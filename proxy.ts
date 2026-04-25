@@ -12,7 +12,20 @@ function isAuthRoute(pathname: string): boolean {
   return AUTH_ROUTES.includes(pathname)
 }
 
+function isSupabaseConfigured(): boolean {
+  return Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL &&
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  )
+}
+
 export async function proxy(request: NextRequest) {
+  // Short-circuit when Supabase isn't configured yet — lets the existing
+  // analyser render in environments where env vars haven't been set.
+  if (!isSupabaseConfigured()) {
+    return NextResponse.next()
+  }
+
   const { response, user } = await updateSupabaseSession(request)
   const { pathname } = request.nextUrl
 
