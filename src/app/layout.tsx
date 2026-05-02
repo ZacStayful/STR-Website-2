@@ -1,16 +1,17 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { DM_Sans } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const dmSans = DM_Sans({
   variable: "--font-sans",
   subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "Stayful Property Analyser | Short-Term Rental Income Calculator",
+  title: "Stayful — See what your property could earn as a short-term rental",
   description:
-    "Analyse your property's short-term rental potential with Stayful. Compare Airbnb income vs long-term let, view local demand drivers, and get a comprehensive risk assessment.",
+    "Calibrated UK-wide income estimates for landlords considering Airbnb or holiday let. Real comparables, seasonal demand, and an honest comparison vs long-term let.",
   generator: "Stayful",
   icons: {
     icon: [
@@ -29,11 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${inter.variable} font-sans antialiased`}
-      >
-        {children}
-      </body>
+      <body className={`${dmSans.variable} font-sans antialiased`}>{children}</body>
     </html>
   );
 }
