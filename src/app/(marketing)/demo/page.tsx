@@ -174,7 +174,7 @@ export default function DemoPage() {
                 {sample.shortLet.comparables.slice(0, 5).map((c) => (
                   <tr key={c.title}>
                     <td>{c.title}</td>
-                    <td>{c.distance.toFixed(1)} mi</td>
+                    <td>{c.distance != null ? `${c.distance.toFixed(1)} mi` : "—"}</td>
                     <td>{fmt(c.averageDailyRate)}</td>
                     <td>{Math.round(c.occupancyRate * 100)}%</td>
                     <td>{c.reviewCount}</td>
