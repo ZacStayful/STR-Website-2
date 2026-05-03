@@ -1,155 +1,196 @@
-import Link from "next/link";
 import type { Metadata } from "next";
+import Link from "next/link";
+import { Bullets } from "@/components/marketing/Bullets";
+import { CTABlock } from "@/components/marketing/CTABlock";
+import { FAQ, type FAQItem } from "@/components/marketing/FAQ";
+import { LastUpdated } from "@/components/marketing/LastUpdated";
+import { Schema } from "@/components/Schema";
+import { CTA } from "@/lib/cta";
+import {
+  faqSchema,
+  softwareApplicationSchema,
+  webPageSchema,
+} from "@/lib/schema";
+import { siteUrl } from "@/lib/url";
+
+const PAGE_TITLE = "Pricing";
+const PAGE_DESCRIPTION =
+  "14 days free, then £29/month. Full access during the trial, no credit card required.";
+const PAGE_URL = siteUrl("/pricing");
+const LAST_UPDATED = "2026-05-03";
 
 export const metadata: Metadata = {
-  title: "Pricing — Stayful",
-  description:
-    "Simple pricing for Stayful Intelligence. 14-day free trial, no credit card required. Pro plan for active landlords.",
+  title: `${PAGE_TITLE} — Stayful`,
+  description: PAGE_DESCRIPTION,
+  alternates: { canonical: PAGE_URL },
 };
+
+const FAQS: FAQItem[] = [
+  {
+    q: "What if I cancel before the trial ends?",
+    a: "You owe nothing. The trial is full access with no card required, so there's nothing to cancel from a billing point of view — you just don't upgrade. You'll get a reminder email a couple of days before the trial ends so you're never surprised.",
+  },
+  {
+    q: "Do you keep my data after I cancel?",
+    a: "Your saved reports stay viewable on a free account so you can come back to them. If you'd like everything deleted, email hello@stayful.co.uk and we'll wipe the account within five working days. We don't share or sell your inputs.",
+  },
+  {
+    q: "How do I cancel?",
+    a: "From your account settings in one click. If you've upgraded to Pro, you keep access until the end of your billing period and aren't charged again.",
+  },
+  {
+    q: "Is the trial really full access?",
+    a: "Yes. Every feature in the software is available during the trial. The only thing you can't do without upgrading is keep using the software past day 14.",
+  },
+  {
+    q: "Do you do team or agency plans?",
+    a: "Email hello@stayful.co.uk and we'll size something. Multi-property portfolios and letting agencies get a custom price.",
+  },
+  {
+    q: "Why £29 per month?",
+    a: "It's the price point where running the software pays for itself if it informs a single decent decision — a property purchase, a switch from long-let, a pricing change. Cheaper than getting one report wrong.",
+  },
+];
 
 export default function PricingPage() {
   return (
     <>
-      <PricingHero />
-      <PricingTable />
-      <PricingFAQ />
-    </>
-  );
-}
+      <Schema
+        items={[
+          softwareApplicationSchema({
+            name: "Stayful",
+            url: PAGE_URL,
+            description: PAGE_DESCRIPTION,
+            price: "29",
+          }),
+          webPageSchema({
+            name: PAGE_TITLE,
+            url: PAGE_URL,
+            description: PAGE_DESCRIPTION,
+            dateModified: LAST_UPDATED,
+          }),
+          faqSchema(FAQS),
+        ]}
+      />
 
-function PricingHero() {
-  return (
-    <section className="sf-section" style={{ paddingBottom: 32 }}>
-      <div className="sf-container" style={{ textAlign: "center", maxWidth: 720, marginInline: "auto" }}>
-        <div className="sf-eyebrow">Pricing</div>
-        <h1 style={{ marginBottom: 16 }}>Simple, honest pricing.</h1>
-        <p style={{ color: "#555", fontSize: 18, margin: 0 }}>
-          Try every feature free for 14 days. Upgrade only if it pays for itself.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-function PricingTable() {
-  return (
-    <section className="sf-section" style={{ paddingTop: 32 }}>
-      <div className="sf-container" style={{ display: "grid", gap: 24, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", maxWidth: 880, marginInline: "auto" }}>
-        {/* Free trial tile */}
-        <div className="sf-card" style={{ padding: 32 }}>
-          <div style={{ marginBottom: 20 }}>
-            <h3 style={{ marginBottom: 4 }}>Free trial</h3>
-            <p style={{ color: "#666", fontSize: 14, margin: 0 }}>Full access, no card needed.</p>
-          </div>
-          <div style={{ marginBottom: 24 }}>
-            <span style={{ fontSize: "2.5rem", fontWeight: 700, color: "var(--sf-green)" }}>£0</span>
-            <span style={{ color: "#888", fontSize: 15, marginLeft: 6 }}>for 14 days</span>
-          </div>
-          <Link href="/signup" className="sf-btn sf-btn--ghost" style={{ width: "100%", marginBottom: 24 }}>
-            Start free trial
-          </Link>
-          <FeatureList
-            items={[
-              "Unlimited property analyses",
-              "All 11 report sections",
-              "Real Airbnb comparables",
-              "Seasonal forecast & profit calc",
-              "PDF/presentation export",
-              "Email support",
-            ]}
-          />
+      <section className="sf-section" style={{ paddingTop: 72, paddingBottom: 32 }}>
+        <div className="sf-container" style={{ maxWidth: 720, textAlign: "center" }}>
+          <h1>14 days, full access, no credit card required.</h1>
+          <LastUpdated date={LAST_UPDATED} />
+          <p style={{ fontSize: 17, fontWeight: 600, marginTop: 16 }}>
+            One plan after that: £29/month. Cancel any time. Past reports stay
+            viewable on a free account either way.
+          </p>
         </div>
+      </section>
 
-        {/* Pro tile */}
-        <div
-          className="sf-card"
-          style={{ padding: 32, borderColor: "var(--sf-green)", borderWidth: 2, position: "relative" }}
-        >
-          <span
-            className="sf-pill"
-            style={{ position: "absolute", top: -14, right: 24, background: "var(--sf-green)", color: "#fff", borderColor: "var(--sf-green)" }}
+      <section className="sf-section" style={{ paddingTop: 32 }}>
+        <div className="sf-container" style={{ maxWidth: 880 }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 24,
+              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            }}
           >
-            Most popular
-          </span>
-          <div style={{ marginBottom: 20 }}>
-            <h3 style={{ marginBottom: 4 }}>Pro</h3>
-            <p style={{ color: "#666", fontSize: 14, margin: 0 }}>For active landlords and investors.</p>
+            <div className="sf-card" style={{ padding: 32 }}>
+              <h3 style={{ margin: "0 0 4px" }}>14-day free trial</h3>
+              <p style={{ fontSize: 14, margin: "0 0 20px" }}>
+                Full access. No card required.
+              </p>
+              <div style={{ marginBottom: 24 }}>
+                <span style={{ fontSize: "2.5rem", fontWeight: 800, color: "var(--sf-green)" }}>£0</span>
+                <span style={{ fontSize: 15, marginLeft: 8, fontWeight: 600 }}>for 14 days</span>
+              </div>
+              <Link
+                href={CTA.primaryHref}
+                className="sf-btn sf-btn--ghost"
+                style={{ width: "100%", marginBottom: 24 }}
+              >
+                {CTA.primary}
+              </Link>
+              <Bullets
+                items={[
+                  "Unlimited property analyses",
+                  "All report sections",
+                  "Live nearby comparables",
+                  "Seasonal forecast and profit calculator",
+                  "PDF / presentation export",
+                  "Email support",
+                ]}
+              />
+            </div>
+
+            <div
+              className="sf-card"
+              style={{
+                padding: 32,
+                borderColor: "var(--sf-green)",
+                borderWidth: 2,
+                position: "relative",
+              }}
+            >
+              <span
+                className="sf-pill"
+                style={{
+                  position: "absolute",
+                  top: -14,
+                  right: 24,
+                  background: "var(--sf-green)",
+                  color: "#fff",
+                  borderColor: "var(--sf-green)",
+                }}
+              >
+                After your trial
+              </span>
+              <h3 style={{ margin: "0 0 4px" }}>Pro</h3>
+              <p style={{ fontSize: 14, margin: "0 0 20px" }}>
+                Same software, no time limit.
+              </p>
+              <div style={{ marginBottom: 24 }}>
+                <span style={{ fontSize: "2.5rem", fontWeight: 800, color: "var(--sf-green)" }}>£29</span>
+                <span style={{ fontSize: 15, marginLeft: 8, fontWeight: 600 }}>/ month</span>
+                <p style={{ fontSize: 13, fontWeight: 600, margin: "4px 0 0", opacity: 0.75 }}>
+                  Cancel any time, billed monthly.
+                </p>
+              </div>
+              <Link
+                href={CTA.primaryHref}
+                className="sf-btn"
+                style={{ width: "100%", marginBottom: 24 }}
+              >
+                {CTA.primary}
+              </Link>
+              <Bullets
+                items={[
+                  "Everything in the trial",
+                  "Unlimited saved properties",
+                  "Side-by-side property comparison",
+                  "CSV export of comparables",
+                  "Priority email support",
+                  "Early access to new features",
+                ]}
+              />
+            </div>
           </div>
-          <div style={{ marginBottom: 24 }}>
-            <span style={{ fontSize: "2.5rem", fontWeight: 700, color: "var(--sf-green)" }}>£29</span>
-            <span style={{ color: "#888", fontSize: 15, marginLeft: 6 }}>/ month</span>
-            <p style={{ fontSize: 13, color: "#888", margin: "4px 0 0" }}>or £290/year (save 17%)</p>
-          </div>
-          <Link href="/signup" className="sf-btn" style={{ width: "100%", marginBottom: 24 }}>
-            Start free trial
-          </Link>
-          <FeatureList
-            items={[
-              "Everything in Free trial",
-              "Unlimited saved searches",
-              "Side-by-side property compare",
-              "CSV export of comparables",
-              "Priority support",
-              "Early access to new features",
-            ]}
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 760 }}>
+          <h2>Billing questions</h2>
+          <FAQ items={FAQS} />
+        </div>
+      </section>
+
+      <section className="sf-section" style={{ paddingTop: 32, paddingBottom: 96 }}>
+        <div className="sf-container" style={{ maxWidth: 820 }}>
+          <CTABlock
+            heading="Try it free for 14 days"
+            body="No card. Cancel any time. Past reports stay viewable on a free account."
           />
         </div>
-      </div>
-      <p style={{ textAlign: "center", color: "#888", fontSize: 13, marginTop: 24 }}>
-        Pricing shown is illustrative — update before launch. VAT applied where applicable.
-      </p>
-    </section>
-  );
-}
-
-function FeatureList({ items }: { items: string[] }) {
-  return (
-    <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 10 }}>
-      {items.map((item) => (
-        <li key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 15, color: "#444" }}>
-          <span aria-hidden="true" style={{ color: "var(--sf-green)", fontWeight: 700, lineHeight: 1.5 }}>✓</span>
-          <span>{item}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function PricingFAQ() {
-  const faqs = [
-    {
-      q: "Can I cancel any time?",
-      a: "Yes. Cancel from your account page in one click. You keep access until the end of your billing period.",
-    },
-    {
-      q: "What happens to my data if I cancel?",
-      a: "Your saved reports are preserved view-only. Re-subscribe any time and they&rsquo;ll be there.",
-    },
-    {
-      q: "Do you offer team or agency plans?",
-      a: "Get in touch at hello@stayful.co.uk — we&rsquo;ll size something for multi-property portfolios or letting agencies.",
-    },
-    {
-      q: "Is there a usage limit?",
-      a: "Pro is uncapped on standard use. Heavy programmatic usage (1000+ reports/month) goes through a custom API plan.",
-    },
-  ];
-  return (
-    <section className="sf-section sf-section--alt">
-      <div className="sf-container" style={{ maxWidth: 760 }}>
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div className="sf-eyebrow">Billing FAQ</div>
-          <h2>Things people ask before they upgrade.</h2>
-        </div>
-        <div>
-          {faqs.map((f) => (
-            <details key={f.q} className="sf-faq">
-              <summary className="sf-faq__q">{f.q}</summary>
-              <div className="sf-faq__a">{f.a}</div>
-            </details>
-          ))}
-        </div>
-      </div>
-    </section>
+      </section>
+    </>
   );
 }
