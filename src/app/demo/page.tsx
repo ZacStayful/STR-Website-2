@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function DemoPage() {
-  redirect("/?demo=true");
+  redirect("/estimate?demo=true");
 }

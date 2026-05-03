@@ -18,14 +18,14 @@ function SiteNav() {
   return (
     <header className="sf-nav">
       <div className="sf-nav__inner">
-        <Link href="/home" className="sf-nav__logo">
+        <Link href="/" className="sf-nav__logo">
           Stayful
         </Link>
         <nav className="sf-nav__links">
-          <Link href="/home">Home</Link>
-          <Link href="/home#how-it-works">How it works</Link>
+          <Link href="/">Home</Link>
+          <Link href="/#how-it-works">How it works</Link>
           <Link href="/pricing">Pricing</Link>
-          <Link href="/home#case-studies">Case studies</Link>
+          <Link href="/#case-studies">Case studies</Link>
           <Link href="/login">Sign in</Link>
           <Link
             href="/signup"
@@ -55,10 +55,10 @@ function SiteFooter() {
           </div>
           <div className="sf-footer__col">
             <h4>Product</h4>
-            <Link href="/home">Overview</Link>
-            <Link href="/home#how-it-works">How it works</Link>
+            <Link href="/">Overview</Link>
+            <Link href="/#how-it-works">How it works</Link>
             <Link href="/pricing">Pricing</Link>
-            <Link href="/home#case-studies">Case studies</Link>
+            <Link href="/#case-studies">Case studies</Link>
           </div>
           <div className="sf-footer__col">
             <h4>Company</h4>
@@ -66,7 +66,7 @@ function SiteFooter() {
               Stayful Management
             </a>
             <a href="mailto:hello@stayful.co.uk">Contact</a>
-            <Link href="/home#faq">FAQ</Link>
+            <Link href="/#faq">FAQ</Link>
           </div>
           <div className="sf-footer__col">
             <h4>Legal</h4>
