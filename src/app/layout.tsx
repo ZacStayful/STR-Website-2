@@ -1,17 +1,10 @@
 import type { Metadata } from "next";
-import { DM_Sans } from "next/font/google";
 import "./globals.css";
 
-const dmSans = DM_Sans({
-  variable: "--font-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
 export const metadata: Metadata = {
-  title: "Stayful — See what your property could earn as a short-term rental",
+  title: "Stayful — income-estimate software for UK short-term lets",
   description:
-    "Calibrated UK-wide income estimates for landlords considering Airbnb or holiday let. Real comparables, seasonal demand, and an honest comparison vs long-term let.",
+    "Find out if your property has potential as a short-term let. Get a peak income estimate, customise based on comparable nearby properties. 14-day free trial.",
   generator: "Stayful",
   icons: {
     icon: [
@@ -30,7 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${dmSans.variable} font-sans antialiased`}>{children}</body>
+      <body className="font-sans antialiased">{children}</body>
     </html>
   );
 }

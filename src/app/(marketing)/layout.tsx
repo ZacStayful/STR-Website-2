@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { CTA } from "@/lib/cta";
+import { BRAND } from "@/lib/brand";
 
 export default function MarketingLayout({
   children,
@@ -22,17 +24,17 @@ function SiteNav() {
           Stayful
         </Link>
         <nav className="sf-nav__links">
-          <Link href="/">Home</Link>
-          <Link href="/#how-it-works">How it works</Link>
+          <Link href="/income-calculator">Calculator</Link>
+          <Link href="/features">Features</Link>
           <Link href="/pricing">Pricing</Link>
-          <Link href="/#case-studies">Case studies</Link>
-          <Link href="/login">Sign in</Link>
+          <Link href="/about">About</Link>
+          <Link href={CTA.secondaryHref}>{CTA.secondary}</Link>
           <Link
-            href="/signup"
+            href={CTA.primaryHref}
             className="sf-btn"
             style={{ padding: "10px 20px", fontSize: "14px" }}
           >
-            Try free for 14 days
+            {CTA.primary}
           </Link>
         </nav>
       </div>
@@ -46,27 +48,35 @@ function SiteFooter() {
       <div className="sf-footer__inner">
         <div className="sf-footer__cols">
           <div className="sf-footer__brand">
-            <h4>Stayful</h4>
+            <h4>{BRAND.name}</h4>
             <p>
-              Calibrated short-term rental income estimates for UK landlords.
-              Real comparables, seasonal demand modelling, honest long-let
-              comparison.
+              Income-estimate software for UK short-term lets. Find out if your
+              property has potential, customise based on comparable nearby
+              properties, decide with confidence.
             </p>
           </div>
           <div className="sf-footer__col">
-            <h4>Product</h4>
-            <Link href="/">Overview</Link>
-            <Link href="/#how-it-works">How it works</Link>
+            <h4>Software</h4>
+            <Link href="/">Home</Link>
+            <Link href="/income-calculator">Calculator</Link>
+            <Link href="/features">Features</Link>
             <Link href="/pricing">Pricing</Link>
-            <Link href="/#case-studies">Case studies</Link>
+            <Link href="/demo">See a sample report</Link>
           </div>
           <div className="sf-footer__col">
-            <h4>Company</h4>
-            <a href="https://stayful.co.uk" target="_blank" rel="noopener noreferrer">
+            <h4>Compare</h4>
+            <Link href="/short-term-vs-long-term-letting">
+              Short-term vs long-term letting
+            </Link>
+            <Link href="/about">About Stayful</Link>
+            <a
+              href={BRAND.managementUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               Stayful Management
             </a>
-            <a href="mailto:hello@stayful.co.uk">Contact</a>
-            <Link href="/#faq">FAQ</Link>
+            <a href={`mailto:${BRAND.contactEmail}`}>Contact</a>
           </div>
           <div className="sf-footer__col">
             <h4>Legal</h4>
@@ -75,7 +85,7 @@ function SiteFooter() {
           </div>
         </div>
         <div className="sf-footer__base">
-          © {new Date().getFullYear()} Stayful Limited. All rights reserved.
+          © {new Date().getFullYear()} {BRAND.legalName}. All rights reserved.
         </div>
       </div>
     </footer>
