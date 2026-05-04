@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { CTABlock } from "@/components/marketing/CTABlock";
 import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
+import { ProductAnatomy } from "@/components/marketing/ProductAnatomy";
+import { DemandConstellation } from "@/components/marketing/DemandConstellation";
+import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
 import { Schema } from "@/components/Schema";
 import {
   faqSchema,
@@ -130,29 +133,58 @@ export default function FeaturesPage() {
         ]}
       />
 
-      <section className="sf-section" style={{ paddingTop: 72, paddingBottom: 32 }}>
-        <div className="sf-container" style={{ maxWidth: 820 }}>
-          <h1>What the software does.</h1>
+      <section className="sf-section" style={{ paddingTop: 72, paddingBottom: 24 }}>
+        <div className="sf-container" style={{ maxWidth: 820, textAlign: "center" }}>
+          <h1 className="sf-display">What the software does.</h1>
           <LastUpdated date={LAST_UPDATED} />
           <div className="sf-intro">
-            <p>
+            <p style={{ textAlign: "left" }}>
               Stayful is income-estimate software for UK short-term lets.
-              This page is the complete inventory of what the software
-              produces for any property you run through it. Every feature on
-              this page is available during the 14-day trial.
+              Every feature here is available during the 14-day trial — no
+              card required.
             </p>
           </div>
         </div>
       </section>
 
+      <section className="sf-section" style={{ paddingTop: 0, paddingBottom: 24 }}>
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <ProductAnatomy />
+        </div>
+      </section>
+
       <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 900 }}>
+          <h2>Every component in the report</h2>
           {FEATURES.map((f) => (
             <div key={f.heading}>
               <h3>{f.heading}</h3>
               <p>{f.body}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Demand drivers nearby</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            The software identifies what makes the area book — transport,
+            universities, hospitals, venues — so the estimate sits on top of
+            an actual demand model, not just a list of comparables.
+          </p>
+          <DemandConstellation />
+        </div>
+      </section>
+
+      <section className="sf-section">
+        <div className="sf-container" style={{ maxWidth: 900 }}>
+          <h2>The seasonal monthly view</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Twelve months of expected revenue shape, weighted by historical
+            occupancy and ADR for the area.
+          </p>
+          <SeasonalityChart caption="Sample shape · the software calculates yours from your address." />
         </div>
       </section>
 

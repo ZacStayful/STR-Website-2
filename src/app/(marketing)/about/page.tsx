@@ -3,6 +3,10 @@ import { CTABlock } from "@/components/marketing/CTABlock";
 import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
 import { TrustSignals } from "@/components/marketing/TrustSignals";
+import { ManagedGallery } from "@/components/marketing/ManagedGallery";
+import { Placeholder } from "@/components/marketing/Placeholder";
+import Image from "next/image";
+import { IMG, hasImage } from "@/lib/images";
 import { Schema } from "@/components/Schema";
 import { BRAND, TRUST } from "@/lib/brand";
 import { breadcrumbSchema, organizationSchema, webPageSchema } from "@/lib/schema";
@@ -90,6 +94,50 @@ export default function AboutPage() {
             promise about your property&rsquo;s income.
           </p>
           <TrustSignals caption="Figures from the Stayful management business as of May 2026. The software estimates your property's potential individually — past management performance is not a guarantee of future income for a specific property." />
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>The properties we manage</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            A glimpse of the portfolio that calibrates the software. Each one
+            has been forecast, taken on, and run by Stayful — the feedback
+            loop is what keeps the model real-world.
+          </p>
+          <ManagedGallery />
+        </div>
+      </section>
+
+      <section className="sf-section">
+        <div className="sf-container" style={{ maxWidth: 1020, display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.4fr)", gap: 36, alignItems: "center" }}>
+          <div style={{ borderRadius: 18, overflow: "hidden", boxShadow: "var(--sf-shadow-photo)", aspectRatio: "4 / 5" }}>
+            {hasImage(IMG.team) ? (
+              <Image
+                src={IMG.team.src}
+                alt={IMG.team.alt}
+                width={IMG.team.width}
+                height={IMG.team.height}
+                sizes="(max-width: 900px) 100vw, 40vw"
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              />
+            ) : (
+              <Placeholder width={IMG.team.width} height={IMG.team.height} label="The Stayful team" />
+            )}
+          </div>
+          <div>
+            <h2 style={{ borderTop: "none", padding: 0, margin: "0 0 16px", textAlign: "left" }}>
+              The team
+            </h2>
+            <p>
+              Stayful is a small UK team of operators who&rsquo;ve built
+              software because we needed it ourselves. We forecast properties
+              before taking them onto management, and we wanted the forecast
+              to be calibrated against properties we&rsquo;d actually run.
+              That&rsquo;s what the software does — and now anyone evaluating
+              a property can use it.
+            </p>
+          </div>
         </div>
       </section>
 

@@ -5,6 +5,8 @@ import { CTABlock } from "@/components/marketing/CTABlock";
 import { FAQ, type FAQItem } from "@/components/marketing/FAQ";
 import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
+import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
+import { ComparisonShowcase } from "@/components/marketing/ComparisonShowcase";
 import { Schema } from "@/components/Schema";
 import {
   faqSchema,
@@ -136,6 +138,18 @@ export default function IncomeCalculatorPage() {
       </section>
 
       <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>What the calculator shows you</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Live nearby comparables you can refine, the seasonal monthly
+            shape, and a long-let benchmark side by side.
+          </p>
+          <SeasonalityChart caption="Twelve-month shape · the calculator builds yours from your specific address." />
+          <ComparisonShowcase />
+        </div>
+      </section>
+
+      <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 820 }}>
           <h2>How to use it</h2>
           <p>

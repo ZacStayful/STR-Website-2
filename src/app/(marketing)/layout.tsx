@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CTA } from "@/lib/cta";
 import { BRAND } from "@/lib/brand";
+import { Logo } from "@/components/marketing/Logo";
 
 export default function MarketingLayout({
   children,
@@ -20,8 +21,8 @@ function SiteNav() {
   return (
     <header className="sf-nav">
       <div className="sf-nav__inner">
-        <Link href="/" className="sf-nav__logo">
-          Stayful
+        <Link href="/" className="sf-nav__logo" aria-label={BRAND.name}>
+          <Logo />
         </Link>
         <nav className="sf-nav__links">
           <Link href="/income-calculator">Calculator</Link>

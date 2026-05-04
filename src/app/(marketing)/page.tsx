@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import { AnswerCapsule } from "@/components/marketing/AnswerCapsule";
 import { Bullets } from "@/components/marketing/Bullets";
@@ -6,7 +7,15 @@ import { FAQ, type FAQItem } from "@/components/marketing/FAQ";
 import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
 import { TrustSignals } from "@/components/marketing/TrustSignals";
+import { HeroWithUICard } from "@/components/marketing/HeroWithUICard";
+import { TrustStrip } from "@/components/marketing/TrustStrip";
+import { ComparisonShowcase } from "@/components/marketing/ComparisonShowcase";
+import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
+import { PropertyTypeGrid } from "@/components/marketing/PropertyTypeGrid";
+import { DetailMosaic } from "@/components/marketing/DetailMosaic";
+import { AtmosphericFullbleed } from "@/components/marketing/AtmosphericFullbleed";
 import { Schema } from "@/components/Schema";
+import { IMG } from "@/lib/images";
 import { CTA } from "@/lib/cta";
 import {
   faqSchema,
@@ -117,26 +126,31 @@ export default function HomePage() {
         ]}
       />
 
-      <section className="sf-section" style={{ paddingTop: 72, paddingBottom: 32 }}>
-        <div className="sf-container" style={{ maxWidth: 820 }}>
-          <h1>{PAGE_TITLE}.</h1>
-          <LastUpdated date={LAST_UPDATED} />
-          <div className="sf-intro">
-            <p>
-              Stayful is income-estimate software for UK short-term lets. It
-              tells you what a property could earn on Airbnb, Booking.com, and
-              direct channels — built from live nearby comparables, not a
-              flat market average.
-            </p>
-            <p>
-              Use it on a property you already own to see if a switch from
-              long-let is worth running the numbers on. Use it on a property
-              you&rsquo;re considering buying. Use it on the one you already
-              short-let if you want to know whether you&rsquo;re leaving money
-              on the table.
-            </p>
-          </div>
+      <HeroWithUICard image={IMG.heroProperty} cardVariant="peak-estimate-loading">
+        <h1 className="sf-display">{PAGE_TITLE}.</h1>
+        <LastUpdated date={LAST_UPDATED} />
+        <p style={{ fontSize: 17, fontWeight: 600, maxWidth: 520 }}>
+          Income-estimate software for UK short-term lets. Get a peak income
+          estimate, customise based on comparable nearby properties, decide
+          with confidence.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+          <Link href={CTA.primaryHref} className="sf-btn">
+            {CTA.primary}
+          </Link>
+          <Link href={CTA.secondaryHref} className="sf-btn sf-btn--ghost">
+            {CTA.secondary}
+          </Link>
+        </div>
+        <p style={{ fontSize: 13, color: "var(--sf-green)", opacity: 0.75, fontWeight: 600, marginTop: 4 }}>
+          {CTA.trialNote}
+        </p>
+      </HeroWithUICard>
 
+      <TrustStrip />
+
+      <section className="sf-section" style={{ paddingTop: 56, paddingBottom: 32 }}>
+        <div className="sf-container" style={{ maxWidth: 820 }}>
           <AnswerCapsule>
             <p>
               <strong>Stayful</strong> estimates short-term let income for any
@@ -147,12 +161,18 @@ export default function HomePage() {
               14 days, full access, no card required.
             </p>
           </AnswerCapsule>
+        </div>
+      </section>
 
-          <CTABlock
-            heading="See what your property could earn"
-            body="Sign up and the software shows you the number for your specific property in under a minute."
-            variant="green"
-          />
+      <section className="sf-section">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Why this beats a flat-average tool</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Most STR calculators give you a single market average with nothing
+            behind it. Stayful shows you the actual nearby listings the
+            estimate is built from, then lets you decide which ones count.
+          </p>
+          <ComparisonShowcase />
         </div>
       </section>
 
@@ -171,10 +191,20 @@ export default function HomePage() {
               <span key="8"><strong>Exportable report.</strong> Share with a partner, accountant, or lender as a single PDF.</span>,
             ]}
           />
+          <SeasonalityChart caption="Your year isn't annual ÷ 12. Cashflow planning gets specific to the property." />
         </div>
       </section>
 
+      <DetailMosaic />
+
       <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Works for any UK property</h2>
+          <PropertyTypeGrid />
+        </div>
+      </section>
+
+      <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 900 }}>
           <h2>Who it&rsquo;s for</h2>
           <h3>Existing landlords considering a switch</h3>
@@ -259,17 +289,21 @@ export default function HomePage() {
         </div>
       </section>
 
-      <section className="sf-section" style={{ paddingTop: 32, paddingBottom: 96 }}>
-        <div className="sf-container" style={{ maxWidth: 820 }}>
-          <CTABlock
-            heading="See your property&rsquo;s number"
-            body="Sign up and the software produces the estimate during your trial. Cancel any time, keep your reports either way."
-          />
-          <p style={{ textAlign: "center", fontSize: 13, color: "var(--sf-green)", opacity: 0.75, marginTop: 12 }}>
-            Already have an account? <a href={CTA.secondaryHref}>Login</a>.
-          </p>
+      <AtmosphericFullbleed image={IMG.atmosphereCottageDusk}>
+        <h2>See your property&rsquo;s number.</h2>
+        <p>
+          Free for 14 days, full access, no card required. Past reports stay
+          viewable on a free account either way.
+        </p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+          <Link href={CTA.primaryHref} className="sf-btn sf-btn--white">
+            {CTA.primary}
+          </Link>
+          <Link href={CTA.secondaryHref} className="sf-btn sf-btn--ghost" style={{ borderColor: "#fff", color: "#fff" }}>
+            {CTA.secondary}
+          </Link>
         </div>
-      </section>
+      </AtmosphericFullbleed>
     </>
   );
 }

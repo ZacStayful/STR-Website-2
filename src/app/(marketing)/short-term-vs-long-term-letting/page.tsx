@@ -5,6 +5,8 @@ import { CTABlock } from "@/components/marketing/CTABlock";
 import { FAQ, type FAQItem } from "@/components/marketing/FAQ";
 import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
+import { LongVsShortSplit } from "@/components/marketing/LongVsShortSplit";
+import { PropertyTypeGrid } from "@/components/marketing/PropertyTypeGrid";
 import { Schema } from "@/components/Schema";
 import {
   articleSchema,
@@ -134,6 +136,12 @@ export default function ShortVsLongPage() {
         </div>
       </section>
 
+      <section className="sf-section" style={{ paddingTop: 16 }}>
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <LongVsShortSplit />
+        </div>
+      </section>
+
       <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 900 }}>
           <h2>The four trade-offs</h2>
@@ -203,6 +211,18 @@ export default function ShortVsLongPage() {
       </section>
 
       <section className="sf-section">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Whatever the property, the software runs it</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            City flats, terraced houses, cottages, coastal stays, period
+            flats. The framework above works for any of them — the actual
+            comparison comes from running yours through the trial.
+          </p>
+          <PropertyTypeGrid />
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
         <div className="sf-container" style={{ maxWidth: 760 }}>
           <h2>Common questions</h2>
           <FAQ items={FAQS} />
