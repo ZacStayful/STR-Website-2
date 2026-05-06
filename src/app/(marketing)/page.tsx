@@ -126,7 +126,7 @@ export default function HomePage() {
         ]}
       />
 
-      <HeroWithUICard image={IMG.heroProperty} cardVariant="peak-estimate-loading">
+      <HeroWithUICard image={IMG.heroProperty} cardVariant="peak-estimate-loading" showUICard={false}>
         <h1 className="sf-display">{PAGE_TITLE}.</h1>
         <LastUpdated date={LAST_UPDATED} />
         <p style={{ fontSize: 17, fontWeight: 600, maxWidth: 520 }}>

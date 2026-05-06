@@ -6,7 +6,9 @@ import { IMG, hasImage } from "@/lib/images";
 // Single property photograph with two ribbons across it: muted "Long-let"
 // and confident green "Short-let peak". The split visualises the question
 // without ever putting a number on the user's specific property.
-export function LongVsShortSplit() {
+// Pass `showRibbons={false}` when the photograph already has the ribbon
+// copy baked into the pixels.
+export function LongVsShortSplit({ showRibbons = true }: { showRibbons?: boolean } = {}) {
   const img = IMG.propertySplit;
   return (
     <div className="sf-split">
@@ -26,6 +28,7 @@ export function LongVsShortSplit() {
         <span className="sf-split__overlay" aria-hidden />
       </div>
 
+      {showRibbons ? (
       <div className="sf-split__ribbons">
         <div className="sf-split__ribbon sf-split__ribbon--muted">
           <span className="sf-split__lede">Long-let</span>
@@ -50,6 +53,7 @@ export function LongVsShortSplit() {
           <span className="sf-split__sub">Higher ceiling, more variable</span>
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

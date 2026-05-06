@@ -138,7 +138,7 @@ export default function ShortVsLongPage() {
 
       <section className="sf-section" style={{ paddingTop: 16 }}>
         <div className="sf-container" style={{ maxWidth: 1020 }}>
-          <LongVsShortSplit />
+          <LongVsShortSplit showRibbons={false} />
         </div>
       </section>
 

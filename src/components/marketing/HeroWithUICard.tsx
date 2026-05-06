@@ -7,13 +7,17 @@ import type { ReactNode } from "react";
 // A1 — Homepage hero.
 // Composes a full-width property photograph with a floating UI card on the
 // top-right, plus a headline + CTA stack on the left.
+// Pass `showUICard={false}` when the photo already has its own UI panel
+// rendered into the pixels (avoids stacking two UIs on top of each other).
 export function HeroWithUICard({
   image,
   cardVariant = "peak-estimate-loading",
+  showUICard = true,
   children,
 }: {
   image: Img;
   cardVariant?: "peak-estimate-loading" | "comparable-listings" | "seasonality-mini" | "profit-calc-mini";
+  showUICard?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -41,9 +45,11 @@ export function HeroWithUICard({
           )}
           <span className="sf-hero__photo-overlay" aria-hidden />
         </div>
-        <div className="sf-hero__ui">
-          <UICard variant={cardVariant} />
-        </div>
+        {showUICard ? (
+          <div className="sf-hero__ui">
+            <UICard variant={cardVariant} />
+          </div>
+        ) : null}
       </div>
     </section>
   );
