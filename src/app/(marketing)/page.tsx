@@ -11,6 +11,8 @@ import { HeroWithUICard } from "@/components/marketing/HeroWithUICard";
 import { TrustStrip } from "@/components/marketing/TrustStrip";
 import { ComparisonShowcase } from "@/components/marketing/ComparisonShowcase";
 import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
+import { StressTest } from "@/components/marketing/StressTest";
+import { ComparablesMap } from "@/components/marketing/ComparablesMap";
 import { PropertyTypeGrid } from "@/components/marketing/PropertyTypeGrid";
 import { DetailMosaic } from "@/components/marketing/DetailMosaic";
 import { AtmosphericFullbleed } from "@/components/marketing/AtmosphericFullbleed";
@@ -25,9 +27,9 @@ import {
 } from "@/lib/schema";
 import { siteUrl } from "@/lib/url";
 
-const PAGE_TITLE = "Find out if your property has potential as a short-term let";
+const PAGE_TITLE = "See your worst month — and beat your long-let";
 const PAGE_DESCRIPTION =
-  "Income-estimate software for UK short-term lets. Get a peak income estimate, customise based on comparable nearby properties, decide with confidence. 14-day free trial.";
+  "Income-estimate software for UK short-term lets. Pulls live nearby comparables, runs your numbers at -10% and -20%, shows every month against your long-let figure. 14-day free trial.";
 const PAGE_URL = siteUrl("/");
 const LAST_UPDATED = "2026-05-03";
 
@@ -127,12 +129,13 @@ export default function HomePage() {
       />
 
       <HeroWithUICard image={IMG.heroProperty} cardVariant="peak-estimate-loading" showUICard={false}>
-        <h1 className="sf-display">{PAGE_TITLE}.</h1>
+        <h1 className="sf-display">See your worst month — and beat your long-let.</h1>
         <LastUpdated date={LAST_UPDATED} />
         <p style={{ fontSize: 17, fontWeight: 600, maxWidth: 520 }}>
-          Income-estimate software for UK short-term lets. Get a peak income
-          estimate, customise based on comparable nearby properties, decide
-          with confidence.
+          Income-estimate software for UK short-term lets. The software pulls
+          live nearby comparables, runs your numbers at &minus;10% and
+          &minus;20%, and shows every month side by side with your long-let
+          figure.
         </p>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
           <Link href={CTA.primaryHref} className="sf-btn">
@@ -166,7 +169,7 @@ export default function HomePage() {
 
       <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 1020 }}>
-          <h2>Why this beats a flat-average tool</h2>
+          <h2>Why a market average misses your property</h2>
           <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
             Most STR calculators give you a single market average with nothing
             behind it. Stayful shows you the actual nearby listings the
@@ -176,9 +179,22 @@ export default function HomePage() {
         </div>
       </section>
 
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Live comparables, on a map</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            The software pulls real short-term rentals nearby and shows you
+            each one with its own daily rate, occupancy, and review weight.
+            De-select the listings that don&rsquo;t match; the estimate
+            updates.
+          </p>
+          <ComparablesMap caption="Sample neighbourhood · the software builds yours from your address." />
+        </div>
+      </section>
+
       <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 900 }}>
-          <h2>What the software does</h2>
+          <h2>What you&rsquo;ll see</h2>
           <Bullets
             items={[
               <span key="1"><strong>Peak income estimate.</strong> A revenue figure for the property at typical occupancy and seasonality.</span>,
@@ -191,7 +207,20 @@ export default function HomePage() {
               <span key="8"><strong>Exportable report.</strong> Share with a partner, accountant, or lender as a single PDF.</span>,
             ]}
           />
-          <SeasonalityChart caption="Your year isn't annual ÷ 12. Cashflow planning gets specific to the property." />
+          <SeasonalityChart caption="Every month, side-by-side with your long-let figure." />
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Your worst month, stress-tested</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            The software runs your numbers at &minus;10% and &minus;20% so you
+            can see the floor, not just the peak. Most properties still beat
+            their long-let figure even at the worst case &mdash; the trial
+            shows you whether yours does.
+          </p>
+          <StressTest />
         </div>
       </section>
 
@@ -262,14 +291,13 @@ export default function HomePage() {
 
       <section className="sf-section sf-section--alt">
         <div className="sf-container" style={{ maxWidth: 820 }}>
-          <h2>Built by people who manage UK short-term lets</h2>
+          <h2>Calibrated against 70+ real UK properties</h2>
           <p>
-            Stayful runs an in-house management company across the UK. The
-            software you&rsquo;re looking at is the same forecasting tool we
-            use internally to evaluate properties before taking them onto
-            management — now made available directly. The track record below
-            is the management business; it&rsquo;s the underwriting on the
-            software.
+            The estimates are calibrated against the in-house Stayful managed
+            portfolio &mdash; properties we forecast and then actually run.
+            That feedback loop is what keeps the model real-world rather than
+            theoretical. The track record below is the management business;
+            it&rsquo;s the data that underwrites the software.
           </p>
           <TrustSignals />
         </div>

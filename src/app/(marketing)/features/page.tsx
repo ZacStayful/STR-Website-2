@@ -5,6 +5,8 @@ import { RelatedLinks } from "@/components/marketing/RelatedLinks";
 import { ProductAnatomy } from "@/components/marketing/ProductAnatomy";
 import { DemandConstellation } from "@/components/marketing/DemandConstellation";
 import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
+import { StressTest } from "@/components/marketing/StressTest";
+import { ComparablesMap } from "@/components/marketing/ComparablesMap";
 import { Schema } from "@/components/Schema";
 import {
   faqSchema,
@@ -181,10 +183,33 @@ export default function FeaturesPage() {
         <div className="sf-container" style={{ maxWidth: 900 }}>
           <h2>The seasonal monthly view</h2>
           <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
-            Twelve months of expected revenue shape, weighted by historical
-            occupancy and ADR for the area.
+            Twelve months of expected revenue shape, side by side with your
+            long-let figure.
           </p>
           <SeasonalityChart caption="Sample shape · the software calculates yours from your address." />
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Worst-case stress test</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            The software re-runs your numbers at &minus;10% and &minus;20% to
+            show what happens if every assumption is wrong. The floor is the
+            test, not the peak.
+          </p>
+          <StressTest />
+        </div>
+      </section>
+
+      <section className="sf-section">
+        <div className="sf-container" style={{ maxWidth: 1020 }}>
+          <h2>Live comparables, on a map</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Up to 40 nearby short-term rentals, each shown with its own ADR,
+            occupancy, and review weight.
+          </p>
+          <ComparablesMap />
         </div>
       </section>
 

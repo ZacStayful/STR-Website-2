@@ -7,6 +7,8 @@ import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
 import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
 import { ComparisonShowcase } from "@/components/marketing/ComparisonShowcase";
+import { StressTest } from "@/components/marketing/StressTest";
+import { ComparablesMap } from "@/components/marketing/ComparablesMap";
 import { Schema } from "@/components/Schema";
 import {
   faqSchema,
@@ -142,9 +144,12 @@ export default function IncomeCalculatorPage() {
           <h2>What the calculator shows you</h2>
           <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
             Live nearby comparables you can refine, the seasonal monthly
-            shape, and a long-let benchmark side by side.
+            shape, a long-let benchmark side by side, and a worst-case
+            stress test.
           </p>
-          <SeasonalityChart caption="Twelve-month shape · the calculator builds yours from your specific address." />
+          <ComparablesMap caption="Sample neighbourhood · the calculator builds yours from your specific address." />
+          <SeasonalityChart caption="Every month, side-by-side with your long-let figure." />
+          <StressTest />
           <ComparisonShowcase />
         </div>
       </section>
