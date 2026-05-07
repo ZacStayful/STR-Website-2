@@ -138,6 +138,81 @@ export const IMG = {
     venue: placeholder(400, 400, "Concert hall facade"),
     airport: placeholder(400, 400, "UK airport apron"),
   },
+  // Real screenshots of the live Stayful analyser (extracted from the
+  // 2026-05-06 product walkthrough). Each is a 1630x856 JPG.
+  software: {
+    input: {
+      src: "/images/software/01-input.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Address entry form in the Stayful property analyser, showing fields for postcode, property type, bedrooms, bathrooms, parking, outdoor space",
+    },
+    analysing: {
+      src: "/images/software/02-analysing.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Loading screen showing the analyser running through Locating property, Fetching short-let data, Long-let valuation, Nearby amenities, Local events, Running analysis",
+    },
+    headline: {
+      src: "/images/software/03-headline.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Sample analysis report header for 17 Park Crescent, York, showing top market potential, net revenue, ADR, occupancy and property value range",
+    },
+    profitCalc: {
+      src: "/images/software/04-profit-calc.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Profit calculator panel with editable booking platform fees, management fees, cleaning, mortgage, bills, and a calculated true profit figure per month and year",
+    },
+    setupCost: {
+      src: "/images/software/05-setup-cost.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Itemised setup cost panel listing dining table, side tables, soft furnishings, paint, TV, kitchen pack and other furnishing items with editable quantities and a running total",
+    },
+    comparables: {
+      src: "/images/software/06-comparables.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Grid of comparable nearby short-term rental listings with photos, nightly rates, occupancy, annual revenue, review counts and exclude-from-estimate buttons",
+    },
+    amenities: {
+      src: "/images/software/07-amenities.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Advised amenities recommendations including Essential Amenities (WiFi, Kitchen) marked Must Have, with target panels for matching versus beating the market",
+    },
+    forecast: {
+      src: "/images/software/08-forecast.jpg",
+      width: 1630,
+      height: 856,
+      alt: "12-month forecast line chart comparing short-let projections against long-let income across all 12 months, with peak month, worst month, and below-long-let month counts",
+    },
+    demandDrivers: {
+      src: "/images/software/09-demand-drivers.jpg",
+      width: 1630,
+      height: 856,
+      alt: "Local Area Intelligence panel showing why people would book this property, with cards for healthcare, educational, construction and events demand drivers nearby",
+    },
+  },
+  clips: {
+    inputToResult: {
+      src: "/images/software/clip-01-input-to-result.mp4",
+      poster: "/images/software/03-headline.jpg",
+      label: "From address to full report — 30 seconds",
+    },
+    profitSetup: {
+      src: "/images/software/clip-02-profit-setup.mp4",
+      poster: "/images/software/04-profit-calc.jpg",
+      label: "Editing profit and setup-cost assumptions",
+    },
+    forecast: {
+      src: "/images/software/clip-03-forecast.mp4",
+      poster: "/images/software/08-forecast.jpg",
+      label: "12-month forecast and demand-driver reveal",
+    },
+  },
 } as const;
 
 // Helper: returns true if the image manifest entry has a real file behind it.

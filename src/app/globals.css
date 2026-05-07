@@ -1154,6 +1154,58 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 }
 @media (max-width: 900px) { .sf-stress { grid-template-columns: 1fr; } }
 
+/* === Software screenshot + clip frames =================================== */
+.sf-shot, .sf-clip {
+  margin: 24px 0; padding: 0;
+}
+.sf-shot__frame, .sf-clip__frame {
+  background: var(--sf-white);
+  border: 1px solid var(--sf-green-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: var(--sf-shadow-lg);
+}
+.sf-shot__chrome {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: var(--sf-bg-alt);
+  border-bottom: 1px solid var(--sf-green-border);
+}
+.sf-shot__dots { display: flex; gap: 5px; }
+.sf-shot__dots i {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: rgba(74, 105, 68, 0.28);
+}
+.sf-shot__url {
+  flex: 1;
+  font-size: 12px; font-weight: 700; color: var(--sf-green);
+  letter-spacing: 0.02em; text-align: center;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+.sf-shot__tag {
+  font-size: 11px; font-weight: 700; color: var(--sf-green);
+  background: rgba(93, 129, 86, 0.10);
+  padding: 4px 10px; border-radius: 999px;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.sf-shot__body, .sf-clip__video {
+  display: block; width: 100%; height: auto;
+}
+.sf-shot__caption {
+  font-size: 13px; font-weight: 600; color: var(--sf-body);
+  text-align: center; margin: 12px 0 0; opacity: 0.85;
+  font-style: italic;
+}
+
+/* Stack of multiple screenshots — overlapping for visual rhythm */
+.sf-shotstack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin: 24px 0;
+}
+@media (max-width: 900px) { .sf-shotstack { grid-template-columns: 1fr; } }
+
 /* === Comparables map block ============================================== */
 .sf-mapblock {
   background: var(--sf-white); border: 1px solid var(--sf-green-border);

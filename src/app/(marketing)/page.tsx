@@ -16,6 +16,8 @@ import { ComparablesMap } from "@/components/marketing/ComparablesMap";
 import { PropertyTypeGrid } from "@/components/marketing/PropertyTypeGrid";
 import { DetailMosaic } from "@/components/marketing/DetailMosaic";
 import { AtmosphericFullbleed } from "@/components/marketing/AtmosphericFullbleed";
+import { SoftwareScreenshot } from "@/components/marketing/SoftwareScreenshot";
+import { SoftwareClip } from "@/components/marketing/SoftwareClip";
 import { Schema } from "@/components/Schema";
 import { IMG } from "@/lib/images";
 import { CTA } from "@/lib/cta";
@@ -152,6 +154,37 @@ export default function HomePage() {
 
       <TrustStrip />
 
+      <section className="sf-section" style={{ paddingTop: 48 }}>
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>From address to full report in 30 seconds</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Type a UK address, the software pulls live nearby data, and you
+            get a complete analysis &mdash; with comparables, a 12-month
+            forecast against your long-let, and an editable profit calculator.
+            Sample property: 17 Park Crescent, York.
+          </p>
+          <SoftwareClip
+            clip={IMG.clips.inputToResult}
+            caption="Sample property &middot; recorded directly in the live analyser."
+          />
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>The headline number, instantly</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Top market potential, your filtered estimate, ADR, occupancy,
+            and a property value range &mdash; on one screen.
+          </p>
+          <SoftwareScreenshot
+            image={IMG.software.headline}
+            label="Overview tab"
+            caption="Sample report for 17 Park Crescent, York."
+          />
+        </div>
+      </section>
+
       <section className="sf-section" style={{ paddingTop: 56, paddingBottom: 32 }}>
         <div className="sf-container" style={{ maxWidth: 820 }}>
           <AnswerCapsule>
@@ -180,15 +213,19 @@ export default function HomePage() {
       </section>
 
       <section className="sf-section sf-section--alt">
-        <div className="sf-container" style={{ maxWidth: 1020 }}>
-          <h2>Live comparables, on a map</h2>
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>Real comparables, with the receipts</h2>
           <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
-            The software pulls real short-term rentals nearby and shows you
-            each one with its own daily rate, occupancy, and review weight.
-            De-select the listings that don&rsquo;t match; the estimate
-            updates.
+            Twelve nearby short-term rentals, each shown with its own
+            nightly rate, occupancy, annual revenue, and review weight.
+            De-select any that don&rsquo;t match your property &mdash;
+            the estimate updates instantly.
           </p>
-          <ComparablesMap caption="Sample neighbourhood · the software builds yours from your address." />
+          <SoftwareScreenshot
+            image={IMG.software.comparables}
+            label="Comparables tab"
+            caption="Sample neighbourhood &middot; pulled live from Airbtics + PropertyData + Google Places."
+          />
         </div>
       </section>
 
@@ -212,6 +249,61 @@ export default function HomePage() {
       </section>
 
       <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>12 months, every month vs your long-let</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            The software charts every month of expected short-let income
+            against the equivalent long-let figure. You see at a glance
+            which months beat the long-let, and which need work.
+          </p>
+          <SoftwareScreenshot
+            image={IMG.software.forecast}
+            label="Forecast tab"
+            caption="Sample property &middot; long-let line in muted, short-let in green, monthly breakdown below."
+          />
+        </div>
+      </section>
+
+      <section className="sf-section">
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>Your true profit, after every cost</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Layer in your mortgage, bills, cleaning, platform fees and
+            management fees &mdash; the software calculates your net per
+            month and per year, with assumptions you can edit in place.
+          </p>
+          <SoftwareClip
+            clip={IMG.clips.profitSetup}
+            caption="Sample property &middot; profit calculator + setup-cost editor."
+          />
+        </div>
+      </section>
+
+      <section className="sf-section sf-section--alt">
+        <div className="sf-container" style={{ maxWidth: 1100 }}>
+          <h2>Why the area books — and how to compete</h2>
+          <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
+            Local Area Intelligence names the demand drivers nearby
+            (hospitals, universities, transport, events) and an Advised
+            Amenities panel tells you exactly what to add to your listing
+            to match or beat the local market.
+          </p>
+          <div className="sf-shotstack">
+            <SoftwareScreenshot
+              image={IMG.software.demandDrivers}
+              label="Local Area tab"
+              caption="Demand drivers near the sample property."
+            />
+            <SoftwareScreenshot
+              image={IMG.software.amenities}
+              label="Amenities tab"
+              caption="Match-the-market vs beat-the-market targets."
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="sf-section">
         <div className="sf-container" style={{ maxWidth: 1020 }}>
           <h2>Your worst month, stress-tested</h2>
           <p style={{ textAlign: "center", maxWidth: 720, margin: "0 auto 8px" }}>
