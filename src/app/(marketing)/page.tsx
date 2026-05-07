@@ -63,8 +63,8 @@ const FAQS: FAQItem[] = [
     a: "The software uses live nearby comparables and a calibrated seasonal model. Every estimate is paired with the comparables it was built from, so you can see exactly which listings drove the number and adjust the comparable set yourself.",
   },
   {
-    q: "Will it tell me my income before I sign up?",
-    a: "No. The software produces the estimate during your trial — that's the whole point of trying it. The marketing pages explain what it does; the trial is where you find out for your specific property.",
+    q: "Do I need to sign up to see my estimate?",
+    a: "No. The full report — comparables, profit calculator, forecast, demand drivers, amenities, risk score, growth trajectory — is free to run on any UK property. The 14-day trial saves your reports so you can re-run them later, compare multiple properties, and see how the numbers move over time.",
   },
   {
     q: "What happens after the 14-day trial?",
