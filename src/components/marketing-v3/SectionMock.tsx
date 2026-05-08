@@ -159,48 +159,19 @@ function MockOverview() {
   );
 }
 
-// 04 Comparables
+// 04 Comparables — video of the live comparables list
 function MockComparables() {
-  const comps = [
-    { title: "Spacious York Home for 10", meta: "3b · 10g · 0.06km", n: "£212", o: "89%", a: "£66,953", top: true },
-    { title: "Monkbridge Mews", meta: "2b · 6g · 0.06km", n: "£198", o: "83%", a: "£62,149", top: true },
-    { title: "Fab city house", meta: "3b · 6g · 0.07km", n: "£153", o: "82%", a: "£36,699", top: false },
-    { title: "The Garden Cottage", meta: "2b · 4g · 0.11km", n: "£165", o: "76%", a: "£42,820", top: false },
-  ];
   return (
-    <div className="mock mock-comps">
-      <div className="mock-h-row">
-        <h4 className="mock-h">Live comparables</h4>
-        <span className="mock-tag">12 nearby</span>
-      </div>
-      <div className="mock-comp-list">
-        {comps.map((c, i) => (
-          <div key={i} className="mock-comp">
-            <div className="mock-comp-img" />
-            <div className="mock-comp-body">
-              <div className="mock-comp-title">
-                {c.title}
-                {c.top && <span className="mock-tag-sm">Top</span>}
-              </div>
-              <div className="mock-comp-meta">{c.meta}</div>
-              <div className="mock-comp-stats">
-                <div>
-                  <span>Nightly</span>
-                  <strong>{c.n}</strong>
-                </div>
-                <div>
-                  <span>Occ</span>
-                  <strong>{c.o}</strong>
-                </div>
-                <div>
-                  <span>Annual</span>
-                  <strong>{c.a}</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="mock mock-comps mock-comps-video">
+      <video
+        src="/assets/comparables.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful live comparables: nearby Airbnb listings with nightly rate, occupancy, annual revenue and reviews — exclude/include to refine your estimate"
+      />
     </div>
   );
 }
