@@ -14,12 +14,11 @@ export function Nav() {
           <span className="brand-sub">Intelligence</span>
         </Link>
         <nav className="v3-nav-links">
-          <a href="/#watch">Watch</a>
-          <a href="/#features">Features</a>
-          <a href="/#reports">Sample reports</a>
-          <a href="/#compare">Why us</a>
-          <a href="/#pricing">Pricing</a>
-          <a href="/#faq">FAQ</a>
+          <Link href="/features">Features</Link>
+          <Link href="/income-calculator">Calculator</Link>
+          <Link href="/short-term-vs-long-term-letting">Why us</Link>
+          <Link href="/pricing">Pricing</Link>
+          <Link href="/about">About</Link>
         </nav>
         <div className="v3-nav-cta">
           <Link className="btn btn-ghost" href="/login">

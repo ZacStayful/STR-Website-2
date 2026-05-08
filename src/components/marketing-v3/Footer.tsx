@@ -21,15 +21,16 @@ export function Footer() {
 
           <div className="v3-footer-col">
             <div className="v3-footer-h">Product</div>
-            <a href="/#features">Features</a>
-            <a href="/#reports">Sample reports</a>
-            <a href="/#pricing">Pricing</a>
-            <a href="/#compare">Why Stayful</a>
+            <Link href="/features">Features</Link>
+            <Link href="/income-calculator">Income calculator</Link>
+            <Link href="/pricing">Pricing</Link>
+            <Link href="/demo">Sample report</Link>
           </div>
 
           <div className="v3-footer-col">
             <div className="v3-footer-h">Company</div>
             <Link href="/about">About</Link>
+            <Link href="/short-term-vs-long-term-letting">Short-let vs long-let</Link>
             <a href="https://stayful.co.uk" target="_blank" rel="noopener noreferrer">
               Management service
             </a>
@@ -37,10 +38,9 @@ export function Footer() {
           </div>
 
           <div className="v3-footer-col">
-            <div className="v3-footer-h">Resources</div>
-            <a href="/#faq">FAQ</a>
-            <a href="/#features">Data sources</a>
-            <Link href="/legal/privacy">Terms · Privacy</Link>
+            <div className="v3-footer-h">Account</div>
+            <Link href="/login">Sign in</Link>
+            <Link href="/signup">Start free trial</Link>
           </div>
         </div>
 
