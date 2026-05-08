@@ -169,43 +169,19 @@ function MockSetup() {
   );
 }
 
-// 10 Risk
+// 10 Risk — video of the live risk-assessment panel
 function MockRisk() {
-  const risks = [
-    { l: "Council short-let regulation", level: "Low", w: 25 },
-    { l: "Supply saturation (postcode)", level: "Medium", w: 55 },
-    { l: "Seasonality concentration", level: "Medium", w: 48 },
-    { l: "Single-channel dependency", level: "High", w: 78 },
-  ];
   return (
-    <div className="mock mock-risk">
-      <h4 className="mock-h">Risk assessment</h4>
-      <div className="mock-risk-overall">
-        <div className="mock-risk-circle">
-          <span className="mock-risk-num">52</span>
-          <span className="mock-risk-of">/100</span>
-        </div>
-        <div>
-          <div className="mock-risk-overall-l">Overall risk</div>
-          <div className="mock-risk-overall-v">Moderate</div>
-        </div>
-      </div>
-      <div className="mock-risk-list">
-        {risks.map((r, i) => (
-          <div key={i} className="mock-risk-row">
-            <div className="mock-risk-r-head">
-              <span>{r.l}</span>
-              <span className={"mock-risk-tag risk-" + r.level.toLowerCase()}>{r.level}</span>
-            </div>
-            <div className="mock-risk-bar">
-              <div
-                className={"mock-risk-fill risk-" + r.level.toLowerCase()}
-                style={{ width: r.w + "%" }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="mock mock-risk mock-risk-video">
+      <video
+        src="/assets/risk-assessment.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful risk assessment: council short-let regulation, supply saturation, seasonality concentration and single-channel dependency"
+      />
     </div>
   );
 }

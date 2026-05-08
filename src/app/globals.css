@@ -2275,7 +2275,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .mock-comps-video,
 .sf-page-v3 .mock-overview-video,
 .sf-page-v3 .mock-loading-video,
-.sf-page-v3 .mock-intake-video {
+.sf-page-v3 .mock-intake-video,
+.sf-page-v3 .mock-risk-video {
   padding: 0;
   background: var(--sage-700);
   min-height: 0;
@@ -2291,7 +2292,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .mock-comps-video video,
 .sf-page-v3 .mock-overview-video video,
 .sf-page-v3 .mock-loading-video video,
-.sf-page-v3 .mock-intake-video video {
+.sf-page-v3 .mock-intake-video video,
+.sf-page-v3 .mock-risk-video video {
   width: 100%; height: 100%;
   object-fit: cover; display: block;
 }
