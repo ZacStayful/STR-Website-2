@@ -6,6 +6,10 @@ import { Walkthrough } from "@/components/marketing-v3/Walkthrough";
 import { ReportGallery } from "@/components/marketing-v3/ReportGallery";
 import { ComparisonHero } from "@/components/marketing-v3/ComparisonHero";
 import { Comparison } from "@/components/marketing-v3/Comparison";
+import { Pricing } from "@/components/marketing-v3/Pricing";
+import { FAQ } from "@/components/marketing-v3/FAQ";
+import { TeamStrip } from "@/components/marketing-v3/TeamStrip";
+import { FinalCTA } from "@/components/marketing-v3/FinalCTA";
 import { Schema } from "@/components/Schema";
 import {
   organizationSchema,
@@ -61,6 +65,10 @@ export default function HomePage() {
       <ReportGallery />
       <ComparisonHero />
       <Comparison />
+      <Pricing />
+      <FAQ />
+      <TeamStrip />
+      <FinalCTA />
     </>
   );
 }
