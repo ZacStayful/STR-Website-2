@@ -205,35 +205,16 @@ function MockComparables() {
   );
 }
 
-// 05 Amenities
+// 05 Amenities — screenshot of the live Advised Amenities panel
 function MockAmenities() {
-  const items: { name: string; sub: string; impact: "High" | "Medium" | "Low"; icon: IconName }[] = [
-    { name: "York Hospital", sub: "0.75 km · Healthcare", impact: "Medium", icon: "shield" },
-    { name: "University of York", sub: "2.64 km · Education", impact: "Medium", icon: "amenities" },
-    { name: "York Minster", sub: "0.55 km · Tourism", impact: "High", icon: "pin" },
-    { name: "York (YRK) Station", sub: "1.45 km · Transport", impact: "High", icon: "map" },
-    { name: "Construction projects", sub: "5 within 40 km", impact: "High", icon: "rocket" },
-    { name: "Events & Entertainment", sub: "Live data feed", impact: "Medium", icon: "spark" },
-  ];
   return (
-    <div className="mock mock-amenities">
-      <h4 className="mock-h">Demand drivers</h4>
-      <div className="mock-amen-grid">
-        {items.map((it) => (
-          <div key={it.name} className="mock-amen">
-            <div className={"mock-amen-icon impact-" + it.impact.toLowerCase()}>
-              <Icon name={it.icon} size={14} color="var(--sage-700)" />
-            </div>
-            <div>
-              <div className="mock-amen-name">{it.name}</div>
-              <div className="mock-amen-sub">{it.sub}</div>
-            </div>
-            <div className={"mock-amen-tag impact-" + it.impact.toLowerCase()}>
-              {it.impact}
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="mock mock-amenities mock-amenities-image">
+      <img
+        src="/assets/amenities.png"
+        alt="Stayful Advised Amenities: Essential (WiFi, Kitchen — must have), Recommended (Garden, Workspace, Free Parking, Smart TV, Coffee Machine, High-Speed Internet, Printer, Meeting Space) and Unique Differentiators (Hot Tub, EV Charger, Pet Friendly, Pool, Smart Lock, High-Speed Internet) for the property's postcode"
+        loading="lazy"
+        decoding="async"
+      />
     </div>
   );
 }
