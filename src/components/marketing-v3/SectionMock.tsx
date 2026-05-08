@@ -286,38 +286,19 @@ function MockLocal() {
   );
 }
 
-// 09 Setup costs (id: bookings)
+// 09 Setup costs (id: bookings) — video of the live setup-cost builder
 function MockSetup() {
-  const rows = [
-    { l: "Double beds (×3)", v: "£1,050" },
-    { l: "Sofabed", v: "£750" },
-    { l: "Coffee + dining table", v: "£450" },
-    { l: "Soft furnishings (per room)", v: "£1,200" },
-    { l: "Paint (per room)", v: "£400" },
-    { l: "Appliances & tech", v: "£680" },
-    { l: "Kitchen", v: "£350" },
-  ];
   return (
-    <div className="mock mock-setup">
-      <h4 className="mock-h">Setup cost summary</h4>
-      <div className="mock-setup-grid">
-        <div className="mock-setup-list">
-          {rows.map((r, i) => (
-            <div key={i} className="mock-setup-row">
-              <span>
-                <span className="mock-tick" /> {r.l}
-              </span>
-              <span>{r.v}</span>
-            </div>
-          ))}
-        </div>
-        <div className="mock-setup-card">
-          <div className="mock-setup-total-l">Grand total</div>
-          <div className="mock-setup-total-v">£6,240</div>
-          <div className="mock-setup-foot">14 items · Dunelm, Argos, Amazon, B&amp;Q</div>
-          <button className="mock-setup-btn">Copy quote</button>
-        </div>
-      </div>
+    <div className="mock mock-setup mock-setup-video">
+      <video
+        src="/assets/setup-costs.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful setup cost builder: furnishing line items with real Dunelm, Argos, Amazon and B&Q pricing"
+      />
     </div>
   );
 }

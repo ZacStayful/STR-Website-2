@@ -2269,7 +2269,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 
 .sf-page-v3 .mock-revenue-video,
 .sf-page-v3 .mock-forecast-video,
-.sf-page-v3 .mock-local-image {
+.sf-page-v3 .mock-local-image,
+.sf-page-v3 .mock-setup-video {
   padding: 0;
   background: var(--sage-700);
   min-height: 0;
@@ -2279,7 +2280,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 }
 .sf-page-v3 .mock-revenue-video video,
 .sf-page-v3 .mock-forecast-video video,
-.sf-page-v3 .mock-local-image img {
+.sf-page-v3 .mock-local-image img,
+.sf-page-v3 .mock-setup-video video {
   width: 100%; height: 100%;
   object-fit: cover; display: block;
 }
