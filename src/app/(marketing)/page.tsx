@@ -7,8 +7,8 @@ import { FAQ, type FAQItem } from "@/components/marketing/FAQ";
 import { LastUpdated } from "@/components/marketing/LastUpdated";
 import { RelatedLinks } from "@/components/marketing/RelatedLinks";
 import { TrustSignals } from "@/components/marketing/TrustSignals";
-import { HeroWithUICard } from "@/components/marketing/HeroWithUICard";
-import { TrustStrip } from "@/components/marketing/TrustStrip";
+import { Hero } from "@/components/marketing-v3/Hero";
+import { StatsBar } from "@/components/marketing-v3/StatsBar";
 import { ComparisonShowcase } from "@/components/marketing/ComparisonShowcase";
 import { SeasonalityChart } from "@/components/marketing/SeasonalityChart";
 import { StressTest } from "@/components/marketing/StressTest";
@@ -130,29 +130,8 @@ export default function HomePage() {
         ]}
       />
 
-      <HeroWithUICard image={IMG.heroProperty} cardVariant="peak-estimate-loading" showUICard={false}>
-        <h1 className="sf-display">See your worst month — and beat your long-let.</h1>
-        <LastUpdated date={LAST_UPDATED} />
-        <p style={{ fontSize: 17, fontWeight: 600, maxWidth: 520 }}>
-          Income-estimate software for UK short-term lets. The software pulls
-          live nearby comparables, runs your numbers at &minus;10% and
-          &minus;20%, and shows every month side by side with your long-let
-          figure.
-        </p>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
-          <Link href={CTA.primaryHref} className="sf-btn">
-            {CTA.primary}
-          </Link>
-          <Link href={CTA.secondaryHref} className="sf-btn sf-btn--ghost">
-            {CTA.secondary}
-          </Link>
-        </div>
-        <p style={{ fontSize: 13, color: "var(--sf-green)", opacity: 0.75, fontWeight: 600, marginTop: 4 }}>
-          {CTA.trialNote}
-        </p>
-      </HeroWithUICard>
-
-      <TrustStrip />
+      <Hero />
+      <StatsBar />
 
       <section className="sf-section" style={{ paddingTop: 48 }}>
         <div className="sf-container" style={{ maxWidth: 1100 }}>
