@@ -114,47 +114,19 @@ function MockLoading() {
   );
 }
 
-// 03 Overview
+// 03 Overview — video of the live decision-overview snapshot
 function MockOverview() {
   return (
-    <div className="mock mock-overview">
-      <div className="mock-overview-status">
-        <Icon name="check" size={12} stroke={2.5} /> Analysis Complete
-      </div>
-      <h4 className="mock-h">17 Park Crescent, York</h4>
-      <div className="mock-h-sub">3 bed · 2 bath · Sleeps 8</div>
-      <div className="mock-overview-grid">
-        <div>
-          <div className="mock-stat-l">Top market potential</div>
-          <div className="mock-big">
-            £59,508 <span>£4,959/mo</span>
-          </div>
-        </div>
-        <div>
-          <div className="mock-stat-l">Filtered estimate</div>
-          <div className="mock-big">
-            £42,180 <span>£3,515/mo</span>
-          </div>
-        </div>
-        <div>
-          <div className="mock-stat-l">Net revenue</div>
-          <div className="mock-big mid">£30,940</div>
-        </div>
-        <div>
-          <div className="mock-stat-l">ADR · Occupancy</div>
-          <div className="mock-big mid">£207 · 78%</div>
-        </div>
-      </div>
-      <div className="mock-overview-range">
-        <span>Property value range</span>
-        <div className="mock-range-bar">
-          <div className="mock-range-fill" />
-        </div>
-        <div className="mock-range-vals">
-          <span>£280,000</span>
-          <span>£350,000</span>
-        </div>
-      </div>
+    <div className="mock mock-overview mock-overview-video">
+      <video
+        src="/assets/decision-overview.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful decision overview: top market potential vs filtered estimate, net revenue after fees, ADR and occupancy"
+      />
     </div>
   );
 }
