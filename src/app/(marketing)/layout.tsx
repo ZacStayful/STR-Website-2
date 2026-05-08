@@ -1,94 +1,44 @@
-import Link from "next/link";
-import { CTA } from "@/lib/cta";
-import { BRAND } from "@/lib/brand";
-import { Logo } from "@/components/marketing/Logo";
+import { Cormorant_Garamond, Inter, JetBrains_Mono, Caveat } from "next/font/google";
+import { Nav } from "@/components/marketing-v3/Nav";
+import { Footer } from "@/components/marketing-v3/Footer";
+
+const cormorant = Cormorant_Garamond({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  style: ["normal", "italic"],
+  variable: "--font-cormorant",
+  display: "swap",
+});
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-inter",
+  display: "swap",
+});
+const jetbrains = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500"],
+  variable: "--font-jetbrains",
+  display: "swap",
+});
+const caveat = Caveat({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-caveat",
+  display: "swap",
+});
 
 export default function MarketingLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const fontClasses = `${cormorant.variable} ${inter.variable} ${jetbrains.variable} ${caveat.variable}`;
   return (
-    <div className="sf-page">
-      <SiteNav />
+    <div className={`sf-page-v3 ${fontClasses}`}>
+      <Nav />
       <main>{children}</main>
-      <SiteFooter />
+      <Footer />
     </div>
-  );
-}
-
-function SiteNav() {
-  return (
-    <header className="sf-nav">
-      <div className="sf-nav__inner">
-        <Link href="/" className="sf-nav__logo" aria-label={BRAND.name}>
-          <Logo />
-        </Link>
-        <nav className="sf-nav__links">
-          <Link href="/income-calculator">Calculator</Link>
-          <Link href="/features">Features</Link>
-          <Link href="/pricing">Pricing</Link>
-          <Link href="/about">About</Link>
-          <Link href={CTA.secondaryHref}>{CTA.secondary}</Link>
-          <Link
-            href={CTA.primaryHref}
-            className="sf-btn"
-            style={{ padding: "10px 20px", fontSize: "14px" }}
-          >
-            {CTA.primary}
-          </Link>
-        </nav>
-      </div>
-    </header>
-  );
-}
-
-function SiteFooter() {
-  return (
-    <footer className="sf-footer">
-      <div className="sf-footer__inner">
-        <div className="sf-footer__cols">
-          <div className="sf-footer__brand">
-            <h4>{BRAND.name}</h4>
-            <p>
-              Income-estimate software for UK short-term lets. Find out if your
-              property has potential, customise based on comparable nearby
-              properties, decide with confidence.
-            </p>
-          </div>
-          <div className="sf-footer__col">
-            <h4>Software</h4>
-            <Link href="/">Home</Link>
-            <Link href="/income-calculator">Calculator</Link>
-            <Link href="/features">Features</Link>
-            <Link href="/pricing">Pricing</Link>
-            <Link href="/demo">See a sample report</Link>
-          </div>
-          <div className="sf-footer__col">
-            <h4>Compare</h4>
-            <Link href="/short-term-vs-long-term-letting">
-              Short-term vs long-term letting
-            </Link>
-            <Link href="/about">About Stayful</Link>
-            <a
-              href={BRAND.managementUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Stayful Management
-            </a>
-            <a href={`mailto:${BRAND.contactEmail}`}>Contact</a>
-          </div>
-          <div className="sf-footer__col">
-            <h4>Legal</h4>
-            <Link href="/legal/privacy">Privacy policy</Link>
-            <Link href="/legal/terms">Terms of service</Link>
-          </div>
-        </div>
-        <div className="sf-footer__base">
-          © {new Date().getFullYear()} {BRAND.legalName}. All rights reserved.
-        </div>
-      </div>
-    </footer>
   );
 }

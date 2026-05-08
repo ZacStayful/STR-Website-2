@@ -1340,3 +1340,260 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   text-align: center; margin: 12px 0 4px; opacity: 0.85;
   font-style: italic;
 }
+
+/* ==========================================================================
+   v3 — Stayful Intelligence (Claude Design handoff)
+   Scoped under .sf-page-v3 so it doesn't bleed onto /estimate.
+   Token names mirror the Drive bundle's styles.css verbatim.
+   ========================================================================== */
+.sf-page-v3 {
+  --cream: #b9d5c6;
+  --cream-2: #a9c8b8;
+  --cream-3: #97baa7;
+
+  --sage-50:  #e8edd9;
+  --sage-100: #d4ddc0;
+  --sage-200: #b8c7a1;
+  --sage-300: #8fa67c;
+  --sage-400: #6b8456;
+  --sage-500: #4f6940;
+  --sage-600: #3e5733;
+  --sage-700: #2f4426;
+  --sage-800: #5d8156;
+  --sage-900: #5d8156;
+
+  --ink:       #5d8156;
+  --ink-soft:  #5d8156;
+  --ink-mute:  #7a9b73;
+  --line:      rgba(47, 68, 38, 0.16);
+  --line-2:    rgba(47, 68, 38, 0.08);
+
+  --shadow-sm: 0 1px 2px rgba(34,50,27,0.06);
+  --shadow-md: 0 6px 24px -8px rgba(34,50,27,0.18), 0 2px 6px -2px rgba(34,50,27,0.08);
+  --shadow-lg: 0 30px 80px -30px rgba(34,50,27,0.32), 0 12px 32px -12px rgba(34,50,27,0.18);
+
+  --v3-radius-sm: 8px;
+  --v3-radius:    14px;
+  --v3-radius-lg: 24px;
+
+  --font-serif:  var(--font-cormorant), "Times New Roman", serif;
+  --font-sans:   var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono:   var(--font-jetbrains), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-script: var(--font-caveat), "Snell Roundhand", cursive;
+
+  font-family: var(--font-sans);
+  background: var(--cream);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.sf-page-v3 ::selection { background: var(--sage-300); color: var(--cream); }
+
+.sf-page-v3 main,
+.sf-page-v3 section,
+.sf-page-v3 .v3-header,
+.sf-page-v3 .v3-footer { position: relative; z-index: 1; }
+
+/* paper-noise texture */
+.sf-page-v3::before {
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    radial-gradient(circle at 20% 10%, rgba(47, 68, 38, 0.04), transparent 40%),
+    radial-gradient(circle at 80% 70%, rgba(47, 68, 38, 0.03), transparent 50%);
+}
+
+/* ---------- typography ---------- */
+.sf-page-v3 .eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 500;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--sage-500);
+  display: inline-flex; align-items: center; gap: 8px;
+  margin: 0;
+}
+.sf-page-v3 .eyebrow .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--sage-500);
+}
+.sf-page-v3 h1,
+.sf-page-v3 h2,
+.sf-page-v3 h3,
+.sf-page-v3 h4 {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--sage-800);
+  margin: 0;
+  text-wrap: balance;
+}
+.sf-page-v3 h1 { font-size: clamp(48px, 6.4vw, 92px); line-height: 1.02; letter-spacing: -0.025em; }
+.sf-page-v3 h2 { font-size: clamp(36px, 4.4vw, 60px); line-height: 1.05; }
+.sf-page-v3 h3 { font-size: clamp(22px, 2.2vw, 30px); line-height: 1.15; }
+.sf-page-v3 p  { margin: 0; text-wrap: pretty; }
+
+.sf-page-v3 .lede {
+  font-size: clamp(17px, 1.4vw, 20px);
+  line-height: 1.5; color: var(--ink-soft);
+  max-width: 60ch;
+}
+.sf-page-v3 .muted { color: var(--ink-mute); }
+
+.sf-page-v3 .num {
+  font-family: var(--font-serif);
+  font-feature-settings: "lnum", "tnum";
+  font-weight: 500;
+}
+
+.sf-page-v3 .hero-script {
+  font-family: var(--font-script);
+  font-weight: 600;
+  font-style: italic;
+  color: var(--sage-500);
+  letter-spacing: 0;
+}
+.sf-page-v3 .hero-script.light { color: var(--sage-200); }
+
+/* ---------- layout ---------- */
+.sf-page-v3 .wrap         { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+.sf-page-v3 .wrap-narrow  { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+.sf-page-v3 .section      { padding: 100px 0; }
+.sf-page-v3 .section-tight { padding: 64px 0; }
+.sf-page-v3 .section-divider { border: none; border-top: 1px solid var(--line); margin: 0; }
+
+/* ---------- buttons ---------- */
+.sf-page-v3 .btn {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 14px 22px; border-radius: 999px;
+  font-family: var(--font-sans); font-weight: 500; font-size: 15px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+  background: transparent;
+}
+.sf-page-v3 .btn-primary {
+  background: var(--sage-700);
+  color: var(--cream);
+}
+.sf-page-v3 .btn-primary:hover {
+  background: var(--sage-800);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.sf-page-v3 .btn-ghost {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--sage-800);
+}
+.sf-page-v3 .btn-ghost:hover { background: rgba(47, 68, 38, 0.04); }
+.sf-page-v3 .btn-light {
+  background: var(--cream);
+  color: var(--sage-800);
+}
+.sf-page-v3 .btn-light:hover { background: white; }
+
+/* ---------- nav ---------- */
+.sf-page-v3 .v3-nav {
+  position: sticky; top: 0; z-index: 100;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  background: rgba(185, 213, 198, 0.82);
+  border-bottom: 1px solid var(--line-2);
+}
+.sf-page-v3 .v3-nav-inner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 32px;
+  max-width: 1400px; margin: 0 auto;
+}
+.sf-page-v3 .brand {
+  display: flex; align-items: baseline; gap: 8px;
+  text-decoration: none;
+  color: var(--sage-800);
+}
+.sf-page-v3 .brand-logo { height: 44px; width: auto; display: block; }
+.sf-page-v3 .brand-mark {
+  font-family: var(--font-script);
+  font-size: 32px; color: var(--sage-700);
+  line-height: 1; font-weight: 500;
+}
+.sf-page-v3 .brand-sub {
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--sage-500);
+  border-left: 1px solid var(--line);
+  padding-left: 10px; margin-left: 4px;
+}
+.sf-page-v3 .v3-nav-links {
+  display: flex; gap: 28px;
+  font-size: 14px; color: var(--ink-soft);
+}
+.sf-page-v3 .v3-nav-links a { text-decoration: none; color: inherit; transition: color 0.15s ease; }
+.sf-page-v3 .v3-nav-links a:hover { color: var(--sage-700); }
+.sf-page-v3 .v3-nav-cta { display: flex; gap: 10px; align-items: center; }
+
+@media (max-width: 880px) {
+  .sf-page-v3 .v3-nav-links { display: none; }
+}
+
+/* ---------- card ---------- */
+.sf-page-v3 .card {
+  background: var(--cream-2);
+  border: 1px solid var(--line);
+  border-radius: var(--v3-radius-lg);
+  padding: 24px;
+}
+
+/* ---------- utilities ---------- */
+.sf-page-v3 .row    { display: flex; }
+.sf-page-v3 .col    { display: flex; flex-direction: column; }
+.sf-page-v3 .gap-8  { gap: 8px; }
+.sf-page-v3 .gap-12 { gap: 12px; }
+.sf-page-v3 .gap-16 { gap: 16px; }
+.sf-page-v3 .gap-24 { gap: 24px; }
+.sf-page-v3 .gap-32 { gap: 32px; }
+.sf-page-v3 .center  { align-items: center; justify-content: center; }
+.sf-page-v3 .between { justify-content: space-between; }
+
+/* ---------- footer ---------- */
+.sf-page-v3 .v3-footer {
+  background: var(--cream-2);
+  border-top: 1px solid var(--line);
+  padding: 64px 0 40px;
+}
+.sf-page-v3 .v3-footer-grid {
+  display: grid; grid-template-columns: 2fr repeat(3, 1fr); gap: 48px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid var(--line);
+}
+.sf-page-v3 .v3-footer-col {
+  display: flex; flex-direction: column; gap: 10px;
+  font-size: 14px;
+}
+.sf-page-v3 .v3-footer-col a {
+  text-decoration: none; color: var(--ink-soft);
+  transition: color 0.15s ease;
+}
+.sf-page-v3 .v3-footer-col a:hover { color: var(--sage-700); }
+.sf-page-v3 .v3-footer-h {
+  font-family: var(--font-mono);
+  font-size: 11px; letter-spacing: 0.14em;
+  color: var(--sage-500); text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.sf-page-v3 .v3-footer-bottom {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-top: 32px; flex-wrap: wrap; gap: 16px;
+  font-size: 12px; color: var(--ink-mute);
+}
+
+@media (max-width: 880px) {
+  .sf-page-v3 .v3-footer-grid { grid-template-columns: 1fr 1fr; gap: 32px; }
+}
+
