@@ -72,44 +72,19 @@ function MockIntake() {
   );
 }
 
-// 02 Loading
+// 02 Loading — video of the live data-ingest progress
 function MockLoading() {
-  const steps = [
-    "Locating property",
-    "Fetching short-let data",
-    "Fetching long-let valuation",
-    "Finding amenities",
-    "Discovering events",
-    "Running analysis",
-  ];
   return (
-    <div className="mock mock-loading">
-      <div className="mock-loading-title">
-        <Icon name="loading" size={14} color="var(--sage-600)" /> Analysing your
-        property…
-      </div>
-      <div className="mock-progress">
-        <div className="mock-progress-fill" style={{ width: "62%" }} />
-      </div>
-      <div className="mock-progress-pct">62% complete</div>
-      <div className="mock-step-list">
-        {steps.map((s, i) => (
-          <div
-            key={s}
-            className={
-              "mock-step " + (i < 3 ? "done" : i === 3 ? "active" : "")
-            }
-          >
-            <span className="mock-step-circle">
-              {i < 3 ? <Icon name="check" size={10} stroke={2.5} /> : null}
-            </span>
-            <span className={i < 3 ? "strike" : ""}>{s}…</span>
-          </div>
-        ))}
-      </div>
-      <div className="mock-foot">
-        Airbtics · PropertyData · Google Places · Ticketmaster
-      </div>
+    <div className="mock mock-loading mock-loading-video">
+      <video
+        src="/assets/data-ingest.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful live data ingest: locating property, fetching short-let data, long-let valuation, amenities and events from Airbtics, PropertyData, Google Places and Ticketmaster"
+      />
     </div>
   );
 }
