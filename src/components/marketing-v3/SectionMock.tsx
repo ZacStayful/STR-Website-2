@@ -238,36 +238,19 @@ function MockAmenities() {
   );
 }
 
-// 06 Revenue breakdown
+// 06 Revenue breakdown — video of the live profit calculator running
 function MockRevenue() {
-  const lines = [
-    { l: "Gross bookings", v: "£42,180", neg: false, big: true },
-    { l: "Platform fees (Airbnb)", v: "−£1,265", neg: true },
-    { l: "Cleaning (passed at cost)", v: "£0", neg: false },
-    { l: "Laundry", v: "−£1,840", neg: true },
-    { l: "Property management", v: "−£6,327", neg: true },
-    { l: "Utilities & council", v: "−£1,808", neg: true },
-  ];
   return (
-    <div className="mock mock-revenue">
-      <h4 className="mock-h">Gross to net</h4>
-      <div className="mock-rev-list">
-        {lines.map((l, i) => (
-          <div key={i} className={"mock-rev-row" + (l.big ? " big" : "")}>
-            <span className="mock-rev-l">{l.l}</span>
-            <span className={"mock-rev-v" + (l.neg ? " neg" : "")}>{l.v}</span>
-          </div>
-        ))}
-        <div className="mock-rev-row total">
-          <span className="mock-rev-l">Net to owner</span>
-          <span className="mock-rev-v">£30,940</span>
-        </div>
-      </div>
-      <div className="mock-rev-bar">
-        <div className="mock-rev-bar-fill" style={{ width: "73%" }}>
-          73% net retention
-        </div>
-      </div>
+    <div className="mock mock-revenue mock-revenue-video">
+      <video
+        src="/assets/profit-breakdown.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful profit calculator: live walkthrough of gross-to-net revenue"
+      />
     </div>
   );
 }

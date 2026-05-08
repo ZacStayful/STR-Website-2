@@ -2267,6 +2267,19 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   font-size: 11px; font-family: var(--font-mono); letter-spacing: 0.06em;
 }
 
+.sf-page-v3 .mock-revenue-video {
+  padding: 0;
+  background: var(--sage-700);
+  min-height: 0;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  position: relative;
+}
+.sf-page-v3 .mock-revenue-video video {
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+}
+
 /* mock — forecast */
 .sf-page-v3 .mock-fore-stats {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
