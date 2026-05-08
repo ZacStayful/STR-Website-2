@@ -1,7 +1,7 @@
 export const BRAND = {
-  name: "Stayful",
+  name: "Stayful Intelligence",
   legalName: "Stayful Limited",
-  tagline: "Income-estimate software for UK short-term lets",
+  tagline: "The decision engine for short-term rental",
   managementUrl: "https://stayful.co.uk",
   contactEmail: "hello@stayful.co.uk",
 } as const;

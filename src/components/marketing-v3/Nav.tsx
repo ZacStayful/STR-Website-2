@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { Icon } from "@/lib/icons";
 
 export function Nav() {
@@ -6,10 +7,13 @@ export function Nav() {
     <header className="v3-nav">
       <div className="v3-nav-inner">
         <Link href="/" className="brand" aria-label="Stayful Intelligence">
-          <img
+          <Image
             src="/assets/stayful-logo.png"
             alt="Stayful"
+            width={75}
+            height={44}
             className="brand-logo"
+            priority
           />
           <span className="brand-sub">Intelligence</span>
         </Link>

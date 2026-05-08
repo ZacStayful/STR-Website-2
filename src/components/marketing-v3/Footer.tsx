@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 
 export function Footer() {
   return (
@@ -7,9 +8,11 @@ export function Footer() {
         <div className="v3-footer-grid">
           <div>
             <Link href="/" className="brand" style={{ textDecoration: "none" }}>
-              <img
+              <Image
                 src="/assets/stayful-logo.png"
                 alt="Stayful"
+                width={75}
+                height={44}
                 className="brand-logo"
               />
             </Link>
