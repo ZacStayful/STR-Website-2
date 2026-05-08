@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Hero } from "@/components/marketing-v3/Hero";
 import { StatsBar } from "@/components/marketing-v3/StatsBar";
+import { Walkthrough } from "@/components/marketing-v3/Walkthrough";
 import { Schema } from "@/components/Schema";
 import {
   organizationSchema,
@@ -51,6 +52,7 @@ export default function HomePage() {
 
       <Hero />
       <StatsBar />
+      <Walkthrough />
     </>
   );
 }
