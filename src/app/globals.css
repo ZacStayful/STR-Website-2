@@ -1513,7 +1513,7 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   max-width: 1400px; margin: 0 auto;
 }
 .sf-page-v3 .brand {
-  display: flex; align-items: baseline; gap: 8px;
+  display: flex; align-items: center; gap: 10px;
   text-decoration: none;
   color: var(--sage-800);
 }
@@ -1525,10 +1525,11 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 }
 .sf-page-v3 .brand-sub {
   font-family: var(--font-mono);
-  font-size: 11px; letter-spacing: 0.16em;
+  font-size: 13px; letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--sage-500);
   border-left: 1px solid var(--line);
   padding-left: 10px; margin-left: 4px;
+  line-height: 1;
 }
 .sf-page-v3 .v3-nav-links {
   display: flex; gap: 28px;
@@ -2276,7 +2277,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .mock-overview-video,
 .sf-page-v3 .mock-loading-video,
 .sf-page-v3 .mock-intake-video,
-.sf-page-v3 .mock-risk-video {
+.sf-page-v3 .mock-risk-video,
+.sf-page-v3 .mock-growth-video {
   padding: 0;
   background: var(--sage-700);
   min-height: 0;
@@ -2293,7 +2295,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .mock-overview-video video,
 .sf-page-v3 .mock-loading-video video,
 .sf-page-v3 .mock-intake-video video,
-.sf-page-v3 .mock-risk-video video {
+.sf-page-v3 .mock-risk-video video,
+.sf-page-v3 .mock-growth-video video {
   width: 100%; height: 100%;
   object-fit: cover; display: block;
 }

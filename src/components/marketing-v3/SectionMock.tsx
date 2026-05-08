@@ -186,33 +186,19 @@ function MockRisk() {
   );
 }
 
-// 11 Growth
+// 11 Growth — video of the live growth playbook
 function MockGrowth() {
-  const actions = [
-    { l: "Professional photography", impact: "+12% nightly", priority: 1 },
-    { l: "Direct booking site setup", impact: "+8% net retention", priority: 2 },
-    { l: "List on Booking.com + VRBO", impact: "+15% occupancy", priority: 3 },
-    { l: "Mid-week minimum stay = 1 night", impact: "+6% occupancy", priority: 4 },
-    { l: "Hospital corporate outreach", impact: "+18% direct bookings", priority: 5 },
-  ];
   return (
-    <div className="mock mock-growth">
-      <h4 className="mock-h">Growth playbook</h4>
-      <div className="mock-growth-sub">Ranked by lift on filtered estimate</div>
-      <div className="mock-growth-list">
-        {actions.map((a) => (
-          <div key={a.priority} className="mock-growth-row">
-            <div className="mock-growth-rank">{a.priority}</div>
-            <div>
-              <div className="mock-growth-l">{a.l}</div>
-              <div className="mock-growth-impact">
-                <Icon name="growth" size={11} color="var(--sage-500)" /> {a.impact}
-              </div>
-            </div>
-            <Icon name="arrow" size={13} color="var(--sage-500)" />
-          </div>
-        ))}
-      </div>
+    <div className="mock mock-growth mock-growth-video">
+      <video
+        src="/assets/action-plan.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful growth playbook: ranked actions including professional photography, direct booking setup and multi-platform expansion"
+      />
     </div>
   );
 }
