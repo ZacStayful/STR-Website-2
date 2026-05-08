@@ -255,44 +255,19 @@ function MockRevenue() {
   );
 }
 
-// 07 Forecast
+// 07 Forecast — video of the 12-month forecast running
 function MockForecast() {
-  const months = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
-  const heights = [38, 42, 55, 68, 78, 92, 100, 95, 80, 70, 58, 88];
   return (
-    <div className="mock mock-forecast">
-      <h4 className="mock-h">12-month forecast</h4>
-      <div className="mock-fore-stats">
-        <div>
-          <span>Peak (Jul)</span>
-          <strong>£5,920</strong>
-        </div>
-        <div>
-          <span>Quiet (Jan)</span>
-          <strong>£1,840</strong>
-        </div>
-        <div>
-          <span>Annual</span>
-          <strong>£42,180</strong>
-        </div>
-      </div>
-      <div className="mock-chart">
-        {heights.map((h, i) => (
-          <div key={i} className="mock-bar-col">
-            <div
-              className={
-                "mock-bar" +
-                (h === 100 ? " peak" : h < 50 ? " quiet" : "")
-              }
-              style={{ height: h + "%" }}
-            />
-            <div className="mock-bar-l">{months[i]}</div>
-          </div>
-        ))}
-      </div>
-      <div className="mock-chart-foot">
-        <span className="dot peak" /> Peak <span className="dot quiet" /> Quiet
-      </div>
+    <div className="mock mock-forecast mock-forecast-video">
+      <video
+        src="/assets/12-month-forecast.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful 12-month forecast: month-by-month occupancy and revenue projection"
+      />
     </div>
   );
 }
