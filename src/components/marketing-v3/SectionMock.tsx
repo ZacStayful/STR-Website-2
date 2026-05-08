@@ -22,52 +22,19 @@ export function SectionMock({ id, active }: SectionMockProps) {
   );
 }
 
-// 01 Intake
+// 01 Intake — video of the live property-intake form
 function MockIntake() {
   return (
-    <div className="mock mock-intake">
-      <div className="mock-title">
-        <Icon name="search" size={14} color="var(--sage-600)" /> Analyse Your
-        Property
-      </div>
-      <div className="mock-pill">
-        <Icon name="check" size={13} color="var(--sage-600)" /> 17 Park Crescent,
-        York <span className="mock-pill-cta">Change</span>
-      </div>
-      <div className="mock-row">
-        <div className="mock-field">
-          <label>Postcode</label>
-          <div className="mock-input">YO31 7NU</div>
-        </div>
-        <div className="mock-field">
-          <label>Property Type</label>
-          <div className="mock-input">Terraced ▾</div>
-        </div>
-      </div>
-      <div className="mock-row">
-        <div className="mock-field">
-          <label>Bedrooms</label>
-          <div className="mock-input">3</div>
-        </div>
-        <div className="mock-field">
-          <label>Bathrooms</label>
-          <div className="mock-input">2</div>
-        </div>
-        <div className="mock-field">
-          <label>Max Guests</label>
-          <div className="mock-input">8</div>
-        </div>
-      </div>
-      <div className="mock-row">
-        <div className="mock-field">
-          <label>Parking</label>
-          <div className="mock-input">No parking ▾</div>
-        </div>
-        <div className="mock-field">
-          <label>Outdoor Space</label>
-          <div className="mock-input">Garden ▾</div>
-        </div>
-      </div>
+    <div className="mock mock-intake mock-intake-video">
+      <video
+        src="/assets/property-intake.mp4"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="metadata"
+        aria-label="Stayful property intake: UK address autocomplete with auto-detected postcode, property type, bedrooms, bathrooms, max guests, parking and outdoor space"
+      />
     </div>
   );
 }
