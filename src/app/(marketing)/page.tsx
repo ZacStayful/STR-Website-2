@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { Hero } from "@/components/marketing-v3/Hero";
 import { StatsBar } from "@/components/marketing-v3/StatsBar";
+import { VideoTour } from "@/components/marketing-v3/VideoTour";
 import { Walkthrough } from "@/components/marketing-v3/Walkthrough";
+import { ReportGallery } from "@/components/marketing-v3/ReportGallery";
+import { ComparisonHero } from "@/components/marketing-v3/ComparisonHero";
+import { Comparison } from "@/components/marketing-v3/Comparison";
 import { Schema } from "@/components/Schema";
 import {
   organizationSchema,
@@ -52,7 +56,11 @@ export default function HomePage() {
 
       <Hero />
       <StatsBar />
+      <VideoTour />
       <Walkthrough />
+      <ReportGallery />
+      <ComparisonHero />
+      <Comparison />
     </>
   );
 }
