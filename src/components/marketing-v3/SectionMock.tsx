@@ -272,30 +272,16 @@ function MockForecast() {
   );
 }
 
-// 08 Local area
+// 08 Local area — screenshot of the live Local Area Intelligence panel
 function MockLocal() {
   return (
-    <div className="mock mock-local">
-      <h4 className="mock-h">Local area · long-term direct booking potential</h4>
-      <div className="mock-local-map mock-local-map-img">
-        <div className="map-pin you">
-          <Icon name="pin" size={11} color="white" />
-        </div>
-      </div>
-      <div className="mock-local-list">
-        <div className="mock-local-row">
-          <strong>York Hospital</strong>
-          <span>1 healthcare · medium impact</span>
-        </div>
-        <div className="mock-local-row">
-          <strong>University of York</strong>
-          <span>2 institutions · medium impact</span>
-        </div>
-        <div className="mock-local-row">
-          <strong>Construction projects</strong>
-          <span>5 active · high impact</span>
-        </div>
-      </div>
+    <div className="mock mock-local mock-local-image">
+      <img
+        src="/assets/local-area.png"
+        alt="Stayful Local Area Intelligence: demand drivers and attractions near the property — Healthcare Facilities (York Hospital), Educational Institutions (University of York), Construction Projects (Leeds Bradford Airport, high impact), Events & Entertainment (York YRK)"
+        loading="lazy"
+        decoding="async"
+      />
     </div>
   );
 }

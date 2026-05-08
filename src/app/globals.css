@@ -2268,7 +2268,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 }
 
 .sf-page-v3 .mock-revenue-video,
-.sf-page-v3 .mock-forecast-video {
+.sf-page-v3 .mock-forecast-video,
+.sf-page-v3 .mock-local-image {
   padding: 0;
   background: var(--sage-700);
   min-height: 0;
@@ -2277,7 +2278,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   position: relative;
 }
 .sf-page-v3 .mock-revenue-video video,
-.sf-page-v3 .mock-forecast-video video {
+.sf-page-v3 .mock-forecast-video video,
+.sf-page-v3 .mock-local-image img {
   width: 100%; height: 100%;
   object-fit: cover; display: block;
 }
