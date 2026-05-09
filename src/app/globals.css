@@ -3184,3 +3184,69 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   .sf-page-v3 .ts-grid { grid-template-columns: 1fr; gap: 32px; }
 }
 
+/* v3 — Why we built this */
+.sf-page-v3 .why-built {
+  background: var(--cream);
+  border-top: 1px solid var(--line);
+}
+.sf-page-v3 .why-built .eyebrow { margin-bottom: 18px; }
+.sf-page-v3 .why-built h2       { max-width: 22ch; }
+.sf-page-v3 .why-built .lede    { margin-top: 20px; max-width: 70ch; }
+
+/* v3 — Founders */
+.sf-page-v3 .founders {
+  background: var(--cream-2);
+  border-top: 1px solid var(--line);
+}
+.sf-page-v3 .founders-head { margin-bottom: 56px; }
+.sf-page-v3 .founders-head h2 { margin-top: 18px; max-width: 22ch; }
+
+.sf-page-v3 .founders-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+}
+
+.sf-page-v3 .founder-card {
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: var(--v3-radius-lg);
+  padding: 28px;
+  display: flex; flex-direction: column; gap: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.sf-page-v3 .founder-img {
+  aspect-ratio: 4 / 5;
+  background-size: cover;
+  background-position: center;
+  border-radius: var(--v3-radius);
+  box-shadow: var(--shadow-md);
+}
+
+.sf-page-v3 .founder-meta { display: flex; flex-direction: column; gap: 6px; }
+.sf-page-v3 .founder-name {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--sage-800);
+  margin: 0;
+}
+.sf-page-v3 .founder-role {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sage-500);
+}
+.sf-page-v3 .founder-bio {
+  margin-top: 6px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 880px) {
+  .sf-page-v3 .founders-grid { grid-template-columns: 1fr; gap: 32px; }
+}
+

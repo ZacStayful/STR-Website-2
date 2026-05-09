@@ -19,6 +19,27 @@ export function organizationSchema(): SchemaItem {
   };
 }
 
+export function personSchema(opts: {
+  name: string;
+  jobTitle: string;
+  image: string;
+  url?: string;
+}): SchemaItem {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Person",
+    name: opts.name,
+    jobTitle: opts.jobTitle,
+    image: opts.image,
+    url: opts.url ?? siteUrl("/about"),
+    worksFor: {
+      "@type": "Organization",
+      name: BRAND.legalName,
+      url: siteUrl(),
+    },
+  };
+}
+
 export function webPageSchema(opts: {
   name: string;
   url: string;
