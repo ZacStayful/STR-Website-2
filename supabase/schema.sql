@@ -11,6 +11,8 @@
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
+  full_name text,
+  mobile text,
   plan text not null default 'free',                  -- 'free' | 'pro'
   trial_ends_at timestamptz not null default (now() + interval '14 days'),
   stripe_customer_id text,
@@ -19,6 +21,10 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Idempotent: catch up existing tables from before full_name/mobile existed.
+alter table public.profiles add column if not exists full_name text;
+alter table public.profiles add column if not exists mobile text;
 
 alter table public.profiles enable row level security;
 
@@ -33,6 +39,8 @@ create policy "Users can update own profile"
   using (auth.uid() = id);
 
 -- Auto-create a profile row whenever a new auth user is created.
+-- Pulls full_name and mobile out of raw_user_meta_data — these are set
+-- by signupAction via supabase.auth.signUp({ options: { data: {...} } }).
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -40,8 +48,13 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email)
-  values (new.id, new.email)
+  insert into public.profiles (id, email, full_name, mobile)
+  values (
+    new.id,
+    new.email,
+    nullif(new.raw_user_meta_data->>'full_name', ''),
+    nullif(new.raw_user_meta_data->>'mobile', '')
+  )
   on conflict (id) do nothing;
   return new;
 end;
