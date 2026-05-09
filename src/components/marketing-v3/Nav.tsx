@@ -25,6 +25,9 @@ export function Nav() {
           <Link href="/about">About</Link>
         </nav>
         <div className="v3-nav-cta">
+          <Link className="btn btn-ghost btn-sample" href="/demo">
+            Sample report
+          </Link>
           <Link className="btn btn-ghost" href="/login">
             Sign in
           </Link>
