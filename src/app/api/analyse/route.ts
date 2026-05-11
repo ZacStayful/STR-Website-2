@@ -7,6 +7,7 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hasAccess } from '@/lib/access';
+import { updateReportsRun } from '@/lib/monday/trial';
 
 // ─── Rate Limiter (in-memory, per IP) ────────────────────────────
 // 10 requests per IP per 60-second window. Protects against API credit abuse.
@@ -87,7 +88,6 @@ export async function POST(request: Request) {
     }
     userId = user.id;
   }
-  void userId; // wired into Monday reports_run counter in Phase B
 
   let body: Record<string, unknown>;
   try {
@@ -348,6 +348,32 @@ export async function POST(request: Request) {
         };
 
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
+
+        // Fire-and-forget: increment reports_run on the profile and mirror
+        // the new total to Monday. Errors logged, never blocking.
+        if (userId) {
+          const trackingUserId = userId;
+          void (async () => {
+            try {
+              const supabase = await createSupabaseServerClient();
+              const { data: current } = await supabase
+                .from('profiles')
+                .select('reports_run, monday_item_id')
+                .eq('id', trackingUserId)
+                .single();
+              const next = (current?.reports_run ?? 0) + 1;
+              await supabase
+                .from('profiles')
+                .update({ reports_run: next, last_seen_at: now })
+                .eq('id', trackingUserId);
+              if (current?.monday_item_id) {
+                await updateReportsRun(current.monday_item_id, next);
+              }
+            } catch (err) {
+              console.error('[api/analyse] reports_run hook failed:', err);
+            }
+          })();
+        }
       } catch (err) {
         console.error('Unexpected error in /api/analyse:', err);
         send({ stage: 'error', progress: 0, message: 'An unexpected error occurred. Please try again.' });
