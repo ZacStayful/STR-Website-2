@@ -1,55 +1,87 @@
 // ─── Monday "Trial signups" CRM integration ───────────────────────
-// Three events go to a dedicated Monday board so the team can see who
+// Three events go to the dedicated Monday board so the team can see who
 // signed up, which trial users are running reports, and who's still
 // active in the trial window.
 //
-// Required env vars (all must be set; otherwise these helpers no-op):
-//   MONDAY_API_KEY              — same key the existing /api/track uses
-//   MONDAY_TRIAL_BOARD_ID       — numeric ID of the new "Trial signups"
-//                                 board (e.g. "1234567890")
-//   MONDAY_TRIAL_COL_EMAIL      — text column ID for email
-//   MONDAY_TRIAL_COL_NAME       — text column ID for full name
-//   MONDAY_TRIAL_COL_MOBILE     — text column ID for mobile
-//   MONDAY_TRIAL_COL_SIGNUP_AT  — date column ID for signup timestamp
-//   MONDAY_TRIAL_COL_TRIAL_ENDS_AT  — date column ID for trial end
-//   MONDAY_TRIAL_COL_REPORTS_RUN    — numbers column ID
-//   MONDAY_TRIAL_COL_LAST_SEEN_AT   — date column ID
-//   MONDAY_TRIAL_COL_PLAN       — status column ID
+// Defaults wire straight to the production board
+// (https://stayful.monday.com/boards/18412564741) so production works
+// as soon as MONDAY_API_KEY is set. Env vars below override the
+// defaults if you ever need to point at a different board or column.
 //
-// The helpers swallow errors and log to console — Monday outages must
-// not break signup or analysis flows.
+//   MONDAY_API_KEY              — required; same key /api/track uses
+//   MONDAY_TRIAL_BOARD_ID       — overrides board ID (default 18412564741)
+//   MONDAY_TRIAL_COL_EMAIL      — overrides "Email" column ID
+//   MONDAY_TRIAL_COL_MOBILE     — overrides "Mobile" column ID
+//   MONDAY_TRIAL_COL_SIGNUP_AT  — overrides "Signup date" column ID
+//   MONDAY_TRIAL_COL_TRIAL_ENDS_AT — overrides "Trial expiry date" column ID
+//   MONDAY_TRIAL_COL_REPORTS_RUN   — overrides "Reports ran" column ID
+//   MONDAY_TRIAL_COL_LAST_SEEN_AT  — overrides "Last seen at" column ID
+//   MONDAY_TRIAL_COL_STATUS        — overrides "Status" column ID
+//
+// All helpers swallow errors and log to console — Monday outages
+// must never break signup or analysis flows.
 
 const MONDAY_ENDPOINT = "https://api.monday.com/v2";
 const MONDAY_API_VERSION = "2024-01";
 
-function env(name: string): string | null {
+// Defaults for the stayful.monday.com board.
+const DEFAULTS = {
+  boardId: "18412564741",
+  cols: {
+    email: "text_mm388kk1",
+    mobile: "text_mm386qhd",
+    signupAt: "text_mm387dg4",      // Monday "text" type — written as YYYY-MM-DD string
+    trialEndsAt: "text_mm38vn3y",   // Monday "text" type — written as YYYY-MM-DD string
+    reportsRun: "numeric_mm38pc2",
+    lastSeenAt: "date4",            // Monday "date" type — written as { date: 'YYYY-MM-DD' }
+    status: "status",               // Monday "status" type — labels: "Free trial" / "Free trial ended" / "Customer" / "Customer left"
+  },
+} as const;
+
+// Status labels as configured on the board.
+export const TRIAL_STATUS = {
+  trial: "Free trial",
+  expired: "Free trial ended",
+  customer: "Customer",
+  churned: "Customer left",
+} as const;
+export type TrialStatusLabel = (typeof TRIAL_STATUS)[keyof typeof TRIAL_STATUS];
+
+function envOrDefault(name: string, fallback: string): string {
   const v = process.env[name];
-  return v && v.length > 0 ? v : null;
+  return v && v.length > 0 ? v : fallback;
 }
 
 function readConfig() {
-  const apiKey = env("MONDAY_API_KEY");
-  const boardId = env("MONDAY_TRIAL_BOARD_ID");
-  if (!apiKey || !boardId) return null;
+  const apiKey = process.env.MONDAY_API_KEY;
+  if (!apiKey) return null;
   return {
     apiKey,
-    boardId,
+    boardId: envOrDefault("MONDAY_TRIAL_BOARD_ID", DEFAULTS.boardId),
     cols: {
-      email: env("MONDAY_TRIAL_COL_EMAIL"),
-      name: env("MONDAY_TRIAL_COL_NAME"),
-      mobile: env("MONDAY_TRIAL_COL_MOBILE"),
-      signupAt: env("MONDAY_TRIAL_COL_SIGNUP_AT"),
-      trialEndsAt: env("MONDAY_TRIAL_COL_TRIAL_ENDS_AT"),
-      reportsRun: env("MONDAY_TRIAL_COL_REPORTS_RUN"),
-      lastSeenAt: env("MONDAY_TRIAL_COL_LAST_SEEN_AT"),
-      plan: env("MONDAY_TRIAL_COL_PLAN"),
+      email: envOrDefault("MONDAY_TRIAL_COL_EMAIL", DEFAULTS.cols.email),
+      mobile: envOrDefault("MONDAY_TRIAL_COL_MOBILE", DEFAULTS.cols.mobile),
+      signupAt: envOrDefault("MONDAY_TRIAL_COL_SIGNUP_AT", DEFAULTS.cols.signupAt),
+      trialEndsAt: envOrDefault(
+        "MONDAY_TRIAL_COL_TRIAL_ENDS_AT",
+        DEFAULTS.cols.trialEndsAt,
+      ),
+      reportsRun: envOrDefault(
+        "MONDAY_TRIAL_COL_REPORTS_RUN",
+        DEFAULTS.cols.reportsRun,
+      ),
+      lastSeenAt: envOrDefault(
+        "MONDAY_TRIAL_COL_LAST_SEEN_AT",
+        DEFAULTS.cols.lastSeenAt,
+      ),
+      status: envOrDefault("MONDAY_TRIAL_COL_STATUS", DEFAULTS.cols.status),
     },
   };
 }
 
-function dateColumn(iso: string) {
-  // Monday's date column wants { date: 'YYYY-MM-DD' }
-  return { date: iso.slice(0, 10) };
+function toDateString(iso: string): string {
+  // Monday wants YYYY-MM-DD for both Text and Date columns.
+  return iso.slice(0, 10);
 }
 
 async function mondayMutate(
@@ -76,9 +108,10 @@ async function mondayMutate(
 }
 
 /**
- * Create a row on the Trial signups board when a new user signs up.
- * Returns the Monday item ID so the caller can persist it to the
- * profile row — that lets future events update the right row.
+ * Create a row on the Trial signups board when a verified user signs
+ * up. The user's full name becomes the item name; email / mobile /
+ * dates / status fill out the rest. Returns the Monday item ID so the
+ * caller can persist it to the profile row.
  */
 export async function createTrialSignup(input: {
   email: string;
@@ -90,15 +123,13 @@ export async function createTrialSignup(input: {
   const cfg = readConfig();
   if (!cfg) return null;
 
-  const columnValues: Record<string, unknown> = {};
-  if (cfg.cols.email) columnValues[cfg.cols.email] = input.email;
-  if (cfg.cols.name) columnValues[cfg.cols.name] = input.fullName;
-  if (cfg.cols.mobile) columnValues[cfg.cols.mobile] = input.mobile;
-  if (cfg.cols.signupAt)
-    columnValues[cfg.cols.signupAt] = dateColumn(input.signupAt);
-  if (cfg.cols.trialEndsAt)
-    columnValues[cfg.cols.trialEndsAt] = dateColumn(input.trialEndsAt);
-  if (cfg.cols.plan) columnValues[cfg.cols.plan] = { label: "Free" };
+  const columnValues: Record<string, unknown> = {
+    [cfg.cols.email]: input.email,
+    [cfg.cols.mobile]: input.mobile,
+    [cfg.cols.signupAt]: toDateString(input.signupAt),
+    [cfg.cols.trialEndsAt]: toDateString(input.trialEndsAt),
+    [cfg.cols.status]: { label: TRIAL_STATUS.trial },
+  };
 
   const query = `mutation ($boardId: ID!, $itemName: String!, $cols: JSON!) {
     create_item(board_id: $boardId, item_name: $itemName, column_values: $cols) {
@@ -109,7 +140,7 @@ export async function createTrialSignup(input: {
   try {
     const data = (await mondayMutate(cfg, query, {
       boardId: cfg.boardId,
-      itemName: input.email,
+      itemName: input.fullName || input.email,
       cols: JSON.stringify(columnValues),
     })) as { create_item?: { id?: string } } | undefined;
     return data?.create_item?.id ?? null;
@@ -120,13 +151,15 @@ export async function createTrialSignup(input: {
 }
 
 /**
- * Update an existing trial-signup row with the latest reports_run
- * count (we maintain the authoritative count in profiles.reports_run
- * and mirror it here). No-op if itemId or the env var is missing.
+ * Mirror the latest reports_run count to Monday. We maintain the
+ * authoritative count in profiles.reports_run; this just reflects it.
  */
-export async function updateReportsRun(itemId: string, total: number): Promise<void> {
+export async function updateReportsRun(
+  itemId: string,
+  total: number,
+): Promise<void> {
   const cfg = readConfig();
-  if (!cfg || !cfg.cols.reportsRun) return;
+  if (!cfg) return;
   const query = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
     change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
       id
@@ -137,7 +170,7 @@ export async function updateReportsRun(itemId: string, total: number): Promise<v
       boardId: cfg.boardId,
       itemId,
       columnId: cfg.cols.reportsRun,
-      value: JSON.stringify(total),
+      value: JSON.stringify(String(total)),
     });
   } catch (err) {
     console.error("[monday/trial] updateReportsRun failed:", err);
@@ -146,11 +179,13 @@ export async function updateReportsRun(itemId: string, total: number): Promise<v
 
 /**
  * Update the row's last-seen-at date when the user lands on /estimate.
- * No-op if itemId or the env var is missing.
  */
-export async function pingLastSeen(itemId: string, isoTimestamp: string): Promise<void> {
+export async function pingLastSeen(
+  itemId: string,
+  isoTimestamp: string,
+): Promise<void> {
   const cfg = readConfig();
-  if (!cfg || !cfg.cols.lastSeenAt) return;
+  if (!cfg) return;
   const query = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
     change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
       id
@@ -161,7 +196,7 @@ export async function pingLastSeen(itemId: string, isoTimestamp: string): Promis
       boardId: cfg.boardId,
       itemId,
       columnId: cfg.cols.lastSeenAt,
-      value: JSON.stringify(dateColumn(isoTimestamp)),
+      value: JSON.stringify({ date: toDateString(isoTimestamp) }),
     });
   } catch (err) {
     console.error("[monday/trial] pingLastSeen failed:", err);
@@ -169,13 +204,16 @@ export async function pingLastSeen(itemId: string, isoTimestamp: string): Promis
 }
 
 /**
- * Update the plan column when a user converts from Free → Pro (will
- * be called from the Stripe webhook once that's wired). No-op until
- * Monday config is in place.
+ * Move a row through the trial lifecycle. Call when a user converts
+ * (TRIAL_STATUS.customer), when a trial expires without converting
+ * (TRIAL_STATUS.expired), or when a customer churns (TRIAL_STATUS.churned).
  */
-export async function updatePlan(itemId: string, plan: "Free" | "Pro"): Promise<void> {
+export async function updateStatus(
+  itemId: string,
+  status: TrialStatusLabel,
+): Promise<void> {
   const cfg = readConfig();
-  if (!cfg || !cfg.cols.plan) return;
+  if (!cfg) return;
   const query = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: JSON!) {
     change_column_value(board_id: $boardId, item_id: $itemId, column_id: $columnId, value: $value) {
       id
@@ -185,10 +223,10 @@ export async function updatePlan(itemId: string, plan: "Free" | "Pro"): Promise<
     await mondayMutate(cfg, query, {
       boardId: cfg.boardId,
       itemId,
-      columnId: cfg.cols.plan,
-      value: JSON.stringify({ label: plan }),
+      columnId: cfg.cols.status,
+      value: JSON.stringify({ label: status }),
     });
   } catch (err) {
-    console.error("[monday/trial] updatePlan failed:", err);
+    console.error("[monday/trial] updateStatus failed:", err);
   }
 }
