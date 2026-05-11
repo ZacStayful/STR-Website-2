@@ -5,6 +5,8 @@ import { getLongLetData, getFloorArea } from '@/lib/apis/propertydata';
 import { getNearbyAmenities } from '@/lib/apis/google-places';
 import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { hasAccess } from '@/lib/access';
 
 // ─── Rate Limiter (in-memory, per IP) ────────────────────────────
 // 10 requests per IP per 60-second window. Protects against API credit abuse.
@@ -58,6 +60,34 @@ export async function POST(request: Request) {
       { status: 429 },
     );
   }
+
+  // Auth + trial gate. Calibration bypass skips this (dev-only).
+  let userId: string | null = null;
+  if (!isCalibrationBypass) {
+    const supabase = await createSupabaseServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return Response.json(
+        { error: 'You need to sign in to run an analysis.' },
+        { status: 401 },
+      );
+    }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('plan, trial_ends_at')
+      .eq('id', user.id)
+      .single();
+    if (!profile || !hasAccess(profile)) {
+      return Response.json(
+        { error: 'Your trial has ended. Subscribe to continue running analyses.', upgradeUrl: '/upgrade' },
+        { status: 402 },
+      );
+    }
+    userId = user.id;
+  }
+  void userId; // wired into Monday reports_run counter in Phase B
 
   let body: Record<string, unknown>;
   try {
