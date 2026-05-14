@@ -1,0 +1,5 @@
+{
+  "_comment": "Bumping this to invalidate Vercel's build cache and force a fresh build that picks up newly-scoped Preview env vars.",
+  "trigger": "force-fresh-build-after-preview-env-fix",
+  "ts": "2026-05-14T08:48:00Z"
+}
