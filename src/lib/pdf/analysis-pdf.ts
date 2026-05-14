@@ -5,8 +5,9 @@ import type { AnalysisResult } from '@/lib/types'
 /**
  * Generate a one-page A4 PDF summary of an analysis result. Uses pdf-lib
  * (pure JS, no native deps) so it works in Vercel's serverless runtime.
+ * Returns Uint8Array (what pdf-lib's save() produces natively).
  */
-export async function generateAnalysisPDF(result: AnalysisResult): Promise<Buffer> {
+export async function generateAnalysisPDF(result: AnalysisResult): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create()
   const page = pdfDoc.addPage([595.28, 841.89]) // A4 portrait
   const { height } = page.getSize()
@@ -70,6 +71,5 @@ export async function generateAnalysisPDF(result: AnalysisResult): Promise<Buffe
     })
   }
 
-  const pdfBytes = await pdfDoc.save()
-  return Buffer.from(pdfBytes)
+  return await pdfDoc.save()
 }

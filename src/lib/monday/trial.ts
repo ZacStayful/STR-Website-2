@@ -187,11 +187,16 @@ export async function pingLastSeen(_itemId: string, _isoTimestamp: string): Prom
  */
 export async function attachAnalysisPDF(
   itemId: string,
-  pdfBuffer: Uint8Array | Buffer,
+  pdfBuffer: Uint8Array,
   filename: string,
 ): Promise<void> {
   const cfg = readConfig();
   if (!cfg) return;
+
+  // Copy into a guaranteed ArrayBuffer so the Blob constructor is happy
+  // under TS strict ArrayBufferLike typing.
+  const ab = new ArrayBuffer(pdfBuffer.byteLength);
+  new Uint8Array(ab).set(pdfBuffer);
 
   const formData = new FormData();
   formData.append(
@@ -209,7 +214,7 @@ export async function attachAnalysisPDF(
   formData.append("map", JSON.stringify({ "0": ["variables.file"] }));
   formData.append(
     "0",
-    new Blob([pdfBuffer], { type: "application/pdf" }),
+    new Blob([ab], { type: "application/pdf" }),
     filename,
   );
 
