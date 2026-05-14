@@ -155,3 +155,92 @@ export async function markCustomer(itemId: string): Promise<void> {
   await setStatus(itemId, 'Customer')
   await moveToGroup(itemId, GROUP_CUSTOMER)
 }
+
+/**
+ * Upload a PDF (or any binary) to the Files column on a given Monday item.
+ * Uses Monday's dedicated /v2/file endpoint with the GraphQL multipart spec.
+ */
+export async function attachAnalysisPDF(
+  itemId: string,
+  pdfBuffer: Buffer,
+  filename: string,
+): Promise<void> {
+  const apiKey = process.env.MONDAY_API_KEY
+  if (!apiKey) {
+    throw new Error('MONDAY_API_KEY is not configured')
+  }
+
+  const query = `mutation ($file: File!) {
+    add_file_to_column(item_id: ${itemId}, column_id: "file_mm3aevrs", file: $file) { id }
+  }`
+
+  const form = new FormData()
+  form.append('query', query)
+  form.append('map', JSON.stringify({ image: 'variables.file' }))
+  form.append(
+    'image',
+    new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' }),
+    filename,
+  )
+
+  const res = await fetch('https://api.monday.com/v2/file', {
+    method: 'POST',
+    headers: { Authorization: apiKey },
+    body: form,
+  })
+
+  const body = (await res.json()) as MondayResponse<unknown>
+  if (!res.ok || body.errors || body.error_message) {
+    const msg =
+      body.errors?.map((e) => e.message).join('; ') ||
+      body.error_message ||
+      `Monday file upload ${res.status}`
+    throw new Error(`Monday file upload error: ${msg}`)
+  }
+}
+
+/**
+ * Find a Monday enquiry item by the user's email. Used as a fallback when
+ * the profile row is missing monday_item_id (e.g. older signups).
+ */
+export async function findEnquiryItemIdByEmail(email: string): Promise<string | null> {
+  const normalized = email.trim().toLowerCase()
+  const query = `
+    query ($boardId: [ID!], $columnId: String!, $value: CompareValue!) {
+      items_page_by_column_values(
+        limit: 1,
+        board_id: $boardId,
+        columns: [{ column_id: $columnId, column_values: [$value] }]
+      ) { items { id } }
+    }
+  `
+  // Monday's GraphQL accepts the simpler items_page query for lookups.
+  // Older API revisions exposed a different signature; fall back to that if needed.
+  const altQuery = `
+    query ($boardId: ID!, $columnId: String!, $value: String!) {
+      items_by_column_values(board_id: $boardId, column_id: $columnId, column_value: $value, limit: 1) {
+        id
+      }
+    }
+  `
+  try {
+    const data = await mondayFetch<{
+      items_page_by_column_values?: { items: Array<{ id: string }> }
+    }>(query, {
+      boardId: BOARD_ID,
+      columnId: COL_EMAIL,
+      value: normalized,
+    })
+    return data.items_page_by_column_values?.items?.[0]?.id ?? null
+  } catch {
+    try {
+      const data = await mondayFetch<{ items_by_column_values?: Array<{ id: string }> }>(
+        altQuery,
+        { boardId: BOARD_ID, columnId: COL_EMAIL, value: normalized },
+      )
+      return data.items_by_column_values?.[0]?.id ?? null
+    } catch {
+      return null
+    }
+  }
+}

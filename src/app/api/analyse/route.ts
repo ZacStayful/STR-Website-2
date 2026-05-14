@@ -5,8 +5,11 @@ import { getLongLetData, getFloorArea } from '@/lib/apis/propertydata';
 import { getNearbyAmenities } from '@/lib/apis/google-places';
 import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
+import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { attachAnalysisPDF, findEnquiryItemIdByEmail } from '@/lib/monday/enquiries';
+import { generateAnalysisPDF, pdfFilenameFor } from '@/lib/pdf/analysis-report';
 
-// ─── Rate Limiter (in-memory, per IP) ────────────────────────────
+// ─── Rate Limiter (in-memory, per IP) ────────────────────────────────
 // 10 requests per IP per 60-second window. Protects against API credit abuse.
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 10;
@@ -34,7 +37,7 @@ setInterval(() => {
   }
 }, 300_000);
 
-// ─── SSE Helper ──────────────────────────────────────────────────
+// ─── SSE Helper ───────────────────────────────────────────────────
 function sseEvent(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
@@ -160,7 +163,7 @@ export async function POST(request: Request) {
   };
   const mappedPropertyType = propertyType ? propertyTypeMap[propertyType as string] ?? 'flat' : 'flat';
 
-  // ─── Streaming SSE Response ──────────────────────────────────
+  // ─── Streaming SSE Response ────────────────────────────────
   const stream = new ReadableStream({
     async start(controller) {
       const send = (data: Record<string, unknown>) => {
@@ -293,7 +296,7 @@ export async function POST(request: Request) {
         send({ stage: 'amenities', progress: 75, message: 'Nearby amenities found' });
         send({ stage: 'events', progress: 80, message: 'Local events discovered' });
 
-        // ── Final: Run analysis ──────────────────────────────────────
+        // ── Final: Run analysis ───────────────────────────────────────────────────
         send({ stage: 'analysis', progress: 90, message: 'Running financial analysis...' });
 
         const financials = calculateFinancials(shortLet, longLet);
@@ -318,6 +321,44 @@ export async function POST(request: Request) {
         };
 
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
+
+        // ── Side-effect: attach a PDF copy of this analysis to the user's
+        // Monday enquiry item (column file_mm3aevrs on board 18413002067).
+        // The Monday item is identified via the authenticated user's profile
+        // (monday_item_id), or as a fallback by looking up their email on the
+        // board. Anonymous analyses are skipped. Best-effort — failure is
+        // logged but never breaks the response.
+        try {
+          const supabase = await createSupabaseServerClient();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('monday_item_id, email')
+              .eq('id', user.id)
+              .single();
+
+            const userEmail = user.email ?? profile?.email ?? null;
+            let itemId = profile?.monday_item_id ?? null;
+            if (!itemId && userEmail) {
+              itemId = await findEnquiryItemIdByEmail(userEmail);
+              if (itemId) {
+                await supabase
+                  .from('profiles')
+                  .update({ monday_item_id: itemId })
+                  .eq('id', user.id);
+              }
+            }
+
+            if (itemId) {
+              const pdf = await generateAnalysisPDF(result, userEmail);
+              await attachAnalysisPDF(itemId, pdf, pdfFilenameFor(result));
+              send({ stage: 'pdf_attached', progress: 100, message: 'Report saved to your account.' });
+            }
+          }
+        } catch (err) {
+          console.error('[analyse] PDF upload to Monday failed:', err);
+        }
       } catch (err) {
         console.error('Unexpected error in /api/analyse:', err);
         send({ stage: 'error', progress: 0, message: 'An unexpected error occurred. Please try again.' });
