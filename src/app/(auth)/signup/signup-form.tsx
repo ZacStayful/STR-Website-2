@@ -11,6 +11,19 @@ export function SignupForm() {
   return (
     <form action={action} className="space-y-4">
       <div className="space-y-1.5">
+        <label htmlFor="name" className="text-sm font-medium">
+          Full name
+        </label>
+        <input
+          id="name"
+          name="name"
+          type="text"
+          autoComplete="name"
+          required
+          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+      </div>
+      <div className="space-y-1.5">
         <label htmlFor="email" className="text-sm font-medium">
           Email
         </label>
@@ -20,6 +33,20 @@ export function SignupForm() {
           type="email"
           autoComplete="email"
           required
+          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor="mobile" className="text-sm font-medium">
+          Mobile number
+        </label>
+        <input
+          id="mobile"
+          name="mobile"
+          type="tel"
+          autoComplete="tel"
+          required
+          placeholder="+44 7..."
           className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
       </div>

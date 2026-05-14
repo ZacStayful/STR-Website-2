@@ -11,14 +11,24 @@
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   email text,
+  name text,
+  mobile text,
   plan text not null default 'free',                  -- 'free' | 'pro'
   trial_ends_at timestamptz not null default (now() + interval '14 days'),
+  trial_expired_synced boolean not null default false,
+  monday_item_id text,
   stripe_customer_id text,
   stripe_subscription_id text,
   stripe_subscription_status text,                    -- 'trialing' | 'active' | 'past_due' | 'canceled' | ...
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Idempotent column adds for existing deployments.
+alter table public.profiles add column if not exists name text;
+alter table public.profiles add column if not exists mobile text;
+alter table public.profiles add column if not exists monday_item_id text;
+alter table public.profiles add column if not exists trial_expired_synced boolean not null default false;
 
 alter table public.profiles enable row level security;
 
@@ -40,8 +50,13 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email)
-  values (new.id, new.email)
+  insert into public.profiles (id, email, name, mobile)
+  values (
+    new.id,
+    new.email,
+    nullif(new.raw_user_meta_data->>'name', ''),
+    nullif(new.raw_user_meta_data->>'mobile', '')
+  )
   on conflict (id) do nothing;
   return new;
 end;
