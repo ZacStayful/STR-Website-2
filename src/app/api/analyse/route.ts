@@ -7,9 +7,10 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hasAccess } from '@/lib/access';
-import { updateReportsRun } from '@/lib/monday/trial';
+import { updateReportsRun, attachAnalysisPDF } from '@/lib/monday/trial';
+import { generateAnalysisPDF } from '@/lib/pdf/analysis-pdf';
 
-// ─── Rate Limiter (in-memory, per IP) ────────────────────────────
+// ─── Rate Limiter (in-memory, per IP) ────────────────────────
 // 10 requests per IP per 60-second window. Protects against API credit abuse.
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 10;
@@ -37,7 +38,7 @@ setInterval(() => {
   }
 }, 300_000);
 
-// ─── SSE Helper ──────────────────────────────────────────────────
+// ─── SSE Helper ────────────────────────────────────────
 function sseEvent(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
 }
@@ -190,7 +191,7 @@ export async function POST(request: Request) {
   };
   const mappedPropertyType = propertyType ? propertyTypeMap[propertyType as string] ?? 'flat' : 'flat';
 
-  // ─── Streaming SSE Response ──────────────────────────────────
+  // ─── Streaming SSE Response ────────────────────────────
   const stream = new ReadableStream({
     async start(controller) {
       const send = (data: Record<string, unknown>) => {
@@ -323,7 +324,7 @@ export async function POST(request: Request) {
         send({ stage: 'amenities', progress: 75, message: 'Nearby amenities found' });
         send({ stage: 'events', progress: 80, message: 'Local events discovered' });
 
-        // ── Final: Run analysis ──────────────────────────────────────
+        // ── Final: Run analysis ─────────────────────────────────
         send({ stage: 'analysis', progress: 90, message: 'Running financial analysis...' });
 
         const financials = calculateFinancials(shortLet, longLet);
@@ -349,8 +350,9 @@ export async function POST(request: Request) {
 
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
 
-        // Fire-and-forget: increment reports_run on the profile and mirror
-        // the new total to Monday. Errors logged, never blocking.
+        // Fire-and-forget: increment reports_run on the profile, mirror to
+        // Monday, and attach a PDF summary to the user's enquiry row on the
+        // Files column. Errors logged, never blocking.
         if (userId) {
           const trackingUserId = userId;
           void (async () => {
@@ -368,6 +370,13 @@ export async function POST(request: Request) {
                 .eq('id', trackingUserId);
               if (current?.monday_item_id) {
                 await updateReportsRun(current.monday_item_id, next);
+                try {
+                  const pdfBuffer = await generateAnalysisPDF(result);
+                  const filename = `Stayful-Analysis-${property.postcode.replace(/\s+/g, '')}-${now.slice(0, 10)}.pdf`;
+                  await attachAnalysisPDF(current.monday_item_id, pdfBuffer, filename);
+                } catch (pdfErr) {
+                  console.error('[api/analyse] PDF attach hook failed:', pdfErr);
+                }
               }
             } catch (err) {
               console.error('[api/analyse] reports_run hook failed:', err);
