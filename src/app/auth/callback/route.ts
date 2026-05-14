@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { createTrialSignup } from '@/lib/monday/trial'
+import { createTrialSignup, markEmailVerified } from '@/lib/monday/trial'
 
 // Handles both OAuth (Google) callback and email-confirmation links.
 export async function GET(request: NextRequest) {
@@ -28,10 +28,12 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // First-confirmation hook: push a new row to the Monday "Trial signups"
-  // board the first time a verified user lands here. Idempotent — only
-  // runs when profiles.monday_item_id is null. Errors are swallowed
-  // inside the helper so a Monday outage can't block the redirect.
+  // First-confirmation hook: push a new row to Monday board 18413002067
+  // the first time a verified user lands here. Idempotent — the helper
+  // checks profiles.monday_item_id. Always flip Email Verified on confirm
+  // (covers reconfirmations from a different device too). Errors are
+  // swallowed inside the helpers so a Monday outage can't block the
+  // redirect to /estimate.
   try {
     const {
       data: { user },
@@ -55,7 +57,10 @@ export async function GET(request: NextRequest) {
             .from('profiles')
             .update({ monday_item_id: mondayId })
             .eq('id', user.id)
+          await markEmailVerified(mondayId)
         }
+      } else if (profile?.monday_item_id) {
+        await markEmailVerified(profile.monday_item_id)
       }
     }
   } catch (err) {
