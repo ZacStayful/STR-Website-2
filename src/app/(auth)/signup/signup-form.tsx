@@ -11,6 +11,20 @@ export function SignupForm() {
   return (
     <form action={action} className="space-y-4">
       <div className="space-y-1.5">
+        <label htmlFor="full_name" className="text-sm font-medium">
+          Full name
+        </label>
+        <input
+          id="full_name"
+          name="full_name"
+          type="text"
+          autoComplete="name"
+          required
+          minLength={2}
+          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+      </div>
+      <div className="space-y-1.5">
         <label htmlFor="email" className="text-sm font-medium">
           Email
         </label>
@@ -22,6 +36,25 @@ export function SignupForm() {
           required
           className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor="mobile" className="text-sm font-medium">
+          Mobile number
+        </label>
+        <input
+          id="mobile"
+          name="mobile"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          required
+          placeholder="07700 900000"
+          pattern="[0-9 +()\-]{7,}"
+          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+        <p className="text-xs text-muted-foreground">
+          We may text you about urgent account or report issues. No marketing.
+        </p>
       </div>
       <div className="space-y-1.5">
         <label htmlFor="password" className="text-sm font-medium">
