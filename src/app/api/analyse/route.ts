@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     );
   }
 
-  // Auth + trial gate. Calibration bypass skips this (dev-only).
+  // Auth + free-reports gate. Calibration bypass skips this (dev-only).
   let userId: string | null = null;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
@@ -77,12 +77,12 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select('plan, trial_ends_at')
+      .select('plan, reports_run')
       .eq('id', user.id)
       .single();
     if (!profile || !hasAccess(profile)) {
       return Response.json(
-        { error: 'Your trial has ended. Subscribe to continue running analyses.', upgradeUrl: '/upgrade' },
+        { error: "You've used all 5 of your free reports. Subscribe to continue running analyses.", upgradeUrl: '/upgrade' },
         { status: 402 },
       );
     }

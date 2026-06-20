@@ -14,7 +14,7 @@ import { FAQS } from "@/lib/faqs-data";
 
 const PAGE_TITLE = "Pricing — £39.99/month or £360/year";
 const PAGE_DESCRIPTION =
-  "Stayful Intelligence pricing. Run one report free with the 14-day trial, then £39.99/month for unlimited analyses or £360/year (save 25% paid annually). No contract, cancel any time.";
+  "Stayful Intelligence pricing. Run 5 reports free, then £39.99/month for unlimited analyses or £360/year (save 25% paid annually). No contract, cancel any time.";
 const PAGE_URL = siteUrl("/pricing");
 const LAST_UPDATED = "2026-05-08";
 

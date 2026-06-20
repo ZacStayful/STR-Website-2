@@ -14,13 +14,13 @@ interface Plan {
 
 const PLANS: Plan[] = [
   {
-    name: "14-day free trial",
+    name: "5 free reports",
     price: "Free",
-    priceSub: "for 14 days",
+    priceSub: "5 reports",
     sub: "Full access — no card required",
     features: [
       "Full 11-section report",
-      "Unlimited reports for 14 days",
+      "5 free reports to start",
       "Live comparables",
       "Forecast & risk",
       "Setup cost quote",

@@ -4,10 +4,11 @@ import { hasAccess } from "@/lib/access";
 import { pingLastSeen } from "@/lib/monday/trial";
 
 // Server component that wraps /estimate. Fetches the current user's profile,
-// runs hasAccess() against plan + trial_ends_at, bounces trial-expired
-// users to /upgrade, and (fire-and-forget) updates the Monday CRM with
-// last_seen_at. Anyone not logged in is already redirected to /login
-// by the middleware (proxy.ts → PROTECTED_PREFIXES).
+// runs hasAccess() against plan + reports_run (5 free reports, then pro),
+// bounces users who've used all their free reports to /upgrade, and
+// (fire-and-forget) updates the Monday CRM with last_seen_at. Anyone not
+// logged in is already redirected to /login by the middleware
+// (proxy.ts → PROTECTED_PREFIXES).
 export default async function EstimateLayout({
   children,
 }: {
@@ -26,7 +27,7 @@ export default async function EstimateLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, trial_ends_at, monday_item_id")
+    .select("plan, reports_run, monday_item_id")
     .eq("id", user.id)
     .single();
 

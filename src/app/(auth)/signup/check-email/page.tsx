@@ -8,7 +8,7 @@ export default function CheckEmailPage() {
       <h1 className="text-2xl font-semibold text-foreground">Check your email</h1>
       <p className="mt-3 text-sm text-muted-foreground">
         We&apos;ve sent you a confirmation link. Click it to activate your account
-        and start your 14-day trial.
+        and get your 5 free reports.
       </p>
       <Link
         href="/login"

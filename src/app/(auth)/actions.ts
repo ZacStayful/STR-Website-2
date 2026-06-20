@@ -63,8 +63,8 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   if (error) return { error: error.message }
 
   // The DB trigger handle_new_user() reads full_name + mobile out of
-  // raw_user_meta_data and writes them onto the profile row, alongside
-  // the default 14-day trial_ends_at.
+  // raw_user_meta_data and writes them onto the profile row. New profiles
+  // start with reports_run = 0, giving them their 5 free reports.
   redirect('/signup/check-email')
 }
 

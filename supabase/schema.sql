@@ -5,8 +5,9 @@
 -- profiles
 -- =========================
 -- Extends auth.users. One row per user, created on signup.
--- Trial model: 14-day full access from sign-up; after that, plan must be 'pro'
--- (driven by Stripe subscription) for hasAccess() to return true.
+-- Access model: 5 free reports from sign-up (tracked in reports_run); after
+-- that, plan must be 'pro' (driven by Stripe subscription) for hasAccess()
+-- to return true. trial_ends_at is retained for the Monday CRM mirror only.
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,

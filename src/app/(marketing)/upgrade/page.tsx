@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, trialDaysRemaining } from "@/lib/access";
+import { hasAccess, FREE_RUNS } from "@/lib/access";
 import { Icon } from "@/lib/icons";
 
 export const metadata: Metadata = {
   title: "Upgrade — Stayful Intelligence",
   description:
-    "Your 14-day free trial of the Stayful Property Analyser has ended. Subscribe to continue running unlimited reports.",
+    "You've used all 5 free reports on the Stayful Property Analyser. Subscribe to continue running unlimited reports.",
   robots: { index: false, follow: false },
 };
 
@@ -27,34 +27,30 @@ export default async function UpgradePage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, trial_ends_at, full_name")
+    .select("plan, reports_run, full_name")
     .eq("id", user.id)
     .single();
 
-  // If the trial is still active or they're already pro, send them straight
-  // back to the analyser — they shouldn't be on the upgrade page.
+  // If they still have free reports left or they're already pro, send them
+  // straight back to the analyser — they shouldn't be on the upgrade page.
   if (profile && hasAccess(profile)) {
     redirect("/estimate");
   }
 
   const firstName =
     profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
-  const daysLeft = profile ? trialDaysRemaining(profile) : 0;
 
   return (
     <section className="upgrade section">
       <div className="wrap-narrow">
         <div className="eyebrow">Subscription required</div>
         <h1 className="upgrade-title">
-          {firstName ? `${firstName}, your` : "Your"} 14-day trial has ended.
+          {firstName ? `${firstName}, you've` : "You've"} used all {FREE_RUNS} free reports.
         </h1>
         <p className="lede">
-          {daysLeft === 0
-            ? "You've used your full free-trial window."
-            : `You have ${daysLeft} ${daysLeft === 1 ? "day" : "days"} left on your trial.`}{" "}
-          To keep running reports, you&apos;ll need a paid subscription. We&apos;re finalising
-          self-serve billing now — until that ships, book a 15-minute call and we&apos;ll set
-          you up the same day.
+          You&apos;ve run your {FREE_RUNS} free analyses. To keep running reports, you&apos;ll
+          need a paid subscription. We&apos;re finalising self-serve billing now — until that
+          ships, book a 15-minute call and we&apos;ll set you up the same day.
         </p>
 
         <div className="upgrade-pricing">
