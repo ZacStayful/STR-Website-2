@@ -32,7 +32,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
       <p className="mt-6 text-sm text-muted-foreground">
         Don&apos;t have an account?{' '}
         <Link href="/signup" className="text-primary font-medium hover:underline">
-          Start your 14-day free trial
+          Start with 5 free reports
         </Link>
       </p>
     </div>

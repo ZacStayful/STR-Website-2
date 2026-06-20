@@ -27,14 +27,24 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
 }
 
 export async function signupAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
+  const fullName = String(formData.get('full_name') ?? '').trim()
   const email = String(formData.get('email') ?? '').trim()
+  const mobile = String(formData.get('mobile') ?? '').trim()
   const password = String(formData.get('password') ?? '')
 
-  if (!email || !password) {
-    return { error: 'Email and password are required.' }
+  if (!fullName || !email || !mobile || !password) {
+    return { error: 'Full name, email, mobile number, and password are all required.' }
+  }
+  if (fullName.length < 2) {
+    return { error: 'Please enter your full name.' }
   }
   if (password.length < 8) {
     return { error: 'Password must be at least 8 characters.' }
+  }
+  // Lightweight UK-friendly mobile sanity: digits/spaces/+/-/()/leading zero, ≥ 7 chars.
+  const normalisedMobile = mobile.replace(/[\s()-]/g, '')
+  if (!/^\+?[0-9]{7,15}$/.test(normalisedMobile)) {
+    return { error: 'Please enter a valid mobile number.' }
   }
 
   const supabase = await createSupabaseServerClient()
@@ -43,13 +53,18 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     password,
     options: {
       emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/estimate`,
+      data: {
+        full_name: fullName,
+        mobile: normalisedMobile,
+      },
     },
   })
 
   if (error) return { error: error.message }
 
-  // The DB trigger handle_new_user() inserts a profile row with the
-  // default 14-day trial_ends_at — no client-side insert needed.
+  // The DB trigger handle_new_user() reads full_name + mobile out of
+  // raw_user_meta_data and writes them onto the profile row. New profiles
+  // start with reports_run = 0, giving them their 5 free reports.
   redirect('/signup/check-email')
 }
 

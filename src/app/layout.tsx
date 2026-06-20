@@ -1,16 +1,10 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
-  variable: "--font-sans",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "Stayful Property Analyser | Short-Term Rental Income Calculator",
+  title: "Stayful — income-estimate software for UK short-term lets",
   description:
-    "Analyse your property's short-term rental potential with Stayful. Compare Airbnb income vs long-term let, view local demand drivers, and get a comprehensive risk assessment.",
+    "Find out if your property has potential as a short-term let. Get a peak income estimate, customise based on comparable nearby properties. 5 free reports.",
   generator: "Stayful",
   icons: {
     icon: [
@@ -29,11 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${inter.variable} font-sans antialiased`}
-      >
-        {children}
-      </body>
+      <body className="font-sans antialiased">{children}</body>
     </html>
   );
 }
