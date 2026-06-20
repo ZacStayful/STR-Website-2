@@ -36,6 +36,8 @@ import {
   Zap,
   Clock,
   Home,
+  HelpCircle,
+  PoundSterling,
   Wrench,
   MessageSquare,
   Camera,
@@ -77,6 +79,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Presentation from "@/components/Presentation";
 import HeatmapOverlay from "@/components/HeatmapOverlay";
+import { AddressAutocomplete, splitAddressAndPostcode } from "@/components/AddressAutocomplete";
+import { AccuracyPanel } from "@/components/AccuracyPanel";
+import { SetupCalculator } from "@/components/SetupCalculator";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
 import { initTracker, endSession, trackCtaClick } from "@/lib/tracker";
@@ -167,6 +172,24 @@ function riskTextColor(level: RiskLevel): string {
   return "text-destructive";
 }
 
+function roundReviewRating(rating: number): string {
+  return (Math.round(rating * 100) / 100).toFixed(2);
+}
+
+function formatRelativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "just now";
+  const diffSec = Math.max(0, Math.round((now - then) / 1000));
+  if (diffSec < 60) return "just now";
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  return `${diffDay}d ago`;
+}
+
 function Badge({
   children,
   className = "",
@@ -193,8 +216,8 @@ function SectionHeading({
   subtitle?: string;
 }) {
   return (
-    <div className="mb-6">
-      <div className="flex items-center gap-2">
+    <div className="mb-6 text-center">
+      <div className="flex items-center justify-center gap-2">
         <Icon className="h-5 w-5 text-primary" aria-hidden="true" />
         <h2 className="text-xl font-bold text-foreground">{title}</h2>
       </div>
@@ -267,14 +290,13 @@ const TAB_SECTIONS = [
   { id: "overview", label: "Overview", icon: Home, num: 1 },
   { id: "comparables", label: "Comparables", icon: Building2, num: 2 },
   { id: "amenities", label: "Amenities", icon: Sparkles, num: 3 },
-  { id: "revenue", label: "Revenue", icon: DollarSign, num: 4 },
-  { id: "profit-calculator", label: "Profit Calculator", icon: Calculator, num: 5 },
-  { id: "forecast", label: "Forecast", icon: LineChart, num: 6 },
-  { id: "local-area", label: "Local Area", icon: MapPin, num: 7 },
-  { id: "bookings", label: "Bookings", icon: Target, num: 8 },
-  { id: "risk", label: "Risk", icon: AlertTriangle, num: 9 },
-  { id: "data-sources", label: "Data Sources", icon: Database, num: 10 },
-  { id: "growth", label: "Growth", icon: Rocket, num: 11 },
+  { id: "revenue", label: "Revenue", icon: PoundSterling, num: 4 },
+  { id: "forecast", label: "Forecast", icon: LineChart, num: 5 },
+  { id: "local-area", label: "Local Area", icon: MapPin, num: 6 },
+  { id: "bookings", label: "Bookings", icon: Target, num: 7 },
+  { id: "risk", label: "Risk", icon: AlertTriangle, num: 8 },
+  { id: "growth", label: "Growth", icon: Rocket, num: 9 },
+  { id: "faq", label: "FAQ", icon: HelpCircle, num: 11 },
 ] as const;
 
 // ─── Main Component ─────────────────────────────────────────────
@@ -282,6 +304,7 @@ const TAB_SECTIONS = [
 export default function HomePage() {
   const [address, setAddress] = useState("");
   const [postcode, setPostcode] = useState("");
+  const [email, setEmail] = useState("");
   const [bedrooms, setBedrooms] = useState("2");
   const [guests, setGuests] = useState("6"); // Auto-calculated: (bedrooms × 2) + 2
   const [bathrooms, setBathrooms] = useState("1");
@@ -290,6 +313,57 @@ export default function HomePage() {
   const [outdoorSpace, setOutdoorSpace] = useState("none");
   const [monthlyMortgage, setMonthlyMortgage] = useState("");
   const [monthlyBills, setMonthlyBills] = useState("");
+
+  // ── Session timer: pushed to Monday via sendBeacon on tab close ──
+  const sessionStartRef = useRef(Date.now());
+  const emailRef = useRef(email);
+  emailRef.current = email;
+
+  useEffect(() => {
+    const pushTime = () => {
+      const seconds = Math.round((Date.now() - sessionStartRef.current) / 1000);
+      const currentEmail = emailRef.current;
+      if (seconds > 0 && currentEmail && currentEmail.includes("@")) {
+        navigator.sendBeacon(
+          "/api/track",
+          new Blob(
+            [JSON.stringify({ type: "time_on_site", email: currentEmail, seconds })],
+            { type: "application/json" },
+          ),
+        );
+      }
+    };
+    const onVisChange = () => { if (document.visibilityState === "hidden") pushTime(); };
+    window.addEventListener("beforeunload", pushTime);
+    document.addEventListener("visibilitychange", onVisChange);
+    return () => {
+      window.removeEventListener("beforeunload", pushTime);
+      document.removeEventListener("visibilitychange", onVisChange);
+    };
+  }, []);
+
+  // Address input mode: "auto" uses Google Places autocomplete (default),
+  // "manual" falls back to the original two freeform fields. selectedAutoAddress
+  // tracks the last picked suggestion so we can render a compact confirmation
+  // row with a Change button instead of the search input.
+  const [entryMode, setEntryMode] = useState<"auto" | "manual">("auto");
+  const [selectedAutoAddress, setSelectedAutoAddress] = useState<{ address: string; postcode: string } | null>(null);
+
+  // User-adjustable expense formula. null means "use default".
+  //   Platform default: 15 %
+  //   Management default: 15 %
+  //   Cleaning default: 18 % of gross, per month → seeded from Top Market gross
+  // These inputs feed BOTH hero net-revenue columns and downstream sections
+  // (Revenue Breakdown, Profit Calculator). Reset on every fresh analysis.
+  const [expensesExpanded, setExpensesExpanded] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [platformFeePct, setPlatformFeePct] = useState<number | null>(null);
+  const [mgmtFeePct, setMgmtFeePct] = useState<number | null>(null);
+  const [cleaningMonthly, setCleaningMonthly] = useState<number | null>(null);
+  const [overheadMortgage, setOverheadMortgage] = useState<number | null>(null);
+  const [overheadBills, setOverheadBills] = useState<number | null>(null);
+  const [overheadOther, setOverheadOther] = useState<number | null>(null);
+  const setupSnapshotRef = useRef<import("@/components/SetupCalculator").SetupCalculatorSnapshot | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -306,9 +380,26 @@ export default function HomePage() {
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // Profit calculator state
-  const [calcMortgage, setCalcMortgage] = useState(0);
-  const [calcBills, setCalcBills] = useState(400);
+  // User-curated comp exclusions — keyed by comp index in r.shortLet.comparables.
+  // Excluded comps are dimmed in the grid and removed from all aggregate stats
+  // (avg ADR/Occ/Revenue, Top 5, Decision Engine, Filtered Estimate). The V4
+  // PMI "Top Market Potential" headline is unaffected — it shows what a top-
+  // performer in the full market pool can earn.
+  const [excludedComps, setExcludedComps] = useState<Set<number>>(new Set());
+
+  // FAQ accordion state — only one item open at a time; null = all collapsed.
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
+
+  // Reset exclusions + expense overrides whenever a fresh analysis result
+  // arrives so users don't accidentally carry filters or cost inputs from
+  // a previous property into a new one.
+  useEffect(() => {
+    setExcludedComps(new Set());
+    setPlatformFeePct(null);
+    setMgmtFeePct(null);
+    setCleaningMonthly(null);
+    setExpensesExpanded(false);
+  }, [result]);
 
   const setSectionRef = useCallback((id: string) => (el: HTMLElement | null) => {
     sectionRefs.current[id] = el;
@@ -424,6 +515,7 @@ export default function HomePage() {
         body: JSON.stringify({
           address,
           postcode,
+          email,
           bedrooms: Number(bedrooms),
           guests: Number(guests),
           bathrooms: Number(bathrooms),
@@ -525,6 +617,10 @@ export default function HomePage() {
   const handleReset = () => {
     setResult(null);
     setError(null);
+    setAddress("");
+    setPostcode("");
+    setEntryMode("auto");
+    setSelectedAutoAddress(null);
   };
 
   // ─── Loading State ──────────────────────────────────────────────
@@ -612,26 +708,49 @@ export default function HomePage() {
       "Long Let": Math.round(r.longLet.monthlyRent),
     }));
 
-    // Revenue cost breakdown calculations
+    // Revenue cost breakdown — user-adjustable via the "Customise expenses"
+    // panel in the hero. Each override is null until the user edits that row,
+    // at which point the typed value sticks. Defaults:
+    //   platform 15 % · management 15 % · cleaning 18 % of gross (per month)
+    // The cleaning default is seeded off the V4 PMI Top Market gross so it
+    // doesn't jump when the user excludes comps (Filtered gross moves).
     const grossAnnual = f.shortLetGrossAnnual;
-    const platformFees = Math.round(grossAnnual * 0.15);
-    const managementFees = Math.round(grossAnnual * 0.15);
-    const cleaningLaundry = Math.round(grossAnnual * 0.18);
+    const DEFAULT_PLATFORM_PCT = 15;
+    const DEFAULT_MGMT_PCT = 15;
+    const DEFAULT_CLEANING_PCT_OF_GROSS = 0.18;
+    const effPlatformPct = platformFeePct ?? DEFAULT_PLATFORM_PCT;
+    const effMgmtPct = mgmtFeePct ?? DEFAULT_MGMT_PCT;
+    const effCleaningMonthly = cleaningMonthly
+      ?? Math.max(0, Math.round((grossAnnual / 12) * DEFAULT_CLEANING_PCT_OF_GROSS));
+    const cleaningAnnual = effCleaningMonthly * 12;
+
+    // Central helper — every Net Revenue figure on the page flows through this.
+    const computeNet = (gross: number): number => {
+      const platformAnnual = gross * (effPlatformPct / 100);
+      const mgmtAnnual = gross * (effMgmtPct / 100);
+      return Math.max(0, Math.round(gross - platformAnnual - mgmtAnnual - cleaningAnnual));
+    };
+
+    const totalMonthlyOverheads = (overheadMortgage ?? 0) + (overheadBills ?? 0) + (overheadOther ?? 0);
+    const totalAnnualOverheads = totalMonthlyOverheads * 12;
+    const computeProfit = (gross: number): number => computeNet(gross) - totalAnnualOverheads;
+
+    const platformFees = Math.round(grossAnnual * (effPlatformPct / 100));
+    const managementFees = Math.round(grossAnnual * (effMgmtPct / 100));
+    const cleaningLaundry = cleaningAnnual;
     const totalOperatingCosts = platformFees + managementFees + cleaningLaundry;
-    const stlNetAnnual = grossAnnual - totalOperatingCosts;
+    const stlNetAnnual = computeNet(grossAnnual);
 
     const ltlGrossAnnual = f.longLetGrossAnnual;
     const ltlAgentFees = Math.round(ltlGrossAnnual * 0.10);
     const ltlNetAnnual = ltlGrossAnnual - ltlAgentFees;
 
-    const revDifference = stlNetAnnual - ltlNetAnnual;
+    const stlTrueAnnualProfit = stlNetAnnual - totalAnnualOverheads;
+    const ltlTrueAnnualProfit = ltlNetAnnual - ((overheadMortgage ?? 0) * 12);
+    const revDifference = stlTrueAnnualProfit - ltlTrueAnnualProfit;
     const revDifferenceMonthly = Math.round(revDifference / 12);
-    const revDifferencePct = ltlNetAnnual > 0 ? Math.round((revDifference / ltlNetAnnual) * 100) : 0;
-
-    // Profit calculator values
-    const stlTrueAnnualProfit = stlNetAnnual - (calcMortgage * 12) - (calcBills * 12);
-    const ltlTrueAnnualProfit = ltlNetAnnual - (calcMortgage * 12); // tenants pay bills
-    const profitDifference = stlTrueAnnualProfit - ltlTrueAnnualProfit;
+    const revDifferencePct = ltlTrueAnnualProfit > 0 ? Math.round((revDifference / ltlTrueAnnualProfit) * 100) : (ltlNetAnnual > 0 ? Math.round(((stlNetAnnual - ltlNetAnnual) / ltlNetAnnual) * 100) : 0);
+    const profitDifference = revDifference;
 
     // Monthly occupancy with seasonal weighting
     const avgOcc = r.shortLet.occupancyRate;
@@ -640,8 +759,14 @@ export default function HomePage() {
       Math.min(1, (avgOcc * 12 * w) / totalWeight)
     );
 
-    // Net monthly for STL (after 48% costs)
-    const stlMonthlyNet = r.shortLet.monthlyRevenue.map((rev) => Math.round(rev * 0.52));
+    // Net monthly for STL — apply the user's adjustable expense formula per
+    // month. Cleaning is a flat monthly figure (not % of month's revenue) so
+    // it deducts equally across all months.
+    const stlMonthlyNet = r.shortLet.monthlyRevenue.map((rev) => {
+      const platform = rev * (effPlatformPct / 100);
+      const mgmt = rev * (effMgmtPct / 100);
+      return Math.max(0, Math.round(rev - platform - mgmt - effCleaningMonthly));
+    });
     const ltlMonthlyNet = Math.round(ltlNetAnnual / 12);
 
     // Peak months = top 3 by STL revenue, Low = bottom 3, Below LTL = months where STL < LTL
@@ -825,8 +950,14 @@ export default function HomePage() {
     const sidebarWidth = sidebarCollapsed ? 48 : 200;
 
     // Average rating and reviews from comparables
-    const hasComparables = r.shortLet.comparables.length > 0;
-    const comps = r.shortLet.comparables;
+    const allComps = r.shortLet.comparables;
+    const hasComparables = allComps.length > 0;
+    // User-filtered subset: all comps minus the ones the user excluded via
+    // the per-card Exclude button. Every aggregate below derives from this
+    // subset so the UI updates live as the user curates.
+    const includedComps = allComps.filter((_, i) => !excludedComps.has(i));
+    const hasIncluded = includedComps.length > 0;
+    const comps = includedComps;
 
     // Sort comparables by annual revenue descending (highest first)
     const compsSortedByRevenue = [...comps].sort((a, b) => b.annualRevenue - a.annualRevenue);
@@ -835,17 +966,66 @@ export default function HomePage() {
     const top5Set = new Set(top5Comps);
     const hasTop5 = top5Comps.length >= 5;
 
-    // Calculate averages from top 5 performers (or all if < 5)
-    const avgSource = hasTop5 ? top5Comps : comps;
-    const compAvgNightlyRate = hasComparables ? Math.round(avgSource.reduce((s, c) => s + c.averageDailyRate, 0) / avgSource.length) : r.shortLet.averageDailyRate;
-    const compAvgOccupancy = hasComparables ? avgSource.reduce((s, c) => s + c.occupancyRate, 0) / avgSource.length : r.shortLet.occupancyRate;
-    const compAvgRevenue = hasComparables ? Math.round(avgSource.reduce((s, c) => s + c.annualRevenue, 0) / avgSource.length) : r.shortLet.annualRevenue;
     const compsWithRating = comps.filter((c) => c.rating > 0);
-    const avgRating = compsWithRating.length > 0 ? Math.floor(compsWithRating.reduce((s, c) => s + c.rating, 0) / compsWithRating.length * 10) / 10 : 0;
+    const avgRating = compsWithRating.length > 0 ? Math.round(compsWithRating.reduce((s, c) => s + c.rating, 0) / compsWithRating.length * 100) / 100 : 0;
     const compsWithReviews = comps.filter((c) => c.reviewCount > 0);
     const avgReviews = compsWithReviews.length > 0 ? Math.round(compsWithReviews.reduce((s, c) => s + c.reviewCount, 0) / compsWithReviews.length) : 0;
     const compsWithAge = comps.filter((c) => c.listingAge > 0);
     const avgListingAge = compsWithAge.length > 0 ? Math.round(compsWithAge.reduce((s, c) => s + c.listingAge, 0) / compsWithAge.length * 10) / 10 : 0;
+
+    // Full pool averages (filtered comps) for Decision Engine "Match" box
+    const poolAvgAdr = hasIncluded ? Math.round(comps.reduce((s, c) => s + c.averageDailyRate, 0) / comps.length) : r.shortLet.averageDailyRate;
+    const poolAvgOccupancy = hasIncluded ? comps.reduce((s, c) => s + c.occupancyRate, 0) / comps.length : r.shortLet.occupancyRate;
+    const poolAvgRevenue = hasIncluded ? Math.round(comps.reduce((s, c) => s + c.annualRevenue, 0) / comps.length) : r.shortLet.annualRevenue;
+
+    // Top 25% comps for Decision Engine "Beat" box
+    const top25PctCount = hasIncluded ? Math.max(1, Math.ceil(comps.length * 0.25)) : 0;
+    const top25Comps = compsSortedByRevenue.slice(0, top25PctCount);
+    const beatAvgAdr = top25Comps.length > 0 ? Math.round(top25Comps.reduce((s, c) => s + c.averageDailyRate, 0) / top25Comps.length) : 0;
+    const beatAvgOccupancy = top25Comps.length > 0 ? top25Comps.reduce((s, c) => s + c.occupancyRate, 0) / top25Comps.length : 0;
+    const beatAvgRevenue = top25Comps.length > 0 ? Math.round(top25Comps.reduce((s, c) => s + c.annualRevenue, 0) / top25Comps.length) : 0;
+
+    // "Your Filtered Estimate" — mirrors the V4 PMI "Top Market Potential"
+    // when no comps are excluded (snap behaviour, so the first impression
+    // shows identical numbers in both columns). As soon as the user removes
+    // any comp it switches to the arithmetic MEAN of the kept comps across
+    // annualRevenue / ADR / occupancy. If the user excludes every comp, all
+    // filtered values collapse to 0.
+    //
+    // Net revenue is now user-adjustable — see computeNet helper above, which
+    // subtracts platform %, management % and cleaning £/month from gross.
+    // Both hero columns and every downstream section share the same helper.
+    const excludedCount = allComps.length - includedComps.length;
+    const hasFilters = excludedCount > 0;
+    const topGross = r.shortLet.annualRevenue;
+    const topAdr = r.shortLet.averageDailyRate;
+    const topOcc = r.shortLet.occupancyRate;
+    const topNet = computeNet(topGross);
+
+    let filteredGross: number;
+    let filteredAdr: number;
+    let filteredOcc: number;
+    if (!hasIncluded) {
+      // All comps excluded (or no comps at all).
+      filteredGross = 0;
+      filteredAdr = 0;
+      filteredOcc = 0;
+    } else if (!hasFilters) {
+      // No user filter yet — snap to V4 PMI Top Market Potential values so
+      // both columns read identically on first load.
+      filteredGross = topGross;
+      filteredAdr = topAdr;
+      filteredOcc = topOcc;
+    } else {
+      // At least one comp excluded — recompute from the kept-comps mean.
+      // Mean of 1 kept comp = that single comp's values (matches user spec).
+      filteredGross = Math.round(includedComps.reduce((s, c) => s + c.annualRevenue, 0) / includedComps.length);
+      filteredAdr = Math.round(includedComps.reduce((s, c) => s + c.averageDailyRate, 0) / includedComps.length);
+      filteredOcc = includedComps.reduce((s, c) => s + c.occupancyRate, 0) / includedComps.length;
+    }
+    const filteredNet = computeNet(filteredGross);
+    // Kept for the Section 2 banner wording that references it downstream.
+    const filteredEstimate = filteredGross;
 
     // 36-month growth chart data
     const growthData = Array.from({ length: 36 }, (_, i) => {
@@ -854,7 +1034,7 @@ export default function HomePage() {
       const monthlyGross = grossAnnual / 12;
       const platformFeeRate = 0.15 * (1 - directPct);
       const revenue = monthlyGross * (1 - platformFeeRate - 0.15 - 0.18);
-      const expenses = (calcMortgage || 0) + (calcBills || 0);
+      const expenses = totalMonthlyOverheads;
       return {
         month: `M${month}`,
         Revenue: Math.round(revenue),
@@ -863,73 +1043,7 @@ export default function HomePage() {
       };
     });
 
-    // Data sources list
-    const dataSources = [
-      {
-        title: "UK STR Market Report 2025",
-        source: "Airbtics",
-        desc: "Comprehensive short-term rental market analytics for the UK market.",
-        bullets: ["Market occupancy trends", "Revenue benchmarking data"],
-        updated: "March 2025",
-        url: "#",
-      },
-      {
-        title: `${r.property.postcode.split(" ")[0]} Airbnb Market Data 2026`,
-        source: "Airbtics",
-        desc: "Local area Airbnb performance data including comparable properties.",
-        bullets: [`${r.dataQuality?.comparablesFound || r.shortLet.activeListings || "Market"} comparable properties analysed`, "Nightly rate and occupancy data"],
-        updated: "March 2026",
-        url: "#",
-      },
-      {
-        title: "OpenRent Rent Calculator",
-        source: "OpenRent",
-        desc: "UK rental market platform providing long-term let comparable data.",
-        bullets: ["Market rent benchmarking", "Comparable rental analysis"],
-        updated: "March 2026",
-        url: "#",
-      },
-      {
-        title: "Birmingham Airbnb Market Data",
-        source: "Airbtics",
-        desc: "Regional market intelligence for revenue estimation.",
-        bullets: ["Regional occupancy rates", "Seasonal demand patterns"],
-        updated: "February 2026",
-        url: "#",
-      },
-      {
-        title: "AirDNA UK Market Analytics",
-        source: "AirDNA",
-        desc: "Advanced short-term rental analytics and market intelligence.",
-        bullets: ["Supply and demand metrics", "Revenue optimization data"],
-        updated: "March 2026",
-        url: "#",
-      },
-      {
-        title: "Home.co.uk Market Rents",
-        source: "Home.co.uk",
-        desc: "UK property market rent data for accurate long-term comparisons.",
-        bullets: ["Local rent trends", "Area-specific valuations"],
-        updated: "March 2026",
-        url: "#",
-      },
-      {
-        title: "Holiday Let Management Costs",
-        source: "Stayful",
-        desc: "Internal cost data from Stayful's managed property portfolio.",
-        bullets: ["Cleaning and laundry costs", "Management fee structures"],
-        updated: "March 2026",
-        url: "#",
-      },
-      {
-        title: "UK Accommodation Occupancy Statistics",
-        source: "VisitBritain",
-        desc: "Official UK tourism statistics for accommodation occupancy.",
-        bullets: ["National occupancy benchmarks", "Regional tourism data"],
-        updated: "January 2026",
-        url: "#",
-      },
-    ];
+    // Data sources list removed — replaced by FAQ section
 
     return (
       <>
@@ -996,6 +1110,19 @@ export default function HomePage() {
             })}
           </nav>
 
+          {/* Calendly CTA */}
+          {!sidebarCollapsed && (
+            <div className="px-4 pb-2.5">
+              <button
+                type="button"
+                onClick={() => { trackCtaClick("sidebar_book_call"); window.open("https://calendly.com/zac-stayful/call", "_blank"); }}
+                style={{ background: "var(--primary)", color: "var(--primary-foreground)", fontSize: 12, fontWeight: 600, width: "100%", padding: "10px 0", borderRadius: 8, marginBottom: 10, border: "none", cursor: "pointer" }}
+              >
+                Book your action plan
+              </button>
+            </div>
+          )}
+
           {/* Progress at bottom */}
           <div className={`border-t border-border ${sidebarCollapsed ? "px-2 py-3" : "px-4 py-3"}`}>
             {!sidebarCollapsed && (
@@ -1047,48 +1174,418 @@ export default function HomePage() {
                   variant="outline"
                   size="sm"
                   className="border-primary-foreground/40 text-primary-foreground hover:bg-primary-foreground/10 bg-transparent"
-                  onClick={() => { trackCtaClick("view_presentation"); setShowPresentation(true); }}
+                  disabled={pdfLoading}
+                  onClick={async () => {
+                    if (!result) return;
+                    trackCtaClick("download_pdf");
+                    setPdfLoading(true);
+                    try {
+                      const res = await fetch("/api/generate-pdf", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          ...result,
+                          setup: setupSnapshotRef.current
+                            ? {
+                                furnishing: setupSnapshotRef.current.furnishing,
+                                bedrooms: setupSnapshotRef.current.bedrooms,
+                                items: setupSnapshotRef.current.items,
+                              }
+                            : undefined,
+                        }),
+                      });
+                      if (!res.ok) throw new Error("PDF generation failed");
+                      const blob = await res.blob();
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `Stayful_Property_Analysis.pdf`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    } catch {
+                      // silently fail — user sees button re-enable
+                    } finally {
+                      setPdfLoading(false);
+                    }
+                  }}
                 >
-                  <Monitor className="mr-1.5 h-3.5 w-3.5" />
-                  View Presentation
+                  {pdfLoading ? "Generating report…" : "↓ Download as PDF"}
                 </Button>
               </div>
-              <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6">
-                <div>
-                  <h1 className="text-2xl font-bold">{r.property.address}</h1>
-                  <p className="mt-1 text-sm text-primary-foreground/80">
-                    {r.property.bedrooms} bed, bath &middot; Sleeps {r.property.guests}
-                  </p>
-                </div>
-                <div className="flex flex-col gap-3 lg:items-end">
-                  {grossAnnual > 0 ? (
-                    <>
-                      <div>
-                        <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Gross Revenue</p>
-                        <p className="text-2xl font-bold">
-                          {gbp(grossAnnual)}{" "}
-                          <span className="text-base font-normal text-primary-foreground/80">({gbp(Math.round(grossAnnual / 12))}/mo)</span>
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Net Revenue</p>
-                        <p className="text-2xl font-bold">
-                          {gbp(stlNetAnnual)}{" "}
-                          <span className="text-base font-normal text-primary-foreground/80">({gbp(Math.round(stlNetAnnual / 12))}/mo)</span>
-                        </p>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-right">
-                      <p className="text-sm text-primary-foreground/80">Limited market data available</p>
-                      <p className="text-xs text-primary-foreground/60 mt-1">Book a call with Stayful for a personalised estimate</p>
-                    </div>
-                  )}
-                  <p className="text-[11px] text-primary-foreground/60">
-                    After booking platform fees, cleaning, laundry and property management
-                  </p>
-                </div>
+              {/* Property title — centered above the two estimate columns */}
+              <div className="mb-6 text-center">
+                <h1 className="text-2xl font-bold">{r.property.address}</h1>
+                <p className="mt-1 text-sm text-primary-foreground/80">
+                  {r.property.bedrooms} bed &middot; bath &middot; Sleeps {r.property.guests}
+                </p>
               </div>
+
+              {grossAnnual > 0 ? (
+                <>
+                  {/* Two estimate columns — side-by-side on lg, stacked on mobile.
+                      Mobile: natural vertical stack (Top, then Filtered, then EPV).
+                      Desktop: grid with a vertical divider between the two columns. */}
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-primary-foreground/15">
+                    {/* ── Top Market Potential (V4 PMI headline — unaffected by exclusions) ── */}
+                    <div className="lg:pr-8">
+                      <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Top Market Potential</p>
+                      <p className="text-sm text-primary-foreground/80 mb-3">
+                        What a top-performer in this area can earn
+                      </p>
+                      <p className="text-3xl font-bold leading-tight">
+                        {gbp(topGross)}{" "}
+                        <span className="text-base font-normal text-primary-foreground/80">{gbp(Math.round(topGross / 12))}/mo</span>
+                      </p>
+                      <p className="mt-4 text-xs text-primary-foreground/70 uppercase tracking-wider">Net Revenue</p>
+                      <p className="text-3xl font-bold leading-tight">
+                        {gbp(topNet)}{" "}
+                        <span className="text-base font-normal text-primary-foreground/80">{gbp(Math.round(topNet / 12))}/mo</span>
+                      </p>
+                      <p className="mt-2 text-[11px] text-primary-foreground/70 leading-relaxed max-w-xs">
+                        After booking platform fees, cleaning, laundry and property management
+                      </p>
+                      <div className="mt-4 flex items-start gap-6">
+                        <div>
+                          <p className="text-[11px] text-primary-foreground/70 uppercase tracking-wider">ADR</p>
+                          <p className="mt-0.5 text-xl font-bold">{gbp(topAdr)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] text-primary-foreground/70 uppercase tracking-wider">Occupancy</p>
+                          <p className="mt-0.5 text-xl font-bold">{pct(topOcc)}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Your Filtered Estimate (mean of kept comps; snaps to Top at 0 excluded) ── */}
+                    <div className="lg:pl-8">
+                      <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Your Filtered Estimate</p>
+                      <p className="text-sm text-primary-foreground/80 mb-3">
+                        {!hasIncluded
+                          ? `All ${allComps.length} comps excluded — reset filters to restore`
+                          : "Average of comps you kept"}
+                      </p>
+                      <p className="text-3xl font-bold leading-tight">
+                        {gbp(filteredGross)}
+                        {filteredGross > 0 && (
+                          <>
+                            {" "}
+                            <span className="text-base font-normal text-primary-foreground/80">{gbp(Math.round(filteredGross / 12))}/mo</span>
+                          </>
+                        )}
+                      </p>
+                      <p className="mt-4 text-xs text-primary-foreground/70 uppercase tracking-wider">Net Revenue</p>
+                      <p className="text-3xl font-bold leading-tight">
+                        {gbp(filteredNet)}
+                        {filteredNet > 0 && (
+                          <>
+                            {" "}
+                            <span className="text-base font-normal text-primary-foreground/80">{gbp(Math.round(filteredNet / 12))}/mo</span>
+                          </>
+                        )}
+                      </p>
+                      <p className="mt-2 text-[11px] text-primary-foreground/70 leading-relaxed max-w-xs">
+                        After booking platform fees, cleaning, laundry and property management
+                      </p>
+                      <div className="mt-4 flex items-start gap-6">
+                        <div>
+                          <p className="text-[11px] text-primary-foreground/70 uppercase tracking-wider">ADR</p>
+                          <p className="mt-0.5 text-xl font-bold">{gbp(filteredAdr)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[11px] text-primary-foreground/70 uppercase tracking-wider">Occupancy</p>
+                          <p className="mt-0.5 text-xl font-bold">{pct(filteredOcc)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Centered property value range block under both columns ── */}
+                  {r.propertyValuation && (() => {
+                    const lower = r.propertyValuation.estimatedValue;
+                    const upper = Math.round(lower * 1.25);
+                    return (
+                      <div className="mt-6 border-t border-primary-foreground/15 pt-6 text-center">
+                        <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Est. Property Value Range</p>
+                        <div className="mt-3 flex items-center justify-center gap-3">
+                          <div className="text-center">
+                            <p className="text-[10px] text-primary-foreground/50 uppercase tracking-wider mb-0.5">Conservative</p>
+                            <p className="text-xl font-semibold" style={{ color: "rgba(255,255,255,0.65)" }}>{gbp(lower)}</p>
+                          </div>
+                          <div className="flex-1" style={{ maxWidth: 120, height: 3, borderRadius: 2, background: "linear-gradient(to right, rgba(255,255,255,0.25), rgba(255,255,255,0.65))" }} />
+                          <div className="text-center">
+                            <p className="text-[10px] text-primary-foreground/50 uppercase tracking-wider mb-0.5">Upper estimate</p>
+                            <p className="text-2xl font-bold text-primary-foreground">{gbp(upper)}</p>
+                          </div>
+                        </div>
+                        <p className="mt-2 text-primary-foreground/30" style={{ fontSize: 10 }}>Range reflects current market uplift potential in this postcode</p>
+                        <p className="mt-1 text-[11px] text-primary-foreground/60">Source: PropertyData</p>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Refinement tagline */}
+                  <p className="mt-4 text-center text-sm italic text-primary-foreground/75">
+                    Refine your competition data for a more direct, accurate analysis of this property&apos;s income potential
+                  </p>
+
+                  {/* ── Customise expenses — user-adjustable net-revenue formula ── */}
+                  <div className="mt-5 border-t border-primary-foreground/15 pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setExpensesExpanded((v) => !v)}
+                      className="flex w-full items-center justify-center gap-2 text-xs font-medium text-primary-foreground/80 hover:text-primary-foreground transition-colors"
+                      aria-expanded={expensesExpanded}
+                    >
+                      {expensesExpanded ? "Hide" : "Estimate"} profit
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expensesExpanded ? "rotate-180" : ""}`} aria-hidden="true" />
+                    </button>
+                    {expensesExpanded && (
+                      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        {/* Platform fee % */}
+                        <div>
+                          <label className="block text-[11px] font-semibold uppercase tracking-wider text-primary-foreground/70">
+                            Booking platform fees
+                          </label>
+                          <div className="mt-1 flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={0.5}
+                              value={platformFeePct ?? effPlatformPct}
+                              onChange={(e) => {
+                                const v = e.target.value.trim();
+                                if (v === "") { setPlatformFeePct(null); return; }
+                                const n = Number(v);
+                                if (Number.isFinite(n) && n >= 0 && n <= 100) setPlatformFeePct(n);
+                              }}
+                              className="w-16 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                            />
+                            <span className="text-sm text-primary-foreground/80">%</span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-primary-foreground/60">
+                            {gbp(Math.round(grossAnnual * (effPlatformPct / 100) / 12))}/mo · {gbp(Math.round(grossAnnual * (effPlatformPct / 100)))}/yr
+                          </p>
+                        </div>
+
+                        {/* Management fee % */}
+                        <div>
+                          <label className="block text-[11px] font-semibold uppercase tracking-wider text-primary-foreground/70">
+                            Management fees
+                          </label>
+                          <div className="mt-1 flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={0.5}
+                              value={mgmtFeePct ?? effMgmtPct}
+                              onChange={(e) => {
+                                const v = e.target.value.trim();
+                                if (v === "") { setMgmtFeePct(null); return; }
+                                const n = Number(v);
+                                if (Number.isFinite(n) && n >= 0 && n <= 100) setMgmtFeePct(n);
+                              }}
+                              className="w-16 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                            />
+                            <span className="text-sm text-primary-foreground/80">%</span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-primary-foreground/60">
+                            {gbp(Math.round(grossAnnual * (effMgmtPct / 100) / 12))}/mo · {gbp(Math.round(grossAnnual * (effMgmtPct / 100)))}/yr
+                          </p>
+                        </div>
+
+                        {/* Cleaning & laundry £ per month */}
+                        <div>
+                          <label className="block text-[11px] font-semibold uppercase tracking-wider text-primary-foreground/70">
+                            Cleaning &amp; laundry
+                          </label>
+                          <div className="mt-1 flex items-center gap-1">
+                            <span className="text-sm text-primary-foreground/80">£</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={10}
+                              value={cleaningMonthly ?? effCleaningMonthly}
+                              onChange={(e) => {
+                                const v = e.target.value.trim();
+                                if (v === "") { setCleaningMonthly(null); return; }
+                                const n = Number(v);
+                                if (Number.isFinite(n) && n >= 0) setCleaningMonthly(Math.round(n));
+                              }}
+                              className="w-24 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                            />
+                            <span className="text-sm text-primary-foreground/80">/mo</span>
+                          </div>
+                          <p className="mt-1 text-[11px] text-primary-foreground/60">
+                            × 12 = {gbp(cleaningAnnual)}/yr
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    {/* ── Overhead inputs (bills, mortgage, other) ── */}
+                    {expensesExpanded && (
+                      <div className="mt-4 border-t border-primary-foreground/15 pt-4">
+                        <p className="mb-3 text-center text-xs font-medium text-primary-foreground/80">Your monthly overheads</p>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                          {/* Mortgage / Rent */}
+                          <div className="rounded-lg bg-primary-foreground/10 p-3">
+                            <label className="text-[11px] font-medium text-primary-foreground/70">
+                              Mortgage / Rent
+                            </label>
+                            <div className="mt-1 flex items-center gap-1">
+                              <span className="text-sm text-primary-foreground/80">£</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={50}
+                                value={overheadMortgage ?? ""}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v === "") { setOverheadMortgage(null); return; }
+                                  const n = Number(v);
+                                  if (Number.isFinite(n) && n >= 0) setOverheadMortgage(Math.round(n));
+                                }}
+                                className="w-24 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                              />
+                              <span className="text-sm text-primary-foreground/80">/mo</span>
+                            </div>
+                          </div>
+                          {/* Bills */}
+                          <div className="rounded-lg bg-primary-foreground/10 p-3">
+                            <label className="text-[11px] font-medium text-primary-foreground/70">
+                              Bills (council tax, utilities, broadband)
+                            </label>
+                            <div className="mt-1 flex items-center gap-1">
+                              <span className="text-sm text-primary-foreground/80">£</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={10}
+                                value={overheadBills ?? ""}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v === "") { setOverheadBills(null); return; }
+                                  const n = Number(v);
+                                  if (Number.isFinite(n) && n >= 0) setOverheadBills(Math.round(n));
+                                }}
+                                className="w-24 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                              />
+                              <span className="text-sm text-primary-foreground/80">/mo</span>
+                            </div>
+                          </div>
+                          {/* Other */}
+                          <div className="rounded-lg bg-primary-foreground/10 p-3">
+                            <label className="text-[11px] font-medium text-primary-foreground/70">
+                              Other / miscellaneous
+                            </label>
+                            <div className="mt-1 flex items-center gap-1">
+                              <span className="text-sm text-primary-foreground/80">£</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={10}
+                                value={overheadOther ?? ""}
+                                placeholder="0"
+                                onChange={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v === "") { setOverheadOther(null); return; }
+                                  const n = Number(v);
+                                  if (Number.isFinite(n) && n >= 0) setOverheadOther(Math.round(n));
+                                }}
+                                className="w-24 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                              />
+                              <span className="text-sm text-primary-foreground/80">/mo</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── True Profit display ── */}
+                    {expensesExpanded && totalMonthlyOverheads > 0 && (
+                      <div className="mt-4 border-t border-primary-foreground/15 pt-4">
+                        <p className="mb-3 text-center text-xs font-medium text-primary-foreground/80">Your true profit (after all overheads)</p>
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                          <div className="rounded-lg bg-primary-foreground/10 p-4 text-center">
+                            <p className="text-[11px] font-medium text-primary-foreground/70 mb-1">Top Market Profit</p>
+                            <p className="text-2xl font-bold text-primary-foreground">
+                              {gbp(computeProfit(topGross))}
+                              <span className="text-sm font-normal text-primary-foreground/60">/yr</span>
+                            </p>
+                            <p className="mt-1 text-sm text-primary-foreground/80">
+                              {gbp(Math.round(computeProfit(topGross) / 12))}/mo
+                            </p>
+                            <p className="mt-2 text-[10px] text-primary-foreground/50">
+                              Net {gbp(computeNet(topGross))} − Overheads {gbp(totalAnnualOverheads)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg bg-primary-foreground/10 p-4 text-center">
+                            <p className="text-[11px] font-medium text-primary-foreground/70 mb-1">Your Filtered Profit</p>
+                            <p className="text-2xl font-bold text-primary-foreground">
+                              {gbp(computeProfit(filteredGross))}
+                              <span className="text-sm font-normal text-primary-foreground/60">/yr</span>
+                            </p>
+                            <p className="mt-1 text-sm text-primary-foreground/80">
+                              {gbp(Math.round(computeProfit(filteredGross) / 12))}/mo
+                            </p>
+                            <p className="mt-2 text-[10px] text-primary-foreground/50">
+                              Net {gbp(computeNet(filteredGross))} − Overheads {gbp(totalAnnualOverheads)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {expensesExpanded && (
+                      <p className="mt-3 text-center text-[11px] text-primary-foreground/60">
+                        Your inputs flow through to both Net Revenue figures and the Revenue Breakdown &amp; Profit Calculator sections.
+                      </p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="text-center">
+                  <p className="text-sm text-primary-foreground/80">Limited market data available</p>
+                  <p className="text-xs text-primary-foreground/60 mt-1">Book a call with Stayful for a personalised estimate</p>
+                </div>
+              )}
+            </div>
+
+            {/* Estimate setup costs — collapsible calculator */}
+            <div className="mt-6">
+              <SetupCalculator
+                defaultBedrooms={r.property.bedrooms}
+                propertyAddress={r.property.address}
+                onSnapshot={(snap) => { setupSnapshotRef.current = snap; }}
+              />
+            </div>
+
+            {/* Is this information accurate? — data-source confidence panel */}
+            <div className="mt-6">
+              <AccuracyPanel />
+            </div>
+
+            {/* Calendly CTA banner */}
+            <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5 rounded-xl bg-primary p-6 sm:p-7">
+              <div>
+                <p className="text-base font-semibold text-primary-foreground" style={{ marginBottom: 6 }}>
+                  Book your profitability action plan
+                </p>
+                <p className="text-[13px] text-primary-foreground/60">
+                  A free consultation to review the risks in your property and analyse your realistic profitability.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { trackCtaClick("overview_book_call"); window.open("https://calendly.com/zac-stayful/call", "_blank"); }}
+                className="shrink-0 whitespace-nowrap rounded-lg px-5 py-3 text-[13px] font-bold text-primary"
+                style={{ background: "#B9D5C6", border: "none", cursor: "pointer" }}
+              >
+                Book your plan →
+              </button>
             </div>
           </section>
 
@@ -1116,7 +1613,7 @@ export default function HomePage() {
                   <a href="https://calendly.com/zac-stayful/call" target="_blank" rel="noopener noreferrer"
                     className="mt-2 inline-block text-xs font-medium text-primary underline"
                     onClick={() => trackCtaClick("book_call")}>
-                    Book a Free Assessment with Stayful
+                    Book your profitability action plan
                   </a>
                 )}
               </div>
@@ -1128,135 +1625,357 @@ export default function HomePage() {
               </p>
             )}
 
-            {/* Stat cards — always show core 3, conditionally show rating/reviews/age */}
-            <div className={`mb-6 grid gap-3 grid-cols-2 sm:grid-cols-3 ${hasComparables ? "lg:grid-cols-6" : "lg:grid-cols-3"}`}>
+            {/* ─ Financial summary row ─ */}
+            <div className="mb-4 grid grid-cols-3 gap-3">
               <div className="rounded-lg bg-muted/50 p-3">
-                <p className="text-[11px] text-muted-foreground">{hasTop5 ? "Top 5 Avg. Nightly Rate" : "Avg. Nightly Rate"}</p>
-                <p className="mt-1 text-xl font-bold text-foreground">{gbp(compAvgNightlyRate)}</p>
+                <p className="text-[11px] text-muted-foreground">Avg. Nightly Rate</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{gbp(poolAvgAdr)}</p>
               </div>
               <div className="rounded-lg bg-muted/50 p-3">
-                <p className="text-[11px] text-muted-foreground">{hasTop5 ? "Top 5 Avg. Occupancy" : "Avg. Occupancy"}</p>
-                <p className="mt-1 text-xl font-bold text-foreground">{pct(compAvgOccupancy)}</p>
+                <p className="text-[11px] text-muted-foreground">Avg. Occupancy</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{pct(poolAvgOccupancy)}</p>
               </div>
               <div className="rounded-lg bg-muted/50 p-3">
-                <p className="text-[11px] text-muted-foreground">{hasTop5 ? "Top 5 Avg. Revenue" : "Avg. Annual Revenue"}</p>
-                <p className="mt-1 text-xl font-bold text-foreground">{gbp(compAvgRevenue)}</p>
+                <p className="text-[11px] text-muted-foreground">Avg. Annual Revenue</p>
+                <p className="mt-1 text-xl font-bold text-foreground">{gbp(poolAvgRevenue)}</p>
               </div>
-              {hasComparables && (
-                <>
+            </div>
+
+            {/* ─ Comp Set Benchmarks banner ─ */}
+            {hasComparables && (
+              <div className="mb-6 rounded-lg border border-border bg-card p-4">
+                <div className="mb-3">
+                  <p className="text-sm font-semibold text-foreground">Comp Set Benchmarks</p>
+                  <p className="text-xs text-muted-foreground">What your listing needs to match the market</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-[11px] text-muted-foreground">Avg. Rating</p>
                     <p className="mt-1 text-xl font-bold text-foreground flex items-center gap-1">
-                      {avgRating > 0 ? <><Star className="h-4 w-4 text-warning fill-warning" />{avgRating} / 5</> : "N/A"}
+                      {avgRating > 0 ? (
+                        <><Star className="h-4 w-4 text-warning fill-warning" />{roundReviewRating(avgRating)}</>
+                      ) : (
+                        <span className="text-base font-semibold text-muted-foreground/50">N/A</span>
+                      )}
                     </p>
                   </div>
                   <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-[11px] text-muted-foreground">Avg. Reviews</p>
-                    <p className="mt-1 text-xl font-bold text-foreground">{avgReviews > 0 ? avgReviews : "N/A"}</p>
+                    <p className="mt-1 text-xl font-bold text-foreground">
+                      {avgReviews > 0 ? avgReviews : <span className="text-base font-semibold text-muted-foreground/50">N/A</span>}
+                    </p>
                   </div>
                   <div className="rounded-lg bg-muted/50 p-3">
                     <p className="text-[11px] text-muted-foreground">Avg. Listing Age</p>
-                    <p className="mt-1 text-xl font-bold text-foreground">{avgListingAge > 0 ? `${avgListingAge} yrs` : "N/A"}</p>
+                    <p className="mt-1 text-xl font-bold text-foreground">
+                      {avgListingAge > 0 ? `${avgListingAge} yrs` : <span className="text-base font-semibold text-muted-foreground/50">N/A</span>}
+                    </p>
                   </div>
-                </>
-              )}
-            </div>
+                </div>
+              </div>
+            )}
 
-            {/* Property table */}
+            {/* ─ Methodology snapshot + source attribution ─ */}
+            {r.shortLet.comparables.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                  Based on{" "}
+                  <span className="font-semibold text-foreground">{r.dataQuality?.comparablesFound ?? r.shortLet.comparables.length}</span>
+                  {r.shortLet.activeListings > 0 && (
+                    <> of <span className="font-semibold text-foreground">{r.shortLet.activeListings}</span></>
+                  )}
+                  {" "}active Airbnb listings
+                  {r.dataQuality?.searchRadiusKm ? <> within <span className="font-semibold text-foreground">{r.dataQuality.searchRadiusKm} km</span></> : null}
+                  {" "}· Median-aggregated · Updated {formatRelativeTime(r.updatedAt)}
+                  {r.dataQuality?.searchBroadened && (
+                    <span className="text-muted-foreground/80"> (search radius broadened)</span>
+                  )}
+                </p>
+                <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground whitespace-nowrap">
+                  <Home className="h-3 w-3" aria-hidden="true" />
+                  Sourced from Airbnb · via Airbtics
+                </span>
+              </div>
+            )}
+
+            {/* ─ Filter banner (always visible when comps exist) ─ */}
+            {r.shortLet.comparables.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
+                <div className="flex items-center gap-2 text-sm">
+                  <Info className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                  {hasFilters ? (
+                    <span className="text-foreground">
+                      Showing <span className="font-semibold">{includedComps.length} of {allComps.length}</span> comparables ·
+                      {" "}Filtered Estimate: <span className="font-semibold">{gbp(filteredEstimate)}/yr</span>
+                    </span>
+                  ) : (
+                    <span className="text-foreground">
+                      Refine your estimate: exclude any comparable that doesn&apos;t match your property (wrong size, luxury outlier, sparse listing) to see a tailored figure.
+                    </span>
+                  )}
+                </div>
+                {hasFilters && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setExcludedComps(new Set())}
+                    className="shrink-0"
+                  >
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+                    Reset filters
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* ─ PMI-style comp cards + Decision Engine ─ */}
             {r.shortLet.comparables.length > 0 ? (
-              <Card>
-                <CardContent className="py-4">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                          <th className="pb-2 font-medium">Property</th>
-                          <th className="pb-2 font-medium text-center">Beds</th>
-                          <th className="pb-2 font-medium text-center">Guests</th>
-                          <th className="pb-2 font-medium">Nightly Rate</th>
-                          <th className="pb-2 font-medium">Occupancy</th>
-                          <th className="pb-2 font-medium">Days Available</th>
-                          <th className="pb-2 font-medium">Est. Revenue</th>
-                          <th className="pb-2 font-medium">Rating</th>
-                          <th className="pb-2 font-medium">View</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {r.shortLet.comparables.map((comp, i) => {
-                          const isTopPerformer = hasTop5 && top5Set.has(comp);
-                          return (
-                          <tr
-                            key={i}
-                            className={`border-b border-border/50 last:border-0 ${isTopPerformer ? "border-l-2 border-l-success bg-success/5" : i % 2 === 1 ? "bg-muted/20" : ""}`}
-                          >
-                            <td className="py-2.5 pr-4">
-                              <div className="flex items-center gap-2">
-                                <p className="font-medium truncate max-w-[180px]">
-                                  {comp.title || `Listing ${i + 1}`}
-                                </p>
-                                {isTopPerformer && (
-                                  <span className="inline-flex items-center rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success whitespace-nowrap">Top performer</span>
+              <>
+                <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {[...r.shortLet.comparables.entries()]
+                    .sort(([a], [b]) => {
+                      const aEx = excludedComps.has(a);
+                      const bEx = excludedComps.has(b);
+                      return aEx === bEx ? 0 : aEx ? 1 : -1;
+                    })
+                    .map(([i, comp]) => {
+                    const isExcluded = excludedComps.has(i);
+                    const isTopPerformer = !isExcluded && hasTop5 && top5Set.has(comp);
+                    const ratingDisplay = comp.rating > 0 ? roundReviewRating(comp.rating) : null;
+                    const ratingAboveAvg = !isExcluded && avgRating > 0 && comp.rating > 0 && comp.rating > avgRating + 0.05;
+                    const ratingBelowAvg = !isExcluded && avgRating > 0 && comp.rating > 0 && comp.rating < avgRating - 0.05;
+                    return (
+                      <Card
+                        key={i}
+                        className={`relative overflow-hidden transition-all ${isTopPerformer ? "ring-1 ring-success" : ""} ${isExcluded ? "opacity-50 grayscale" : ""}`}
+                      >
+                        {isTopPerformer && (
+                          <div className="absolute left-0 right-0 top-0 h-0.5 bg-success" />
+                        )}
+                        {comp.thumbnailUrl && (
+                          <div className="aspect-[16/9] w-full overflow-hidden">
+                            <img
+                              src={comp.thumbnailUrl}
+                              alt={comp.title || `Listing ${i + 1}`}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          </div>
+                        )}
+                        <CardContent className={comp.thumbnailUrl ? "p-4 pt-3" : "p-4"}>
+                          {/* Header */}
+                          <div className="mb-3 flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className={`truncate text-sm font-semibold leading-tight text-foreground ${isExcluded ? "line-through" : ""}`}>
+                                {comp.title || `Listing ${i + 1}`}
+                              </p>
+                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                                {comp.bedrooms}b · {comp.accommodates}g{comp.distance != null ? ` · ${comp.distance} km` : ""}
+                              </p>
+                            </div>
+                            {isExcluded ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground whitespace-nowrap">
+                                Excluded
+                              </span>
+                            ) : isTopPerformer ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success whitespace-nowrap">
+                                Top
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {/* Primary metrics */}
+                          <div className="mb-3 grid grid-cols-3 divide-x divide-border/50 rounded-lg bg-muted/40 px-2 py-2.5">
+                            <div className="px-1 text-center">
+                              <p className="text-[10px] text-muted-foreground">Nightly</p>
+                              <p className="mt-0.5 text-sm font-bold text-foreground">{gbp(comp.averageDailyRate)}</p>
+                            </div>
+                            <div className="px-1 text-center">
+                              <p className="text-[10px] text-muted-foreground">Occupancy</p>
+                              <p className="mt-0.5 text-sm font-bold text-foreground">{pct(comp.occupancyRate)}</p>
+                            </div>
+                            <div className="px-1 text-center">
+                              <p className="text-[10px] text-muted-foreground">Annual</p>
+                              <p className="mt-0.5 text-sm font-bold text-foreground">{gbp(comp.annualRevenue)}</p>
+                            </div>
+                          </div>
+
+                          {/* Secondary: rating + review count */}
+                          <div className="mb-2 flex items-center gap-1.5 flex-wrap">
+                            {ratingDisplay ? (
+                              <>
+                                <Star className="h-3.5 w-3.5 fill-warning text-warning" />
+                                <span className="text-sm font-medium">{ratingDisplay}</span>
+                                {comp.reviewCount > 0 && (
+                                  <>
+                                    <span className="text-[11px] text-muted-foreground">·</span>
+                                    <span className="text-xs text-muted-foreground">{comp.reviewCount} review{comp.reviewCount === 1 ? "" : "s"}</span>
+                                  </>
+                                )}
+                                {ratingAboveAvg && (
+                                  <span className="rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">↑ above avg</span>
+                                )}
+                                {ratingBelowAvg && (
+                                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">↓ below avg</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">No rating yet</span>
+                            )}
+                          </div>
+
+                          {/* Listing activity: days available + listing age */}
+                          {(() => {
+                            const daysEff = comp.daysAvailable > 0
+                              ? comp.daysAvailable
+                              : Math.round(comp.occupancyRate * 365);
+                            const hasAge = comp.listingAge > 0;
+                            if (daysEff <= 0 && !hasAge) return null;
+                            return (
+                              <div className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+                                {daysEff > 0 && (
+                                  <span className="inline-flex items-center gap-1">
+                                    <Calendar className="h-3 w-3" aria-hidden="true" />
+                                    {daysEff} days/yr
+                                  </span>
+                                )}
+                                {daysEff > 0 && hasAge && <span className="text-muted-foreground/60">·</span>}
+                                {hasAge && (
+                                  <span className="inline-flex items-center gap-1">
+                                    <Clock className="h-3 w-3" aria-hidden="true" />
+                                    {comp.listingAge} yr{comp.listingAge === 1 ? "" : "s"} old
+                                  </span>
                                 )}
                               </div>
-                              <p className="text-[11px] text-muted-foreground">
-                                {comp.distance != null ? `${comp.distance} km away` : ""}
-                              </p>
-                            </td>
-                            <td className="py-2.5 text-center">
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-success/15 text-xs font-semibold text-success">
-                                {comp.bedrooms}
-                              </span>
-                            </td>
-                            <td className="py-2.5 text-center">
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-success/15 text-xs font-semibold text-success">
-                                {comp.accommodates}
-                              </span>
-                            </td>
-                            <td className="py-2.5 pr-4 font-semibold">
-                              {gbp(comp.averageDailyRate)}
-                            </td>
-                            <td className="py-2.5 pr-4">{pct(comp.occupancyRate)}</td>
-                            <td className="py-2.5 pr-4 text-muted-foreground">
-                              {comp.daysAvailable > 0 ? comp.daysAvailable : Math.round(comp.occupancyRate * 365)}
-                            </td>
-                            <td className="py-2.5 pr-4 font-semibold">
-                              {gbp(comp.annualRevenue)}
-                            </td>
-                            <td className="py-2.5 pr-4">
-                              {comp.rating > 0 ? (
-                                <div className="flex items-center gap-1">
-                                  <Star className="h-3 w-3 text-warning fill-warning" />
-                                  <span className="text-sm">{comp.rating.toFixed(1)}</span>
-                                  {comp.reviewCount > 0 && (
-                                    <span className="text-[11px] text-muted-foreground">({comp.reviewCount})</span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">N/A</span>
-                              )}
-                            </td>
-                            <td className="py-2.5">
-                              {comp.url ? (
-                                <a
-                                  href={comp.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-primary hover:underline text-xs font-medium"
-                                >
-                                  View
-                                </a>
-                              ) : (
-                                <span className="text-muted-foreground text-xs">-</span>
-                              )}
-                            </td>
-                          </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                            );
+                          })()}
+
+                          {/* Airbnb-branded action button */}
+                          {comp.url ? (
+                            comp.url.startsWith("https://www.airbnb.") ? (
+                              <a
+                                href={comp.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-[#FF385C]/10 px-3 py-1.5 text-xs font-semibold text-[#FF385C] transition-colors hover:bg-[#FF385C]/20"
+                              >
+                                View on Airbnb
+                                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                              </a>
+                            ) : (
+                              <a
+                                href={comp.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex w-full items-center justify-center gap-1.5 rounded-md bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+                              >
+                                View listing
+                                <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                              </a>
+                            )
+                          ) : (
+                            <div className="flex w-full items-center justify-center rounded-md bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+                              Listing URL unavailable
+                            </div>
+                          )}
+
+                          {/* Exclude / Include toggle */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExcludedComps((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(i)) next.delete(i);
+                                else next.add(i);
+                                return next;
+                              });
+                            }}
+                            className={
+                              isExcluded
+                                ? "mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted"
+                                : "mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                            }
+                            aria-pressed={isExcluded}
+                            aria-label={isExcluded ? "Include this comp in your estimate" : "Exclude this comp from your estimate"}
+                          >
+                            {isExcluded ? (
+                              <>
+                                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                Include
+                              </>
+                            ) : (
+                              <>
+                                <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                                Exclude from estimate
+                              </>
+                            )}
+                          </button>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+
+                {/* ─ Decision Engine ─ */}
+                <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {/* To Match the Market */}
+                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                    <div className="mb-3">
+                      <p className="text-sm font-semibold text-foreground">To Match the Market</p>
+                      <p className="text-xs text-muted-foreground">
+                        Benchmark from all {comps.length} comparable propert{comps.length === 1 ? "y" : "ies"}
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Target Nightly Rate</span>
+                        <span className="text-sm font-bold text-foreground">{gbp(poolAvgAdr)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Target Occupancy</span>
+                        <span className="text-sm font-bold text-foreground">{pct(poolAvgOccupancy)}</span>
+                      </div>
+                      {avgRating > 0 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">Target Rating</span>
+                          <span className="flex items-center gap-1 text-sm font-bold text-foreground">
+                            <Star className="h-3.5 w-3.5 fill-warning text-warning" />
+                            {roundReviewRating(avgRating)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between border-t border-primary/20 pt-2">
+                        <span className="text-xs font-medium text-muted-foreground">Target Annual Revenue</span>
+                        <span className="text-base font-bold text-foreground">{gbp(poolAvgRevenue)}</span>
+                      </div>
+                    </div>
                   </div>
-                </CardContent>
-              </Card>
+
+                  {/* To Beat the Market */}
+                  <div className="rounded-xl border border-success/30 bg-success/5 p-4">
+                    <div className="mb-3">
+                      <p className="text-sm font-semibold text-foreground">To Beat the Market</p>
+                      <p className="text-xs text-muted-foreground">
+                        Based on top {top25PctCount} propert{top25PctCount === 1 ? "y" : "ies"} (top 25%)
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Target Nightly Rate</span>
+                        <span className="text-sm font-bold text-success">{gbp(beatAvgAdr)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Target Occupancy</span>
+                        <span className="text-sm font-bold text-success">{pct(beatAvgOccupancy)}</span>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-success/20 pt-2">
+                        <span className="text-xs font-medium text-muted-foreground">Target Annual Revenue</span>
+                        <span className="text-base font-bold text-success">{gbp(beatAvgRevenue)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
             ) : (
               <Card className="border-l-4 border-l-primary">
                 <CardContent className="py-6">
@@ -1284,7 +2003,7 @@ export default function HomePage() {
                         onClick={() => trackCtaClick("book_call")}
                       >
                         <Phone className="h-3 w-3" />
-                        Book a Free Assessment
+                        Book your profitability action plan
                         <ExternalLink className="h-3 w-3" />
                       </a>
                     </div>
@@ -1540,166 +2259,7 @@ export default function HomePage() {
           </section>
 
           {/* ══════════════════════════════════════════════════════════
-              Section 5: True Profit Calculator
-              ══════════════════════════════════════════════════════════ */}
-          <section id="profit-calculator" ref={setSectionRef("profit-calculator")} className="mb-12">
-            <SectionHeading
-              icon={Calculator}
-              title="True Profit Calculator"
-              subtitle="Enter your monthly costs to see your actual take-home profit"
-            />
-
-            {/* Inputs side by side */}
-            <div className="mb-6 grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="calc-mortgage" className="text-sm font-semibold">
-                  Monthly Mortgage Cost
-                </Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">£</span>
-                  <Input
-                    id="calc-mortgage"
-                    type="number"
-                    min={0}
-                    className="pl-7"
-                    value={calcMortgage}
-                    onChange={(e) => setCalcMortgage(Number(e.target.value) || 0)}
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="calc-bills" className="text-sm font-semibold">
-                    Monthly Bills
-                  </Label>
-                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
-                </div>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">£</span>
-                  <Input
-                    id="calc-bills"
-                    type="number"
-                    min={0}
-                    className="pl-7"
-                    value={calcBills}
-                    onChange={(e) => setCalcBills(Number(e.target.value) || 0)}
-                  />
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Recommended: £400 (Council Tax, Utilities, WiFi)
-                </p>
-              </div>
-            </div>
-
-            {/* Three cards: STL, LTL, Extra Profit */}
-            <div className="grid gap-4 lg:grid-cols-3">
-              {/* Short-Term Let */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Short-Term Let</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between px-2 py-1.5">
-                      <span className="text-sm">Net Revenue</span>
-                      <div className="text-right">
-                        <span className="text-sm font-semibold">{gbp(stlNetAnnual)}</span>
-                        <span className="ml-1 text-xs text-muted-foreground">({gbp(Math.round(stlNetAnnual / 12))}/mo)</span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between px-2 py-1.5">
-                      <span className="text-sm text-muted-foreground">- Mortgage</span>
-                      <div className="text-right">
-                        <span className="text-sm text-destructive">-{gbp(calcMortgage * 12)}</span>
-                        <span className="ml-1 text-xs text-muted-foreground">(-{gbp(calcMortgage)}/mo)</span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between px-2 py-1.5">
-                      <span className="text-sm text-muted-foreground">- Bills</span>
-                      <div className="text-right">
-                        <span className="text-sm text-destructive">-{gbp(calcBills * 12)}</span>
-                        <span className="ml-1 text-xs text-muted-foreground">(-{gbp(calcBills)}/mo)</span>
-                      </div>
-                    </div>
-                    <div className="border-t border-border" />
-                    <div className="rounded-lg bg-success/10 px-3 py-3 text-center">
-                      <p className="text-sm font-bold text-foreground">True Annual Profit</p>
-                      <p className={`text-2xl font-bold ${stlTrueAnnualProfit >= 0 ? "text-success" : "text-destructive"}`}>
-                        {gbp(stlTrueAnnualProfit)} <span className="text-base font-normal text-muted-foreground">({gbp(Math.round(stlTrueAnnualProfit / 12))}/mo)</span>
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Long-Term Let */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Long-Term Let</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between px-2 py-1.5">
-                      <span className="text-sm">Net Revenue</span>
-                      <div className="text-right">
-                        <span className="text-sm font-semibold">{gbp(ltlNetAnnual)}</span>
-                        <span className="ml-1 text-xs text-muted-foreground">({gbp(Math.round(ltlNetAnnual / 12))}/mo)</span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between px-2 py-1.5">
-                      <span className="text-sm text-muted-foreground">- Mortgage</span>
-                      <div className="text-right">
-                        <span className="text-sm text-destructive">-{gbp(calcMortgage * 12)}</span>
-                        <span className="ml-1 text-xs text-muted-foreground">(-{gbp(calcMortgage)}/mo)</span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between px-2 py-1.5">
-                      <span className="text-sm text-muted-foreground">- Bills</span>
-                      <span className="text-sm font-medium text-success">Tenant pays</span>
-                    </div>
-                    <div className="border-t border-border" />
-                    <div className="rounded-lg bg-muted/50 px-3 py-3 text-center">
-                      <p className="text-sm font-bold text-foreground">True Annual Profit</p>
-                      <p className={`text-2xl font-bold ${ltlTrueAnnualProfit >= 0 ? "text-foreground" : "text-destructive"}`}>
-                        {gbp(ltlTrueAnnualProfit)} <span className="text-base font-normal text-muted-foreground">({gbp(Math.round(ltlTrueAnnualProfit / 12))}/mo)</span>
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Extra Profit Card */}
-              <Card className={`border-2 ${profitDifference >= 0 ? "border-success" : "border-destructive"}`}>
-                <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Extra Profit with Short-Term Let
-                  </p>
-                  <p className={`mt-2 text-3xl font-bold ${profitDifference >= 0 ? "text-success" : "text-destructive"}`}>
-                    {profitDifference >= 0 ? "+" : ""}{gbp(profitDifference)}
-                  </p>
-                  <p className={`text-lg font-semibold ${profitDifference >= 0 ? "text-success" : "text-destructive"}`}>
-                    {profitDifference >= 0 ? "+" : ""}{gbp(Math.round(profitDifference / 12))}/month
-                  </p>
-                  {profitDifference > 0 ? (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Short-term letting generates more profit even after bills.
-                    </p>
-                  ) : (
-                    <p className="mt-2 text-xs text-destructive">
-                      Long-term letting may be more profitable with these costs.
-                    </p>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-
-            <p className="mt-3 text-xs text-muted-foreground text-center">
-              Note: Short-term let bills (council tax, utilities, WiFi) are your responsibility. With long-term lets, tenants typically pay their own bills.
-            </p>
-          </section>
-
-          {/* ══════════════════════════════════════════════════════════
-              Section 6: 12-Month Forecast
+              Section 5: 12-Month Forecast
               ══════════════════════════════════════════════════════════ */}
           <section id="forecast" ref={setSectionRef("forecast")} className="mb-12">
             <SectionHeading
@@ -2089,70 +2649,189 @@ export default function HomePage() {
           {/* ══════════════════════════════════════════════════════════
               Section 10: Data Sources & Methodology
               ══════════════════════════════════════════════════════════ */}
-          <section id="data-sources" ref={setSectionRef("data-sources")} className="mb-12">
+          {/* ══════════════════════════════════════════════════════════
+              FAQ Section (replaced Data Sources)
+              ══════════════════════════════════════════════════════════ */}
+          <section id="faq" ref={setSectionRef("faq")} className="mb-12">
             <SectionHeading
-              icon={Database}
-              title="Data Sources & Methodology"
-              subtitle="How we calculate our estimates and where the data comes from"
+              icon={HelpCircle}
+              title="Frequently Asked Questions"
+              subtitle="Everything you need to know about short-term letting with Stayful"
             />
 
-            {/* Methodology card */}
-            <Card className="mb-6">
-              <CardContent className="py-6">
-                <h3 className="text-sm font-bold text-foreground mb-2">Methodology</h3>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Our property analysis combines data from multiple industry-leading sources to provide accurate revenue estimates. We analyse comparable properties in your area, local demand drivers, seasonal patterns, and market trends. Revenue projections account for platform fees (15%), property management (15%), and cleaning/laundry costs (18%), totalling 48% in operating expenses. Long-term let comparisons use a 10% letting agent fee. All figures are based on current market data and may vary based on property presentation, pricing strategy, and market conditions.
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* Source cards 2-column grid */}
-            <div className="grid gap-4 sm:grid-cols-2 mb-6">
-              {dataSources.map((source) => (
-                <Card key={source.title}>
-                  <CardContent className="pt-4 pb-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <p className="text-sm font-bold text-foreground">{source.title}</p>
-                        <p className="text-xs text-muted-foreground">{source.source}</p>
+            <div className="space-y-3">
+              {[
+                {
+                  emoji: "💷",
+                  question: "Will I actually earn these numbers?",
+                  short: "Based on real active Airbnb listings in your postcode, median-aggregated — not national averages.",
+                  answer: (
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      These projections are built from active Airbnb listings within the search radius of the property. The methodology uses the median revenue across comparable listings — not the top performers — so the figure shown represents what a typical, well-managed property in this area earns. The user can refine the figure on the Comparables tab by excluding listings that don&apos;t match their property, and the estimate updates in real time.
+                    </p>
+                  ),
+                },
+                {
+                  emoji: "⏱",
+                  question: "What does this actually involve day to day?",
+                  short: "With Stayful managing, your involvement is zero. Here is what that means in practice.",
+                  answer: (
+                    <div>
+                      <div className="grid gap-2 sm:grid-cols-2 mb-4">
+                        {["Guest enquiries and messaging", "Check-in and check-out coordination", "Dynamic pricing and calendar management", "Cleaning and laundry between stays", "Maintenance issues and repairs", "Review management and guest feedback", "Listing optimisation and photography", "Monthly income statements"].map((task) => (
+                          <div key={task} className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                              <span className="text-xs text-foreground">{task}</span>
+                            </div>
+                            <span className="text-[10px] font-semibold text-success bg-success/10 px-1.5 py-0.5 rounded">Stayful</span>
+                          </div>
+                        ))}
                       </div>
-                      <Button variant="outline" size="sm" className="shrink-0 text-xs h-7 px-2">
-                        View
-                      </Button>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        Your role as the property owner is to be available for significant maintenance decisions and to receive your monthly income. You can review everything through your owner dashboard at any time.
+                      </p>
                     </div>
-                    <p className="text-xs leading-relaxed text-muted-foreground mb-2">
-                      {source.desc}
+                  ),
+                },
+                {
+                  emoji: "💼",
+                  question: "What does management cost and what do I get for it?",
+                  short: "15% of revenue. Only charged on booked nights. No hidden fees.",
+                  answer: (
+                    <div>
+                      <div className="mb-4 flex items-baseline gap-3">
+                        <span className="text-3xl font-bold text-foreground">15%</span>
+                        <span className="text-sm text-muted-foreground">of revenue · only charged on nights that are booked</span>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2 mb-4">
+                        {["Professional listing setup and photography", "Dynamic pricing updated daily", "24/7 guest communication", "Cleaning and linen coordination", "Maintenance network and coordination", "Multi-platform distribution (Airbnb, Booking.com, direct)", "Monthly owner statements", "Dedicated property manager"].map((item) => (
+                          <div key={item} className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-lg border border-success/30 bg-success/5 px-4 py-3">
+                        <p className="text-xs font-semibold text-foreground">No lock-in contracts.</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Stayful operates on a rolling monthly basis. You can pause or end management with 30 days notice.</p>
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  emoji: "⚠",
+                  question: "What are the realistic risks for this property?",
+                  short: "Low-medium overall risk profile. STR outperforms long-let in every month of the year for this postcode.",
+                  answer: (
+                    <div>
+                      <div className="grid gap-3 sm:grid-cols-2 mb-4">
+                        {([
+                          { name: "Seasonal variation", level: "Medium", color: "warning", text: "Income varies by month. Summer earns more. The quietest month in this postcode still outperforms long-let." },
+                          { name: "Void periods", level: "Low", color: "success", text: "This postcode has strong year-round demand from hospitals, universities and local employers." },
+                          { name: "Property damage", level: "Low", color: "success", text: "All bookings include guest damage protection. Stayful holds a security deposit on every booking." },
+                          { name: "Regulation changes", level: "Low", color: "success", text: "No current Article 4 restrictions apply to this postcode. Stayful monitors regulatory changes continuously." },
+                        ] as const).map((risk) => (
+                          <div key={risk.name} className="rounded-lg border border-border bg-card p-3">
+                            <div className="flex items-center justify-between mb-1">
+                              <p className="text-xs font-semibold text-foreground">{risk.name}</p>
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded bg-${risk.color}/10 text-${risk.color}`}>{risk.level}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">{risk.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-sm text-muted-foreground">See the Risk section for a full breakdown of revenue consistency, seasonal variance and market demand scores.</p>
+                    </div>
+                  ),
+                },
+                {
+                  emoji: "🔓",
+                  question: "Can I get my property back if I need it?",
+                  short: "6-month fixed term with 3 months notice. Block out any dates in your calendar anytime you want to use the property yourself.",
+                  answer: (
+                    <div>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        {([
+                          { label: "Contract type", value: "6-month fixed term" },
+                          { label: "Notice period", value: "3 months" },
+                          { label: "Owner calendar access", value: "Anytime" },
+                          { label: "Block-out days", value: "Unlimited" },
+                        ]).map((item) => (
+                          <div key={item.label} className="rounded-lg bg-muted/50 p-3 text-center">
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{item.label}</p>
+                            <p className="mt-0.5 text-sm font-bold text-foreground">{item.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        You have full access to the property&apos;s calendar at any time through your owner dashboard — block out any dates you want to stay yourself, host family, or take the property offline temporarily. The management agreement is a 6-month fixed term with 3 months notice after that, so your income and guest experience are stable while you retain full control of when you want to use the property. Existing confirmed bookings at the point of notice are honoured to protect guests, and Stayful handles all guest communication throughout.
+                      </p>
+                    </div>
+                  ),
+                },
+                {
+                  emoji: "📅",
+                  question: "How long does it actually take to get up and running?",
+                  short: "Kick-off call once the agreement is signed, then 7–21 days before your property is live.",
+                  answer: (
+                    <div>
+                      <div className="mb-4 space-y-3 border-l-2 border-success/30 pl-4">
+                        {([
+                          { day: "Day 0", task: "Management agreement signed" },
+                          { day: "Day 1", task: "Kick-off call with your dedicated property manager" },
+                          { day: "Day 7–21", task: "Property goes live and starts taking bookings" },
+                        ]).map((step) => (
+                          <div key={step.day} className="flex gap-3">
+                            <span className="text-xs font-bold text-success whitespace-nowrap w-16">{step.day}</span>
+                            <span className="text-xs text-muted-foreground">{step.task}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-sm leading-relaxed text-muted-foreground">
+                        The 7–21 day window depends on the current condition of the property, access availability, cleaning team scheduling, and any snagging that needs addressing before launch. Stayful keeps you informed at every stage — you&apos;ll always know what&apos;s happening, what&apos;s next, and when your listing is expected to go live.
+                      </p>
+                    </div>
+                  ),
+                },
+                {
+                  emoji: "🏠",
+                  question: "Does Stayful manage properties in my area?",
+                  short: "Stayful operates across the UK. Your postcode is within our active coverage area.",
+                  answer: (
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      Stayful manages properties across all major UK cities, towns and coastal areas. The fact that this analysis has been run for your postcode confirms it sits within our active service area. Book your profitability action plan to confirm availability and discuss your specific property.
                     </p>
-                    <ul className="space-y-1 mb-2">
-                      {source.bullets.map((bullet, i) => (
-                        <li key={i} className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <TrendingUp className="h-3 w-3 text-success shrink-0" />
-                          {bullet}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="text-[10px] text-muted-foreground">
-                      Last updated: {source.updated}
-                    </p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-
-            {/* Important Disclaimer */}
-            <Card className="border-l-4 border-l-warning bg-warning/5">
-              <CardContent className="py-4">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 shrink-0 text-warning mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold text-foreground">Important Disclaimer</p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                      All revenue projections and financial estimates are based on current market data and historical trends. Actual results may vary based on property condition, local regulations, market changes, and management quality. These estimates should not be considered guaranteed income. We recommend consulting with a tax professional regarding your specific financial situation.
-                    </p>
+                  ),
+                },
+              ].map((faq, i) => {
+                const isOpen = openFaqIndex === i;
+                return (
+                  <div key={i} className={`rounded-lg border bg-card overflow-hidden transition-colors ${isOpen ? "border-primary" : "border-border"}`}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
+                      onClick={() => setOpenFaqIndex(isOpen ? null : i)}
+                      aria-expanded={isOpen}
+                    >
+                      <span className="text-lg" aria-hidden="true">{faq.emoji}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-foreground">{faq.question}</p>
+                        {!isOpen && (
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{faq.short}</p>
+                        )}
+                      </div>
+                      <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
+                    </button>
+                    {isOpen && (
+                      <div className="px-4 pb-4 pt-0 border-t border-border/50">
+                        <div className="pt-3">{faq.answer}</div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                );
+              })}
+            </div>
           </section>
 
           {/* ══════════════════════════════════════════════════════════
@@ -2433,7 +3112,7 @@ export default function HomePage() {
                 <h2 className="text-2xl font-bold">Ready to maximise your rental income?</h2>
                 <p className="max-w-lg text-sm text-primary-foreground/80">
                   Let Stayful handle the hard work while you earn more from your
-                  property. Book a free consultation to get started.
+                  property. Book your profitability action plan to get started.
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="flex items-center gap-2 text-sm font-medium text-primary-foreground/80">
@@ -2512,6 +3191,35 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* How It Works — compact 3-step explainer */}
+      <section className="relative z-10 -mt-4 pb-4">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
+          <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+            <p className="mb-3 text-sm font-semibold text-foreground">How this works</p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">1</span>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  <span className="font-semibold text-foreground">Enter your property.</span> Address, bedrooms, guest capacity, parking and outdoor space.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">2</span>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  <span className="font-semibold text-foreground">We pull live Airbnb data.</span> Up to 12 comparable properties near you with their actual 12-month earnings, via Airbtics.
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">3</span>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  <span className="font-semibold text-foreground">Refine with your judgement.</span> Exclude any comp that doesn&apos;t match your property — the estimate updates instantly so you see your realistic figure alongside the market&apos;s top potential.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Form Section */}
       <section className="relative z-10 -mt-8 pb-12">
         <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
@@ -2524,36 +3232,124 @@ export default function HomePage() {
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
-                {/* Row 1: Address (full width) */}
-                <div className="space-y-2">
-                  <Label htmlFor="address" className="flex items-center gap-2">
-                    <MapPin className="h-4 w-4" aria-hidden="true" />
-                    Full Property Address
-                  </Label>
-                  <Input
-                    id="address"
-                    placeholder="e.g. 123 High Street"
-                    required
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                  />
-                </div>
-
-                {/* Row 2: Postcode | Property Type */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Row 1: Address entry — auto (Google Places) or manual fallback */}
+                {entryMode === "auto" && !selectedAutoAddress && (
                   <div className="space-y-2">
-                    <Label htmlFor="postcode" className="flex items-center gap-2">
-                      <MapPin className="h-4 w-4" aria-hidden="true" />
-                      Postcode
+                    <Label className="flex items-center gap-2">
+                      <Search className="h-4 w-4" aria-hidden="true" />
+                      Find your property
                     </Label>
-                    <Input
-                      id="postcode"
-                      placeholder="e.g. M4 7FE"
-                      required
-                      value={postcode}
-                      onChange={(e) => setPostcode(e.target.value)}
+                    <AddressAutocomplete
+                      onSelect={(r) => {
+                        setAddress(r.address);
+                        setPostcode(r.postcode);
+                        setSelectedAutoAddress(r);
+                      }}
+                      onUseManual={(typedQuery) => {
+                        const parsed = splitAddressAndPostcode(typedQuery);
+                        setAddress(parsed.address || typedQuery);
+                        setPostcode(parsed.postcode);
+                        setEntryMode("manual");
+                      }}
                     />
                   </div>
+                )}
+
+                {entryMode === "auto" && selectedAutoAddress && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+                          <p className="text-sm font-medium text-foreground truncate">
+                            {selectedAutoAddress.address}
+                          </p>
+                        </div>
+                        {selectedAutoAddress.postcode && (
+                          <p className="mt-0.5 pl-6 text-xs text-muted-foreground">
+                            {selectedAutoAddress.postcode}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedAutoAddress(null);
+                          setAddress("");
+                          setPostcode("");
+                        }}
+                      >
+                        Change
+                      </Button>
+                    </div>
+                    {/* If postcode wasn't detected, show an inline input so the user can supply it */}
+                    {!selectedAutoAddress.postcode && (
+                      <div className="rounded-lg border border-warning/50 bg-warning/5 px-3 py-2.5 space-y-1.5">
+                        <p className="text-xs font-medium text-foreground">
+                          We couldn&apos;t detect the postcode from the selected address.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="postcode-fallback" className="text-xs text-muted-foreground shrink-0">
+                            Postcode:
+                          </Label>
+                          <Input
+                            id="postcode-fallback"
+                            placeholder="e.g. M4 7FE"
+                            required
+                            value={postcode}
+                            onChange={(e) => setPostcode(e.target.value)}
+                            className="max-w-[140px]"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {entryMode === "manual" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="address" className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4" aria-hidden="true" />
+                      Full Property Address
+                    </Label>
+                    <Input
+                      id="address"
+                      placeholder="e.g. 123 High Street"
+                      required
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { setEntryMode("auto"); setSelectedAutoAddress(null); }}
+                      className="text-xs font-medium text-primary hover:underline"
+                    >
+                      Use address search instead
+                    </button>
+                  </div>
+                )}
+
+                {/* Row 2: Postcode (manual or auto-with-missing-postcode) | Property Type */}
+                <div className="grid grid-cols-2 gap-4">
+                  {entryMode === "manual" ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="postcode" className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4" aria-hidden="true" />
+                        Postcode
+                      </Label>
+                      <Input
+                        id="postcode"
+                        placeholder="e.g. M4 7FE"
+                        required
+                        value={postcode}
+                        onChange={(e) => setPostcode(e.target.value)}
+                      />
+                    </div>
+                  ) : (
+                    <div />
+                  )}
 
                   <div className="space-y-2">
                     <Label htmlFor="propertyType" className="flex items-center gap-2">
@@ -2668,6 +3464,21 @@ export default function HomePage() {
                       <option value="roof_terrace">Roof terrace</option>
                     </select>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="email">
+                    Email
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    required
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                  />
                 </div>
 
                 {error && (
