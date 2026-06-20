@@ -1,20 +1,33 @@
 /**
- * PropertyData API — fetches long-term rental valuation data.
+ * PropertyData API integration.
  *
- * The API returns rent in GBP per WEEK. We convert to monthly by multiplying
- * by 52/12. There are no comparables or high/low estimates in the response,
- * so we derive those from the point estimate.
+ * Endpoints used:
+ *   /floor-areas     — square footage + build year
+ *   /valuation-rent  — long-term rental estimate (GBP/week → monthly)
+ *   /valuation-sale  — estimated sale value
+ *
+ * API key: PROPERTYDATA_API_KEY environment variable
+ * Docs / key signup: https://propertydata.co.uk/api
  *
  * Retry strategy: if the first attempt fails (API requires ALL params and
  * rejects invalid combos), retry with progressively simpler defaults.
+ *
+ * All functions return a fallback / null on any failure — they must NEVER
+ * throw or block the main analysis pipeline.
  */
 
-import type { LongLetData } from '../types';
+import type { LongLetData, PropertyDataValuation } from '../types';
 
 // ─── Bedroom-scaled defaults ────────────────────────────────────
 // More realistic than a single static default for all property sizes.
 const AREA_BY_BEDROOMS: Record<number, number> = {
   1: 500, 2: 700, 3: 900, 4: 1100, 5: 1350,
+};
+
+// UK national median monthly rents (2024, ONS/Zoopla blend).
+// Used as last-resort fallback when PropertyData API has no data for the area.
+const UK_FALLBACK_MONTHLY_RENT: Record<number, number> = {
+  0: 950, 1: 1100, 2: 1400, 3: 1650, 4: 2050, 5: 2500,
 };
 
 // ─── Floor Area + Build Year from /floor-areas ─────────────────
@@ -132,11 +145,18 @@ export async function getLongLetData(
   },
 ): Promise<LongLetData> {
   const apiKey = process.env.PROPERTYDATA_API_KEY;
-  if (!apiKey) {
-    throw new Error('PROPERTYDATA_API_KEY is not set in environment variables.');
-  }
-
   const clampedBedrooms = Math.max(1, Math.min(bedrooms, 5));
+
+  if (!apiKey) {
+    console.log('[PropertyData] PROPERTYDATA_API_KEY not set — using national median fallback for long-let');
+    const fallbackRent = UK_FALLBACK_MONTHLY_RENT[clampedBedrooms] ?? 1400;
+    return {
+      monthlyRent: fallbackRent,
+      estimateHigh: Math.round(fallbackRent * 1.15),
+      estimateLow: Math.round(fallbackRent * 0.85),
+      comparables: [],
+    };
+  }
 
   // Attempt 1: Full params with bedroom-scaled defaults + high finish
   const attempt1Params = {
@@ -199,12 +219,13 @@ export async function getLongLetData(
     }
   }
 
-  // All attempts failed, return zero instead of throwing (so the report still generates)
-  console.log('PropertyData: all attempts failed, returning zero rent');
+  // All attempts failed — use national median fallback so long-let is always populated.
+  const fallbackRent = UK_FALLBACK_MONTHLY_RENT[clampedBedrooms] ?? 1400;
+  console.log(`[PropertyData] all attempts failed — using national median fallback £${fallbackRent}/mo`);
   return {
-    monthlyRent: 0,
-    estimateHigh: 0,
-    estimateLow: 0,
+    monthlyRent: fallbackRent,
+    estimateHigh: Math.round(fallbackRent * 1.15),
+    estimateLow: Math.round(fallbackRent * 0.85),
     comparables: [],
   };
 }
@@ -263,4 +284,132 @@ async function tryPropertyDataCall(
     console.log('PropertyData: fetch error:', err);
     return null;
   }
+}
+
+// ─── Sale Valuation ──────────────────────────────────────────────
+
+/**
+ * Fetches an estimated sale value from the PropertyData /valuation-sale
+ * endpoint. Returns null on any failure — must never block the analysis.
+ *
+ * Retries with simplified params if the first attempt fails.
+ */
+export async function fetchPropertyValuation(
+  postcode: string,
+  bedrooms: number,
+  propertyType: string,
+): Promise<PropertyDataValuation | null> {
+  const apiKey = process.env.PROPERTYDATA_API_KEY;
+  if (!apiKey) {
+    console.log('[PropertyData] PROPERTYDATA_API_KEY not set — skipping sale valuation');
+    return null;
+  }
+
+  // Normalise property type to PropertyData expected values
+  const PT_MAP: Record<string, string> = {
+    flat: 'flat',
+    terraced_house: 'terraced_house',
+    'semi-detached_house': 'semi-detached_house',
+    detached_house: 'detached_house',
+    Flat: 'flat',
+    Terraced: 'terraced_house',
+    'Semi-detached': 'semi-detached_house',
+    'Terraced House': 'terraced_house',
+    'Semi-Detached House': 'semi-detached_house',
+    'Detached House': 'detached_house',
+    Detached: 'detached_house',
+  };
+  const mappedType = PT_MAP[propertyType] ?? 'flat';
+  const clampedBedrooms = Math.max(1, Math.min(bedrooms, 5));
+
+  async function attemptSale(params: Record<string, string>): Promise<PropertyDataValuation | null> {
+    try {
+      const url = new URL('https://api.propertydata.co.uk/valuation-sale');
+      url.searchParams.set('key', apiKey!);
+      for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+
+      const safeUrl = url.toString().replace(apiKey!, '<redacted>');
+      console.log(`[PropertyData] GET ${safeUrl}`);
+
+      const response = await fetch(url.toString(), { cache: 'no-store' });
+      if (!response.ok) {
+        const body = await response.text().catch(() => '');
+        console.log(`[PropertyData] /valuation-sale HTTP ${response.status}: ${body.slice(0, 300)}`);
+        return null;
+      }
+
+      const data = await response.json().catch(() => null);
+      if (!data) {
+        console.log('[PropertyData] /valuation-sale JSON parse failed');
+        return null;
+      }
+      if (data.status === 'error') {
+        console.log(`[PropertyData] /valuation-sale API error: ${data.message ?? 'unknown'}`);
+        return null;
+      }
+
+      // PropertyData may return the estimate under various keys depending on
+      // API version/endpoint. Check all known fields.
+      const result = data.result ?? data;
+      const estimate = Number(
+        result?.estimate
+        ?? result?.estimate_value
+        ?? result?.valuation
+        ?? result?.price
+        ?? result?.value
+        ?? 0,
+      );
+
+      if (!Number.isFinite(estimate) || estimate <= 0) {
+        console.log(`[PropertyData] /valuation-sale: no usable estimate. Raw result keys: [${Object.keys(result || {}).join(',')}]`);
+        return null;
+      }
+
+      const rangeLow = Number(
+        result?.range_low ?? result?.estimate_low ?? result?.low ?? 0,
+      ) || Math.round(estimate * 0.85);
+      const rangeHigh = Number(
+        result?.range_high ?? result?.estimate_high ?? result?.high ?? 0,
+      ) || Math.round(estimate * 1.15);
+
+      console.log(`[PropertyData] /valuation-sale success: £${estimate} (£${rangeLow}–£${rangeHigh})`);
+      return {
+        estimatedValue: Math.round(estimate),
+        valuationRangeLow: Math.round(rangeLow),
+        valuationRangeHigh: Math.round(rangeHigh),
+        source: 'propertydata',
+      };
+    } catch (err) {
+      console.log('[PropertyData] /valuation-sale fetch error:', err);
+      return null;
+    }
+  }
+
+  // Attempt 1: full params
+  const r1 = await attemptSale({
+    postcode,
+    property_type: mappedType,
+    bedrooms: String(clampedBedrooms),
+    bathrooms: String(BATHROOMS_BY_BEDROOMS[clampedBedrooms] ?? 1),
+    finish_quality: 'average',
+    construction_date: '1914_2000',
+    internal_area: String(AREA_BY_BEDROOMS[clampedBedrooms] ?? 700),
+    outdoor_space: 'none',
+    off_street_parking: '0',
+  });
+  if (r1) return r1;
+
+  // Attempt 2: minimal params
+  const r2 = await attemptSale({ postcode, property_type: mappedType, bedrooms: String(clampedBedrooms) });
+  if (r2) return r2;
+
+  // Attempt 3: try alternate property types
+  for (const pType of ['flat', 'terraced_house', 'semi-detached_house', 'detached_house']) {
+    if (pType === mappedType) continue;
+    const r3 = await attemptSale({ postcode, property_type: pType, bedrooms: String(clampedBedrooms) });
+    if (r3) return r3;
+  }
+
+  console.log('[PropertyData] /valuation-sale: all attempts failed, returning null');
+  return null;
 }

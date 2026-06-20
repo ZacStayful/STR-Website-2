@@ -26,6 +26,20 @@ import type {
   AdrMultipliers,
   AnnualisationMeta,
 } from '../types';
+import {
+  BED_GAP_BOOST_PER_BED,
+  GUEST_GAP_SHRINK_THRESHOLD,
+  GUEST_GAP_SHRINK_DAMP,
+  COASTAL_SMALL_BED_THRESHOLD,
+  OUTLIER_ADR_MULTIPLIER,
+  OUTLIER_REVENUE_MULTIPLIER,
+  OUTLIER_DISTANCE_MULTIPLIER,
+  MIN_COMPS_FOR_AGGREGATION,
+  TOP_N_FOR_COMPRESSED_PREMIUM,
+  isCompressedPremium,
+  typicalOccupancyByBeds,
+  clampBedsForTable,
+} from './pmi-rules';
 
 // ─── V2 Filters & Tiering ───────────────────────────────────────
 // Non-residential types: deprioritised but not excluded
@@ -47,14 +61,34 @@ const URBAN_POSTCODE_PREFIXES = new Set<string>([
   // Greater London
   'E', 'EC', 'N', 'NW', 'SE', 'SW', 'W', 'WC',
   'BR', 'CR', 'DA', 'EN', 'HA', 'IG', 'KT', 'RM', 'SM', 'TW', 'UB', 'WD',
-  // Core cities
+  // Core cities (incl. Scottish city centres — urban regardless of coastal proximity)
   'B', 'M', 'LS', 'S', 'L', 'BS', 'EH', 'G', 'NE', 'NG', 'CF', 'LE', 'CV', 'BD',
+  'AB', 'DD',
 ]);
 
-// UK coastal outward-code prefixes
+// UK coastal outward-code prefixes (AB moved to urban — Aberdeen is a city centre)
 const COASTAL_POSTCODE_PREFIXES = new Set<string>([
   'TR', 'PL', 'EX', 'TQ', 'BH', 'BN', 'CT', 'TN', 'PO', 'SO', 'SA', 'LL',
-  'PH', 'AB', 'KW', 'TD', 'DG', 'PA', 'KA', 'ZE', 'HS', 'IV',
+  'PH', 'KW', 'TD', 'DG', 'PA', 'KA', 'ZE', 'HS', 'IV',
+]);
+
+// Outward-code-level overrides for mixed regions where the 1-2 letter prefix
+// is too coarse. Checked BEFORE the prefix sets so they take precedence.
+//
+// YO covers York city (urban: YO1/YO10/YO19/YO23/YO24/YO26/YO30/YO31/YO32),
+// Scarborough/Whitby coast (coastal: YO11/YO12/YO13/YO14/YO21/YO22), and
+// rural North Yorkshire (the rest defaults to rural_village).
+//
+// Discovered from production test: YO31 was classifying as rural_village
+// → 60-65% typical occupancy → undervalued by ~30% vs PMI which uses
+// urban-tier (median comp occ).
+const URBAN_OUTWARD_CODES = new Set<string>([
+  // York city + suburbs
+  'YO1', 'YO10', 'YO19', 'YO23', 'YO24', 'YO26', 'YO30', 'YO31', 'YO32',
+]);
+const COASTAL_OUTWARD_CODES = new Set<string>([
+  // North Yorkshire coast (Scarborough, Filey, Whitby)
+  'YO11', 'YO12', 'YO13', 'YO14', 'YO21', 'YO22',
 ]);
 
 // Default radius steps (km) per location class — rural properties start wider
@@ -144,9 +178,12 @@ const SEARCH_RADII_KM = [0.4, 0.8, 1.6, 2.4, 3.2, 4.8, 8.0]; // PMI-equivalent s
 const REPORT_POLL_INTERVAL_MS = 2000;
 const REPORT_POLL_MAX_MS = 25000; // 25 seconds (up from 15)
 
-// "Good operator" uplift applied to market fallback data.
-// Based on observed difference: report/all p60 is ~25% above market median.
+// DEAD CONSTANT — declared but never used anywhere in this file.
+// Originally intended as a 25% uplift for Tier B market fallback data
+// but was never wired up. Tier B now uses headlineMode multiplier instead.
+// Do not delete — kept for documentation purposes.
 const GOOD_OPERATOR_UPLIFT = 1.25;
+void GOOD_OPERATOR_UPLIFT;
 
 // ─── In-memory cache for report IDs ─────────────────────────────
 // Reading existing reports is FREE. Cache report_id by postcode+bedrooms
@@ -197,6 +234,34 @@ export interface ShortLetOptions {
   specialFeatures?: string[];  // V3: e.g. ['sea_views','hot_tub','near_events_venue']
 }
 
+async function enrichWithThumbnails(
+  comparables: ShortLetComparable[],
+  lat: number,
+  lng: number,
+  apiKey: string,
+  radiusKm: number,
+): Promise<void> {
+  if (comparables.length === 0) return;
+  try {
+    const boundsResult = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
+    if (boundsResult?.listings) {
+      const thumbMap = new Map<string, string>();
+      for (const l of boundsResult.listings) {
+        if (l.thumbnail_url) thumbMap.set(l.listingID, l.thumbnail_url);
+      }
+      for (const comp of comparables) {
+        const listingId = comp.url.split('/rooms/')[1];
+        if (listingId && thumbMap.has(listingId)) {
+          comp.thumbnailUrl = thumbMap.get(listingId);
+        }
+      }
+      console.log(`[Airbtics] Enriched ${comparables.filter(c => c.thumbnailUrl).length}/${comparables.length} comps with thumbnails`);
+    }
+  } catch {
+    // Non-critical — comps render fine without thumbnails
+  }
+}
+
 export async function getShortLetData(
   postcode: string,
   bedrooms: number,
@@ -228,11 +293,12 @@ export async function getShortLetData(
     const reportResult = await fetchReportAll(lat, lng, bedrooms, guests, apiKey, postcode, options?.bathrooms);
     if (reportResult) {
       console.log(`[Airbtics] report/all returned ${reportResult.comps.length} raw comps`);
-      reportAllResult = buildDataFromReportComps(reportResult, bedrooms, guests, lat, lng, locationClass, options);
+      reportAllResult = buildDataFromReportComps(reportResult, bedrooms, guests, lat, lng, locationClass, postcode, options);
 
       // If we got 12+ quality comps, use the report result directly
       if (reportAllResult.quality.comparablesFound >= TARGET_COMPARABLES) {
         console.log(`[Airbtics] Using report/all result: ${reportAllResult.quality.comparablesFound} comps found`);
+        await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
         return reportAllResult;
       }
       console.log(`[Airbtics] report/all only found ${reportAllResult.quality.comparablesFound}/${TARGET_COMPARABLES} comps - trying bounds expansion`);
@@ -247,12 +313,15 @@ export async function getShortLetData(
   // This runs when report/all found < 12 comps OR failed entirely.
   // Uses PMI-style radius steps (0.4km to 8km) until 12 comps found.
   try {
-    const marketsResult = await getShortLetDataFromMarkets(postcode, bedrooms, guests, lat, lng, apiKey, options?.finishQuality);
+    // V3 fix — pass full options so Tier B can apply the headline-mode
+    // multiplier (outdoor + parking) instead of the deprecated quality mult.
+    const marketsResult = await getShortLetDataFromMarkets(postcode, bedrooms, guests, lat, lng, apiKey, options);
 
     // Pick the better result between report/all and markets
     // Prefer whichever found more comparables
     if (reportAllResult && reportAllResult.quality.comparablesFound > marketsResult.quality.comparablesFound) {
       console.log(`[Airbtics] Keeping report/all result (${reportAllResult.quality.comparablesFound} > ${marketsResult.quality.comparablesFound} comps)`);
+      await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
       return reportAllResult;
     }
     console.log(`[Airbtics] Using markets flow result: ${marketsResult.quality.comparablesFound} comps`);
@@ -264,6 +333,7 @@ export async function getShortLetData(
   // ── LAST RESORT: Return report/all result even with few comps ──
   if (reportAllResult) {
     console.log('[Airbtics] Returning report/all result as last resort');
+    await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
     return reportAllResult;
   }
 
@@ -359,6 +429,15 @@ interface ReportAllResult {
   radius: number;
   comps_status: string;
   comps: ReportComp[];
+  // V3 fix — Airbtics returns aggregate median stats at the report level.
+  // PMI uses these directly rather than computing a median from the displayed
+  // comp list. Verified against 13 PMI PDF reports.
+  median_adr?: number;
+  median_occupancy?: number;
+  summary?: {
+    median_adr?: number;
+    median_occupancy?: number;
+  };
 }
 
 /**
@@ -414,7 +493,10 @@ async function fetchReportAll(
   console.log(`[DEBUG] report/all HTTP status: ${createRes.status}`);
 
   if (!createRes.ok) {
-    console.error(`[DEBUG] Airbtics report/all POST failed HTTP ${createRes.status}`);
+    const errBody = await createRes.text().catch(() => '<unreadable body>');
+    console.error(
+      `[DEBUG] Airbtics report/all POST failed HTTP ${createRes.status} body: ${errBody.slice(0, 500)}`,
+    );
     return null;
   }
 
@@ -498,6 +580,15 @@ function calculateMedian(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/**
+ * V3 fix — Airbtics summary occupancy may arrive as either a 0–1 ratio
+ * (e.g. 0.72) or a 0–100 percentage (e.g. 72). Normalise to 0–1.
+ */
+function normaliseOccupancy(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return value > 1 ? value / 100 : value;
+}
+
 /** Finish quality multipliers applied after median calculation. */
 const FINISH_MULTIPLIERS: Record<string, number> = {
   'below_average': 0.75,
@@ -516,14 +607,26 @@ const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 /** V3 — Classify location from UK postcode outward code. Defaults to 'suburban'. */
 function classifyLocation(postcode: string | undefined): LocationClass {
   if (!postcode) return 'suburban';
-  // Extract outward code letters (e.g. "SW1A 1AA" → "SW")
-  const match = postcode.toUpperCase().match(/^([A-Z]{1,2})/);
-  if (!match) return 'suburban';
-  const prefix = match[1];
+  const upper = postcode.toUpperCase();
+
+  // Step 1: Full outward-code overrides (e.g. YO31 = urban, YO22 = coastal).
+  // Outward code = letters + digits before the space, e.g. "YO31 1AA" → "YO31".
+  const outwardMatch = upper.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/);
+  if (outwardMatch) {
+    const outward = outwardMatch[1];
+    if (URBAN_OUTWARD_CODES.has(outward)) return 'urban';
+    if (COASTAL_OUTWARD_CODES.has(outward)) return 'coastal';
+  }
+
+  // Step 2: Letter-prefix fallback (covers blanket-classifiable cities like
+  // M = all Manchester, B = all Birmingham, etc.).
+  const prefixMatch = upper.match(/^([A-Z]{1,2})/);
+  if (!prefixMatch) return 'suburban';
+  const prefix = prefixMatch[1];
   if (URBAN_POSTCODE_PREFIXES.has(prefix)) return 'urban';
   if (COASTAL_POSTCODE_PREFIXES.has(prefix)) return 'coastal';
-  // Unknown prefix = likely rural/smaller town — be conservative with 'rural_village'
-  // Urban prefixes cover all major cities so anything else is probably rural/smalltown
+
+  // Unknown — default to rural_village (conservative).
   return 'rural_village';
 }
 
@@ -832,7 +935,45 @@ interface AdrMultOutput {
   };
 }
 
-function getADRMultiplier(input: AdrMultInput): AdrMultOutput {
+function getADRMultiplier(input: AdrMultInput, headlineMode = false): AdrMultOutput {
+  const parkingNum = input.parkingSpaces ?? 0;
+
+  if (headlineMode) {
+    // V3 fix — HEADLINE MODE uses outdoor and parking only.
+    // Location class, property type and condition are already reflected in the
+    // Airbtics comp pool ADR. Applying them again double-counts the premium
+    // and inflates the headline vs PMI. Verified against 13 PMI reports — PMI
+    // applies no such multipliers to the headline figure.
+    const outdoorHeadline: Record<string, number> = {
+      none: 1.00,
+      small_garden: 1.03,
+      garden: 1.03,
+      balcony: 1.00,
+      balcony_terrace: 1.00,
+      large_garden: 1.06,
+      hot_tub: 1.12,
+      grounds: 1.06,
+      large_grounds: 1.06,
+      roof_terrace: 1.00,
+    };
+    const outdoorKey = (input.outdoorSpace || 'none').toLowerCase();
+    const outdoorMult = outdoorHeadline[outdoorKey] ?? 1.00;
+    const parkingMult = parkingNum >= 2 ? 1.05 : parkingNum === 1 ? 1.03 : 1.00;
+
+    return {
+      total: outdoorMult * parkingMult,
+      breakdown: {
+        locMult: 1.0,
+        propTypeMult: 1.0,
+        outdoorMult,
+        parkingMult,
+        conditionMult: 1.0,
+        specialBonus: 0,
+      },
+    };
+  }
+
+  // FULL STACK — used for scenarios only, not headline.
   const locMult = LOCATION_ADR_MULT[input.locationClass] ?? 1.0;
 
   const propKey = (input.propertyType || '').toLowerCase().replace(/[\s-]/g, '_');
@@ -843,7 +984,6 @@ function getADRMultiplier(input: AdrMultInput): AdrMultOutput {
 
   const conditionMult = CONDITION_ADR_MULT[(input.finishQuality || 'average').toLowerCase()] ?? 1.0;
 
-  const parkingNum = input.parkingSpaces ?? 0;
   const parkingMult = parkingNum >= 2 ? 1.10 : parkingNum === 1 ? 1.06 : 1.0;
 
   let specialBonus = 0;
@@ -894,12 +1034,26 @@ function buildDataFromReportComps(
   lat: number,
   lng: number,
   locationClass: LocationClass,
+  postcode: string,
   options?: ShortLetOptions,
 ): { data: ShortLetData; quality: DataQuality } {
   const hasParking = options?.hasParking;
   const finishQuality = options?.finishQuality;
   const allComps = report.comps || [];
   console.log(`[V2] buildDataFromReportComps: ${allComps.length} raw comps`);
+
+  // V3 diagnostic — verify whether Airbtics report/all populates listing
+  // date fields. If all three are undefined, annualisation silently degrades
+  // to review-count uplift only and the seasonal-coverage correction never runs.
+  // Remove this log once confirmed.
+  const dateFieldSample = report.comps?.slice(0, 3).map((c: ReportComp) => ({
+    id: c.listingID ?? (c as unknown as { id?: string }).id,
+    added_on: (c as unknown as { added_on?: string }).added_on,
+    created_date: (c as unknown as { created_date?: string }).created_date,
+    listed_date: (c as unknown as { listed_date?: string }).listed_date,
+    active_days_count_ltm: c.active_days_count_ltm,
+  }));
+  console.log('[V3] Comp date field sample:', JSON.stringify(dateFieldSample, null, 2));
 
   // ── Step 3a: Non-UK lat/lng filter ──
   const ukComps = allComps.filter(isUKListing);
@@ -983,11 +1137,20 @@ function buildDataFromReportComps(
   const comparables: ShortLetComparable[] = enrichedComps.map((c): ShortLetComparable => {
     const e = enrichment.get(c.listingID);
     const distance = haversineKm(lat, lng, c.latitude, c.longitude);
-    // listingAge: show months-live / 12 as decimal years when <12 months, else rounded years.
     let listingAge = 0;
     if (e?.monthsLive != null) {
       listingAge = Math.round((e.monthsLive / 12) * 10) / 10;
+    } else {
+      const raw = c.added_on || c.created_date || c.listed_date;
+      if (raw) {
+        const d = new Date(raw);
+        if (!isNaN(d.getTime())) {
+          listingAge = Math.max(0, Math.round((Date.now() - d.getTime()) / (365.25 * 24 * 60 * 60 * 1000) * 10) / 10);
+        }
+      }
     }
+    const rawRating = c.reveiw_scores_rating ?? 0;
+    const normalizedRating = rawRating > 5 ? rawRating / 20 : rawRating;
     return {
       title: c.name || 'Airbnb Listing',
       url: `https://www.airbnb.co.uk/rooms/${c.listingID}`,
@@ -997,20 +1160,180 @@ function buildDataFromReportComps(
       occupancyRate: Math.round(c.avg_occupancy_rate_ltm ?? 0) / 100,
       annualRevenue: Math.round(c.annual_revenue_ltm ?? 0),
       distance,
-      rating: Math.floor((c.reveiw_scores_rating ?? 0) * 10) / 10,
+      rating: Math.round(normalizedRating * 100) / 100,
       reviewCount: c.visible_review_count ?? 0,
       listingAge,
       daysAvailable: c.active_days_count_ltm ?? 0,
+      amenityCount: Object.values(c.amenities ?? {}).filter(Boolean).length,
     };
   });
 
-  // ── Step 5 (V3): Weighted ADR + weighted occupancy ──
-  // Replaces V2's median + outlier trimming. Distance, bedroom-match, property-type,
-  // and review-count all contribute to each comp's weight.
-  const base_ADR = calculateWeightedADR(enrichedComps, enrichment, bedrooms, lat, lng);
-  const base_occ = calculateWeightedOccupancy(enrichedComps, enrichment, lat, lng);
+  // ── Step 5 (V4): PMI-aligned target RevPAR + typical occupancy ──
+  // Derived from analysis of 33 PMI PDF reports. The core insight: PMI does
+  // NOT derive headline ADR directly from comp ADRs. Instead it:
+  //   1. Computes a target RevPAR (revenue per available day) from the 12 comps
+  //   2. Looks up / derives a "typical occupancy" for the market
+  //   3. Splits RevPAR into Occupancy (from lookup) and ADR (= RevPAR / Occ)
+  //
+  // See docs/PMI_ALGORITHM_REWRITE_PLAN.md and src/lib/apis/pmi-rules.ts for
+  // the rule tables (thresholds, multipliers, occupancy tables) and their
+  // derivation from PMI samples.
+
+  // Fetch Airbtics' own summary stats — kept for logging only now, not used
+  // for the actual computation (V3 path was too noisy across large properties).
+  const summaryADR = report.median_adr ?? report.summary?.median_adr ?? 0;
+  const summaryOcc = report.median_occupancy ?? report.summary?.median_occupancy ?? 0;
+  void normaliseOccupancy; // imported helper may be unused after V4 cutover
+  void calculateWeightedADR;
+  void calculateWeightedOccupancy;
+  void enrichment;
+
+  // 5a. Pool statistics for outlier filter.
+  const poolAdrs = enrichedComps
+    .map(c => c.avg_booked_daily_rate_ltm ?? 0)
+    .filter(v => v > 0);
+  const poolRevenues = enrichedComps
+    .map(c => c.annual_revenue_ltm ?? 0)
+    .filter(v => v > 0);
+  const poolDistances = enrichedComps.map(c => haversineKm(lat, lng, c.latitude, c.longitude));
+  const poolMedianADR = calculateMedian(poolAdrs);
+  const poolMedianRev = calculateMedian(poolRevenues);
+  const poolMedianDist = calculateMedian(poolDistances);
+
+  // 5b. Outlier filter — drop comps that are both high-ADR AND high-revenue
+  // outliers (catches lodge/luxury comps that dominate the pool but don't
+  // reflect the subject property's realistic performance). Also drop comps
+  // whose distance is pathologically above the pool median (non-UK geocode
+  // bug — Barrow LA14 saw comps in Connecticut and Pacific).
+  const filteredComps = enrichedComps.filter(c => {
+    const adr = c.avg_booked_daily_rate_ltm ?? 0;
+    const rev = c.annual_revenue_ltm ?? 0;
+    const dist = haversineKm(lat, lng, c.latitude, c.longitude);
+    const isAdrOutlier = poolMedianADR > 0 && adr > OUTLIER_ADR_MULTIPLIER * poolMedianADR
+      && poolMedianRev > 0 && rev > OUTLIER_REVENUE_MULTIPLIER * poolMedianRev;
+    const isDistOutlier = poolMedianDist > 0 && dist > OUTLIER_DISTANCE_MULTIPLIER * poolMedianDist;
+    return !isAdrOutlier && !isDistOutlier;
+  });
+  const droppedByFilter = enrichedComps.length - filteredComps.length;
+  console.log(`[V4] outlier filter: dropped ${droppedByFilter} of ${enrichedComps.length} comps`);
+
+  // If filtering left too few comps, fall back to the unfiltered pool.
+  const effectiveComps = filteredComps.length >= MIN_COMPS_FOR_AGGREGATION
+    ? filteredComps
+    : enrichedComps;
+  if (effectiveComps !== filteredComps) {
+    console.log(`[V4] filter fallback: using unfiltered pool (${enrichedComps.length} comps) — filtered only had ${filteredComps.length}`);
+  }
+
+  // 5c. Per-comp RevPAR = ADR × occupancy (i.e. average revenue per available day).
+  const effectiveRevPARs = effectiveComps
+    .map(c => {
+      const adr = c.avg_booked_daily_rate_ltm ?? 0;
+      const occ = (c.avg_occupancy_rate_ltm ?? 0) / 100;
+      return adr * occ;
+    })
+    .filter(v => v > 0);
+
+  // 5d. Aggregate to a single target RevPAR.
+  //  - Compressed-premium postcodes (EH1, OX1, BA1, EH2): top-8-of-12 mean
+  //    because the comp pool has a compressed high-end cluster that plain
+  //    median undershoots (Edinburgh Old Town, Oxford city centre, Bath).
+  //  - Coastal + small (≤2 bed): mean — right-skewed distribution, median
+  //    under-predicts (Broadstairs 1b).
+  //  - Everyone else: median (robust to outliers the filter didn't catch).
+  let target_RevPAR: number;
+  let aggregationMethod: string;
+  if (isCompressedPremium(postcode)) {
+    const sortedDesc = [...effectiveRevPARs].sort((a, b) => b - a);
+    const topN = sortedDesc.slice(0, TOP_N_FOR_COMPRESSED_PREMIUM);
+    target_RevPAR = topN.length > 0 ? topN.reduce((s, v) => s + v, 0) / topN.length : 0;
+    aggregationMethod = `compressed_premium_top_${TOP_N_FOR_COMPRESSED_PREMIUM}_mean`;
+  } else if (locationClass === 'coastal' && bedrooms <= COASTAL_SMALL_BED_THRESHOLD) {
+    target_RevPAR = effectiveRevPARs.length > 0
+      ? effectiveRevPARs.reduce((s, v) => s + v, 0) / effectiveRevPARs.length
+      : 0;
+    aggregationMethod = 'coastal_small_mean';
+  } else {
+    target_RevPAR = calculateMedian(effectiveRevPARs);
+    aggregationMethod = 'median';
+  }
+  console.log(`[V4] target_RevPAR=£${target_RevPAR.toFixed(2)} via ${aggregationMethod} over ${effectiveRevPARs.length} comps`);
+
+  // 5e. Subject-vs-pool adjustments.
+  //  - bed_gap_boost: if subject has more bedrooms than the pool (and guests
+  //    are at or above pool median), raise RevPAR by +15% per extra bed.
+  //    (Nottingham NG1 4ET/1GL both exhibit this.)
+  //  - guest_gap_shrink: if subject guests is well below pool guests, shrink
+  //    RevPAR proportionally. (Glasgow G12 — 3-bed rented for 3 guests.)
+  const poolBeds = effectiveComps
+    .map(c => typeof c.bedrooms === 'string' ? parseInt(c.bedrooms, 10) : (c.bedrooms ?? 0))
+    .filter(v => v > 0);
+  const poolGuests = effectiveComps
+    .map(c => c.accommodates ?? 0)
+    .filter(v => v > 0);
+  const medianPoolBeds = calculateMedian(poolBeds);
+  const medianPoolGuests = calculateMedian(poolGuests);
+  const bedGap = bedrooms - medianPoolBeds;
+  const guestGap = guests - medianPoolGuests;
+
+  let adjustmentFactor = 1.0;
+  let adjustmentReason = 'none';
+  if (bedGap >= 1 && guestGap >= 0) {
+    adjustmentFactor = 1 + BED_GAP_BOOST_PER_BED * bedGap;
+    adjustmentReason = `bed_gap_boost(+${bedGap} beds, x${adjustmentFactor.toFixed(3)})`;
+  } else if (
+    guestGap <= GUEST_GAP_SHRINK_THRESHOLD
+    && medianPoolGuests > 0
+    && !isCompressedPremium(postcode)
+  ) {
+    // Damped shrink: pull the raw ratio halfway back toward 1.0 so mild
+    // under-specs don't collapse the estimate. factor = 1 - DAMP × (1 - ratio)
+    const rawRatio = guests / medianPoolGuests;
+    adjustmentFactor = 1 - GUEST_GAP_SHRINK_DAMP * (1 - rawRatio);
+    adjustmentReason = `guest_gap_shrink_damped(${guestGap} gap, rawRatio=${rawRatio.toFixed(3)}, damped=x${adjustmentFactor.toFixed(3)})`;
+  } else if (guestGap <= GUEST_GAP_SHRINK_THRESHOLD && isCompressedPremium(postcode)) {
+    // Don't shrink compressed-premium postcodes on guest gap — their comp
+    // pools are already constrained to the target tier. Shrinking on top of
+    // the top-8-mean aggregation double-discounts and undershoots PMI.
+    adjustmentReason = `guest_gap_skipped(compressed_premium)`;
+  }
+  const adjusted_RevPAR = target_RevPAR * adjustmentFactor;
+  console.log(`[V4] subject_vs_pool: subject=${bedrooms}b/${guests}g pool_median=${medianPoolBeds}b/${medianPoolGuests}g → ${adjustmentReason} → adjusted_RevPAR=£${adjusted_RevPAR.toFixed(2)}`);
+
+  // 5f. Derive headline occupancy.
+  //  - Coastal or rural_village/rural_isolated → use typical_occ lookup
+  //    (size-dependent: small props fill, large summer-dependent).
+  //  - Urban / suburban → use median of comp occupancies.
+  const typicalTable = typicalOccupancyByBeds(locationClass);
+  let base_occ: number;
+  let occSource: string;
+  if (typicalTable) {
+    const bedsKey = clampBedsForTable(bedrooms);
+    base_occ = typicalTable[bedsKey] ?? 0.60;
+    occSource = `typical_table:${locationClass}:${bedsKey}bed`;
+  } else {
+    const poolOccs = effectiveComps
+      .map(c => (c.avg_occupancy_rate_ltm ?? 0) / 100)
+      .filter(v => v > 0);
+    base_occ = calculateMedian(poolOccs);
+    if (!(base_occ > 0)) base_occ = 0.60;
+    occSource = 'comp_median';
+  }
+  console.log(`[V4] base_occ=${(base_occ * 100).toFixed(0)}% via ${occSource}`);
+
+  // 5g. Split target RevPAR into ADR and Occupancy.
+  // If base_occ is 0 (defensive; shouldn't happen given the 0.60 fallback),
+  // fall back to weighted comp ADR so we don't divide by zero.
+  const base_ADR = base_occ > 0
+    ? adjusted_RevPAR / base_occ
+    : calculateWeightedADR(enrichedComps, enrichment, bedrooms, lat, lng);
+  console.log(`[V4] base_ADR=£${base_ADR.toFixed(0)} (= adjusted_RevPAR / base_occ)`);
+
+  // Legacy diagnostics — keep for comparison with V3 path during rollout.
+  console.log(`[V4] airbtics_summary_stats (ignored): summaryADR=£${summaryADR}, summaryOcc=${summaryOcc}%`);
+
   const trimmed = wasADRTrimmed(enrichedComps);
-  console.log(`[V3] Step 5: base_ADR=£${base_ADR.toFixed(0)}, base_occ=${(base_occ*100).toFixed(0)}% (weighted)`);
+  console.log(`[V4] Step 5 complete: base_ADR=£${base_ADR.toFixed(0)}, base_occ=${(base_occ*100).toFixed(0)}%, target_RevPAR=£${adjusted_RevPAR.toFixed(0)}`);
 
   // ── Step 6: Quality multiplier (stored for scenarios, NOT applied to headline) ──
   const qualityMultiplier = FINISH_MULTIPLIERS[finishQuality || 'average'] ?? 1.0;
@@ -1020,20 +1343,22 @@ function buildDataFromReportComps(
   const seasonalADRMultiplier = buildSeasonalMultipliers(enrichedComps, 'booked_daily_rate_ltm_monthly');
   const seasonalOccMultiplier = buildSeasonalMultipliers(enrichedComps, 'occupancy_rate_ltm_monthly');
 
-  // ── Step 8b (V3): Stacked ADR feature multiplier (the big form-fields fix) ──
-  // This is what closes the PMI gap on rural, coastal, and unique properties —
-  // location class, property type, outdoor space, parking, finish, and special
-  // features all stack multiplicatively onto the headline ADR.
-  const { total: adrMultiplier, breakdown: multBreakdown } = getADRMultiplier({
+  // ── Step 8b (V3): Headline ADR multiplier — outdoor + parking only ──
+  // V3 fix — headline mode strips location, property type and condition because
+  // these are already reflected in the Airbtics comp pool ADR. Double-counting
+  // them was the source of PMI-vs-app divergence on rural, coastal and unique
+  // properties. Scenarios below use the full stack.
+  const adrMultInput: AdrMultInput = {
     locationClass,
     propertyType: options?.propertyType,
     outdoorSpace: options?.outdoorSpace,
     parkingSpaces: options?.parkingSpaces,
     finishQuality,
     specialFeatures: options?.specialFeatures,
-  });
+  };
+  const { total: adrMultiplier, breakdown: multBreakdown } = getADRMultiplier(adrMultInput, true);
   const adjusted_ADR = base_ADR * adrMultiplier;
-  console.log(`[V3] Step 8b: adrMultiplier=${adrMultiplier.toFixed(3)} (loc=${multBreakdown.locMult} type=${multBreakdown.propTypeMult} out=${multBreakdown.outdoorMult} park=${multBreakdown.parkingMult} cond=${multBreakdown.conditionMult} special=${multBreakdown.specialBonus.toFixed(2)}) → adjusted_ADR=£${adjusted_ADR.toFixed(0)}`);
+  console.log(`[V3] Step 8b (headline): adrMultiplier=${adrMultiplier.toFixed(3)} (loc=${multBreakdown.locMult} type=${multBreakdown.propTypeMult} out=${multBreakdown.outdoorMult} park=${multBreakdown.parkingMult} cond=${multBreakdown.conditionMult} special=${multBreakdown.specialBonus.toFixed(2)}) → adjusted_ADR=£${adjusted_ADR.toFixed(0)}`);
 
   // ── Step 8: Build 12-month forecast ──
   //    Formula: adjusted_ADR × seasonal_ADR × occ × seasonal_occ × days_in_month
@@ -1052,9 +1377,15 @@ function buildDataFromReportComps(
   // ── Step 9 (V3 FIX): Scenarios (worst/base/best) ──
   // V2 had a copy-paste bug where `bestForecast = worstForecast`. V3 properly
   // differentiates: best adds +5% ADR and +5% occupancy on top of quality multiplier.
-  const worstForecast = buildForecast(adjusted_ADR * qualityMultiplier, base_occ);
-  const baseCaseForecast = buildForecast(adjusted_ADR * qualityMultiplier, Math.min(base_occ * 1.05, 1.0));
-  const bestForecast = buildForecast(adjusted_ADR * qualityMultiplier * 1.05, Math.min(base_occ * 1.05, 1.0));
+  //
+  // V3 fix — scenarios use the FULL-STACK multiplier (location × type × outdoor ×
+  // parking × condition + specials) so worst/base/best can still reflect property
+  // characteristics even though the headline strips them.
+  const { total: fullStackMultiplier } = getADRMultiplier(adrMultInput);
+  const scenarioADR = base_ADR * fullStackMultiplier;
+  const worstForecast = buildForecast(scenarioADR * qualityMultiplier, base_occ);
+  const baseCaseForecast = buildForecast(scenarioADR * qualityMultiplier, Math.min(base_occ * 1.05, 1.0));
+  const bestForecast = buildForecast(scenarioADR * qualityMultiplier * 1.05, Math.min(base_occ * 1.05, 1.0));
 
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const buildScenarioMonthly = (f: ReturnType<typeof buildForecast>) =>
@@ -1242,8 +1573,12 @@ async function getShortLetDataFromMarkets(
   lat: number,
   lng: number,
   apiKey: string,
-  finishQuality?: string,
+  // V3 fix — Tier B now accepts the full options object so it can apply the
+  // same headline-mode (outdoor + parking) multiplier as Tier A instead of
+  // the old, now-deprecated quality multiplier.
+  options?: ShortLetOptions,
 ): Promise<{ data: ShortLetData; quality: DataQuality }> {
+  const finishQuality = options?.finishQuality;
   const lowQuality: DataQuality = {
     comparablesFound: 0, comparablesTarget: TARGET_COMPARABLES,
     searchRadiusKm: 0, searchBroadened: false, level: 'low',
@@ -1304,8 +1639,24 @@ async function getShortLetDataFromMarkets(
     avgOccupancy = summaryOccupancy || 0.65;
   }
 
-  // Apply finish quality multiplier (same as report/all path)
-  const qualityMultiplier = FINISH_MULTIPLIERS[finishQuality || 'high'] ?? 1.15;
+  // V3 fix — replace old finish-quality multiplier with headline-mode multiplier
+  // (outdoor + parking only). This keeps Tier B aligned with Tier A's headline
+  // methodology: location/type/condition are considered already baked into the
+  // Airbtics market figures, so we only apply the property-feature uplift.
+  // finishQuality is still read from options so noqa on unused-variable.
+  void finishQuality;
+  const tierBLocationClass = classifyLocation(postcode);
+  const { total: headlineMult } = getADRMultiplier(
+    {
+      locationClass: tierBLocationClass,
+      propertyType: options?.propertyType,
+      outdoorSpace: options?.outdoorSpace,
+      parkingSpaces: options?.parkingSpaces,
+      finishQuality: options?.finishQuality,
+      specialFeatures: options?.specialFeatures,
+    },
+    true,
+  );
 
   // Apply guest-count adjustment: market data is for median guest count (~4)
   // Larger properties (more guests) command proportionally more revenue
@@ -1313,10 +1664,10 @@ async function getShortLetDataFromMarkets(
   const guestAdjustment = Math.min(1 + (Math.max(0, guests - 4) * 0.12), 1.5);
 
   const rawRevenue = summaryRevenue || monthlyRevenue.reduce((a, b) => a + b, 0);
-  let annualRevenue = Math.round(rawRevenue * qualityMultiplier * guestAdjustment);
-  let derivedAdr = Math.round((summaryAdr || Math.round(rawRevenue / 12 / ((avgOccupancy || 0.65) * 30))) * qualityMultiplier * guestAdjustment);
+  let annualRevenue = Math.round(rawRevenue * headlineMult * guestAdjustment);
+  let derivedAdr = Math.round((summaryAdr || Math.round(rawRevenue / 12 / ((avgOccupancy || 0.65) * 30))) * headlineMult * guestAdjustment);
 
-  monthlyRevenue = monthlyRevenue.map(m => Math.round(m * qualityMultiplier * guestAdjustment));
+  monthlyRevenue = monthlyRevenue.map(m => Math.round(m * headlineMult * guestAdjustment));
 
   // ── Rule of 12: Try to find 12 comparables, broadening search if needed ──
   let comparables: ShortLetComparable[] = [];
@@ -1472,6 +1823,8 @@ function extractComparables(
       ? Math.max(0, Math.round((Date.now() - addedOn.getTime()) / (365.25 * 24 * 60 * 60 * 1000) * 10) / 10)
       : 0;
 
+    const rawRating = l.reveiw_scores_rating ?? 0;
+    const normalizedRating = rawRating > 5 ? rawRating / 20 : rawRating;
     return {
       title: l.name || 'Airbnb Listing',
       url: `https://www.airbnb.co.uk/rooms/${l.listingID}`,
@@ -1481,10 +1834,12 @@ function extractComparables(
       occupancyRate: Math.round(l.avg_occupancy_rate_ltm ?? 0) / 100,
       annualRevenue: Math.round(l.annual_revenue_ltm ?? 0),
       distance: l.distance,
-      rating: Math.floor(((l.reveiw_scores_rating ?? 0) / 20) * 10) / 10, // Always round DOWN
+      rating: Math.round(normalizedRating * 100) / 100,
       reviewCount: l.visible_review_count ?? 0,
       listingAge: ageYears,
       daysAvailable: l.active_days_count_ltm ?? 0,
+      thumbnailUrl: l.thumbnail_url || undefined,
+      amenityCount: 0,
     };
   });
 
@@ -1505,6 +1860,9 @@ async function fetchNearbyListings(
   const latOffset = radiusKm / 111;
   const lngOffset = radiusKm / 65;
 
+  // `page` is required by listings/search/bounds — omitting it causes the
+  // AWS gateway to reject the request with HTTP 403. The endpoint paginates
+  // 50 listings per page; page 1 is enough for the comp set we need.
   const body = {
     bounds: {
       ne_lat: lat + latOffset,
@@ -1512,7 +1870,7 @@ async function fetchNearbyListings(
       sw_lat: lat - latOffset,
       sw_lng: lng - lngOffset,
     },
-    currency: 'GBP',
+    page: 1,
   };
 
   const radiusMetres = Math.round(radiusKm * 1000);
@@ -1532,7 +1890,14 @@ async function fetchNearbyListings(
   console.log(`[DEBUG] listings/search/bounds HTTP status: ${response.status}`);
 
   if (!response.ok) {
-    console.error(`[DEBUG] Airbtics bounds search failed HTTP ${response.status}`);
+    // Capture the response body so we can see Airbtics' actual rejection
+    // reason (Forbidden, Limit Exceeded, Missing Authentication Token, etc.)
+    // instead of just the HTTP status. Helps diagnose per-endpoint auth
+    // when the same key works from other origins (e.g. local curl).
+    const errBody = await response.text().catch(() => '<unreadable body>');
+    console.error(
+      `[DEBUG] Airbtics bounds search failed HTTP ${response.status} body: ${errBody.slice(0, 500)}`,
+    );
     return null;
   }
 
@@ -1546,14 +1911,21 @@ async function fetchNearbyListings(
 
   const totalCount = data.message?.total_count ?? 0;
 
-  // The listings field is a JSON string that needs double-parsing
+  // The listings field is a JSON string that needs double-parsing. The
+  // parsed payload itself is wrapped in a `{ message: [...] }` object — not
+  // a bare array — so unwrap one more level before checking shape.
   let listings: AirbticsListing[] = [];
   if (data.message?.listings) {
     try {
       const parsed = typeof data.message.listings === 'string'
         ? JSON.parse(data.message.listings)
         : data.message.listings;
-      listings = Array.isArray(parsed) ? parsed : [];
+      const inner = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.message)
+          ? parsed.message
+          : [];
+      listings = inner;
     } catch (e) {
       console.error('[DEBUG] Airbtics: failed to parse listings JSON:', e);
     }
@@ -1730,7 +2102,13 @@ async function fetchMetric(
 
   console.log(`[DEBUG] markets/metrics/${metric} HTTP status: ${response.status}`);
 
-  if (!response.ok) return [];
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '<unreadable body>');
+    console.error(
+      `[DEBUG] markets/metrics/${metric} failed HTTP ${response.status} body: ${errBody.slice(0, 500)}`,
+    );
+    return [];
+  }
 
   const data = await response.json();
   console.log(`[DEBUG] Market monthly (${metric}) raw:`, JSON.stringify(data).slice(0, 1000));
@@ -1773,16 +2151,29 @@ function padTo12Months(data: number[]): ShortLetData['monthlyRevenue'] {
  * Used when Airbtics API is unavailable or has insufficient credits.
  */
 function generateMarketEstimate(bedrooms: number): ShortLetData {
+  // V3 fix — previously 4/5/6/7/8-bed all used identical [200,280] range.
+  // Calibrated against PMI data: Derby 5-bed = £174 ADR, Bradford 1-bed = £87 ADR.
   const adrRanges: Record<number, [number, number]> = {
-    1: [85, 100],
-    2: [110, 140],
-    3: [150, 200],
+    0: [65, 95],   // studio — PMI rule: ~75-85% of 1-bed ADR, sleeps max 2 guests
+    1: [70,  100],
+    2: [90,  130],
+    3: [120, 170],
+    4: [150, 210],
+    5: [165, 230],
+    6: [180, 250],
+    7: [200, 270],
+    8: [220, 290],
   };
-  const defaultRange: [number, number] = [200, 280];
-  const [adrLow, adrHigh] = adrRanges[bedrooms] ?? defaultRange;
-  const adr = Math.round((adrLow + adrHigh) / 2);
+  const range = adrRanges[Math.min(bedrooms, 8)] ?? adrRanges[5];
+  const adr = Math.round((range[0] + range[1]) / 2);
 
-  const occupancy = bedrooms <= 1 ? 0.72 : bedrooms <= 2 ? 0.70 : bedrooms <= 3 ? 0.67 : 0.65;
+  // V3 fix — graduate occupancy by bedroom count — larger properties have
+  // lower base occupancy.
+  const occupancyByBeds: Record<number, number> = {
+    0: 0.62,   // studio — slightly higher occupancy than 1-beds, lower price point fills easier
+    1: 0.72, 2: 0.70, 3: 0.67, 4: 0.66, 5: 0.65, 6: 0.63, 7: 0.61, 8: 0.59,
+  };
+  const occupancy = occupancyByBeds[Math.min(bedrooms, 8)] ?? 0.63;
   const annualRevenue = Math.round(adr * 365 * occupancy);
 
   const seasonalMultipliers = [
