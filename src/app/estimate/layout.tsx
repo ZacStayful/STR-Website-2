@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess } from "@/lib/access";
+import { hasAccess, isPro, runsRemaining } from "@/lib/access";
 import { pingLastSeen } from "@/lib/monday/trial";
+import { TrialBanner } from "@/components/TrialBanner";
 
 // Server component that wraps /estimate. Fetches the current user's profile,
 // runs hasAccess() against plan + reports_run (5 free reports, then pro),
@@ -51,5 +52,14 @@ export default async function EstimateLayout({
     }
   })();
 
-  return <>{children}</>;
+  // Trial countdown banner for free users (Pro users have unlimited access).
+  const showTrialBanner = !isPro(profile);
+  const remaining = runsRemaining(profile);
+
+  return (
+    <>
+      {showTrialBanner && <TrialBanner remaining={remaining} />}
+      {children}
+    </>
+  );
 }
