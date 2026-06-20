@@ -1,8 +1,12 @@
-import Link from "next/link";
-
 // Sticky trial banner shown to logged-in, non-Pro users on the analyser.
-// Counts down the remaining free reports and offers an upgrade CTA.
-export function TrialBanner({ remaining }: { remaining: number }) {
+// Counts down the remaining free reports and links to Stripe checkout.
+export function TrialBanner({
+  remaining,
+  checkoutHref,
+}: {
+  remaining: number;
+  checkoutHref: string;
+}) {
   const urgent = remaining <= 1;
 
   return (
@@ -18,13 +22,13 @@ export function TrialBanner({ remaining }: { remaining: number }) {
               ? "⏳ You have 1 free report left on your trial."
               : `⏳ You have ${remaining} of 5 free reports left on your trial.`}
         </span>
-        <Link
-          href="/upgrade"
+        <a
+          href={checkoutHref}
           className="inline-flex items-center rounded-full bg-white px-4 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-white/90"
           style={{ color: urgent ? "#b45309" : "rgb(93, 129, 86)" }}
         >
           Subscribe for unlimited reports
-        </Link>
+        </a>
       </div>
     </div>
   );
