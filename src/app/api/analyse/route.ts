@@ -9,6 +9,12 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hasAccess } from '@/lib/access';
 import { updateReportsRun } from '@/lib/monday/trial';
 
+// This route streams an SSE response while making ~6 sequential external
+// API calls (geocode, floor area, long/short let, amenities, events). The
+// default function timeout (10s on Hobby) cuts the stream off mid-flight,
+// which the client surfaces as "Could not reach the server". Give it room.
+export const maxDuration = 60;
+
 // ─── Rate Limiter (in-memory, per IP) ────────────────────────────
 // 10 requests per IP per 60-second window. Protects against API credit abuse.
 const RATE_LIMIT_WINDOW_MS = 60_000;
