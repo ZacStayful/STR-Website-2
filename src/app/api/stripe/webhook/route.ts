@@ -47,13 +47,27 @@ export async function POST(request: Request) {
           stripe_subscription_status: "active",
         };
 
-        // Prefer the exact user id we tagged the link with; fall back to email.
+        // Prefer the exact user id we tagged the link with; fall back to
+        // email. Capture the row's email so we can mirror to the CRM.
+        let paidEmail = email;
         if (userId) {
-          await admin.from("profiles").update(update).eq("id", userId);
+          const { data } = await admin
+            .from("profiles")
+            .update(update)
+            .eq("id", userId)
+            .select("email")
+            .single();
+          paidEmail = paidEmail ?? data?.email ?? null;
         } else if (email) {
           await admin.from("profiles").update(update).eq("email", email);
         } else {
           console.warn("[stripe/webhook] completed session with no user id or email");
+        }
+
+        // Log the "Sign up started" (paid) date on the Monday enquiry.
+        if (paidEmail) {
+          const { setSubscriptionStarted } = await import("@/lib/apis/monday");
+          await setSubscriptionStarted(paidEmail);
         }
         break;
       }
@@ -63,13 +77,21 @@ export async function POST(request: Request) {
       case "customer.subscription.deleted": {
         const sub = event.data.object as Stripe.Subscription;
         const active = sub.status === "active" || sub.status === "trialing";
-        await admin
+        const { data } = await admin
           .from("profiles")
           .update({
             plan: active ? "pro" : "free",
             stripe_subscription_status: sub.status,
           })
-          .eq("stripe_subscription_id", sub.id);
+          .eq("stripe_subscription_id", sub.id)
+          .select("email")
+          .single();
+
+        // On cancellation/lapse, log the "Cancel date" on the Monday enquiry.
+        if (!active && data?.email) {
+          const { setSubscriptionCancelled } = await import("@/lib/apis/monday");
+          await setSubscriptionCancelled(data.email);
+        }
         break;
       }
 

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { createTrialSignup } from '@/lib/monday/trial'
+import { createEnquiry } from '@/lib/apis/monday'
 
 // Handles both OAuth (Google) callback and email-confirmation links.
 export async function GET(request: NextRequest) {
@@ -43,12 +43,11 @@ export async function GET(request: NextRequest) {
         .eq('id', user.id)
         .single()
       if (profile && !profile.monday_item_id) {
-        const mondayId = await createTrialSignup({
+        const mondayId = await createEnquiry({
+          name: profile.full_name ?? '',
           email: profile.email ?? user.email ?? '',
-          fullName: profile.full_name ?? '',
           mobile: profile.mobile ?? '',
-          signupAt: new Date().toISOString(),
-          trialEndsAt: profile.trial_ends_at,
+          trialStartedAt: new Date().toISOString(),
         })
         if (mondayId) {
           await supabase
