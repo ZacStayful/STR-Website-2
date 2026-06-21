@@ -85,7 +85,7 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select('plan, reports_run, full_name, mobile')
+      .select('plan, reports_run, full_name, mobile, stripe_subscription_id')
       .eq('id', user.id)
       .single();
     if (!profile || !hasAccess(profile)) {
