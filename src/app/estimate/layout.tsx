@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, isPro, runsRemaining } from "@/lib/access";
-import { pingLastSeen } from "@/lib/monday/trial";
 import { TrialBanner } from "@/components/TrialBanner";
 import { checkoutUrlFor } from "@/lib/billing";
 
@@ -37,17 +36,12 @@ export default async function EstimateLayout({
     redirect("/upgrade");
   }
 
-  // Mirror return-visit timestamp to the profile + the Monday CRM. Both
-  // are fire-and-forget so a slow Monday call can't block the analyser
-  // from rendering.
+  // Mirror return-visit timestamp to the profile (fire-and-forget so it
+  // never blocks the analyser from rendering).
   const now = new Date().toISOString();
-  const profileWithMondayId = profile;
   void (async () => {
     try {
       await supabase.from("profiles").update({ last_seen_at: now }).eq("id", user.id);
-      if (profileWithMondayId.monday_item_id) {
-        await pingLastSeen(profileWithMondayId.monday_item_id, now);
-      }
     } catch (err) {
       console.error("[estimate/layout] last_seen hook failed:", err);
     }

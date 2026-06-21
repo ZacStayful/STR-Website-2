@@ -8,7 +8,6 @@ import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hasAccess } from '@/lib/access';
-import { updateReportsRun } from '@/lib/monday/trial';
 
 // This route streams SSE while making several sequential external API
 // calls; the default 10s function timeout (Hobby) would cut the stream
@@ -432,44 +431,34 @@ export async function POST(request: Request) {
 
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
 
-        // Monday.com CRM sync + PDF upload — awaited before closing stream
-        // so Vercel doesn't kill the function before they complete.
+        // Generate the PDF report and upload it to the user's enquiry row
+        // (Monday "Reports" file column), matched by email. Awaited before
+        // closing the stream so Vercel doesn't kill the function mid-upload.
         const effectiveEmail = emailStr ?? userEmail;
         if (effectiveEmail) {
           try {
-            const { syncAnalysisToMonday, uploadPdfToMonday } = await import('@/lib/apis/monday');
-            // Run sync and PDF generation in parallel
-            await Promise.allSettled([
-              syncAnalysisToMonday(
-                effectiveEmail,
-                result.financials.longLetNetAnnual,
-                result.financials.shortLetNetAnnual,
-              ),
-              (async () => {
-                const React = await import('react');
-                const { renderToBuffer } = await import('@react-pdf/renderer');
-                const { deriveReportData, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
-                const { StayfulReport } = await import('@/lib/pdf/StayfulReport');
-                const data = deriveReportData(result);
-                const element = React.createElement(StayfulReport, { data });
-                const buffer = await (renderToBuffer as (e: unknown) => Promise<Buffer>)(element);
-                const filename = `Stayful_Property_Analysis_${sanitiseAddressForFilename(result.property.address)}.pdf`;
-                await uploadPdfToMonday(effectiveEmail, buffer, filename);
-              })(),
-            ]);
+            const { uploadPdfToMonday } = await import('@/lib/apis/monday');
+            const React = await import('react');
+            const { renderToBuffer } = await import('@react-pdf/renderer');
+            const { deriveReportData, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
+            const { StayfulReport } = await import('@/lib/pdf/StayfulReport');
+            const data = deriveReportData(result);
+            const element = React.createElement(StayfulReport, { data });
+            const buffer = await (renderToBuffer as (e: unknown) => Promise<Buffer>)(element);
+            const filename = `Stayful_Property_Analysis_${sanitiseAddressForFilename(result.property.address)}.pdf`;
+            await uploadPdfToMonday(effectiveEmail, buffer, filename);
           } catch (err) {
-            console.error('[Monday] CRM sync error:', err);
+            console.error('[Monday] PDF upload error:', err);
           }
         }
 
-        // Count this run against the user's 5 free reports + mirror to the
-        // trial CRM. Source of truth is profiles.reports_run.
+        // Count this run against the user's 5 free reports.
         if (userId) {
           try {
             const supabase = await createSupabaseServerClient();
             const { data: current } = await supabase
               .from('profiles')
-              .select('reports_run, monday_item_id')
+              .select('reports_run')
               .eq('id', userId)
               .single();
             const next = (current?.reports_run ?? 0) + 1;
@@ -477,9 +466,6 @@ export async function POST(request: Request) {
               .from('profiles')
               .update({ reports_run: next, last_seen_at: new Date().toISOString() })
               .eq('id', userId);
-            if (current?.monday_item_id) {
-              await updateReportsRun(current.monday_item_id, next);
-            }
           } catch (err) {
             console.error('[api/analyse] reports_run hook failed:', err);
           }
