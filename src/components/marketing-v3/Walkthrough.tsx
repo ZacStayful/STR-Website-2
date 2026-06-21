@@ -41,8 +41,8 @@ export function Walkthrough() {
             One decision.
           </h2>
           <p className="lede">
-            Every analysis runs the same 11 modules — from address intake to a
-            ranked growth playbook. Each module is a piece of evidence.
+            Every analysis runs the same 10 modules — from address intake to a
+            risk assessment. Each module is a piece of evidence.
             Together, they&rsquo;re a defensible answer to{" "}
             <em>should I do this?</em>
           </p>

@@ -20,7 +20,6 @@ const CHAPTERS: Chapter[] = [
   { num: "08", title: "Local area report", t: 102 },
   { num: "09", title: "Setup costs", t: 56 },
   { num: "10", title: "Risk assessment", t: 108 },
-  { num: "11", title: "Growth playbook", t: 116 },
 ];
 
 const SPEED_OPTIONS = [1, 1.5, 2];

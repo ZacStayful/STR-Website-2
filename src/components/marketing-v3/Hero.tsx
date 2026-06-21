@@ -67,7 +67,7 @@ export function Hero() {
           </h1>
           <p className="lede">
             A decision engine for short-term rental — not a revenue calculator.
-            Type a postcode and get an 11-section report on what your property
+            Type a postcode and get a 10-section report on what your property
             could earn, how the market actually behaves and what you&rsquo;d
             need to do to win in it.
           </p>

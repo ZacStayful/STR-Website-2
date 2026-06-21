@@ -20,7 +20,7 @@ export function FinalCTA() {
             <span className="hero-script light">Start analysing.</span>
           </h2>
           <p className="lede">
-            Type any UK postcode and get a full 11-section report in under 20
+            Type any UK postcode and get a full 10-section report in under 20
             seconds. Free, no card required.
           </p>
           <form className="postcode-form dark" onSubmit={submit}>
@@ -42,7 +42,7 @@ export function FinalCTA() {
               <Icon name="check" size={13} /> Free trial · No card
             </span>
             <span>
-              <Icon name="check" size={13} /> Full 11-section report
+              <Icon name="check" size={13} /> Full 10-section report
             </span>
             <span>
               <Icon name="check" size={13} /> 10–20 second analysis

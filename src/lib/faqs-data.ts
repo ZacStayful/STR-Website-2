@@ -9,7 +9,7 @@ export interface FAQItem {
 export const FAQS: FAQItem[] = [
   {
     q: "What does the Property Analyser actually output?",
-    a: "An 11-section report covering intake, live comparables, amenities and demand drivers, a gross-to-net revenue breakdown, a 12-month forecast, a local area report, a furnishing setup quote, a risk assessment and a ranked growth playbook. Every figure is sourced — no projections without a comparable behind them.",
+    a: "A 10-section report covering intake, live comparables, amenities and demand drivers, a gross-to-net revenue breakdown, a 12-month forecast, a local area report, a furnishing setup quote and a risk assessment. Every figure is sourced — no projections without a comparable behind them.",
   },
   {
     q: "Where does the data come from?",
@@ -25,7 +25,7 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: "Do I need to be technical to use it?",
-    a: "No. Type an address, click analyse. The 11 sections are the report — no setup, no configuration, no spreadsheets to build.",
+    a: "No. Type an address, click analyse. The 10 sections are the report — no setup, no configuration, no spreadsheets to build.",
   },
   {
     q: "What does it cost?",

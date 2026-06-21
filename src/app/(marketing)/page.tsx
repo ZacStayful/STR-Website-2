@@ -20,7 +20,7 @@ import { siteUrl } from "@/lib/url";
 
 const PAGE_TITLE = "Stayful Intelligence — The decision engine for short-term rental";
 const PAGE_DESCRIPTION =
-  "A decision engine for short-term rental — not a revenue calculator. Type a UK postcode and get an 11-section report on what your property could earn, how the market actually behaves and what you'd need to do to win in it.";
+  "A decision engine for short-term rental — not a revenue calculator. Type a UK postcode and get a 10-section report on what your property could earn, how the market actually behaves and what you'd need to do to win in it.";
 const PAGE_URL = siteUrl("/");
 const LAST_UPDATED = "2026-05-08";
 

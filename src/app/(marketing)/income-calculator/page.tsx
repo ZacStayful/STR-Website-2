@@ -12,7 +12,7 @@ import { siteUrl } from "@/lib/url";
 
 const PAGE_TITLE = "Airbnb income calculator (UK) — Stayful Intelligence";
 const PAGE_DESCRIPTION =
-  "Free Airbnb income calculator for any UK property. Type a postcode and get an 11-section report — top market potential, your filtered estimate, gross-to-net revenue, 12-month forecast, risk, and a ranked growth playbook.";
+  "Free Airbnb income calculator for any UK property. Type a postcode and get a 10-section report — top market potential, your filtered estimate, gross-to-net revenue, 12-month forecast and risk.";
 const PAGE_URL = siteUrl("/income-calculator");
 const LAST_UPDATED = "2026-05-08";
 
