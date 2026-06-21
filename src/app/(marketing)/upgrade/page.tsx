@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, FREE_RUNS } from "@/lib/access";
+import { checkoutUrlFor } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
 
 export const metadata: Metadata = {
@@ -39,6 +40,7 @@ export default async function UpgradePage() {
 
   const firstName =
     profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
+  const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
 
   return (
     <section className="upgrade section">
@@ -68,16 +70,16 @@ export default async function UpgradePage() {
         </div>
 
         <div className="upgrade-ctas">
+          <a className="btn btn-primary" href={checkoutHref}>
+            Subscribe now <Icon name="arrow" size={14} />
+          </a>
           <a
-            className="btn btn-primary"
+            className="btn btn-ghost"
             href={CALENDLY_URL}
             target="_blank"
             rel="noopener noreferrer"
           >
-            Book a 15-min call to subscribe <Icon name="arrow" size={14} />
-          </a>
-          <a className="btn btn-ghost" href="mailto:zac@stayful.co.uk">
-            Or email us
+            Or book a call
           </a>
         </div>
 
