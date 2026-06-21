@@ -28,7 +28,7 @@ export default async function EstimateLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, monday_item_id")
+    .select("plan, reports_run, monday_item_id, stripe_subscription_id")
     .eq("id", user.id)
     .single();
 

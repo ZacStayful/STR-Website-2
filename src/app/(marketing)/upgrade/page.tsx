@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, FREE_RUNS } from "@/lib/access";
+import { hasAccess, FREE_RUNS, isLapsedSubscriber } from "@/lib/access";
 import { checkoutUrlFor } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
 
@@ -28,7 +28,7 @@ export default async function UpgradePage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, full_name")
+    .select("plan, reports_run, full_name, stripe_subscription_id")
     .eq("id", user.id)
     .single();
 
@@ -40,6 +40,7 @@ export default async function UpgradePage() {
 
   const firstName =
     profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
+  const lapsed = profile ? isLapsedSubscriber(profile) : false;
   const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
 
   return (
@@ -47,12 +48,14 @@ export default async function UpgradePage() {
       <div className="wrap-narrow">
         <div className="eyebrow">Subscription required</div>
         <h1 className="upgrade-title">
-          {firstName ? `${firstName}, you've` : "You've"} used all {FREE_RUNS} free reports.
+          {lapsed
+            ? `${firstName ? `${firstName}, your` : "Your"} subscription has ended.`
+            : `${firstName ? `${firstName}, you've` : "You've"} used all ${FREE_RUNS} free reports.`}
         </h1>
         <p className="lede">
-          You&apos;ve run your {FREE_RUNS} free analyses. To keep running reports, you&apos;ll
-          need a paid subscription. We&apos;re finalising self-serve billing now — until that
-          ships, book a 15-minute call and we&apos;ll set you up the same day.
+          {lapsed
+            ? "Your Stayful subscription has been cancelled, so analyser access is paused. Re-subscribe to pick up right where you left off — unlimited reports, no free-report limit."
+            : `You've run your ${FREE_RUNS} free analyses. To keep running reports, you'll need a paid subscription — subscribe below for unlimited reports.`}
         </p>
 
         <div className="upgrade-pricing">

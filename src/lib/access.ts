@@ -26,6 +26,21 @@ export function hasFreeRunsLeft(profile: Pick<Profile, 'reports_run'>): boolean 
   return (profile.reports_run ?? 0) < FREE_RUNS
 }
 
-export function hasAccess(profile: Pick<Profile, 'plan' | 'reports_run'>): boolean {
-  return isPro(profile) || hasFreeRunsLeft(profile)
+// Someone who subscribed at least once (has a Stripe subscription on record)
+// but isn't currently Pro — i.e. they cancelled or their subscription lapsed.
+// These users must re-subscribe; they do NOT fall back to the free tier.
+export function isLapsedSubscriber(
+  profile: Pick<Profile, 'plan' | 'stripe_subscription_id'>,
+): boolean {
+  return !!profile.stripe_subscription_id && profile.plan !== 'pro'
+}
+
+export function hasAccess(
+  profile: Pick<Profile, 'plan' | 'reports_run' | 'stripe_subscription_id'>,
+): boolean {
+  if (isPro(profile)) return true
+  // Former subscribers who cancelled are sent to the paywall — no falling
+  // back onto the free-report allowance.
+  if (isLapsedSubscriber(profile)) return false
+  return hasFreeRunsLeft(profile)
 }
