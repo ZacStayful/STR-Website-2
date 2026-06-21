@@ -1,12 +1,26 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Icon } from "@/lib/icons";
 
+const LINKS = [
+  { href: "/features", label: "Features" },
+  { href: "/income-calculator", label: "Calculator" },
+  { href: "/short-term-vs-long-term-letting", label: "Why us" },
+  { href: "/pricing", label: "Pricing" },
+  { href: "/about", label: "About" },
+];
+
 export function Nav() {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+
   return (
     <header className="v3-nav">
       <div className="v3-nav-inner">
-        <Link href="/" className="brand" aria-label="Stayful Intelligence">
+        <Link href="/" className="brand" aria-label="Stayful Intelligence" onClick={close}>
           <Image
             src="/assets/stayful-logo.png"
             alt="Stayful"
@@ -17,13 +31,15 @@ export function Nav() {
           />
           <span className="brand-sub">Intelligence</span>
         </Link>
+
         <nav className="v3-nav-links">
-          <Link href="/features">Features</Link>
-          <Link href="/income-calculator">Calculator</Link>
-          <Link href="/short-term-vs-long-term-letting">Why us</Link>
-          <Link href="/pricing">Pricing</Link>
-          <Link href="/about">About</Link>
+          {LINKS.map((l) => (
+            <Link key={l.href} href={l.href}>
+              {l.label}
+            </Link>
+          ))}
         </nav>
+
         <div className="v3-nav-cta">
           <Link className="btn btn-ghost btn-sample" href="/demo">
             Sample report
@@ -35,7 +51,35 @@ export function Nav() {
             Start free trial <Icon name="arrow" size={14} />
           </Link>
         </div>
+
+        <button
+          type="button"
+          className="v3-nav-burger"
+          aria-label="Toggle menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
       </div>
+
+      {open && (
+        <div className="v3-nav-mobile">
+          {LINKS.map((l) => (
+            <Link key={l.href} href={l.href} onClick={close}>
+              {l.label}
+            </Link>
+          ))}
+          <Link className="btn btn-ghost" href="/login" onClick={close}>
+            Sign in
+          </Link>
+          <Link className="btn btn-primary" href="/signup" onClick={close}>
+            Start free trial
+          </Link>
+        </div>
+      )}
     </header>
   );
 }

@@ -3347,3 +3347,87 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   .sf-page-v3 .upgrade-pricing { grid-template-columns: 1fr; }
 }
 
+/* ============================================================
+   Mobile responsiveness pass — scoped to the v3 marketing site
+   so none of it can bleed onto the /estimate analyser.
+   ============================================================ */
+
+/* 1) Never allow horizontal scrolling. overflow-x: clip (not hidden) keeps
+   the sticky nav working. Media can't exceed the viewport. */
+.sf-page-v3 { overflow-x: clip; max-width: 100%; }
+.sf-page-v3 img,
+.sf-page-v3 video,
+.sf-page-v3 svg,
+.sf-page-v3 iframe { max-width: 100%; height: auto; }
+
+/* 2) Mobile nav: hamburger button (hidden on desktop) + dropdown panel. */
+.sf-page-v3 .v3-nav-burger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 44px;
+  height: 44px;
+  padding: 11px;
+  background: transparent;
+  border: 1px solid var(--sage-300, rgba(93, 129, 86, 0.25));
+  border-radius: 8px;
+  cursor: pointer;
+}
+.sf-page-v3 .v3-nav-burger span {
+  display: block;
+  height: 2px;
+  width: 100%;
+  background: var(--sage-700, rgb(74, 105, 68));
+  border-radius: 2px;
+}
+.sf-page-v3 .v3-nav-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 20px 20px;
+  background: var(--cream, #fff);
+  border-bottom: 1px solid var(--sage-200, rgba(93, 129, 86, 0.18));
+}
+.sf-page-v3 .v3-nav-mobile a {
+  padding: 13px 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--sage-800, rgb(60, 84, 55));
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.sf-page-v3 .v3-nav-mobile a.btn {
+  border-bottom: 0;
+  margin-top: 8px;
+  justify-content: center;
+}
+
+@media (max-width: 880px) {
+  /* Below the desktop nav breakpoint, swap links/CTAs for the hamburger. */
+  .sf-page-v3 .v3-nav-links,
+  .sf-page-v3 .v3-nav-cta { display: none; }
+  .sf-page-v3 .v3-nav-burger { display: flex; }
+}
+@media (min-width: 881px) {
+  .sf-page-v3 .v3-nav-mobile { display: none !important; }
+}
+
+/* 3) Phone tuning: tame oversized fixed fonts + comfortable padding. */
+@media (max-width: 640px) {
+  .sf-page-v3 h1 { font-size: clamp(30px, 8.5vw, 42px); }
+  .sf-page-v3 h2 { font-size: clamp(25px, 7vw, 34px); }
+  .sf-page-v3 h3 { font-size: clamp(20px, 5.5vw, 26px); }
+
+  /* Hard-coded serif display sizes that overflow on narrow screens. */
+  .sf-page-v3 .cs-title { font-size: 30px; }
+  .sf-page-v3 .cs-big { font-size: 34px; }
+  .sf-page-v3 .plan-price { font-size: 40px; }
+  .sf-page-v3 .upgrade-tier-price { font-size: 32px; }
+  .sf-page-v3 .final-cta-card h2 { font-size: clamp(30px, 9vw, 44px); }
+
+  /* Give every section breathing room from the screen edges. */
+  .sf-page-v3 main > section { padding-left: 18px; padding-right: 18px; }
+}
+
+
