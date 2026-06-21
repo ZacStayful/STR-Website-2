@@ -70,6 +70,8 @@ export async function POST(request: Request) {
   // Auth + free-reports gate. Calibration bypass skips this (dev-only).
   let userId: string | null = null;
   let userEmail: string | null = null;
+  let userName: string | null = null;
+  let userMobile: string | null = null;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
     const {
@@ -83,7 +85,7 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select('plan, reports_run')
+      .select('plan, reports_run, full_name, mobile')
       .eq('id', user.id)
       .single();
     if (!profile || !hasAccess(profile)) {
@@ -92,6 +94,8 @@ export async function POST(request: Request) {
         { status: 402 },
       );
     }
+    userName = profile.full_name ?? null;
+    userMobile = profile.mobile ?? null;
     userId = user.id;
     userEmail = user.email ?? null;
   }
@@ -446,7 +450,11 @@ export async function POST(request: Request) {
             const element = React.createElement(StayfulReport, { data });
             const buffer = await (renderToBuffer as (e: unknown) => Promise<Buffer>)(element);
             const filename = `Stayful_Property_Analysis_${sanitiseAddressForFilename(result.property.address)}.pdf`;
-            await uploadPdfToMonday(effectiveEmail, buffer, filename);
+            await uploadPdfToMonday(
+              { email: effectiveEmail, name: userName ?? undefined, mobile: userMobile ?? undefined },
+              buffer,
+              filename,
+            );
           } catch (err) {
             console.error('[Monday] PDF upload error:', err);
           }
