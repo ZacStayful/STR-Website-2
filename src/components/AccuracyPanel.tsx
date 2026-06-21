@@ -96,14 +96,6 @@ export function AccuracyPanel() {
             ))}
           </div>
 
-          {/* Methodology footnote */}
-          <p className="mt-3 text-[12px] text-primary-foreground/70">
-            Revenue projections are based on active comparable listings sourced from Airbnb,
-            median-aggregated and updated in real time. Long-let comparison uses current
-            OpenRent listings for the subject postcode. All cost assumptions use Stayful&apos;s
-            managed portfolio averages.
-          </p>
-
           {/* Case-study buttons */}
           <div className="mt-4 border-t border-primary-foreground/15 pt-3">
             <p className="mb-2 text-center text-[11px] font-semibold text-primary-foreground">
