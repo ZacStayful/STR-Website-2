@@ -108,8 +108,12 @@ export async function createEnquiry(input: {
     [COL.name]: input.name || "",
     [COL.email]: input.email,
     [COL.mobile]: input.mobile || "",
-    [COL.trialStarted]: dateValue(input.trialStartedAt),
   };
+  // Only stamp the trial-start date when this is an actual trial signup
+  // (not when we're back-filling a row to attach a report).
+  if (input.trialStartedAt !== undefined) {
+    cols[COL.trialStarted] = dateValue(input.trialStartedAt);
+  }
   const query = `mutation ($boardId: ID!, $groupId: String!, $itemName: String!, $cols: JSON!) {
     create_item(board_id: $boardId, group_id: $groupId, item_name: $itemName, column_values: $cols) { id }
   }`;
@@ -146,19 +150,37 @@ export const setSubscriptionStarted = (email: string, when?: string) =>
 export const setSubscriptionCancelled = (email: string, when?: string) =>
   setEnquiryDate(email, COL.cancelled, when);
 
-/** Upload a PDF report to the enquiry's "Reports" file column, matched by email. */
+/**
+ * Upload a PDF report to the enquiry's "Reports" file column (file_mm3aevrs),
+ * matched on the email column (text_mm3a8s7c). If no enquiry exists for that
+ * email yet (e.g. an account created before CRM wiring), one is created first
+ * so the report always lands somewhere.
+ */
 export async function uploadPdfToMonday(
-  email: string,
+  input:
+    | string
+    | { email: string; name?: string; mobile?: string },
   pdfBuffer: Buffer | Uint8Array,
   filename: string,
 ): Promise<void> {
   const tok = token();
   if (!tok) return;
-  const itemId = await findEnquiryByEmail(email);
+
+  const email = typeof input === "string" ? input : input.email;
+  if (!email || !email.includes("@")) return;
+
+  let itemId = await findEnquiryByEmail(email);
   if (!itemId) {
-    console.log(`[Monday] PDF skipped — no enquiry for ${email}`);
+    const name = typeof input === "string" ? "" : input.name ?? "";
+    const mobile = typeof input === "string" ? "" : input.mobile ?? "";
+    itemId = await createEnquiry({ name, email, mobile });
+    console.log(`[Monday] no enquiry for ${email} — created ${itemId ?? "FAILED"}`);
+  }
+  if (!itemId) {
+    console.error(`[Monday] PDF skipped — could not find/create enquiry for ${email}`);
     return;
   }
+
   try {
     const query = `mutation ($file: File!) { add_file_to_column(item_id: ${itemId}, column_id: "${COL.file}", file: $file) { id } }`;
     const blob = new Blob([new Uint8Array(pdfBuffer)], { type: "application/pdf" });
