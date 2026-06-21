@@ -1,5 +1,5 @@
 const STATS = [
-  { num: "11", label: "Section deep-dive", sub: "From intake to growth playbook" },
+  { num: "10", label: "Section deep-dive", sub: "From intake to risk assessment" },
   { num: "4+", label: "Live data sources", sub: "Airbnb, PropertyData, Google, Ticketmaster" },
   { num: "10–20s", label: "End-to-end analysis", sub: "Live comparables and demand drivers" },
   { num: "Try for free", label: "Start your free trial", sub: "Get 5 free reports today" },

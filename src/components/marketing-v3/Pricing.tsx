@@ -19,12 +19,11 @@ const PLANS: Plan[] = [
     priceSub: "5 reports",
     sub: "Full access — no card required",
     features: [
-      "Full 11-section report",
+      "Full 10-section report",
       "5 free reports to start",
       "Live comparables",
       "Forecast & risk",
       "Setup cost quote",
-      "Growth playbook",
     ],
     cta: "Start free trial",
   },

@@ -294,7 +294,7 @@ const TAB_SECTIONS = [
   { id: "local-area", label: "Local Area", icon: MapPin, num: 6 },
   { id: "bookings", label: "Bookings", icon: Target, num: 7 },
   { id: "risk", label: "Risk", icon: AlertTriangle, num: 8 },
-  { id: "faq", label: "FAQ", icon: HelpCircle, num: 11 },
+  { id: "faq", label: "FAQ", icon: HelpCircle, num: 10 },
 ] as const;
 
 // ─── Main Component ─────────────────────────────────────────────
@@ -1117,7 +1117,7 @@ export default function HomePage() {
             <div className="flex items-center gap-2">
               {!sidebarCollapsed && (
                 <span className="text-xs font-semibold text-foreground whitespace-nowrap">
-                  {activeTabInfo ? `${activeTabInfo.num} of 11` : ""}
+                  {activeTabInfo ? `${activeTabInfo.num} of 10` : ""}
                 </span>
               )}
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">

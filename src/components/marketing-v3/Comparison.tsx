@@ -16,7 +16,6 @@ const ROWS: { l: string; v: CellValue[] }[] = [
   { l: "Itemised setup cost quote", v: [true, "Manual", false, false] },
   { l: "12-month seasonal forecast", v: [true, "Manual", true, false] },
   { l: "Risk assessment", v: [true, false, false, "Vibes"] },
-  { l: "Ranked growth playbook", v: [true, false, false, false] },
   { l: "Decision-ready in 20 seconds", v: [true, false, "Partial", "Eventually"] },
 ];
 

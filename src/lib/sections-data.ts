@@ -1,4 +1,4 @@
-// 11 sections of the analyser — verbatim port of the Drive bundle's app-data.js.
+// 10 sections of the analyser — verbatim port of the Drive bundle's app-data.js.
 // Used by Walkthrough rail + section content + each SectionMock.
 
 import type { IconName } from "@/lib/icons";
@@ -154,19 +154,5 @@ export const SECTIONS: AnalyserSection[] = [
       "Seasonality + concentration risk",
     ],
     icon: "risk",
-  },
-  {
-    id: "growth",
-    number: "11",
-    title: "Growth playbook",
-    subtitle: "What you need to do to win",
-    description:
-      "The decision engine. Specific actions ranked by impact: photography, listing copy, direct booking setup, multi-platform expansion. Tells you exactly what successful properties in your postcode are doing differently.",
-    bullets: [
-      "Ranked action plan",
-      "What top performers do",
-      "Listing + photography + multi-platform",
-    ],
-    icon: "growth",
   },
 ];

@@ -8,9 +8,9 @@ import {
 } from "@/lib/schema";
 import { siteUrl } from "@/lib/url";
 
-const PAGE_TITLE = "Features — the 11 sections of every Stayful report";
+const PAGE_TITLE = "Features — the 10 sections of every Stayful report";
 const PAGE_DESCRIPTION =
-  "Every Stayful Property Analyser run produces the same 11-section report: intake, live data ingest, decision overview, comparables, amenities, gross-to-net revenue, 12-month forecast, local area, setup costs, risk assessment, growth playbook.";
+  "Every Stayful Property Analyser run produces the same 10-section report: intake, live data ingest, decision overview, comparables, amenities, gross-to-net revenue, 12-month forecast, local area, setup costs, risk assessment.";
 const PAGE_URL = siteUrl("/features");
 const LAST_UPDATED = "2026-05-08";
 
