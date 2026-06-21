@@ -42,5 +42,24 @@ export async function GET(request: Request) {
   } catch (err) {
     out.uploadError = String(err);
   }
+
+  // Does @react-pdf actually render in this runtime? (the real flow uses it)
+  try {
+    const React = await import("react");
+    const pdf = await import("@react-pdf/renderer");
+    const { Document, Page, Text, View } = pdf as unknown as Record<string, React.ComponentType<Record<string, unknown>>>;
+    const el = React.createElement(
+      Document,
+      null,
+      React.createElement(Page, null, React.createElement(View, null, React.createElement(Text, null, "test"))),
+    );
+    const buf = await (pdf.renderToBuffer as (e: unknown) => Promise<Buffer>)(el);
+    out.reactPdfOk = true;
+    out.reactPdfBytes = buf.length;
+  } catch (err) {
+    out.reactPdfOk = false;
+    out.reactPdfError = String(err).slice(0, 400);
+  }
+
   return Response.json(out);
 }
