@@ -6,57 +6,59 @@ type CellValue = boolean | string;
 const COLS: { name: string; hl?: boolean }[] = [
   { name: "The Stayful Analyser", hl: true },
   { name: "Property Market Intel" },
+  { name: "AirDNA" },
+  { name: "PriceLabs" },
 ];
 
 const ROWS: { l: string; v: CellValue[]; d: string }[] = [
   {
     l: "Long-let vs short-let comparison",
-    v: [true, false],
+    v: [true, false, false, false],
     d: "See both income models side by side, so you know which strategy actually wins for this exact property before you commit.",
   },
   {
     l: "Live Airbnb comparables",
-    v: [true, false],
+    v: [true, true, true, true],
     d: "Real, active listings near your postcode — not national averages — so your numbers reflect the market you'd genuinely compete in.",
   },
   {
     l: "Average review rating & reviews",
-    v: [true, false],
+    v: [true, false, false, false],
     d: "Gauge how guests rate nearby properties so you know the quality bar you'll need to clear to win bookings and command higher rates.",
   },
   {
     l: "12-month forecast",
-    v: [true, false],
+    v: [true, true, true, true],
     d: "Month-by-month projected income that builds in seasonality, so you can plan cashflow with confidence instead of guessing.",
   },
   {
     l: "Direct booking opportunity potential",
-    v: [true, false],
+    v: [true, false, false, false],
     d: "See how much income you could keep by driving direct bookings and cutting platform fees out of your margin.",
   },
   {
     l: "Risk profile",
-    v: [true, false],
+    v: [true, false, true, false],
     d: "A clear read on regulation, demand volatility and operating risk, so there are no nasty surprises after you've bought.",
   },
   {
     l: "Advised & essential amenities",
-    v: [true, false],
+    v: [true, false, true, false],
     d: "Know exactly what the property needs to perform — the must-haves and the upgrades that lift your nightly rate.",
   },
   {
     l: "Estimated property setup costs",
-    v: [true, false],
+    v: [true, true, false, false],
     d: "An itemised view of what it costs to furnish and go live, so your return is built on the full picture, not a guess.",
   },
   {
     l: "Download PDF report",
-    v: [true, true],
+    v: [true, false, false, true],
     d: "Take the whole analysis with you — share it with partners, lenders or your team in one clean, professional document.",
   },
   {
     l: "Estimate true profit potential",
-    v: [true, false],
+    v: [true, true, false, false],
     d: "Net profit after costs and fees, not headline revenue — the number that actually tells you whether a deal is worth doing.",
   },
 ];
