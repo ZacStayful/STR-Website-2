@@ -6,11 +6,12 @@ import Image from "next/image";
 import { Icon } from "@/lib/icons";
 
 const LINKS = [
+  { href: "https://intelligence.stayful.co.uk/", label: "Home" },
+  { href: "/about", label: "About" },
+  { href: "/short-term-vs-long-term-letting", label: "Why us" },
   { href: "/features", label: "Features" },
   { href: "/income-calculator", label: "Calculator" },
-  { href: "/short-term-vs-long-term-letting", label: "Why us" },
   { href: "/pricing", label: "Pricing" },
-  { href: "/about", label: "About" },
 ];
 
 export function Nav() {
@@ -42,7 +43,7 @@ export function Nav() {
 
         <div className="v3-nav-cta">
           <Link className="btn btn-ghost btn-sample" href="/demo">
-            Sample report
+            Case studies
           </Link>
           <Link className="btn btn-ghost" href="/login">
             Sign in
@@ -72,6 +73,9 @@ export function Nav() {
               {l.label}
             </Link>
           ))}
+          <Link className="btn btn-ghost btn-sample" href="/demo" onClick={close}>
+            Case studies
+          </Link>
           <Link className="btn btn-ghost" href="/login" onClick={close}>
             Sign in
           </Link>
