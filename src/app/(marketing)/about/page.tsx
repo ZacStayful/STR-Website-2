@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { TeamStrip } from "@/components/marketing-v3/TeamStrip";
 import { WhyWeBuilt } from "@/components/marketing-v3/WhyWeBuilt";
 import { Founders } from "@/components/marketing-v3/Founders";
 import { FinalCTA } from "@/components/marketing-v3/FinalCTA";
@@ -47,7 +46,6 @@ export default function AboutPage() {
           }),
         ]}
       />
-      <TeamStrip />
       <WhyWeBuilt />
       <Founders />
       <FinalCTA />
