@@ -53,7 +53,7 @@ const ROWS: { l: string; v: CellValue[]; d: string }[] = [
   },
   {
     l: "Download PDF report",
-    v: [true, false, false, true],
+    v: [true, true, false, true],
     d: "Take the whole analysis with you — share it with partners, lenders or your team in one clean, professional document.",
   },
   {
