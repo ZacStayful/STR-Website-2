@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { ComparisonHero } from "@/components/marketing-v3/ComparisonHero";
 import { Comparison } from "@/components/marketing-v3/Comparison";
 import { Schema } from "@/components/Schema";
 import {
@@ -34,7 +33,6 @@ export default function ShortVsLongPage() {
           }),
         ]}
       />
-      <ComparisonHero />
       <Comparison />
     </>
   );
