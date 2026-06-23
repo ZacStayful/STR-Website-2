@@ -80,7 +80,7 @@ export function webApplicationSchema(opts: {
       "@type": "Offer",
       price: "0",
       priceCurrency: "GBP",
-      description: "14-day free trial",
+      description: "5 free reports, no card required",
     },
   };
 }
