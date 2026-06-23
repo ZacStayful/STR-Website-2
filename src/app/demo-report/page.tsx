@@ -24,5 +24,7 @@ export default async function DemoReportPage({
 }) {
   const { demo } = await searchParams;
   const result = (demo && DEMO_MAP[demo]) || DEMO_MAP.manchester;
-  return <EstimatePage initialResult={result} />;
+  // Open the "Customise expenses" panel on load so the new self-managed
+  // management-fee toggle is immediately visible to reviewers.
+  return <EstimatePage initialResult={result} initialExpensesExpanded />;
 }

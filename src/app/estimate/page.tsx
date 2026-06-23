@@ -301,12 +301,17 @@ const TAB_SECTIONS = [
 
 // Optional `initialResult` lets a host route (e.g. the public /demo-report
 // preview) seed the analyser with a ready-made report so it renders the
-// result immediately, instead of the empty property-input form. The real
-// /estimate route renders this with no props (Next passes route props, which
-// are ignored), so behaviour there is unchanged.
-type HomePageProps = { initialResult?: AnalysisResult };
+// result immediately, instead of the empty property-input form.
+// `initialExpensesExpanded` opens the "Customise expenses" panel on load so
+// the self-managed management-fee toggle is visible without hunting for it.
+// The real /estimate route renders this with no props (Next passes route
+// props, which are ignored), so behaviour there is unchanged.
+type HomePageProps = {
+  initialResult?: AnalysisResult;
+  initialExpensesExpanded?: boolean;
+};
 
-export default function HomePage({ initialResult }: HomePageProps = {}) {
+export default function HomePage({ initialResult, initialExpensesExpanded }: HomePageProps = {}) {
   const [address, setAddress] = useState("");
   const [postcode, setPostcode] = useState("");
   const [email, setEmail] = useState("");
@@ -360,7 +365,7 @@ export default function HomePage({ initialResult }: HomePageProps = {}) {
   //   Cleaning default: 18 % of gross, per month → seeded from Top Market gross
   // These inputs feed BOTH hero net-revenue columns and downstream sections
   // (Revenue Breakdown, Profit Calculator). Reset on every fresh analysis.
-  const [expensesExpanded, setExpensesExpanded] = useState(false);
+  const [expensesExpanded, setExpensesExpanded] = useState(initialExpensesExpanded ?? false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [platformFeePct, setPlatformFeePct] = useState<number | null>(null);
   const [mgmtFeePct, setMgmtFeePct] = useState<number | null>(null);
@@ -400,8 +405,15 @@ export default function HomePage({ initialResult }: HomePageProps = {}) {
 
   // Reset exclusions + expense overrides whenever a fresh analysis result
   // arrives so users don't accidentally carry filters or cost inputs from
-  // a previous property into a new one.
+  // a previous property into a new one. Skip the very first run when the page
+  // was seeded via props (demo preview) so the seeded panel/toggle state is
+  // preserved; subsequent real analyses still reset normally.
+  const skipResultResetRef = useRef(Boolean(initialResult));
   useEffect(() => {
+    if (skipResultResetRef.current) {
+      skipResultResetRef.current = false;
+      return;
+    }
     setExcludedComps(new Set());
     setPlatformFeePct(null);
     setMgmtFeePct(null);
