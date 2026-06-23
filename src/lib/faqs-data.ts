@@ -29,7 +29,7 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: "What does it cost?",
-    a: "Free trial — run as many reports as you like for 14 days at no cost. Subscription is £39.99/month for unlimited analyses, or £360/year (saving 25% paid annually). Cancel any time, no contract.",
+    a: "Free trial — run 5 full reports at no cost, no card required. Subscription is £39.99/month for unlimited analyses, or £360/year (saving 25% paid annually). Cancel any time, no contract.",
   },
   {
     q: "Can I use this for properties I don't own yet?",
