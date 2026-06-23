@@ -58,6 +58,18 @@ export interface PdfSetupSnapshot {
   categories: PdfSetupCategory[];
 }
 
+/**
+ * The user's effective expense formula from the estimate page. Mirrors the
+ * "Customise expenses" panel so the PDF reproduces exactly what's on screen.
+ * All values are already resolved (e.g. mgmtPct is 0 when self-managed).
+ */
+export interface PdfExpenses {
+  platformPct: number;
+  mgmtPct: number;
+  cleaningMonthly: number | null; // null → default 18% of gross / 12
+  selfManaged: boolean;
+}
+
 export interface PdfReportData {
   property: { address: string; bedrooms: number; sleeps: number };
   overview: {
@@ -83,6 +95,14 @@ export interface PdfReportData {
     cleaning: number;
     totalCosts: number;
     net: number;
+    // Percentage labels (of gross) so the PDF breakdown stays in sync with the
+    // adjustable expenses, plus a flag for the self-managed case where the
+    // management fee is removed entirely.
+    platformPct: number;
+    managementPct: number;
+    cleaningPct: number;
+    totalCostsPct: number;
+    selfManaged: boolean;
   };
   longLetAnnual: {
     gross: number;
@@ -237,13 +257,30 @@ function directBookingScoreFromSignals(result: AnalysisResult): number {
   return Math.max(0, Math.min(100, Math.round(raw)));
 }
 
-export function deriveReportData(result: AnalysisResult): PdfReportData {
+export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses): PdfReportData {
   const { property, shortLet, longLet, financials, risk, demandDrivers, nearbyEvents, propertyValuation, dataQuality } = result;
 
   // ── Overview ──
   const grossAnnual = financials.shortLetGrossAnnual;
-  const netAnnual = financials.shortLetNetAnnual;
-  const netRatio = grossAnnual > 0 ? netAnnual / grossAnnual : 0.52;
+
+  // ── Expense formula ──
+  // Mirror the estimate page's "Customise expenses" panel. Defaults reproduce
+  // the standard 15% platform + 15% management + 18% cleaning = 48% model, so
+  // a PDF generated without overrides matches the previous output exactly.
+  const platformPct = expenses?.platformPct ?? 15;
+  const mgmtPct = expenses?.mgmtPct ?? 15; // already 0 when self-managed
+  const cleaningMonthly = expenses?.cleaningMonthly
+    ?? Math.max(0, Math.round((grossAnnual / 12) * 0.18));
+  const cleaningAnnual = cleaningMonthly * 12;
+  const selfManaged = expenses?.selfManaged ?? false;
+
+  const platformFeeAnnual = Math.round(grossAnnual * (platformPct / 100));
+  const mgmtFeeAnnual = Math.round(grossAnnual * (mgmtPct / 100));
+  const totalCostsAnnual = platformFeeAnnual + mgmtFeeAnnual + cleaningAnnual;
+  const netAnnual = Math.max(0, grossAnnual - platformFeeAnnual - mgmtFeeAnnual - cleaningAnnual);
+  const cleaningPct = grossAnnual > 0 ? Math.round((cleaningAnnual / grossAnnual) * 100) : 0;
+  const totalCostsPct = grossAnnual > 0 ? Math.round((totalCostsAnnual / grossAnnual) * 100) : 0;
+
   const ltlGross = financials.longLetGrossAnnual;
   const ltlNet = financials.longLetNetAnnual;
 
@@ -251,7 +288,11 @@ export function deriveReportData(result: AnalysisResult): PdfReportData {
   const scenarioBase = shortLet.scenarios?.base?.monthly;
   const ltlNetMonthly = ltlNet / 12;
 
-  const monthlyNet: number[] = shortLet.monthlyRevenue.map((gross) => Math.round(gross * netRatio));
+  // Per-month net mirrors the estimate page: platform/management are % of that
+  // month's revenue, cleaning is a flat monthly figure deducted equally.
+  const monthlyNet: number[] = shortLet.monthlyRevenue.map((gross) =>
+    Math.max(0, Math.round(gross - gross * (platformPct / 100) - gross * (mgmtPct / 100) - cleaningMonthly)),
+  );
   const peakThreshold = [...monthlyNet].sort((a, b) => b - a)[2] ?? 0; // top-3 cut-off
 
   const monthly: PdfMonth[] = shortLet.monthlyRevenue.map((_, i) => {
@@ -406,11 +447,16 @@ export function deriveReportData(result: AnalysisResult): PdfReportData {
     },
     shortLetAnnual: {
       gross: grossAnnual,
-      platformFee: Math.round(grossAnnual * 0.15),
-      managementFee: Math.round(grossAnnual * 0.15),
-      cleaning: Math.round(grossAnnual * 0.18),
-      totalCosts: Math.round(grossAnnual * 0.48),
+      platformFee: platformFeeAnnual,
+      managementFee: mgmtFeeAnnual,
+      cleaning: cleaningAnnual,
+      totalCosts: totalCostsAnnual,
       net: netAnnual,
+      platformPct,
+      managementPct: mgmtPct,
+      cleaningPct,
+      totalCostsPct,
+      selfManaged,
     },
     longLetAnnual: {
       gross: ltlGross,

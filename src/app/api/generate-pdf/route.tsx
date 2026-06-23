@@ -2,6 +2,7 @@ import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
 import type { AnalysisResult } from "@/lib/types";
 import { deriveReportData, buildSetupSnapshot, sanitiseAddressForFilename } from "@/lib/pdf/derive";
+import type { PdfExpenses } from "@/lib/pdf/derive";
 import { StayfulReport } from "@/lib/pdf/StayfulReport";
 
 export const runtime = "nodejs";
@@ -20,6 +21,7 @@ interface PdfRequestBody extends AnalysisResult {
       active: boolean;
     }>;
   };
+  expenses?: PdfExpenses;
 }
 
 export async function POST(request: Request) {
@@ -34,7 +36,7 @@ export async function POST(request: Request) {
     return new Response("Missing required analysis data", { status: 400 });
   }
 
-  const data = deriveReportData(body);
+  const data = deriveReportData(body, body.expenses);
   if (body.setup) {
     const snap = buildSetupSnapshot(body.setup);
     if (snap) data.setup = snap;

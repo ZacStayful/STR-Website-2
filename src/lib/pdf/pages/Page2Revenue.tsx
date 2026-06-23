@@ -149,10 +149,14 @@ export function Page2Revenue({ data }: { data: PdfReportData }) {
             <Text style={[s.thCell, s.colMonthly]}>Monthly</Text>
           </View>
           <BreakdownRow label="Gross Revenue" annual={formatGbp(str.gross)} monthly={formatGbp(str.gross / 12)} />
-          <BreakdownRow label="Platform Fees (15%)" annual={`−${formatGbp(str.platformFee)}`} monthly={`−${formatGbp(str.platformFee / 12)}`} />
-          <BreakdownRow label="Management Fees (15%)" annual={`−${formatGbp(str.managementFee)}`} monthly={`−${formatGbp(str.managementFee / 12)}`} />
-          <BreakdownRow label="Cleaning & Laundry (18%)" annual={`−${formatGbp(str.cleaning)}`} monthly={`−${formatGbp(str.cleaning / 12)}`} />
-          <BreakdownRow label={`Total Operating Costs (48%)`} annual={`−${formatGbp(str.totalCosts)}`} monthly={`−${formatGbp(str.totalCosts / 12)}`} variant="total" />
+          <BreakdownRow label={`Platform Fees (${str.platformPct}%)`} annual={`−${formatGbp(str.platformFee)}`} monthly={`−${formatGbp(str.platformFee / 12)}`} />
+          {str.selfManaged ? (
+            <BreakdownRow label="Management Fees (self-managed)" annual="Excluded" monthly="—" />
+          ) : (
+            <BreakdownRow label={`Management Fees (${str.managementPct}%)`} annual={`−${formatGbp(str.managementFee)}`} monthly={`−${formatGbp(str.managementFee / 12)}`} />
+          )}
+          <BreakdownRow label={`Cleaning & Laundry (${str.cleaningPct}%)`} annual={`−${formatGbp(str.cleaning)}`} monthly={`−${formatGbp(str.cleaning / 12)}`} />
+          <BreakdownRow label={`Total Operating Costs (${str.totalCostsPct}%)`} annual={`−${formatGbp(str.totalCosts)}`} monthly={`−${formatGbp(str.totalCosts / 12)}`} variant="total" />
           <BreakdownRow label="NET ANNUAL REVENUE" annual={formatGbp(str.net)} monthly={formatGbp(str.net / 12)} variant="net" />
         </View>
 

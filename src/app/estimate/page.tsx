@@ -1181,6 +1181,15 @@ export default function HomePage() {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                           ...result,
+                          // Mirror the on-screen "Customise expenses" panel so
+                          // the PDF matches the report — including a removed
+                          // management fee when self-managing.
+                          expenses: {
+                            platformPct: effPlatformPct,
+                            mgmtPct: effMgmtPct,
+                            cleaningMonthly: effCleaningMonthly,
+                            selfManaged,
+                          },
                           setup: setupSnapshotRef.current
                             ? {
                                 furnishing: setupSnapshotRef.current.furnishing,
