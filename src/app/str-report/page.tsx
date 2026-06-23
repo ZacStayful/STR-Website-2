@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo, useState } from "react";
 import type {
   ChapterState,
@@ -17,6 +18,7 @@ import { NavButtons } from "./_components/ui/NavButtons";
 import { InputChapter } from "./_components/chapters/InputChapter";
 import { ScanChapter } from "./_components/chapters/ScanChapter";
 import { MarketChapter } from "./_components/chapters/MarketChapter";
+import { LocationChapter } from "./_components/chapters/LocationChapter";
 import { IncomeChapter } from "./_components/chapters/IncomeChapter";
 import { CompareChapter } from "./_components/chapters/CompareChapter";
 import { RiskChapter } from "./_components/chapters/RiskChapter";
@@ -63,7 +65,7 @@ export default function StrReportPage() {
     setSelfManaged(false);
   }
 
-  const goContinue = () => setChapter((c) => (Math.min(6, c + 1) as ChapterState));
+  const goContinue = () => setChapter((c) => (Math.min(7, c + 1) as ChapterState));
   const goBack = () => setChapter((c) => (Math.max(2, c - 1) as ChapterState));
 
   return (
@@ -71,9 +73,14 @@ export default function StrReportPage() {
       style={{
         maxWidth: 600,
         margin: "0 auto",
-        padding: "2.5rem 1.5rem 4rem",
+        padding: "1.75rem 1.5rem 4rem",
       }}
     >
+      {/* Stayful branding */}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+        <Image src="/assets/stayful-logo.png" alt="Stayful" width={47} height={28} priority />
+      </div>
+
       <ProgressBar chapter={chapter} />
 
       <div key={chapter}>
@@ -85,7 +92,9 @@ export default function StrReportPage() {
 
         {chapter === 2 && input && market && <MarketChapter input={input} market={market} />}
 
-        {chapter === 3 && income && adjustedIncome && (
+        {chapter === 3 && input && market && <LocationChapter input={input} market={market} />}
+
+        {chapter === 4 && income && adjustedIncome && (
           <IncomeChapter
             income={adjustedIncome}
             baseManagement={income.management}
@@ -94,7 +103,7 @@ export default function StrReportPage() {
           />
         )}
 
-        {chapter === 4 && input && adjustedIncome && verdict && (
+        {chapter === 5 && input && adjustedIncome && verdict && (
           <CompareChapter
             strNet={adjustedIncome.net}
             ltlNet={ltlEstimate(input.beds)}
@@ -103,9 +112,9 @@ export default function StrReportPage() {
           />
         )}
 
-        {chapter === 5 && risk && <RiskChapter risk={risk} />}
+        {chapter === 6 && risk && <RiskChapter risk={risk} />}
 
-        {chapter === 6 && input && adjustedIncome && risk && verdict && (
+        {chapter === 7 && input && adjustedIncome && risk && verdict && (
           <VerdictChapter
             input={input}
             income={adjustedIncome}
@@ -116,7 +125,7 @@ export default function StrReportPage() {
         )}
       </div>
 
-      {chapter >= 2 && chapter <= 5 && (
+      {chapter >= 2 && chapter <= 6 && (
         <NavButtons chapter={chapter} onBack={goBack} onContinue={goContinue} />
       )}
     </main>

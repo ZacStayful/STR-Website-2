@@ -1,6 +1,7 @@
 import { C, gbp } from "../../_lib/brand";
 import type { IncomeData, PropertyInput, RiskData, VerdictData } from "../../_lib/types";
 import { StatTile } from "../ui/StatTile";
+import { FaqSection } from "../FaqSection";
 
 const TYPE_LABEL: Record<PropertyInput["propertyType"], string> = {
   apartment: "apartment",
@@ -119,6 +120,8 @@ export function VerdictChapter({
           {buildSummary(input, income, risk, verdict)}
         </p>
       </div>
+
+      <FaqSection />
 
       <div style={{ textAlign: "center", marginTop: 24 }}>
         <button

@@ -1,5 +1,6 @@
-import { C, gbp } from "../../_lib/brand";
+import { C, gbp, ratingColors } from "../../_lib/brand";
 import type { MarketData, PropertyInput } from "../../_lib/types";
+import { competitiveness } from "../../_lib/location";
 import { ChapterHeader } from "../ui/ChapterHeader";
 import { StatTile } from "../ui/StatTile";
 
@@ -21,6 +22,8 @@ const cardStyle: React.CSSProperties = {
 };
 
 export function MarketChapter({ input, market }: { input: PropertyInput; market: MarketData }) {
+  const comp = competitiveness(market);
+  const compColors = ratingColors(comp.rating);
   return (
     <div className="sr-chapter-enter">
       <ChapterHeader
@@ -99,6 +102,32 @@ export function MarketChapter({ input, market }: { input: PropertyInput; market:
             </span>
           ))}
         </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 500, color: C.gray800 }}>How competitive the area is</span>
+          <span
+            style={{
+              background: compColors.bg,
+              color: compColors.tx,
+              fontSize: 11,
+              fontWeight: 500,
+              padding: "2px 8px",
+              borderRadius: 999,
+            }}
+          >
+            {comp.rating === "Low" ? "Low competition" : comp.rating === "Moderate" ? "Moderate" : "High competition"}
+          </span>
+        </div>
+        <div style={{ height: 6, borderRadius: 3, background: C.gray200, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${comp.score}%`, background: compColors.fill }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.gray400, marginTop: 4 }}>
+          <span>Room to stand out</span>
+          <span>Saturated</span>
+        </div>
+        <p style={{ fontSize: 13, color: C.gray500, lineHeight: 1.7, margin: "10px 0 0" }}>{comp.summary}</p>
       </div>
     </div>
   );

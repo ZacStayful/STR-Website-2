@@ -1,6 +1,6 @@
 import { C } from "../_lib/brand";
 
-const LABELS = ["Your market", "Your income", "STR vs long let", "Risk profile", "The verdict"];
+const LABELS = ["Your market", "Location & demand", "Your income", "STR vs long let", "Risk profile", "The verdict"];
 
 // Six visible chapters map to five labelled segments (Market…Verdict). Chapter
 // state 2 = segment 0. Not shown for chapters 0 (input) or 1 (scanning).

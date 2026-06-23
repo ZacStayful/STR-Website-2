@@ -1,7 +1,8 @@
 // Types for the STR Intelligence Report experience.
 
-export type ChapterState = 0 | 1 | 2 | 3 | 4 | 5 | 6;
-// 0 = input, 1 = scanning, 2 = market, 3 = income, 4 = compare, 5 = risk, 6 = verdict
+export type ChapterState = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+// 0 = input, 1 = scanning, 2 = market, 3 = location, 4 = income,
+// 5 = compare, 6 = risk, 7 = verdict
 
 export type Beds = 1 | 2 | 3 | 4;
 export type PropertyType = "apartment" | "terraced" | "semi-detached" | "detached";
