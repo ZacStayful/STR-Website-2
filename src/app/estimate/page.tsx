@@ -357,6 +357,9 @@ export default function HomePage() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [platformFeePct, setPlatformFeePct] = useState<number | null>(null);
   const [mgmtFeePct, setMgmtFeePct] = useState<number | null>(null);
+  // When true the property is self-managed: the management fee is removed
+  // entirely and every net/profit figure recomputes without it.
+  const [selfManaged, setSelfManaged] = useState(false);
   const [cleaningMonthly, setCleaningMonthly] = useState<number | null>(null);
   const [overheadMortgage, setOverheadMortgage] = useState<number | null>(null);
   const [overheadBills, setOverheadBills] = useState<number | null>(null);
@@ -395,6 +398,7 @@ export default function HomePage() {
     setExcludedComps(new Set());
     setPlatformFeePct(null);
     setMgmtFeePct(null);
+    setSelfManaged(false);
     setCleaningMonthly(null);
     setExpensesExpanded(false);
   }, [result]);
@@ -717,7 +721,9 @@ export default function HomePage() {
     const DEFAULT_MGMT_PCT = 15;
     const DEFAULT_CLEANING_PCT_OF_GROSS = 0.18;
     const effPlatformPct = platformFeePct ?? DEFAULT_PLATFORM_PCT;
-    const effMgmtPct = mgmtFeePct ?? DEFAULT_MGMT_PCT;
+    // Self-managing removes the management fee entirely (0 %). Otherwise the
+    // user's typed override (or the 15 % default) applies.
+    const effMgmtPct = selfManaged ? 0 : (mgmtFeePct ?? DEFAULT_MGMT_PCT);
     const effCleaningMonthly = cleaningMonthly
       ?? Math.max(0, Math.round((grossAnnual / 12) * DEFAULT_CLEANING_PCT_OF_GROSS));
     const cleaningAnnual = effCleaningMonthly * 12;
@@ -738,6 +744,10 @@ export default function HomePage() {
     const cleaningLaundry = cleaningAnnual;
     const totalOperatingCosts = platformFees + managementFees + cleaningLaundry;
     const stlNetAnnual = computeNet(grossAnnual);
+    // Percentage labels for the Revenue Breakdown, kept in sync with the
+    // adjustable expense inputs and the self-managed toggle.
+    const cleaningPctLabel = grossAnnual > 0 ? Math.round((cleaningLaundry / grossAnnual) * 100) : 0;
+    const totalOpsPctLabel = grossAnnual > 0 ? Math.round((totalOperatingCosts / grossAnnual) * 100) : 0;
 
     const ltlGrossAnnual = f.longLetGrossAnnual;
     const ltlAgentFees = Math.round(ltlGrossAnnual * 0.10);
@@ -1031,7 +1041,7 @@ export default function HomePage() {
       const directPct = Math.min(0.5, (month / 36) * 0.5);
       const monthlyGross = grossAnnual / 12;
       const platformFeeRate = 0.15 * (1 - directPct);
-      const revenue = monthlyGross * (1 - platformFeeRate - 0.15 - 0.18);
+      const revenue = monthlyGross * (1 - platformFeeRate - (effMgmtPct / 100) - 0.18);
       const expenses = totalMonthlyOverheads;
       return {
         month: `M${month}`,
@@ -1354,7 +1364,8 @@ export default function HomePage() {
                           </p>
                         </div>
 
-                        {/* Management fee % */}
+                        {/* Management fee % — with a self-managed toggle that
+                            removes the fee entirely from every net figure. */}
                         <div>
                           <label className="block text-[11px] font-semibold uppercase tracking-wider text-primary-foreground/70">
                             Management fees
@@ -1365,20 +1376,32 @@ export default function HomePage() {
                               min={0}
                               max={100}
                               step={0.5}
-                              value={mgmtFeePct ?? effMgmtPct}
+                              disabled={selfManaged}
+                              value={selfManaged ? 0 : (mgmtFeePct ?? effMgmtPct)}
                               onChange={(e) => {
                                 const v = e.target.value.trim();
                                 if (v === "") { setMgmtFeePct(null); return; }
                                 const n = Number(v);
                                 if (Number.isFinite(n) && n >= 0 && n <= 100) setMgmtFeePct(n);
                               }}
-                              className="w-16 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60"
+                              className="w-16 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 py-1 text-sm font-semibold text-primary-foreground outline-none focus:border-primary-foreground/60 disabled:opacity-40"
                             />
                             <span className="text-sm text-primary-foreground/80">%</span>
                           </div>
                           <p className="mt-1 text-[11px] text-primary-foreground/60">
-                            {gbp(Math.round(grossAnnual * (effMgmtPct / 100) / 12))}/mo · {gbp(Math.round(grossAnnual * (effMgmtPct / 100)))}/yr
+                            {selfManaged
+                              ? "No management fee applied"
+                              : `${gbp(Math.round(grossAnnual * (effMgmtPct / 100) / 12))}/mo · ${gbp(Math.round(grossAnnual * (effMgmtPct / 100)))}/yr`}
                           </p>
+                          <label className="mt-2 flex cursor-pointer items-center gap-2 text-[11px] text-primary-foreground/80">
+                            <input
+                              type="checkbox"
+                              checked={selfManaged}
+                              onChange={(e) => setSelfManaged(e.target.checked)}
+                              className="h-3.5 w-3.5 cursor-pointer accent-primary-foreground"
+                            />
+                            I&apos;ll self-manage (no fee)
+                          </label>
                         </div>
 
                         {/* Cleaning & laundry £ per month */}
@@ -2144,28 +2167,35 @@ export default function HomePage() {
                       </div>
                     </div>
                     <div className="flex items-center justify-between rounded-lg bg-muted/50 px-4 py-2.5">
-                      <span className="text-sm text-muted-foreground">Platform Fees (15%)</span>
+                      <span className="text-sm text-muted-foreground">Platform Fees ({effPlatformPct}%)</span>
                       <div className="text-right">
                         <span className="text-sm font-medium text-destructive">-{gbp(platformFees)}</span>
                         <span className="ml-1 text-xs text-muted-foreground">(-{gbp(Math.round(platformFees / 12))}/mo)</span>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between rounded-lg bg-muted/50 px-4 py-2.5">
-                      <span className="text-sm text-muted-foreground">Management Fees (15%)</span>
-                      <div className="text-right">
-                        <span className="text-sm font-medium text-destructive">-{gbp(managementFees)}</span>
-                        <span className="ml-1 text-xs text-muted-foreground">(-{gbp(Math.round(managementFees / 12))}/mo)</span>
+                    {selfManaged ? (
+                      <div className="flex items-center justify-between rounded-lg bg-success/5 px-4 py-2.5">
+                        <span className="text-sm text-muted-foreground">Management Fees (self-managed)</span>
+                        <span className="text-sm font-medium text-success">Excluded</span>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-between rounded-lg bg-muted/50 px-4 py-2.5">
+                        <span className="text-sm text-muted-foreground">Management Fees ({effMgmtPct}%)</span>
+                        <div className="text-right">
+                          <span className="text-sm font-medium text-destructive">-{gbp(managementFees)}</span>
+                          <span className="ml-1 text-xs text-muted-foreground">(-{gbp(Math.round(managementFees / 12))}/mo)</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between rounded-lg bg-muted/50 px-4 py-2.5">
-                      <span className="text-sm text-muted-foreground">Cleaning &amp; Laundry (18%)</span>
+                      <span className="text-sm text-muted-foreground">Cleaning &amp; Laundry ({cleaningPctLabel}%)</span>
                       <div className="text-right">
                         <span className="text-sm font-medium text-destructive">-{gbp(cleaningLaundry)}</span>
                         <span className="ml-1 text-xs text-muted-foreground">(-{gbp(Math.round(cleaningLaundry / 12))}/mo)</span>
                       </div>
                     </div>
                     <div className="flex items-center justify-between rounded-lg bg-destructive/5 px-4 py-3">
-                      <span className="text-sm font-medium">Total Operating Costs (48%)</span>
+                      <span className="text-sm font-medium">Total Operating Costs ({totalOpsPctLabel}%)</span>
                       <div className="text-right">
                         <span className="text-sm font-bold text-destructive">-{gbp(totalOperatingCosts)}</span>
                         <span className="ml-1 text-xs text-muted-foreground">(-{gbp(Math.round(totalOperatingCosts / 12))}/mo)</span>
