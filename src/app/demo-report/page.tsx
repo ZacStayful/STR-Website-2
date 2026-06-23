@@ -1,16 +1,16 @@
-import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import EstimatePage from "@/app/estimate/page";
+import { DEMO_MAP } from "@/lib/demo-data";
 
 // ─── TEMPORARY public preview route ──────────────────────────────────────
-// Renders the /estimate analyser UI with seeded demo data so the report
-// (including the new self-managed expense toggle and PDF download) can be
-// reviewed without logging in. This deliberately sits OUTSIDE the /estimate
-// route tree, so it skips the Supabase auth layout + middleware gate.
+// Renders the /estimate analyser UI with a seeded demo report injected as
+// initial state, so the report (including the self-managed expense toggle and
+// the matching PDF) renders immediately for anyone — no login, no live API
+// calls, no redirect/URL-param dance. It sits OUTSIDE the /estimate route
+// tree, so it skips the Supabase auth layout + middleware gate.
 //
-// It only ever shows hard-coded demo properties (DEMO_MAP) — no live API
-// calls, no user data. Remove this folder when the design review is done.
-// noindex so it never shows up in search.
+// Only ever shows hard-coded demo properties (DEMO_MAP) — no user data.
+// noindex. Remove this folder when the design review is done.
 
 export const metadata: Metadata = {
   title: "Demo report (preview) — Stayful Intelligence",
@@ -23,8 +23,6 @@ export default async function DemoReportPage({
   searchParams: Promise<{ demo?: string }>;
 }) {
   const { demo } = await searchParams;
-  // Default the bare URL straight to a seeded report so the link lands on the
-  // analyser rather than the empty property-input form.
-  if (!demo) redirect("/demo-report?demo=manchester");
-  return <EstimatePage />;
+  const result = (demo && DEMO_MAP[demo]) || DEMO_MAP.manchester;
+  return <EstimatePage initialResult={result} />;
 }

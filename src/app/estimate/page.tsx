@@ -299,7 +299,14 @@ const TAB_SECTIONS = [
 
 // ─── Main Component ─────────────────────────────────────────────
 
-export default function HomePage() {
+// Optional `initialResult` lets a host route (e.g. the public /demo-report
+// preview) seed the analyser with a ready-made report so it renders the
+// result immediately, instead of the empty property-input form. The real
+// /estimate route renders this with no props (Next passes route props, which
+// are ignored), so behaviour there is unchanged.
+type HomePageProps = { initialResult?: AnalysisResult };
+
+export default function HomePage({ initialResult }: HomePageProps = {}) {
   const [address, setAddress] = useState("");
   const [postcode, setPostcode] = useState("");
   const [email, setEmail] = useState("");
@@ -368,7 +375,7 @@ export default function HomePage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(initialResult ?? null);
   const [showPresentation, setShowPresentation] = useState(false);
   const [progress, setProgress] = useState(0);
   const [completedStages, setCompletedStages] = useState<Set<string>>(new Set());
