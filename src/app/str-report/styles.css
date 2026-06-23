@@ -1,0 +1,54 @@
+/* Scoped styles for the STR Intelligence Report route. Class-prefixed with
+   `sr-` so nothing here can leak into the rest of the app. */
+
+@keyframes sr-fadeSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sr-chapter-enter {
+  animation: sr-fadeSlideUp 0.35s ease forwards;
+}
+
+@keyframes sr-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.sr-pulse-dot {
+  display: inline-block;
+  animation: sr-pulse 1.2s ease-in-out infinite;
+}
+
+.sr-chapter-num {
+  font-size: 64px;
+}
+
+.sr-wf-label {
+  width: 130px;
+}
+
+.sr-risk-label {
+  width: 130px;
+}
+
+@media (max-width: 480px) {
+  .sr-chapter-num {
+    font-size: 48px;
+  }
+  .sr-wf-label,
+  .sr-risk-label {
+    width: 110px;
+  }
+}
