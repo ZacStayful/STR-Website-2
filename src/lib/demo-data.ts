@@ -87,7 +87,7 @@ export const DEMO_MANCHESTER: AnalysisResult = {
     platformDependency: "moderate",
     locationDemand: "low",
     competition: "high",
-    overallScore: 38,
+    overallScore: 4,
   },
   verdict: {
     fit: "strong",
@@ -196,7 +196,7 @@ export const DEMO_RESULT: AnalysisResult = {
     platformDependency: "high",
     locationDemand: "low",
     competition: "moderate",
-    overallScore: 48,
+    overallScore: 5,
   },
   verdict: {
     fit: "moderate",

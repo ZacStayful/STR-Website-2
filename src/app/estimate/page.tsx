@@ -1646,23 +1646,23 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               <AccuracyPanel />
             </div>
 
-            {/* Calendly CTA banner */}
+            {/* Presentation view CTA banner */}
             <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5 rounded-xl bg-primary p-6 sm:p-7">
               <div>
                 <p className="text-base font-semibold text-primary-foreground" style={{ marginBottom: 6 }}>
-                  Book your profitability action plan
+                  See this report as a presentation
                 </p>
                 <p className="text-[13px] text-primary-foreground/60">
-                  A free consultation to review the risks in your property and analyse your realistic profitability.
+                  Turn this analysis into a branded, editable presentation you can walk through or save as a PDF.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => { trackCtaClick("overview_book_call"); window.open("https://calendly.com/zac-stayful/call", "_blank"); }}
+                onClick={openPresentation}
                 className="shrink-0 whitespace-nowrap rounded-lg px-5 py-3 text-[13px] font-bold text-primary"
                 style={{ background: "#B9D5C6", border: "none", cursor: "pointer" }}
               >
-                Book your plan →
+                Presentation view →
               </button>
             </div>
           </section>

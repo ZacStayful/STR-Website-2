@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useMemo, useState } from "react";
 import type { AnalysisResult, RiskLevel } from "@/lib/types";
 import { deriveReportData, type PdfExpenses } from "@/lib/pdf/derive";
+import { overallRiskScore100 } from "@/lib/scores";
 import { C, gbp, riskLevelColors, riskScoreColors, riskScoreLabel, scoreColors } from "./_lib/tokens";
 import { CASE_STUDIES, averageAccuracy } from "./_lib/caseStudies";
 
@@ -162,7 +163,8 @@ export function PresentationDeck({
     return m;
   })();
 
-  const adjustedOverall = clamp(Math.round(result.risk.overallScore + (comp.score - 50) * 0.18), 0, 100);
+  // Same /100 risk score the dashboard and PDF use — kept identical for consistency.
+  const overall100 = overallRiskScore100(result.risk);
 
   const fit = result.verdict.fit;
   const ANSWER: Record<typeof fit, { label: string; color: string }> = {
@@ -177,7 +179,7 @@ export function PresentationDeck({
     { label: "Profit after mortgage & bills", value: `${profit >= 0 ? "+" : "−"}${gbp(Math.abs(profit))}/mo`, color: profit >= 0 ? C.green : C.red },
     { label: "Market & competition", value: `${result.shortLet.activeListings} listings · ${avgRating > 0 ? `${avgRating.toFixed(1)}★ · ` : ""}${comp.rating} competition` },
     { label: "Demand strength", value: `${dbScore}/100 direct-booking${topDriver ? ` · ${topDriver.type.toLowerCase()}` : ""}` },
-    { label: "Risk level", value: `${adjustedOverall}/100 · ${riskScoreLabel(adjustedOverall)}`, color: riskScoreColors(adjustedOverall).fill },
+    { label: "Risk level", value: `${overall100}/100 · ${riskScoreLabel(overall100)}`, color: riskScoreColors(overall100).fill },
     { label: "Break-even occupancy", value: `${Math.round((result.financials.breakEvenOccupancy ?? 0) * 100)}%` },
   ];
 
@@ -323,7 +325,7 @@ export function PresentationDeck({
             <div style={{ height: 6, borderRadius: 3, background: C.gray200, overflow: "hidden" }}>
               <div style={{ height: "100%", width: `${comp.score}%`, background: riskLevelColors(comp.rating).fill }} />
             </div>
-            <p style={{ fontSize: 13, color: C.gray500, lineHeight: 1.6, margin: "10px 0 0" }}>{comp.takeaway} <span style={{ color: C.gray400 }}>Supply + review depth feed the risk score.</span></p>
+            <p style={{ fontSize: 13, color: C.gray500, lineHeight: 1.6, margin: "10px 0 0" }}>{comp.takeaway}</p>
           </div>
         </section>
 
@@ -392,13 +394,12 @@ export function PresentationDeck({
           <p style={slideSub}>The factors that determine how risky this property is to short let.</p>
           <div style={{ ...card, textAlign: "center", marginBottom: 14 }}>
             <div style={{ fontSize: 12, color: C.gray500 }}>Overall STR risk score</div>
-            <div style={{ fontSize: 44, fontWeight: 500, color: riskScoreColors(adjustedOverall).fill, lineHeight: 1.1 }}>{adjustedOverall}</div>
-            <div style={{ fontSize: 13, fontWeight: 500, color: riskScoreColors(adjustedOverall).fill }}>{riskScoreLabel(adjustedOverall)} risk · out of 100, lower is better</div>
-            <p style={{ fontSize: 11, color: C.gray400, margin: "6px 0 0" }}>Includes how competitive the local market is.</p>
+            <div style={{ fontSize: 44, fontWeight: 500, color: riskScoreColors(overall100).fill, lineHeight: 1.1 }}>{overall100}</div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: riskScoreColors(overall100).fill }}>{riskScoreLabel(overall100)} risk · out of 100, lower is better</div>
           </div>
           <div style={card}>
             {RISK_LABELS.map(({ key, label }) => {
-              const level: RiskLevel = key === "competition" ? comp.rating : (result.risk[key] as RiskLevel);
+              const level: RiskLevel = result.risk[key] as RiskLevel;
               const rc = riskLevelColors(level);
               const width = level === "low" ? 33 : level === "moderate" ? 66 : 100;
               return (

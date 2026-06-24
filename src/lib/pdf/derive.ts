@@ -3,6 +3,7 @@ import type {
   RiskLevel,
   ShortLetComparable,
 } from "@/lib/types";
+import { directBookingScore as computeDirectBookingScore, overallRiskScore100 } from "@/lib/scores";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -245,18 +246,6 @@ function formatDistance(km: number | undefined): string {
   return `${km.toFixed(2)} km`;
 }
 
-function directBookingScoreFromSignals(result: AnalysisResult): number {
-  const d = result.demandDrivers;
-  const events = result.nearbyEvents?.totalEvents ?? 0;
-  const raw =
-    (d.hospitals?.length ?? 0) * 10 +
-    (d.universities?.length ?? 0) * 15 +
-    (d.trainStations?.length ?? 0) * 10 +
-    (d.subwayStations?.length ?? 0) * 5 +
-    (events >= 200 ? 40 : events / 5);
-  return Math.max(0, Math.min(100, Math.round(raw)));
-}
-
 export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses): PdfReportData {
   const { property, shortLet, longLet, financials, risk, demandDrivers, nearbyEvents, propertyValuation, dataQuality } = result;
 
@@ -388,8 +377,8 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
     });
   }
 
-  // ── Direct booking score ──
-  const directBookingScore = directBookingScoreFromSignals(result);
+  // ── Direct booking score (shared with dashboard + presentation) ──
+  const directBookingScore = computeDirectBookingScore(result);
 
   // ── Risk (map 8 levels → 4 numeric factors shown in PDF) ──
   const riskFactors = {
@@ -477,8 +466,8 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
     demandDrivers: drivers,
     directBookingScore,
     risk: {
-      overall: risk.overallScore,
-      label: overallRiskLabel(risk.overallScore),
+      overall: overallRiskScore100(risk),
+      label: overallRiskLabel(overallRiskScore100(risk)),
       factors: riskFactors,
     },
     amenities,
