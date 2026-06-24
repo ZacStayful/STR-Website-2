@@ -1,7 +1,19 @@
+import Link from "next/link";
 import { C, gbp } from "../../_lib/brand";
 import type { IncomeData, PropertyInput, RiskData, VerdictData } from "../../_lib/types";
 import { StatTile } from "../ui/StatTile";
 import { FaqSection } from "../FaqSection";
+
+function presentationHref(input: PropertyInput): string {
+  const params = new URLSearchParams({
+    postcode: input.postcode,
+    beds: String(input.beds),
+    type: input.propertyType,
+    mortgage: String(input.monthlyMortgage),
+  });
+  if (input.ownerName) params.set("name", input.ownerName);
+  return `/str-report/presentation?${params.toString()}`;
+}
 
 const TYPE_LABEL: Record<PropertyInput["propertyType"], string> = {
   apartment: "apartment",
@@ -120,6 +132,25 @@ export function VerdictChapter({
           {buildSummary(input, income, risk, verdict)}
         </p>
       </div>
+
+      {/* Turn this report into a shareable, branded presentation. */}
+      <Link
+        href={presentationHref(input)}
+        style={{
+          display: "block",
+          textAlign: "center",
+          marginTop: 16,
+          background: C.greenDk,
+          color: C.white,
+          textDecoration: "none",
+          fontSize: 14,
+          fontWeight: 500,
+          borderRadius: 8,
+          padding: "13px 20px",
+        }}
+      >
+        View as presentation →
+      </Link>
 
       <FaqSection />
 

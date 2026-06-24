@@ -25,6 +25,7 @@ const labelStyle: React.CSSProperties = {
 };
 
 export function InputChapter({ onSubmit }: { onSubmit: (input: PropertyInput) => void }) {
+  const [ownerName, setOwnerName] = useState("");
   const [postcode, setPostcode] = useState("");
   const [beds, setBeds] = useState<Beds>(2);
   const [propertyType, setPropertyType] = useState<PropertyType>("terraced");
@@ -44,7 +45,13 @@ export function InputChapter({ onSubmit }: { onSubmit: (input: PropertyInput) =>
       return;
     }
     setError(null);
-    onSubmit({ postcode: pc.toUpperCase(), beds, propertyType, monthlyMortgage });
+    onSubmit({
+      postcode: pc.toUpperCase(),
+      beds,
+      propertyType,
+      monthlyMortgage,
+      ownerName: ownerName.trim() || undefined,
+    });
   }
 
   return (
@@ -79,6 +86,20 @@ export function InputChapter({ onSubmit }: { onSubmit: (input: PropertyInput) =>
             gap: 16,
           }}
         >
+          <div>
+            <label style={labelStyle} htmlFor="sr-owner">
+              Owner name <span style={{ color: C.gray400, fontWeight: 400 }}>(optional)</span>
+            </label>
+            <input
+              id="sr-owner"
+              style={inputStyle}
+              placeholder="e.g. James Bourn"
+              value={ownerName}
+              onChange={(e) => setOwnerName(e.target.value)}
+              autoComplete="name"
+            />
+          </div>
+
           <div>
             <label style={labelStyle} htmlFor="sr-postcode">
               Postcode

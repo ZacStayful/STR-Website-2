@@ -52,3 +52,23 @@
     width: 110px;
   }
 }
+
+/* Presentation: print / Save-as-PDF lays every slide out in sequence and hides
+   the interactive navigation. */
+@media print {
+  .sr-pres-tabs,
+  .sr-pres-nav {
+    display: none !important;
+  }
+  .sr-pres-slide {
+    display: block !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    margin-bottom: 28px;
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+  }
+  .sr-pres-page {
+    max-width: 100% !important;
+  }
+}

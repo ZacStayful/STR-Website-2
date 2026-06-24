@@ -12,6 +12,7 @@ export interface PropertyInput {
   beds: Beds;
   propertyType: PropertyType;
   monthlyMortgage: number;
+  ownerName?: string; // optional — only used to address the presentation
 }
 
 export interface MarketData {
