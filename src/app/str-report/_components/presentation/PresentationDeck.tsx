@@ -38,7 +38,7 @@ const TABS = [
   { id: "income", label: "Income" },
   { id: "risk", label: "Risk" },
   { id: "proof", label: "Proof" },
-  { id: "next", label: "Next steps" },
+  { id: "verdict", label: "Worth it?" },
 ] as const;
 
 const card: React.CSSProperties = {
@@ -89,6 +89,36 @@ export function PresentationDeck({ input }: { input: PropertyInput }) {
   const quietest = Math.min(...monthlyNet);
   const maxNet = Math.max(...monthlyNet, 1);
   const db = directBookingRating(dbScore);
+
+  const ANSWERS: Record<typeof verdict.result, { label: string; color: string }> = {
+    "strong-yes": { label: "Yes — strong short-let potential", color: C.green },
+    yes: { label: "Yes — worth short letting", color: C.green },
+    borderline: { label: "Borderline — proceed with caution", color: C.amber },
+    no: { label: "No — not the right move here", color: C.red },
+  };
+  const answer = ANSWERS[verdict.result];
+
+  // Everything from the report, condensed into evidence rows for the answer.
+  const summaryRows: { label: string; value: string; color?: string }[] = [
+    {
+      label: "Income vs long let",
+      value: `${gbp(income.net)} vs ${gbp(ltl)}/mo · ${verdict.upliftPct >= 0 ? "+" : ""}${verdict.upliftPct}%`,
+      color: verdict.upliftPct >= 20 ? C.green : verdict.upliftPct >= 10 ? C.amber : C.red,
+    },
+    {
+      label: "Covers your mortgage",
+      value: `${coversMortgage >= 0 ? "+" : "−"}${gbp(Math.abs(coversMortgage))}/mo`,
+      color: coversMortgage >= 0 ? C.green : C.red,
+    },
+    { label: "Market & competition", value: `${market.listingCount} listings · ${comp.rating.toLowerCase()} competition` },
+    { label: "Demand strength", value: `${dbScore}/100 direct-booking · ${reasons[0].title.toLowerCase()}` },
+    {
+      label: "Risk level",
+      value: `${risk.overall}/100 · ${risk.overallRating.toLowerCase()}`,
+      color: ratingColors(risk.overallRating).fill,
+    },
+    { label: "Setup payback", value: verdict.setupPaybackMonths >= 999 ? "—" : `${verdict.setupPaybackMonths} months` },
+  ];
 
   return (
     <div className="sr-pres">
@@ -287,20 +317,46 @@ export function PresentationDeck({ input }: { input: PropertyInput }) {
           </div>
         </section>
 
-        {/* 7. Next steps / verdict */}
+        {/* 7. The answer — every finding condensed into yes/no */}
         <section className="sr-pres-slide" style={{ display: active === 6 ? "block" : "none" }}>
-          <h2 style={slideTitle}>{verdict.headline}</h2>
-          <p style={slideSub}>{verdict.summary}</p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
-            <div style={tile}><div style={tileLabel}>Net / month</div><div style={{ ...tileValue, color: C.green }}>{gbp(income.net)}</div></div>
-            <div style={tile}><div style={tileLabel}>Uplift</div><div style={tileValue}>{verdict.upliftPct >= 0 ? "+" : ""}{verdict.upliftPct}%</div></div>
-            <div style={tile}><div style={tileLabel}>Risk</div><div style={tileValue}>{risk.overallRating}</div></div>
+          <h2 style={slideTitle}>Is this property worth short letting?</h2>
+          <p style={slideSub}>Every finding from this report, condensed into one answer.</p>
+
+          {/* Clear verdict banner */}
+          <div style={{ ...card, textAlign: "center", border: `2px solid ${answer.color}` }}>
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style={{ display: "inline-block" }}>
+              <circle cx="12" cy="12" r="10" stroke={answer.color} strokeWidth="1.5" />
+              {verdict.result === "no" ? (
+                <path d="M15 9l-6 6M9 9l6 6" stroke={answer.color} strokeWidth="1.5" strokeLinecap="round" />
+              ) : (
+                <path d="M8 12.5l2.5 2.5L16 9" stroke={answer.color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              )}
+            </svg>
+            <div style={{ fontSize: 20, fontWeight: 500, color: answer.color, margin: "8px 0 0" }}>{answer.label}</div>
+            <p style={{ fontSize: 14, color: C.gray500, lineHeight: 1.7, margin: "8px 0 0" }}>{verdict.summary}</p>
           </div>
-          <div style={{ ...card, textAlign: "center" }}>
+
+          {/* Condensed evidence */}
+          <div style={{ ...card, marginTop: 14, padding: 0, overflow: "hidden" }}>
+            {summaryRows.map((row, i) => (
+              <div key={row.label} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "11px 16px", borderTop: i === 0 ? "none" : `1px solid ${C.gray100}`, fontSize: 13 }}>
+                <span style={{ color: C.gray500 }}>{row.label}</span>
+                <span style={{ fontWeight: 500, color: row.color ?? C.gray900, textAlign: "right" }}>{row.value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Bottom line + CTA */}
+          <div style={{ ...card, marginTop: 14, textAlign: "center" }}>
             <p style={{ fontSize: 14, color: C.gray800, lineHeight: 1.7, margin: "0 0 14px" }}>
-              {ownerName ? `${ownerName}, ` : ""}if this looks right, the next step is a quick call to walk through how Stayful would run it for you.
+              {ownerName ? `${ownerName}, ` : ""}
+              {verdict.result === "no"
+                ? "on these numbers short letting doesn't beat long letting by enough to justify the effort. Happy to talk it through if you'd like a second look."
+                : verdict.result === "borderline"
+                  ? "this is a close call — it can work with sharp pricing and management. A quick call will help you decide with confidence."
+                  : "the case for short letting is clear. The next step is a quick call to walk through how Stayful would run it for you."}
             </p>
-            <a href="https://calendly.com/stayful" target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", background: C.green, color: C.white, textDecoration: "none", fontSize: 14, fontWeight: 500, borderRadius: 8, padding: "12px 22px" }}>
+            <a href="https://calendly.com/stayful" target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", background: answer.color, color: C.white, textDecoration: "none", fontSize: 14, fontWeight: 500, borderRadius: 8, padding: "12px 22px" }}>
               Book a call with Stayful →
             </a>
           </div>
