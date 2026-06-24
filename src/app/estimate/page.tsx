@@ -1185,6 +1185,36 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   <CheckCircle2 className="h-5 w-5" />
                   <span className="text-sm font-medium">Analysis Complete</span>
                 </div>
+                <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-primary-foreground/40 text-primary-foreground hover:bg-primary-foreground/10 bg-transparent"
+                  onClick={() => {
+                    if (!result) return;
+                    trackCtaClick("presentation_view");
+                    try {
+                      localStorage.setItem(
+                        "stayful_presentation",
+                        JSON.stringify({
+                          result,
+                          expenses: {
+                            platformPct: effPlatformPct,
+                            mgmtPct: effMgmtPct,
+                            cleaningMonthly: effCleaningMonthly,
+                            selfManaged,
+                          },
+                          mortgage: overheadMortgage ?? null,
+                        }),
+                      );
+                      window.open("/presentation", "_blank");
+                    } catch {
+                      // localStorage unavailable — ignore
+                    }
+                  }}
+                >
+                  ▶ Presentation view
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1235,6 +1265,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                 >
                   {pdfLoading ? "Generating report…" : "↓ Download as PDF"}
                 </Button>
+                </div>
               </div>
               {/* Property title — centered above the two estimate columns */}
               <div className="mb-6 text-center">
