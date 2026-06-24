@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useMemo, useState } from "react";
 import type { AnalysisResult, RiskLevel } from "@/lib/types";
 import { deriveReportData, type PdfExpenses } from "@/lib/pdf/derive";
-import { overallRiskScore100 } from "@/lib/scores";
+import { overallRiskScore100, riskFactors100 } from "@/lib/scores";
 import { C, gbp, riskLevelColors, riskScoreColors, riskScoreLabel, scoreColors } from "./_lib/tokens";
 import { CASE_STUDIES, averageAccuracy } from "./_lib/caseStudies";
 
@@ -19,17 +19,6 @@ const TABS = [
   { id: "proof", label: "Proof" },
   { id: "worth", label: "Worth it?" },
 ] as const;
-
-const RISK_LABELS: { key: keyof AnalysisResult["risk"]; label: string }[] = [
-  { key: "incomeVolatility", label: "Income volatility" },
-  { key: "seasonality", label: "Seasonality" },
-  { key: "regulatory", label: "Local regulation" },
-  { key: "competition", label: "Competition" },
-  { key: "locationDemand", label: "Location demand" },
-  { key: "guestDamage", label: "Guest damage" },
-  { key: "platformDependency", label: "Platform dependency" },
-  { key: "setupCost", label: "Setup cost" },
-];
 
 const card: React.CSSProperties = { background: C.white, border: `1px solid ${C.gray200}`, borderRadius: 12, padding: "1.1rem 1.25rem" };
 const tile: React.CSSProperties = { background: C.gray50, borderRadius: 8, padding: "0.85rem 0.9rem" };
@@ -398,17 +387,15 @@ export function PresentationDeck({
             <div style={{ fontSize: 13, fontWeight: 500, color: riskScoreColors(overall100).fill }}>{riskScoreLabel(overall100)} risk · out of 100, lower is better</div>
           </div>
           <div style={card}>
-            {RISK_LABELS.map(({ key, label }) => {
-              const level: RiskLevel = result.risk[key] as RiskLevel;
-              const rc = riskLevelColors(level);
-              const width = level === "low" ? 33 : level === "moderate" ? 66 : 100;
+            {riskFactors100(result.risk).map((f) => {
+              const rc = riskLevelColors(f.level);
               return (
-                <div key={String(key)} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <div style={{ width: 140, fontSize: 12, color: C.gray800, flexShrink: 0 }}>{label}</div>
+                <div key={f.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{ width: 140, fontSize: 12, color: C.gray800, flexShrink: 0 }}>{f.label}</div>
                   <div style={{ flex: 1, height: 5, borderRadius: 3, background: C.gray200, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${width}%`, background: rc.fill }} />
+                    <div style={{ height: "100%", width: `${f.score}%`, background: rc.fill }} />
                   </div>
-                  <span style={{ background: rc.bg, color: rc.tx, fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 999, flexShrink: 0, textTransform: "capitalize" }}>{level}</span>
+                  <span style={{ background: rc.bg, color: rc.tx, fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 999, flexShrink: 0, textTransform: "capitalize" }}>{f.level}</span>
                 </div>
               );
             })}

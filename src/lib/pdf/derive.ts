@@ -3,7 +3,7 @@ import type {
   RiskLevel,
   ShortLetComparable,
 } from "@/lib/types";
-import { directBookingScore as computeDirectBookingScore, overallRiskScore100 } from "@/lib/scores";
+import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "@/lib/scores";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -211,12 +211,6 @@ export function buildSetupSnapshot(raw: {
   };
 }
 
-function riskLevelToScore(level: RiskLevel): number {
-  if (level === "low") return 25;
-  if (level === "moderate") return 50;
-  return 75;
-}
-
 function overallRiskLabel(score: number): string {
   if (score <= 25) return "Low Risk";
   if (score <= 50) return "Low-Medium Risk";
@@ -380,12 +374,13 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
   // ── Direct booking score (shared with dashboard + presentation) ──
   const directBookingScore = computeDirectBookingScore(result);
 
-  // ── Risk (map 8 levels → 4 numeric factors shown in PDF) ──
+  // ── Risk profile — same four factors and mapping as the dashboard ──
+  const rf = riskFactors100(risk);
   const riskFactors = {
-    revenueConsistency: riskLevelToScore(risk.incomeVolatility),
-    longTermComparison: riskLevelToScore(risk.platformDependency),
-    seasonalVariance: riskLevelToScore(risk.seasonality),
-    marketDemand: riskLevelToScore(risk.locationDemand),
+    revenueConsistency: rf[0].score,
+    longTermComparison: rf[1].score,
+    seasonalVariance: rf[2].score,
+    marketDemand: rf[3].score,
   };
 
   // ── Amenities (Stayful defaults; future: compute from comps) ──

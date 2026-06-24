@@ -1,7 +1,29 @@
 // Single source of truth for the headline scores shown across the dashboard,
 // the PDF and the presentation, so all three always agree.
 
-import type { AnalysisResult, RiskProfile } from "./types";
+import type { AnalysisResult, RiskLevel, RiskProfile } from "./types";
+
+// The four risk factors shown in the report's risk profile, with the mapping
+// the dashboard uses (the canonical "main view"). PDF and presentation render
+// the same four so the risk profile is identical everywhere.
+export interface RiskFactor100 {
+  label: string;
+  level: RiskLevel;
+  score: number; // 0–100, lower is better
+}
+
+function levelToScore(level: RiskLevel): number {
+  return level === "low" ? 25 : level === "moderate" ? 50 : 75;
+}
+
+export function riskFactors100(risk: RiskProfile): RiskFactor100[] {
+  return [
+    { label: "Revenue Consistency", level: risk.incomeVolatility, score: levelToScore(risk.incomeVolatility) },
+    { label: "Long-Term Comparison", level: risk.competition, score: levelToScore(risk.competition) },
+    { label: "Seasonal Variance", level: risk.seasonality, score: levelToScore(risk.seasonality) },
+    { label: "Market Demand", level: risk.locationDemand, score: levelToScore(risk.locationDemand) },
+  ];
+}
 
 // Overall STR risk on a 0–100 scale (lower is better). The analyser stores
 // `overallScore` on a 1–10 scale; the dashboard displays it ×10, so that is the
