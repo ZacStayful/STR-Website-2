@@ -41,17 +41,20 @@ function clamp(v: number, min: number, max: number) {
   return Math.min(max, Math.max(min, v));
 }
 
-function competitivenessOf(listings: number, avgReviews: number, avgRating: number): { score: number; rating: RiskLevel; takeaway: string } {
-  const listingScore = clamp((listings - 180) * 0.35, 0, 65);
-  const incumbent = clamp((avgReviews / 120) * 18 + (avgRating - 4.2) * 22, 0, 32);
-  const score = clamp(Math.round(listingScore + incumbent), 10, 96);
+function competitivenessOf(listings: number, avgReviews: number, avgRating: number, monthsToEstablished: number | null): { score: number; rating: RiskLevel; takeaway: string } {
+  const listingScore = clamp((listings - 180) * 0.3, 0, 55);
+  const incumbent = clamp((avgReviews / 120) * 16 + (avgRating - 4.2) * 20, 0, 30);
+  // The longer it takes a new listing to reach the market's review count, the
+  // more entrenched the competition — so a slow ramp raises the score.
+  const rampTerm = monthsToEstablished != null ? clamp((monthsToEstablished - 12) * 0.5, 0, 20) : 0;
+  const score = clamp(Math.round(listingScore + incumbent + rampTerm), 10, 96);
   const rating: RiskLevel = score <= 35 ? "low" : score <= 60 ? "moderate" : "high";
   const takeaway =
     rating === "low"
-      ? "Light supply — a well-presented property can stand out."
+      ? "Light supply — a well-presented property can stand out quickly."
       : rating === "moderate"
         ? "A reviewed, established field — strong listing & pricing needed to win."
-        : "Busy market with well-reviewed incumbents — execution has to be excellent.";
+        : "Busy market with well-reviewed incumbents — it takes time to establish.";
   return { score, rating, takeaway };
 }
 
@@ -108,6 +111,10 @@ export function PresentationDeck({
   const [mortgage, setMortgage] = useState(mortgageProp ?? 0);
   const [bills, setBills] = useState(0);
 
+  // Editable assumptions for the time-to-competitive estimate.
+  const [avgStayNights, setAvgStayNights] = useState(3);
+  const [reviewOneIn, setReviewOneIn] = useState(3);
+
   const data = useMemo(
     () => deriveReportData(result, { platformPct, mgmtPct, cleaningMonthly, selfManaged: false }),
     [result, platformPct, mgmtPct, cleaningMonthly],
@@ -128,9 +135,32 @@ export function PresentationDeck({
   const avgRating = data.compsBenchmark.avgRating;
   const avgReviews = data.compsBenchmark.avgReviews;
   const reviewPct = clamp((avgReviews / 150) * 100, 3, 100);
-  const comp = competitivenessOf(result.shortLet.activeListings, avgReviews, avgRating);
+
+  // Time-to-competitive: how long to accumulate reviews at this property's
+  // projected occupancy. Bookings = occupied nights ÷ avg stay; reviews =
+  // bookings ÷ "1 in N". Beginner = 10 reviews; Established = market average.
+  const BEGINNER_REVIEWS = 10;
+  const targetReviews = Math.round(avgReviews);
+  const nightsPerMonth = data.overview.occupancy * 30.4;
+  const bookingsPerMonth = avgStayNights > 0 ? nightsPerMonth / avgStayNights : 0;
+  const reviewsPerMonth = reviewOneIn > 0 ? bookingsPerMonth / reviewOneIn : 0;
+  const monthsToBeginner = reviewsPerMonth > 0 ? Math.ceil(BEGINNER_REVIEWS / reviewsPerMonth) : null;
+  const monthsToEstablished = reviewsPerMonth > 0 && targetReviews > 0 ? Math.ceil(targetReviews / reviewsPerMonth) : null;
+
+  const comp = competitivenessOf(result.shortLet.activeListings, avgReviews, avgRating, monthsToEstablished);
   const dbScore = data.directBookingScore;
   const topDriver = data.demandDrivers[0];
+
+  type Marker = { pos: number; name: string; sub: string; months: number; color: string };
+  const timelineMarkers: Marker[] = (() => {
+    if (monthsToEstablished == null) return [];
+    const m: Marker[] = [{ pos: 4, name: "Launch", sub: "Listed", months: 0, color: C.gray400 }];
+    if (targetReviews >= BEGINNER_REVIEWS && monthsToBeginner != null) {
+      m.push({ pos: clamp((monthsToBeginner / monthsToEstablished) * 100, 16, 84), name: "Beginner", sub: `${BEGINNER_REVIEWS} reviews`, months: monthsToBeginner, color: C.amber });
+    }
+    m.push({ pos: 96, name: "Established", sub: `${targetReviews} reviews`, months: monthsToEstablished, color: C.green });
+    return m;
+  })();
 
   const adjustedOverall = clamp(Math.round(result.risk.overallScore + (comp.score - 50) * 0.18), 0, 100);
 
@@ -244,6 +274,44 @@ export function PresentationDeck({
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: C.gray400, marginTop: 3 }}><span>new</span><span>established (150+)</span></div>
               </div>
             </div>
+          </div>
+
+          {/* Time to become competitive */}
+          <div style={{ ...card, marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: C.gray800 }}>How long to become competitive</span>
+              {reviewsPerMonth > 0 ? (
+                <span style={{ fontSize: 12, color: C.gray500 }}>≈ {reviewsPerMonth.toFixed(1)} reviews / month</span>
+              ) : null}
+            </div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: C.gray500, marginTop: 6 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Avg stay <NumField value={avgStayNights} onChange={setAvgStayNights} suffix="nts" step={1} max={30} width={48} /></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>1 in <NumField value={reviewOneIn} onChange={setReviewOneIn} step={1} max={20} width={44} /> guests review</span>
+            </div>
+
+            {timelineMarkers.length >= 2 ? (
+              <>
+                <div style={{ position: "relative", height: 64, marginTop: 22 }}>
+                  <div style={{ position: "absolute", left: "4%", right: "4%", top: 27, height: 3, borderRadius: 2, background: C.gray200 }} />
+                  <div style={{ position: "absolute", left: "4%", width: "92%", top: 27, height: 3, borderRadius: 2, background: `linear-gradient(to right, ${C.gray300}, ${C.amber}, ${C.green})` }} />
+                  {timelineMarkers.map((mk) => (
+                    <div key={mk.name} style={{ position: "absolute", left: `${mk.pos}%`, top: 0, transform: "translateX(-50%)", width: 92, textAlign: "center" }}>
+                      <div style={{ fontSize: 10, fontWeight: 500, color: mk.color, lineHeight: 1.1 }}>{mk.name}</div>
+                      <div style={{ width: 13, height: 13, borderRadius: "50%", background: mk.color, margin: "6px auto 0", boxShadow: `0 0 0 3px ${C.white}` }} />
+                      <div style={{ fontSize: 11, fontWeight: 500, color: C.gray800, marginTop: 6 }}>{mk.months === 0 ? "now" : `${mk.months} mo`}</div>
+                      <div style={{ fontSize: 9, color: C.gray400 }}>{mk.sub}</div>
+                    </div>
+                  ))}
+                </div>
+                <p style={{ fontSize: 12, color: C.gray500, lineHeight: 1.6, margin: "4px 0 0" }}>
+                  At {Math.round(data.overview.occupancy * 100)}% occupancy, this property reaches the {targetReviews}-review market average in about <strong style={{ fontWeight: 500, color: C.gray800 }}>{monthsToEstablished} months</strong> — where returns become the most predictable and accurate.
+                </p>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: C.gray500, lineHeight: 1.6, margin: "12px 0 0" }}>
+                There isn&apos;t enough review data on nearby listings to estimate a time-to-competitive for this area.
+              </p>
+            )}
           </div>
 
           {/* Competitiveness gauge */}
