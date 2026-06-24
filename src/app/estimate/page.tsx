@@ -747,6 +747,31 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
       ?? Math.max(0, Math.round((grossAnnual / 12) * DEFAULT_CLEANING_PCT_OF_GROSS));
     const cleaningAnnual = effCleaningMonthly * 12;
 
+    // Hand the live analysis (+ customised expenses + mortgage) to the
+    // presentation route via localStorage, then open it in a new tab.
+    const openPresentation = () => {
+      if (!result) return;
+      trackCtaClick("presentation_view");
+      try {
+        localStorage.setItem(
+          "stayful_presentation",
+          JSON.stringify({
+            result,
+            expenses: {
+              platformPct: effPlatformPct,
+              mgmtPct: effMgmtPct,
+              cleaningMonthly: effCleaningMonthly,
+              selfManaged,
+            },
+            mortgage: overheadMortgage ?? null,
+          }),
+        );
+        window.open("/presentation", "_blank");
+      } catch {
+        // localStorage unavailable — ignore
+      }
+    };
+
     // Central helper — every Net Revenue figure on the page flows through this.
     const computeNet = (gross: number): number => {
       const platformAnnual = gross * (effPlatformPct / 100);
@@ -1137,6 +1162,22 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
             })}
           </nav>
 
+          {/* Presentation view — opens the branded slide deck in a new tab */}
+          <div className={`border-t border-border ${sidebarCollapsed ? "px-2 py-3" : "px-4 py-3"}`}>
+            <button
+              type="button"
+              onClick={openPresentation}
+              title={sidebarCollapsed ? "Presentation view" : undefined}
+              className={`flex w-full items-center gap-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors ${
+                sidebarCollapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5"
+              }`}
+            >
+              <Monitor className="h-4 w-4 shrink-0" />
+              {!sidebarCollapsed && (
+                <span className="text-sm font-medium truncate">Presentation view</span>
+              )}
+            </button>
+          </div>
 
           {/* Progress at bottom */}
           <div className={`border-t border-border ${sidebarCollapsed ? "px-2 py-3" : "px-4 py-3"}`}>
@@ -1185,36 +1226,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   <CheckCircle2 className="h-5 w-5" />
                   <span className="text-sm font-medium">Analysis Complete</span>
                 </div>
-                <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="border-primary-foreground/40 text-primary-foreground hover:bg-primary-foreground/10 bg-transparent"
-                  onClick={() => {
-                    if (!result) return;
-                    trackCtaClick("presentation_view");
-                    try {
-                      localStorage.setItem(
-                        "stayful_presentation",
-                        JSON.stringify({
-                          result,
-                          expenses: {
-                            platformPct: effPlatformPct,
-                            mgmtPct: effMgmtPct,
-                            cleaningMonthly: effCleaningMonthly,
-                            selfManaged,
-                          },
-                          mortgage: overheadMortgage ?? null,
-                        }),
-                      );
-                      window.open("/presentation", "_blank");
-                    } catch {
-                      // localStorage unavailable — ignore
-                    }
-                  }}
-                >
-                  ▶ Presentation view
-                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1265,7 +1276,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                 >
                   {pdfLoading ? "Generating report…" : "↓ Download as PDF"}
                 </Button>
-                </div>
               </div>
               {/* Property title — centered above the two estimate columns */}
               <div className="mb-6 text-center">
