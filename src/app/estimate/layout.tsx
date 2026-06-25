@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, isPro, runsRemaining } from "@/lib/access";
 import { TrialBanner } from "@/components/TrialBanner";
@@ -39,25 +40,27 @@ export default async function EstimateLayout({
     redirect("/upgrade");
   }
 
-  // Mirror return-visit timestamp to the profile (fire-and-forget so it
-  // never blocks the analyser from rendering).
+  // Mirror return-visit timestamp to the profile. Run via after() so it
+  // completes after the response is sent without being killed by the
+  // serverless runtime (and without blocking the analyser from rendering).
   const now = new Date().toISOString();
-  void (async () => {
+  after(async () => {
     try {
       await supabase.from("profiles").update({ last_seen_at: now }).eq("id", user.id);
     } catch (err) {
       console.error("[estimate/layout] last_seen hook failed:", err);
     }
-  })();
+  });
 
   // Resilient Monday CRM backfill. The primary trial→Monday push happens once
   // in /auth/callback; if Monday was unconfigured or unreachable at that
   // instant the row is never created and never retried. Every trial user must
-  // visit /estimate to use the product, so retry here (fire-and-forget) until
-  // the profile is linked. ensureEnquiry dedupes by email, so this can't create
-  // a second row, and it short-circuits cheaply when Monday isn't configured.
+  // visit /estimate to use the product, so retry here until the profile is
+  // linked. ensureEnquiry dedupes by email, so this can't create a second row,
+  // and it short-circuits cheaply when Monday isn't configured. after() keeps
+  // it off the render path while guaranteeing it runs to completion.
   if (!profile.monday_item_id) {
-    void (async () => {
+    after(async () => {
       try {
         const mondayId = await ensureEnquiry({
           name: profile.full_name ?? "",
@@ -74,7 +77,7 @@ export default async function EstimateLayout({
       } catch (err) {
         console.error("[estimate/layout] Monday backfill failed:", err);
       }
-    })();
+    });
   }
 
   // Trial countdown banner for free users (Pro users have unlimited access).
