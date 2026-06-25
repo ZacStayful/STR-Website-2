@@ -1,9 +1,8 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-// Streams audio back from ElevenLabs. The v3 model is more expressive but
-// slower than the turbo models, so give it generous headroom over the 10s
-// Hobby default.
-export const maxDuration = 60;
+// Streams audio back from ElevenLabs. Give it headroom over the 10s Hobby
+// default so longer summaries finish synthesising.
+export const maxDuration = 30;
 
 // ElevenLabs' well-known default voice ("Rachel") — used unless ELEVENLABS_VOICE_ID
 // is set to a specific cloned/branded voice.
@@ -50,11 +49,10 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           text,
-          // Eleven v3 — the most expressive model. Note v3 treats `stability`
-          // as discrete steps (0.0 Creative / 0.5 Natural / 1.0 Robust) rather
-          // than a free float, and effectively ignores `style`.
-          model_id: "eleven_v3",
-          voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          // Turbo v2.5: low-latency (~250ms TTFB), good quality — best fit for
+          // a snappy narrator. stability/similarity_boost are floats here.
+          model_id: "eleven_turbo_v2_5",
+          voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.0 },
         }),
       },
     );
