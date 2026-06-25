@@ -13,8 +13,6 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-const CALENDLY_URL = "https://calendly.com/zac-stayful/call";
-
 export default async function UpgradePage() {
   const supabase = await createSupabaseServerClient();
   const {
@@ -75,14 +73,6 @@ export default async function UpgradePage() {
         <div className="upgrade-ctas">
           <a className="btn btn-primary" href={checkoutHref}>
             Subscribe now <Icon name="arrow" size={14} />
-          </a>
-          <a
-            className="btn btn-ghost"
-            href={CALENDLY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Or book a call
           </a>
         </div>
 
