@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  Menu,
+  X,
   Building2,
   GraduationCap,
   Plane,
@@ -393,6 +395,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
   // Sidebar state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // Mobile (< md): the sidebar becomes an off-canvas drawer and content goes
+  // full-width, instead of being shoved by the fixed sidebar.
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // User-curated comp exclusions — keyed by comp index in r.shortLet.comparables.
   // Excluded comps are dimmed in the grid and removed from all aggregate stats
@@ -469,11 +475,17 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     }
   }, [bedrooms]);
 
-  // Auto-collapse sidebar on mobile
+  // Track mobile breakpoint. On mobile the sidebar is an off-canvas drawer;
+  // on desktop it's the fixed rail (auto-collapsed on first load on smaller
+  // desktops, matching the previous behaviour).
   useEffect(() => {
     const checkWidth = () => {
-      if (window.innerWidth < 768) {
-        setSidebarCollapsed(true);
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setMobileNavOpen(false);
+      } else {
+        setSidebarCollapsed(window.innerWidth < 1024);
       }
     };
     checkWidth();
@@ -1001,6 +1013,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     // Current active tab info for progress indicator
     const activeTabInfo = TAB_SECTIONS.find((t) => t.id === activeTab);
     const sidebarWidth = sidebarCollapsed ? 48 : 200;
+    // On mobile the rail is an off-canvas drawer (always full, never the
+    // collapsed icon-rail), and content is full-width.
+    const collapsed = sidebarCollapsed && !isMobile;
+    const contentMargin = isMobile ? 0 : sidebarWidth;
 
     // Average rating and reviews from comparables
     const allComps = r.shortLet.comparables;
@@ -1105,15 +1121,25 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
         <Presentation data={r} onClose={() => setShowPresentation(false)} />
       )}
       <main className="min-h-screen bg-background">
+        {/* Mobile drawer backdrop */}
+        {isMobile && mobileNavOpen && (
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => setMobileNavOpen(false)}
+            aria-hidden="true"
+          />
+        )}
         {/* ─── LEFT SIDEBAR ─────────────────────────────────── */}
         <aside
-          className={`fixed left-0 top-0 z-40 h-full border-r border-border bg-card transition-all duration-300 ${
-            sidebarCollapsed ? "w-12" : "w-[200px]"
+          className={`fixed left-0 top-0 flex h-full flex-col border-r border-border bg-card transition-transform duration-300 ${
+            isMobile
+              ? `z-50 w-[260px] ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"}`
+              : `z-40 translate-x-0 ${collapsed ? "w-12" : "w-[200px]"}`
           }`}
         >
           {/* Sidebar header */}
-          <div className={`flex items-center border-b border-border ${sidebarCollapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
-            {!sidebarCollapsed && (
+          <div className={`flex items-center border-b border-border ${collapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
+            {!collapsed && (
               <Image
                 alt="Stayful"
                 width={100}
@@ -1123,17 +1149,27 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                 priority
               />
             )}
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight className="h-4 w-4" />
-              ) : (
-                <ChevronLeft className="h-4 w-4" />
-              )}
-            </button>
+            {isMobile ? (
+              <button
+                onClick={() => setMobileNavOpen(false)}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                aria-label="Close menu"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {collapsed ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <ChevronLeft className="h-4 w-4" />
+                )}
+              </button>
+            )}
           </div>
 
           {/* Nav items */}
@@ -1144,18 +1180,21 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               return (
                 <button
                   key={tab.id}
-                  onClick={() => scrollToSection(tab.id)}
+                  onClick={() => {
+                    scrollToSection(tab.id);
+                    if (isMobile) setMobileNavOpen(false);
+                  }}
                   className={`flex w-full items-center gap-3 transition-colors ${
-                    sidebarCollapsed ? "justify-center px-2 py-2.5" : "px-4 py-2.5"
+                    collapsed ? "justify-center px-2 py-2.5" : "px-4 py-2.5"
                   } ${
                     isActive
                       ? "bg-primary/10 text-primary font-semibold border-r-2 border-primary"
                       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                   }`}
-                  title={sidebarCollapsed ? tab.label : undefined}
+                  title={collapsed ? tab.label : undefined}
                 >
                   <TabIcon className={`h-4 w-4 shrink-0 ${isActive ? "text-primary" : ""}`} />
-                  {!sidebarCollapsed && (
+                  {!collapsed && (
                     <span className="text-sm truncate">{tab.label}</span>
                   )}
                 </button>
@@ -1181,12 +1220,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           </div>
 
           {/* Progress at bottom */}
-          <div className={`border-t border-border ${sidebarCollapsed ? "px-2 py-3" : "px-4 py-3"}`}>
-            {!sidebarCollapsed && (
+          <div className={`border-t border-border ${collapsed ? "px-2 py-3" : "px-4 py-3"}`}>
+            {!collapsed && (
               <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">Progress</p>
             )}
             <div className="flex items-center gap-2">
-              {!sidebarCollapsed && (
+              {!collapsed && (
                 <span className="text-xs font-semibold text-foreground whitespace-nowrap">
                   {activeTabInfo ? `${activeTabInfo.num} of 10` : ""}
                 </span>
@@ -1204,17 +1243,28 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
         {/* ─── MAIN CONTENT AREA ────────────────────────────── */}
         <div
           className="transition-all duration-300"
-          style={{ marginLeft: sidebarWidth }}
+          style={{ marginLeft: contentMargin }}
         >
           {/* Top header with action buttons */}
-          <div className="flex items-center justify-end gap-2 px-6 py-3 border-b border-border bg-card/50">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border bg-card/50 sm:px-6">
+            {isMobile ? (
+              <button
+                onClick={() => setMobileNavOpen(true)}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                aria-label="Open report sections menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            ) : (
+              <span />
+            )}
             <Button variant="secondary" size="sm" onClick={handleReset}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
               New Analysis
             </Button>
           </div>
 
-          <div className="px-6 py-8 pb-28 max-w-5xl mx-auto">
+          <div className="px-4 py-8 pb-28 max-w-5xl mx-auto sm:px-6">
 
           {/* ══════════════════════════════════════════════════════════
               Section 1: Overview
@@ -1504,7 +1554,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                     )}
                     {/* ── Overhead inputs (bills, mortgage, other) ── */}
                     {expensesExpanded && (
-                      <div className="mt-4 border-t border-primary-foreground/15 pt-4">
+                      <div id="property-costs" className="mt-4 scroll-mt-24 border-t border-primary-foreground/15 pt-4">
                         <p className="mb-3 text-center text-xs font-medium text-primary-foreground/80">Your monthly overheads</p>
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                           {/* Mortgage / Rent */}
@@ -2882,7 +2932,28 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
         </div>
       </main>
       {/* Floating AI narrator — summarises the report aloud and helps decide */}
-      <AnalyserNarrator result={r} />
+      <AnalyserNarrator
+        result={r}
+        costsProvided={totalAnnualOverheads > 0}
+        grounded={
+          totalAnnualOverheads > 0
+            ? {
+                shortLetTrueAnnual: stlTrueAnnualProfit,
+                longLetTrueAnnual: ltlTrueAnnualProfit,
+                annualDifference: revDifference,
+                monthlyDifference: revDifferenceMonthly,
+              }
+            : null
+        }
+        onAddCosts={() => {
+          setExpensesExpanded(true);
+          setTimeout(() => {
+            document
+              .getElementById("property-costs")
+              ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }, 60);
+        }}
+      />
       </>
     );
   }

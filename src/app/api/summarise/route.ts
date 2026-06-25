@@ -10,31 +10,64 @@ const NARRATOR_SYSTEM = `You are Stayful's analyst — the voice of the Stayful 
 
 Rules:
 - Write ONE spoken-aloud paragraph, 90–130 words. No headings, no bullet points, no markdown, no emoji — it will be read by a text-to-speech voice.
-- Open with the headline: is short-letting clearly worth it, marginal, or not worth it for this property, and the key number (the net annual or monthly difference vs long-let).
-- Then give the one or two reasons that drive the verdict (demand, seasonality, occupancy needed to break even, setup/involvement, data confidence).
+- Open with the headline: is short-letting clearly worth it, marginal, or not worth it for this property. Use the net profit difference as the key number ONLY when net figures are provided; otherwise lead with the gross revenue potential.
+- Then give the one or two reasons that drive the verdict (demand, seasonality, setup/involvement, data confidence).
 - End with a clear, honest recommendation framed as a next step.
+- NEVER state a break-even occupancy percentage — the analyser does not produce a cost-grounded break-even, so any figure would be invented.
 - Never guarantee income. Say "comparable properties typically achieve" or "the analysis estimates". Use £ and round figures naturally for speech (e.g. "about £8,400 more a year", not "£8,432.17").
-- Be warm, direct and concise — a trusted advisor, not a salesperson. Respond with only the paragraph itself, nothing else.`;
+- Be warm, direct and concise — a trusted advisor, not a salesperson. Respond with only the paragraph itself, nothing else.
+- CRITICAL — if "COSTS PROVIDED BY USER" is "no": you do NOT have their mortgage or bills, so you CANNOT know net profit or break-even occupancy. Do NOT state any net-profit figure, net monthly/annual difference, or break-even occupancy — stating one would be a guess. Instead: lead with what you can stand behind (gross revenue potential and demand), say plainly that an accurate net profit and break-even figure need their actual costs, and end by telling them to add their property costs in the analyser and re-run to get an accurate report. Keep the same single spoken paragraph format.`;
 
 // Collapse the full AnalysisResult into a compact, model-friendly fact sheet.
 // Keeping this deterministic (no prose) lets the model do the narration while we
 // stay in control of which numbers it sees.
-function buildFacts(r: AnalysisResult): string {
+// Cost-grounded profit figures the client computes from the user's own
+// overheads (only present when the user has filled them in).
+interface GroundedCosts {
+  shortLetTrueAnnual: number;
+  longLetTrueAnnual: number;
+  annualDifference: number;
+  monthlyDifference: number;
+}
+
+function buildFacts(
+  r: AnalysisResult,
+  costsProvided: boolean,
+  grounded: GroundedCosts | null,
+): string {
   const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
   const p = r.property;
   const f = r.financials;
   const lines: string[] = [];
 
   lines.push(`PROPERTY: ${p.bedrooms}-bed property in ${p.address}, ${p.postcode}, sleeping ${p.guests}.`);
+  lines.push(`COSTS PROVIDED BY USER: ${costsProvided ? "yes" : "no"}.`);
 
-  lines.push(`SHORT-LET: gross ${gbp(f.shortLetGrossAnnual)}/yr, net ${gbp(f.shortLetNetAnnual)}/yr.`);
-  lines.push(`LONG-LET: gross ${gbp(f.longLetGrossAnnual)}/yr, net ${gbp(f.longLetNetAnnual)}/yr.`);
-  lines.push(`DIFFERENCE (short minus long, net): ${gbp(f.annualDifference)}/yr (${gbp(f.monthlyDifference)}/mo).`);
-  lines.push(`BREAK-EVEN OCCUPANCY: ${Math.round(f.breakEvenOccupancy)}% (vs the analysis's projected occupancy).`);
+  // Gross figures don't depend on the user's costs, so they're always safe.
+  lines.push(`SHORT-LET GROSS REVENUE: ${gbp(f.shortLetGrossAnnual)}/yr.`);
+  lines.push(`LONG-LET GROSS RENT: ${gbp(f.longLetGrossAnnual)}/yr.`);
+
+  // Net profit is only trustworthy when the user has entered their own costs
+  // (the overheads section). When they have, use the cost-grounded figures the
+  // app computed from those inputs — NOT result.financials, whose net is based
+  // on default assumed costs. When they haven't, state nothing about net.
+  // Break-even occupancy is never included: the analyser has no cost-grounded
+  // break-even, so any figure would be a guess.
+  if (costsProvided && grounded) {
+    lines.push(`SHORT-LET NET PROFIT (after the user's entered costs): ${gbp(grounded.shortLetTrueAnnual)}/yr.`);
+    lines.push(`LONG-LET NET PROFIT (after the user's entered costs): ${gbp(grounded.longLetTrueAnnual)}/yr.`);
+    lines.push(`NET PROFIT DIFFERENCE (short minus long): ${gbp(grounded.annualDifference)}/yr (${gbp(grounded.monthlyDifference)}/mo).`);
+  } else {
+    lines.push(
+      `NET PROFIT: NOT AVAILABLE. The user has not entered their property costs (mortgage, bills, overheads), so any net-profit or net-difference figure would be a guess — DO NOT state one. Tell the user to add their property costs in the analyser to see an accurate net result.`,
+    );
+  }
 
   const v = r.verdict;
   lines.push(`VERDICT FIT: ${v.fit}. RISK LEVEL: ${v.riskLevel}. OWNER INVOLVEMENT: ${v.ownerInvolvement}.`);
-  if (v.recommendation) lines.push(`MODEL RECOMMENDATION TEXT: ${v.recommendation}`);
+  // The recommendation text is cost-dependent (it can quote net figures), so
+  // only feed it to the model when the user actually provided costs.
+  if (costsProvided && v.recommendation) lines.push(`MODEL RECOMMENDATION TEXT: ${v.recommendation}`);
 
   lines.push(`RISK SCORE: ${r.risk.overallScore}/100. Seasonality: ${r.risk.seasonality}, income volatility: ${r.risk.incomeVolatility}, location demand: ${r.risk.locationDemand}, competition: ${r.risk.competition}, setup cost: ${r.risk.setupCost}.`);
 
@@ -82,12 +115,25 @@ export async function POST(request: Request) {
   }
 
   let result: AnalysisResult;
+  let costsProvided = false;
+  let grounded: GroundedCosts | null = null;
   try {
-    const body = (await request.json()) as { result?: AnalysisResult };
+    const body = (await request.json()) as {
+      result?: AnalysisResult;
+      costsProvided?: boolean;
+      grounded?: GroundedCosts;
+    };
     result = body.result as AnalysisResult;
     if (!result?.property || !result?.financials || !result?.verdict) {
       throw new Error("missing fields");
     }
+    // Default to false: if we're unsure whether the user gave costs, treat the
+    // net figures as unreliable rather than risk over-claiming.
+    costsProvided = body.costsProvided === true;
+    grounded =
+      costsProvided && body.grounded && typeof body.grounded.shortLetTrueAnnual === "number"
+        ? body.grounded
+        : null;
   } catch {
     return Response.json({ error: "Invalid analysis payload." }, { status: 400 });
   }
@@ -102,7 +148,7 @@ export async function POST(request: Request) {
       // narration task, not a reasoning one.
       output_config: { effort: "low" },
       system: NARRATOR_SYSTEM,
-      messages: [{ role: "user", content: buildFacts(result) }],
+      messages: [{ role: "user", content: buildFacts(result, costsProvided, grounded) }],
     });
 
     const summary = message.content
