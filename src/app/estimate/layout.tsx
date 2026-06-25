@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, isPro, runsRemaining } from "@/lib/access";
 import { TrialBanner } from "@/components/TrialBanner";
 import { checkoutUrlFor } from "@/lib/billing";
+import { ensureEnquiry } from "@/lib/apis/monday";
 
 // Server component that wraps /estimate. Fetches the current user's profile,
 // runs hasAccess() against plan + reports_run (5 free reports, then pro),
@@ -28,7 +30,9 @@ export default async function EstimateLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, monday_item_id, stripe_subscription_id")
+    .select(
+      "plan, reports_run, monday_item_id, stripe_subscription_id, email, full_name, mobile, created_at",
+    )
     .eq("id", user.id)
     .single();
 
@@ -36,16 +40,45 @@ export default async function EstimateLayout({
     redirect("/upgrade");
   }
 
-  // Mirror return-visit timestamp to the profile (fire-and-forget so it
-  // never blocks the analyser from rendering).
+  // Mirror return-visit timestamp to the profile. Run via after() so it
+  // completes after the response is sent without being killed by the
+  // serverless runtime (and without blocking the analyser from rendering).
   const now = new Date().toISOString();
-  void (async () => {
+  after(async () => {
     try {
       await supabase.from("profiles").update({ last_seen_at: now }).eq("id", user.id);
     } catch (err) {
       console.error("[estimate/layout] last_seen hook failed:", err);
     }
-  })();
+  });
+
+  // Resilient Monday CRM backfill. The primary trial→Monday push happens once
+  // in /auth/callback; if Monday was unconfigured or unreachable at that
+  // instant the row is never created and never retried. Every trial user must
+  // visit /estimate to use the product, so retry here until the profile is
+  // linked. ensureEnquiry dedupes by email, so this can't create a second row,
+  // and it short-circuits cheaply when Monday isn't configured. after() keeps
+  // it off the render path while guaranteeing it runs to completion.
+  if (!profile.monday_item_id) {
+    after(async () => {
+      try {
+        const mondayId = await ensureEnquiry({
+          name: profile.full_name ?? "",
+          email: profile.email ?? user.email ?? "",
+          mobile: profile.mobile ?? "",
+          trialStartedAt: profile.created_at ?? undefined,
+        });
+        if (mondayId) {
+          await supabase
+            .from("profiles")
+            .update({ monday_item_id: mondayId })
+            .eq("id", user.id);
+        }
+      } catch (err) {
+        console.error("[estimate/layout] Monday backfill failed:", err);
+      }
+    });
+  }
 
   // Trial countdown banner for free users (Pro users have unlimited access).
   const showTrialBanner = !isPro(profile);

@@ -1,7 +1,9 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { ensureEnquiry } from '@/lib/apis/monday'
 
 export type AuthState = { error: string | null }
 
@@ -65,6 +67,26 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   // The DB trigger handle_new_user() reads full_name + mobile out of
   // raw_user_meta_data and writes them onto the profile row. New profiles
   // start with reports_run = 0, giving them their 5 free reports.
+
+  // Push the trial to Monday immediately — this is the most reliable point
+  // to do it, because we have the name/email/mobile in hand and don't depend
+  // on email confirmation firing or the user reaching /estimate. ensureEnquiry
+  // dedupes by email, so the /auth/callback and /estimate hooks later adopt
+  // this same row instead of creating a duplicate. Runs via after() so it
+  // never delays the redirect to the check-email page.
+  after(async () => {
+    try {
+      await ensureEnquiry({
+        name: fullName,
+        email,
+        mobile: normalisedMobile,
+        trialStartedAt: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('[signup] Monday trial create failed:', err)
+    }
+  })
+
   redirect('/signup/check-email')
 }
 

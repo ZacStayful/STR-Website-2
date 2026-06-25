@@ -126,6 +126,27 @@ export async function createEnquiry(input: {
   return data?.create_item?.id ?? null;
 }
 
+/**
+ * Link a trial user to a Monday enquiry, creating the row only if one doesn't
+ * already exist for that email. Dedupes so we never create a second row for the
+ * same person (and so a manually-created row gets adopted). Returns the item id
+ * to store on the profile, or null if Monday is unconfigured/unreachable.
+ *
+ * Safe to call repeatedly — this is what lets the /estimate backfill retry a
+ * sync that failed during the one-shot /auth/callback hook.
+ */
+export async function ensureEnquiry(input: {
+  name: string;
+  email: string;
+  mobile: string;
+  trialStartedAt?: string;
+}): Promise<string | null> {
+  if (!input.email || !input.email.includes("@")) return null;
+  const existing = await findEnquiryByEmail(input.email);
+  if (existing) return existing;
+  return createEnquiry(input);
+}
+
 async function setEnquiryDate(email: string, columnId: string, when?: string): Promise<void> {
   const itemId = await findEnquiryByEmail(email);
   if (!itemId) {
