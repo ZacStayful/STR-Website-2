@@ -81,6 +81,7 @@ import HeatmapOverlay from "@/components/HeatmapOverlay";
 import { AddressAutocomplete, splitAddressAndPostcode } from "@/components/AddressAutocomplete";
 import { AccuracyPanel } from "@/components/AccuracyPanel";
 import { SetupCalculator } from "@/components/SetupCalculator";
+import { AnalyserNarrator } from "@/components/AnalyserNarrator";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
 import { initTracker, endSession, trackCtaClick } from "@/lib/tracker";
@@ -2781,6 +2782,8 @@ export default function HomePage() {
           </footer>
         </div>
       </main>
+      {/* Floating AI narrator — summarises the report aloud and helps decide */}
+      <AnalyserNarrator result={r} />
       </>
     );
   }
