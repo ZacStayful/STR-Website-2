@@ -26,6 +26,10 @@ create table if not exists public.profiles (
   -- Server-of-truth counters for trial usage. Monday is a mirror.
   reports_run integer not null default 0,
   last_seen_at timestamptz,
+  -- Optional discount code the user entered at signup. Stored verbatim
+  -- (uppercased/trimmed) and resolved against Stripe's promotion codes at
+  -- checkout time, where it discounts the Pro subscription. Null = none.
+  promo_code text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -36,6 +40,7 @@ alter table public.profiles add column if not exists mobile text;
 alter table public.profiles add column if not exists monday_item_id text;
 alter table public.profiles add column if not exists reports_run integer not null default 0;
 alter table public.profiles add column if not exists last_seen_at timestamptz;
+alter table public.profiles add column if not exists promo_code text;
 
 alter table public.profiles enable row level security;
 
@@ -59,12 +64,13 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email, full_name, mobile)
+  insert into public.profiles (id, email, full_name, mobile, promo_code)
   values (
     new.id,
     new.email,
     nullif(new.raw_user_meta_data->>'full_name', ''),
-    nullif(new.raw_user_meta_data->>'mobile', '')
+    nullif(new.raw_user_meta_data->>'mobile', ''),
+    nullif(new.raw_user_meta_data->>'promo_code', '')
   )
   on conflict (id) do nothing;
   return new;

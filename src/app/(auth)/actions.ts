@@ -33,6 +33,11 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   const email = String(formData.get('email') ?? '').trim()
   const mobile = String(formData.get('mobile') ?? '').trim()
   const password = String(formData.get('password') ?? '')
+  // Optional discount code. We only sanity-check the format here (alphanumeric
+  // plus - and _, normalised to uppercase); the code is validated for real
+  // against Stripe's promotion codes at checkout time. Empty => no code.
+  const promoRaw = String(formData.get('promo_code') ?? '').trim().toUpperCase()
+  const promoCode = /^[A-Z0-9][A-Z0-9_-]{1,63}$/.test(promoRaw) ? promoRaw : ''
 
   if (!fullName || !email || !mobile || !password) {
     return { error: 'Full name, email, mobile number, and password are all required.' }
@@ -58,6 +63,9 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
       data: {
         full_name: fullName,
         mobile: normalisedMobile,
+        // handle_new_user() copies this onto the profile row. Omitted when
+        // blank so the trigger's nullif() leaves promo_code null.
+        ...(promoCode ? { promo_code: promoCode } : {}),
       },
     },
   })

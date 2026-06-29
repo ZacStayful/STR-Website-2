@@ -3392,6 +3392,16 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   padding: 4px 8px;
   border-radius: 999px;
 }
+.sf-page-v3 .upgrade-promo {
+  font-size: 14px;
+  color: var(--sage-700);
+  background: var(--cream);
+  border: 1px solid var(--sage-200);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 18px;
+}
+.sf-page-v3 .upgrade-promo strong { font-weight: 600; }
 .sf-page-v3 .upgrade-ctas {
   display: flex; flex-wrap: wrap; gap: 12px;
   margin-bottom: 28px;

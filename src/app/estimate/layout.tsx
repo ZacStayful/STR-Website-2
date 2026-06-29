@@ -3,7 +3,7 @@ import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, isPro, runsRemaining } from "@/lib/access";
 import { TrialBanner } from "@/components/TrialBanner";
-import { checkoutUrlFor } from "@/lib/billing";
+import { CHECKOUT_PATH } from "@/lib/billing";
 import { ensureEnquiry } from "@/lib/apis/monday";
 
 // Server component that wraps /estimate. Fetches the current user's profile,
@@ -83,7 +83,7 @@ export default async function EstimateLayout({
   // Trial countdown banner for free users (Pro users have unlimited access).
   const showTrialBanner = !isPro(profile);
   const remaining = runsRemaining(profile);
-  const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
+  const checkoutHref = CHECKOUT_PATH;
 
   return (
     <>

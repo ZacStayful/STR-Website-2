@@ -71,6 +71,24 @@ export function SignupForm() {
         />
         <p className="text-xs text-muted-foreground">At least 8 characters.</p>
       </div>
+      <div className="space-y-1.5">
+        <label htmlFor="promo_code" className="text-sm font-medium">
+          Discount code <span className="text-muted-foreground font-normal">(optional)</span>
+        </label>
+        <input
+          id="promo_code"
+          name="promo_code"
+          type="text"
+          autoComplete="off"
+          autoCapitalize="characters"
+          maxLength={64}
+          placeholder="e.g. WELCOME25"
+          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm uppercase outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+        <p className="text-xs text-muted-foreground">
+          Got a code? We&apos;ll apply it to your subscription when you upgrade.
+        </p>
+      </div>
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       <button
         type="submit"

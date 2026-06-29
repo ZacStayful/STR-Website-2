@@ -4,7 +4,14 @@ export const STRIPE_PAYMENT_LINK =
   process.env.NEXT_PUBLIC_STRIPE_PAYMENT_LINK ||
   "https://buy.stripe.com/6oUcN4bBif6Y0ln0C74sE01";
 
-// Build the checkout URL for a specific user. client_reference_id is echoed
+// Internal route that creates a Stripe Checkout Session and redirects to it.
+// Used by every "Subscribe" button. The route applies the user's signup
+// discount code (if any) and falls back to the static Payment Link when
+// Stripe isn't fully configured. See src/app/api/stripe/checkout/route.ts.
+export const CHECKOUT_PATH = "/api/stripe/checkout";
+
+// Build the static Payment Link URL for a specific user. Used as the fallback
+// when the Stripe API checkout isn't configured. client_reference_id is echoed
 // back on the completed Checkout Session so the webhook knows who paid;
 // prefilled_email saves them re-typing it.
 export function checkoutUrlFor(userId: string, email: string | null): string {

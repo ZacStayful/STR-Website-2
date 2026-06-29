@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, FREE_RUNS, isLapsedSubscriber } from "@/lib/access";
-import { checkoutUrlFor } from "@/lib/billing";
+import { CHECKOUT_PATH } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
 
 export const metadata: Metadata = {
@@ -26,7 +26,7 @@ export default async function UpgradePage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, full_name, stripe_subscription_id")
+    .select("plan, reports_run, full_name, stripe_subscription_id, promo_code")
     .eq("id", user.id)
     .single();
 
@@ -39,7 +39,7 @@ export default async function UpgradePage() {
   const firstName =
     profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
   const lapsed = profile ? isLapsedSubscriber(profile) : false;
-  const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
+  const promoCode = profile?.promo_code?.toString().trim() || null;
 
   return (
     <section className="upgrade section">
@@ -70,8 +70,14 @@ export default async function UpgradePage() {
           </article>
         </div>
 
+        {promoCode ? (
+          <p className="upgrade-promo">
+            Discount code <strong>{promoCode}</strong> will be applied at checkout.
+          </p>
+        ) : null}
+
         <div className="upgrade-ctas">
-          <a className="btn btn-primary" href={checkoutHref}>
+          <a className="btn btn-primary" href={CHECKOUT_PATH}>
             Subscribe now <Icon name="arrow" size={14} />
           </a>
         </div>
