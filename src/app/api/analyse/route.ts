@@ -517,22 +517,6 @@ export async function POST(request: Request) {
           }
         }
 
-        // Write the qualification decision to the Management Leads board,
-        // matched by email. Uses the TRUE uplift (trueSTRNet − trueLLNet),
-        // not any inflated headline difference.
-        if (effectiveEmail && recommendation) {
-          try {
-            const { syncQualificationToMonday } = await import('@/lib/apis/monday');
-            await syncQualificationToMonday(effectiveEmail, {
-              longLetAnnual: recommendation.longLetMonthly * 12,
-              strProfit: recommendation.trueSTRNet - recommendation.trueLLNet,
-              recommendation: recommendation.recommendation,
-            });
-          } catch (err) {
-            console.error('[Monday] qualification sync error:', err);
-          }
-        }
-
         // Count this run against the user's 5 free reports.
         if (userId) {
           try {
