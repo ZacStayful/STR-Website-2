@@ -82,6 +82,8 @@ import { AddressAutocomplete, splitAddressAndPostcode } from "@/components/Addre
 import { AccuracyPanel } from "@/components/AccuracyPanel";
 import { SetupCalculator } from "@/components/SetupCalculator";
 import { AnalyserNarrator } from "@/components/AnalyserNarrator";
+import { DecisionScreen } from "@/components/qualification/DecisionScreen";
+import { TakeHomeBridge } from "@/components/qualification/TakeHomeBridge";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
 import { initTracker, endSession, trackCtaClick } from "@/lib/tracker";
@@ -324,6 +326,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const [outdoorSpace, setOutdoorSpace] = useState("none");
   const [monthlyMortgage, setMonthlyMortgage] = useState("");
   const [monthlyBills, setMonthlyBills] = useState("");
+  // Long-let comparison input for the qualification decision.
+  const [longLetMonthly, setLongLetMonthly] = useState("");
+  const [longLetNotSure, setLongLetNotSure] = useState(false);
+  // Decision screen is shown first; the detailed report is revealed on demand.
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
   // ── Session timer: pushed to Monday via sendBeacon on tab close ──
   const sessionStartRef = useRef(Date.now());
@@ -529,6 +536,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     setProgress(0);
     setCompletedStages(new Set());
     setCurrentMessage("Starting analysis...");
+    setShowBreakdown(false);
 
     try {
       const res = await fetch("/api/analyse", {
@@ -546,6 +554,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           propertyType,
           ...(monthlyMortgage !== "" && { monthlyMortgage: Number(monthlyMortgage) }),
           ...(monthlyBills !== "" && { monthlyBills: Number(monthlyBills) }),
+          longLetNotSure,
+          ...(!longLetNotSure && longLetMonthly !== "" && { longLetMonthly: Number(longLetMonthly) }),
         }),
       });
 
@@ -643,6 +653,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     setPostcode("");
     setEntryMode("auto");
     setSelectedAutoAddress(null);
+    setShowBreakdown(false);
+    setLongLetMonthly("");
+    setLongLetNotSure(false);
   };
 
   // ─── Loading State ──────────────────────────────────────────────
@@ -716,6 +729,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   }
 
   // ─── Report State ───────────────────────────────────────────────
+
+  // ─── Qualification Decision Screen (shown first) ────────────────
+  // Rendered before any detailed numbers. The full report is revealed via
+  // "See the full breakdown" (showBreakdown).
+  if (result && result.recommendation && !showBreakdown) {
+    return (
+      <DecisionScreen
+        recommendation={result.recommendation}
+        grossSTRAnnual={result.shortLet.annualRevenue}
+        onSeeBreakdown={() => setShowBreakdown(true)}
+        onBookCall={() => trackCtaClick("book_call")}
+      />
+    );
+  }
 
   if (result) {
     const r = result;
@@ -1208,6 +1235,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
         >
           {/* Top header with action buttons */}
           <div className="flex items-center justify-end gap-2 px-6 py-3 border-b border-border bg-card/50">
+            {r.recommendation && (
+              <Button variant="ghost" size="sm" onClick={() => setShowBreakdown(false)}>
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                Back to recommendation
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={handleReset}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
               New Analysis
@@ -2342,6 +2375,19 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                 </div>
               </CardContent>
             </Card>
+
+            {/* Take-home waterfall bridge — reconciles Net Revenue above to
+                the decision's true take-home, then compares to a managed
+                long-let. Same component shown on the decision screen. */}
+            {r.recommendation && (
+              <div className="mt-6">
+                <TakeHomeBridge
+                  grossSTRAnnual={r.shortLet.annualRevenue}
+                  longLetNetAnnual={r.recommendation.trueLLNet}
+                  longLetFeePct={0.10}
+                />
+              </div>
+            )}
           </section>
 
           {/* ══════════════════════════════════════════════════════════
@@ -2861,6 +2907,41 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
             </div>
           </section>
 
+          {/* ══════════════════════════════════════════════════════════
+              Closing call-to-action — gated by the qualification decision.
+              "Book a call" only when short-let is recommended; otherwise the
+              no-pressure keep-on-file message (no dead end).
+              ══════════════════════════════════════════════════════════ */}
+          {r.recommendation && (
+            <section className="mb-12">
+              {r.recommendation.recommendation !== "LONG_LET" ? (
+                <div className="flex flex-col items-center gap-4 rounded-xl bg-primary p-7 text-center text-primary-foreground">
+                  <div>
+                    <p className="text-lg font-bold">Short-let is the right fit for this property.</p>
+                    <p className="mt-1 text-sm text-primary-foreground/80">
+                      Book a call and we&apos;ll build your profitability action plan.
+                    </p>
+                  </div>
+                  <a
+                    href="https://calendly.com/zac-stayful/call"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => trackCtaClick("book_call")}
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary-foreground px-6 py-3 text-sm font-bold text-primary transition-opacity hover:opacity-90"
+                  >
+                    <Phone className="h-4 w-4" />
+                    Book a call
+                  </a>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border bg-muted/30 p-7 text-center text-sm leading-relaxed text-muted-foreground">
+                  Based on your numbers, short-let isn&apos;t the right fit right now — but circumstances
+                  change. We&apos;ll keep your report on file.
+                </div>
+              )}
+            </section>
+          )}
+
           </div>
 
           {/* Footer */}
@@ -3189,6 +3270,39 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                       <option value="roof_terrace">Roof terrace</option>
                     </select>
                   </div>
+                </div>
+
+                {/* Long-let comparison — drives the qualification decision */}
+                <div className="space-y-2">
+                  <Label htmlFor="longLetMonthly" className="flex items-center gap-2">
+                    <Home className="h-4 w-4" aria-hidden="true" />
+                    What would this property currently rent for as a standard long-term let, per month?
+                  </Label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">£</span>
+                    <Input
+                      type="number"
+                      id="longLetMonthly"
+                      min={0}
+                      placeholder="e.g. 1,500"
+                      className="pl-7"
+                      value={longLetMonthly}
+                      disabled={longLetNotSure}
+                      onChange={(e) => setLongLetMonthly(e.target.value)}
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={longLetNotSure}
+                      onChange={(e) => {
+                        setLongLetNotSure(e.target.checked);
+                        if (e.target.checked) setLongLetMonthly("");
+                      }}
+                      className="h-4 w-4 rounded border-input text-primary focus:ring-2 focus:ring-ring"
+                    />
+                    Not sure — estimate this for me
+                  </label>
                 </div>
 
                 <div className="space-y-2">

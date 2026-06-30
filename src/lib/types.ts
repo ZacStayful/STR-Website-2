@@ -215,4 +215,7 @@ export interface AnalysisResult {
   crossValidation?: CrossValidation;
   // PropertyData estimated sale value. null if the call failed or key is missing.
   propertyValuation?: PropertyDataValuation | null;
+  // Short-let vs long-let qualification decision. Only present when both the
+  // gross STR projection and the resolved long-let figure are > 0.
+  recommendation?: import('./qualification').Recommendation;
 }

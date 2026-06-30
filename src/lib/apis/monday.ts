@@ -230,3 +230,75 @@ export async function uploadPdfToMonday(
 export async function syncTimeOnSiteToMonday(_email: string, _seconds: number): Promise<void> {
   return;
 }
+
+// ─── Management Leads board — qualification decision write-back ────────
+// Separate board from the trial enquiries board above. Leads are matched on
+// the plain-text "Email" column (text_mkygb5xx), and the qualification
+// decision is written to three pre-existing columns.
+const MGMT_BOARD_ID = process.env.MONDAY_MGMT_BOARD_ID || "5891626711";
+
+const MGMT_COL = {
+  email: "text_mkygb5xx",        // "Email" (plain text)
+  longTermLet: "text_mm2dsnw7",  // "Long term let" — annual long-let rent
+  strProfit: "text_mm2eawgk",    // "STR Profit" — true uplift (trueSTRNet − trueLLNet)
+  recommendation: "color_mm4tkwqv", // "Recommendation" status (1=Short-Let, 2=Long-Let)
+} as const;
+
+/** Find a Management Leads item id by its email column. Tries exact then lowercase. */
+async function findManagementLeadByEmail(email: string): Promise<string | null> {
+  if (!email || !email.includes("@")) return null;
+  const query = `query ($boardId: ID!, $columnId: String!, $email: String!) {
+    items_page_by_column_values(board_id: $boardId, columns: [{ column_id: $columnId, column_values: [$email] }], limit: 1) {
+      items { id }
+    }
+  }`;
+  const candidates = email === email.toLowerCase() ? [email] : [email, email.toLowerCase()];
+  for (const e of candidates) {
+    const data = await mondayQuery<{
+      items_page_by_column_values: { items: Array<{ id: string }> };
+    }>(query, { boardId: MGMT_BOARD_ID, columnId: MGMT_COL.email, email: e });
+    const id = data?.items_page_by_column_values?.items?.[0]?.id;
+    if (id) return id;
+  }
+  return null;
+}
+
+/**
+ * Write the short-let vs long-let qualification decision onto the matching
+ * Management Leads row. Matched by email. No-op (logged) if no lead matches or
+ * Monday is unconfigured — CRM hiccups never break the user flow.
+ */
+export async function syncQualificationToMonday(
+  email: string,
+  input: {
+    longLetAnnual: number;   // longLetMonthly × 12
+    strProfit: number;       // true uplift: trueSTRNet − trueLLNet
+    recommendation: "SHORT_LET" | "LONG_LET";
+  },
+): Promise<void> {
+  if (!token()) return;
+  if (!email || !email.includes("@")) return;
+
+  const itemId = await findManagementLeadByEmail(email);
+  if (!itemId) {
+    console.log(`[Monday] no management lead for ${email} — qualification write skipped`);
+    return;
+  }
+
+  const label = input.recommendation === "SHORT_LET" ? "Short-Let" : "Long-Let";
+  const values = {
+    [MGMT_COL.recommendation]: { label },
+    [MGMT_COL.longTermLet]: String(Math.round(input.longLetAnnual)),
+    [MGMT_COL.strProfit]: String(Math.round(input.strProfit)),
+  };
+
+  const mutation = `mutation ($boardId: ID!, $itemId: ID!, $values: JSON!) {
+    change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $values) { id }
+  }`;
+  await mondayQuery(mutation, {
+    boardId: MGMT_BOARD_ID,
+    itemId,
+    values: JSON.stringify(values),
+  });
+  console.log(`[Monday] qualification (${label}) written for ${email} → item ${itemId}`);
+}

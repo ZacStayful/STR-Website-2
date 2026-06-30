@@ -6,6 +6,8 @@ import { getNearbyAmenities } from '@/lib/apis/google-places';
 import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
+import { getRecommendation, estimateLongLet } from '@/lib/qualification';
+import type { Recommendation, LongLetSource } from '@/lib/qualification';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hasAccess } from '@/lib/access';
 
@@ -111,14 +113,25 @@ export async function POST(request: Request) {
   }
 
   // Validate input
-  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, monthlyMortgage, monthlyBills } = body as {
+  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, monthlyMortgage, monthlyBills, longLetMonthly, longLetNotSure } = body as {
     address: unknown; postcode: unknown; email: unknown;
     bedrooms: unknown; guests: unknown;
     bathrooms: unknown; parking: unknown; outdoorSpace: unknown;
     propertyType: unknown;
     monthlyMortgage: unknown; monthlyBills: unknown;
+    longLetMonthly: unknown; longLetNotSure: unknown;
   };
   const emailStr = typeof email === 'string' && email.includes('@') ? email.trim() : null;
+
+  // Qualification decision input: the lead's own long-let figure. When they
+  // tick "Not sure" we ignore any number and fall back to estimate/PropertyData.
+  const longLetNotSureFlag = longLetNotSure === true;
+  const longLetMonthlyNum = Number(longLetMonthly);
+  const longLetMonthlyInput =
+    !longLetNotSureFlag && Number.isFinite(longLetMonthlyNum) && longLetMonthlyNum > 0
+      ? longLetMonthlyNum
+      : null;
+  const hasLongLetMonthly = longLetMonthlyInput !== null;
 
   const bathroomCount = Number(bathrooms);
   const validBathrooms = Number.isFinite(bathroomCount) && bathroomCount >= 1 ? bathroomCount : undefined;
@@ -234,15 +247,25 @@ export async function POST(request: Request) {
         // Wait for floor area data before starting long-let call
         const floorArea = await floorAreaPromise;
 
-        const longLetPromise = getLongLetData(property.postcode, property.bedrooms, {
-          propertyType: mappedPropertyType,
-          constructionDate: floorArea.constructionDate,
-          internalArea: floorArea.squareFeet,
-          ...(validBathrooms && { bathrooms: validBathrooms }),
-          finishQuality: validFinishQuality,
-          outdoorSpace: validOutdoorSpace,
-          offStreetParking: parkingValue,
-        });
+        // When the lead enters their own long-let figure, bypass the
+        // PropertyData long-let valuation entirely and drive the whole long-let
+        // comparison off their number. Only call PropertyData when they don't.
+        const longLetPromise: Promise<LongLetData> = hasLongLetMonthly
+          ? Promise.resolve({
+              monthlyRent: longLetMonthlyInput,
+              estimateHigh: longLetMonthlyInput,
+              estimateLow: longLetMonthlyInput,
+              comparables: [],
+            })
+          : getLongLetData(property.postcode, property.bedrooms, {
+              propertyType: mappedPropertyType,
+              constructionDate: floorArea.constructionDate,
+              internalArea: floorArea.squareFeet,
+              ...(validBathrooms && { bathrooms: validBathrooms }),
+              finishQuality: validFinishQuality,
+              outdoorSpace: validOutdoorSpace,
+              offStreetParking: parkingValue,
+            });
 
         // Now fetch short-let (needs coords) + long-let in parallel
         const shortLetPromise = getShortLetData(
@@ -414,6 +437,39 @@ export async function POST(request: Request) {
         const risk = assessRisk(shortLet, longLet, demandDrivers, nearbyEvents);
         const verdict = generateVerdict(financials, risk);
 
+        // ── Qualification decision (short-let vs long-let) ──────────
+        // Resolve the long-let monthly figure in priority order:
+        //   (1) the lead's entered figure, else
+        //   (2) estimateLongLet() if it returns non-null, else
+        //   (3) the PropertyData long-let monthlyRent.
+        // Only produce a decision when both gross and the long-let figure are
+        // > 0 (avoids divide-by-zero in the uplift calculation).
+        const grossSTRAnnual = shortLet.annualRevenue;
+        let recommendation: Recommendation | undefined;
+        let resolvedLongLetMonthly = 0;
+        let longLetSource: LongLetSource = 'propertydata_fallback';
+        if (hasLongLetMonthly) {
+          resolvedLongLetMonthly = longLetMonthlyInput;
+          longLetSource = 'user';
+        } else {
+          const estimated = estimateLongLet(property.postcode, property.bedrooms);
+          if (estimated != null && estimated > 0) {
+            resolvedLongLetMonthly = estimated;
+            longLetSource = 'estimate';
+          } else {
+            resolvedLongLetMonthly = longLet.monthlyRent;
+            longLetSource = 'propertydata_fallback';
+          }
+        }
+        if (grossSTRAnnual > 0 && resolvedLongLetMonthly > 0) {
+          const rec = getRecommendation(grossSTRAnnual, resolvedLongLetMonthly);
+          recommendation = {
+            ...rec,
+            longLetMonthly: resolvedLongLetMonthly,
+            longLetSource,
+          };
+        }
+
         const now = new Date().toISOString();
 
         const result: AnalysisResult = {
@@ -431,6 +487,7 @@ export async function POST(request: Request) {
           updatedAt: now,
           crossValidation,
           propertyValuation,
+          recommendation,
         };
 
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
@@ -457,6 +514,22 @@ export async function POST(request: Request) {
             );
           } catch (err) {
             console.error('[Monday] PDF upload error:', err);
+          }
+        }
+
+        // Write the qualification decision to the Management Leads board,
+        // matched by email. Uses the TRUE uplift (trueSTRNet − trueLLNet),
+        // not any inflated headline difference.
+        if (effectiveEmail && recommendation) {
+          try {
+            const { syncQualificationToMonday } = await import('@/lib/apis/monday');
+            await syncQualificationToMonday(effectiveEmail, {
+              longLetAnnual: recommendation.longLetMonthly * 12,
+              strProfit: recommendation.trueSTRNet - recommendation.trueLLNet,
+              recommendation: recommendation.recommendation,
+            });
+          } catch (err) {
+            console.error('[Monday] qualification sync error:', err);
           }
         }
 
