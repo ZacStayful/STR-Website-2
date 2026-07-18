@@ -272,6 +272,8 @@ export const STR_LICENSING: Record<string, LicensingEntry> = {
   OL: englandCity('OL', 'Oldham'),
   SK: englandCity('SK', 'Stockport'),
   WA: englandCity('WA', 'Warrington'),
+  CT: englandCity('CT', 'Canterbury & East Kent'),
+  DT: englandCity('DT', 'Dorchester & Dorset'),
 
   // ── Wales — confirmed-unrestricted today, registration incoming ──
   CF: walesCity('CF', 'Cardiff'),
