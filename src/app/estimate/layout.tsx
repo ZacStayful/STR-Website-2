@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, isPro, runsRemaining } from "@/lib/access";
+import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
 import { checkoutUrlFor } from "@/lib/billing";
 import { ensureEnquiry } from "@/lib/apis/monday";
@@ -36,7 +37,11 @@ export default async function EstimateLayout({
     .eq("id", user.id)
     .single();
 
-  if (!profile || !hasAccess(profile)) {
+  // Admins (matched by verified auth email) have unlimited access — they never
+  // hit the free-report limit or the paywall.
+  const admin = isAdminEmail(user.email);
+
+  if (!profile || (!admin && !hasAccess(profile))) {
     redirect("/upgrade");
   }
 
@@ -80,8 +85,9 @@ export default async function EstimateLayout({
     });
   }
 
-  // Trial countdown banner for free users (Pro users have unlimited access).
-  const showTrialBanner = !isPro(profile);
+  // Trial countdown banner for free users (Pro users and admins have unlimited
+  // access, so no banner for them).
+  const showTrialBanner = !admin && !isPro(profile);
   const remaining = runsRemaining(profile);
   const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
 

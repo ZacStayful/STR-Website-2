@@ -8,6 +8,7 @@ import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { hasAccess } from '@/lib/access';
+import { isAdminEmail } from '@/lib/admin';
 
 // This route streams SSE while making several sequential external API
 // calls; the default 10s function timeout (Hobby) would cut the stream
@@ -88,7 +89,8 @@ export async function POST(request: Request) {
       .select('plan, reports_run, full_name, mobile, stripe_subscription_id')
       .eq('id', user.id)
       .single();
-    if (!profile || !hasAccess(profile)) {
+    // Admins (matched by verified auth email) bypass the free-report limit.
+    if (!profile || (!isAdminEmail(user.email) && !hasAccess(profile))) {
       return Response.json(
         { error: "You've used all 5 of your free reports. Subscribe to continue running analyses.", upgradeUrl: '/upgrade' },
         { status: 402 },
