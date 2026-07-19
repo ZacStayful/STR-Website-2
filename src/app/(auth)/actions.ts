@@ -6,6 +6,9 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
 
 export type AuthState = { error: string | null }
+// For flows that show a success message in place (resend, reset request) as
+// well as an error.
+export type FormState = { error: string | null; success: string | null }
 
 function getSiteUrl(): string {
   return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
@@ -87,11 +90,81 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     }
   })
 
-  redirect('/signup/check-email')
+  // Pass the email to the check-email page so it can offer a "resend" button.
+  redirect(`/signup/check-email?email=${encodeURIComponent(email)}`)
 }
 
 export async function signOutAction(): Promise<void> {
   const supabase = await createSupabaseServerClient()
   await supabase.auth.signOut()
   redirect('/login')
+}
+
+// Resend the signup confirmation email (e.g. it never arrived / expired).
+export async function resendConfirmationAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const email = String(formData.get('email') ?? '').trim()
+  if (!email) return { error: 'Enter your email address.', success: null }
+
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email,
+    options: { emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/estimate` },
+  })
+
+  if (error) return { error: error.message, success: null }
+  return { error: null, success: `Confirmation email resent to ${email}.` }
+}
+
+// Send a password-reset email. The link lands on /auth/callback (which
+// exchanges the recovery code for a session) and forwards to /reset-password.
+export async function requestPasswordResetAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const email = String(formData.get('email') ?? '').trim()
+  if (!email) return { error: 'Enter your email address.', success: null }
+
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${getSiteUrl()}/auth/callback?next=/reset-password`,
+  })
+
+  // Don't reveal whether an account exists — always show the same message.
+  if (error) console.error('[auth] password reset request failed:', error.message)
+  return {
+    error: null,
+    success: `If an account exists for ${email}, a reset link is on its way.`,
+  }
+}
+
+// Set a new password. The user must already be in a recovery session (arrived
+// via the reset link → callback exchanged the code).
+export async function updatePasswordAction(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const password = String(formData.get('password') ?? '')
+  const confirm = String(formData.get('confirm') ?? '')
+
+  if (password.length < 8) return { error: 'Password must be at least 8 characters.' }
+  if (password !== confirm) return { error: 'Passwords do not match.' }
+
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return {
+      error: 'Your reset link has expired or is invalid. Please request a new one.',
+    }
+  }
+
+  const { error } = await supabase.auth.updateUser({ password })
+  if (error) return { error: error.message }
+
+  redirect('/estimate')
 }
