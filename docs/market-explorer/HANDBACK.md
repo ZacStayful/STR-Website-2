@@ -1,7 +1,7 @@
 # Market Explorer — Build Handback
 
-Status at handback: **Phase 1 & 2 complete; Phase 3 QA done. One item blocked on
-sign-off (the score card); one on your input already actioned (occupancy).**
+Status at handback: **All phases complete.** Score signed off (option 1, as
+proposed) and built. Occupancy fix actioned and merged. Everything is in PRs.
 
 ## PRs (unmerged, ready for review)
 
@@ -29,8 +29,10 @@ sign-off (the score card); one on your input already actioned (occupancy).**
 - **`/markets` + `/markets/[area]`** — server-rendered, fully open (no paywall),
   filters (region/budget/bedrooms), unique per-area SEO, 13 area pages SSG,
   empty/unconfirmed states, CTA into the `/estimate` analyser.
-- **Score** — proposal written (`score-proposal.md`); NOT implemented (awaiting
-  sign-off). A marked slot is left in the card/explorer.
+- **Score** — proposal signed off (option 1, as proposed) and **built**:
+  `src/lib/market/score.ts` (0–100 composite, 9 unit tests), a sage score-ring on
+  each card + area hero, and a "show our working" breakdown panel on area pages.
+  Explorer now sorts by score. Build + Vercel preview green.
 
 ## Phase 3 — QA results
 
@@ -65,9 +67,7 @@ sign-off (the score card); one on your input already actioned (occupancy).**
 
 ## Deviations from spec (called out, not buried)
 
-1. **Score not built** — per the Step 2 hard stop, awaiting your sign-off. This is the
-   one remaining Phase 2 element.
-2. **Long-let comparator = one representative central postcode per area**, not a true
+1. **Long-let comparator = one representative central postcode per area**, not a true
    multi-point average across the area. Bounds PropertyData to one call/area. Documented
    in `area-postcodes.ts`. (Locally I couldn't set `PROPERTYDATA_API_KEY`, so verdicts in
    my screenshots use the national-median fallback; production has the key and will be
@@ -81,8 +81,10 @@ sign-off (the score card); one on your input already actioned (occupancy).**
    backend) + `allowImportingTsExtensions` in tsconfig (matching the backend's).
 6. **Next.js is 16.2.1**, not 14 as the original spec stated.
 
-## Score sign-off — still needed from you
+## Score — DONE
 
-`docs/market-explorer/score-proposal.md` — weights (40/25/20/15), regulatory ordering
-(unrestricted > licensed > unconfirmed), and anchor bands. Once approved I'll wire it into
-the card + explorer sort (the only remaining piece).
+Signed off (option 1, as proposed in `docs/market-explorer/score-proposal.md`) and built
+exactly as written: weights 40/25/20/15, regulatory ordering unrestricted > licensed >
+unconfirmed, anchor bands yield 4–14% / occupancy 40–75% / revenue £15k–£45k. Missing
+inputs drop the component and renormalise; a missing yield flags the score "partial". Every
+sub-score is shown with its raw value on the area page ("show our working").
