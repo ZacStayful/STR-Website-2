@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, FREE_RUNS, isLapsedSubscriber } from "@/lib/access";
+import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
 
@@ -30,9 +31,10 @@ export default async function UpgradePage() {
     .eq("id", user.id)
     .single();
 
-  // If they still have free reports left or they're already pro, send them
-  // straight back to the analyser — they shouldn't be on the upgrade page.
-  if (profile && hasAccess(profile)) {
+  // If they still have free reports left, they're already pro, or they're an
+  // admin, send them straight back to the analyser — they shouldn't be on the
+  // upgrade page.
+  if (isAdminEmail(user.email) || (profile && hasAccess(profile))) {
     redirect("/estimate");
   }
 
