@@ -2,6 +2,7 @@
 
 import { useActionState } from 'react'
 import { signupAction, type AuthState } from '../actions'
+import { PasswordField } from '../PasswordField'
 
 const initialState: AuthState = { error: null }
 
@@ -60,15 +61,7 @@ export function SignupForm() {
         <label htmlFor="password" className="text-sm font-medium">
           Password
         </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          minLength={8}
-          required
-          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        />
+        <PasswordField id="password" name="password" autoComplete="new-password" minLength={8} />
         <p className="text-xs text-muted-foreground">At least 8 characters.</p>
       </div>
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}

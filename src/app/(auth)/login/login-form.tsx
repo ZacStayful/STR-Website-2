@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useActionState } from 'react'
 import { loginAction, type AuthState } from '../actions'
+import { PasswordField } from '../PasswordField'
 
 const initialState: AuthState = { error: null }
 
@@ -25,17 +27,15 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
         />
       </div>
       <div className="space-y-1.5">
-        <label htmlFor="password" className="text-sm font-medium">
-          Password
-        </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        />
+        <div className="flex items-center justify-between">
+          <label htmlFor="password" className="text-sm font-medium">
+            Password
+          </label>
+          <Link href="/forgot-password" className="text-xs text-primary hover:underline">
+            Forgot password?
+          </Link>
+        </div>
+        <PasswordField id="password" name="password" autoComplete="current-password" />
       </div>
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       <button
