@@ -8,6 +8,8 @@ import { gbp, pct } from "@/lib/market/format";
 import { siteUrl } from "@/lib/url";
 import { LicensingBadge } from "../_components/LicensingBadge";
 import { VerdictLabel } from "../_components/VerdictLabel";
+import { ScoreBadge } from "../_components/ScoreBadge";
+import { ScoreBreakdown } from "../_components/ScoreBreakdown";
 import { ArrowRight } from "lucide-react";
 
 export const revalidate = 3600;
@@ -88,10 +90,18 @@ export default async function AreaPage({ params }: { params: Promise<{ area: str
 
   return (
     <div className="mx-container">
-      <div className="mx-detail-hero">
-        <div className="mx-breadcrumb"><Link href="/markets">← All areas</Link> · {card.code} postcode area</div>
-        <h1>{card.name} short-term rental market</h1>
-        <LicensingBadge status={lic.status} label={lic.headline} />
+      <div className="mx-detail-hero mx-detail-hero--score">
+        <div>
+          <div className="mx-breadcrumb"><Link href="/markets">← All areas</Link> · {card.code} postcode area</div>
+          <h1>{card.name} short-term rental market</h1>
+          <LicensingBadge status={lic.status} label={lic.headline} />
+        </div>
+        {card.score && (
+          <div className="mx-detail-score">
+            <ScoreBadge score={card.score} size={84} />
+            <div className="mx-detail-score-lbl">{card.score.grade} · {card.score.gradeLabel}</div>
+          </div>
+        )}
       </div>
 
       {/* ── Headline stats (server-rendered into HTML) ── */}
@@ -118,6 +128,9 @@ export default async function AreaPage({ params }: { params: Promise<{ area: str
           )}
         </div>
       </div>
+
+      {/* ── Transparent score breakdown ("show our working") ── */}
+      {card.score && <ScoreBreakdown score={card.score} />}
 
       {/* ── Short vs long-let verdict ── */}
       <div className="mx-panel">

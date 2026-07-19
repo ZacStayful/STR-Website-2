@@ -94,6 +94,25 @@
 }
 .mx-card-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; flex: 1; }
 
+/* ── Score ring ── */
+.mx-card-score { position: absolute; top: 12px; right: 12px; }
+.mx-score { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.mx-score-inner {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; line-height: 1; color: #fff;
+}
+.mx-score-num { font-family: var(--font-playfair), serif; font-weight: 700; font-size: 1.1rem; }
+.mx-score-grade { font-size: 0.62rem; font-weight: 600; opacity: 0.9; letter-spacing: 0.04em; }
+.mx-detail-hero--score { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.mx-detail-score { text-align: center; }
+.mx-detail-score .mx-score-num { font-size: 1.7rem; }
+.mx-detail-score .mx-score-grade { font-size: 0.8rem; }
+.mx-detail-score-lbl { font-size: 0.8rem; color: var(--mx-sage-deep-2); font-weight: 600; margin-top: 6px; }
+/* On the light detail hero the ring needs sage, not white. */
+.mx-detail-score .mx-score svg circle:first-child { stroke: var(--mx-line); }
+.mx-detail-score .mx-score svg circle:last-child { stroke: var(--mx-sage-deep); }
+.mx-detail-score .mx-score-inner { color: var(--mx-ink); }
+
 /* ── Stat row ── */
 .mx-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .mx-stat { }

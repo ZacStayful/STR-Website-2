@@ -3,6 +3,7 @@ import type { AreaCardData } from "@/lib/market/explorer";
 import { gbpCompact, pct } from "@/lib/market/format";
 import { LicensingBadge } from "./LicensingBadge";
 import { VerdictLabel } from "./VerdictLabel";
+import { ScoreBadge } from "./ScoreBadge";
 
 /**
  * Fully-open area card (no lock/paywall — per spec). Shows revenue, ADR,
@@ -16,6 +17,11 @@ export function AreaCard({ card }: { card: AreaCardData }) {
       <div className="mx-card-thumb">
         <span className="mx-card-code" aria-hidden>{card.code}</span>
         <h3>{card.name}</h3>
+        {card.score && (
+          <div className="mx-card-score">
+            <ScoreBadge score={card.score} />
+          </div>
+        )}
       </div>
       <div className="mx-card-body">
         <LicensingBadge status={card.licensing.status} label={card.licensing.headline} />

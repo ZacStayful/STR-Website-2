@@ -12,6 +12,7 @@
 import { fetchMarketStats, fetchMarketArea } from './client.ts';
 import { computeYieldOnCost, type YieldOnCost } from './yield.ts';
 import { computeAreaVerdict, type AreaVerdict } from './verdict.ts';
+import { computeAreaScore, type AreaScore } from './score.ts';
 import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
@@ -58,23 +59,33 @@ export interface AreaCardData {
   yieldOnCost: YieldOnCost | null;
   verdict: AreaVerdict | null;
   licensing: LicensingEntry;
+  score: AreaScore | null;
 }
 
 async function buildCard(area: MarketArea): Promise<AreaCardData> {
   const meta = areaMetaForCode(area.postcode_area);
   const longLetRent = await getAreaLongLetRent(area);
+  const headline = areaHeadline(area);
+  const yieldOnCost = computeYieldOnCost(area);
+  const licensing = getLicensing(area.postcode_area);
   return {
     code: meta.code,
     slug: meta.slug,
     name: meta.name,
-    headline: areaHeadline(area),
-    yieldOnCost: computeYieldOnCost(area),
+    headline,
+    yieldOnCost,
     verdict: computeAreaVerdict(area, longLetRent),
-    licensing: getLicensing(area.postcode_area),
+    licensing,
+    score: computeAreaScore({
+      grossYieldPct: yieldOnCost?.grossYieldPct ?? null,
+      occupancyPct: headline.occupancy,
+      grossRevenue: headline.grossRevenue,
+      licensing: licensing.status,
+    }),
   };
 }
 
-/** All area cards for the /markets index, sorted by gross yield desc (nulls last). */
+/** All area cards for the /markets index, sorted by score desc (nulls last). */
 export async function getAreaCards(): Promise<AreaCardData[]> {
   const data = await fetchMarketStats({});
   if (!data) return [];
@@ -83,7 +94,11 @@ export async function getAreaCards(): Promise<AreaCardData[]> {
   );
   return cards
     .filter((c): c is AreaCardData => c !== null)
-    .sort((a, b) => (b.yieldOnCost?.grossYieldPct ?? -1) - (a.yieldOnCost?.grossYieldPct ?? -1));
+    .sort(
+      (a, b) =>
+        (b.score?.score ?? -1) - (a.score?.score ?? -1) ||
+        (b.yieldOnCost?.grossYieldPct ?? -1) - (a.yieldOnCost?.grossYieldPct ?? -1),
+    );
 }
 
 export interface AreaDetail {

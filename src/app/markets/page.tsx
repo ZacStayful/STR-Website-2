@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { getAreaCards } from "@/lib/market/explorer";
 import { FilterableAreas } from "./_components/FilterableAreas";
 import { siteUrl } from "@/lib/url";
@@ -33,10 +34,10 @@ export default async function MarketsPage() {
       <div className="mx-container">
         <div className="mx-shell">
           <nav className="mx-subnav" aria-label="Market Explorer">
-            <a href="/markets" aria-current="page">All areas</a>
-            <a href="/estimate">Analyse an address</a>
-            <a href="/short-term-vs-long-term-letting">Short vs long-let</a>
-            <a href="/pricing">Pricing</a>
+            <Link href="/markets" aria-current="page">All areas</Link>
+            <Link href="/estimate">Analyse an address</Link>
+            <Link href="/short-term-vs-long-term-letting">Short vs long-let</Link>
+            <Link href="/pricing">Pricing</Link>
           </nav>
 
           <main>
