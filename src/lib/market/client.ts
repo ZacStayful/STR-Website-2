@@ -17,6 +17,11 @@ import type { MarketStatsResponse } from './types';
 
 const REVALIDATE_SECONDS = 3600;
 
+// Show every area that has any data — the UI tiers areas by sample count
+// (Confirmed / Building / Early) rather than hiding thin ones behind a
+// per-group minimum. Override per-call via options.minSamples.
+const DEFAULT_MIN_SAMPLES = 1;
+
 function baseUrl(): string {
   return (process.env.MARKET_STATS_API_URL ?? 'https://stayful-str-estimate-software.vercel.app').replace(/\/$/, '');
 }
@@ -37,7 +42,7 @@ export async function fetchMarketStats(options: FetchOptions = {}): Promise<Mark
   const url = new URL(`${baseUrl()}/api/market-stats`);
   if (options.area) url.searchParams.set('area', options.area);
   if (options.bedrooms !== undefined) url.searchParams.set('bedrooms', String(options.bedrooms));
-  if (options.minSamples !== undefined) url.searchParams.set('min_samples', String(options.minSamples));
+  url.searchParams.set('min_samples', String(options.minSamples ?? DEFAULT_MIN_SAMPLES));
 
   try {
     const res = await fetch(url.toString(), {

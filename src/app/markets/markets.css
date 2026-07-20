@@ -130,6 +130,31 @@
 .mx-badge--licensed { background: var(--mx-amber-bg); color: var(--mx-amber); }
 .mx-badge--unconfirmed { background: var(--mx-grey-bg); color: var(--mx-grey); }
 
+/* ── Badge row (confidence + licensing) ── */
+.mx-card-badges { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* ── Confidence chip ── */
+.mx-conf {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  font-size: 0.76rem; font-weight: 600; width: fit-content;
+}
+.mx-conf-dot { width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+.mx-conf-count { font-weight: 500; opacity: 0.85; }
+.mx-conf-blurb { font-weight: 500; opacity: 0.9; }
+.mx-conf--confirmed { background: rgba(93,129,86,0.12); color: var(--mx-sage-deep-2); }
+.mx-conf--building { background: var(--mx-amber-bg); color: var(--mx-amber); }
+.mx-conf--early { background: var(--mx-grey-bg); color: var(--mx-grey); }
+
+/* ── Confidence callout (area page) ── */
+.mx-conf-callout {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 12px 16px; border-radius: 12px; margin-bottom: 18px;
+  font-size: 0.88rem; color: var(--mx-body); border: 1px solid var(--mx-line); background: #fff;
+}
+.mx-conf-callout--confirmed { border-color: rgba(93,129,86,0.3); background: rgba(93,129,86,0.05); }
+.mx-conf-callout--building { border-color: #e6dcbf; background: var(--mx-amber-bg); }
+.mx-conf-callout--early { border-color: var(--mx-line); background: var(--mx-grey-bg); }
+
 /* ── Verdict pill ── */
 .mx-verdict { display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; font-weight: 600; }
 .mx-verdict svg { width: 15px; height: 15px; }

@@ -7,6 +7,7 @@ import { AreaCard } from "./AreaCard";
 type Region = "any" | "England" | "Scotland" | "Wales" | "Northern Ireland";
 type Budget = "any" | "u200" | "200-350" | "350-500" | "500+";
 type Beds = "any" | "1" | "2" | "3" | "4+";
+type Conf = "any" | "confirmed" | "building+";
 
 const REGIONS: { key: Region; label: string }[] = [
   { key: "any", label: "Anywhere in UK" },
@@ -31,10 +32,17 @@ function hasBeds(available: number[], b: Beds): boolean {
   return available.includes(Number(b));
 }
 
+function passesConfidence(tier: string, c: Conf): boolean {
+  if (c === "any") return true;
+  if (c === "confirmed") return tier === "confirmed";
+  return tier === "confirmed" || tier === "building"; // building+
+}
+
 export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
   const [region, setRegion] = useState<Region>("any");
   const [budget, setBudget] = useState<Budget>("any");
   const [beds, setBeds] = useState<Beds>("any");
+  const [conf, setConf] = useState<Conf>("any");
 
   const filtered = useMemo(
     () =>
@@ -42,9 +50,10 @@ export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
         if (region !== "any" && c.licensing.nation !== region) return false;
         if (!inBudget(c.yieldOnCost?.propertyValueMid ?? null, budget)) return false;
         if (!hasBeds(c.headline.bedroomsAvailable, beds)) return false;
+        if (!passesConfidence(c.confidence.tier, conf)) return false;
         return true;
       }),
-    [cards, region, budget, beds],
+    [cards, region, budget, beds, conf],
   );
 
   return (
@@ -80,6 +89,12 @@ export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
           <option value="4+">4+ bed</option>
         </select>
 
+        <select className="mx-select" aria-label="Data confidence" value={conf} onChange={(e) => setConf(e.target.value as Conf)}>
+          <option value="any">Any confidence</option>
+          <option value="building+">Building &amp; up</option>
+          <option value="confirmed">Confirmed only</option>
+        </select>
+
         <span className="mx-result-count">
           {filtered.length} {filtered.length === 1 ? "area" : "areas"}
         </span>
@@ -89,8 +104,7 @@ export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
         <div className="mx-empty">
           <h2>No areas match those filters</h2>
           <p>
-            Try widening your budget or region — with data still building, only a
-            handful of UK areas currently have enough samples to show.
+            Try widening your budget, region, or data-confidence filter.
           </p>
         </div>
       ) : (

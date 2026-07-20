@@ -9,6 +9,7 @@ import { siteUrl } from "@/lib/url";
 import { LicensingBadge } from "../_components/LicensingBadge";
 import { VerdictLabel } from "../_components/VerdictLabel";
 import { ScoreBadge } from "../_components/ScoreBadge";
+import { ConfidenceBadge } from "../_components/ConfidenceBadge";
 import { ScoreBreakdown } from "../_components/ScoreBreakdown";
 import { ArrowRight } from "lucide-react";
 
@@ -94,7 +95,10 @@ export default async function AreaPage({ params }: { params: Promise<{ area: str
         <div>
           <div className="mx-breadcrumb"><Link href="/markets">← All areas</Link> · {card.code} postcode area</div>
           <h1>{card.name} short-term rental market</h1>
-          <LicensingBadge status={lic.status} label={lic.headline} />
+          <div className="mx-card-badges">
+            <ConfidenceBadge confidence={card.confidence} samples={h.totalSamples} />
+            <LicensingBadge status={lic.status} label={lic.headline} />
+          </div>
         </div>
         {card.score && (
           <div className="mx-detail-score">
@@ -127,6 +131,16 @@ export default async function AreaPage({ params }: { params: Promise<{ area: str
             <div className="sub">no area property-value data</div>
           )}
         </div>
+      </div>
+
+      {/* ── Data confidence — how much this rests on ── */}
+      <div className={`mx-conf-callout mx-conf-callout--${card.confidence.tier}`}>
+        <ConfidenceBadge confidence={card.confidence} samples={h.totalSamples} />
+        <span>
+          {card.confidence.blurb}{" "}
+          {card.confidence.tier !== "confirmed" &&
+            "As more Stayful analyser reports come in for this area, these figures will firm up."}
+        </span>
       </div>
 
       {/* ── Transparent score breakdown ("show our working") ── */}
