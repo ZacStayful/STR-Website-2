@@ -58,6 +58,22 @@
 }
 .mx-subnav a[aria-current="page"], .mx-subnav a:hover { background: #fff; color: var(--mx-sage-deep-2); }
 
+/* ── Search bar ── */
+.mx-search { margin-bottom: 14px; }
+.mx-search-input {
+  width: 100%; height: 48px; border: 1px solid var(--mx-line); border-radius: 12px;
+  background: #fff; padding: 0 18px; font-size: 1rem; font-family: inherit; color: var(--mx-ink);
+  outline: none;
+}
+.mx-search-input::placeholder { color: var(--mx-muted); }
+.mx-search-input:focus { border-color: var(--mx-sage-deep); box-shadow: 0 0 0 3px rgba(93,129,86,0.12); }
+
+/* ── Bedroom tag ── */
+.mx-bed-tag {
+  display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700; background: var(--mx-sage-deep); color: #fff;
+}
+
 /* ── Filter pill bar ── */
 .mx-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 22px; }
 .mx-filter-group { display: flex; align-items: center; gap: 6px; }

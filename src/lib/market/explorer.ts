@@ -52,11 +52,48 @@ export function areaHeadline(area: MarketArea): AreaHeadline {
   };
 }
 
+/** Per-bedroom stats so the client can show bedroom-specific figures when the
+ *  bedroom filter is used (instead of the area-blended headline). */
+export interface BedroomStat {
+  bedrooms: number;
+  samples: number;
+  adr: number | null;
+  occupancy: number | null; // 0–100
+  grossRevenue: number | null;
+  propertyValueMid: number | null;
+  grossYieldPct: number | null;
+}
+
+export function bedroomStats(area: MarketArea): BedroomStat[] {
+  return area.by_bedrooms
+    .map((g) => {
+      const mid =
+        g.avg_property_value_low !== null && g.avg_property_value_high !== null
+          ? (g.avg_property_value_low + g.avg_property_value_high) / 2
+          : null;
+      const grossYieldPct =
+        mid !== null && mid > 0 && g.avg_gross_revenue !== null
+          ? Math.round((g.avg_gross_revenue / mid) * 1000) / 10
+          : null;
+      return {
+        bedrooms: g.bedrooms,
+        samples: g.sample_count,
+        adr: g.avg_adr === null ? null : Math.round(g.avg_adr),
+        occupancy: g.avg_occupancy === null ? null : Math.round(g.avg_occupancy * 10) / 10,
+        grossRevenue: g.avg_gross_revenue === null ? null : Math.round(g.avg_gross_revenue),
+        propertyValueMid: mid === null ? null : Math.round(mid),
+        grossYieldPct,
+      };
+    })
+    .sort((a, b) => a.bedrooms - b.bedrooms);
+}
+
 export interface AreaCardData {
   code: string;
   slug: string;
   name: string;
   headline: AreaHeadline;
+  byBedrooms: BedroomStat[];
   yieldOnCost: YieldOnCost | null;
   verdict: AreaVerdict | null;
   licensing: LicensingEntry;
@@ -75,6 +112,7 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
     slug: meta.slug,
     name: meta.name,
     headline,
+    byBedrooms: bedroomStats(area),
     yieldOnCost,
     verdict: computeAreaVerdict(area, longLetRent),
     licensing,

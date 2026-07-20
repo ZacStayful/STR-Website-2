@@ -39,25 +39,49 @@ function passesConfidence(tier: string, c: Conf): boolean {
 }
 
 export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
+  const [query, setQuery] = useState("");
   const [region, setRegion] = useState<Region>("any");
   const [budget, setBudget] = useState<Budget>("any");
   const [beds, setBeds] = useState<Beds>("any");
   const [conf, setConf] = useState<Conf>("any");
 
+  // A specific bedroom count (1/2/3) drives bedroom-specific card stats.
+  // "4+" stays an availability filter (blended stats) since it spans sizes.
+  const selectedBedroom = /^[1-3]$/.test(beds) ? Number(beds) : null;
+
+  const q = query.trim().toLowerCase();
+
   const filtered = useMemo(
     () =>
       cards.filter((c) => {
+        if (q && !(c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q))) return false;
         if (region !== "any" && c.licensing.nation !== region) return false;
-        if (!inBudget(c.yieldOnCost?.propertyValueMid ?? null, budget)) return false;
         if (!hasBeds(c.headline.bedroomsAvailable, beds)) return false;
+        // Budget uses the selected bedroom's value when one is chosen, else the area blend.
+        const valueMid =
+          selectedBedroom != null
+            ? c.byBedrooms.find((b) => b.bedrooms === selectedBedroom)?.propertyValueMid ?? null
+            : c.yieldOnCost?.propertyValueMid ?? null;
+        if (!inBudget(valueMid, budget)) return false;
         if (!passesConfidence(c.confidence.tier, conf)) return false;
         return true;
       }),
-    [cards, region, budget, beds, conf],
+    [cards, q, region, beds, budget, conf, selectedBedroom],
   );
 
   return (
     <>
+      <div className="mx-search">
+        <input
+          type="search"
+          className="mx-search-input"
+          placeholder="Search an area or postcode — e.g. Manchester or NG"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search area"
+        />
+      </div>
+
       <div className="mx-filters" role="group" aria-label="Filter areas">
         <div className="mx-filter-group" role="group" aria-label="Region">
           {REGIONS.map((r) => (
@@ -97,20 +121,23 @@ export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
 
         <span className="mx-result-count">
           {filtered.length} {filtered.length === 1 ? "area" : "areas"}
+          {selectedBedroom != null ? ` · ${selectedBedroom}-bed` : ""}
         </span>
       </div>
 
       {filtered.length === 0 ? (
         <div className="mx-empty">
-          <h2>No areas match those filters</h2>
+          <h2>No areas match</h2>
           <p>
-            Try widening your budget, region, or data-confidence filter.
+            {q
+              ? `We don't have data for "${query}" yet — try another area or postcode, or clear the search.`
+              : "Try widening your budget, bedrooms, region, or data-confidence filter."}
           </p>
         </div>
       ) : (
         <div className="mx-grid">
           {filtered.map((c) => (
-            <AreaCard key={c.code} card={c} />
+            <AreaCard key={c.code} card={c} bedroom={selectedBedroom} />
           ))}
         </div>
       )}
