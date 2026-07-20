@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -93,6 +94,28 @@ export default async function EstimateLayout({
 
   return (
     <>
+      {admin && (
+        <div
+          style={{
+            display: "flex",
+            gap: 16,
+            justifyContent: "center",
+            alignItems: "center",
+            padding: "6px 12px",
+            fontSize: 13,
+            background: "#2E3D2B",
+            color: "#fff",
+          }}
+        >
+          <span>Admin</span>
+          <Link href="/admin" style={{ color: "#B9D5C6", fontWeight: 600 }}>
+            Dashboard
+          </Link>
+          <Link href="/markets" style={{ color: "#B9D5C6", fontWeight: 600 }}>
+            Market Explorer
+          </Link>
+        </div>
+      )}
       {showTrialBanner && (
         <TrialBanner remaining={remaining} checkoutHref={checkoutHref} />
       )}

@@ -7,6 +7,7 @@ import { Icon } from "@/lib/icons";
 
 const LINKS = [
   { href: "https://intelligence.stayful.co.uk/", label: "Home" },
+  { href: "/markets", label: "Market Explorer" },
   { href: "/about", label: "About" },
   { href: "/short-term-vs-long-term-letting", label: "Why us" },
   { href: "/features", label: "Features" },
