@@ -14,7 +14,9 @@ export const metadata: Metadata = {
 };
 
 export default async function MarketsMapPage() {
-  const cards = await getAreaCards();
+  // The map never renders the short-vs-long-let verdict, so skip the per-area
+  // PropertyData long-let lookups it would otherwise trigger.
+  const cards = await getAreaCards(false);
 
   const areas: MapArea[] = cards.map((c) => ({
     code: c.code,

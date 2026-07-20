@@ -101,12 +101,20 @@ export interface AreaCardData {
   confidence: Confidence;
 }
 
-async function buildCard(area: MarketArea): Promise<AreaCardData> {
+/**
+ * Build a card. `withVerdict` controls the short-let-vs-long-let comparison,
+ * which is the ONLY part that needs a (paid, rate-limited) PropertyData long-let
+ * lookup. Views that don't render the verdict — e.g. the map — pass `false` to
+ * skip ~84 wasted PropertyData calls per regeneration.
+ */
+async function buildCard(area: MarketArea, withVerdict = true): Promise<AreaCardData> {
   const meta = areaMetaForCode(area.postcode_area);
-  const longLetRent = await getAreaLongLetRent(area);
   const headline = areaHeadline(area);
   const yieldOnCost = computeYieldOnCost(area);
   const licensing = getLicensing(area.postcode_area);
+  const verdict = withVerdict
+    ? computeAreaVerdict(area, await getAreaLongLetRent(area))
+    : null;
   return {
     code: meta.code,
     slug: meta.slug,
@@ -114,7 +122,7 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
     headline,
     byBedrooms: bedroomStats(area),
     yieldOnCost,
-    verdict: computeAreaVerdict(area, longLetRent),
+    verdict,
     licensing,
     score: computeAreaScore({
       grossYieldPct: yieldOnCost?.grossYieldPct ?? null,
@@ -130,12 +138,16 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
  * All area cards for the /markets index. Sorted by data confidence first
  * (Confirmed areas surface above thin/Early ones), then by score, then yield —
  * so the most trustworthy areas lead while everything stays visible.
+ *
+ * `withVerdict` (default true) computes the short-vs-long-let verdict, which
+ * requires a PropertyData long-let lookup per area. Pass false for views that
+ * never show the verdict (the map) to avoid those calls entirely.
  */
-export async function getAreaCards(): Promise<AreaCardData[]> {
+export async function getAreaCards(withVerdict = true): Promise<AreaCardData[]> {
   const data = await fetchMarketStats({});
   if (!data) return [];
   const cards = await Promise.all(
-    data.areas.map((a) => buildCard(a).catch(() => null)),
+    data.areas.map((a) => buildCard(a, withVerdict).catch(() => null)),
   );
   return cards
     .filter((c): c is AreaCardData => c !== null)
