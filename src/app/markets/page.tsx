@@ -35,6 +35,7 @@ export default async function MarketsPage() {
         <div className="mx-shell">
           <nav className="mx-subnav" aria-label="Market Explorer">
             <Link href="/markets" aria-current="page">All areas</Link>
+            <Link href="/markets/map">Map view</Link>
             <Link href="/estimate">Analyse an address</Link>
             <Link href="/short-term-vs-long-term-letting">Short vs long-let</Link>
             <Link href="/pricing">Pricing</Link>
