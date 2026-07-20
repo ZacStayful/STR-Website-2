@@ -13,6 +13,7 @@ import { fetchMarketStats, fetchMarketArea } from './client.ts';
 import { computeYieldOnCost, type YieldOnCost } from './yield.ts';
 import { computeAreaVerdict, type AreaVerdict } from './verdict.ts';
 import { computeAreaScore, type AreaScore } from './score.ts';
+import { areaConfidence, type Confidence } from './confidence.ts';
 import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
@@ -60,6 +61,7 @@ export interface AreaCardData {
   verdict: AreaVerdict | null;
   licensing: LicensingEntry;
   score: AreaScore | null;
+  confidence: Confidence;
 }
 
 async function buildCard(area: MarketArea): Promise<AreaCardData> {
@@ -82,10 +84,15 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
       grossRevenue: headline.grossRevenue,
       licensing: licensing.status,
     }),
+    confidence: areaConfidence(headline.totalSamples),
   };
 }
 
-/** All area cards for the /markets index, sorted by score desc (nulls last). */
+/**
+ * All area cards for the /markets index. Sorted by data confidence first
+ * (Confirmed areas surface above thin/Early ones), then by score, then yield —
+ * so the most trustworthy areas lead while everything stays visible.
+ */
 export async function getAreaCards(): Promise<AreaCardData[]> {
   const data = await fetchMarketStats({});
   if (!data) return [];
@@ -96,6 +103,7 @@ export async function getAreaCards(): Promise<AreaCardData[]> {
     .filter((c): c is AreaCardData => c !== null)
     .sort(
       (a, b) =>
+        b.confidence.rank - a.confidence.rank ||
         (b.score?.score ?? -1) - (a.score?.score ?? -1) ||
         (b.yieldOnCost?.grossYieldPct ?? -1) - (a.yieldOnCost?.grossYieldPct ?? -1),
     );

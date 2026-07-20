@@ -4,6 +4,7 @@ import { gbpCompact, pct } from "@/lib/market/format";
 import { LicensingBadge } from "./LicensingBadge";
 import { VerdictLabel } from "./VerdictLabel";
 import { ScoreBadge } from "./ScoreBadge";
+import { ConfidenceBadge } from "./ConfidenceBadge";
 
 /**
  * Fully-open area card (no lock/paywall — per spec). Shows revenue, ADR,
@@ -24,7 +25,10 @@ export function AreaCard({ card }: { card: AreaCardData }) {
         )}
       </div>
       <div className="mx-card-body">
-        <LicensingBadge status={card.licensing.status} label={card.licensing.headline} />
+        <div className="mx-card-badges">
+          <ConfidenceBadge confidence={card.confidence} samples={h.totalSamples} />
+          <LicensingBadge status={card.licensing.status} label={card.licensing.headline} />
+        </div>
 
         <div className="mx-stats">
           <div className="mx-stat">
