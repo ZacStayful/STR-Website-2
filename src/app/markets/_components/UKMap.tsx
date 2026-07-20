@@ -14,7 +14,33 @@ export interface MapArea {
   grossRevenue: number | null;
   adr: number | null;
   occupancy: number | null;
+  yieldPct: number | null;
   score: number | null;
+}
+
+type Metric = "accuracy" | "yield" | "occupancy" | "revenue";
+
+const METRICS: { key: Metric; label: string }[] = [
+  { key: "accuracy", label: "Data accuracy" },
+  { key: "yield", label: "Yield-on-cost" },
+  { key: "occupancy", label: "Occupancy" },
+  { key: "revenue", label: "Avg revenue" },
+];
+
+function metricValue(a: MapArea, m: Metric): number | null {
+  if (m === "yield") return a.yieldPct;
+  if (m === "occupancy") return a.occupancy;
+  if (m === "revenue") return a.grossRevenue;
+  return null;
+}
+
+// Sequential green ramp, pale → deep, for numeric heat metrics.
+function greenRamp(t: number): string {
+  const c = Math.max(0, Math.min(1, t));
+  const lo = [231, 239, 221]; // #e7efdd
+  const hi = [58, 86, 52]; // #3a5634
+  const ch = (i: number) => Math.round(lo[i] + (hi[i] - lo[i]) * c);
+  return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
 }
 
 interface Feature {
@@ -38,6 +64,7 @@ export function UKMap({ areas }: { areas: MapArea[] }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [view, setView] = useState({ k: 1, x: 0, y: 0 });
+  const [metric, setMetric] = useState<Metric>("accuracy");
   const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -138,6 +165,27 @@ export function UKMap({ areas }: { areas: MapArea[] }) {
     drag.current = null;
   }
 
+  // Value domain for the active numeric metric (min/max over areas with data).
+  const domain = useMemo(() => {
+    if (metric === "accuracy") return null;
+    const vals = areas.map((a) => metricValue(a, metric)).filter((v): v is number => v !== null);
+    if (vals.length === 0) return null;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    return { min, max: max === min ? min + 1 : max };
+  }, [areas, metric]);
+
+  function fillFor(a: MapArea | undefined): string {
+    if (!a) return NO_DATA_FILL;
+    if (metric === "accuracy") return TIER_FILL[a.tier];
+    const v = metricValue(a, metric);
+    if (v === null || !domain) return NO_DATA_FILL;
+    return greenRamp((v - domain.min) / (domain.max - domain.min));
+  }
+
+  const fmtDomain = (v: number) =>
+    metric === "revenue" ? gbp(v) : metric === "occupancy" ? `${Math.round(v)}%` : `${v.toFixed(1)}%`;
+
   const sel = selected ? areaByCode.get(selected) ?? null : null;
 
   if (failed) {
@@ -167,7 +215,7 @@ export function UKMap({ areas }: { areas: MapArea[] }) {
             <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
               {paths.map((p) => {
                 const a = areaByCode.get(p.area);
-                const fill = a ? TIER_FILL[a.tier] : NO_DATA_FILL;
+                const fill = fillFor(a);
                 const isSel = selected === p.area;
                 const isHover = hover === p.area;
                 return (
@@ -189,6 +237,21 @@ export function UKMap({ areas }: { areas: MapArea[] }) {
           </svg>
         )}
 
+        {/* Heat-metric toggle */}
+        <div className="mx-map-metric" role="group" aria-label="Colour map by">
+          {METRICS.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              className="mx-map-metric-btn"
+              aria-pressed={metric === m.key}
+              onClick={() => setMetric(m.key)}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+
         {/* Zoom controls */}
         <div className="mx-map-zoom">
           <button type="button" aria-label="Zoom in" onClick={() => zoomBy(1.4)}>+</button>
@@ -196,13 +259,27 @@ export function UKMap({ areas }: { areas: MapArea[] }) {
           <button type="button" aria-label="Reset" onClick={() => setView({ k: 1, x: 0, y: 0 })}>⟲</button>
         </div>
 
-        {/* Legend */}
+        {/* Legend — categorical for accuracy, gradient for numeric metrics */}
         <div className="mx-map-legend">
-          <div className="mx-map-legend-title">Data accuracy</div>
-          <div><span style={{ background: TIER_FILL.confirmed }} />Confirmed</div>
-          <div><span style={{ background: TIER_FILL.building }} />Building</div>
-          <div><span style={{ background: TIER_FILL.early }} />Early</div>
-          <div><span style={{ background: NO_DATA_FILL }} />No data yet</div>
+          {metric === "accuracy" ? (
+            <>
+              <div className="mx-map-legend-title">Data accuracy</div>
+              <div><span style={{ background: TIER_FILL.confirmed }} />Confirmed</div>
+              <div><span style={{ background: TIER_FILL.building }} />Building</div>
+              <div><span style={{ background: TIER_FILL.early }} />Early</div>
+              <div><span style={{ background: NO_DATA_FILL }} />No data yet</div>
+            </>
+          ) : (
+            <>
+              <div className="mx-map-legend-title">{METRICS.find((m) => m.key === metric)?.label}</div>
+              <div className="mx-map-legend-bar" style={{ background: `linear-gradient(90deg, ${greenRamp(0)}, ${greenRamp(1)})` }} />
+              <div className="mx-map-legend-scale">
+                <span>{domain ? fmtDomain(domain.min) : "low"}</span>
+                <span>{domain ? fmtDomain(domain.max) : "high"}</span>
+              </div>
+              <div><span style={{ background: NO_DATA_FILL }} />No data</div>
+            </>
+          )}
         </div>
 
         {hover && !sel && (

@@ -26,6 +26,7 @@ export default async function MarketsMapPage() {
     grossRevenue: c.headline.grossRevenue,
     adr: c.headline.adr,
     occupancy: c.headline.occupancy,
+    yieldPct: c.yieldOnCost?.grossYieldPct ?? null,
     score: c.score?.score ?? null,
   }));
 

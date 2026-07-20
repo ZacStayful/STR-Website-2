@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import type { AreaCardData } from "@/lib/market/explorer";
 import { AreaCard } from "./AreaCard";
+import { CompareBar, MAX_COMPARE } from "./CompareBar";
 
 type Region = "any" | "England" | "Scotland" | "Wales" | "Northern Ireland";
 type Budget = "any" | "u200" | "200-350" | "350-500" | "500+";
@@ -44,6 +45,19 @@ export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
   const [budget, setBudget] = useState<Budget>("any");
   const [beds, setBeds] = useState<Beds>("any");
   const [conf, setConf] = useState<Conf>("any");
+  const [compare, setCompare] = useState<string[]>([]);
+
+  const toggleCompare = (code: string) =>
+    setCompare((prev) =>
+      prev.includes(code)
+        ? prev.filter((c) => c !== code)
+        : prev.length >= MAX_COMPARE
+          ? prev
+          : [...prev, code],
+    );
+  const compareCards = compare
+    .map((code) => cards.find((c) => c.code === code))
+    .filter((c): c is AreaCardData => !!c);
 
   // A specific bedroom count (1/2/3) drives bedroom-specific card stats.
   // "4+" stays an availability filter (blended stats) since it spans sizes.
@@ -137,10 +151,24 @@ export function FilterableAreas({ cards }: { cards: AreaCardData[] }) {
       ) : (
         <div className="mx-grid">
           {filtered.map((c) => (
-            <AreaCard key={c.code} card={c} bedroom={selectedBedroom} />
+            <AreaCard
+              key={c.code}
+              card={c}
+              bedroom={selectedBedroom}
+              comparing={compare.includes(c.code)}
+              compareDisabled={compare.length >= MAX_COMPARE}
+              onToggleCompare={() => toggleCompare(c.code)}
+            />
           ))}
         </div>
       )}
+
+      <CompareBar
+        cards={compareCards}
+        bedroom={selectedBedroom}
+        onRemove={(code) => setCompare((prev) => prev.filter((c) => c !== code))}
+        onClear={() => setCompare([])}
+      />
     </>
   );
 }
