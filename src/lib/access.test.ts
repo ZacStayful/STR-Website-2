@@ -76,6 +76,42 @@ test('a manually granted plan with no Stripe record still counts as paid', () =>
   assert.equal(freeReportsRemaining(p), null);
 });
 
+test('a dead Stripe status beats a stale plan=pro column', () => {
+  const p = profile({
+    plan: 'pro',
+    stripe_subscription_id: 'sub_1',
+    stripe_subscription_status: 'canceled',
+  });
+  assert.equal(accountStatus(p), 'lapsed');
+  assert.equal(hasAccess(p), false);
+});
+
+// The escape hatch: a plan set by hand outranks Stripe in both directions,
+// so a customer Stripe has wrong can always be fixed from the dashboard.
+test('a manual grant outranks a dead Stripe status', () => {
+  const p = profile({
+    plan: 'pro',
+    plan_source: 'manual',
+    stripe_subscription_id: 'sub_1',
+    stripe_subscription_status: 'canceled',
+  });
+  assert.equal(accountStatus(p), 'paid');
+  assert.equal(hasAccess(p), true);
+});
+
+test('plan_source=manual on a free plan grants nothing', () => {
+  const p = profile({ plan: 'free', plan_source: 'manual' });
+  assert.equal(accountStatus(p), 'free_trial');
+});
+
+test('an incomplete/expired checkout is not a paying customer', () => {
+  for (const status of ['incomplete', 'incomplete_expired', 'unpaid', 'paused']) {
+    const p = profile({ plan: 'pro', stripe_subscription_status: status });
+    assert.equal(accountStatus(p), 'lapsed', status);
+    assert.equal(hasAccess(p), false, status);
+  }
+});
+
 test('a Stripe free trial is a subscriber but not a paying customer', () => {
   const p = profile({
     plan: 'pro',

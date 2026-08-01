@@ -482,22 +482,23 @@ export async function POST(request: Request) {
           }
         }
 
-        // Count this run against the user's 5 free reports — free-trial users
-        // only. Subscribers and admins still get their last_seen_at touched.
+        // reports_total counts every report for usage reporting. reports_run
+        // is the free-trial allowance and only advances for free-trial users —
+        // burning a subscriber's allowance would leave them at "0 free reports
+        // left" the moment their subscription ever lapsed.
         if (userId) {
           try {
             const supabase = await createSupabaseServerClient();
+            const { data: current } = await supabase
+              .from('profiles')
+              .select('reports_run, reports_total')
+              .eq('id', userId)
+              .single();
             const update: Record<string, unknown> = {
               last_seen_at: new Date().toISOString(),
+              reports_total: (current?.reports_total ?? 0) + 1,
             };
-            if (countRun) {
-              const { data: current } = await supabase
-                .from('profiles')
-                .select('reports_run')
-                .eq('id', userId)
-                .single();
-              update.reports_run = (current?.reports_run ?? 0) + 1;
-            }
+            if (countRun) update.reports_run = (current?.reports_run ?? 0) + 1;
             await supabase.from('profiles').update(update).eq('id', userId);
           } catch (err) {
             console.error('[api/analyse] reports_run hook failed:', err);

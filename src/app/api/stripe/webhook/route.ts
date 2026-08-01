@@ -23,7 +23,19 @@ export const dynamic = "force-dynamic";
 
 type Admin = SupabaseClient;
 
-type ProfileMatch = { id: string; email: string | null };
+// The profile we matched, plus enough of its current state to tell whether
+// this event actually changes anything.
+type ProfileMatch = {
+  id: string;
+  email: string | null;
+  plan: string | null;
+  plan_source: string | null;
+  stripe_subscription_id: string | null;
+  stripe_subscription_status: string | null;
+};
+
+const PROFILE_FIELDS =
+  "id, email, plan, plan_source, stripe_subscription_id, stripe_subscription_status";
 
 // Stripe statuses that should grant unlimited access. `past_due` is included
 // deliberately — Stripe is still retrying the card, and a paying customer
@@ -56,7 +68,7 @@ async function findProfile(
     email?: string | null;
   },
 ): Promise<ProfileMatch | null> {
-  const select = "id, email";
+  const select = PROFILE_FIELDS;
 
   if (keys.userId) {
     const { data } = await admin
@@ -129,7 +141,7 @@ async function customerEmail(
  */
 async function applySubscriptionState(
   admin: Admin,
-  profileId: string,
+  profile: ProfileMatch,
   state: {
     status: string;
     customerId: string | null;
@@ -139,11 +151,18 @@ async function applySubscriptionState(
 ): Promise<void> {
   const live = LIVE_STATUSES.has(state.status);
 
+  // A plan granted by hand is a deliberate decision that outranks Stripe
+  // (accountStatus honours it the same way). Record what Stripe told us, but
+  // don't let a stray event silently revoke the override.
+  const manual = profile.plan === "pro" && profile.plan_source === "manual";
+
   const update: Record<string, unknown> = {
-    plan: live ? "pro" : "free",
-    plan_source: "stripe",
     stripe_subscription_status: state.status,
   };
+  if (!manual) {
+    update.plan = live ? "pro" : "free";
+    update.plan_source = "stripe";
+  }
   if (state.customerId) update.stripe_customer_id = state.customerId;
   if (state.subscriptionId) update.stripe_subscription_id = state.subscriptionId;
   if (live) {
@@ -153,13 +172,69 @@ async function applySubscriptionState(
     update.subscription_ended_at = new Date().toISOString();
   }
 
-  const { error } = await admin.from("profiles").update(update).eq("id", profileId);
+  const { error } = await admin.from("profiles").update(update).eq("id", profile.id);
   if (error) {
     // Loud: a failed write here is what leaves a paying customer on the
     // free-trial banner, so it must never be swallowed.
-    console.error("[stripe/webhook] profile update failed", profileId, error);
+    console.error("[stripe/webhook] profile update failed", profile.id, error);
     throw new Error(`profile update failed: ${error.message}`);
   }
+}
+
+/**
+ * Mirror a subscription transition to the Monday CRM — but ONLY on an actual
+ * change of state. `setSubscriptionStarted` overwrites the "Subscribed" date
+ * column, and `customer.subscription.updated` fires on every trivial change
+ * (metadata edits, renewals), so mirroring unconditionally would rewrite the
+ * original subscription date to today over and over.
+ */
+async function mirrorToMonday(
+  email: string | null,
+  wasLive: boolean,
+  isLive: boolean,
+): Promise<void> {
+  if (!email || wasLive === isLive) return;
+  if (isLive) {
+    const { setSubscriptionStarted } = await import("@/lib/apis/monday");
+    await setSubscriptionStarted(email);
+  } else {
+    const { setSubscriptionCancelled } = await import("@/lib/apis/monday");
+    await setSubscriptionCancelled(email);
+  }
+}
+
+/**
+ * Any OTHER live subscription this customer holds. Used to decide whether a
+ * cancellation really means "stop their access", or is just the tail of a plan
+ * change. Returns null if Stripe can't be reached — the caller then trusts the
+ * event it was handed.
+ */
+async function liveSubscriptionFor(
+  stripe: Stripe,
+  customerId: string,
+  excludeId: string,
+): Promise<Stripe.Subscription | null> {
+  try {
+    const subs = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 100,
+    });
+    return (
+      subs.data.find(
+        (s) => s.id !== excludeId && LIVE_STATUSES.has(s.status),
+      ) ?? null
+    );
+  } catch (err) {
+    console.error("[stripe/webhook] could not list subscriptions", customerId, err);
+    return null;
+  }
+}
+
+/** Was this profile already being treated as a live subscriber? */
+function wasLive(profile: ProfileMatch): boolean {
+  const prior = profile.stripe_subscription_status?.trim().toLowerCase();
+  return prior ? LIVE_STATUSES.has(prior) : profile.plan === "pro";
 }
 
 /** Grant/revoke off a Stripe Subscription object. */
@@ -170,14 +245,23 @@ async function syncSubscription(
   extra: { userId?: string | null; email?: string | null } = {},
 ): Promise<void> {
   const customerId = idOf(sub.customer);
-  const email = extra.email ?? (await customerEmail(stripe, customerId));
 
-  const profile = await findProfile(admin, {
+  // Try the cheap id-based matches first. Only reach out to Stripe for the
+  // customer's email if none of them hit — `subscription.updated` fires often
+  // enough that an unconditional customers.retrieve is wasted latency and
+  // quota on every renewal.
+  let email = extra.email ?? null;
+  let profile = await findProfile(admin, {
     userId: extra.userId,
     subscriptionId: sub.id,
     customerId,
     email,
   });
+
+  if (!profile && !email) {
+    email = await customerEmail(stripe, customerId);
+    if (email) profile = await findProfile(admin, { email });
+  }
 
   if (!profile) {
     console.error(
@@ -188,23 +272,37 @@ async function syncSubscription(
     return;
   }
 
-  await applySubscriptionState(admin, profile.id, {
-    status: sub.status,
+  const before = wasLive(profile);
+  let effective = sub;
+
+  // Don't let a dead subscription revoke access when the customer still has a
+  // live one. Switching plan (monthly → annual) cancels the old subscription
+  // and creates a new one, and Stripe does not guarantee event order — so a
+  // late `sub_old.deleted` would otherwise lock out a customer who is paying
+  // on sub_new.
+  if (!LIVE_STATUSES.has(sub.status) && customerId) {
+    const live = await liveSubscriptionFor(stripe, customerId, sub.id);
+    if (live) {
+      console.warn(
+        "[stripe/webhook] ignoring",
+        `${sub.id} (${sub.status})`,
+        "— customer still has live subscription",
+        live.id,
+      );
+      effective = live;
+    }
+  }
+
+  const isLive = LIVE_STATUSES.has(effective.status);
+
+  await applySubscriptionState(admin, profile, {
+    status: effective.status,
     customerId,
-    subscriptionId: sub.id,
-    startedAt: isoFromUnix(sub.start_date),
+    subscriptionId: effective.id,
+    startedAt: isoFromUnix(effective.start_date),
   });
 
-  const mirrorEmail = profile.email ?? email;
-  if (!mirrorEmail) return;
-
-  if (LIVE_STATUSES.has(sub.status)) {
-    const { setSubscriptionStarted } = await import("@/lib/apis/monday");
-    await setSubscriptionStarted(mirrorEmail);
-  } else {
-    const { setSubscriptionCancelled } = await import("@/lib/apis/monday");
-    await setSubscriptionCancelled(mirrorEmail);
-  }
+  await mirrorToMonday(profile.email ?? email, before, isLive);
 }
 
 export async function POST(request: Request) {
@@ -259,18 +357,14 @@ export async function POST(request: Request) {
           break;
         }
 
-        await applySubscriptionState(admin, profile.id, {
+        const before = wasLive(profile);
+        await applySubscriptionState(admin, profile, {
           status: "active",
           customerId,
           subscriptionId,
           startedAt: new Date().toISOString(),
         });
-
-        const mirrorEmail = profile.email ?? email;
-        if (mirrorEmail) {
-          const { setSubscriptionStarted } = await import("@/lib/apis/monday");
-          await setSubscriptionStarted(mirrorEmail);
-        }
+        await mirrorToMonday(profile.email ?? email, before, true);
         break;
       }
 

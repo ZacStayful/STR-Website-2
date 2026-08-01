@@ -35,7 +35,11 @@ create table if not exists public.profiles (
   -- and until MONDAY_TRIAL_BOARD_ID env vars are configured).
   monday_item_id text,
   -- Server-of-truth counters for trial usage. Monday is a mirror.
+  -- reports_run is the FREE-TRIAL allowance counter and only advances while
+  -- the account is on the free trial. reports_total counts every report ever
+  -- run, subscribers included — use it for usage reporting, never for gating.
   reports_run integer not null default 0,
+  reports_total integer not null default 0,
   last_seen_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -47,6 +51,7 @@ alter table public.profiles add column if not exists mobile text;
 alter table public.profiles add column if not exists monday_item_id text;
 alter table public.profiles add column if not exists reports_run integer not null default 0;
 alter table public.profiles add column if not exists last_seen_at timestamptz;
+alter table public.profiles add column if not exists reports_total integer not null default 0;
 alter table public.profiles add column if not exists plan_source text;
 alter table public.profiles add column if not exists subscription_started_at timestamptz;
 alter table public.profiles add column if not exists subscription_ended_at timestamptz;
@@ -62,6 +67,12 @@ create index if not exists profiles_stripe_subscription_id_idx
   on public.profiles (stripe_subscription_id);
 create index if not exists profiles_stripe_customer_id_idx
   on public.profiles (stripe_customer_id);
+
+-- Seed the new all-time counter from the historic trial counter, which until
+-- now advanced for every user. Safe to re-run — it never lowers a value.
+update public.profiles
+   set reports_total = greatest(coalesce(reports_total, 0), coalesce(reports_run, 0))
+ where coalesce(reports_total, 0) < coalesce(reports_run, 0);
 
 -- ---------------------------------------------------------------
 -- Repair: paying customers stuck on plan='free'

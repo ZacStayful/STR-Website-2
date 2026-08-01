@@ -14,7 +14,10 @@ export type Profile = {
   email: string | null
   plan: Plan
   trial_ends_at: string
+  // Free-trial allowance counter — only advances while on the free trial.
   reports_run: number
+  // Every report ever run, subscribers included. Reporting only, never gating.
+  reports_total: number
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   stripe_subscription_status: string | null
@@ -62,6 +65,7 @@ export type AccountStatus =
 // answer rather than a crash or a type error.
 type PartialAccount = {
   plan?: Plan | string | null
+  plan_source?: string | null
   reports_run?: number | null
   stripe_subscription_id?: string | null
   stripe_subscription_status?: string | null
@@ -85,19 +89,27 @@ export function hasSubscriptionHistory(profile: PartialAccount): boolean {
 export function accountStatus(profile: PartialAccount): AccountStatus {
   const s = status(profile)
 
-  // A live Stripe subscription is authoritative, whatever `plan` says.
-  if (s && LIVE_STATUSES.has(s)) {
-    return PAYING_STATUSES.has(s) ? 'paid' : 'subscription_trial'
+  // A plan granted by hand (plan_source='manual') is a deliberate decision by
+  // us and outranks anything Stripe says — it's the escape hatch for a
+  // customer Stripe doesn't know about, or whose Stripe record is wrong.
+  if (profile.plan === 'pro' && profile.plan_source === 'manual') return 'paid'
+
+  // Otherwise Stripe is the source of truth for billing, in BOTH directions.
+  if (s) {
+    if (LIVE_STATUSES.has(s)) {
+      return PAYING_STATUSES.has(s) ? 'paid' : 'subscription_trial'
+    }
+    // A dead Stripe status is just as authoritative as a live one: the
+    // subscription is over, whatever a stale `plan` column still says. They
+    // do NOT fall back onto the free-report allowance, and must never be
+    // told they're "on a trial".
+    return 'lapsed'
   }
 
-  // plan='pro' with no live Stripe status is a manually granted subscription
-  // (set by hand while self-serve checkout was still being built), or a
-  // Stripe grant whose status column never got written. Either way: paid.
+  // No Stripe status at all. plan='pro' here is a legacy or hand-set grant.
   if (profile.plan === 'pro') return 'paid'
 
-  // Not pro and no live subscription, but there is subscription history —
-  // they cancelled or the subscription lapsed. They do NOT fall back onto the
-  // free-report allowance, and they must never be told they're "on a trial".
+  // A subscription id but no status — subscription history all the same.
   if (hasSubscriptionHistory(profile)) return 'lapsed'
 
   return hasFreeRunsLeft(profile) ? 'free_trial' : 'trial_expired'
@@ -131,10 +143,9 @@ export function isLapsedSubscriber(profile: PartialAccount): boolean {
   return accountStatus(profile) === 'lapsed'
 }
 
-/** @deprecated Prefer `isSubscriber` — kept because `plan` alone lies. */
-export function isPro(profile: Pick<Profile, 'plan'>): boolean {
-  return profile.plan === 'pro'
-}
+// NOTE: there is deliberately no `isPro(profile)` helper reading `plan` on its
+// own. That check is what let a paying customer whose plan write failed be
+// treated as a free-trial user. Use `isSubscriber` / `accountStatus`.
 
 export function hasFreeRunsLeft(profile: PartialAccount): boolean {
   return (profile.reports_run ?? 0) < FREE_RUNS
@@ -174,4 +185,4 @@ export function hasAccess(profile: PartialAccount): boolean {
 
 /** Columns every access check needs. Select these together, always. */
 export const ACCESS_COLUMNS =
-  'plan, reports_run, stripe_subscription_id, stripe_subscription_status'
+  'plan, plan_source, reports_run, stripe_subscription_id, stripe_subscription_status'

@@ -25,6 +25,7 @@ interface ProfileRow {
   full_name: string | null;
   plan: "free" | "pro" | null;
   reports_run: number | null;
+  reports_total: number | null;
   stripe_subscription_id: string | null;
   stripe_subscription_status: string | null;
   created_at: string | null;
@@ -97,7 +98,7 @@ export default async function AdminPage() {
     const { data, error } = await admin
       .from("profiles")
       .select(
-        `id, email, full_name, created_at, last_seen_at, ${ACCESS_COLUMNS}`,
+        `id, email, full_name, created_at, last_seen_at, reports_total, ${ACCESS_COLUMNS}`,
       )
       .order("created_at", { ascending: false })
       .limit(2000);
@@ -118,7 +119,12 @@ export default async function AdminPage() {
   const drifted = rows.filter(
     (r) => (r.plan === "pro") !== isSubscriber(r),
   ).length;
-  const totalReports = rows.reduce((s, r) => s + (r.reports_run ?? 0), 0);
+  // reports_total counts every report; reports_run only advances while an
+  // account is on the free trial, so summing it would undercount subscribers.
+  const totalReports = rows.reduce(
+    (s, r) => s + Math.max(r.reports_total ?? 0, r.reports_run ?? 0),
+    0,
+  );
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const signups7d = rows.filter((r) => r.created_at && new Date(r.created_at).getTime() >= weekAgo).length;
   const recent = rows.slice(0, 15);
@@ -201,7 +207,9 @@ export default async function AdminPage() {
                       {STATUS_LABEL[accountStatus(r)]}
                     </span>
                   </td>
-                  <td className="p-3 text-muted-foreground">{r.reports_run ?? 0}</td>
+                  <td className="p-3 text-muted-foreground">
+                    {Math.max(r.reports_total ?? 0, r.reports_run ?? 0)}
+                  </td>
                   <td className="p-3 text-muted-foreground">{fmtDate(r.created_at)}</td>
                   <td className="p-3 text-muted-foreground">{fmtDate(r.last_seen_at)}</td>
                 </tr>
