@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { LoginForm } from './login-form'
 import { GoogleButton } from '../google-button'
+import { FREE_RUNS } from "@/lib/access";
 
 export const metadata = { title: 'Sign in · Stayful Intelligence' }
 
@@ -32,7 +33,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
       <p className="mt-6 text-sm text-muted-foreground">
         Don&apos;t have an account?{' '}
         <Link href="/signup" className="text-primary font-medium hover:underline">
-          Start with 5 free reports
+          Start with {FREE_RUNS} free reports
         </Link>
       </p>
     </div>

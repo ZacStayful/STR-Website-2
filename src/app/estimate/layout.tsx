@@ -3,14 +3,16 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, isPro, runsRemaining } from "@/lib/access";
+import { pooledReportsRun } from "@/lib/usage";
 import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
 import { checkoutUrlFor } from "@/lib/billing";
 import { ensureEnquiry } from "@/lib/apis/monday";
 
 // Server component that wraps /estimate. Fetches the current user's profile,
-// runs hasAccess() against plan + reports_run (5 free reports, then pro),
-// bounces users who've used all their free reports to /upgrade, and
+// runs hasAccess() against plan + the free reports used across every account
+// sharing their mobile (see lib/usage.ts), bounces users who've used all their
+// free reports to /upgrade, and
 // (fire-and-forget) updates the Monday CRM with last_seen_at. Anyone not
 // logged in is already redirected to /login by the middleware
 // (proxy.ts → PROTECTED_PREFIXES).
@@ -42,7 +44,12 @@ export default async function EstimateLayout({
   // hit the free-report limit or the paywall.
   const admin = isAdminEmail(user.email);
 
-  if (!profile || (!admin && !hasAccess(profile))) {
+  // Pooled across sibling accounts on the same mobile, so a second signup
+  // doesn't hand out a fresh allowance. Skipped for admins, who bypass the
+  // limit anyway and shouldn't pay for the extra lookup.
+  const runsUsed = profile && !admin ? await pooledReportsRun(profile) : 0;
+
+  if (!profile || (!admin && !hasAccess(profile, runsUsed))) {
     redirect("/upgrade");
   }
 
@@ -89,7 +96,7 @@ export default async function EstimateLayout({
   // Trial countdown banner for free users (Pro users and admins have unlimited
   // access, so no banner for them).
   const showTrialBanner = !admin && !isPro(profile);
-  const remaining = runsRemaining(profile);
+  const remaining = runsRemaining(runsUsed);
   const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
 
   return (

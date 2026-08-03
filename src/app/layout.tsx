@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
+import { FREE_RUNS } from "@/lib/access";
 
 // The analyser (calculator.stayful.co.uk parity) is designed in Inter.
 // Marketing pages set their own font via --sf-font, so they're unaffected.
@@ -12,7 +13,7 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Stayful — income-estimate software for UK short-term lets",
   description:
-    "Find out if your property has potential as a short-term let. Get a peak income estimate, customise based on comparable nearby properties. 5 free reports.",
+    `Find out if your property has potential as a short-term let. Get a peak income estimate, customise based on comparable nearby properties. ${FREE_RUNS} free reports.`,
   generator: "Stayful",
   icons: {
     icon: [

@@ -1,5 +1,6 @@
 import { BRAND, TRUST } from "./brand";
 import { siteUrl } from "./url";
+import { FREE_RUNS } from "@/lib/access";
 
 type SchemaItem = Record<string, unknown>;
 
@@ -80,7 +81,7 @@ export function webApplicationSchema(opts: {
       "@type": "Offer",
       price: "0",
       priceCurrency: "GBP",
-      description: "5 free reports, no card required",
+      description: `${FREE_RUNS} free reports, no card required`,
     },
   };
 }

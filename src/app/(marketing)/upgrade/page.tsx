@@ -3,14 +3,14 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { hasAccess, FREE_RUNS, isLapsedSubscriber } from "@/lib/access";
+import { pooledReportsRun } from "@/lib/usage";
 import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
 
 export const metadata: Metadata = {
   title: "Upgrade — Stayful Intelligence",
-  description:
-    "You've used all 5 free reports on the Stayful Property Analyser. Subscribe to continue running unlimited reports.",
+  description: `You've used all ${FREE_RUNS} free reports on the Stayful Property Analyser. Subscribe to continue running unlimited reports.`,
   robots: { index: false, follow: false },
 };
 
@@ -27,14 +27,18 @@ export default async function UpgradePage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, full_name, stripe_subscription_id")
+    .select("plan, reports_run, mobile, full_name, stripe_subscription_id")
     .eq("id", user.id)
     .single();
+
+  // Pooled across sibling accounts on the same mobile — must match the gate in
+  // /estimate, or the two would disagree and bounce the user between them.
+  const runsUsed = profile ? await pooledReportsRun(profile) : 0;
 
   // If they still have free reports left, they're already pro, or they're an
   // admin, send them straight back to the analyser — they shouldn't be on the
   // upgrade page.
-  if (isAdminEmail(user.email) || (profile && hasAccess(profile))) {
+  if (isAdminEmail(user.email) || (profile && hasAccess(profile, runsUsed))) {
     redirect("/estimate");
   }
 

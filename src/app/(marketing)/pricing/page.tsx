@@ -11,10 +11,11 @@ import {
 } from "@/lib/schema";
 import { siteUrl } from "@/lib/url";
 import { FAQS } from "@/lib/faqs-data";
+import { FREE_RUNS } from "@/lib/access";
 
 const PAGE_TITLE = "Pricing — £39.99/month or £360/year";
 const PAGE_DESCRIPTION =
-  "Stayful Intelligence pricing. Run 5 reports free, then £39.99/month for unlimited analyses or £360/year (save 25% paid annually). No contract, cancel any time.";
+  `Stayful Intelligence pricing. Run ${FREE_RUNS} reports free, then £39.99/month for unlimited analyses or £360/year (save 25% paid annually). No contract, cancel any time.`;
 const PAGE_URL = siteUrl("/pricing");
 const LAST_UPDATED = "2026-05-08";
 

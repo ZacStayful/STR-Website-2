@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { ResendButton } from './ResendButton'
+import { FREE_RUNS } from "@/lib/access";
 
 export const metadata = { title: 'Check your email · Stayful Intelligence' }
 
@@ -13,7 +14,7 @@ export default async function CheckEmailPage({ searchParams }: { searchParams: S
       <h1 className="text-2xl font-semibold text-foreground">Check your email</h1>
       <p className="mt-3 text-sm text-muted-foreground">
         We&apos;ve sent a confirmation link{email ? ` to ${email}` : ''}. Click it to
-        activate your account and get your 5 free reports.
+        activate your account and get your {FREE_RUNS} free reports.
       </p>
 
       <ResendButton email={email ?? ''} />

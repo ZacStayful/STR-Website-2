@@ -1,3 +1,4 @@
+import { FREE_RUNS } from "@/lib/access";
 // Sticky trial banner shown to logged-in, non-Pro users on the analyser.
 // Counts down the remaining free reports and links to Stripe checkout.
 export function TrialBanner({
@@ -20,7 +21,7 @@ export function TrialBanner({
             ? "Your free reports are used up."
             : remaining === 1
               ? "⏳ You have 1 free report left on your trial."
-              : `⏳ You have ${remaining} of 5 free reports left on your trial.`}
+              : `⏳ You have ${remaining} of ${FREE_RUNS} free reports left on your trial.`}
         </span>
         <a
           href={checkoutHref}

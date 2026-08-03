@@ -69,7 +69,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
 
   // The DB trigger handle_new_user() reads full_name + mobile out of
   // raw_user_meta_data and writes them onto the profile row. New profiles
-  // start with reports_run = 0, giving them their 5 free reports.
+  // start with reports_run = 0, giving them their free-report allowance.
 
   // Push the trial to Monday immediately — this is the most reliable point
   // to do it, because we have the name/email/mobile in hand and don't depend

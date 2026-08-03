@@ -1,13 +1,14 @@
 import Link from 'next/link'
 import { SignupForm } from './signup-form'
 import { GoogleButton } from '../google-button'
+import { FREE_RUNS } from "@/lib/access";
 
 export const metadata = { title: 'Start your free trial · Stayful Intelligence' }
 
 export default function SignupPage() {
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
-      <h1 className="text-2xl font-semibold text-foreground">Start with 5 free reports</h1>
+      <h1 className="text-2xl font-semibold text-foreground">Start with {FREE_RUNS} free reports</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Full access to the analyser. No card required.
       </p>

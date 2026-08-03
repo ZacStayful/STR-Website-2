@@ -7,7 +7,8 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { hasAccess } from '@/lib/access';
+import { hasAccess, FREE_RUNS } from '@/lib/access';
+import { pooledReportsRun } from '@/lib/usage';
 import { isAdminEmail } from '@/lib/admin';
 
 // This route streams SSE while making several sequential external API
@@ -90,9 +91,13 @@ export async function POST(request: Request) {
       .eq('id', user.id)
       .single();
     // Admins (matched by verified auth email) bypass the free-report limit.
-    if (!profile || (!isAdminEmail(user.email) && !hasAccess(profile))) {
+    const admin = isAdminEmail(user.email);
+    // Pooled across every account sharing this mobile, so signing up again
+    // with a new email doesn't reset the allowance.
+    const runsUsed = profile && !admin ? await pooledReportsRun(profile) : 0;
+    if (!profile || (!admin && !hasAccess(profile, runsUsed))) {
       return Response.json(
-        { error: "You've used all 5 of your free reports. Subscribe to continue running analyses.", upgradeUrl: '/upgrade' },
+        { error: `You've used all ${FREE_RUNS} of your free reports. Subscribe to continue running analyses.`, upgradeUrl: '/upgrade' },
         { status: 402 },
       );
     }
@@ -462,7 +467,7 @@ export async function POST(request: Request) {
           }
         }
 
-        // Count this run against the user's 5 free reports.
+        // Count this run against the user's free-report allowance.
         if (userId) {
           try {
             const supabase = await createSupabaseServerClient();

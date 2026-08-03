@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Icon } from "@/lib/icons";
+import { FREE_RUNS } from "@/lib/access";
 
 interface Plan {
   name: string;
@@ -14,13 +15,13 @@ interface Plan {
 
 const PLANS: Plan[] = [
   {
-    name: "5 free reports",
+    name: `${FREE_RUNS} free reports`,
     price: "Free",
-    priceSub: "5 reports",
+    priceSub: `${FREE_RUNS} reports`,
     sub: "Full access — no card required",
     features: [
       "Full 10-section report",
-      "5 free reports to start",
+      `${FREE_RUNS} free reports to start`,
       "Live comparables",
       "Forecast & risk",
       "Setup cost quote",
