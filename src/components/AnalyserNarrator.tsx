@@ -1,13 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Play, Pause, RotateCcw, Volume2, Loader2 } from "lucide-react";
+import { X, Play, Pause, RotateCcw, Volume2, Loader2, Calculator } from "lucide-react";
 import { JarvisEye } from "@/components/JarvisEye";
 import type { JARVISState } from "@/types/jarvis";
 import type { AnalysisResult } from "@/lib/types";
 
 interface AnalyserNarratorProps {
   result: AnalysisResult;
+  // Whether the user has entered their own property costs (mortgage / bills /
+  // overheads). When false, net-profit and break-even figures are based on
+  // assumed defaults, so the narrator must not present them as accurate and
+  // instead steers the user to fill costs in and re-run.
+  costsProvided: boolean;
+  // Takes the user to the property-costs section of the analyser (expands it
+  // and scrolls to it).
+  onAddCosts: () => void;
+  // Cost-grounded profit figures derived from the user's entered overheads.
+  // Present only when costsProvided is true; used by the summary so it never
+  // speaks default-cost (guessed) net figures.
+  grounded?: {
+    shortLetTrueAnnual: number;
+    longLetTrueAnnual: number;
+    annualDifference: number;
+    monthlyDifference: number;
+  } | null;
 }
 
 // A stable identity for "which analysis is this" so the narrator resets its
@@ -16,13 +33,14 @@ function resultKey(r: AnalysisResult): string {
   return `${r.property.address}|${r.property.postcode}|${r.createdAt}`;
 }
 
-export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
+export function AnalyserNarrator({ result, costsProvided, onAddCosts, grounded }: AnalyserNarratorProps) {
   const [open, setOpen] = useState(false);
   const [eyeState, setEyeState] = useState<JARVISState>("idle");
   const [summary, setSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [voiceNote, setVoiceNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false); // a network request is in flight
+  const [showBubble, setShowBubble] = useState(true); // "Summarise the report" prompt
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -37,6 +55,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       setError(null);
       setVoiceNote(null);
       setEyeState("idle");
+      setShowBubble(true);
       setOpen(false);
       stopAudio();
     }
@@ -139,7 +158,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       const res = await fetch("/api/summarise", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ result }),
+        body: JSON.stringify({ result, costsProvided, grounded }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         summary?: string;
@@ -160,11 +179,12 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       setEyeState("idle");
       setBusy(false);
     }
-  }, [result, speak]);
+  }, [result, costsProvided, grounded, speak]);
 
   const handleTrigger = useCallback(() => {
     const nextOpen = !open;
     setOpen(nextOpen);
+    setShowBubble(false);
     if (nextOpen && !summary && !busy) {
       void generate();
     }
@@ -203,7 +223,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
         <div
           role="dialog"
           aria-label="Stayful AI analyst"
-          className="fixed bottom-[104px] right-4 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl sm:right-6"
+          className="fixed bottom-[120px] right-4 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl sm:right-8"
         >
           {/* Header */}
           <div className="flex items-center gap-3 border-b border-border bg-primary/5 px-4 py-3">
@@ -233,7 +253,29 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
           </div>
 
           {/* Body */}
-          <div className="max-h-[40vh] overflow-y-auto px-4 py-4">
+          <div className="max-h-[45vh] overflow-y-auto px-4 py-4">
+            {!costsProvided && (
+              <div className="mb-3 rounded-xl border border-primary/30 bg-primary/5 p-3">
+                <p className="text-xs font-semibold text-foreground">
+                  Add your costs for an accurate result
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Net profit and break-even occupancy can&apos;t be calculated without
+                  your actual mortgage and bills — the figures below use assumed
+                  defaults. Add your costs and re-run for a report you can rely on.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onAddCosts();
+                    handleClose();
+                  }}
+                  className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                >
+                  <Calculator className="h-3.5 w-3.5" /> Add my costs &amp; re-run
+                </button>
+              </div>
+            )}
             {error ? (
               <div className="space-y-3">
                 <p className="text-sm text-destructive">{error}</p>
@@ -286,20 +328,46 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
         </div>
       )}
 
-      {/* ── Floating eye trigger ──────────────────────────── */}
-      <button
-        type="button"
-        onClick={handleTrigger}
-        aria-label={open ? "Hide AI analyst" : "Ask the AI analyst to summarise this report"}
-        aria-expanded={open}
-        title="AI analyst — summarise & help me decide"
-        className="fixed bottom-6 right-4 z-50 grid h-[60px] w-[60px] place-items-center rounded-full transition-transform hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 sm:right-6"
-        style={{ background: "transparent", border: "none", cursor: "pointer" }}
-      >
-        <div style={{ transform: "scale(0.43)", transformOrigin: "center" }}>
-          <JarvisEye state={eyeState} size={140} />
-        </div>
-      </button>
+      {/* ── Floating eye trigger + speech bubble ──────────── */}
+      <div className="fixed bottom-10 right-5 z-50 flex items-center gap-2 sm:bottom-12 sm:right-8">
+        {!open && showBubble && (
+          <div className="relative max-w-[200px] rounded-2xl rounded-br-sm border border-border bg-card px-3.5 py-2 shadow-lg">
+            <button
+              type="button"
+              onClick={handleTrigger}
+              className="text-left text-[13px] font-medium leading-snug text-foreground"
+            >
+              Summarise the report
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowBubble(false);
+              }}
+              aria-label="Dismiss"
+              className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+            {/* tail pointing toward the eye */}
+            <span className="absolute -right-1 bottom-2 h-3 w-3 rotate-45 border-b border-r border-border bg-card" />
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={handleTrigger}
+          aria-label={open ? "Hide AI analyst" : "Ask the AI analyst to summarise this report"}
+          aria-expanded={open}
+          title="AI analyst — summarise & help me decide"
+          className="grid h-[64px] w-[64px] place-items-center rounded-full transition-transform hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          style={{ background: "transparent", border: "none", cursor: "pointer" }}
+        >
+          <div style={{ transform: "scale(0.46)", transformOrigin: "center" }}>
+            <JarvisEye state={eyeState} size={140} />
+          </div>
+        </button>
+      </div>
     </>
   );
 }
