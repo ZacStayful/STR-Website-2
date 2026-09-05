@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { gbp, pct } from "@/lib/market/format";
+import { useUkGeo, MAP_W as W, MAP_H as H } from "./useUkGeo";
 
 export interface MapArea {
   code: string;
@@ -43,11 +44,6 @@ function greenRamp(t: number): string {
   return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
 }
 
-interface Feature {
-  properties: { area: string };
-  geometry: { type: "MultiPolygon"; coordinates: number[][][][] };
-}
-
 // Green → pale = most accurate → least; grey = no data.
 const TIER_FILL: Record<string, string> = {
   confirmed: "#4c6b47",
@@ -55,12 +51,9 @@ const TIER_FILL: Record<string, string> = {
   early: "#c3d1ab",
 };
 const NO_DATA_FILL = "#e8e8e2";
-const W = 760;
-const H = 920;
 
 export function UKMap({ areas }: { areas: MapArea[] }) {
-  const [features, setFeatures] = useState<Feature[] | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { features, paths, failed } = useUkGeo();
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [view, setView] = useState({ k: 1, x: 0, y: 0 });
@@ -68,64 +61,11 @@ export function UKMap({ areas }: { areas: MapArea[] }) {
   const drag = useRef<{ px: number; py: number; vx: number; vy: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let alive = true;
-    fetch("/data/uk-postcode-areas.geojson")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((d) => alive && setFeatures(d.features as Feature[]))
-      .catch(() => alive && setFailed(true));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const areaByCode = useMemo(() => {
     const m = new Map<string, MapArea>();
     for (const a of areas) m.set(a.code.toUpperCase(), a);
     return m;
   }, [areas]);
-
-  const project = useMemo(() => {
-    if (!features) return null;
-    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-    for (const f of features)
-      for (const poly of f.geometry.coordinates)
-        for (const ring of poly)
-          for (const [lng, lat] of ring) {
-            if (lng < minLng) minLng = lng;
-            if (lng > maxLng) maxLng = lng;
-            if (lat < minLat) minLat = lat;
-            if (lat > maxLat) maxLat = lat;
-          }
-    const latMid = (minLat + maxLat) / 2;
-    const cos = Math.cos((latMid * Math.PI) / 180);
-    const spanX = (maxLng - minLng) * cos;
-    const spanY = maxLat - minLat;
-    const pad = 16;
-    const k = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
-    const offX = (W - spanX * k) / 2;
-    const offY = (H - spanY * k) / 2;
-    return (lng: number, lat: number): [number, number] => [
-      offX + (lng - minLng) * cos * k,
-      offY + (maxLat - lat) * k,
-    ];
-  }, [features]);
-
-  const paths = useMemo(() => {
-    if (!features || !project) return [];
-    return features.map((f) => {
-      let d = "";
-      for (const poly of f.geometry.coordinates)
-        for (const ring of poly) {
-          ring.forEach(([lng, lat], i) => {
-            const [x, y] = project(lng, lat);
-            d += (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1);
-          });
-          d += "Z";
-        }
-      return { area: f.properties.area.toUpperCase(), d };
-    });
-  }, [features, project]);
 
   function zoomBy(factor: number, cx = W / 2, cy = H / 2) {
     setView((v) => {

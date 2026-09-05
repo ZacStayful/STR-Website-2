@@ -32,6 +32,18 @@
   font-weight: 600;
   line-height: 1.15;
 }
+/* When an .mx block is embedded in the marketing design system (the public
+   product page's sample area), out-rank `.sf-page-v3 h1/h2/h3` explicitly. */
+.sf-page-v3 .mx h1, .sf-page-v3 .mx h2, .sf-page-v3 .mx h3 {
+  font-family: var(--font-playfair), Georgia, serif;
+  color: var(--mx-ink);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: 0;
+  text-wrap: initial;
+}
+.sf-page-v3 .mx .mx-panel h2 { font-size: 1.25rem; }
+.sf-page-v3 .mx .mx-card-thumb h3 { font-size: 1.35rem; color: #fff; }
 
 .mx-container { max-width: 1180px; margin: 0 auto; padding: 0 20px; }
 

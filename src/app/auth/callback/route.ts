@@ -1,12 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
+import { safeInternalPath } from '@/lib/safe-path'
 
 // Handles both OAuth (Google) callback and email-confirmation links.
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl
   const code = searchParams.get('code')
-  const next = searchParams.get('next') || '/estimate'
+  // Guarded here — the sink — so every producer of ?next= is covered.
+  const next = safeInternalPath(searchParams.get('next'), '/estimate')
   const error = searchParams.get('error_description') || searchParams.get('error')
 
   if (error) {

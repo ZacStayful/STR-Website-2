@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getAreaDetail, listAreaCodes } from "@/lib/market/explorer";
-import { areaMetaForCode, areaMetaForSlug } from "@/lib/market/areas";
+import { getAreaDetail } from "@/lib/market/cached";
+import { requireMarketAccess } from "@/lib/market/gate";
+import { MarketExplorerProductPage } from "../_components/product/MarketExplorerProductPage";
+import { areaMetaForSlug } from "@/lib/market/areas";
 import { getLicensing } from "@/lib/data/str-licensing";
 import { gbp, pct } from "@/lib/market/format";
 import { siteUrl } from "@/lib/url";
@@ -13,14 +15,9 @@ import { ConfidenceBadge } from "../_components/ConfidenceBadge";
 import { ScoreBreakdown } from "../_components/ScoreBreakdown";
 import { ArrowRight } from "lucide-react";
 
-export const revalidate = 3600;
-export const dynamicParams = true;
-
-export async function generateStaticParams() {
-  const codes = await listAreaCodes();
-  return codes.map((code) => ({ area: areaMetaForCode(code).slug }));
-}
-
+// Members-only: rendered per request behind the layout gate. The metadata is
+// deliberately static — no live figures — because metadata resolves even when
+// the layout withholds the page from a signed-out visitor.
 export async function generateMetadata({
   params,
 }: {
@@ -28,27 +25,30 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { area: slug } = await params;
   const meta = areaMetaForSlug(slug);
-  const name = meta?.name ?? slug;
-  const detail = meta ? await getAreaDetail(meta.code) : null;
-
-  const title = `${name} Short-Term Rental Yields & Investment Data | Stayful`;
-  const description = detail
-    ? `Short-term rental data for ${name} (${detail.card.code}): ${gbp(detail.card.headline.grossRevenue)} avg revenue, ${pct(detail.card.headline.occupancy, 0)} occupancy${detail.card.yieldOnCost ? `, ${pct(detail.card.yieldOnCost.grossYieldPct, 1)} gross yield-on-cost` : ""}, plus licensing rules and short-vs-long-let. Free area report from Stayful.`
-    : `Short-term rental investment data and licensing rules for ${name}. Explore UK STR areas free with Stayful Market Explorer.`;
+  if (!meta) return { title: { absolute: "Market Explorer | Stayful" }, robots: { index: false, follow: false } };
+  const name = meta.name;
+  const path = `/markets/${meta.slug}`;
+  const title = `${name} Short-Term Rental Market Data | Stayful`;
+  const description = `Short-term rental data for ${name}: average revenue, occupancy, yield-on-cost, licensing rules and short-vs-long-let. Available to Stayful members.`;
 
   return {
     title: { absolute: title },
     description,
-    alternates: { canonical: siteUrl(`/markets/${meta?.slug ?? slug}`) },
-    openGraph: { title, description, url: siteUrl(`/markets/${meta?.slug ?? slug}`) },
+    robots: { index: false, follow: false },
+    alternates: { canonical: siteUrl(path) },
+    openGraph: { title, description, url: siteUrl(path) },
   };
 }
 
 export default async function AreaPage({ params }: { params: Promise<{ area: string }> }) {
   const { area: slug } = await params;
   const meta = areaMetaForSlug(slug);
-  // A truly unknown slug (not a mapped city, not a valid postcode-area code) 404s.
+  // A truly unknown slug (not a mapped city, not a valid postcode-area code)
+  // 404s for everyone — slug validity reveals nothing about market data.
   if (!meta) notFound();
+  // Members only: blocked users go to /upgrade and come back to this area;
+  // signed-out visitors get the public product page.
+  if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage />;
   const detail = await getAreaDetail(meta.code);
 
   // ── Not-enough-data state (area no longer meets min_samples, or never did) ──
