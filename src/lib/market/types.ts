@@ -18,12 +18,40 @@ export interface MarketBedroomAgg {
   avg_net_revenue: number | null;
   avg_property_value_low: number | null;
   avg_property_value_high: number | null;
+  // Market signals (Phase 2 backend; optional so an older backend still parses)
+  avg_rating?: number | null; // 0–5, reviewed comparables only
+  avg_review_count?: number | null;
+  avg_listing_age?: number | null; // years
+  avg_listing_density?: number | null; // listings per km²
+}
+
+/** Per-area competition summary from the backend (averages over rows with data). */
+export interface AreaCompetitionRaw {
+  sample_count: number;
+  avg_rating: number | null;
+  avg_review_count: number | null;
+  avg_listing_age: number | null;
+  avg_listing_density: number | null;
+}
+
+/** Per-area demand-driver summary from the backend. Shares are 0–1. */
+export interface AreaDemandRaw {
+  sample_count: number;
+  share_hospital: number | null;
+  share_university: number | null;
+  share_transport: number | null;
+  avg_events: number | null;
+  large_planning_apps_12m: number | null;
+  large_planning_apps_prev_12m: number | null;
+  planning_fetched_at: string | null;
 }
 
 export interface MarketArea {
   postcode_area: string;
   total_sample_count: number;
   by_bedrooms: MarketBedroomAgg[];
+  competition?: AreaCompetitionRaw | null;
+  demand?: AreaDemandRaw | null;
 }
 
 export interface MarketStatsResponse {
