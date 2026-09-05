@@ -7,6 +7,7 @@ export interface ExplorerUser {
   email: string | null;
   goals: MarketGoals | null;
   savedAreas: string[];
+  alertWeekly: boolean;
 }
 
 /**
@@ -15,15 +16,24 @@ export interface ExplorerUser {
  * auth round-trip, not two.
  */
 export async function loadExplorerUser(user: { id: string; email?: string | null } | null): Promise<ExplorerUser> {
-  if (!user) return { email: null, goals: null, savedAreas: [] };
+  if (!user) return { email: null, goals: null, savedAreas: [], alertWeekly: true };
   const supabase = await createSupabaseServerClient();
-  const [{ data: profile }, { data: saved }] = await Promise.all([
-    supabase.from('profiles').select('market_goals').eq('id', user.id).single(),
+  const [profileRes, { data: saved }] = await Promise.all([
+    supabase.from('profiles').select('market_goals, alert_weekly').eq('id', user.id).single(),
     supabase.from('saved_areas').select('postcode_area').eq('user_id', user.id),
   ]);
+  // Tolerate a database that hasn't had the Phase 3 column added yet: fall
+  // back to the goals-only select rather than silently losing the goals.
+  let profile = profileRes.data as { market_goals: unknown; alert_weekly?: boolean } | null;
+  if (profileRes.error) {
+    console.warn('[markets] profile select failed (schema behind?):', profileRes.error.message);
+    const fallback = await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
+    profile = fallback.data ?? null;
+  }
   return {
     email: user.email ?? null,
     goals: parseMarketGoals(profile?.market_goals),
     savedAreas: (saved ?? []).map((s: { postcode_area: string }) => s.postcode_area.toUpperCase()),
+    alertWeekly: profile?.alert_weekly !== false,
   };
 }

@@ -4,6 +4,7 @@ import { Star } from "lucide-react";
 import { gbpCompact, pct } from "@/lib/market/format";
 import { ScoreBadge } from "../ScoreBadge";
 import { MAX_COMPARE } from "../CompareBar";
+import { TrendSparkline } from "./TrendSparkline";
 import type { ExplorerRow } from "./types";
 
 function FitPill({ ok, yes, no }: { ok: boolean | null; yes?: string; no: string }) {
@@ -68,6 +69,7 @@ export function AreaListRow({
           <span><b>{yieldPct !== null ? pct(yieldPct, 1) : "—"}</b> yield</span>
           {c.competition && <span className={`mx-comp mx-comp--${c.competition.label.toLowerCase()}`}>{c.competition.label}</span>}
           {c.directBooking && <span className={`mx-db mx-db--${c.directBooking.label.toLowerCase()}`}>Direct {c.directBooking.label.toLowerCase()}</span>}
+          {row.trend && <TrendSparkline series={row.trend.series} trend={row.trend.enquiries} />}
         </div>
         {p && (
           <div className="mx-row-fit">

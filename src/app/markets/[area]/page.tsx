@@ -7,6 +7,7 @@ import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "../_components/product/MarketExplorerProductPage";
 import { ExplorerShell } from "../_components/explorer/ExplorerShell";
 import { loadExplorerUser } from "../_lib/loadExplorerUser";
+import { fetchMarketTrends } from "@/lib/market/trends-client";
 import { isSortKey } from "@/lib/market/rank";
 
 // Deep link into the explorer with one area's drawer open. Members-only and
@@ -45,7 +46,7 @@ export default async function AreaPage({
   if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort }, cards, user] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user)]);
+  const [{ sort }, cards, user, trends] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user), fetchMarketTrends()]);
   const hasData = cards.some((c) => c.code === meta.code);
 
   return (
@@ -54,6 +55,8 @@ export default async function AreaPage({
       goals={user.goals}
       savedAreas={user.savedAreas}
       userEmail={user.email}
+      trends={trends}
+      alertWeekly={user.alertWeekly}
       initialArea={meta.code}
       initialAreaName={hasData ? null : meta.name}
       initialSort={isSortKey(sort) ? sort : "stayful"}

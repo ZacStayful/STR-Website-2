@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Hero } from "@/components/marketing-v3/Hero";
 import { StatsBar } from "@/components/marketing-v3/StatsBar";
+import { HomePulse } from "@/components/marketing-v3/HomePulse";
 import { VideoTour } from "@/components/marketing-v3/VideoTour";
 import { Walkthrough } from "@/components/marketing-v3/Walkthrough";
 import { ReportGallery } from "@/components/marketing-v3/ReportGallery";
@@ -57,6 +58,7 @@ export default function HomePage() {
       />
 
       <Hero />
+      <HomePulse />
       <StatsBar />
       <VideoTour />
       <Walkthrough />

@@ -5,6 +5,7 @@ import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "./_components/product/MarketExplorerProductPage";
 import { ExplorerShell } from "./_components/explorer/ExplorerShell";
 import { loadExplorerUser } from "./_lib/loadExplorerUser";
+import { fetchMarketTrends } from "@/lib/market/trends-client";
 import { isSortKey } from "@/lib/market/rank";
 
 // Signed-out visitors get the public, indexable product page at this URL;
@@ -38,7 +39,7 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
   if ((await requireMarketAccess("/markets")) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort, q }, cards, user] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user)]);
+  const [{ sort, q }, cards, user, trends] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user), fetchMarketTrends()]);
 
   if (cards.length === 0) {
     return (
@@ -57,6 +58,8 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
       goals={user.goals}
       savedAreas={user.savedAreas}
       userEmail={user.email}
+      trends={trends}
+      alertWeekly={user.alertWeekly}
       initialSort={isSortKey(sort) ? sort : "stayful"}
       initialQuery={typeof q === "string" ? q.slice(0, 40) : ""}
     />

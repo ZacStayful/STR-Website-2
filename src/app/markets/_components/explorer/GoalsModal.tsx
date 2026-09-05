@@ -29,7 +29,7 @@ function PriorityPills({ name, value, label, help }: { name: string; value: Prio
   );
 }
 
-export function GoalsModal({ goals, onClose }: { goals: MarketGoals | null; onClose: () => void }) {
+export function GoalsModal({ goals, alertWeekly = true, onClose }: { goals: MarketGoals | null; alertWeekly?: boolean; onClose: () => void }) {
   const g = goals ?? DEFAULT_GOALS;
   const [state, action, pending] = useActionState(saveMarketGoalsAction, initial);
   const [clearing, startClear] = useTransition();
@@ -132,6 +132,14 @@ export function GoalsModal({ goals, onClose }: { goals: MarketGoals | null; onCl
                 </select>
               </label>
             </div>
+          </section>
+
+          <section className="mx-goals-section">
+            <h3>5 · Alerts</h3>
+            <label className="mx-check">
+              <input type="checkbox" name="alertWeekly" value="1" defaultChecked={alertWeekly} />
+              <span>Email me weekly when a saved area’s enquiry trend flips or its data becomes Confirmed.</span>
+            </label>
           </section>
 
           {state.error && <p className="mx-note mx-note--error">{state.error}</p>}

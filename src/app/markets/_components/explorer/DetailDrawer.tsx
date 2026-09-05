@@ -11,6 +11,7 @@ import { LicensingBadge } from "../LicensingBadge";
 import { VerdictLabel } from "../VerdictLabel";
 import { Gauge, BedroomBars } from "./Charts";
 import { ManagedEnquiry } from "./ManagedEnquiry";
+import { TrendCharts } from "./TrendCharts";
 import type { ExplorerRow } from "./types";
 
 function Breakdown({ title, intro, rows }: { title: string; intro: string; rows: { label: string; detail: string; earned: number | null; weight: number }[] }) {
@@ -166,6 +167,8 @@ export function DetailDrawer({
             </table>
           )}
         </div>
+
+        {row.trend && <TrendCharts trend={row.trend} name={c.name} />}
 
         {p && (
           <Breakdown

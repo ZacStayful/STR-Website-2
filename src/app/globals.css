@@ -3688,3 +3688,11 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 
 /* Data section tweaks */
 .sf-page-v3 .mxp-honest { max-width: 72ch; font-size: 14px; line-height: 1.6; }
+
+/* Homepage market pulse (real national figures from the Market Explorer) */
+.sf-page-v3 .home-pulse { padding: 0 0 12px; }
+.sf-page-v3 .home-pulse .mx { min-height: 0; background: transparent; }
+.sf-page-v3 .home-pulse-link { display: inline-block; margin-top: 10px; font-size: 14px; color: var(--sage-600); font-weight: 600; text-decoration: none; }
+.sf-page-v3 .home-pulse-link:hover { text-decoration: underline; }
+.sf-page-v3 .mxp-pulse-section { background: var(--cream); }
+.sf-page-v3 .mxp-pulse-section .lede { max-width: 70ch; margin: 14px 0 22px; }
