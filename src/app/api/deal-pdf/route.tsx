@@ -2,6 +2,7 @@ import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { sharedListingByToken } from "@/lib/listing/share";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
+import { formatListingPrice } from "@/lib/listing/format";
 import { pdfDealFrom } from "@/lib/pdf/derive";
 import { DealSheet, type DealSheetData } from "@/lib/pdf/deal/DealSheet";
 
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
     address: l.displayAddress ?? l.postcode,
     sourceLabel: SOURCE_LABELS[l.source],
     sourceUrl: l.canonicalUrl,
-    price: l.price ? `£${Math.round(l.price.amount).toLocaleString("en-GB")}${l.price.period === "pcm" ? " pcm" : l.price.period === "night" ? " / night" : ""}` : null,
+    price: l.price ? formatListingPrice(l.price) : null,
     bedrooms: l.bedrooms,
     estimate: est ? { revenue: est.grossRevenue, adr: est.adr, occupancy: est.occupancy, note: est.note } : null,
     area: area ? { name: area.name, score: area.score, grade: area.grade, competition: area.competition?.label ?? null, directBooking: area.directBooking?.label ?? null, licensing: area.licensing.headline } : null,

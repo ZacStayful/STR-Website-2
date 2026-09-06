@@ -5,6 +5,7 @@
 import type { Deal } from './deal.ts';
 import type { ListingKind, ListingSource, ListingStatus } from './types.ts';
 import type { QuickEstimate } from './quick-types.ts';
+import { postcodeAreaOf } from './normalise.ts';
 
 export type PipelineStatus = 'watching' | 'viewing' | 'offer' | 'passed';
 
@@ -113,18 +114,17 @@ export function toCheckedListingRow(raw: Record<string, unknown>): CheckedListin
 }
 
 /** Builds a pipeline row from a fresh /api/listing/resolve response (client side). */
-export function rowFromResolved(res: { snapshot: import('./types.ts').ListingSnapshot; quick: QuickEstimate | null; checkedListingId: string | null }, fallbackId?: string): CheckedListingRow | null {
-  const id = res.checkedListingId ?? fallbackId ?? null;
+export function rowFromResolved(res: { snapshot: import('./types.ts').ListingSnapshot; quick: QuickEstimate | null; checkedListingId: string | null }): CheckedListingRow | null {
+  const id = res.checkedListingId;
   if (!id) return null;
   const s = res.snapshot;
-  const outcode = s.outcode ?? s.postcode?.split(' ')[0] ?? null;
   return {
     id,
     canonicalUrl: s.canonicalUrl,
     source: s.source,
     kind: s.kind,
     postcode: s.postcode ?? null,
-    postcodeArea: outcode?.match(/^[A-Z]{1,2}/i)?.[0].toUpperCase() ?? null,
+    postcodeArea: postcodeAreaOf(s.outcode ?? s.postcode),
     lat: s.lat ?? null,
     lng: s.lng ?? null,
     title: s.title,

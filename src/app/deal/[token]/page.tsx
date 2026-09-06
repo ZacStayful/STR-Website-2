@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sharedListingByToken } from "@/lib/listing/share";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
-import { PIPELINE_STATUSES } from "@/lib/listing/pipeline";
+import { formatListingPrice } from "@/lib/listing/format";
 
 export const dynamic = "force-dynamic";
 
@@ -28,8 +28,7 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
   const est = l.quick?.estimate ?? null;
   const area = l.quick?.area ?? null;
   const d = l.deal;
-  const status = PIPELINE_STATUSES.find((s) => s.key === l.status);
-  const price = l.price ? `${gbp(l.price.amount)}${l.price.period === "pcm" ? " pcm" : l.price.period === "night" ? " / night" : ""}` : null;
+  const price = l.price ? formatListingPrice(l.price) : null;
 
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
@@ -40,7 +39,6 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
           {l.displayAddress ?? l.postcode ?? ""}{l.bedrooms !== null ? ` · ${l.bedrooms} bed` : ""}{price ? ` · ${price}` : ""} ·{" "}
           <a href={l.canonicalUrl} target="_blank" rel="noopener noreferrer" className="underline">View on {SOURCE_LABELS[l.source]}</a>
         </p>
-        {status && status.key !== "watching" && <p className="mt-1 text-xs text-[#7a8274]">Pipeline status: {status.label}</p>}
 
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Tile label="Est. revenue / yr" value={est ? gbp(est.grossRevenue) : "—"} sub={est?.adr ? `${gbp(est.adr)} / night${est.occupancy !== null ? ` · ${Math.round(est.occupancy)}% occ.` : ""}` : undefined} />

@@ -4,18 +4,8 @@ import { useState } from "react";
 import { gbp } from "@/lib/market/format";
 import { dealReturn, listingFit, type CheckedListingRow } from "@/lib/listing/pipeline";
 import type { ExplorerRow } from "./types";
-
-function bestIndex(values: (number | null)[]): number {
-  let best = -1;
-  let bestVal = -Infinity;
-  values.forEach((v, i) => {
-    if (v !== null && v > bestVal) {
-      bestVal = v;
-      best = i;
-    }
-  });
-  return best;
-}
+import { bestIndex } from "../CompareBar";
+import { formatListingPrice } from "@/lib/listing/format";
 
 /** Side-by-side table for 2–4 checked listings, docked like the area compare tray. */
 export function ListingCompare({ rows, areaOf, onRemove, onClear }: { rows: CheckedListingRow[]; areaOf: (row: CheckedListingRow) => ExplorerRow | null; onRemove: (id: string) => void; onClear: () => void }) {
@@ -28,7 +18,7 @@ export function ListingCompare({ rows, areaOf, onRemove, onClear }: { rows: Chec
   const scoreBest = bestIndex(areas.map((a) => a?.card.score?.score ?? null));
   const priceBest = bestIndex(rows.map((r) => (r.price ? -r.price.amount : null)));
   const cell = (best: boolean) => (best ? "mx-cmp-best" : undefined);
-  const priceText = (r: CheckedListingRow) => (r.price ? `${gbp(r.price.amount)}${r.price.period === "pcm" ? " pcm" : r.price.period === "night" ? "/night" : ""}` : "—");
+  const priceText = (r: CheckedListingRow) => formatListingPrice(r.price);
 
   return (
     <>
@@ -56,7 +46,10 @@ export function ListingCompare({ rows, areaOf, onRemove, onClear }: { rows: Chec
             <div className="mx-cmp-scroll">
               <table className="mx-cmp-table">
                 <thead>
-                  <tr><th /> {rows.map((r) => <th key={r.id}><a href={r.canonicalUrl} target="_blank" rel="noopener noreferrer">{r.title.slice(0, 40)}</a><br /><small>{r.displayAddress ?? r.postcode ?? ""}</small></th>)}</tr>
+                  <tr>
+                    <th />
+                    {rows.map((r) => <th key={r.id}><a href={r.canonicalUrl} target="_blank" rel="noopener noreferrer">{r.title.slice(0, 40)}</a><br /><small>{r.displayAddress ?? r.postcode ?? ""}</small></th>)}
+                  </tr>
                 </thead>
                 <tbody>
                   <tr><td className="mx-cmp-rowlabel">Price</td>{rows.map((r, i) => <td key={r.id} className={cell(i === priceBest)}>{priceText(r)}</td>)}</tr>

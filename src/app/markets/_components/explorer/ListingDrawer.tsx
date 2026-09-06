@@ -48,18 +48,24 @@ export function ListingDrawer({
   comparing: boolean;
   compareDisabled: boolean;
   onClose: () => void;
-  onChange: (next: CheckedListingRow) => void;
+  /** Merges a partial update into the listing (functional, so in-flight edits never clobber each other). */
+  onChange: (id: string, patch: Partial<CheckedListingRow>) => void;
   onRemoved: (id: string) => void;
   onOpenArea: (code: string) => void;
   onToggleCompare: () => void;
 }) {
   const [notes, setNotes] = useState(listing.notes);
   const [message, setMessage] = useState<string | null>(null);
+  const [origin, setOrigin] = useState("");
   const [, start] = useTransition();
   const status = PIPELINE_STATUSES.find((s) => s.key === listing.status)!;
   // Rendered as a path so server and client markup match; the copy button adds the origin.
   const sharePath = listing.shareToken ? `/deal/${listing.shareToken}` : null;
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- origin is only known in the browser; SSR renders the path
+    setOrigin(window.location.origin);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -68,18 +74,18 @@ export function ListingDrawer({
 
   const setStatus = (s: PipelineStatus) => {
     const prev = listing.status;
-    onChange({ ...listing, status: s });
+    onChange(listing.id, { status: s });
     start(async () => {
       const r = await updateListingStatusAction(listing.id, s);
       if ("error" in r) {
-        onChange({ ...listing, status: prev });
+        onChange(listing.id, { status: prev });
         setMessage(r.error);
       }
     });
   };
   const saveNotes = () => {
     if (notes === listing.notes) return;
-    onChange({ ...listing, notes });
+    onChange(listing.id, { notes });
     start(async () => {
       const r = await updateListingNotesAction(listing.id, notes);
       setMessage("error" in r ? r.error : "Notes saved");
@@ -91,7 +97,7 @@ export function ListingDrawer({
         const r = await unshareListingAction(listing.id);
         if ("error" in r) setMessage(r.error);
         else {
-          onChange({ ...listing, shareToken: null });
+          onChange(listing.id, { shareToken: null });
           setMessage("Share link revoked");
         }
         return;
@@ -99,7 +105,7 @@ export function ListingDrawer({
       const r = await shareListingAction(listing.id);
       if ("error" in r) setMessage(r.error);
       else {
-        onChange({ ...listing, shareToken: r.token });
+        onChange(listing.id, { shareToken: r.token });
         try {
           await navigator.clipboard.writeText(`${window.location.origin}/deal/${r.token}`);
           setMessage("Share link copied");
@@ -157,7 +163,7 @@ export function ListingDrawer({
             <h2><Link2 size={14} /> Share link</h2>
             <p style={{ color: "var(--mx-muted)" }}>Anyone with this link sees the figures and deal maths, never your notes or details.</p>
             <div style={{ display: "flex", gap: 6 }}>
-              <input className="mx-input" readOnly value={sharePath} onFocus={(e) => e.currentTarget.select()} aria-label="Share link" />
+              <input className="mx-input" readOnly value={`${origin}${sharePath}`} onFocus={(e) => e.currentTarget.select()} aria-label="Share link" />
               <button
                 type="button"
                 className="mx-pill mx-pill--sm"

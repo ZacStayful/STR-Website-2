@@ -2,14 +2,11 @@
 
 import { ExternalLink } from "lucide-react";
 import { gbpCompact } from "@/lib/market/format";
+import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { PIPELINE_STATUSES, LISTING_SORT_LABELS, dealReturn, listingFit, sortListings, type CheckedListingRow, type ListingSort, type PipelineStatus } from "@/lib/listing/pipeline";
 import { MAX_COMPARE } from "../CompareBar";
 
-function priceLabel(p: CheckedListingRow["price"]): string {
-  if (!p) return "—";
-  return `${gbpCompact(p.amount)}${p.period === "pcm" ? " pcm" : p.period === "pw" ? " pw" : p.period === "night" ? "/night" : ""}`;
-}
 
 export function ListingsPane({
   listings,
@@ -73,7 +70,7 @@ export function ListingsPane({
             const status = PIPELINE_STATUSES.find((s) => s.key === l.status)!;
             const comparing = compare.includes(l.id);
             return (
-              <div key={l.id} className="mx-row mx-listing-row" role="button" tabIndex={0} onClick={() => onSelect(l.id)} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onSelect(l.id))}>
+              <div key={l.id} className="mx-row mx-listing-row" role="button" tabIndex={0} onClick={() => onSelect(l.id)} onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(l.id); } }}>
                 {l.photo ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={l.photo} alt="" className="mx-listing-thumb" loading="lazy" referrerPolicy="no-referrer" />
@@ -87,7 +84,7 @@ export function ListingsPane({
                     {l.listingStatus && l.listingStatus !== "available" && <span className="mx-fit mx-fit--warn">{l.listingStatus.replace("_", " ")}</span>}
                   </div>
                   <div className="mx-row-stats">
-                    <span><b>{priceLabel(l.price)}</b></span>
+                    <span><b>{formatListingPrice(l.price, true)}</b></span>
                     {l.bedrooms !== null && <span><b>{l.bedrooms}</b> bed</span>}
                     <span><b>{est ? gbpCompact(est) : "—"}</b> est rev</span>
                     {ret !== null && <span><b>{l.deal?.kind === "purchase" ? `${ret}%` : `${ret < 0 ? "−" : ""}${gbpCompact(Math.abs(ret))}/mo`}</b> {l.deal?.kind === "purchase" ? "yield" : "margin"}</span>}

@@ -190,21 +190,29 @@ export function ExplorerShell({
     },
     [listings, byCode],
   );
+  const [listingNotice, setListingNotice] = useState<string | null>(null);
   const onResolved = (res: ResolvedListing) => {
-    const row = rowFromResolved(res, `local-${res.snapshot.canonicalUrl}`);
-    if (!row) return;
+    const row = rowFromResolved(res);
+    if (row?.postcodeArea && byCode.has(row.postcodeArea)) setSelected(row.postcodeArea);
+    if (!row) {
+      // The listing was read but not saved (database hiccup): nothing to act on yet.
+      setListingNotice("We read that listing but could not save it to your pipeline. Please try again in a moment.");
+      setSidePane("listings");
+      setActiveListing(null);
+      setMobilePane("list");
+      return;
+    }
+    setListingNotice(null);
     setListings((prev) => {
       const existing = prev.find((l) => l.canonicalUrl === row.canonicalUrl);
-      const merged = existing ? { ...existing, ...row, id: existing.id, status: existing.status, notes: existing.notes, shareToken: existing.shareToken, analysedReportId: existing.analysedReportId } : row;
+      const merged = existing ? { ...existing, ...row, status: existing.status, notes: existing.notes, shareToken: existing.shareToken, analysedReportId: existing.analysedReportId } : row;
       return [merged, ...prev.filter((l) => l.canonicalUrl !== row.canonicalUrl)];
     });
-    const id = listings.find((l) => l.canonicalUrl === row.canonicalUrl)?.id ?? row.id;
     setSidePane("listings");
-    setActiveListing(id);
+    setActiveListing(row.id);
     setMobilePane("list");
-    if (row.postcodeArea && byCode.has(row.postcodeArea)) setSelected(row.postcodeArea);
   };
-  const updateListing = (next: CheckedListingRow) => setListings((prev) => prev.map((l) => (l.id === next.id ? next : l)));
+  const updateListing = (id: string, patch: Partial<CheckedListingRow>) => setListings((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   const removeListing = (id: string) => {
     setListings((prev) => prev.filter((l) => l.id !== id));
     setListingCompare((prev) => prev.filter((c) => c !== id));
@@ -282,6 +290,8 @@ export function ExplorerShell({
                 onToggleCompare={() => toggleListingCompare(activeListingRow.id)}
               />
             ) : (
+              <>
+              {listingNotice && <div className="mx-note mx-note--error" role="alert" style={{ margin: "10px 16px 0" }}>{listingNotice}</div>}
               <ListingsPane
                 listings={listings}
                 statusFilter={listingStatusFilter}
@@ -294,6 +304,7 @@ export function ExplorerShell({
                 onSelect={openListing}
                 onBack={() => setSidePane("areas")}
               />
+              </>
             )
           ) : selectedRow ? (
             <DetailDrawer
