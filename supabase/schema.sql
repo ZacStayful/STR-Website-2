@@ -124,3 +124,15 @@ create policy "Users can manage own saved areas"
   on public.saved_areas for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- =========================
+-- Market Explorer: weekly trend alerts
+-- =========================
+-- alert_weekly: opt-in (default on) for the weekly digest about saved areas.
+-- saved_areas.last_alerted_* remember what the last digest said so the next
+-- one only reports changes (a flipped enquiry trend or a confidence tier
+-- crossing into Confirmed).
+alter table public.profiles add column if not exists alert_weekly boolean not null default true;
+alter table public.saved_areas add column if not exists last_alerted_direction text;
+alter table public.saved_areas add column if not exists last_alerted_tier text;
+alter table public.saved_areas add column if not exists last_alerted_at timestamptz;

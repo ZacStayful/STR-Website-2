@@ -25,6 +25,7 @@ export function GoalBar({
   savedCount,
   mobilePane,
   onMobilePane,
+  trendSortReady = false,
 }: {
   filters: Filters;
   onFilters: (f: Filters) => void;
@@ -36,6 +37,7 @@ export function GoalBar({
   savedCount: number;
   mobilePane: "map" | "list";
   onMobilePane: (p: "map" | "list") => void;
+  trendSortReady?: boolean;
 }) {
   const set = (patch: Partial<Filters>) => onFilters({ ...filters, ...patch });
   const chips = goals ? describeGoals(goals) : [];
@@ -109,7 +111,7 @@ export function GoalBar({
           <span>Sort</span>
           <select className="mx-select" aria-label="Sort by" value={sort} onChange={(e) => isSortKey(e.target.value) && onSort(e.target.value)}>
             {(Object.keys(SORT_LABELS) as SortKey[])
-              .filter((k) => goals || (k !== "personal" && k !== "distance"))
+              .filter((k) => (goals || (k !== "personal" && k !== "distance")) && (trendSortReady || k !== "trend"))
               .map((k) => <option key={k} value={k}>{SORT_LABELS[k]}</option>)}
           </select>
         </label>

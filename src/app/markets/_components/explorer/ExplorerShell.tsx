@@ -12,6 +12,9 @@ import { GoalsModal } from "./GoalsModal";
 import { AreaList } from "./AreaList";
 import { DetailDrawer } from "./DetailDrawer";
 import { DEFAULT_FILTERS, type AreaCardData, type ExplorerRow, type Filters, type MapMetric, type MarketGoals, type SortKey } from "./types";
+import { areaTrend } from "@/lib/market/trend";
+import type { MarketTrendsResponse } from "@/lib/market/types";
+import { MarketPulse } from "./MarketPulse";
 
 const DISMISS_KEY = "mx_goals_dismissed";
 
@@ -24,8 +27,13 @@ export function ExplorerShell({
   initialSort = "stayful",
   initialQuery = "",
   userEmail = null,
+  trends = null,
+  alertWeekly = true,
 }: {
   cards: AreaCardData[];
+  /** Monthly series from /api/market-trends, or null when unavailable. */
+  trends?: MarketTrendsResponse | null;
+  alertWeekly?: boolean;
   goals: MarketGoals | null;
   savedAreas: string[];
   /** Postcode area code to open in the drawer (deep link). */
@@ -73,9 +81,15 @@ export function ExplorerShell({
         card,
         personal: goals ? personaliseScore(personalInputFor(card, goals), goals) : null,
         saved: saved.has(card.code),
+        trend: trends ? areaTrend(trends.areas[card.code]) : null,
       })),
-    [cards, goals, saved],
+    [cards, goals, saved, trends],
   );
+
+  // The trend sort only makes sense once a handful of areas have a direction;
+  // a deep link asking for it before then falls back to the Stayful score.
+  const trendSortReady = useMemo(() => rows.filter((r) => r.trend && r.trend.enquiries.direction !== "insufficient").length >= 5, [rows]);
+  const effectiveSort: SortKey = sort === "trend" && !trendSortReady ? "stayful" : sort;
 
   const q = filters.q.trim().toLowerCase();
   const visible = useMemo(() => {
@@ -89,8 +103,8 @@ export function ExplorerShell({
       if (filters.savedOnly && !isSaved) return false;
       return true;
     });
-    return sortRows(filtered, sort, filters.savedOnly);
-  }, [rows, q, filters, bedroom, sort]);
+    return sortRows(filtered, effectiveSort, filters.savedOnly);
+  }, [rows, q, filters, bedroom, effectiveSort]);
 
   const byCode = useMemo(() => new Map(rows.map((r) => [r.card.code, r])), [rows]);
   const selectedRow = selected ? byCode.get(selected) ?? null : null;
@@ -147,7 +161,7 @@ export function ExplorerShell({
       <GoalBar
         filters={filters}
         onFilters={setFilters}
-        sort={sort}
+        sort={effectiveSort}
         onSort={updateSort}
         goals={goals}
         onEditGoals={() => setGoalsOpen(true)}
@@ -155,7 +169,9 @@ export function ExplorerShell({
         savedCount={saved.size}
         mobilePane={mobilePane}
         onMobilePane={setMobilePane}
+        trendSortReady={trendSortReady}
       />
+      {trends && <MarketPulse national={trends.national} compact />}
 
       <div className="mx-explorer-body">
         <div className="mx-explorer-map">
@@ -212,7 +228,7 @@ export function ExplorerShell({
         </div>
       </div>
 
-      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} onClose={closeGoals} />}
+      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} alertWeekly={alertWeekly} onClose={closeGoals} />}
     </div>
   );
 }

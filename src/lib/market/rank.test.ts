@@ -40,3 +40,9 @@ test('saved-first pins starred areas, ties fall back to confidence then score th
   assert.deepEqual(sortRows(rows, 'stayful', true).map((r) => r.card.code), ['A', 'C', 'B']);
   assert.deepEqual(sortRows(rows, 'stayful').map((r) => r.card.code), ['C', 'A', 'B']);
 });
+
+test('trend sort uses the enquiry delta and ignores insufficient areas', () => {
+  const t = (direction: 'up' | 'down' | 'insufficient', deltaPct: number | null) => ({ enquiries: { direction, deltaPct } }) as never;
+  const rows = [{ ...row('A'), trend: t('up', 0.2) }, { ...row('B'), trend: t('insufficient', null) }, { ...row('C'), trend: t('down', -0.1) }];
+  assert.deepEqual(sortRows(rows, 'trend').map((r) => r.card.code), ['A', 'C', 'B']);
+});

@@ -2,8 +2,9 @@
 
 import type { AreaCardData } from './explorer.ts';
 import type { PersonalScore } from './personalise.ts';
+import type { AreaTrend } from './trend.ts';
 
-export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy' | 'competition' | 'directBooking' | 'distance';
+export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy' | 'competition' | 'directBooking' | 'distance' | 'trend';
 
 export const SORT_LABELS: Record<SortKey, string> = {
   stayful: 'Stayful score',
@@ -14,12 +15,14 @@ export const SORT_LABELS: Record<SortKey, string> = {
   competition: 'Least competitive',
   directBooking: 'Direct-booking potential',
   distance: 'Closest to home',
+  trend: 'Rising enquiries',
 };
 
 export interface ExplorerRow {
   card: AreaCardData;
   personal: PersonalScore | null;
   saved: boolean;
+  trend?: AreaTrend | null;
 }
 
 export function isSortKey(v: unknown): v is SortKey {
@@ -38,6 +41,7 @@ export function sortValue(row: ExplorerRow, key: SortKey): number | null {
     case 'competition': return c.competition ? 100 - c.competition.percentile : null;
     case 'directBooking': return c.directBooking?.score ?? null;
     case 'distance': return row.personal?.fit.distanceMiles === null || row.personal?.fit.distanceMiles === undefined ? null : -row.personal.fit.distanceMiles;
+    case 'trend': return row.trend && row.trend.enquiries.direction !== 'insufficient' ? row.trend.enquiries.deltaPct : null;
   }
 }
 

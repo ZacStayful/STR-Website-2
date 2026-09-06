@@ -59,3 +59,19 @@ export interface MarketStatsResponse {
   min_samples_threshold: number;
   generated_at: string;
 }
+
+/** One month of analyser-report activity (from /api/market-trends). */
+export interface MonthBucket {
+  month: string; // YYYY-MM (UTC)
+  reports: number;
+  avg_adr: number | null;
+  avg_occupancy: number | null; // 0–100
+  avg_gross_revenue: number | null;
+}
+
+export interface MarketTrendsResponse {
+  months: string[];
+  national: MonthBucket[];
+  areas: Record<string, MonthBucket[]>;
+  generated_at: string;
+}
