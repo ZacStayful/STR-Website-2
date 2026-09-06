@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
 import type { AnalysisResult } from "@/lib/types";
-import { deriveReportData, buildSetupSnapshot, sanitiseAddressForFilename } from "@/lib/pdf/derive";
+import { deriveReportData, buildSetupSnapshot, buildPdfDeal, sanitiseAddressForFilename } from "@/lib/pdf/derive";
 import type { PdfExpenses } from "@/lib/pdf/derive";
 import { StayfulReport } from "@/lib/pdf/StayfulReport";
 
@@ -37,6 +37,7 @@ export async function POST(request: Request) {
   }
 
   const data = deriveReportData(body, body.expenses);
+  data.deal = buildPdfDeal(body);
   if (body.setup) {
     const snap = buildSetupSnapshot(body.setup);
     if (snap) data.setup = snap;

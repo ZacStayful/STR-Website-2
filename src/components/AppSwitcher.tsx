@@ -3,7 +3,7 @@ import Link from "next/link";
 // Thin strip shown to signed-in users so they can move between the two
 // members-only surfaces (the analyser and the Market Explorer). Admins also
 // get the admin dashboard link that used to live inline in estimate/layout.
-export function AppSwitcher({ active, admin }: { active: "estimate" | "markets"; admin?: boolean }) {
+export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "reports"; admin?: boolean }) {
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
     fontWeight: 600,
@@ -33,6 +33,9 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets";
       </Link>
       <Link href="/markets" style={linkStyle(active === "markets")} aria-current={active === "markets" ? "page" : undefined}>
         Market Explorer
+      </Link>
+      <Link href="/reports" style={linkStyle(active === "reports")} aria-current={active === "reports" ? "page" : undefined}>
+        My reports
       </Link>
       {admin && (
         <Link href="/admin" style={linkStyle(false)}>

@@ -82,6 +82,13 @@ import { AddressAutocomplete, splitAddressAndPostcode } from "@/components/Addre
 import { AccuracyPanel } from "@/components/AccuracyPanel";
 import { SetupCalculator } from "@/components/SetupCalculator";
 import { AnalyserNarrator } from "@/components/AnalyserNarrator";
+import { ListingLinkBox } from "./_components/ListingLinkBox";
+import { SourceListingCard } from "./_components/SourceListingCard";
+import { DealPanel } from "./_components/DealPanel";
+import { CashflowChart } from "./_components/CashflowChart";
+import { CompetitorsPanel } from "./_components/CompetitorsPanel";
+import { SecondOpinionCard } from "./_components/SecondOpinionCard";
+import type { ResolvedListing } from "./_components/listing-client-types";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
 import { initTracker, endSession, trackCtaClick } from "@/lib/tracker";
@@ -288,6 +295,7 @@ function CircularScore({
 
 const TAB_SECTIONS = [
   { id: "overview", label: "Overview", icon: Home, num: 1 },
+  { id: "deal", label: "Deal", icon: Calculator, num: 2 },
   { id: "comparables", label: "Comparables", icon: Building2, num: 2 },
   { id: "amenities", label: "Amenities", icon: Sparkles, num: 3 },
   { id: "revenue", label: "Revenue", icon: PoundSterling, num: 4 },
@@ -322,8 +330,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const [propertyType, setPropertyType] = useState("Flat");
   const [parking, setParking] = useState("no_parking");
   const [outdoorSpace, setOutdoorSpace] = useState("none");
-  const [monthlyMortgage, setMonthlyMortgage] = useState("");
-  const [monthlyBills, setMonthlyBills] = useState("");
+  // Listing link (Rightmove / OnTheMarket / Airbnb) that prefilled this form
+  const [listing, setListing] = useState<ResolvedListing | null>(null);
+  const [purchasePrice, setPurchasePrice] = useState("");
+  const [advertisedRent, setAdvertisedRent] = useState("");
+  const listingGuestsRef = useRef<string | null>(null);
+  const autoListingRef = useRef(false);
 
   // ── Session timer: pushed to Monday via sendBeacon on tab close ──
   const sessionStartRef = useRef(Date.now());
@@ -463,11 +475,60 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
   // Auto-recalculate guests when bedrooms changes: (beds * 2) + 2
   useEffect(() => {
+    // A listing that states its own guest capacity wins over the formula, once.
+    if (listingGuestsRef.current !== null) {
+      setGuests(listingGuestsRef.current);
+      listingGuestsRef.current = null;
+      return;
+    }
     const numBeds = Number(bedrooms);
     if (!isNaN(numBeds) && numBeds > 0) {
       setGuests(String(numBeds * 2 + 2));
     }
   }, [bedrooms]);
+
+  // Prefill every field from a resolved listing link.
+  const applyListing = useCallback((res: ResolvedListing) => {
+    const p = res.prefill;
+    setListing(res);
+    listingGuestsRef.current = String(p.guests);
+    setAddress(p.address);
+    setPostcode(p.postcode);
+    setSelectedAutoAddress({ address: p.address, postcode: p.postcode });
+    setEntryMode("auto");
+    setBedrooms(String(p.bedrooms));
+    setGuests(String(p.guests));
+    setBathrooms(String(p.bathrooms));
+    setPropertyType(p.propertyType);
+    setParking(p.parking);
+    setOutdoorSpace(p.outdoorSpace);
+    setPurchasePrice(p.purchasePrice ? String(p.purchasePrice) : "");
+    setAdvertisedRent(p.advertisedRent ? String(p.advertisedRent) : "");
+    setError(null);
+  }, []);
+
+  // /estimate?listing=<url> (from the Market Explorer or a shared link):
+  // resolve the link on first load and prefill the form.
+  useEffect(() => {
+    if (initialResult || autoListingRef.current) return;
+    const url = new URLSearchParams(window.location.search).get("listing");
+    if (!url) return;
+    autoListingRef.current = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/listing/resolve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const data = await res.json();
+        if (res.ok && !data.error) applyListing(data as ResolvedListing);
+        else setError(data.error ?? "Could not read that listing.");
+      } catch {
+        setError("Could not read that listing link.");
+      }
+    })();
+  }, [initialResult, applyListing]);
 
   // Auto-collapse sidebar on mobile
   useEffect(() => {
@@ -544,8 +605,17 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           parking,
           outdoorSpace,
           propertyType,
-          ...(monthlyMortgage !== "" && { monthlyMortgage: Number(monthlyMortgage) }),
-          ...(monthlyBills !== "" && { monthlyBills: Number(monthlyBills) }),
+          ...(purchasePrice !== "" && Number(purchasePrice) > 0 && { purchasePrice: Number(purchasePrice) }),
+          ...(advertisedRent !== "" && Number(advertisedRent) > 0 && { advertisedRent: Number(advertisedRent) }),
+          ...(listing && {
+            sourceListing: {
+              url: listing.snapshot.canonicalUrl,
+              kind: listing.snapshot.kind,
+              title: listing.snapshot.title,
+              photo: listing.snapshot.photos[0],
+            },
+            checkedListingId: listing.checkedListingId ?? undefined,
+          }),
         }),
       });
 
@@ -643,6 +713,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     setPostcode("");
     setEntryMode("auto");
     setSelectedAutoAddress(null);
+    setListing(null);
+    setPurchasePrice("");
+    setAdvertisedRent("");
   };
 
   // ─── Loading State ──────────────────────────────────────────────
@@ -1138,7 +1211,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
           {/* Nav items */}
           <nav className="flex-1 overflow-y-auto py-2">
-            {TAB_SECTIONS.map((tab) => {
+            {TAB_SECTIONS.filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion).map((tab) => {
               const TabIcon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
@@ -1282,8 +1355,25 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               <div className="mb-6 text-center">
                 <h1 className="text-2xl font-bold">{r.property.address}</h1>
                 <p className="mt-1 text-sm text-primary-foreground/80">
-                  {r.property.bedrooms} bed &middot; bath &middot; Sleeps {r.property.guests}
+                  {r.property.bedrooms} bed &middot; Sleeps {r.property.guests}
                 </p>
+                {r.sourceListing && (
+                  <a
+                    href={r.sourceListing.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-xs text-primary-foreground/80 underline-offset-2 hover:underline"
+                  >
+                    From {r.sourceListing.source === "onthemarket" ? "OnTheMarket" : r.sourceListing.source === "rightmove" ? "Rightmove" : r.sourceListing.source === "airbnb" ? "Airbnb" : r.sourceListing.source}
+                    {r.sourceListing.price ? ` · ${gbp(r.sourceListing.price.amount)}${r.sourceListing.price.period === "pcm" ? " pcm" : ""}` : ""}
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                  </a>
+                )}
+                {r.reportId && (
+                  <p className="mt-1 text-xs text-primary-foreground/70">
+                    Saved to <a href="/reports" className="underline-offset-2 hover:underline">My reports</a>
+                  </p>
+                )}
               </div>
 
               {grossAnnual > 0 ? (
@@ -1667,6 +1757,38 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               </button>
             </div>
           </section>
+
+          {/* ══════════════════════════════════════════════════════════
+              Section 1b: The Deal (listing links)
+              ══════════════════════════════════════════════════════════ */}
+          {(r.deal || r.secondOpinion) && (
+            <section id="deal" ref={setSectionRef("deal")} className="mb-12">
+              <SectionHeading
+                icon={Calculator}
+                title={r.deal?.kind === "rent-to-rent" ? "The Deal: Rent-to-Rent" : "The Deal: If You Bought It"}
+                subtitle={
+                  r.deal?.basis === "asking-price"
+                    ? "Yield, cash needed and cashflow on the asking price, with a reverse calculator for your offer."
+                    : r.deal?.basis === "advertised-rent"
+                      ? "Monthly margin after rent and running costs, breakeven occupancy and the most you could pay."
+                      : "Yield and cashflow on the estimated property value. Paste a listing link to use a real asking price."
+                }
+              />
+              <div className="space-y-6">
+                {r.deal && (
+                  <DealPanel deal={r.deal} grossRevenue={r.shortLet.annualRevenue} adr={r.shortLet.averageDailyRate} bedrooms={r.property.bedrooms} />
+                )}
+                {r.deal && r.cashflow && r.cashflow.length === 12 && (
+                  <CashflowChart
+                    monthlyRevenue={r.shortLet.monthlyRevenue}
+                    fixedPcm={r.deal.kind === "rent-to-rent" ? r.deal.advertisedRentPcm : r.deal.mortgageMonthly}
+                    fixedLabel={r.deal.kind === "rent-to-rent" ? "rent" : "mortgage"}
+                  />
+                )}
+                {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} />}
+              </div>
+            </section>
+          )}
 
           {/* ══════════════════════════════════════════════════════════
               Section 2: Comparables
@@ -2089,6 +2211,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   </div>
                 </CardContent>
               </Card>
+            )}
+
+            {r.competitors && (
+              <CompetitorsPanel competitors={r.competitors} centre={r.coordinates} bedrooms={r.property.bedrooms} />
             )}
 
             {/* Data Note */}
@@ -2957,6 +3083,38 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Row 0: Paste a listing link — prefills everything below */}
+                {listing ? (
+                  <SourceListingCard
+                    snapshot={listing.snapshot}
+                    quick={listing.quick}
+                    warnings={listing.warnings}
+                    onChange={() => {
+                      setListing(null);
+                      setPurchasePrice("");
+                      setAdvertisedRent("");
+                    }}
+                  />
+                ) : (
+                  <ListingLinkBox onResolved={applyListing} />
+                )}
+                {listing && listing.snapshot.kind !== "str" && (
+                  <div className="grid grid-cols-2 gap-4">
+                    {listing.snapshot.kind === "sale" ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="purchasePrice">Asking price (£)</Label>
+                        <Input id="purchasePrice" type="number" inputMode="numeric" min={0} step={1000} value={purchasePrice} onChange={(e) => setPurchasePrice(e.target.value)} placeholder="e.g. 220000" />
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label htmlFor="advertisedRent">Advertised rent (£ pcm)</Label>
+                        <Input id="advertisedRent" type="number" inputMode="numeric" min={0} step={25} value={advertisedRent} onChange={(e) => setAdvertisedRent(e.target.value)} placeholder="e.g. 1200" />
+                      </div>
+                    )}
+                    <p className="self-end text-xs text-muted-foreground">Used for the deal maths in your report. Change it to what you would offer.</p>
+                  </div>
+                )}
+
                 {/* Row 1: Address entry — auto (Google Places) or manual fallback */}
                 {entryMode === "auto" && !selectedAutoAddress && (
                   <div className="space-y-2">

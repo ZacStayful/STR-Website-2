@@ -576,9 +576,10 @@ export async function POST(request: Request) {
             const { uploadPdfToMonday } = await import('@/lib/apis/monday');
             const React = await import('react');
             const { renderToBuffer } = await import('@react-pdf/renderer');
-            const { deriveReportData, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
+            const { deriveReportData, buildPdfDeal, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
             const { StayfulReport } = await import('@/lib/pdf/StayfulReport');
             const data = deriveReportData(result);
+            data.deal = buildPdfDeal(result);
             const element = React.createElement(StayfulReport, { data });
             const buffer = await (renderToBuffer as (e: unknown) => Promise<Buffer>)(element);
             const filename = `Stayful_Property_Analysis_${sanitiseAddressForFilename(result.property.address)}.pdf`;

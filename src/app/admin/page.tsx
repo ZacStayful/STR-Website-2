@@ -4,6 +4,8 @@ import { redirect, notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
+import { spendSummary } from "@/lib/broker/store";
+import { pmiAccount, pmiConfigured } from "@/lib/broker/providers/pmi";
 
 export const metadata: Metadata = {
   title: "Admin — Stayful Intelligence",
@@ -96,6 +98,13 @@ export default async function AdminPage() {
   const recent = rows.slice(0, 15);
 
   const market = await getMarketHealth();
+  const [spend, pmi] = await Promise.all([
+    spendSummary(7).catch(() => []),
+    pmiConfigured() ? pmiAccount().catch(() => null) : Promise.resolve(null),
+  ]);
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const spendToday = spend.filter((r) => r.day === todayKey);
+  const todayPence = spendToday.reduce((n, r) => n + r.pence, 0);
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">
@@ -131,6 +140,41 @@ export default async function AdminPage() {
           sub={market ? `${market.samples} samples` : "endpoint unavailable"}
         />
       </div>
+
+      <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Data spend (last 7 days)</h2>
+      <p className="mb-3 text-sm text-muted-foreground">
+        Every paid provider call goes through the data broker and is recorded here. Today: £{(todayPence / 100).toFixed(2)}
+        {pmi ? ` · PMI credits remaining ${pmi.credits_remaining ?? "?"} of ${pmi.credits_monthly ?? "?"} (${pmi.plan ?? "plan"})` : pmiConfigured() ? " · PMI account unreachable" : " · PMI not configured"}
+        . Run the <Link href="/api/internal/provider-spike?dry=1" className="text-primary hover:underline">provider spike</Link> (add <code>&amp;dry=0</code> to spend) to check parsers and coverage.
+      </p>
+      {spend.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">No provider calls recorded yet.</div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-border bg-card">
+          <table className="w-full text-sm">
+            <thead className="text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="px-4 py-2 font-medium">Day</th>
+                <th className="px-4 py-2 font-medium">Provider</th>
+                <th className="px-4 py-2 font-medium">Calls</th>
+                <th className="px-4 py-2 font-medium">Cache hits</th>
+                <th className="px-4 py-2 font-medium">Spend</th>
+              </tr>
+            </thead>
+            <tbody>
+              {spend.map((r) => (
+                <tr key={`${r.day}-${r.provider}`} className="border-t border-border">
+                  <td className="px-4 py-2">{r.day}</td>
+                  <td className="px-4 py-2">{r.provider}</td>
+                  <td className="px-4 py-2">{r.calls}</td>
+                  <td className="px-4 py-2">{r.cacheHits}</td>
+                  <td className="px-4 py-2">£{(r.pence / 100).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Recent signups</h2>
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
