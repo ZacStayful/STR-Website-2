@@ -1,7 +1,8 @@
 import 'server-only';
 
 import { unstable_cache } from 'next/cache';
-import { buildAreaCards, buildAreaDetail, pickSampleArea, type AreaCardData, type AreaDetail, type SampleArea } from './explorer';
+import { buildAreaCards, pickSampleArea, type AreaCardData, type SampleArea } from './explorer';
+import { getManagedAreas } from './managed-areas';
 
 /**
  * Hourly-cached entry points for the /markets pages.
@@ -16,16 +17,16 @@ import { buildAreaCards, buildAreaDetail, pickSampleArea, type AreaCardData, typ
 const CACHE_SECONDS = 3600;
 const TAG = 'market-area-cards';
 
-const cachedAreaCards = unstable_cache(buildAreaCards, ['market-area-cards'], { revalidate: CACHE_SECONDS, tags: [TAG] });
-const cachedAreaDetail = unstable_cache(buildAreaDetail, ['market-area-detail'], { revalidate: CACHE_SECONDS, tags: [TAG] });
+async function buildCardsWithManaged(): Promise<AreaCardData[]> {
+  const managed = await getManagedAreas();
+  return buildAreaCards({ managedAreas: managed });
+}
+
+const cachedAreaCards = unstable_cache(buildCardsWithManaged, ['market-area-cards-v2'], { revalidate: CACHE_SECONDS, tags: [TAG] });
 
 export async function getAreaCards(): Promise<AreaCardData[]> {
   const cards = await cachedAreaCards();
-  return cards.length > 0 ? cards : buildAreaCards();
-}
-
-export async function getAreaDetail(code: string): Promise<AreaDetail | null> {
-  return cachedAreaDetail(code.trim().toUpperCase());
+  return cards.length > 0 ? cards : buildCardsWithManaged();
 }
 
 export async function getSampleArea(): Promise<SampleArea | null> {

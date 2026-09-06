@@ -5,11 +5,13 @@
  * SERVER ONLY (uses the market client + PropertyData).
  */
 
-import { fetchMarketStats, fetchMarketArea } from './client.ts';
+import { fetchMarketStats } from './client.ts';
 import { computeYieldOnCost, type YieldOnCost } from './yield.ts';
 import { computeAreaVerdict, type AreaVerdict } from './verdict.ts';
 import { computeAreaScore, type AreaScore } from './score.ts';
 import { areaConfidence, type Confidence } from './confidence.ts';
+import { rankCompetition, type CompetitionRank } from './competition.ts';
+import { areaDirectBooking, type DirectBooking } from './direct-booking.ts';
 import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
@@ -56,6 +58,8 @@ export interface BedroomStat {
   adr: number | null;
   occupancy: number | null; // 0–100
   grossRevenue: number | null;
+  propertyValueLow: number | null;
+  propertyValueHigh: number | null;
   propertyValueMid: number | null;
   grossYieldPct: number | null;
 }
@@ -77,6 +81,8 @@ export function bedroomStats(area: MarketArea): BedroomStat[] {
         adr: g.avg_adr === null ? null : Math.round(g.avg_adr),
         occupancy: g.avg_occupancy === null ? null : Math.round(g.avg_occupancy * 10) / 10,
         grossRevenue: g.avg_gross_revenue === null ? null : Math.round(g.avg_gross_revenue),
+        propertyValueLow: g.avg_property_value_low === null ? null : Math.round(g.avg_property_value_low),
+        propertyValueHigh: g.avg_property_value_high === null ? null : Math.round(g.avg_property_value_high),
         propertyValueMid: mid === null ? null : Math.round(mid),
         grossYieldPct,
       };
@@ -95,6 +101,11 @@ export interface AreaCardData {
   licensing: LicensingEntry;
   score: AreaScore | null;
   confidence: Confidence;
+  /** Relative competition rank (Phase 2); null until enough areas carry signals. */
+  competition: CompetitionRank | null;
+  directBooking: DirectBooking | null;
+  /** Stayful already manages properties in this postcode area. */
+  managedByStayful: boolean;
 }
 
 async function buildCard(area: MarketArea): Promise<AreaCardData> {
@@ -119,7 +130,33 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
       licensing: licensing.status,
     }),
     confidence: areaConfidence(headline.totalSamples),
+    competition: null, // filled in once every area is known (relative rank)
+    directBooking: areaDirectBooking(area.demand),
+    managedByStayful: false, // filled in by the caller from the managed-areas lookup
   };
+}
+
+/** Attach the relative competition rank; needs every area at once. */
+export function withCompetition(cards: AreaCardData[], areas: MarketArea[]): AreaCardData[] {
+  const byCode = new Map(areas.map((a) => [a.postcode_area.toUpperCase(), a]));
+  const ranks = rankCompetition(
+    cards.map((c) => {
+      const comp = byCode.get(c.code)?.competition ?? null;
+      return {
+        code: c.code,
+        density: comp?.avg_listing_density ?? null,
+        reviews: comp?.avg_review_count ?? null,
+        age: comp?.avg_listing_age ?? null,
+        sampleCount: comp?.sample_count ?? 0,
+      };
+    }),
+  );
+  return cards.map((c) => ({ ...c, competition: ranks.get(c.code) ?? null }));
+}
+
+export interface BuildOptions {
+  /** Postcode areas where Stayful manages properties. */
+  managedAreas?: ReadonlySet<string>;
 }
 
 /**
@@ -128,34 +165,23 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
  * so the most trustworthy areas lead while everything stays visible.
  * Uncached: pages go through `cached.ts`, which wraps this in an hourly cache.
  */
-export async function buildAreaCards(): Promise<AreaCardData[]> {
+export async function buildAreaCards(opts: BuildOptions = {}): Promise<AreaCardData[]> {
   const data = await fetchMarketStats({});
   if (!data) return [];
-  const cards = await Promise.all(
+  const built = await Promise.all(
     data.areas.map((a) => buildCard(a).catch(() => null)),
   );
+  const cards = withCompetition(
+    built.filter((c): c is AreaCardData => c !== null),
+    data.areas,
+  ).map((c) => ({ ...c, managedByStayful: opts.managedAreas?.has(c.code) ?? false }));
   return cards
-    .filter((c): c is AreaCardData => c !== null)
     .sort(
       (a, b) =>
         b.confidence.rank - a.confidence.rank ||
         (b.score?.score ?? -1) - (a.score?.score ?? -1) ||
         (b.yieldOnCost?.grossYieldPct ?? -1) - (a.yieldOnCost?.grossYieldPct ?? -1),
     );
-}
-
-export interface AreaDetail {
-  card: AreaCardData;
-  area: MarketArea;
-}
-
-/** Full detail for one area page, or null if the area has no qualifying data. */
-/** Full detail for one area page, or null if the area has no qualifying data. Uncached. */
-export async function buildAreaDetail(code: string): Promise<AreaDetail | null> {
-  const area = await fetchMarketArea(code);
-  if (!area) return null;
-  const card = await buildCard(area);
-  return { card, area };
 }
 
 export interface SampleArea {

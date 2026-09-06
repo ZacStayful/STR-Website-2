@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { AreaCardData } from "@/lib/market/explorer";
+import type { ExplorerRow } from "@/lib/market/rank";
 import { gbp, pct } from "@/lib/market/format";
 import { activeAreaStats } from "./areaStats";
 import { LicensingBadge } from "./LicensingBadge";
@@ -25,21 +25,26 @@ function bestIndex(values: (number | null)[]): number {
 }
 
 export function CompareBar({
-  cards,
+  rows,
   bedroom,
   onRemove,
   onClear,
 }: {
-  cards: AreaCardData[];
+  rows: ExplorerRow[];
   bedroom: number | null;
   onRemove: (code: string) => void;
   onClear: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  if (cards.length === 0) return null;
+  if (rows.length === 0) return null;
 
+  const cards = rows.map((r) => r.card);
+  const hasPersonal = rows.some((r) => r.personal);
   const stats = cards.map((c) => activeAreaStats(c, bedroom));
   const scoreBest = bestIndex(cards.map((c) => c.score?.score ?? null));
+  const personalBest = bestIndex(rows.map((r) => r.personal?.score ?? null));
+  const compBest = bestIndex(cards.map((c) => (c.competition ? 100 - c.competition.percentile : null)));
+  const dbBest = bestIndex(cards.map((c) => c.directBooking?.score ?? null));
   const revBest = bestIndex(stats.map((s) => s.revenue));
   const adrBest = bestIndex(stats.map((s) => s.adr));
   const occBest = bestIndex(stats.map((s) => s.occupancy));
@@ -100,6 +105,14 @@ export function CompareBar({
                       </td>
                     ))}
                   </tr>
+                  {hasPersonal && (
+                    <tr>
+                      <th className="mx-cmp-rowlabel" title="The Stayful score re-weighted by your goals">Your fit</th>
+                      {rows.map((r, i) => (
+                        <td key={r.card.code} className={cell(i === personalBest)}>{r.personal ? `${r.personal.score} · ${r.personal.grade}` : "—"}</td>
+                      ))}
+                    </tr>
+                  )}
                   <tr>
                     <th className="mx-cmp-rowlabel">Avg revenue / yr</th>
                     {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === revBest)}>{gbp(s.revenue)}</td>))}
@@ -115,6 +128,18 @@ export function CompareBar({
                   <tr>
                     <th className="mx-cmp-rowlabel" title="Gross annual revenue ÷ property value">Yield-on-cost</th>
                     {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === yieldBest)}>{s.yieldPct !== null ? pct(s.yieldPct, 1) : "—"}</td>))}
+                  </tr>
+                  <tr>
+                    <th className="mx-cmp-rowlabel" title="Relative to every other UK area: listing density, review depth, listing age">Competition</th>
+                    {cards.map((c, i) => (
+                      <td key={c.code} className={cell(i === compBest)}>{c.competition ? `${c.competition.label} · ${c.competition.percentile}th` : "—"}</td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <th className="mx-cmp-rowlabel" title="Contractors, hospitals, universities, events, transport">Direct-booking potential</th>
+                    {cards.map((c, i) => (
+                      <td key={c.code} className={cell(i === dbBest)}>{c.directBooking ? `${c.directBooking.score} · ${c.directBooking.label}` : "—"}</td>
+                    ))}
                   </tr>
                   <tr>
                     <th className="mx-cmp-rowlabel">Short vs long-let</th>

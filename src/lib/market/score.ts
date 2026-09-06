@@ -67,7 +67,7 @@ const GRADES: { min: number; grade: Grade; label: string }[] = [
   { min: 0, grade: 'E', label: 'Weak' },
 ];
 
-function gradeFor(score: number): { grade: Grade; label: string } {
+export function gradeFor(score: number): { grade: Grade; label: string } {
   const g = GRADES.find((x) => score >= x.min)!;
   return { grade: g.grade, label: g.label };
 }

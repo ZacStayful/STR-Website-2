@@ -36,7 +36,9 @@ function loadGeo(): Promise<GeoFeature[]> {
   return geoPromise;
 }
 
-export function useUkGeo(): { features: GeoFeature[] | null; paths: AreaPath[]; failed: boolean } {
+export type Project = (lng: number, lat: number) => [number, number];
+
+export function useUkGeo(): { features: GeoFeature[] | null; paths: AreaPath[]; failed: boolean; project: Project | null } {
   const [features, setFeatures] = useState<GeoFeature[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -92,5 +94,5 @@ export function useUkGeo(): { features: GeoFeature[] | null; paths: AreaPath[]; 
     });
   }, [features, project]);
 
-  return { features, paths, failed };
+  return { features, paths, failed, project };
 }

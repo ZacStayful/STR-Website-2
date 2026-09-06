@@ -99,3 +99,28 @@ create policy "Users can manage own searches"
   on public.saved_searches for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- =========================
+-- Market Explorer: goal profile + watchlist
+-- =========================
+-- market_goals holds the user's questionnaire answers (see
+-- src/lib/market/goals.ts for the shape). Editable any time; drives the
+-- personalised "Your fit" score. The "Users can update own profile" policy
+-- above already covers writes.
+alter table public.profiles add column if not exists market_goals jsonb;
+alter table public.profiles add column if not exists market_goals_updated_at timestamptz;
+
+create table if not exists public.saved_areas (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  postcode_area text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, postcode_area)
+);
+
+alter table public.saved_areas enable row level security;
+
+drop policy if exists "Users can manage own saved areas" on public.saved_areas;
+create policy "Users can manage own saved areas"
+  on public.saved_areas for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
