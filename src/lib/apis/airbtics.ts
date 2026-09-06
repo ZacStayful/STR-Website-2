@@ -2193,3 +2193,49 @@ function generateMarketEstimate(bedrooms: number): ShortLetData {
     comparables: [],
   };
 }
+
+// ─── Tracked listings for the Market Explorer / listing links ──────
+// Thin, typed wrapper around the bounds search so callers outside this
+// file (the data broker) can list every tracked Airbnb near a point with
+// its own performance, without the comp-selection heuristics above.
+import type { TrackedListing } from '../listing/competitors';
+
+export function toTrackedListing(l: AirbticsListing, lat: number, lng: number): TrackedListing {
+  const rawRating = l.reveiw_scores_rating ?? 0;
+  const rating = rawRating > 5 ? rawRating / 20 : rawRating;
+  const occ = l.avg_occupancy_rate_ltm ?? 0;
+  return {
+    listingId: String(l.listingID),
+    name: l.name || 'Airbnb listing',
+    url: `https://www.airbnb.co.uk/rooms/${l.listingID}`,
+    lat: l.latitude,
+    lng: l.longitude,
+    bedrooms: l.bedrooms ?? 0,
+    bathrooms: l.bathrooms ?? 0,
+    guests: l.accommodates ?? 0,
+    roomType: l.room_type ?? '',
+    propertyType: l.property_type ?? '',
+    annualRevenue: Math.round(l.annual_revenue_ltm ?? 0),
+    adr: Math.round(l.avg_booked_daily_rate_ltm ?? 0),
+    occupancy: occ > 1 ? occ / 100 : occ,
+    reviewCount: l.visible_review_count ?? 0,
+    rating: Math.round(rating * 100) / 100,
+    activeDays: l.active_days_count_ltm ?? 0,
+    listedSince: l.added_on || undefined,
+    thumbnailUrl: l.thumbnail_url || undefined,
+    distanceKm: Number.isFinite(l.latitude) && Number.isFinite(l.longitude) ? Math.round(haversineKm(lat, lng, l.latitude, l.longitude) * 100) / 100 : undefined,
+  };
+}
+
+/**
+ * Every tracked listing inside a box of ±radiusKm around a point, with
+ * per-listing revenue / ADR / occupancy / reviews. One bounds call ($0.05).
+ * Returns null when the key is missing, credits are out, or the call fails.
+ */
+export async function findNearbyListings(lat: number, lng: number, radiusKm = 1): Promise<TrackedListing[] | null> {
+  const apiKey = process.env.AIRBTICS_API_KEY;
+  if (!apiKey) return null;
+  const result = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
+  if (!result) return null;
+  return result.listings.map((l) => toTrackedListing(l, lat, lng));
+}
