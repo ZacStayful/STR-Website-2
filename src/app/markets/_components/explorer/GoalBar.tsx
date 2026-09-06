@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, SlidersHorizontal, Star, Target } from "lucide-react";
+import { Briefcase, Search, SlidersHorizontal, Star, Target } from "lucide-react";
 import { BUDGET_LABELS, isBudget, isBeds, isConf, type Region } from "@/lib/market/filters";
 import { describeGoals } from "@/lib/market/goals";
 import { SORT_LABELS, isSortKey } from "@/lib/market/rank";
@@ -26,6 +26,9 @@ export function GoalBar({
   mobilePane,
   onMobilePane,
   trendSortReady = false,
+  listingsCount = 0,
+  listingsOpen = false,
+  onToggleListings,
 }: {
   filters: Filters;
   onFilters: (f: Filters) => void;
@@ -38,6 +41,9 @@ export function GoalBar({
   mobilePane: "map" | "list";
   onMobilePane: (p: "map" | "list") => void;
   trendSortReady?: boolean;
+  listingsCount?: number;
+  listingsOpen?: boolean;
+  onToggleListings?: () => void;
 }) {
   const set = (patch: Partial<Filters>) => onFilters({ ...filters, ...patch });
   const chips = goals ? describeGoals(goals) : [];
@@ -68,6 +74,13 @@ export function GoalBar({
             <span>Set your goals</span>
           )}
         </button>
+
+        {onToggleListings && (
+          <button type="button" className={"mx-goals-chip mx-listings-chip" + (listingsOpen ? " has-goals" : "")} aria-pressed={listingsOpen} onClick={onToggleListings}>
+            <Briefcase size={14} aria-hidden />
+            <span>My listings{listingsCount ? ` (${listingsCount})` : ""}</span>
+          </button>
+        )}
 
         <div className="mx-pane-toggle" role="group" aria-label="View">
           <button type="button" aria-pressed={mobilePane === "map"} onClick={() => onMobilePane("map")}>Map</button>

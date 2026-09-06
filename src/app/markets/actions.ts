@@ -7,6 +7,8 @@ import { goalsFromForm, parseMarketGoals } from '@/lib/market/goals';
 import { areaMetaForCode } from '@/lib/market/areas';
 import { mondayQuery } from '@/lib/apis/monday';
 import { getMarketAccess } from '@/lib/market/gate';
+import { isPipelineStatus } from '@/lib/listing/pipeline';
+import { randomBytes } from 'node:crypto';
 
 export type GoalsState = { error: string | null; warning: string | null; saved: boolean };
 
@@ -137,4 +139,59 @@ export async function managementEnquiryAction(_prev: EnquiryState, formData: For
   await mondayQuery(`mutation ($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`, { itemId, body });
 
   return { error: null, sent: true };
+}
+
+
+// ─── Deal pipeline (checked listings) ────────────────────────────
+
+const UUID = /^[0-9a-f-]{36}$/i;
+
+async function ownListing(id: string) {
+  if (!UUID.test(id)) return null;
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  return { supabase, userId: user.id };
+}
+
+export async function updateListingStatusAction(id: string, status: string): Promise<{ ok: true } | { error: string }> {
+  if (!isPipelineStatus(status)) return { error: 'Unknown status' };
+  const ctx = await ownListing(id);
+  if (!ctx) return { error: 'Please sign in again.' };
+  const { error } = await ctx.supabase.from('checked_listings').update({ status, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  return error ? { error: 'Could not update the listing.' } : { ok: true };
+}
+
+export async function updateListingNotesAction(id: string, notes: string): Promise<{ ok: true } | { error: string }> {
+  const ctx = await ownListing(id);
+  if (!ctx) return { error: 'Please sign in again.' };
+  const clean = notes.slice(0, 2000);
+  const { error } = await ctx.supabase.from('checked_listings').update({ notes: clean, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  return error ? { error: 'Could not save your notes.' } : { ok: true };
+}
+
+export async function removeCheckedListingAction(id: string): Promise<{ ok: true } | { error: string }> {
+  const ctx = await ownListing(id);
+  if (!ctx) return { error: 'Please sign in again.' };
+  const { error } = await ctx.supabase.from('checked_listings').delete().eq('id', id).eq('user_id', ctx.userId);
+  return error ? { error: 'Could not remove the listing.' } : { ok: true };
+}
+
+/** Mints (or returns) a share token for the public deal sheet. */
+export async function shareListingAction(id: string): Promise<{ token: string } | { error: string }> {
+  const ctx = await ownListing(id);
+  if (!ctx) return { error: 'Please sign in again.' };
+  const { data: existing } = await ctx.supabase.from('checked_listings').select('share_token').eq('id', id).eq('user_id', ctx.userId).maybeSingle();
+  if (!existing) return { error: 'Listing not found.' };
+  if (typeof existing.share_token === 'string' && existing.share_token) return { token: existing.share_token };
+  const token = randomBytes(24).toString('base64url');
+  const { error } = await ctx.supabase.from('checked_listings').update({ share_token: token, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  return error ? { error: 'Could not create a share link.' } : { token };
+}
+
+export async function unshareListingAction(id: string): Promise<{ ok: true } | { error: string }> {
+  const ctx = await ownListing(id);
+  if (!ctx) return { error: 'Please sign in again.' };
+  const { error } = await ctx.supabase.from('checked_listings').update({ share_token: null, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  return error ? { error: 'Could not revoke the share link.' } : { ok: true };
 }

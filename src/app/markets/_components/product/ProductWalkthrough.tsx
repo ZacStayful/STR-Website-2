@@ -72,8 +72,19 @@ const STEPS: Step[] = [
     mock: <MockCompare />,
   },
   {
-    id: "trend",
+    id: "listing",
     number: "06",
+    icon: "search",
+    title: "Paste any listing. Get the answer.",
+    subtitle: "Rightmove, OnTheMarket or Airbnb links become deals in seconds.",
+    description:
+      "Found a flat on Rightmove or a competitor on Airbnb? Paste the link. We read the price, beds and location, show a free quick view — estimated revenue, area score, competition and, for Airbnbs, what that listing actually earns — and run the deal maths: yield on the asking price or the rent-to-rent margin, with the most you could pay. Save it to your pipeline, compare listings side by side, share a deal sheet, and run the full report when you're serious.",
+    bullets: ["Free quick view before you spend a report", "Purchase or rent-to-rent maths with a reverse calculator", "Deal pipeline with status, notes and map pins", "Shareable deal sheet for partners, lenders or landlords"],
+    mock: <div className="mxp-mock-stack"><MockGoalChips /><MockRankedList rows={3} dense /></div>,
+  },
+  {
+    id: "trend",
+    number: "07",
     icon: "growth",
     title: "Watch the market move.",
     subtitle: "Is an area getting stronger or weaker? Is the UK?",
