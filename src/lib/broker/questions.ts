@@ -6,6 +6,9 @@ import { findNearbyListings } from '../apis/airbtics';
 import { gridCell, matchTracked, type TrackedListing } from '../listing/competitors';
 import { storedCompForListing, storedPostcodeFigures, type PostcodeFigures } from './providers/internal';
 import { pmiStrEstimate, pmiStrMarket, num, type PmiStrEstimate, type PmiStrMarket } from './providers/pmi';
+import type { SecondOpinion } from '../listing/quick-types';
+
+export type { SecondOpinion } from '../listing/quick-types';
 
 /**
  * The questions the product asks, each with its ladder. Levels: 1 our data,
@@ -74,16 +77,6 @@ export interface SecondOpinionParams {
   bedrooms: number;
   bathrooms?: number;
   propertyType?: 'house' | 'apartment';
-}
-export interface SecondOpinion {
-  annualRevenue: number;
-  adr: number | null;
-  occupancy: number | null; // 0–100
-  confidence: 'high' | 'medium' | 'low';
-  rangeLow: number | null;
-  rangeHigh: number | null;
-  monthly: { month: string; revenue: number }[];
-  comparables: { listingId: string | null; title: string; revenue: number | null; adr: number | null; occupancy: number | null; rating: number | null; url: string | null; distanceM: number | null }[];
 }
 function fromPmiEstimate(e: PmiStrEstimate): SecondOpinion | null {
   const annual = num(e.annual_revenue);

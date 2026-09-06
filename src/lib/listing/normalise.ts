@@ -30,6 +30,12 @@ export interface NormaliseResult {
   warnings: string[];
 }
 
+/** "NG1 5JS" / "NG1" → "NG". */
+export function postcodeAreaOf(outcodeOrPostcode: string | null | undefined): string | null {
+  const m = outcodeOrPostcode?.trim().toUpperCase().match(/^[A-Z]{1,2}/);
+  return m ? m[0] : null;
+}
+
 export function defaultGuests(bedrooms: number): number {
   return Math.max(1, Math.min(16, bedrooms * 2 + 2));
 }
