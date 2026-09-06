@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import {
   Search,
   MapPin,
@@ -295,7 +296,7 @@ function CircularScore({
 
 const TAB_SECTIONS = [
   { id: "overview", label: "Overview", icon: Home, num: 1 },
-  { id: "deal", label: "Deal", icon: Calculator, num: 2 },
+  { id: "deal", label: "Deal", icon: Calculator, num: 0 },
   { id: "comparables", label: "Comparables", icon: Building2, num: 2 },
   { id: "amenities", label: "Amenities", icon: Sparkles, num: 3 },
   { id: "revenue", label: "Revenue", icon: PoundSterling, num: 4 },
@@ -334,7 +335,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const [listing, setListing] = useState<ResolvedListing | null>(null);
   const [purchasePrice, setPurchasePrice] = useState("");
   const [advertisedRent, setAdvertisedRent] = useState("");
-  const listingGuestsRef = useRef<string | null>(null);
+  const listingGuestsRef = useRef<{ bedrooms: string; guests: string } | null>(null);
   const autoListingRef = useRef(false);
 
   // ── Session timer: pushed to Monday via sendBeacon on tab close ──
@@ -475,10 +476,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
   // Auto-recalculate guests when bedrooms changes: (beds * 2) + 2
   useEffect(() => {
-    // A listing that states its own guest capacity wins over the formula, once.
-    if (listingGuestsRef.current !== null) {
-      setGuests(listingGuestsRef.current);
-      listingGuestsRef.current = null;
+    // A listing that states its own guest capacity wins over the formula, but
+    // only for the bedroom count it came with; any later edit uses the formula.
+    const fromListing = listingGuestsRef.current;
+    listingGuestsRef.current = null;
+    if (fromListing && fromListing.bedrooms === bedrooms) {
+      setGuests(fromListing.guests);
       return;
     }
     const numBeds = Number(bedrooms);
@@ -491,7 +494,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const applyListing = useCallback((res: ResolvedListing) => {
     const p = res.prefill;
     setListing(res);
-    listingGuestsRef.current = String(p.guests);
+    listingGuestsRef.current = { bedrooms: String(p.bedrooms), guests: String(p.guests) };
     setAddress(p.address);
     setPostcode(p.postcode);
     setSelectedAutoAddress({ address: p.address, postcode: p.postcode });
@@ -1072,7 +1075,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     const y3ExtraMonthlyProfit = Math.round((grossAnnual * 0.5 * 0.15) / 12);
 
     // Current active tab info for progress indicator
-    const activeTabInfo = TAB_SECTIONS.find((t) => t.id === activeTab);
+    const visibleTabs = TAB_SECTIONS.filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion);
+    const activeTabIndex = visibleTabs.findIndex((t) => t.id === activeTab);
+    const activeTabInfo = activeTabIndex >= 0 ? { ...visibleTabs[activeTabIndex], num: activeTabIndex + 1 } : undefined;
     const sidebarWidth = sidebarCollapsed ? 48 : 200;
 
     // Average rating and reviews from comparables
@@ -1211,7 +1216,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
           {/* Nav items */}
           <nav className="flex-1 overflow-y-auto py-2">
-            {TAB_SECTIONS.filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion).map((tab) => {
+            {visibleTabs.map((tab) => {
               const TabIcon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
@@ -1261,13 +1266,13 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
             <div className="flex items-center gap-2">
               {!sidebarCollapsed && (
                 <span className="text-xs font-semibold text-foreground whitespace-nowrap">
-                  {activeTabInfo ? `${activeTabInfo.num} of 10` : ""}
+                  {activeTabInfo ? `${activeTabInfo.num} of ${visibleTabs.length}` : ""}
                 </span>
               )}
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
                 <div
                   className="h-full rounded-full bg-success transition-all duration-300"
-                  style={{ width: `${activeTabInfo ? (activeTabInfo.num / 11) * 100 : 0}%` }}
+                  style={{ width: `${activeTabInfo ? (activeTabInfo.num / visibleTabs.length) * 100 : 0}%` }}
                 />
               </div>
             </div>
@@ -1371,7 +1376,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                 )}
                 {r.reportId && (
                   <p className="mt-1 text-xs text-primary-foreground/70">
-                    Saved to <a href="/reports" className="underline-offset-2 hover:underline">My reports</a>
+                    Saved to <Link href="/reports" className="underline-offset-2 hover:underline">My reports</Link>
                   </p>
                 )}
               </div>

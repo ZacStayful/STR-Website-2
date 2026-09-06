@@ -20,12 +20,14 @@ export async function storedCompForListing(listingId: string, maxAgeDays = 30): 
   if (!hasServiceRole() || !/^\d+$/.test(listingId)) return null;
   const admin = createAdminClient();
   const since = new Date(Date.now() - maxAgeDays * 24 * 3600 * 1000).toISOString();
-  // `raw_response` holds the full AnalysisResult; the comp URL is unique enough to search for.
+  // `raw_response` holds the full AnalysisResult; jsonb containment matches a
+  // comparable whose url is exactly the canonical Airbnb URL we construct.
+  const url = `https://www.airbnb.co.uk/rooms/${listingId}`;
   const { data, error } = await admin
     .from('analyser_reports')
     .select('raw_response, created_at')
     .gte('created_at', since)
-    .ilike('raw_response::text', `%/rooms/${listingId}%`)
+    .contains('raw_response', { shortLet: { comparables: [{ url }] } })
     .order('created_at', { ascending: false })
     .limit(1);
   if (error || !data || data.length === 0) return null;

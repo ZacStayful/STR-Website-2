@@ -29,7 +29,8 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const dry = url.searchParams.get('dry') === '1';
   const wantEstimate = url.searchParams.get('estimate') === '1';
-  const maxReports = Math.min(10, Math.max(1, Number(url.searchParams.get('reports') ?? 6)));
+  const reportsParam = Number(url.searchParams.get('reports'));
+  const maxReports = Math.min(10, Math.max(1, Number.isFinite(reportsParam) && reportsParam > 0 ? reportsParam : 6));
   const outcode = (url.searchParams.get('outcode') ?? 'NG1').toUpperCase();
   const started = Date.now();
   const out: Record<string, unknown> = { ranAt: new Date().toISOString(), dry };

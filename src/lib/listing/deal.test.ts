@@ -26,6 +26,11 @@ test('purchase deal: yields, cash required and target price', () => {
   assert.equal(d.stampDuty, stampDutyAdditional(220_000));
   assert.equal(d.cashRequired, 55_000 + d.stampDuty + 10_000);
   assert.equal(d.maxPriceForTargetYield, 300_000);
+  assert.equal(d.depositPct, 25);
+  const custom = purchaseDeal(220_000, { grossRevenue: 30_000, adr: 150, bedrooms: 2, finance: { depositPct: 40, mortgageRatePct: 4, termYears: 20 } });
+  assert.equal(custom.depositPct, 40);
+  assert.equal(custom.mortgageRatePct, 4);
+  assert.ok(custom.mortgageMonthly < d.mortgageMonthly);
   assert.equal(maxPriceForYield(30_000, 10), 300_000);
   assert.equal(maxPriceForYield(30_000, 0), 0);
   assert.ok(d.mortgageMonthly > 900 && d.mortgageMonthly < 1100);

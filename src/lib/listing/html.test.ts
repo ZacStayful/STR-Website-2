@@ -25,6 +25,8 @@ test('meta, title and entities', () => {
   assert.equal(metaContent(html, 'og:title'), 'Home · £1,000');
   assert.equal(metaContent(html, 'description'), 'x');
   assert.equal(metaContent(html, 'missing'), null);
+  assert.equal(metaContent('<meta property="og:description" content="Cosy flat near King\'s Cross">', 'og:description'), "Cosy flat near King's Cross");
+  assert.equal(metaContent(`<meta content='Say "hi"' name="x">`, 'x'), 'Say "hi"');
   assert.equal(decodeEntities('&pound;5 &gt; &#x41;'), '£5 > A');
 });
 

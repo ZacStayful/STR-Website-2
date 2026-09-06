@@ -38,7 +38,11 @@ function Field({ id, label, value, onChange, suffix, step, min, max }: { id: str
  * live figures and the saved report agree.
  */
 export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { deal: DealResult; grossRevenue: number; adr: number; bedrooms: number; setupCost?: number }) {
-  const initialFinance: FinanceDefaults = { ...DEFAULT_FINANCE, targetYieldPct: deal.kind === 'purchase' ? deal.targetYieldPct : DEFAULT_FINANCE.targetYieldPct, targetMarginPcm: deal.kind === 'rent-to-rent' ? deal.targetMarginPcm : DEFAULT_FINANCE.targetMarginPcm };
+  // Start from the inputs the server used, so the first render matches the saved report and PDF.
+  const initialFinance: FinanceDefaults =
+    deal.kind === 'purchase'
+      ? { depositPct: deal.depositPct, mortgageRatePct: deal.mortgageRatePct, termYears: deal.termYears, targetYieldPct: deal.targetYieldPct, targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm }
+      : { ...DEFAULT_FINANCE, targetMarginPcm: deal.targetMarginPcm };
   const [finance, setFinance] = useState<FinanceDefaults>(initialFinance);
   const [price, setPrice] = useState(deal.kind === 'purchase' ? deal.askingPrice : deal.advertisedRentPcm);
   const [bills, setBills] = useState(250);

@@ -79,12 +79,15 @@ export function jsonLdBlocks(html: string): unknown[] {
 
 export function metaContent(html: string, key: string): string | null {
   const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`<meta[^>]*(?:property|name|itemprop)=["']${esc}["'][^>]*content=["']([^"']*)["']`, 'i');
+  // Match the opening quote so an apostrophe inside a double-quoted value survives.
+  const content = `content=(?:"([^"]*)"|'([^']*)')`;
+  const keyAttr = `(?:property|name|itemprop)=["']${esc}["']`;
+  const re = new RegExp(`<meta[^>]*${keyAttr}[^>]*${content}`, 'i');
   const m = html.match(re);
-  if (m) return decodeEntities(m[1]);
-  const re2 = new RegExp(`<meta[^>]*content=["']([^"']*)["'][^>]*(?:property|name|itemprop)=["']${esc}["']`, 'i');
+  if (m) return decodeEntities(m[1] ?? m[2] ?? '');
+  const re2 = new RegExp(`<meta[^>]*${content}[^>]*${keyAttr}`, 'i');
   const m2 = html.match(re2);
-  return m2 ? decodeEntities(m2[1]) : null;
+  return m2 ? decodeEntities(m2[1] ?? m2[2] ?? '') : null;
 }
 
 export function titleOf(html: string): string | null {

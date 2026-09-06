@@ -49,6 +49,10 @@ export interface PurchaseDeal {
   cashOnCashPct: number;
   maxPriceForTargetYield: number;
   targetYieldPct: number;
+  /** Finance inputs the figures were computed with, so a live panel can start from them. */
+  depositPct: number;
+  mortgageRatePct: number;
+  termYears: number;
 }
 
 export interface RentToRentDeal {
@@ -143,6 +147,9 @@ export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDe
     cashOnCashPct: cashRequired > 0 ? round1(((cashflowMonthly * 12) / cashRequired) * 100) : 0,
     maxPriceForTargetYield: maxPriceForYield(gross, fin.targetYieldPct),
     targetYieldPct: fin.targetYieldPct,
+    depositPct: fin.depositPct,
+    mortgageRatePct: fin.mortgageRatePct,
+    termYears: fin.termYears,
   };
 }
 
