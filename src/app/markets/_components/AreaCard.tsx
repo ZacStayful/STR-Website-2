@@ -19,17 +19,20 @@ export function AreaCard({
   comparing,
   onToggleCompare,
   compareDisabled,
+  href,
 }: {
   card: AreaCardData;
   bedroom?: number | null;
   comparing?: boolean;
   onToggleCompare?: () => void;
   compareDisabled?: boolean;
+  /** Override the card link (default: the area's detail page). */
+  href?: string;
 }) {
   const s = activeAreaStats(card, bedroom);
 
   return (
-    <Link href={`/markets/${card.slug}`} className="mx-card" prefetch={false}>
+    <Link href={href ?? `/markets/${card.slug}`} className="mx-card" prefetch={false}>
       <div className="mx-card-thumb">
         <span className="mx-card-code" aria-hidden>{card.code}</span>
         <h3>{card.name}</h3>

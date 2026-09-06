@@ -6,11 +6,12 @@ import { PasswordField } from '../PasswordField'
 
 const initialState: AuthState = { error: null }
 
-export function SignupForm() {
+export function SignupForm({ next = '/estimate' }: { next?: string }) {
   const [state, action, pending] = useActionState(signupAction, initialState)
 
   return (
     <form action={action} className="space-y-4">
+      <input type="hidden" name="next" value={next} />
       <div className="space-y-1.5">
         <label htmlFor="full_name" className="text-sm font-medium">
           Full name

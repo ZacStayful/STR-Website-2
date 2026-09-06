@@ -5,11 +5,12 @@ import { resendConfirmationAction, type FormState } from '../../actions'
 
 const initial: FormState = { error: null, success: null }
 
-export function ResendButton({ email }: { email: string }) {
+export function ResendButton({ email, next = '/estimate' }: { email: string; next?: string }) {
   const [state, action, pending] = useActionState(resendConfirmationAction, initial)
 
   return (
     <form action={action} className="mt-6 space-y-2 text-left">
+      <input type="hidden" name="next" value={next} />
       <label htmlFor="resend-email" className="text-xs font-medium text-muted-foreground">
         Didn&apos;t get it? Resend to:
       </label>

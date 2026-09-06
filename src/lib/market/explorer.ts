@@ -1,12 +1,8 @@
 /**
  * Server-side Market Explorer aggregator. Assembles the per-area card data the
  * /markets pages render: headline stats, yield-on-cost, long-let vs short-let
- * verdict, and the licensing flag. SERVER ONLY (uses the market client +
- * PropertyData).
- *
- * NOTE (score): the transparent area score (Phase 1 Step 2) is intentionally
- * absent — it is not built until the proposal is signed off. When approved,
- * add it to AreaCardData and the sort here.
+ * verdict, licensing flag, transparent score and confidence tier.
+ * SERVER ONLY (uses the market client + PropertyData).
  */
 
 import { fetchMarketStats, fetchMarketArea } from './client.ts';
@@ -130,8 +126,9 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
  * All area cards for the /markets index. Sorted by data confidence first
  * (Confirmed areas surface above thin/Early ones), then by score, then yield —
  * so the most trustworthy areas lead while everything stays visible.
+ * Uncached: pages go through `cached.ts`, which wraps this in an hourly cache.
  */
-export async function getAreaCards(): Promise<AreaCardData[]> {
+export async function buildAreaCards(): Promise<AreaCardData[]> {
   const data = await fetchMarketStats({});
   if (!data) return [];
   const cards = await Promise.all(
@@ -153,16 +150,33 @@ export interface AreaDetail {
 }
 
 /** Full detail for one area page, or null if the area has no qualifying data. */
-export async function getAreaDetail(code: string): Promise<AreaDetail | null> {
+/** Full detail for one area page, or null if the area has no qualifying data. Uncached. */
+export async function buildAreaDetail(code: string): Promise<AreaDetail | null> {
   const area = await fetchMarketArea(code);
   if (!area) return null;
   const card = await buildCard(area);
   return { card, area };
 }
 
-/** Postcode-area codes that currently have qualifying data (for static params). */
-export async function listAreaCodes(): Promise<string[]> {
-  const data = await fetchMarketStats({});
-  if (!data) return [];
-  return data.areas.map((a) => a.postcode_area);
+export interface SampleArea {
+  card: AreaCardData;
+  totalAreas: number;
+  totalSamples: number;
+}
+
+/**
+ * One area shown with real figures on the public product page, as a taster
+ * for logged-out visitors. Picks MARKET_SAMPLE_AREA when it has data, else
+ * the best-backed area (the cards are already sorted confidence → score).
+ * Returns null when no data is available so the page can omit the section.
+ */
+export function pickSampleArea(cards: AreaCardData[], wanted = process.env.MARKET_SAMPLE_AREA): SampleArea | null {
+  if (cards.length === 0) return null;
+  const code = wanted?.trim().toUpperCase();
+  const card = (code && cards.find((c) => c.code === code)) || cards[0];
+  return {
+    card,
+    totalAreas: cards.length,
+    totalSamples: cards.reduce((n, c) => n + c.headline.totalSamples, 0),
+  };
 }

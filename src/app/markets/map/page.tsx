@@ -1,19 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getAreaCards } from "@/lib/market/explorer";
+import { getAreaCards } from "@/lib/market/cached";
+import { requireMarketAccess } from "@/lib/market/gate";
+import { MarketExplorerProductPage } from "../_components/product/MarketExplorerProductPage";
 import { UKMap, type MapArea } from "../_components/UKMap";
 import { siteUrl } from "@/lib/url";
-
-export const revalidate = 3600;
 
 export const metadata: Metadata = {
   title: "UK Short-Term Rental Map — Explore Areas by Data",
   description:
     "An interactive map of the UK short-term rental market. Every postcode area is shaded by data accuracy; click a region for its average revenue, occupancy and full report.",
   alternates: { canonical: siteUrl("/markets/map") },
+  robots: { index: false, follow: false },
 };
 
 export default async function MarketsMapPage() {
+  if ((await requireMarketAccess("/markets/map")) === "anon") return <MarketExplorerProductPage />;
   const cards = await getAreaCards();
 
   const areas: MapArea[] = cards.map((c) => ({
@@ -50,7 +52,6 @@ export default async function MarketsMapPage() {
             <Link href="/markets">All areas (list)</Link>
             <Link href="/markets/map" aria-current="page">Map view</Link>
             <Link href="/estimate">Analyse an address</Link>
-            <Link href="/pricing">Pricing</Link>
           </nav>
 
           <main>

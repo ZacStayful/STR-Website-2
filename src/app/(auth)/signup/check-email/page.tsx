@@ -1,12 +1,14 @@
 import Link from 'next/link'
 import { ResendButton } from './ResendButton'
+import { safeInternalPath } from '@/lib/safe-path'
 
 export const metadata = { title: 'Check your email · Stayful Intelligence' }
 
-type SearchParams = Promise<{ email?: string }>
+type SearchParams = Promise<{ email?: string; next?: string }>
 
 export default async function CheckEmailPage({ searchParams }: { searchParams: SearchParams }) {
-  const { email } = await searchParams
+  const { email, next } = await searchParams
+  const nextPath = safeInternalPath(next, '/estimate')
 
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm text-center">
@@ -16,7 +18,7 @@ export default async function CheckEmailPage({ searchParams }: { searchParams: S
         activate your account and get your 5 free reports.
       </p>
 
-      <ResendButton email={email ?? ''} />
+      <ResendButton email={email ?? ''} next={nextPath} />
 
       <p className="mt-4 text-xs text-muted-foreground">
         Check your spam folder if it hasn&apos;t arrived in a couple of minutes.
