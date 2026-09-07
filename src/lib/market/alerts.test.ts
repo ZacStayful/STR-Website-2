@@ -37,3 +37,13 @@ test('digest email lists every change and links the explorer', () => {
   assert.match(e.text, /falling \(-25%\)/);
   assert.match(e.html, /href="https:\/\/intelligence.stayful.co.uk\/markets\/m"/);
 });
+
+test('digestEmail carries pipeline listing changes, alone or beside area changes', () => {
+  const listings = [{ id: 'abc', label: '1 High St & Co', summary: 'price down from £220,000 to £210,000 (-4.5%)' }];
+  const alone = digestEmail([], 'https://intelligence.stayful.co.uk', listings);
+  assert.equal(alone.subject, 'Market Explorer: 1 of your listings moved this week');
+  assert.ok(alone.text.includes('/markets?pane=listings&listing=abc'));
+  assert.ok(alone.html.includes('1 High St &amp; Co'));
+  assert.ok(alone.html.includes('Your pipeline moved this week'));
+  assert.ok(!alone.html.includes('<ul style="padding-left:18px"></ul>'));
+});

@@ -2,7 +2,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAreaCards } from "@/lib/market/cached";
 import { fetchMarketTrends } from "@/lib/market/trends-client";
 import { areaTrend, type AreaTrend } from "@/lib/market/trend";
-import { digestChanges, digestEmail, type SavedAreaState } from "@/lib/market/alerts";
+import { digestChanges, digestEmail, type ListingWeekChange, type SavedAreaState } from "@/lib/market/alerts";
+import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { marketAccessState } from "@/lib/market/access";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
@@ -66,31 +67,48 @@ export async function GET(request: Request) {
     return Response.json({ error: "Query failed" }, { status: 500 });
   }
 
-  const byUser = new Map<string, { profile: Row["profiles"]; rows: Row[] }>();
+  const byUser = new Map<string, { profile: Row["profiles"]; rows: Row[]; listings: ListingWeekChange[] }>();
   for (const r of (saved ?? []) as unknown as Row[]) {
-    const entry = byUser.get(r.user_id) ?? { profile: r.profiles, rows: [] };
+    const entry = byUser.get(r.user_id) ?? { profile: r.profiles, rows: [], listings: [] };
     entry.rows.push(r);
     byUser.set(r.user_id, entry);
   }
 
+  // Pipeline listings that moved in the last week (recorded by the daily
+  // re-check) ride along in the same digest, for members with alerts on.
+  const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).getTime();
+  const { data: moved, error: movedError } = await admin
+    .from("checked_listings")
+    .select("id, user_id, snapshot, price_history, profiles!inner(email, alert_weekly, plan, reports_run, stripe_subscription_id)")
+    .eq("profiles.alert_weekly", true)
+    .neq("price_history", "[]");
+  if (movedError) console.warn("[alerts] checked_listings select failed (schema behind?):", movedError.message);
+  for (const raw of (moved ?? []) as unknown as { id: string; user_id: string; snapshot: { title?: string; displayAddress?: string }; price_history: unknown; profiles: Row["profiles"] }[]) {
+    const recent = parseHistory(raw.price_history).filter((e) => new Date(e.at).getTime() >= weekAgo);
+    if (recent.length === 0) continue;
+    const entry = byUser.get(raw.user_id) ?? { profile: raw.profiles, rows: [], listings: [] };
+    entry.listings.push({ id: raw.id, label: raw.snapshot?.displayAddress ?? raw.snapshot?.title ?? "Listing", summary: recent.map(describeChange).join("; ") });
+    byUser.set(raw.user_id, entry);
+  }
+
   const now = new Date().toISOString();
-  const summary: { user: string; changes: number; sent: boolean; recorded: number; reason?: string }[] = [];
+  const summary: { user: string; changes: number; listings: number; sent: boolean; recorded: number; reason?: string }[] = [];
   const toRecord: { user_id: string; postcode_area: string; last_alerted_direction: string; last_alerted_tier: string; last_alerted_at: string }[] = [];
 
-  for (const [userId, { profile, rows }] of byUser) {
+  for (const [userId, { profile, rows, listings }] of byUser) {
     // Same rule as the explorer: lapsed / exhausted accounts get no paid figures.
     if (!profile || marketAccessState({ email: profile.email }, profile) !== "ok") {
-      summary.push({ user: userId, changes: 0, sent: false, recorded: 0, reason: "no_access" });
+      summary.push({ user: userId, changes: 0, listings: 0, sent: false, recorded: 0, reason: "no_access" });
       continue;
     }
     const changes = digestChanges(rows, cardByCode, trendByCode);
     let sent = false;
     let reason: string | undefined;
-    if (changes.length > 0 && !dry) {
+    if ((changes.length > 0 || listings.length > 0) && !dry) {
       if (!profile.email) reason = "no_email";
       else if (!isEmailConfigured()) reason = "email_not_configured";
       else {
-        const res = await sendEmail({ to: profile.email, ...digestEmail(changes, siteUrl()) });
+        const res = await sendEmail({ to: profile.email, ...digestEmail(changes, siteUrl(), listings) });
         sent = res.sent;
         reason = res.reason;
       }
@@ -110,7 +128,7 @@ export async function GET(request: Request) {
         recorded += 1;
       }
     }
-    summary.push({ user: userId, changes: changes.length, sent, recorded, reason });
+    summary.push({ user: userId, changes: changes.length, listings: listings.length, sent, recorded, reason });
   }
 
   if (toRecord.length > 0) {
@@ -121,7 +139,7 @@ export async function GET(request: Request) {
   return Response.json({
     dry,
     members: summary.length,
-    digests: summary.filter((s) => s.changes > 0).length,
+    digests: summary.filter((s) => s.changes > 0 || s.listings > 0).length,
     sent: summary.filter((s) => s.sent).length,
     recorded: toRecord.length,
     summary,

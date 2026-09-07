@@ -228,3 +228,43 @@ alter table public.saved_searches add column if not exists kind text;
 alter table public.saved_searches add column if not exists source_listing jsonb;
 alter table public.saved_searches add column if not exists deal jsonb;
 alter table public.saved_searches add column if not exists checked_listing_id uuid;
+
+-- =========================
+-- Listing re-checks + deal sourcing (PR 1.3)
+-- =========================
+-- rechecked_at: when the daily re-check cron last looked at the listing.
+-- Kept apart from last_checked_at (a member's own resolve) so the cron never
+-- counts against the member's daily resolve cap. price_history entries are
+-- { at, amount, period, status, notified } — notified flips once the change
+-- has been emailed, so a failed send is retried next run rather than lost.
+alter table public.checked_listings add column if not exists rechecked_at timestamptz;
+create index if not exists checked_listings_recheck_idx on public.checked_listings (rechecked_at nulls first, last_checked_at);
+
+-- sourcing_alerts: opt-in (default OFF) for the daily deal-sourcing email.
+-- sourcing_last_sent_at: when the last sourcing email went out.
+alter table public.profiles add column if not exists sourcing_alerts boolean not null default false;
+alter table public.profiles add column if not exists sourcing_last_sent_at timestamptz;
+
+-- sourced_listings: every listing a sourcing query has ever surfaced, so
+-- "new since last run" is a simple first_seen_at comparison.
+create table if not exists public.sourced_listings (
+  canonical_url text primary key,
+  source text not null,
+  kind text not null,
+  query_key text not null,
+  postcode_area text,
+  snapshot jsonb not null,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+create index if not exists sourced_listings_seen_idx on public.sourced_listings (first_seen_at desc);
+alter table public.sourced_listings enable row level security;
+
+-- sourcing_sent: which listings each member has already been emailed.
+create table if not exists public.sourcing_sent (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  canonical_url text not null,
+  sent_at timestamptz not null default now(),
+  primary key (user_id, canonical_url)
+);
+alter table public.sourcing_sent enable row level security;

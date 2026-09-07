@@ -5,7 +5,10 @@ import { COST_PENCE, TTL } from './config';
 import { findNearbyListings } from '../apis/airbtics';
 import { gridCell, matchTracked, type TrackedListing } from '../listing/competitors';
 import { storedCompForListing, storedPostcodeFigures, type PostcodeFigures } from './providers/internal';
-import { pmiStrEstimate, pmiStrMarket, num, type PmiStrEstimate, type PmiStrMarket } from './providers/pmi';
+import { pmiStrEstimate, pmiStrMarket, pmiListings, num, type PmiStrEstimate, type PmiStrMarket } from './providers/pmi';
+import { fetchOnTheMarketSearch } from './providers/onthemarket';
+import { fromPmiListings, type SourcedListing, type SourcingQuery } from '../listing/sourcing';
+import { areaCentroid } from '../market/area-centroids';
 import type { SecondOpinion } from '../listing/quick-types';
 
 export type { SecondOpinion } from '../listing/quick-types';
@@ -170,5 +173,34 @@ export const strMarket: Question<StrMarketParams, StrMarketSnapshot> = {
         return m ? fromPmiMarket(m) : null;
       },
     },
+  ],
+};
+
+// ── Live for-sale / to-rent listings for a sourcing query (daily digest) ──
+// PMI's licensed listings feed first (1 credit, aggregates Rightmove, Zoopla
+// and OnTheMarket); one OnTheMarket results page as the fallback. Both sit
+// at level 3 so the cron may use them; answers are shared for a day.
+const PMI_LISTINGS_RADIUS_M = 8000;
+export const sourcingListings: Question<SourcingQuery, SourcedListing[]> = {
+  name: 'sourcingListings',
+  key: (q) => q.key,
+  rungs: [
+    {
+      provider: 'pmi',
+      level: 3,
+      costPence: COST_PENCE.pmiListings,
+      ttlMs: TTL.sourcing,
+      run: async (q) => {
+        const c = areaCentroid(q.area);
+        if (!c) return null;
+        const resp = await pmiListings(
+          { lat: c.lat, lng: c.lng, radiusM: PMI_LISTINGS_RADIUS_M },
+          { type: q.kind, minPrice: q.minPrice ?? undefined, maxPrice: q.maxPrice ?? undefined, minBedrooms: q.minBedrooms ?? undefined, sort: 'date_desc', perPage: 50 },
+        );
+        const list = fromPmiListings(resp, q.kind);
+        return list.length > 0 ? list : null;
+      },
+    },
+    { provider: 'onthemarket', level: 3, costPence: COST_PENCE.onthemarketFetch, ttlMs: TTL.sourcing, run: (q) => fetchOnTheMarketSearch(q) },
   ],
 };
