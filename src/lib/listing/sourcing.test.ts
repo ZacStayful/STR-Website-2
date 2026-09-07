@@ -94,12 +94,12 @@ test('fromPmiListings keeps only listings with a recognisable portal URL', () =>
     },
     'sale',
   );
-  assert.equal(out.length, 2);
+  // Zoopla is recognised but not fetchable by us, so the digest must not link to it.
+  assert.equal(out.length, 1);
   assert.equal(out[0].source, 'rightmove');
   assert.equal(out[0].canonicalUrl, 'https://www.rightmove.co.uk/properties/123');
   assert.equal(out[0].postcode, 'NG1 1AA');
   assert.equal(out[0].postcodeArea, 'NG');
-  assert.equal(out[1].source, 'zoopla');
   assert.deepEqual(fromPmiListings(null, 'sale'), []);
 });
 

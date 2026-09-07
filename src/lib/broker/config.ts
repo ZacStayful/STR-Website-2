@@ -15,7 +15,9 @@ export const TTL = {
   pmiEstimate: 30 * DAY,
   pmiMarket: 7 * DAY,
   areaCards: 60 * 60 * 1000,
-  sourcing: DAY,
+  // Shorter than the daily sourcing cron so cron jitter can never land on a
+  // still-fresh answer from yesterday's run.
+  sourcing: 20 * 60 * 60 * 1000,
 } as const;
 
 /** Pence per call. Real figures from the spike replace these estimates. */

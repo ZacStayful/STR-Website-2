@@ -46,7 +46,7 @@ export function ExplorerShell({
   trends?: MarketTrendsResponse | null;
   alertWeekly?: boolean;
   sourcingAlerts?: boolean;
-  /** A listing URL to check as soon as the explorer mounts (from the sourcing email's "Add to pipeline"). */
+  /** A listing URL prefilled in the paste box (from the sourcing email's "Add to pipeline"); the member still clicks Check. */
   initialCheckUrl?: string | null;
   /** The member's checked listings (deal pipeline). */
   listings?: CheckedListingRow[];

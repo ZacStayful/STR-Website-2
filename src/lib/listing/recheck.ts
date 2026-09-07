@@ -8,6 +8,7 @@ import type { ListingKind, ListingPrice, ListingStatus } from './types.ts';
 import { formatListingPrice } from './format.ts';
 import { purchaseDeal, rentToRentDeal, type Deal } from './deal.ts';
 import type { QuickEstimate } from './quick-types.ts';
+import { escapeHtml as esc } from '../email/escape.ts';
 
 export interface PriceHistoryEntry {
   at: string;
@@ -140,7 +141,6 @@ export function recheckEmail(items: RecheckAlertItem[], siteUrl: string): { subj
     `Your pipeline: ${pipeline}`,
     'Mark a listing as Passed in your pipeline to stop re-checking it.',
   ].join('\n');
-  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const html = `
     <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#2e3d2b;max-width:560px">
       <p style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5d8156;font-weight:600">Stayful Deal Pipeline</p>

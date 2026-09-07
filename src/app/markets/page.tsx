@@ -42,7 +42,8 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
   const access = await getMarketAccess();
   const [{ sort, q, pane, listing, check }, cards, user, trends] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user), fetchMarketTrends()]);
   // Deep links from the re-check and sourcing emails: open the pipeline on a
-  // listing the member already has, or check a new listing URL straight away.
+  // listing the member already has, or prefill the paste box with a new URL
+  // (never auto-checked: a link must not be able to spend the member's checks).
   const activeListing = typeof listing === "string" && user.listings.some((l) => l.id === listing) ? listing : null;
   const checkUrl = typeof check === "string" && detectListingUrl(check) ? check.slice(0, 500) : null;
   const sidePane = pane === "listings" || activeListing || checkUrl ? "listings" : "areas";

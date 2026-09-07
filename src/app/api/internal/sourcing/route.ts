@@ -8,6 +8,7 @@ import { ask, sourcingListings } from "@/lib/broker";
 import { queriesForGoals, dealForSourced, rankPicks, sourcingEmail, type AreaRef, type SourcedListing, type SourcingQuery } from "@/lib/listing/sourcing";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
+import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Daily deal-sourcing digest ────────────────────────────────────────
 // Vercel cron (vercel.json, 07:00 UTC). Ships dark: SOURCING_ENABLED=true turns
@@ -30,15 +31,6 @@ const TIME_BUDGET_MS = 50_000;
 const NEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const PICKS_PER_EMAIL = 5;
 
-function authorise(request: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  const auth = request.headers.get("authorization");
-  if (cronSecret && auth === `Bearer ${cronSecret}`) return true;
-  const secret = process.env.INTERNAL_API_SECRET;
-  if (secret && request.headers.get("x-internal-secret") === secret) return true;
-  return false;
-}
-
 function maxQueries(): number {
   const n = Number(process.env.SOURCING_MAX_QUERIES_PER_RUN ?? 150);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 150;
@@ -57,8 +49,8 @@ interface Member {
 }
 
 export async function GET(request: Request) {
-  if (!process.env.INTERNAL_API_SECRET && !process.env.CRON_SECRET) return Response.json({ error: "Not found" }, { status: 404 });
-  if (!authorise(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
+  if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (process.env.SOURCING_ENABLED !== "true") return Response.json({ enabled: false, reason: "SOURCING_ENABLED is not 'true'" });
 
   const dry = new URL(request.url).searchParams.get("dry") === "1";

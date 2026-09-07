@@ -7,7 +7,8 @@
 import type { ListingSource } from './types.ts';
 import type { Deal, FinanceDefaults } from './deal.ts';
 import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE } from './deal.ts';
-import { detectListingUrl } from './detect.ts';
+import { detectListingUrl, SERVER_FETCHABLE } from './detect.ts';
+import { escapeHtml as esc } from '../email/escape.ts';
 import { scriptJsonById, parsePrice, findPostcode, findOutcode } from './html.ts';
 import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
@@ -189,13 +190,17 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
 
 // ── Property Market Intel /listings ──
 
-/** PMI listings carry the portal URL; only ones we can canonicalise are usable. */
+/**
+ * PMI listings carry the portal URL; only ones we can canonicalise AND fetch
+ * ourselves are usable, because every link in the digest (full report, add
+ * to pipeline) goes through the server-side resolve.
+ */
 export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind): SourcedListing[] {
   if (!resp || !Array.isArray(resp.listings)) return [];
   const out: SourcedListing[] = [];
   for (const l of resp.listings) {
     const detected = l.url ? detectListingUrl(l.url) : null;
-    if (!detected) continue;
+    if (!detected || !SERVER_FETCHABLE.has(detected.source)) continue;
     const pc = findPostcode(l.postcode ?? l.address ?? null);
     const outcode = pc?.outcode ?? findOutcode(l.postcode ?? l.address ?? null);
     const amount = typeof l.price === 'number' && l.price > 0 ? l.price : null;
@@ -282,7 +287,6 @@ export function describeDeal(d: Deal): string {
 
 export function sourcingEmail(picks: SourcedPick[], siteUrl: string): { subject: string; text: string; html: string } {
   const subject = picks.length === 1 ? `1 new listing that fits your goals: ${picks[0].areaName}` : `${picks.length} new listings that fit your goals`;
-  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const label = (p: SourcedPick) => {
     const l = p.listing;
     const bits = [l.bedrooms ? `${l.bedrooms}-bed` : null, l.rawType, formatListingPrice(l.price)].filter(Boolean);

@@ -7,6 +7,7 @@ import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { marketAccessState } from "@/lib/market/access";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
+import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Weekly trend-alert digest ─────────────────────────────────────
 // Vercel cron (vercel.json). For every member with explorer access,
@@ -25,23 +26,14 @@ import { siteUrl } from "@/lib/url";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-function authorise(request: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  const auth = request.headers.get("authorization");
-  if (cronSecret && auth === `Bearer ${cronSecret}`) return true;
-  const secret = process.env.INTERNAL_API_SECRET;
-  if (secret && request.headers.get("x-internal-secret") === secret) return true;
-  return false;
-}
-
 type Row = SavedAreaState & {
   user_id: string;
   profiles: { email: string | null; alert_weekly: boolean; plan: "free" | "pro"; reports_run: number; stripe_subscription_id: string | null } | null;
 };
 
 export async function GET(request: Request) {
-  if (!process.env.INTERNAL_API_SECRET && !process.env.CRON_SECRET) return Response.json({ error: "Not found" }, { status: 404 });
-  if (!authorise(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
+  if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const dry = new URL(request.url).searchParams.get("dry") === "1";
   let admin;
@@ -81,6 +73,7 @@ export async function GET(request: Request) {
     .from("checked_listings")
     .select("id, user_id, snapshot, price_history, profiles!inner(email, alert_weekly, plan, reports_run, stripe_subscription_id)")
     .eq("profiles.alert_weekly", true)
+    .neq("status", "passed")
     .neq("price_history", "[]");
   if (movedError) console.warn("[alerts] checked_listings select failed (schema behind?):", movedError.message);
   for (const raw of (moved ?? []) as unknown as { id: string; user_id: string; snapshot: { title?: string; displayAddress?: string }; price_history: unknown; profiles: Row["profiles"] }[]) {

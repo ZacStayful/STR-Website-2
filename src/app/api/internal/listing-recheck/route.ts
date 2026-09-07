@@ -9,6 +9,7 @@ import type { Deal } from "@/lib/listing/deal";
 import { marketAccessState } from "@/lib/market/access";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
+import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Daily re-check of saved listings ──────────────────────────────────
 // Vercel cron (vercel.json, 06:00 UTC). Stalest first over every pipeline
@@ -25,29 +26,26 @@ import { siteUrl } from "@/lib/url";
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/listing-recheck?dry=1"
 //
 // Kill switches: LISTING_RECHECK_ENABLED=false (this route), LISTING_SERVER_FETCH
-// and LISTING_SOURCES (the fetch layer). LISTING_RECHECK_MAX_PER_RUN caps a run.
+// and LISTING_SOURCES (the fetch layer). LISTING_RECHECK_MAX_PER_RUN caps a run
+// (default 40: at one fetch plus a one-second pause each, that is what the
+// 60 s function limit allows; a larger pipeline drains over several days,
+// stalest first).
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const TIME_BUDGET_MS = 50_000;
+/** The Airbnb refresh makes no page fetch and runs first inside this slice. */
+const AIRBNB_BUDGET_MS = 8_000;
 const PORTAL_MIN_AGE_MS = 20 * 60 * 60 * 1000;
 const AIRBNB_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const AIRBNB_MAX_PER_RUN = 20;
+const AIRBNB_MAX_PER_RUN = 10;
 const PORTAL_SOURCES: ListingSource[] = ["rightmove", "onthemarket"];
-
-function authorise(request: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  const auth = request.headers.get("authorization");
-  if (cronSecret && auth === `Bearer ${cronSecret}`) return true;
-  const secret = process.env.INTERNAL_API_SECRET;
-  if (secret && request.headers.get("x-internal-secret") === secret) return true;
-  return false;
-}
+const DEFAULT_MAX_PER_RUN = 40;
 
 function maxPerRun(): number {
-  const n = Number(process.env.LISTING_RECHECK_MAX_PER_RUN ?? 200);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 200;
+  const n = Number(process.env.LISTING_RECHECK_MAX_PER_RUN ?? DEFAULT_MAX_PER_RUN);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : DEFAULT_MAX_PER_RUN;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -78,8 +76,8 @@ function lastSeen(r: Row): number {
 }
 
 export async function GET(request: Request) {
-  if (!process.env.INTERNAL_API_SECRET && !process.env.CRON_SECRET) return Response.json({ error: "Not found" }, { status: 404 });
-  if (!authorise(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
+  if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (process.env.LISTING_RECHECK_ENABLED === "false") return Response.json({ enabled: false, reason: "LISTING_RECHECK_ENABLED=false" });
 
   const dry = new URL(request.url).searchParams.get("dry") === "1";
@@ -101,17 +99,19 @@ export async function GET(request: Request) {
     .neq("status", "passed")
     .in("source", [...PORTAL_SOURCES, "airbnb"])
     .order("rechecked_at", { ascending: true, nullsFirst: true })
-    .limit(cap * 4);
+    .limit(cap * 2 + AIRBNB_MAX_PER_RUN);
   if (error) {
     console.error("[recheck] select failed:", error.message);
     return Response.json({ error: "Query failed" }, { status: 500 });
   }
   const rows = (data ?? []) as unknown as Row[];
 
-  // Portal listings: one fetch per URL, oldest first, skipping anything seen today.
+  // Portal listings: one fetch per URL, oldest first, skipping anything seen
+  // today and anything already gone (a removed listing cannot change again).
   const byUrl = new Map<string, Row[]>();
   for (const r of rows) {
     if (!PORTAL_SOURCES.includes(r.source)) continue;
+    if (r.listing_status === "removed") continue;
     if (now.getTime() - lastSeen(r) < PORTAL_MIN_AGE_MS) continue;
     if (!serverFetchEnabled(r.source)) continue;
     const list = byUrl.get(r.canonical_url) ?? [];
@@ -128,7 +128,20 @@ export async function GET(request: Request) {
     return Response.json({ ...summary, wouldFetch: urls.map(([u, rs]) => ({ url: u, members: rs.length, lastSeen: new Date(Math.min(...rs.map(lastSeen))).toISOString() })), wouldRefresh: airbnb.map((r) => r.canonical_url) });
   }
 
-  const changedRows = new Map<string, Row & { history: PriceHistoryEntry[] }>();
+  // Airbnb first: no page fetch, bounded by its own slice so a long portal
+  // queue can never starve the monthly refresh.
+  for (const r of airbnb) {
+    if (Date.now() - started > AIRBNB_BUDGET_MS) break;
+    const snap = r.snapshot;
+    const quick = await quickEstimate(
+      { kind: "str", postcode: snap.postcode ?? r.postcode, outcode: snap.outcode, bedrooms: snap.bedrooms ?? 2, bathrooms: snap.bathrooms, lat: snap.lat ?? r.lat, lng: snap.lng ?? r.lng, airbnbId: snap.id },
+      { mode: "cron", userId: r.user_id },
+    );
+    const { error: upErr } = await admin.from("checked_listings").update({ quick_estimate: quick, rechecked_at: nowIso }).eq("id", r.id);
+    if (upErr) console.error("[recheck] airbnb update failed:", upErr.message);
+    else summary.airbnbRefreshed += 1;
+  }
+
   let first = true;
   for (const [url, members] of urls) {
     if (Date.now() - started > TIME_BUDGET_MS) {
@@ -173,33 +186,19 @@ export async function GET(request: Request) {
           }
         }
         summary.changed += 1;
-        changedRows.set(r.id, { ...r, history });
       }
       const { error: upErr } = await admin.from("checked_listings").update(update).eq("id", r.id);
       if (upErr) console.error("[recheck] update failed:", upErr.message);
     }
   }
 
-  for (const r of airbnb) {
-    if (Date.now() - started > TIME_BUDGET_MS) {
-      summary.ranOutOfTime = true;
-      break;
-    }
-    const snap = r.snapshot;
-    const quick = await quickEstimate(
-      { kind: "str", postcode: snap.postcode ?? r.postcode, outcode: snap.outcode, bedrooms: snap.bedrooms ?? 2, bathrooms: snap.bathrooms, lat: snap.lat ?? r.lat, lng: snap.lng ?? r.lng, airbnbId: snap.id },
-      { mode: "cron", userId: r.user_id },
-    );
-    const { error: upErr } = await admin.from("checked_listings").update({ quick_estimate: quick, rechecked_at: nowIso }).eq("id", r.id);
-    if (upErr) console.error("[recheck] airbnb update failed:", upErr.message);
-    else summary.airbnbRefreshed += 1;
-  }
-
   // Email everything still unnotified: this run's changes plus any earlier
-  // ones whose email failed. Recorded as notified only after a successful send.
+  // ones whose email failed. Recorded as notified only after a successful
+  // send. Listings the member has since Passed are left alone.
   const { data: pendingData, error: pendErr } = await admin
     .from("checked_listings")
     .select("id, user_id, canonical_url, snapshot, price_history, profiles!inner(email, plan, reports_run, stripe_subscription_id)")
+    .neq("status", "passed")
     .contains("price_history", [{ notified: false }]);
   if (pendErr) console.error("[recheck] pending select failed:", pendErr.message);
   const byUser = new Map<string, { profile: Profile; items: (RecheckAlertItem & { history: PriceHistoryEntry[] })[] }>();

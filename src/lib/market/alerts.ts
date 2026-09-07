@@ -10,6 +10,7 @@
 import type { AreaCardData } from './explorer.ts';
 import type { AreaTrend } from './trend.ts';
 import { formatMonth } from './trend.ts';
+import { escapeHtml as esc } from '../email/escape.ts';
 
 export interface SavedAreaState {
   postcode_area: string;
@@ -96,7 +97,6 @@ export function digestEmail(changes: AlertChange[], siteUrl: string, listingChan
     `Open the explorer: ${siteUrl}/markets`,
     `Manage alerts in your goals: ${siteUrl}/markets`,
   ].join('\n');
-  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const areasHtml = changes.length > 0 ? `<ul style="padding-left:18px">${changes.map((c) => `<li style="margin:8px 0"><a href="${siteUrl}/markets/${esc(c.code.toLowerCase())}" style="color:#2e3d2b">${esc(line(c))}</a></li>`).join('')}</ul>` : '';
   const listingsHtml =
     listingChanges.length > 0
