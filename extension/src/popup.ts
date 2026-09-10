@@ -1,20 +1,17 @@
 /** Toolbar popup: connection status, manual token entry, disconnect. */
-import { DEFAULT_SITE, type StatusResult } from './shared.ts';
+import { DEFAULT_SITE, esc, send, type StatusResult } from './shared.ts';
 
 const app = document.getElementById('app') as HTMLElement;
-const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-function send<T>(message: unknown): Promise<T> {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response: T) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(response);
-    });
-  });
-}
 
 function connectedView(st: Extract<StatusResult, { connected: true }>): string {
   const me = st.me;
+  if (!me) {
+    return `
+    <p><strong>Connected</strong>, but Stayful could not be reached.</p>
+    <p class="err">${esc(st.error)}</p>
+    <button class="cta secondary" id="retry">Try again</button>
+    <button class="cta secondary" id="disconnect">Disconnect</button>`;
+  }
   const plan = me.plan === 'pro' ? 'Pro' : me.runsRemaining !== null ? `Trial · ${me.runsRemaining} free report${me.runsRemaining === 1 ? '' : 's'} left` : 'Member';
   return `
     <p><strong>Connected</strong>${me.email ? ` as ${esc(me.email)}` : ''}</p>
@@ -44,6 +41,7 @@ async function render() {
     return;
   }
   app.innerHTML = st.connected ? connectedView(st) : disconnectedView(st.site || DEFAULT_SITE);
+  document.getElementById('retry')?.addEventListener('click', () => void render());
   document.getElementById('disconnect')?.addEventListener('click', async () => {
     await send({ type: 'disconnect' });
     void render();

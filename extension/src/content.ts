@@ -8,7 +8,7 @@
  */
 import { detectListingUrl, SOURCE_LABELS } from '../../src/lib/listing/detect.ts';
 import { formatListingPrice } from '../../src/lib/listing/format.ts';
-import type { CheckResponse, CheckResult, StatusResult } from './shared.ts';
+import { esc, send, type CheckResponse, type CheckResult, type StatusResult } from './shared.ts';
 
 const HOST_ID = 'stayful-intelligence-root';
 
@@ -51,19 +51,10 @@ type State =
 let currentUrl = '';
 let host: HTMLElement | null = null;
 let root: ShadowRoot | null = null;
-let closed = false;
+/** The listing the member dismissed the bar on; it stays closed until they open a different listing. */
+let closedFor: string | null = null;
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
-const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-function send<T>(message: unknown): Promise<T> {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response: T) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(response);
-    });
-  });
-}
 
 function mount(): ShadowRoot {
   if (root && host?.isConnected) return root;
@@ -138,7 +129,7 @@ function resultHtml(site: string, r: CheckResponse): string {
 }
 
 function render(state: State, site: string) {
-  if (closed) return;
+  if (closedFor === currentUrl) return;
   const r = mount();
   let body = '';
   const source = detectListingUrl(currentUrl)?.source;
@@ -154,7 +145,7 @@ function render(state: State, site: string) {
       body = resultHtml(site, state.data);
       break;
     case 'error':
-      body = `${header()}<div class="body"><div class="title">Could not check this listing</div><div class="err">${esc(state.message)}</div>${state.upgradeUrl ? `<a class="cta" href="${esc(site + state.upgradeUrl)}" target="_blank" rel="noopener">Upgrade</a>` : `<button class="cta secondary" data-act="check">Try again</button>`}</div>`;
+      body = `${header()}<div class="body"><div class="title">Could not check this listing</div><div class="err">${esc(state.message)}</div>${state.upgradeUrl ? `<a class="cta" href="${esc(site + state.upgradeUrl)}" target="_blank" rel="noopener">Upgrade</a>` : `<button class="cta secondary" data-act="${state.code === 'status' ? 'retry' : 'check'}">Try again</button>`}</div>`;
       break;
     case 'locked':
       body =
@@ -172,10 +163,11 @@ function render(state: State, site: string) {
       const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
       if (!t) return;
       if (t.dataset.act === 'close') {
-        closed = true;
+        closedFor = currentUrl;
         unmount();
       }
       if (t.dataset.act === 'check') void runCheck();
+      if (t.dataset.act === 'retry') void start(true);
     });
   }
   bar.innerHTML = body;
@@ -196,23 +188,25 @@ async function runCheck() {
   }
 }
 
-async function start() {
+async function start(force = false) {
   const detected = detectListingUrl(location.href);
   if (!detected) {
     unmount();
     return;
   }
-  if (detected.canonicalUrl === currentUrl && host?.isConnected) return;
+  // Same listing (date pickers and the like only change the query string): leave the bar as it is.
+  if (!force && detected.canonicalUrl === currentUrl) return;
   currentUrl = detected.canonicalUrl;
-  closed = false;
+  if (closedFor === currentUrl) return;
   try {
     const st = await send<StatusResult>({ type: 'status' });
     site = st.site;
     if (!st.connected) render({ kind: 'locked', site, reason: 'not_connected' }, site);
+    else if (st.me === null) render({ kind: 'error', message: st.error, code: 'status' }, site);
     else if (st.me.state !== 'ok') render({ kind: 'locked', site, reason: 'no_access' }, site);
     else render({ kind: 'idle' }, site);
-  } catch {
-    render({ kind: 'locked', site, reason: 'not_connected' }, site);
+  } catch (err) {
+    render({ kind: 'error', message: (err as Error).message || 'Could not reach the extension.', code: 'status' }, site);
   }
 }
 

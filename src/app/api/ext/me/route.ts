@@ -1,6 +1,6 @@
 import { extensionAccess } from '@/lib/extension/auth';
 import { json, preflight } from '@/lib/extension/cors';
-import { FREE_RUNS } from '@/lib/access';
+import { runsRemaining } from '@/lib/access';
 
 export const runtime = 'nodejs';
 
@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     email: access.user?.email ?? null,
     state: access.state,
     plan: access.plan,
-    runsRemaining: access.plan === 'pro' ? null : Math.max(0, FREE_RUNS - (access.reportsRun ?? 0)),
+    runsRemaining: access.plan === 'pro' ? null : runsRemaining({ reports_run: access.reportsRun ?? 0 }),
   });
 }
 

@@ -1,7 +1,8 @@
 import 'server-only';
 
 import { createHash, randomBytes } from 'node:crypto';
-import { createAdminClient } from '../supabase/admin';
+import { after } from 'next/server';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 
 /**
  * Scoped tokens for the browser extension. The raw token is shown to the
@@ -23,9 +24,6 @@ export function hashToken(raw: string): string {
   return createHash('sha256').update(raw).digest('hex');
 }
 
-function hasServiceRole(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
 
 /** Mints a new token for the member and returns the raw value (never stored). */
 export async function mintExtensionToken(userId: string, label: string | null): Promise<{ raw: string; id: string } | null> {
@@ -51,7 +49,10 @@ export async function verifyExtensionToken(raw: string): Promise<{ id: string; u
   if (!data || data.revoked_at) return null;
   const last = data.last_used_at ? new Date(data.last_used_at as string).getTime() : 0;
   if (Date.now() - last > LAST_USED_THROTTLE_MS) {
-    void admin.from('extension_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id).then(({ error }) => {
+    // Runs once the response has been sent; a plain floating promise can be
+    // frozen with the serverless function before it commits.
+    after(async () => {
+      const { error } = await admin.from('extension_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id);
       if (error) console.error('[extension] last_used update failed:', error.message);
     });
   }

@@ -3,7 +3,7 @@
  * behalf of the content script and popup (so page origins never see the
  * token), and accepts the token handed over by /extension/connect.
  */
-import { DEFAULT_SITE, normaliseSite, type CheckResponse, type CheckResult, type Message, type MeResponse, type Reply, type Settings, type StatusResult } from './shared.ts';
+import { normaliseSite, type CheckResponse, type CheckResult, type Message, type MeResponse, type Reply, type Settings, type StatusResult } from './shared.ts';
 
 const MAX_HTML = 3 * 1024 * 1024;
 
@@ -33,7 +33,9 @@ async function status(): Promise<StatusResult> {
     await chrome.storage.local.remove('token');
     return { connected: false, site: s.site };
   }
-  if (status !== 200 || !('state' in data)) return { connected: true, site: s.site, me: { email: null, state: 'blocked', plan: null, runsRemaining: null } };
+  // Anything but a real answer (5xx, maintenance page, proxy error) is a
+  // transient problem to retry, never "your plan does not include this".
+  if (status !== 200 || !('state' in data)) return { connected: true, site: s.site, me: null, error: ('error' in data && data.error) || `Stayful returned ${status}.` };
   return { connected: true, site: s.site, me: data };
 }
 
@@ -81,15 +83,22 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, sendResponse: (
 });
 
 /**
- * /extension/connect hands the freshly minted token straight over. Only a
- * page on the configured Stayful site (or the default) may do so.
+ * /extension/connect hands the freshly minted token straight over. Chrome
+ * only delivers these messages from pages listed under externally_connectable
+ * in the manifest (the Stayful site, plus localhost in --dev builds), so the
+ * sender's origin is trusted as the site to talk to; the token is still
+ * verified against that site before it is stored.
  */
 chrome.runtime.onMessageExternal.addListener((message: { type?: string; token?: string; site?: string }, sender, sendResponse: (r: { ok: boolean; error?: string }) => void) => {
   (async () => {
     if (message?.type !== 'stayful.connect' || typeof message.token !== 'string') return sendResponse({ ok: false, error: 'Unknown message.' });
-    const origin = sender.url ? new URL(sender.url).origin : '';
-    const s = await settings();
-    if (origin !== s.site && origin !== DEFAULT_SITE) return sendResponse({ ok: false, error: 'Unexpected origin.' });
+    let origin: string;
+    try {
+      origin = new URL(sender.url ?? '').origin;
+    } catch {
+      return sendResponse({ ok: false, error: 'Unexpected sender.' });
+    }
+    if (!/^https?:$/.test(new URL(origin).protocol)) return sendResponse({ ok: false, error: 'Unexpected sender.' });
     sendResponse(await setToken(message.token, origin));
   })().catch((err) => sendResponse({ ok: false, error: (err as Error).message }));
   return true;
