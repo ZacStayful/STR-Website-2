@@ -49,7 +49,7 @@ export async function resolveListing(url: string, opts: { html?: string; refresh
     let html = opts.html ?? null;
     if (!html) {
       if (!SERVER_FETCHABLE.has(detected.source)) {
-        return { ok: false, code: 'needs_extension', message: `${SOURCE_LABELS[detected.source]} blocks automated access. The Stayful browser extension (coming soon) reads the page for you; for now, enter the details manually.`, detected };
+        return { ok: false, code: 'needs_extension', message: `${SOURCE_LABELS[detected.source]} blocks automated access. Open the listing with the Stayful browser extension installed (see /extension) and it reads the page for you; otherwise enter the details manually.`, detected };
       }
       const fetched = await fetchListingHtml(detected.source, detected.canonicalUrl);
       if (!fetched.ok) {
@@ -81,10 +81,23 @@ export async function resolveListing(url: string, opts: { html?: string; refresh
   return { ok: true, detected, snapshot, prefill, warnings, fromCache: Boolean(cached) };
 }
 
-/** Upserts the member's own record of this listing (RLS-scoped session client). */
-export async function recordCheckedListing(userId: string, snapshot: ListingSnapshot, quick: QuickEstimate | null): Promise<string | null> {
+/**
+ * Callers with a browser session use the RLS-scoped client; the extension's
+ * token-authenticated routes have no cookies and pass `admin: true` after
+ * verifying the token themselves.
+ */
+export interface ClientChoice {
+  admin?: boolean;
+}
+
+async function clientFor(opts: ClientChoice | undefined) {
+  return opts?.admin ? createAdminClient() : await createSupabaseServerClient();
+}
+
+/** Upserts the member's own record of this listing. */
+export async function recordCheckedListing(userId: string, snapshot: ListingSnapshot, quick: QuickEstimate | null, opts?: ClientChoice): Promise<string | null> {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await clientFor(opts);
     const row = {
       user_id: userId,
       canonical_url: snapshot.canonicalUrl,
@@ -114,9 +127,9 @@ export async function recordCheckedListing(userId: string, snapshot: ListingSnap
 }
 
 /** How many listings this member has resolved today (for the daily cap). */
-export async function resolvesToday(userId: string): Promise<number> {
+export async function resolvesToday(userId: string, opts?: ClientChoice): Promise<number> {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await clientFor(opts);
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
     // last_checked_at is set only when a listing is resolved; pipeline edits touch updated_at, not this.

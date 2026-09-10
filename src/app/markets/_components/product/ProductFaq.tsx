@@ -22,7 +22,7 @@ const FAQS = [
   },
   {
     q: "Can I check a specific property I've found online?",
-    a: "Yes. Paste a Rightmove, OnTheMarket or Airbnb link anywhere in Stayful and we fill in the details, show a free quick view (estimated revenue, area score, competition and what a tracked Airbnb actually earns), and run the deal maths on the asking price or rent. Zoopla and Booking.com need the upcoming browser extension. The full report still uses one of your runs.",
+    a: "Yes. Paste a Rightmove, OnTheMarket or Airbnb link anywhere in Stayful and we fill in the details, show a free quick view (estimated revenue, area score, competition and what a tracked Airbnb actually earns), and run the deal maths on the asking price or rent. Zoopla and Booking.com are read by the Stayful browser extension, which also puts the quick view on every listing page you open. The full report still uses one of your runs.",
   },
   {
     q: "How is this different from the property analyser?",

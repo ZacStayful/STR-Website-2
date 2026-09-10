@@ -268,3 +268,26 @@ create table if not exists public.sourcing_sent (
   primary key (user_id, canonical_url)
 );
 alter table public.sourcing_sent enable row level security;
+
+-- =========================
+-- Browser extension: scoped tokens (Part 2)
+-- =========================
+-- A member connects the Stayful browser extension from /extension/connect,
+-- which mints a random token and stores only its SHA-256 hash here. The
+-- extension sends the raw token as a Bearer header to /api/ext/*; revoking
+-- sets revoked_at and the token stops working immediately.
+create table if not exists public.extension_tokens (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  token_hash text not null unique,
+  label text,
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz,
+  revoked_at timestamptz
+);
+create index if not exists extension_tokens_user_idx on public.extension_tokens (user_id, created_at desc);
+alter table public.extension_tokens enable row level security;
+drop policy if exists "Users can read own extension tokens" on public.extension_tokens;
+create policy "Users can read own extension tokens"
+  on public.extension_tokens for select
+  using (auth.uid() = user_id);
