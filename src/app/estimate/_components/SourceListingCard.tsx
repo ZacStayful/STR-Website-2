@@ -116,7 +116,7 @@ export function SourceListingCard({ snapshot, quick, warnings, onChange, compact
               {area.licensing.headline}
             </span>
           )}
-          {quick.limited && ' Some lookups were paused for today.'}
+          {quick.limited && ' Some lookups were skipped this time (paused for today or too slow); check again later for the rest.'}
         </p>
       )}
 
