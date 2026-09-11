@@ -1,6 +1,7 @@
 import 'server-only';
 
-import { getAreaCardsWithin } from '../market/cached';
+import { getAreaCards, getAreaCardsWithin } from '../market/cached';
+import { keepAlive } from '../keep-alive';
 import { fetchMarketTrends } from '../market/trends-client';
 import { areaTrend } from '../market/trend';
 import { ask, listingPerformance, nearbyListings, postcodeRevenue, strMarket, type BrokerContext, type ResolveResult } from '../broker';
@@ -28,11 +29,12 @@ export interface QuickInput {
 const TREND_LABEL: Record<string, string> = { up: 'Rising enquiries', flat: 'Steady', down: 'Falling enquiries', insufficient: 'Building history' };
 
 /**
- * Time budget. The quick view sits inside one API request (a pasted link
- * has already spent up to ~18 s being fetched and geocoded), so every
- * lookup gets a few seconds and the answer degrades to `limited` instead
- * of the whole request timing out. Slow lookups keep running in the
- * background and fill their caches for the next caller.
+ * Time budget for `quick` mode only. That quick view sits inside one API
+ * request (a pasted link has already spent up to ~18 s being fetched and
+ * geocoded), so every lookup gets a few seconds and the answer degrades to
+ * `limited` instead of the whole request timing out. A lookup that runs
+ * over is kept alive so the provider's answer still reaches its cache and
+ * the spend ledger. Crons and full reports manage their own time and wait.
  */
 export const QUICK_BUDGET_MS = {
   area: 8_000,
@@ -46,11 +48,11 @@ function unavailable<T>(): ResolveResult<T> {
   return { value: null, provider: null, level: null, cached: false, stale: false, unavailable: true, updatedAt: null, costPence: 0 };
 }
 
-async function areaSlice(code: string | null, bedrooms: number, onTimeout: () => void): Promise<QuickArea | null> {
+async function areaSlice(code: string | null, bedrooms: number, budgetMs: number | null, onTimeout: () => void): Promise<QuickArea | null> {
   if (!code) return null;
   const [cards, trends] = await Promise.all([
-    getAreaCardsWithin(QUICK_BUDGET_MS.area).catch(() => null),
-    withTimeout(fetchMarketTrends().catch(() => null), QUICK_BUDGET_MS.area, null),
+    budgetMs === null ? getAreaCards().catch(() => []) : getAreaCardsWithin(budgetMs),
+    budgetMs === null ? fetchMarketTrends().catch(() => null) : withTimeout(fetchMarketTrends().catch(() => null), budgetMs, null),
   ]);
   if (cards === null) {
     onTimeout();
@@ -93,14 +95,18 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
   const timedOut = () => {
     limited = true;
   };
+  const budgeted = ctx.mode === 'quick';
   const bounded = <T>(p: Promise<ResolveResult<T>>, ms: number) =>
-    withTimeout(p, ms, () => {
-      timedOut();
-      return unavailable<T>();
-    });
+    budgeted
+      ? withTimeout(p, ms, () => {
+          timedOut();
+          keepAlive(p);
+          return unavailable<T>();
+        })
+      : p;
 
   const [area, pcRes, nearbyRes] = await Promise.all([
-    areaSlice(areaCode, input.bedrooms, timedOut),
+    areaSlice(areaCode, input.bedrooms, budgeted ? QUICK_BUDGET_MS.area : null, timedOut),
     input.postcode ? bounded(ask(postcodeRevenue, { postcode: input.postcode, bedrooms: input.bedrooms }, ctx), QUICK_BUDGET_MS.postcode) : Promise.resolve(null),
     hasPoint ? bounded(ask(nearbyListings, { lat: input.lat!, lng: input.lng! }, ctx), QUICK_BUDGET_MS.nearby) : Promise.resolve(null),
   ]);
@@ -116,8 +122,8 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
     else {
       const perf = await bounded(ask(listingPerformance, { listingId: input.airbnbId, lat: input.lat ?? undefined, lng: input.lng ?? undefined }, ctx), QUICK_BUDGET_MS.tracked);
       if (perf.value) tracked = { ...perf.value, provider: perf.provider ?? 'internal', updatedAt: perf.updatedAt };
+      else if (perf.unavailable) limited = true; // skipped or too slow: not evidence the listing is untracked
       else trackedMissing = true;
-      if (perf.unavailable && !perf.value) limited = true;
     }
   }
 

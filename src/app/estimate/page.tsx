@@ -89,7 +89,7 @@ import { DealPanel } from "./_components/DealPanel";
 import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
 import { SecondOpinionCard } from "./_components/SecondOpinionCard";
-import type { ResolvedListing } from "./_components/listing-client-types";
+import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "./_components/listing-client-types";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
 import { initTracker, endSession, trackCtaClick } from "@/lib/tracker";
@@ -524,11 +524,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
         });
-        const data = await res.json();
-        if (res.ok && !data.error) applyListing(data as ResolvedListing);
-        else setError(data.error ?? "Could not read that listing.");
+        const result = await readResolvedListing(res);
+        if (result.ok) applyListing(result.listing);
+        else setError(result.error);
       } catch {
-        setError("Could not read that listing link.");
+        setError(RESOLVE_NETWORK_ERROR);
       }
     })();
   }, [initialResult, applyListing]);
