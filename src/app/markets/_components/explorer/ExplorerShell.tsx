@@ -3,23 +3,23 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { toggleSavedAreaAction } from "../../actions";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
-import { sortRows, isSortKey } from "@/lib/market/rank";
+import { sortRows, isSortKey, SORT_LABELS } from "@/lib/market/rank";
 import { hasBeds, inBudget, passesConfidence } from "@/lib/market/filters";
 import { CompareBar, MAX_COMPARE } from "../CompareBar";
 import { MapPane } from "./MapPane";
-import { GoalBar } from "./GoalBar";
+import { TopBar } from "./TopBar";
 import { GoalsModal } from "./GoalsModal";
 import { AreaList } from "./AreaList";
 import { DetailDrawer } from "./DetailDrawer";
 import { DEFAULT_FILTERS, type AreaCardData, type ExplorerRow, type Filters, type MapMetric, type MarketGoals, type SortKey } from "./types";
-import { areaTrend } from "@/lib/market/trend";
+import { areaTrend, pulse } from "@/lib/market/trend";
 import type { MarketTrendsResponse } from "@/lib/market/types";
-import { MarketPulse } from "./MarketPulse";
-import { ListingCheck } from "./ListingCheck";
 import { ListingsPane } from "./ListingsPane";
 import { ListingDrawer } from "./ListingDrawer";
 import { ListingCompare } from "./ListingCompare";
-import { PIPELINE_STATUSES, rowFromResolved, type CheckedListingRow, type ListingSort, type PipelineStatus } from "@/lib/listing/pipeline";
+import { rowFromResolved, type CheckedListingRow, type ListingSort, type PipelineStatus } from "@/lib/listing/pipeline";
+import { VERDICT_CHIPS, VERDICT_COLOURS } from "@/lib/listing/verdict";
+import { listingVerdict } from "./verdicts";
 import type { ResolvedListing } from "@/app/estimate/_components/listing-client-types";
 
 const DISMISS_KEY = "mx_goals_dismissed";
@@ -46,11 +46,11 @@ export function ExplorerShell({
   trends?: MarketTrendsResponse | null;
   alertWeekly?: boolean;
   sourcingAlerts?: boolean;
-  /** A listing URL prefilled in the paste box (from the sourcing email's "Add to pipeline"); the member still clicks Check. */
+  /** A listing URL prefilled in the search box (from the sourcing email's "Add to pipeline"); the member still clicks Check. */
   initialCheckUrl?: string | null;
   /** The member's checked listings (deal pipeline). */
   listings?: CheckedListingRow[];
-  /** Open on the pipeline instead of the areas list (deep links / fixtures). */
+  /** Open on the deals instead of the areas list (deep links / fixtures). */
   initialSidePane?: "areas" | "listings";
   initialActiveListing?: string | null;
   goals: MarketGoals | null;
@@ -115,7 +115,7 @@ export function ExplorerShell({
   // The trend sort only makes sense once a handful of areas have a direction;
   // a deep link asking for it before then falls back to the Stayful score.
   const trendSortReady = useMemo(() => rows.filter((r) => r.trend && r.trend.enquiries.direction !== "insufficient").length >= 5, [rows]);
-  const effectiveSort: SortKey = sort === "trend" && !trendSortReady ? "stayful" : sort;
+  const effectiveSort: SortKey = sort === "trend" && !trendSortReady ? "stayful" : sort === "personal" && !goals ? "stayful" : sort;
 
   const q = filters.q.trim().toLowerCase();
   const visible = useMemo(() => {
@@ -184,6 +184,7 @@ export function ExplorerShell({
   // ── Deal pipeline helpers ──
   const areaRowOf = useCallback((l: CheckedListingRow): ExplorerRow | null => (l.postcodeArea ? byCode.get(l.postcodeArea) ?? null : null), [byCode]);
   const areaFit = useCallback((l: CheckedListingRow): number | null => areaRowOf(l)?.personal?.score ?? null, [areaRowOf]);
+  const verdicts = useMemo(() => new Map(listings.map((l) => [l.id, listingVerdict(l)])), [listings]);
   const activeListingRow = activeListing ? listings.find((l) => l.id === activeListing) ?? null : null;
   const openListing = useCallback(
     (id: string) => {
@@ -201,7 +202,7 @@ export function ExplorerShell({
     if (row?.postcodeArea && byCode.has(row.postcodeArea)) setSelected(row.postcodeArea);
     if (!row) {
       // The listing was read but not saved (database hiccup): nothing to act on yet.
-      setListingNotice("We read that listing but could not save it to your pipeline. Please try again in a moment.");
+      setListingNotice("We read that listing but could not save it to your deals. Please try again in a moment.");
       setSidePane("listings");
       setActiveListing(null);
       setMobilePane("list");
@@ -228,14 +229,20 @@ export function ExplorerShell({
   const listingCompareRows = listingCompare.map((id) => listings.find((l) => l.id === id)).filter((l): l is CheckedListingRow => !!l);
   const pins = listings
     .filter((l) => l.lat !== null && l.lng !== null && l.status !== "passed")
-    .map((l) => ({ id: l.id, lat: l.lat!, lng: l.lng!, colour: PIPELINE_STATUSES.find((s) => s.key === l.status)?.colour ?? "#9a7b2e", label: `${l.title}${l.price ? ` · £${Math.round(l.price.amount).toLocaleString("en-GB")}` : ""}`, active: l.id === activeListing }));
+    .map((l) => {
+      const v = verdicts.get(l.id);
+      const tone = v?.tone ?? "unknown";
+      return { id: l.id, lat: l.lat!, lng: l.lng!, colour: VERDICT_COLOURS[tone], legend: VERDICT_CHIPS[tone], label: `${l.title}${v ? ` · ${v.number} ${v.numberLabel}` : ""}`, active: l.id === activeListing };
+    });
 
   const listingsShown = sidePane === "listings";
   const drawerShown = listingsShown ? !!activeListingRow : !!selectedRow || (!!initialAreaName && !!selected);
+  const nationalPulse = trends ? pulse(trends.national) : null;
+  const pulseWord = nationalPulse ? (nationalPulse.enquiries.direction === "up" ? "rising" : nationalPulse.enquiries.direction === "down" ? "falling" : nationalPulse.enquiries.direction === "flat" ? "steady" : null) : null;
 
   return (
     <div className={"mx-explorer" + (drawerShown ? " has-drawer" : "") + ` pane-${mobilePane}`}>
-      <GoalBar
+      <TopBar
         filters={filters}
         onFilters={setFilters}
         sort={effectiveSort}
@@ -247,16 +254,16 @@ export function ExplorerShell({
         mobilePane={mobilePane}
         onMobilePane={setMobilePane}
         trendSortReady={trendSortReady}
-        listingsCount={listings.filter((l) => l.status !== "passed").length}
-        listingsOpen={listingsShown}
-        onToggleListings={() => {
-          setSidePane(listingsShown ? "areas" : "listings");
+        dealsCount={listings.filter((l) => l.status !== "passed").length}
+        view={sidePane}
+        onView={(v) => {
+          setSidePane(v);
           setActiveListing(null);
           setMobilePane("list");
         }}
+        onResolved={onResolved}
+        initialCheckUrl={initialCheckUrl}
       />
-      <ListingCheck onResolved={onResolved} initialUrl={initialCheckUrl} />
-      {trends && <MarketPulse national={trends.national} compact />}
 
       <div className="mx-explorer-body">
         <div className="mx-explorer-map">
@@ -272,6 +279,7 @@ export function ExplorerShell({
             home={home}
             pins={pins}
             onPinClick={openListing}
+            pulse={pulseWord ? <>Enquiries across the UK: <b className={`mx-pulse-word mx-pulse-word--${nationalPulse!.enquiries.direction}`}>{pulseWord}</b> this month</> : null}
           />
         </div>
 
@@ -281,7 +289,9 @@ export function ExplorerShell({
               <ListingDrawer
                 key={activeListingRow.id}
                 listing={activeListingRow}
+                verdict={verdicts.get(activeListingRow.id) ?? listingVerdict(activeListingRow)}
                 areaRow={areaRowOf(activeListingRow)}
+                areaFit={areaFit(activeListingRow)}
                 comparing={listingCompare.includes(activeListingRow.id)}
                 compareDisabled={listingCompare.length >= MAX_COMPARE}
                 onClose={() => setActiveListing(null)}
@@ -299,15 +309,13 @@ export function ExplorerShell({
               {listingNotice && <div className="mx-note mx-note--error" role="alert" style={{ margin: "10px 16px 0" }}>{listingNotice}</div>}
               <ListingsPane
                 listings={listings}
+                verdicts={verdicts}
                 statusFilter={listingStatusFilter}
                 onStatusFilter={setListingStatusFilter}
                 sort={listingSort}
                 onSort={setListingSort}
                 areaFit={areaFit}
-                compare={listingCompare}
-                onToggleCompare={toggleListingCompare}
                 onSelect={openListing}
-                onBack={() => setSidePane("areas")}
               />
               </>
             )
@@ -315,6 +323,7 @@ export function ExplorerShell({
             <DetailDrawer
               row={selectedRow}
               bedroom={bedroom}
+              goals={goals}
               comparing={compare.includes(selectedRow.card.code)}
               compareDisabled={compare.length >= MAX_COMPARE}
               userEmail={userEmail}
@@ -335,13 +344,14 @@ export function ExplorerShell({
           ) : (
             <AreaList
               rows={visible}
+              total={rows.length}
               selected={selected}
               hover={hover}
-              compare={compare}
               bedroom={bedroom}
+              goals={goals}
+              sortLabel={SORT_LABELS[effectiveSort]}
               onSelect={select}
               onHover={setHover}
-              onToggleCompare={toggleCompare}
               onToggleSaved={toggleSaved}
               emptyMessage={q ? `We don't have data for “${filters.q}” yet — try another area or postcode.` : "Try widening your budget, bedrooms, region, confidence or saved filter."}
             />

@@ -55,6 +55,7 @@ export function MapPane({
   home,
   pins = [],
   onPinClick,
+  pulse,
 }: {
   rows: ExplorerRow[];
   selected: string | null;
@@ -65,9 +66,11 @@ export function MapPane({
   onMetricChange: (m: MapMetric) => void;
   hasGoals: boolean;
   home: { lat: number; lng: number; radiusMiles: number | null } | null;
-  /** Checked listings drawn as dots, coloured by pipeline status. */
-  pins?: { id: string; lat: number; lng: number; colour: string; label: string; active?: boolean }[];
+  /** The member's deals as markers, coloured by verdict. */
+  pins?: { id: string; lat: number; lng: number; colour: string; label: string; legend: string; active?: boolean }[];
   onPinClick?: (id: string) => void;
+  /** A small overlay (the UK market pulse) in the map's corner. */
+  pulse?: React.ReactNode;
 }) {
   const { features, paths, failed, project } = useUkGeo();
   const [view, setView] = useState({ k: 1, x: 0, y: 0 });
@@ -136,6 +139,14 @@ export function MapPane({
     return Math.abs(y2 - y1);
   })();
 
+  const pinLegend = useMemo(() => {
+    const m = new Map<string, { legend: string; colour: string; n: number }>();
+    for (const p of pins) {
+      const e = m.get(p.legend);
+      if (e) e.n += 1; else m.set(p.legend, { legend: p.legend, colour: p.colour, n: 1 });
+    }
+    return [...m.values()];
+  }, [pins]);
   const hoverRow = hover ? byCode.get(hover) : undefined;
   const hoverVal = hoverRow && metric !== "accuracy" ? metricValue(hoverRow, metric) : null;
 
@@ -194,15 +205,16 @@ export function MapPane({
                   {pins.map((pin) => {
                     const pt = project(pin.lng, pin.lat);
                     if (!pt) return null;
+                    const s = (pin.active ? 1.3 : 1) / view.k;
                     return (
-                      <circle
+                      <path
                         key={pin.id}
-                        cx={pt[0]}
-                        cy={pt[1]}
-                        r={(pin.active ? 7 : 5) / view.k}
+                        // A teardrop with its point on the listing.
+                        d="M0 0 L-6 -11 A7 7 0 1 1 6 -11 Z"
+                        transform={`translate(${pt[0]} ${pt[1]}) scale(${s})`}
                         fill={pin.colour}
-                        stroke="#fff"
-                        strokeWidth={(pin.active ? 2.5 : 1.5) / view.k}
+                        stroke={pin.active ? "#2E3D2B" : "#fff"}
+                        strokeWidth={pin.active ? 2 : 1.5}
                         style={{ cursor: "pointer" }}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -210,7 +222,7 @@ export function MapPane({
                         }}
                       >
                         <title>{pin.label}</title>
-                      </circle>
+                      </path>
                     );
                   })}
                 </g>
@@ -253,10 +265,12 @@ export function MapPane({
               {metric === "competition" && <div style={{ fontSize: "0.7rem", color: "var(--mx-muted)" }}>Darker = more competitive</div>}
               <div><span style={{ background: NO_DATA_FILL }} />No data</div>
               {home && <div><span style={{ background: "#2E3D2B", borderRadius: 99 }} />Your home{home.radiusMiles ? ` · ${home.radiusMiles} mi` : ""}</div>}
-              {pins.length > 0 && <div><span style={{ background: "#9a7b2e", borderRadius: 99 }} />Your listings ({pins.length})</div>}
+              {pinLegend.map((l) => <div key={l.legend}><span style={{ background: l.colour, borderRadius: 99 }} />{l.legend} ({l.n})</div>)}
             </>
           )}
         </div>
+
+        {pulse && <div className="mx-map-pulse">{pulse}</div>}
 
         {hover && (
           <div className="mx-map-hint">
