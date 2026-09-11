@@ -22,10 +22,11 @@ async function api<T>(path: string, init: { method?: 'GET' | 'POST'; body?: unkn
     body: init.body ? JSON.stringify(init.body) : undefined,
   });
   // A non-JSON answer is the platform, not the API: a gateway timeout page, a proxy error.
-  const fallback = res.status === 504 || res.status === 502 ? 'Stayful took too long reading that listing. Please try again in a moment.' : `Stayful returned an unexpected response (${res.status}). Please try again.`;
-  const data = (await res.json().catch(() => ({ error: fallback }))) as T;
+  const data = (await res.json().catch(() => ({ error: `Stayful is not responding right now (HTTP ${res.status}). Please try again.`, code: 'no_answer' }))) as T;
   return { status: res.status, data };
 }
+
+const GATEWAY_TIMEOUT = 'Stayful took too long reading that listing. Please try again in a moment.';
 
 async function status(): Promise<StatusResult> {
   const s = await settings();
@@ -49,6 +50,7 @@ async function check(url: string, html: string, save: boolean): Promise<CheckRes
     body: { url, html: html.length > MAX_HTML ? html.slice(0, MAX_HTML) : html, save },
   });
   if (status === 401) await chrome.storage.local.remove('token');
+  if (data.code === 'no_answer' && (status === 504 || status === 502)) return { ok: false, status, error: { error: GATEWAY_TIMEOUT, code: data.code } };
   if (status !== 200 || data.error) return { ok: false, status, error: { error: data.error ?? `Stayful returned ${status}.`, code: data.code, upgradeUrl: data.upgradeUrl } };
   return { ok: true, data };
 }
