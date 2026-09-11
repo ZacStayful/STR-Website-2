@@ -60,6 +60,7 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
       userEmail={user.email}
       trends={trends}
       alertWeekly={user.alertWeekly}
+      listings={user.listings}
       initialSort={isSortKey(sort) ? sort : "stayful"}
       initialQuery={typeof q === "string" ? q.slice(0, 40) : ""}
     />

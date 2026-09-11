@@ -43,6 +43,8 @@ export function Page7Deal({ deal }: { deal: PdfDeal }) {
         ))}
       </View>
 
+      {deal.cashflow.length > 0 && (
+        <>
       <Divider />
 
       <View style={s.thRow}>
@@ -61,6 +63,8 @@ export function Page7Deal({ deal }: { deal: PdfDeal }) {
           <Text style={[m.net < 0 ? s.tdBold : s.td, s.cNum]}>{m.net < 0 ? `-${formatGbp(Math.abs(m.net))}` : formatGbp(m.net)}</Text>
         </View>
       ))}
+        </>
+      )}
 
       <Text style={s.note}>{deal.note}</Text>
     </Page>

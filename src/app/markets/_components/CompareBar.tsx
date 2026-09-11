@@ -12,7 +12,7 @@ import { ConfidenceBadge } from "./ConfidenceBadge";
 export const MAX_COMPARE = 4;
 
 // Numeric rows where a higher value is "better" (highlighted as the winner).
-function bestIndex(values: (number | null)[]): number {
+export function bestIndex(values: (number | null)[]): number {
   let best = -1;
   let bestVal = -Infinity;
   values.forEach((v, i) => {

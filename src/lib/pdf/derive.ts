@@ -493,6 +493,11 @@ export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
   const d = result.deal;
   if (!d) return undefined;
   const cashflow = (result.cashflow ?? []).map((m) => ({ month: m.month, revenue: m.revenue, operating: m.operating, fixed: m.fixed, net: m.net }));
+  return pdfDealFrom(d, result.sourceListing?.url ?? null, cashflow);
+}
+
+/** Same page data from a bare deal (used by the shareable deal sheet, which has no monthly series). */
+export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: string | null, cashflow: PdfDeal["cashflow"]): PdfDeal {
   const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
   const basisLabel =
     d.basis === "asking-price" ? `Based on the asking price of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`
@@ -502,7 +507,7 @@ export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
     return {
       kind: "purchase",
       basisLabel,
-      sourceUrl: result.sourceListing?.url ?? null,
+      sourceUrl,
       metrics: [
         { label: "Gross yield", value: `${d.grossYieldPct}%`, sub: `on ${gbp(d.askingPrice)}` },
         { label: "Net yield", value: `${d.netYieldPct}%`, sub: "after running costs" },
@@ -520,7 +525,7 @@ export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
   return {
     kind: "rent-to-rent",
     basisLabel,
-    sourceUrl: result.sourceListing?.url ?? null,
+    sourceUrl,
     metrics: [
       { label: "Monthly margin", value: `${d.monthlyMargin < 0 ? "-" : ""}${gbp(Math.abs(d.monthlyMargin))}`, sub: `after ${gbp(d.advertisedRentPcm)} rent` },
       { label: "Annual margin", value: `${d.annualMargin < 0 ? "-" : ""}${gbp(Math.abs(d.annualMargin))}` },

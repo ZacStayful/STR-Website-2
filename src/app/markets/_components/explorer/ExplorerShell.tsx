@@ -15,6 +15,12 @@ import { DEFAULT_FILTERS, type AreaCardData, type ExplorerRow, type Filters, typ
 import { areaTrend } from "@/lib/market/trend";
 import type { MarketTrendsResponse } from "@/lib/market/types";
 import { MarketPulse } from "./MarketPulse";
+import { ListingCheck } from "./ListingCheck";
+import { ListingsPane } from "./ListingsPane";
+import { ListingDrawer } from "./ListingDrawer";
+import { ListingCompare } from "./ListingCompare";
+import { PIPELINE_STATUSES, rowFromResolved, type CheckedListingRow, type ListingSort, type PipelineStatus } from "@/lib/listing/pipeline";
+import type { ResolvedListing } from "@/app/estimate/_components/listing-client-types";
 
 const DISMISS_KEY = "mx_goals_dismissed";
 
@@ -29,11 +35,19 @@ export function ExplorerShell({
   userEmail = null,
   trends = null,
   alertWeekly = true,
+  listings: initialListings = [],
+  initialSidePane = "areas",
+  initialActiveListing = null,
 }: {
   cards: AreaCardData[];
   /** Monthly series from /api/market-trends, or null when unavailable. */
   trends?: MarketTrendsResponse | null;
   alertWeekly?: boolean;
+  /** The member's checked listings (deal pipeline). */
+  listings?: CheckedListingRow[];
+  /** Open on the pipeline instead of the areas list (deep links / fixtures). */
+  initialSidePane?: "areas" | "listings";
+  initialActiveListing?: string | null;
   goals: MarketGoals | null;
   savedAreas: string[];
   /** Postcode area code to open in the drawer (deep link). */
@@ -59,6 +73,13 @@ export function ExplorerShell({
   const [dismissed, setDismissed] = useState(false);
   const [saved, setSaved] = useState<Set<string>>(() => new Set(savedAreas));
   const [, startSave] = useTransition();
+  // Deal pipeline: checked listings live in the side pane next to the areas.
+  const [listings, setListings] = useState<CheckedListingRow[]>(initialListings);
+  const [sidePane, setSidePane] = useState<"areas" | "listings">(initialSidePane);
+  const [activeListing, setActiveListing] = useState<string | null>(initialActiveListing);
+  const [listingStatusFilter, setListingStatusFilter] = useState<PipelineStatus | "all">("all");
+  const [listingSort, setListingSort] = useState<ListingSort>("fit");
+  const [listingCompare, setListingCompare] = useState<string[]>([]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-off mount flag for the auto-open
@@ -154,7 +175,58 @@ export function ExplorerShell({
 
   const home = goals?.home && goals.home.lat !== null && goals.home.lng !== null ? { lat: goals.home.lat, lng: goals.home.lng, radiusMiles: goals.maxDistanceMiles } : null;
   const compareRows = compare.map((c) => byCode.get(c)).filter((r): r is ExplorerRow => !!r);
-  const drawerShown = !!selectedRow || (!!initialAreaName && !!selected);
+
+  // ── Deal pipeline helpers ──
+  const areaRowOf = useCallback((l: CheckedListingRow): ExplorerRow | null => (l.postcodeArea ? byCode.get(l.postcodeArea) ?? null : null), [byCode]);
+  const areaFit = useCallback((l: CheckedListingRow): number | null => areaRowOf(l)?.personal?.score ?? null, [areaRowOf]);
+  const activeListingRow = activeListing ? listings.find((l) => l.id === activeListing) ?? null : null;
+  const openListing = useCallback(
+    (id: string) => {
+      setSidePane("listings");
+      setActiveListing(id);
+      setMobilePane("list");
+      const l = listings.find((x) => x.id === id);
+      if (l?.postcodeArea && byCode.has(l.postcodeArea)) setSelected(l.postcodeArea);
+    },
+    [listings, byCode],
+  );
+  const [listingNotice, setListingNotice] = useState<string | null>(null);
+  const onResolved = (res: ResolvedListing) => {
+    const row = rowFromResolved(res);
+    if (row?.postcodeArea && byCode.has(row.postcodeArea)) setSelected(row.postcodeArea);
+    if (!row) {
+      // The listing was read but not saved (database hiccup): nothing to act on yet.
+      setListingNotice("We read that listing but could not save it to your pipeline. Please try again in a moment.");
+      setSidePane("listings");
+      setActiveListing(null);
+      setMobilePane("list");
+      return;
+    }
+    setListingNotice(null);
+    setListings((prev) => {
+      const existing = prev.find((l) => l.canonicalUrl === row.canonicalUrl);
+      const merged = existing ? { ...existing, ...row, status: existing.status, notes: existing.notes, shareToken: existing.shareToken, analysedReportId: existing.analysedReportId } : row;
+      return [merged, ...prev.filter((l) => l.canonicalUrl !== row.canonicalUrl)];
+    });
+    setSidePane("listings");
+    setActiveListing(row.id);
+    setMobilePane("list");
+  };
+  const updateListing = (id: string, patch: Partial<CheckedListingRow>) => setListings((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+  const removeListing = (id: string) => {
+    setListings((prev) => prev.filter((l) => l.id !== id));
+    setListingCompare((prev) => prev.filter((c) => c !== id));
+    setActiveListing(null);
+  };
+  const toggleListingCompare = (id: string) =>
+    setListingCompare((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : prev.length >= MAX_COMPARE ? prev : [...prev, id]));
+  const listingCompareRows = listingCompare.map((id) => listings.find((l) => l.id === id)).filter((l): l is CheckedListingRow => !!l);
+  const pins = listings
+    .filter((l) => l.lat !== null && l.lng !== null && l.status !== "passed")
+    .map((l) => ({ id: l.id, lat: l.lat!, lng: l.lng!, colour: PIPELINE_STATUSES.find((s) => s.key === l.status)?.colour ?? "#9a7b2e", label: `${l.title}${l.price ? ` · £${Math.round(l.price.amount).toLocaleString("en-GB")}` : ""}`, active: l.id === activeListing }));
+
+  const listingsShown = sidePane === "listings";
+  const drawerShown = listingsShown ? !!activeListingRow : !!selectedRow || (!!initialAreaName && !!selected);
 
   return (
     <div className={"mx-explorer" + (drawerShown ? " has-drawer" : "") + ` pane-${mobilePane}`}>
@@ -170,7 +242,15 @@ export function ExplorerShell({
         mobilePane={mobilePane}
         onMobilePane={setMobilePane}
         trendSortReady={trendSortReady}
+        listingsCount={listings.filter((l) => l.status !== "passed").length}
+        listingsOpen={listingsShown}
+        onToggleListings={() => {
+          setSidePane(listingsShown ? "areas" : "listings");
+          setActiveListing(null);
+          setMobilePane("list");
+        }}
       />
+      <ListingCheck onResolved={onResolved} />
       {trends && <MarketPulse national={trends.national} compact />}
 
       <div className="mx-explorer-body">
@@ -185,11 +265,48 @@ export function ExplorerShell({
             onMetricChange={setMetric}
             hasGoals={!!goals}
             home={home}
+            pins={pins}
+            onPinClick={openListing}
           />
         </div>
 
         <div className="mx-explorer-side">
-          {selectedRow ? (
+          {listingsShown ? (
+            activeListingRow ? (
+              <ListingDrawer
+                key={activeListingRow.id}
+                listing={activeListingRow}
+                areaRow={areaRowOf(activeListingRow)}
+                comparing={listingCompare.includes(activeListingRow.id)}
+                compareDisabled={listingCompare.length >= MAX_COMPARE}
+                onClose={() => setActiveListing(null)}
+                onChange={updateListing}
+                onRemoved={removeListing}
+                onOpenArea={(code) => {
+                  setSidePane("areas");
+                  setActiveListing(null);
+                  select(code);
+                }}
+                onToggleCompare={() => toggleListingCompare(activeListingRow.id)}
+              />
+            ) : (
+              <>
+              {listingNotice && <div className="mx-note mx-note--error" role="alert" style={{ margin: "10px 16px 0" }}>{listingNotice}</div>}
+              <ListingsPane
+                listings={listings}
+                statusFilter={listingStatusFilter}
+                onStatusFilter={setListingStatusFilter}
+                sort={listingSort}
+                onSort={setListingSort}
+                areaFit={areaFit}
+                compare={listingCompare}
+                onToggleCompare={toggleListingCompare}
+                onSelect={openListing}
+                onBack={() => setSidePane("areas")}
+              />
+              </>
+            )
+          ) : selectedRow ? (
             <DetailDrawer
               row={selectedRow}
               bedroom={bedroom}
@@ -224,7 +341,11 @@ export function ExplorerShell({
               emptyMessage={q ? `We don't have data for “${filters.q}” yet — try another area or postcode.` : "Try widening your budget, bedrooms, region, confidence or saved filter."}
             />
           )}
-          <CompareBar rows={compareRows} bedroom={bedroom} onRemove={(code) => setCompare((prev) => prev.filter((c) => c !== code))} onClear={() => setCompare([])} />
+          {listingsShown ? (
+            <ListingCompare rows={listingCompareRows} areaOf={areaRowOf} onRemove={(id) => setListingCompare((prev) => prev.filter((c) => c !== id))} onClear={() => setListingCompare([])} />
+          ) : (
+            <CompareBar rows={compareRows} bedroom={bedroom} onRemove={(code) => setCompare((prev) => prev.filter((c) => c !== code))} onClear={() => setCompare([])} />
+          )}
         </div>
       </div>
 

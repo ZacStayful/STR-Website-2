@@ -6,12 +6,7 @@ import { SOURCE_LABELS } from '@/lib/listing/detect';
 import type { ListingSnapshot } from '@/lib/listing/types';
 import type { QuickEstimate } from '@/lib/listing/quick-types';
 import { gbp, pct0 } from './format';
-
-function priceLabel(p: ListingSnapshot['price']): string | null {
-  if (!p) return null;
-  const suffix = p.period === 'pcm' ? ' pcm' : p.period === 'pw' ? ' pw' : p.period === 'night' ? ' / night' : '';
-  return `${gbp(p.amount)}${suffix}`;
-}
+import { formatListingPrice } from '@/lib/listing/format';
 
 const STATUS_LABEL: Record<string, string> = { under_offer: 'Under offer', let_agreed: 'Let agreed', sold: 'Sold', removed: 'Removed' };
 
@@ -22,7 +17,7 @@ const STATUS_LABEL: Record<string, string> = { under_offer: 'Under offer', let_a
  * compact form at the top of the report.
  */
 export function SourceListingCard({ snapshot, quick, warnings, onChange, compact }: { snapshot: ListingSnapshot; quick: QuickEstimate | null; warnings?: string[]; onChange?: () => void; compact?: boolean }) {
-  const price = priceLabel(snapshot.price);
+  const price = snapshot.price ? formatListingPrice(snapshot.price) : null;
   const status = snapshot.status && snapshot.status !== 'available' ? STATUS_LABEL[snapshot.status] : null;
   const est = quick?.estimate ?? null;
   const area = quick?.area ?? null;

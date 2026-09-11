@@ -12,6 +12,7 @@ export default function robots(): MetadataRoute.Robots {
           "/admin",
           "/estimate",
           "/reports",
+          "/deal/",
           "/dashboard",
           "/account",
           "/upgrade",

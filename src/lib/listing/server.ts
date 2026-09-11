@@ -119,7 +119,8 @@ export async function resolvesToday(userId: string): Promise<number> {
     const supabase = await createSupabaseServerClient();
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
-    const { count } = await supabase.from('checked_listings').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('updated_at', start.toISOString());
+    // last_checked_at is set only when a listing is resolved; pipeline edits touch updated_at, not this.
+    const { count } = await supabase.from('checked_listings').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('last_checked_at', start.toISOString());
     return count ?? 0;
   } catch {
     return 0;

@@ -513,3 +513,32 @@
 .mx-trend-chart-title { font-size: 0.78rem; font-weight: 700; color: var(--mx-ink); margin-bottom: 2px; }
 .mx-check { display: flex; gap: 10px; align-items: flex-start; font-size: 0.88rem; color: var(--mx-body); }
 .mx-check input { margin-top: 3px; }
+
+/* ── Deal pipeline: checked listings ─────────────────────────────── */
+.mx-listing-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px 10px; background: var(--mx-card); border-bottom: 1px solid var(--mx-line); }
+.mx-listing-check-input { flex: 1; min-width: 260px; }
+.mx-listing-check-hint { font-size: 0.75rem; color: var(--mx-muted); }
+.mx-listing-check-error { font-size: 0.75rem; color: #8a3b2b; }
+.mx-spin { animation: mx-spin 0.8s linear infinite; }
+@keyframes mx-spin { to { transform: rotate(360deg); } }
+.mx-listings-chip { white-space: nowrap; }
+.mx-listings { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.mx-listings-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 8px; }
+.mx-listings-head h2 { margin: 0; font-size: 1.15rem; }
+.mx-listings-head p { margin: 2px 0 0; color: var(--mx-muted); font-size: 0.8rem; }
+.mx-listings-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 16px 10px; border-bottom: 1px solid var(--mx-line); }
+.mx-listings-filters .mx-select { margin-left: auto; }
+.mx-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 99px; margin-right: 2px; }
+.mx-status { padding: 1px 8px; border-radius: 999px; font-weight: 700; font-size: 0.7rem; color: #fff; }
+.mx-listing-row { grid-template-columns: 56px minmax(0, 1fr) auto auto; }
+.mx-listing-thumb { width: 56px; height: 42px; border-radius: 8px; object-fit: cover; background: var(--mx-grey-bg); display: block; }
+.mx-listing-thumb--empty { background: repeating-linear-gradient(45deg, #eef0ee, #eef0ee 6px, #e4e7dc 6px, #e4e7dc 12px); }
+.mx-listing-src { display: inline-flex; align-items: center; gap: 3px; color: var(--mx-muted); text-decoration: none; }
+.mx-listing-src:hover { text-decoration: underline; }
+.mx-personal-ring--sm { width: 34px; height: 34px; }
+.mx-personal-ring--sm b { font-size: 0.85rem; }
+.mx-select--status { padding: 3px 8px; font-size: 0.8rem; border-width: 2px; }
+.mx-panel--tight { padding: 14px 16px; margin-bottom: 12px; }
+.mx-panel--tight h2 { display: flex; align-items: center; gap: 6px; font-size: 0.95rem; margin: 0 0 6px; }
+.mx-textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.4; }
+.mx-explorer-side .mx-listings + .mx-cmp-tray { margin-top: auto; }

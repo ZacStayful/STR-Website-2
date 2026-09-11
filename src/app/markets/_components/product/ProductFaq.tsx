@@ -21,6 +21,10 @@ const FAQS = [
     a: "Yes. The Market Explorer is included from the moment you sign up, alongside your 5 free property analyses. Using the explorer never uses up a free report.",
   },
   {
+    q: "Can I check a specific property I've found online?",
+    a: "Yes. Paste a Rightmove, OnTheMarket or Airbnb link anywhere in Stayful and we fill in the details, show a free quick view (estimated revenue, area score, competition and what a tracked Airbnb actually earns), and run the deal maths on the asking price or rent. Zoopla and Booking.com need the upcoming browser extension. The full report still uses one of your runs.",
+  },
+  {
     q: "How is this different from the property analyser?",
     a: "The analyser answers 'what would this specific address earn?'. The Market Explorer answers 'where should I be looking in the first place?'. Use the explorer to pick an area, then run the analyser on the properties you find there.",
   },
