@@ -6,17 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { detectListingUrl, SOURCE_LABELS } from '@/lib/listing/detect';
-import type { ResolvedListing } from './listing-client-types';
-
-/** The route always answers JSON; anything else is the platform (a gateway timeout, a proxy error page). */
-async function readJson(res: Response): Promise<Record<string, unknown> | null> {
-  try {
-    const data = await res.json();
-    return data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
+import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from './listing-client-types';
 
 /**
  * "Paste a listing link" box on the analyser form. Resolves the link through
@@ -39,18 +29,14 @@ export function ListingLinkBox({ onResolved, initialUrl, compact }: { onResolved
     setError(null);
     try {
       const res = await fetch('/api/listing/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
-      const data = await readJson(res);
-      if (!data) {
-        setError(res.status === 504 || res.status === 502 ? 'Stayful took too long reading that listing. Please try again in a moment.' : `Something went wrong on our side (HTTP ${res.status}). Please try again.`);
+      const result = await readResolvedListing(res);
+      if (!result.ok) {
+        setError(result.error);
         return;
       }
-      if (!res.ok || data.error) {
-        setError(typeof data.error === 'string' ? data.error : 'Could not read that listing.');
-        return;
-      }
-      onResolved(data as unknown as ResolvedListing);
+      onResolved(result.listing);
     } catch {
-      setError('Could not reach the server. Check your connection and try again.');
+      setError(RESOLVE_NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
