@@ -7,7 +7,12 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { hasAccess } from '@/lib/access';
+import {
+  ACCESS_COLUMNS,
+  accountStatus,
+  countsAgainstFreeTrial,
+  hasAccess,
+} from '@/lib/access';
 import { isAdminEmail } from '@/lib/admin';
 import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '@/lib/broker';
 import { matchTracked, rankCompetitors, summariseCompetitors } from '@/lib/listing/competitors';
@@ -80,6 +85,8 @@ export async function POST(request: Request) {
   let userEmail: string | null = null;
   let userName: string | null = null;
   let userMobile: string | null = null;
+  // Whether this run should be counted against the free-report allowance.
+  let countRun = false;
   let finance: FinanceGoals = DEFAULT_FINANCE_GOALS;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
@@ -94,16 +101,29 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select('plan, reports_run, full_name, mobile, stripe_subscription_id, market_goals')
+      .select(`${ACCESS_COLUMNS}, full_name, mobile, market_goals`)
       .eq('id', user.id)
       .single();
     // Admins (matched by verified auth email) bypass the free-report limit.
-    if (!profile || (!isAdminEmail(user.email) && !hasAccess(profile))) {
+    const isAdmin = isAdminEmail(user.email);
+    if (!profile || (!isAdmin && !hasAccess(profile))) {
+      // A lapsed subscriber has never had a free trial to use up — telling
+      // them they've "used all 5 free reports" is both wrong and confusing.
+      const lapsed = !!profile && accountStatus(profile) === 'lapsed';
       return Response.json(
-        { error: "You've used all 5 of your free reports. Subscribe to continue running analyses.", upgradeUrl: '/upgrade' },
+        {
+          error: lapsed
+            ? 'Your subscription has ended. Re-subscribe to keep running analyses.'
+            : "You've used all 5 of your free reports. Subscribe to continue running analyses.",
+          upgradeUrl: '/upgrade',
+        },
         { status: 402 },
       );
     }
+    // Only free-trial users burn a report credit. Counting a subscriber's
+    // runs would quietly exhaust an allowance they'd be dropped onto if their
+    // subscription ever lapsed, hard-paywalling a customer mid-session.
+    countRun = !isAdmin && countsAgainstFreeTrial(profile);
     userName = profile.full_name ?? null;
     userMobile = profile.mobile ?? null;
     userId = user.id;
@@ -593,20 +613,24 @@ export async function POST(request: Request) {
           }
         }
 
-        // Count this run against the user's 5 free reports.
+        // reports_total counts every report for usage reporting. reports_run
+        // is the free-trial allowance and only advances for free-trial users —
+        // burning a subscriber's allowance would leave them at "0 free reports
+        // left" the moment their subscription ever lapsed.
         if (userId) {
           try {
             const supabase = await createSupabaseServerClient();
             const { data: current } = await supabase
               .from('profiles')
-              .select('reports_run')
+              .select('reports_run, reports_total')
               .eq('id', userId)
               .single();
-            const next = (current?.reports_run ?? 0) + 1;
-            await supabase
-              .from('profiles')
-              .update({ reports_run: next, last_seen_at: new Date().toISOString() })
-              .eq('id', userId);
+            const update: Record<string, unknown> = {
+              last_seen_at: new Date().toISOString(),
+              reports_total: (current?.reports_total ?? 0) + 1,
+            };
+            if (countRun) update.reports_run = (current?.reports_run ?? 0) + 1;
+            await supabase.from('profiles').update(update).eq('id', userId);
           } catch (err) {
             console.error('[api/analyse] reports_run hook failed:', err);
           }

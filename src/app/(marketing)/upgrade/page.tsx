@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, FREE_RUNS, isLapsedSubscriber } from "@/lib/access";
+import {
+  ACCESS_COLUMNS,
+  FREE_RUNS,
+  hasAccess,
+  isLapsedSubscriber,
+} from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
@@ -39,7 +44,7 @@ export default async function UpgradePage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, full_name, stripe_subscription_id")
+    .select(`${ACCESS_COLUMNS}, full_name`)
     .eq("id", user.id)
     .single();
 

@@ -1,6 +1,5 @@
 import { extensionAccess } from '@/lib/extension/auth';
 import { json, preflight } from '@/lib/extension/cors';
-import { runsRemaining } from '@/lib/access';
 
 export const runtime = 'nodejs';
 
@@ -12,7 +11,8 @@ export async function GET(request: Request) {
     email: access.user?.email ?? null,
     state: access.state,
     plan: access.plan,
-    runsRemaining: access.plan === 'pro' ? null : runsRemaining({ reports_run: access.reportsRun ?? 0 }),
+    // null for subscribers — they have no free-report count to show.
+    runsRemaining: access.freeReportsLeft,
   });
 }
 

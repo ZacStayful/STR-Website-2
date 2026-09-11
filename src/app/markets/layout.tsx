@@ -5,7 +5,7 @@ import { Footer } from "@/components/marketing-v3/Footer";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { TrialBanner } from "@/components/TrialBanner";
 import { getMarketAccess } from "@/lib/market/gate";
-import { isPro, runsRemaining } from "@/lib/access";
+import { freeReportsRemaining, trialBannerVariant } from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
 import { marketingFontClasses } from "@/lib/marketing-fonts";
@@ -70,7 +70,7 @@ export default async function MarketsLayout({ children }: { children: React.Reac
   // 'blocked' falls through: the page itself redirects to /upgrade with its
   // own return path, and renders nothing meanwhile.
   const admin = isAdminEmail(user?.email);
-  const showTrialBanner = !admin && !!profile && !isPro(profile);
+  const bannerVariant = trialBannerVariant(profile, admin);
 
   // The marketing nav/footer need the `.sf-page-v3` scope, but the explorer
   // itself must not sit inside it — its element-level heading rules would
@@ -79,8 +79,12 @@ export default async function MarketsLayout({ children }: { children: React.Reac
     <div className={fontVars}>
       <div className="sf-page-v3"><Nav /></div>
       <AppSwitcher active="markets" admin={admin} />
-      {showTrialBanner && profile && user && (
-        <TrialBanner remaining={runsRemaining(profile)} checkoutHref={checkoutUrlFor(user.id, user.email ?? null)} />
+      {bannerVariant && profile && user && (
+        <TrialBanner
+          variant={bannerVariant}
+          remaining={freeReportsRemaining(profile)}
+          checkoutHref={checkoutUrlFor(user.id, user.email ?? null)}
+        />
       )}
       <div className="mx">{children}</div>
       <div className="sf-page-v3"><Footer /></div>

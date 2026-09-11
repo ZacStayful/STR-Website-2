@@ -1,6 +1,11 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, isPro, runsRemaining } from "@/lib/access";
+import {
+  ACCESS_COLUMNS,
+  freeReportsRemaining,
+  hasAccess,
+  trialBannerVariant,
+} from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -19,17 +24,23 @@ export default async function ReportsLayout({ children }: { children: React.Reac
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan, reports_run, stripe_subscription_id")
+    .select(ACCESS_COLUMNS)
     .eq("id", user.id)
     .single();
   const admin = isAdminEmail(user.email);
   if (!profile || (!admin && !hasAccess(profile))) redirect("/upgrade?redirect=/reports");
 
-  const showTrialBanner = !admin && !isPro(profile);
+  const bannerVariant = trialBannerVariant(profile, admin);
   return (
     <>
       <AppSwitcher active="reports" admin={admin} />
-      {showTrialBanner && <TrialBanner remaining={runsRemaining(profile)} checkoutHref={checkoutUrlFor(user.id, user.email ?? null)} />}
+      {bannerVariant && (
+        <TrialBanner
+          variant={bannerVariant}
+          remaining={freeReportsRemaining(profile)}
+          checkoutHref={checkoutUrlFor(user.id, user.email ?? null)}
+        />
+      )}
       {children}
     </>
   );

@@ -3,6 +3,7 @@ import 'server-only';
 import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '../supabase/server';
+import { ACCESS_COLUMNS } from '../access';
 import { marketAccessState, type MarketAccessProfile, type MarketAccessState } from './access';
 
 export interface MarketAccess {
@@ -35,7 +36,7 @@ export const getMarketAccess = cache(async (): Promise<MarketAccess> => {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('plan, reports_run, stripe_subscription_id')
+    .select(ACCESS_COLUMNS)
     .eq('id', user.id)
     .single();
 

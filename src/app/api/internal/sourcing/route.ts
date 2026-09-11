@@ -4,6 +4,7 @@ import { parseMarketGoals, type MarketGoals } from "@/lib/market/goals";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
 import { areaCentroid } from "@/lib/market/area-centroids";
 import { marketAccessState } from "@/lib/market/access";
+import { ACCESS_COLUMNS } from "@/lib/access";
 import { ask, sourcingListings } from "@/lib/broker";
 import { queriesForGoals, dealForSourced, rankPicks, sourcingEmail, type AreaRef, type SourcedListing, type SourcingQuery } from "@/lib/listing/sourcing";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
@@ -36,7 +37,7 @@ function maxQueries(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 150;
 }
 
-type ProfileRow = { id: string; email: string | null; market_goals: unknown; plan: "free" | "pro"; reports_run: number; stripe_subscription_id: string | null };
+type ProfileRow = { id: string; email: string | null; market_goals: unknown; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null };
 
 interface Member {
   id: string;
@@ -69,7 +70,7 @@ export async function GET(request: Request) {
 
   const { data: profiles, error } = await admin
     .from("profiles")
-    .select("id, email, market_goals, plan, reports_run, stripe_subscription_id")
+    .select(`id, email, market_goals, ${ACCESS_COLUMNS}`)
     .eq("sourcing_alerts", true)
     .not("market_goals", "is", null);
   if (error) {

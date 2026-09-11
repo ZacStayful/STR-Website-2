@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { ACCESS_COLUMNS } from "@/lib/access";
 import { resolveListing } from "@/lib/listing/server";
 import { quickEstimate } from "@/lib/listing/quick";
 import { serverFetchEnabled } from "@/lib/listing/fetch";
@@ -69,7 +70,7 @@ interface Row {
   created_at: string;
 }
 
-type Profile = { email: string | null; plan: "free" | "pro"; reports_run: number; stripe_subscription_id: string | null };
+type Profile = { email: string | null; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null };
 
 function lastSeen(r: Row): number {
   return new Date(r.rechecked_at ?? r.last_checked_at ?? r.created_at).getTime();
@@ -202,7 +203,7 @@ export async function GET(request: Request) {
   // send. Listings the member has since Passed are left alone.
   const { data: pendingData, error: pendErr } = await admin
     .from("checked_listings")
-    .select("id, user_id, canonical_url, snapshot, price_history, profiles!inner(email, plan, reports_run, stripe_subscription_id)")
+    .select(`id, user_id, canonical_url, snapshot, price_history, profiles!inner(email, ${ACCESS_COLUMNS})`)
     .neq("status", "passed")
     .contains("price_history", [{ notified: false }]);
   if (pendErr) console.error("[recheck] pending select failed:", pendErr.message);

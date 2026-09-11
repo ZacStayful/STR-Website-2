@@ -4,6 +4,12 @@ import { redirect, notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
+import {
+  ACCESS_COLUMNS,
+  accountStatus,
+  isSubscriber,
+  type AccountStatus,
+} from "@/lib/access";
 import { spendSummary } from "@/lib/broker/store";
 import { pmiAccount, pmiConfigured } from "@/lib/broker/providers/pmi";
 
@@ -19,11 +25,25 @@ interface ProfileRow {
   id: string;
   email: string | null;
   full_name: string | null;
-  plan: string | null;
+  plan: "free" | "pro" | null;
   reports_run: number | null;
+  reports_total: number | null;
+  stripe_subscription_id: string | null;
+  stripe_subscription_status: string | null;
   created_at: string | null;
   last_seen_at: string | null;
 }
+
+// Human labels for the derived account status. "Paid" and "Free trial" are
+// deliberately different rows here — conflating them is what let paying
+// customers keep seeing trial messaging.
+const STATUS_LABEL: Record<AccountStatus, string> = {
+  paid: "Paid",
+  subscription_trial: "Stripe trial",
+  free_trial: "Free trial",
+  trial_expired: "Trial used up",
+  lapsed: "Lapsed",
+};
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -79,7 +99,9 @@ export default async function AdminPage() {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("profiles")
-      .select("id, email, full_name, plan, reports_run, created_at, last_seen_at")
+      .select(
+        `id, email, full_name, created_at, last_seen_at, reports_total, ${ACCESS_COLUMNS}`,
+      )
       .order("created_at", { ascending: false })
       .limit(2000);
     if (error) throw error;
@@ -90,9 +112,21 @@ export default async function AdminPage() {
   }
 
   const total = rows.length;
-  const pro = rows.filter((r) => r.plan === "pro").length;
-  const free = total - pro;
-  const totalReports = rows.reduce((s, r) => s + (r.reports_run ?? 0), 0);
+  const statuses = rows.map((r) => accountStatus(r));
+  const paying = statuses.filter((s) => s === "paid").length;
+  const subscribers = rows.filter((r) => isSubscriber(r)).length;
+  const onTrial = statuses.filter((s) => s === "free_trial").length;
+  // Rows where the plan column and Stripe disagree — i.e. a customer Stripe
+  // says is live but whose plan never flipped to 'pro' (or the reverse).
+  const drifted = rows.filter(
+    (r) => (r.plan === "pro") !== isSubscriber(r),
+  ).length;
+  // reports_total counts every report; reports_run only advances while an
+  // account is on the free trial, so summing it would undercount subscribers.
+  const totalReports = rows.reduce(
+    (s, r) => s + Math.max(r.reports_total ?? 0, r.reports_run ?? 0),
+    0,
+  );
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const signups7d = rows.filter((r) => r.created_at && new Date(r.created_at).getTime() >= weekAgo).length;
   const recent = rows.slice(0, 15);
@@ -128,10 +162,23 @@ export default async function AdminPage() {
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Total users" value={total} />
-        <Stat label="Pro" value={pro} sub={`${free} free`} />
+        <Stat
+          label="Subscribers"
+          value={subscribers}
+          sub={`${paying} paying · ${onTrial} on free trial`}
+        />
         <Stat label="Reports run" value={totalReports} />
         <Stat label="New (7 days)" value={signups7d} />
       </div>
+
+      {drifted > 0 && (
+        <div className="mt-4 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+          <strong className="text-foreground">{drifted}</strong> profile
+          {drifted === 1 ? " has" : "s have"} a plan column that disagrees with
+          Stripe. Access follows Stripe, so nobody is locked out — but re-run
+          the backfill in <code>supabase/schema.sql</code> to tidy the column.
+        </div>
+      )}
 
       <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat
@@ -183,7 +230,7 @@ export default async function AdminPage() {
             <tr className="border-b border-border text-left text-muted-foreground">
               <th className="p-3 font-medium">Email</th>
               <th className="p-3 font-medium">Name</th>
-              <th className="p-3 font-medium">Plan</th>
+              <th className="p-3 font-medium">Status</th>
               <th className="p-3 font-medium">Reports</th>
               <th className="p-3 font-medium">Joined</th>
               <th className="p-3 font-medium">Last seen</th>
@@ -200,11 +247,13 @@ export default async function AdminPage() {
                   <td className="p-3 text-foreground">{r.email ?? "—"}</td>
                   <td className="p-3 text-muted-foreground">{r.full_name ?? "—"}</td>
                   <td className="p-3">
-                    <span className={r.plan === "pro" ? "font-medium text-primary" : "text-muted-foreground"}>
-                      {r.plan ?? "free"}
+                    <span className={isSubscriber(r) ? "font-medium text-primary" : "text-muted-foreground"}>
+                      {STATUS_LABEL[accountStatus(r)]}
                     </span>
                   </td>
-                  <td className="p-3 text-muted-foreground">{r.reports_run ?? 0}</td>
+                  <td className="p-3 text-muted-foreground">
+                    {Math.max(r.reports_total ?? 0, r.reports_run ?? 0)}
+                  </td>
                   <td className="p-3 text-muted-foreground">{fmtDate(r.created_at)}</td>
                   <td className="p-3 text-muted-foreground">{fmtDate(r.last_seen_at)}</td>
                 </tr>

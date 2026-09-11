@@ -1,7 +1,12 @@
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, isPro, runsRemaining } from "@/lib/access";
+import {
+  ACCESS_COLUMNS,
+  accountStatus,
+  freeReportsRemaining,
+  hasAccess,
+} from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -9,8 +14,8 @@ import { checkoutUrlFor } from "@/lib/billing";
 import { ensureEnquiry } from "@/lib/apis/monday";
 
 // Server component that wraps /estimate. Fetches the current user's profile,
-// runs hasAccess() against plan + reports_run (5 free reports, then pro),
-// bounces users who've used all their free reports to /upgrade, and
+// runs hasAccess() against the derived account status (subscriber → unlimited;
+// otherwise 5 free reports), bounces users without access to /upgrade, and
 // (fire-and-forget) updates the Monday CRM with last_seen_at. Anyone not
 // logged in is already redirected to /login by the middleware
 // (proxy.ts → PROTECTED_PREFIXES).
@@ -33,7 +38,7 @@ export default async function EstimateLayout({
   const { data: profile } = await supabase
     .from("profiles")
     .select(
-      "plan, reports_run, monday_item_id, stripe_subscription_id, email, full_name, mobile, created_at",
+      `${ACCESS_COLUMNS}, monday_item_id, email, full_name, mobile, created_at`,
     )
     .eq("id", user.id)
     .single();
@@ -86,17 +91,30 @@ export default async function EstimateLayout({
     });
   }
 
-  // Trial countdown banner for free users (Pro users and admins have unlimited
-  // access, so no banner for them).
-  const showTrialBanner = !admin && !isPro(profile);
-  const remaining = runsRemaining(profile);
+  // Banner is for non-subscribers only. Subscribers (paying customers and
+  // Stripe-trial customers) and admins have unlimited access, so they must
+  // never see free-report copy. `status` is derived from plan AND the Stripe
+  // subscription status, so a customer whose `plan` write failed still counts
+  // as a subscriber and stays out of the trial UI.
+  const status = accountStatus(profile);
+  const bannerVariant =
+    admin || status === "paid" || status === "subscription_trial"
+      ? null
+      : status === "lapsed"
+        ? ("lapsed" as const)
+        : ("free_trial" as const);
+  const remaining = freeReportsRemaining(profile);
   const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
 
   return (
     <>
       <AppSwitcher active="estimate" admin={admin} />
-      {showTrialBanner && (
-        <TrialBanner remaining={remaining} checkoutHref={checkoutHref} />
+      {bannerVariant && (
+        <TrialBanner
+          variant={bannerVariant}
+          remaining={remaining}
+          checkoutHref={checkoutHref}
+        />
       )}
       {children}
     </>
