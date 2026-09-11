@@ -21,6 +21,8 @@ const PLANS: Plan[] = [
     features: [
       "Full 10-section report",
       "5 free reports to start",
+      "Market Explorer: UK area rankings",
+      "Paste any Rightmove, OnTheMarket or Airbnb link",
       "Live comparables",
       "Forecast & risk",
       "Setup cost quote",
@@ -35,7 +37,9 @@ const PLANS: Plan[] = [
     features: [
       "Everything in Free",
       "Unlimited reports",
-      "Saved properties",
+      "Full Market Explorer: goal-based ranking, competition & trends",
+      "Deal pipeline, listing compare & shareable deal sheets",
+      "Saved reports",
       "PDF export with branding",
       "Priority data refresh",
       "Email support",
@@ -60,7 +64,7 @@ const PLANS: Plan[] = [
   },
 ];
 
-export function Pricing() {
+export function Pricing({ signupHref = "/signup" }: { signupHref?: string }) {
   return (
     <section className="pricing section" id="pricing">
       <div className="wrap-narrow">
@@ -94,7 +98,7 @@ export function Pricing() {
                 ))}
               </ul>
               <Link
-                href="/signup"
+                href={signupHref}
                 className={"btn " + (p.hl ? "btn-primary" : "btn-ghost")}
                 style={{ width: "100%", justifyContent: "center" }}
               >

@@ -1,19 +1,17 @@
 /**
  * Server-side Market Explorer aggregator. Assembles the per-area card data the
  * /markets pages render: headline stats, yield-on-cost, long-let vs short-let
- * verdict, and the licensing flag. SERVER ONLY (uses the market client +
- * PropertyData).
- *
- * NOTE (score): the transparent area score (Phase 1 Step 2) is intentionally
- * absent — it is not built until the proposal is signed off. When approved,
- * add it to AreaCardData and the sort here.
+ * verdict, licensing flag, transparent score and confidence tier.
+ * SERVER ONLY (uses the market client + PropertyData).
  */
 
-import { fetchMarketStats, fetchMarketArea } from './client.ts';
+import { fetchMarketStats } from './client.ts';
 import { computeYieldOnCost, type YieldOnCost } from './yield.ts';
 import { computeAreaVerdict, type AreaVerdict } from './verdict.ts';
 import { computeAreaScore, type AreaScore } from './score.ts';
 import { areaConfidence, type Confidence } from './confidence.ts';
+import { rankCompetition, type CompetitionRank } from './competition.ts';
+import { areaDirectBooking, type DirectBooking } from './direct-booking.ts';
 import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
@@ -60,6 +58,8 @@ export interface BedroomStat {
   adr: number | null;
   occupancy: number | null; // 0–100
   grossRevenue: number | null;
+  propertyValueLow: number | null;
+  propertyValueHigh: number | null;
   propertyValueMid: number | null;
   grossYieldPct: number | null;
 }
@@ -81,6 +81,8 @@ export function bedroomStats(area: MarketArea): BedroomStat[] {
         adr: g.avg_adr === null ? null : Math.round(g.avg_adr),
         occupancy: g.avg_occupancy === null ? null : Math.round(g.avg_occupancy * 10) / 10,
         grossRevenue: g.avg_gross_revenue === null ? null : Math.round(g.avg_gross_revenue),
+        propertyValueLow: g.avg_property_value_low === null ? null : Math.round(g.avg_property_value_low),
+        propertyValueHigh: g.avg_property_value_high === null ? null : Math.round(g.avg_property_value_high),
         propertyValueMid: mid === null ? null : Math.round(mid),
         grossYieldPct,
       };
@@ -99,6 +101,11 @@ export interface AreaCardData {
   licensing: LicensingEntry;
   score: AreaScore | null;
   confidence: Confidence;
+  /** Relative competition rank (Phase 2); null until enough areas carry signals. */
+  competition: CompetitionRank | null;
+  directBooking: DirectBooking | null;
+  /** Stayful already manages properties in this postcode area. */
+  managedByStayful: boolean;
 }
 
 async function buildCard(area: MarketArea): Promise<AreaCardData> {
@@ -123,22 +130,52 @@ async function buildCard(area: MarketArea): Promise<AreaCardData> {
       licensing: licensing.status,
     }),
     confidence: areaConfidence(headline.totalSamples),
+    competition: null, // filled in once every area is known (relative rank)
+    directBooking: areaDirectBooking(area.demand),
+    managedByStayful: false, // filled in by the caller from the managed-areas lookup
   };
+}
+
+/** Attach the relative competition rank; needs every area at once. */
+export function withCompetition(cards: AreaCardData[], areas: MarketArea[]): AreaCardData[] {
+  const byCode = new Map(areas.map((a) => [a.postcode_area.toUpperCase(), a]));
+  const ranks = rankCompetition(
+    cards.map((c) => {
+      const comp = byCode.get(c.code)?.competition ?? null;
+      return {
+        code: c.code,
+        density: comp?.avg_listing_density ?? null,
+        reviews: comp?.avg_review_count ?? null,
+        age: comp?.avg_listing_age ?? null,
+        sampleCount: comp?.sample_count ?? 0,
+      };
+    }),
+  );
+  return cards.map((c) => ({ ...c, competition: ranks.get(c.code) ?? null }));
+}
+
+export interface BuildOptions {
+  /** Postcode areas where Stayful manages properties. */
+  managedAreas?: ReadonlySet<string>;
 }
 
 /**
  * All area cards for the /markets index. Sorted by data confidence first
  * (Confirmed areas surface above thin/Early ones), then by score, then yield —
  * so the most trustworthy areas lead while everything stays visible.
+ * Uncached: pages go through `cached.ts`, which wraps this in an hourly cache.
  */
-export async function getAreaCards(): Promise<AreaCardData[]> {
+export async function buildAreaCards(opts: BuildOptions = {}): Promise<AreaCardData[]> {
   const data = await fetchMarketStats({});
   if (!data) return [];
-  const cards = await Promise.all(
+  const built = await Promise.all(
     data.areas.map((a) => buildCard(a).catch(() => null)),
   );
+  const cards = withCompetition(
+    built.filter((c): c is AreaCardData => c !== null),
+    data.areas,
+  ).map((c) => ({ ...c, managedByStayful: opts.managedAreas?.has(c.code) ?? false }));
   return cards
-    .filter((c): c is AreaCardData => c !== null)
     .sort(
       (a, b) =>
         b.confidence.rank - a.confidence.rank ||
@@ -147,22 +184,25 @@ export async function getAreaCards(): Promise<AreaCardData[]> {
     );
 }
 
-export interface AreaDetail {
+export interface SampleArea {
   card: AreaCardData;
-  area: MarketArea;
+  totalAreas: number;
+  totalSamples: number;
 }
 
-/** Full detail for one area page, or null if the area has no qualifying data. */
-export async function getAreaDetail(code: string): Promise<AreaDetail | null> {
-  const area = await fetchMarketArea(code);
-  if (!area) return null;
-  const card = await buildCard(area);
-  return { card, area };
-}
-
-/** Postcode-area codes that currently have qualifying data (for static params). */
-export async function listAreaCodes(): Promise<string[]> {
-  const data = await fetchMarketStats({});
-  if (!data) return [];
-  return data.areas.map((a) => a.postcode_area);
+/**
+ * One area shown with real figures on the public product page, as a taster
+ * for logged-out visitors. Picks MARKET_SAMPLE_AREA when it has data, else
+ * the best-backed area (the cards are already sorted confidence → score).
+ * Returns null when no data is available so the page can omit the section.
+ */
+export function pickSampleArea(cards: AreaCardData[], wanted = process.env.MARKET_SAMPLE_AREA): SampleArea | null {
+  if (cards.length === 0) return null;
+  const code = wanted?.trim().toUpperCase();
+  const card = (code && cards.find((c) => c.code === code)) || cards[0];
+  return {
+    card,
+    totalAreas: cards.length,
+    totalSamples: cards.reduce((n, c) => n + c.headline.totalSamples, 0),
+  };
 }

@@ -196,6 +196,32 @@ export interface CrossValidation {
   note: string;
 }
 
+// ─── Listing links (Rightmove / OnTheMarket / Airbnb …) ──────────
+import type { Deal, CashflowMonth } from './listing/deal';
+import type { CompetitorSummary, TrackedListing } from './listing/competitors';
+import type { SecondOpinion } from './listing/quick-types';
+
+export interface SourceListingRef {
+  url: string;
+  source: 'rightmove' | 'onthemarket' | 'zoopla' | 'airbnb' | 'booking';
+  kind: 'sale' | 'rent' | 'str';
+  title?: string;
+  photo?: string;
+  price?: { amount: number; period: 'total' | 'pcm' | 'pw' | 'night' };
+}
+
+export type DealResult = Deal & { basis: 'asking-price' | 'advertised-rent' | 'estimated-value' };
+
+export interface CompetitorsResult {
+  summary: CompetitorSummary;
+  top: TrackedListing[];
+  /** The pasted Airbnb listing's own tracked figures, when a provider has them. */
+  tracked: TrackedListing | null;
+  trackedMissing: boolean;
+  provider: string | null;
+  updatedAt: string | null;
+}
+
 // ─── Full Analysis Result ────────────────────────────────────────
 export interface AnalysisResult {
   property: PropertyInput;
@@ -215,4 +241,12 @@ export interface AnalysisResult {
   crossValidation?: CrossValidation;
   // PropertyData estimated sale value. null if the call failed or key is missing.
   propertyValuation?: PropertyDataValuation | null;
+  // ── Listing-link additions (all optional; older reports simply lack them) ──
+  sourceListing?: SourceListingRef | null;
+  deal?: DealResult | null;
+  cashflow?: CashflowMonth[] | null;
+  competitors?: CompetitorsResult | null;
+  secondOpinion?: (SecondOpinion & { provider: 'pmi'; updatedAt: string | null }) | null;
+  /** Row id in saved_searches once the report has been persisted. */
+  reportId?: string;
 }

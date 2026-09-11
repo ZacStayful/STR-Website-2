@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSupabaseSession } from '@/lib/supabase/proxy'
 
-const PROTECTED_PREFIXES = ['/estimate', '/dashboard', '/account', '/upgrade', '/admin']
+const PROTECTED_PREFIXES = ['/estimate', '/reports', '/dashboard', '/account', '/upgrade', '/admin', '/extension/connect']
 const AUTH_ROUTES = ['/login', '/signup']
 
 function isProtected(pathname: string): boolean {
@@ -31,7 +31,7 @@ export async function proxy(request: NextRequest) {
 
   if (isProtected(pathname) && !user) {
     const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('redirect', pathname)
+    loginUrl.searchParams.set('redirect', pathname + request.nextUrl.search)
     return NextResponse.redirect(loginUrl)
   }
 

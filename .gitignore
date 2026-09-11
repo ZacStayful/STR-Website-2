@@ -41,3 +41,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 scripts/calibration-results.json
+
+# browser extension build output
+extension/dist
+extension/dev-key.pem

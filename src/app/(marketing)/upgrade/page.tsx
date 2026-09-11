@@ -11,6 +11,7 @@ import {
 import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
 import { Icon } from "@/lib/icons";
+import { safeInternalPath } from "@/lib/safe-path";
 
 export const metadata: Metadata = {
   title: "Upgrade — Stayful Intelligence",
@@ -19,7 +20,18 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default async function UpgradePage() {
+export default async function UpgradePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ redirect?: string }>;
+}) {
+  const { redirect: redirectParam } = await searchParams;
+  // Where to send the user once they have access — the analyser by default,
+  // or the Market Explorer when that's what they were trying to open.
+  const wanted = safeInternalPath(redirectParam, "/estimate");
+  const back = /^\/(upgrade|login|signup)(\/|\?|$)/.test(wanted) ? "/estimate" : wanted;
+  const fromMarkets = back.startsWith("/markets");
+
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -27,7 +39,7 @@ export default async function UpgradePage() {
 
   // Middleware already gates /upgrade to logged-in users. Defensive guard.
   if (!user) {
-    redirect("/login?redirect=/upgrade");
+    redirect(`/login?redirect=${encodeURIComponent(`/upgrade?redirect=${back}`)}`);
   }
 
   const { data: profile } = await supabase
@@ -40,7 +52,7 @@ export default async function UpgradePage() {
   // admin, send them straight back to the analyser — they shouldn't be on the
   // upgrade page.
   if (isAdminEmail(user.email) || (profile && hasAccess(profile))) {
-    redirect("/estimate");
+    redirect(back);
   }
 
   const firstName =
@@ -59,8 +71,10 @@ export default async function UpgradePage() {
         </h1>
         <p className="lede">
           {lapsed
-            ? "Your Stayful subscription has been cancelled, so analyser access is paused. Re-subscribe to pick up right where you left off — unlimited reports, no free-report limit."
-            : `You've run your ${FREE_RUNS} free analyses. To keep running reports, you'll need a paid subscription — subscribe below for unlimited reports.`}
+            ? `Your Stayful subscription has been cancelled, so ${fromMarkets ? "the Market Explorer and the analyser are" : "analyser access is"} paused. Re-subscribe to pick up right where you left off — unlimited reports, no free-report limit.`
+            : fromMarkets
+              ? `You've run your ${FREE_RUNS} free analyses, which also covers the Market Explorer. Subscribe below for unlimited reports and full Market Explorer access.`
+              : `You've run your ${FREE_RUNS} free analyses. To keep running reports, you'll need a paid subscription — subscribe below for unlimited reports.`}
         </p>
 
         <div className="upgrade-pricing">

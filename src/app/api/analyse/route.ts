@@ -14,6 +14,13 @@ import {
   hasAccess,
 } from '@/lib/access';
 import { isAdminEmail } from '@/lib/admin';
+import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '@/lib/broker';
+import { matchTracked, rankCompetitors, summariseCompetitors } from '@/lib/listing/competitors';
+import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '@/lib/listing/deal';
+import { detectListingUrl } from '@/lib/listing/detect';
+import { postcodeAreaOf } from '@/lib/listing/normalise';
+import { parseMarketGoals, DEFAULT_FINANCE_GOALS, type FinanceGoals } from '@/lib/market/goals';
+import type { CompetitorsResult, DealResult, SourceListingRef } from '@/lib/types';
 
 // This route streams SSE while making several sequential external API
 // calls; the default 10s function timeout (Hobby) would cut the stream
@@ -80,6 +87,7 @@ export async function POST(request: Request) {
   let userMobile: string | null = null;
   // Whether this run should be counted against the free-report allowance.
   let countRun = false;
+  let finance: FinanceGoals = DEFAULT_FINANCE_GOALS;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
     const {
@@ -93,7 +101,7 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select(`${ACCESS_COLUMNS}, full_name, mobile`)
+      .select(`${ACCESS_COLUMNS}, full_name, mobile, market_goals`)
       .eq('id', user.id)
       .single();
     // Admins (matched by verified auth email) bypass the free-report limit.
@@ -120,6 +128,7 @@ export async function POST(request: Request) {
     userMobile = profile.mobile ?? null;
     userId = user.id;
     userEmail = user.email ?? null;
+    finance = parseMarketGoals(profile.market_goals)?.finance ?? DEFAULT_FINANCE_GOALS;
   }
 
   let body: Record<string, unknown>;
@@ -133,14 +142,36 @@ export async function POST(request: Request) {
   }
 
   // Validate input
-  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, monthlyMortgage, monthlyBills } = body as {
+  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, purchasePrice, advertisedRent, sourceListing, checkedListingId } = body as {
     address: unknown; postcode: unknown; email: unknown;
     bedrooms: unknown; guests: unknown;
     bathrooms: unknown; parking: unknown; outdoorSpace: unknown;
     propertyType: unknown;
-    monthlyMortgage: unknown; monthlyBills: unknown;
+    purchasePrice: unknown; advertisedRent: unknown; sourceListing: unknown; checkedListingId: unknown;
   };
   const emailStr = typeof email === 'string' && email.includes('@') ? email.trim() : null;
+
+  // ── Listing-link inputs (all optional) ──
+  const money = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= max ? Math.round(v) : null);
+  const askingPrice = money(purchasePrice, 50_000_000);
+  const rentPcm = money(advertisedRent, 50_000);
+  let source: SourceListingRef | null = null;
+  if (sourceListing && typeof sourceListing === 'object') {
+    const sl = sourceListing as Record<string, unknown>;
+    const detected = typeof sl.url === 'string' ? detectListingUrl(sl.url) : null;
+    if (detected) {
+      source = {
+        url: detected.canonicalUrl,
+        source: detected.source,
+        kind: sl.kind === 'rent' ? 'rent' : sl.kind === 'str' ? 'str' : 'sale',
+        title: typeof sl.title === 'string' ? sl.title.slice(0, 200) : undefined,
+        photo: typeof sl.photo === 'string' && /^https:\/\//.test(sl.photo) ? sl.photo.slice(0, 500) : undefined,
+      };
+      if (askingPrice && source.kind === 'sale') source.price = { amount: askingPrice, period: 'total' };
+      if (rentPcm && source.kind === 'rent') source.price = { amount: rentPcm, period: 'pcm' };
+    }
+  }
+  const checkedId = typeof checkedListingId === 'string' && /^[0-9a-f-]{36}$/i.test(checkedListingId) ? checkedListingId : null;
 
   const bathroomCount = Number(bathrooms);
   const validBathrooms = Number.isFinite(bathroomCount) && bathroomCount >= 1 ? bathroomCount : undefined;
@@ -313,6 +344,49 @@ export async function POST(request: Request) {
           mappedPropertyType,
         );
 
+        // ── Listing-link extras, in parallel with the main calls ──
+        // Tracked competitors within 1 km (one 5p bounds call per cell per
+        // week) and, when the member pasted an Airbnb, that listing's own
+        // figures. PMI second opinion is 50 credits so it only runs here, in
+        // a full report, and only within its daily budget.
+        const brokerCtx = { mode: 'full' as const, userId };
+        const competitorsPromise = (async (): Promise<CompetitorsResult | null> => {
+          const near = await ask(nearbyListings, { lat: coordinates.lat, lng: coordinates.lng }, brokerCtx);
+          const list = near.value;
+          const airbnbId = source?.source === 'airbnb' ? source.url.match(/\/rooms\/(\d+)/)?.[1] ?? null : null;
+          let tracked = airbnbId && list ? matchTracked(list, airbnbId) : null;
+          let provider = near.provider;
+          if (airbnbId && !tracked) {
+            const perf = await ask(listingPerformance, { listingId: airbnbId, lat: coordinates.lat, lng: coordinates.lng }, brokerCtx);
+            tracked = perf.value;
+            if (tracked) provider = perf.provider;
+          }
+          if (!list && !tracked) return null;
+          return {
+            summary: summariseCompetitors(list ?? [], property.bedrooms),
+            top: rankCompetitors(list ?? [], 8),
+            tracked,
+            trackedMissing: Boolean(airbnbId) && !tracked,
+            provider,
+            updatedAt: near.updatedAt,
+          };
+        })().catch((err) => {
+          console.error('[analyse] competitors failed:', err);
+          return null;
+        });
+        const secondOpinionPromise = (async () => {
+          if (process.env.PMI_SECOND_OPINION === 'false') return null;
+          const r = await ask(
+            strSecondOpinion,
+            { postcode: property.postcode, bedrooms: property.bedrooms, bathrooms: validBathrooms, propertyType: mappedPropertyType === 'flat' ? 'apartment' : 'house' },
+            brokerCtx,
+          );
+          return r.value ? { ...r.value, provider: 'pmi' as const, updatedAt: r.updatedAt } : null;
+        })().catch((err) => {
+          console.error('[analyse] second opinion failed:', err);
+          return null;
+        });
+
         const [shortLetResult, longLetResult, priceLabsResult, saleValuationResult] = await Promise.allSettled([
           shortLetPromise,
           longLetPromise,
@@ -438,6 +512,16 @@ export async function POST(request: Request) {
 
         const now = new Date().toISOString();
 
+        // ── Deal maths on the asking price / advertised rent (or the estimated value) ──
+        const [competitors, secondOpinion] = await Promise.all([competitorsPromise, secondOpinionPromise]);
+        const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance };
+        let deal: DealResult | null = null;
+        if (rentPcm) deal = { ...rentToRentDeal(rentPcm, dealBase), basis: 'advertised-rent' };
+        else if (askingPrice) deal = { ...purchaseDeal(askingPrice, dealBase), basis: 'asking-price' };
+        else if (propertyValuation?.estimatedValue) deal = { ...purchaseDeal(propertyValuation.estimatedValue, dealBase), basis: 'estimated-value' };
+        const fixedPcm = deal?.kind === 'rent-to-rent' ? deal.advertisedRentPcm : deal?.kind === 'purchase' ? deal.mortgageMonthly : 0;
+        const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm) : null;
+
         const result: AnalysisResult = {
           property,
           coordinates,
@@ -453,7 +537,53 @@ export async function POST(request: Request) {
           updatedAt: now,
           crossValidation,
           propertyValuation,
+          sourceListing: source,
+          deal,
+          cashflow,
+          competitors,
+          secondOpinion,
         };
+
+        // Persist the report so it can be reopened from /reports, and link it
+        // to the checked listing it came from. Done before `complete` so the
+        // client receives the report id with the result.
+        if (userId) {
+          try {
+            const supabase = await createSupabaseServerClient();
+            const { data: saved, error: saveError } = await supabase
+              .from('saved_searches')
+              .insert({
+                user_id: userId,
+                name: property.address,
+                address: property.address,
+                postcode: property.postcode,
+                postcode_area: postcodeAreaOf(property.postcode),
+                guest_count: property.guests,
+                bedrooms: property.bedrooms,
+                kind: source?.kind ?? (rentPcm ? 'rent' : 'sale'),
+                result,
+                source_listing: source,
+                deal,
+                checked_listing_id: checkedId,
+              })
+              .select('id')
+              .single();
+            if (saveError) console.error('[api/analyse] report save failed:', saveError.message);
+            else if (saved?.id) {
+              result.reportId = saved.id as string;
+              if (checkedId) {
+                await supabase.from('checked_listings').update({ analysed_report_id: saved.id, updated_at: now }).eq('id', checkedId).eq('user_id', userId);
+              }
+              // Keep the last 200 reports per member.
+              const { data: older } = await supabase.from('saved_searches').select('id').eq('user_id', userId).order('created_at', { ascending: false }).range(200, 400);
+              if (older && older.length > 0) {
+                await supabase.from('saved_searches').delete().in('id', older.map((r) => r.id));
+              }
+            }
+          } catch (err) {
+            console.error('[api/analyse] report save threw:', err);
+          }
+        }
 
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
 
@@ -466,9 +596,10 @@ export async function POST(request: Request) {
             const { uploadPdfToMonday } = await import('@/lib/apis/monday');
             const React = await import('react');
             const { renderToBuffer } = await import('@react-pdf/renderer');
-            const { deriveReportData, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
+            const { deriveReportData, buildPdfDeal, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
             const { StayfulReport } = await import('@/lib/pdf/StayfulReport');
             const data = deriveReportData(result);
+            data.deal = buildPdfDeal(result);
             const element = React.createElement(StayfulReport, { data });
             const buffer = await (renderToBuffer as (e: unknown) => Promise<Buffer>)(element);
             const filename = `Stayful_Property_Analysis_${sanitiseAddressForFilename(result.property.address)}.pdf`;

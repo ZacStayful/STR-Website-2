@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { LoginForm } from './login-form'
 import { GoogleButton } from '../google-button'
+import { safeInternalPath } from '@/lib/safe-path'
 
 export const metadata = { title: 'Sign in · Stayful Intelligence' }
 
@@ -8,7 +9,7 @@ type SearchParams = Promise<{ redirect?: string }>
 
 export default async function LoginPage({ searchParams }: { searchParams: SearchParams }) {
   const { redirect } = await searchParams
-  const redirectTo = redirect || '/estimate'
+  const redirectTo = safeInternalPath(redirect, '/estimate')
 
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">

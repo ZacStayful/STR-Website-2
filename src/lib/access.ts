@@ -186,3 +186,20 @@ export function hasAccess(profile: PartialAccount): boolean {
 /** Columns every access check needs. Select these together, always. */
 export const ACCESS_COLUMNS =
   'plan, plan_source, reports_run, stripe_subscription_id, stripe_subscription_status'
+
+/**
+ * Which TrialBanner variant to show, or null for no banner.
+ *
+ * Admins and subscribers (paying customers and Stripe-trial customers) have
+ * unlimited access, so free-report copy is always wrong for them. Shared by
+ * every layout that renders the banner so the three can't drift apart.
+ */
+export function trialBannerVariant(
+  profile: PartialAccount | null | undefined,
+  admin: boolean,
+): 'free_trial' | 'lapsed' | null {
+  if (admin || !profile) return null
+  const s = accountStatus(profile)
+  if (s === 'paid' || s === 'subscription_trial') return null
+  return s === 'lapsed' ? 'lapsed' : 'free_trial'
+}

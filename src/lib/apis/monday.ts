@@ -33,7 +33,7 @@ function token(): string | null {
   return process.env.MONDAY_API_KEY || process.env.MONDAY_API_TOKEN || null;
 }
 
-async function mondayQuery<T>(
+export async function mondayQuery<T>(
   query: string,
   variables: Record<string, unknown>,
 ): Promise<T | null> {

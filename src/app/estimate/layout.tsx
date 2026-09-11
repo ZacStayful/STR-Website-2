@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -10,6 +9,7 @@ import {
 } from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
+import { AppSwitcher } from "@/components/AppSwitcher";
 import { checkoutUrlFor } from "@/lib/billing";
 import { ensureEnquiry } from "@/lib/apis/monday";
 
@@ -108,28 +108,7 @@ export default async function EstimateLayout({
 
   return (
     <>
-      {admin && (
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            justifyContent: "center",
-            alignItems: "center",
-            padding: "6px 12px",
-            fontSize: 13,
-            background: "#2E3D2B",
-            color: "#fff",
-          }}
-        >
-          <span>Admin</span>
-          <Link href="/admin" style={{ color: "#B9D5C6", fontWeight: 600 }}>
-            Dashboard
-          </Link>
-          <Link href="/markets" style={{ color: "#B9D5C6", fontWeight: 600 }}>
-            Market Explorer
-          </Link>
-        </div>
-      )}
+      <AppSwitcher active="estimate" admin={admin} />
       {bannerVariant && (
         <TrialBanner
           variant={bannerVariant}

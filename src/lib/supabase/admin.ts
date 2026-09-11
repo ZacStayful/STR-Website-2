@@ -5,6 +5,12 @@ import { createClient } from "@supabase/supabase-js";
 // bypass RLS — e.g. the Stripe webhook flipping a profile to Pro, where
 // there is no logged-in user session. Requires SUPABASE_SERVICE_ROLE_KEY.
 // NEVER import this into client components.
+
+/** True when the service-role client can be created (the one check every admin-only path shares). */
+export function hasServiceRole(): boolean {
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
 export function createAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
+import { safeInternalPath } from '@/lib/safe-path'
 
 export type AuthState = { error: string | null }
 // For flows that show a success message in place (resend, reset request) as
@@ -17,7 +18,7 @@ function getSiteUrl(): string {
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const email = String(formData.get('email') ?? '').trim()
   const password = String(formData.get('password') ?? '')
-  const redirectTo = String(formData.get('redirect') ?? '/estimate')
+  const redirectTo = safeInternalPath(String(formData.get('redirect') ?? ''), '/estimate')
 
   if (!email || !password) {
     return { error: 'Email and password are required.' }
@@ -36,6 +37,9 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   const email = String(formData.get('email') ?? '').trim()
   const mobile = String(formData.get('mobile') ?? '').trim()
   const password = String(formData.get('password') ?? '')
+  // Where to land after email confirmation — the analyser unless the signup
+  // started from another members-only surface (e.g. the Market Explorer).
+  const next = safeInternalPath(String(formData.get('next') ?? ''), '/estimate')
 
   if (!fullName || !email || !mobile || !password) {
     return { error: 'Full name, email, mobile number, and password are all required.' }
@@ -57,7 +61,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     email,
     password,
     options: {
-      emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/estimate`,
+      emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(next)}`,
       data: {
         full_name: fullName,
         mobile: normalisedMobile,
@@ -91,7 +95,9 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   })
 
   // Pass the email to the check-email page so it can offer a "resend" button.
-  redirect(`/signup/check-email?email=${encodeURIComponent(email)}`)
+  redirect(
+    `/signup/check-email?email=${encodeURIComponent(email)}${next === '/estimate' ? '' : `&next=${encodeURIComponent(next)}`}`,
+  )
 }
 
 export async function signOutAction(): Promise<void> {
@@ -107,12 +113,13 @@ export async function resendConfirmationAction(
 ): Promise<FormState> {
   const email = String(formData.get('email') ?? '').trim()
   if (!email) return { error: 'Enter your email address.', success: null }
+  const next = safeInternalPath(String(formData.get('next') ?? ''), '/estimate')
 
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email,
-    options: { emailRedirectTo: `${getSiteUrl()}/auth/callback?next=/estimate` },
+    options: { emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(next)}` },
   })
 
   if (error) return { error: error.message, success: null }

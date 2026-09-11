@@ -1,69 +1,79 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { getAreaCards } from "@/lib/market/explorer";
-import { FilterableAreas } from "./_components/FilterableAreas";
+import { getAreaCards } from "@/lib/market/cached";
+import { getMarketAccess, requireMarketAccess } from "@/lib/market/gate";
 import { siteUrl } from "@/lib/url";
+import { MarketExplorerProductPage } from "./_components/product/MarketExplorerProductPage";
+import { ExplorerShell } from "./_components/explorer/ExplorerShell";
+import { loadExplorerUser } from "./_lib/loadExplorerUser";
+import { fetchMarketTrends } from "@/lib/market/trends-client";
+import { isSortKey } from "@/lib/market/rank";
+import { detectListingUrl } from "@/lib/listing/detect";
 
-// ISR: the underlying data is a slowly growing snapshot.
-export const revalidate = 3600;
+// Signed-out visitors get the public, indexable product page at this URL;
+// members get the explorer, which stays out of search.
+export async function generateMetadata(): Promise<Metadata> {
+  const { state } = await getMarketAccess();
+  if (state !== "ok") {
+    return {
+      title: { absolute: "Market Explorer — Find the UK Areas Where Short-Lets Pay | Stayful" },
+      description:
+        "Every UK postcode area ranked by real short-term rental performance: revenue, occupancy, yield-on-cost, competition, licensing and direct-booking potential, tailored to your goals. Included with every Stayful trial.",
+      alternates: { canonical: siteUrl("/markets") },
+      openGraph: {
+        title: "Stayful Market Explorer — find the UK areas where short-lets pay",
+        description: "Every UK area ranked by real short-term rental performance, tailored to your investment goals.",
+        url: siteUrl("/markets"),
+      },
+    };
+  }
+  return {
+    title: "Market Explorer — UK Short-Term Rental Areas Ranked",
+    description: "Every UK area ranked by short-term rental performance, competition, licensing and direct-booking potential, tailored to your goals.",
+    robots: { index: false, follow: false },
+    alternates: { canonical: siteUrl("/markets") },
+  };
+}
 
-export const metadata: Metadata = {
-  title: "Market Explorer — UK Short-Term Rental Yields by Area",
-  description:
-    "Browse UK areas by short-term rental investment potential. Compare average revenue, occupancy, yield-on-cost, licensing rules and short-vs-long-let — free, no login.",
-  alternates: { canonical: siteUrl("/markets") },
-};
+export default async function MarketsPage({ searchParams }: { searchParams: Promise<{ sort?: string; q?: string; pane?: string; listing?: string; check?: string }> }) {
+  // Members only. Signed-out visitors get the public product page; blocked
+  // users are redirected to /upgrade; nothing below runs for either.
+  if ((await requireMarketAccess("/markets")) === "anon") return <MarketExplorerProductPage />;
 
-export default async function MarketsPage() {
-  const cards = await getAreaCards();
+  const access = await getMarketAccess();
+  const [{ sort, q, pane, listing, check }, cards, user, trends] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user), fetchMarketTrends()]);
+  // Deep links from the re-check and sourcing emails: open the pipeline on a
+  // listing the member already has, or prefill the paste box with a new URL
+  // (never auto-checked: a link must not be able to spend the member's checks).
+  const activeListing = typeof listing === "string" && user.listings.some((l) => l.id === listing) ? listing : null;
+  const checkUrl = typeof check === "string" && detectListingUrl(check) ? check.slice(0, 500) : null;
+  const sidePane = pane === "listings" || activeListing || checkUrl ? "listings" : "areas";
 
-  return (
-    <>
-      <header className="mx-hero">
-        <div className="mx-container">
-          <span className="mx-eyebrow">Stayful Market Explorer</span>
-          <h1>Where should you invest in UK short-term lets?</h1>
-          <p>
-            Explore UK areas by real short-term-rental performance — average revenue,
-            occupancy, yield-on-cost, the local licensing picture, and whether short-let
-            actually beats a long-let. Every figure is open. No login, no paywall.
-          </p>
-        </div>
-      </header>
-
+  if (cards.length === 0) {
+    return (
       <div className="mx-container">
-        <div className="mx-shell">
-          <nav className="mx-subnav" aria-label="Market Explorer">
-            <Link href="/markets" aria-current="page">All areas</Link>
-            <Link href="/markets/map">Map view</Link>
-            <Link href="/estimate">Analyse an address</Link>
-            <Link href="/short-term-vs-long-term-letting">Short vs long-let</Link>
-            <Link href="/pricing">Pricing</Link>
-          </nav>
-
-          <main>
-            {cards.length === 0 ? (
-              <div className="mx-empty">
-                <h2>Market data is loading</h2>
-                <p>
-                  We couldn’t load area data right now. This usually clears on its own —
-                  please try again shortly.
-                </p>
-              </div>
-            ) : (
-              <FilterableAreas cards={cards} />
-            )}
-
-            <p className="mx-disclaimer">
-              Figures are averages aggregated from Stayful analyser reports across each
-              postcode area and are indicative, not a guarantee of returns. Yield-on-cost
-              uses an area property-value estimate as a purchase-price proxy. Licensing
-              flags are a general guide — always confirm with the local authority before
-              buying. Click any area to see the detail and analyse a specific address.
-            </p>
-          </main>
+        <div className="mx-empty" style={{ marginTop: 40 }}>
+          <h2>Market data is loading</h2>
+          <p>We couldn’t load area data right now — please try again shortly.</p>
         </div>
       </div>
-    </>
+    );
+  }
+
+  return (
+    <ExplorerShell
+      cards={cards}
+      goals={user.goals}
+      savedAreas={user.savedAreas}
+      userEmail={user.email}
+      trends={trends}
+      alertWeekly={user.alertWeekly}
+      sourcingAlerts={user.sourcingAlerts}
+      listings={user.listings}
+      initialSidePane={sidePane}
+      initialActiveListing={activeListing}
+      initialCheckUrl={checkUrl}
+      initialSort={isSortKey(sort) ? sort : "stayful"}
+      initialQuery={typeof q === "string" ? q.slice(0, 40) : ""}
+    />
   );
 }
