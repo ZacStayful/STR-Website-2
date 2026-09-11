@@ -137,6 +137,11 @@ export async function GET(request: Request) {
       { kind: "str", postcode: snap.postcode ?? r.postcode, outcode: snap.outcode, bedrooms: snap.bedrooms ?? 2, bathrooms: snap.bathrooms, lat: snap.lat ?? r.lat, lng: snap.lng ?? r.lng, airbnbId: snap.id },
       { mode: "cron", userId: r.user_id },
     );
+    if (quick.limited && !quick.estimate && !quick.tracked) {
+      // Provider budget spent: keep last month's figures and try again next run.
+      summary.skipped += 1;
+      continue;
+    }
     const { error: upErr } = await admin.from("checked_listings").update({ quick_estimate: quick, rechecked_at: nowIso }).eq("id", r.id);
     if (upErr) console.error("[recheck] airbnb update failed:", upErr.message);
     else summary.airbnbRefreshed += 1;
