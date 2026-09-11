@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { ArrowRight, Download, Star, X } from "lucide-react";
 import { gbp, pct } from "@/lib/market/format";
+import { trendLabel } from "@/lib/market/trend";
 import { Gauge, BedroomBars } from "./Charts";
 import { ManagedEnquiry } from "./ManagedEnquiry";
 import { TrendCharts } from "./TrendCharts";
@@ -51,7 +52,7 @@ export function DetailDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const trendWord = row.trend ? (row.trend.enquiries.direction === "up" ? "rising enquiries" : row.trend.enquiries.direction === "down" ? "enquiries falling" : row.trend.enquiries.direction === "flat" ? "steady enquiries" : "building history") : null;
+  const trendWord = trendLabel(row.trend?.enquiries.direction)?.toLowerCase() ?? null;
   const metaLine = [trendWord, c.competition ? `${c.competition.label.toLowerCase()} competition` : null, lic.headline.toLowerCase()].filter(Boolean).join(" · ");
 
   return (

@@ -7,13 +7,14 @@ import { removeCheckedListingAction, shareListingAction, unshareListingAction, u
 import { PIPELINE_STATUSES, type CheckedListingRow, type PipelineStatus } from "@/lib/listing/pipeline";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { DEFAULT_COSTS } from "@/lib/listing/deal";
-import { gbp } from "@/lib/listing/verdict";
 import type { Verdict } from "@/lib/listing/verdict";
-import { gbpCompact } from "@/lib/market/format";
+import { gbp, gbpCompact } from "@/lib/market/format";
+import { trendLabel } from "@/lib/market/trend";
 import type { ExplorerRow } from "./types";
 import { KeyTiles, Kv, VerdictBlock, Working } from "./VerdictBits";
 import { ListingThumb, listingMeta } from "./ListingsPane";
 
+const LISTING_STATUS_LABEL: Record<string, string> = { under_offer: "Under offer", let_agreed: "Let agreed", sold: "Sold", removed: "Removed from the market" };
 const SOURCE_LABEL: Record<string, string> = { "postcode-reports": "Recent Stayful reports for this postcode", competitors: "Tracked Airbnbs within 1 km", "area-bedrooms": "Area average for this size", area: "Area average across all sizes", "pmi-market": "Property Market Intel area snapshot" };
 
 /** Tracked competitors around the listing as dots, the listing at the centre. */
@@ -27,6 +28,7 @@ function MiniMap({ listing }: { listing: CheckedListingRow }) {
   const R = 1.15; // km shown from centre to edge
   const pos = (lat: number, lng: number) => ({ x: 50 + ((lng - lng0) * kmPerDegLng * 50) / R, y: 50 - ((lat - lat0) * kmPerDegLat * 50) / R });
   const me = listing.quick?.tracked?.listingId ?? null;
+  const meDrawn = me !== null && comps.some((c) => c.listingId === me);
   return (
     <div className="mx-minimap" role="img" aria-label={`${comps.length} tracked Airbnbs near this listing`}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -43,7 +45,7 @@ function MiniMap({ listing }: { listing: CheckedListingRow }) {
             </g>
           );
         })}
-        {!me && <circle cx="50" cy="50" r="3.2" className="mx-minimap-me"><title>This listing</title></circle>}
+        {!meDrawn && <circle cx="50" cy="50" r="3.2" className="mx-minimap-me"><title>This listing</title></circle>}
       </svg>
       <ul className="mx-minimap-list">
         {comps.slice(0, 5).map((c) => (
@@ -178,7 +180,10 @@ export function ListingDrawer({
         <ListingThumb listing={listing} large />
         <div className="mx-deal-title">
           <h2>{listing.title}</h2>
-          <div className="mx-deal-meta">{listingMeta(listing)}</div>
+          <div className="mx-deal-meta">
+            {listing.listingStatus && listing.listingStatus !== "available" && <span className="mx-fit mx-fit--warn" style={{ marginRight: 6 }}>{LISTING_STATUS_LABEL[listing.listingStatus] ?? listing.listingStatus}</span>}
+            {listingMeta(listing)}
+          </div>
         </div>
         <button type="button" className="mx-cmp-close mx-deal-close" aria-label="Close" onClick={onClose}><X size={20} /></button>
       </div>
@@ -306,14 +311,14 @@ export function ListingDrawer({
             )}
           </Working>
 
-          <Working title={areaRow ? `Area: ${areaRow.card.name}${areaRow.card.score ? ` ${areaRow.card.score.score} · ${areaRow.card.score.grade}` : ""}` : "Area"} small={areaRow?.trend ? areaRow.trend.enquiries.direction === "up" ? "rising enquiries" : areaRow.trend.enquiries.direction === "down" ? "enquiries falling" : "steady" : area?.trend?.label.toLowerCase()}>
+          <Working title={areaRow ? `Area: ${areaRow.card.name}${areaRow.card.score ? ` ${areaRow.card.score.score} · ${areaRow.card.score.grade}` : ""}` : "Area"} small={(trendLabel(areaRow?.trend?.enquiries.direction) ?? area?.trend?.label)?.toLowerCase()}>
             {areaRow ? (
               <>
                 <Kv
                   rows={[
                     { k: "Competition", v: areaRow.card.competition?.label ?? "—" },
                     { k: "Direct bookings", v: areaRow.card.directBooking?.label ?? "—" },
-                    { k: "Enquiry trend", v: areaRow.trend ? (areaRow.trend.enquiries.direction === "insufficient" ? "Building history" : areaRow.trend.enquiries.direction === "up" ? "Rising" : areaRow.trend.enquiries.direction === "down" ? "Falling" : "Steady") : "—" },
+                    { k: "Enquiry trend", v: trendLabel(areaRow.trend?.enquiries.direction) ?? "—" },
                     ...(p?.fit.distanceMiles !== null && p?.fit.distanceMiles !== undefined ? [{ k: "Distance from home", v: `${p.fit.distanceMiles} mi` }] : []),
                     { k: "Licensing", v: areaRow.card.licensing.headline },
                     { k: "Data confidence", v: `${areaRow.card.confidence.label} · ${areaRow.card.headline.totalSamples} reports` },

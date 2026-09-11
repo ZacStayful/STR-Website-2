@@ -12,7 +12,7 @@ import { GoalsModal } from "./GoalsModal";
 import { AreaList } from "./AreaList";
 import { DetailDrawer } from "./DetailDrawer";
 import { DEFAULT_FILTERS, type AreaCardData, type ExplorerRow, type Filters, type MapMetric, type MarketGoals, type SortKey } from "./types";
-import { areaTrend, pulse } from "@/lib/market/trend";
+import { areaTrend, pulse, trendLabel } from "@/lib/market/trend";
 import type { MarketTrendsResponse } from "@/lib/market/types";
 import { ListingsPane } from "./ListingsPane";
 import { ListingDrawer } from "./ListingDrawer";
@@ -238,7 +238,7 @@ export function ExplorerShell({
   const listingsShown = sidePane === "listings";
   const drawerShown = listingsShown ? !!activeListingRow : !!selectedRow || (!!initialAreaName && !!selected);
   const nationalPulse = trends ? pulse(trends.national) : null;
-  const pulseWord = nationalPulse ? (nationalPulse.enquiries.direction === "up" ? "rising" : nationalPulse.enquiries.direction === "down" ? "falling" : nationalPulse.enquiries.direction === "flat" ? "steady" : null) : null;
+  const pulseLabel = nationalPulse && nationalPulse.enquiries.direction !== "insufficient" ? trendLabel(nationalPulse.enquiries.direction) : null;
 
   return (
     <div className={"mx-explorer" + (drawerShown ? " has-drawer" : "") + ` pane-${mobilePane}`}>
@@ -279,7 +279,7 @@ export function ExplorerShell({
             home={home}
             pins={pins}
             onPinClick={openListing}
-            pulse={pulseWord ? <>Enquiries across the UK: <b className={`mx-pulse-word mx-pulse-word--${nationalPulse!.enquiries.direction}`}>{pulseWord}</b> this month</> : null}
+            pulse={pulseLabel ? <><b className={`mx-pulse-word mx-pulse-word--${nationalPulse!.enquiries.direction}`}>{pulseLabel}</b> across the UK this month</> : null}
           />
         </div>
 

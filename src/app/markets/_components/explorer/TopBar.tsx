@@ -68,6 +68,9 @@ export function TopBar({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
   const detected = detectListingUrl(text);
+  // A link we cannot read is told apart from an area search, so the member
+  // hears "not a listing page" rather than "no data for https://…".
+  const badLink = !detected && /^https?:\/\//i.test(text.trim());
   const active = activeFilterCount(filters);
   const set = (patch: Partial<Filters>) => onFilters({ ...filters, ...patch });
 
@@ -89,7 +92,7 @@ export function TopBar({
     setText(v);
     setError(null);
     // A pasted link is a listing check, not an area search.
-    const q = detectListingUrl(v) ? "" : v;
+    const q = detectListingUrl(v) || /^https?:\/\//i.test(v.trim()) ? "" : v;
     if (q !== filters.q) set({ q });
   };
 
@@ -219,10 +222,12 @@ export function TopBar({
           <button type="button" aria-pressed={mobilePane === "list"} onClick={() => onMobilePane("list")}>List</button>
         </div>
       </div>
-      {(detected || error) && (
+      {(detected || error || badLink) && (
         <div className="mx-topbar-hint">
           {error ? (
             <span className="mx-listing-check-error" role="alert">{error}</span>
+          ) : badLink ? (
+            <span className="mx-listing-check-error" role="alert">That link is not a listing page we can read. Paste a Rightmove, OnTheMarket or Airbnb listing link.</span>
           ) : detected ? (
             <span className="mx-listing-check-hint">{SOURCE_LABELS[detected.source]} listing · {initialCheckUrl && text === initialCheckUrl ? "press Check listing to add it to your deals" : "free quick view, no report used"}</span>
           ) : null}

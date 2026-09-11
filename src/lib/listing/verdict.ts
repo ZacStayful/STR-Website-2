@@ -7,6 +7,8 @@
 import type { Deal } from './deal.ts';
 import type { ListingKind } from './types.ts';
 import type { QuickEstimate } from './quick-types.ts';
+import { gradeFor } from '../market/score.ts';
+import { trendLabel, type Direction } from '../market/trend.ts';
 
 export type VerdictTone = 'works' | 'tight' | 'no' | 'info' | 'unknown';
 
@@ -52,15 +54,17 @@ export interface DealVerdictInput {
   quick: QuickEstimate | null;
 }
 
-export const gbp = (n: number): string => `£${Math.round(Math.abs(n)).toLocaleString('en-GB')}`;
-export const signedGbp = (n: number): string => `${n < 0 ? '−' : '+'}${gbp(n)}`;
-const gbpK = (n: number): string => (Math.abs(n) >= 1000 ? `£${Math.round(n / 1000)}k` : gbp(n));
+/** Magnitude only; callers add the sign where it matters. */
+const absGbp = (n: number): string => `£${Math.round(Math.abs(n)).toLocaleString('en-GB')}`;
+/** Always signed: +£89, −£374. */
+export const signedGbp = (n: number): string => `${n < 0 ? '−' : '+'}${absGbp(n)}`;
+const gbpK = (n: number): string => (Math.abs(n) >= 1000 ? `£${Math.round(n / 1000)}k` : absGbp(n));
 const pct = (n: number, dp = 0): string => `${n.toFixed(dp)}%`;
 
 export function formatTrackValue(v: number, unit: VerdictTrack['unit']): string {
   if (unit === 'pct') return pct(v, Number.isInteger(v) ? 0 : 1);
   if (unit === 'gbpk') return gbpK(v);
-  return `${v < 0 ? '−' : ''}${gbp(v)}`;
+  return `${v < 0 ? '−' : ''}${absGbp(v)}`;
 }
 
 function licensingKey(quick: QuickEstimate | null): VerdictKey {
@@ -74,7 +78,7 @@ function rateLine(quick: QuickEstimate | null): string {
   const e = quick?.estimate;
   if (!e) return '';
   const parts: string[] = [];
-  if (e.adr) parts.push(`${gbp(e.adr)} a night`);
+  if (e.adr) parts.push(`${absGbp(e.adr)} a night`);
   if (e.occupancy !== null) parts.push(`${Math.round(e.occupancy)}% occupied`);
   return parts.join(' · ');
 }
@@ -86,17 +90,17 @@ function limitedNote(quick: QuickEstimate | null): string {
 function purchaseVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'purchase' }>): Verdict {
   const ratio = deal.targetYieldPct > 0 ? deal.grossYieldPct / deal.targetYieldPct : 0;
   const tone: VerdictTone = ratio >= 1 ? 'works' : ratio >= 0.8 ? 'tight' : 'no';
-  const price = gbp(deal.askingPrice);
+  const price = absGbp(deal.askingPrice);
   const cash = deal.cashflowMonthly;
-  const cashText = cash >= 0 ? `with ${gbp(cash)} a month left after the mortgage` : `and ${gbp(cash)} a month short after the mortgage`;
+  const cashText = cash >= 0 ? `with ${absGbp(cash)} a month left after the mortgage` : `and ${absGbp(cash)} a month short after the mortgage`;
   const yieldText = `${pct(deal.grossYieldPct, 1)} gross yield`;
   const headline = tone === 'works' ? `Works at ${price}` : tone === 'tight' ? `Tight at ${price}` : `Doesn’t work at ${price}`;
   let sentence =
     tone === 'works'
       ? `${yieldText} against your ${pct(deal.targetYieldPct)} target, ${cashText}.`
       : tone === 'tight'
-        ? `${yieldText}, just under your ${pct(deal.targetYieldPct)} target, ${cashText}. It works at ${gbp(deal.maxPriceForTargetYield)} or below.`
-        : `${yieldText} against your ${pct(deal.targetYieldPct)} target, ${cashText}. It would need to be ${gbp(deal.maxPriceForTargetYield)} or below.`;
+        ? `${yieldText}, just under your ${pct(deal.targetYieldPct)} target, ${cashText}. It works at ${absGbp(deal.maxPriceForTargetYield)} or below.`
+        : `${yieldText} against your ${pct(deal.targetYieldPct)} target, ${cashText}. It would need to be ${absGbp(deal.maxPriceForTargetYield)} or below.`;
   sentence += limitedNote(input.quick);
   const max = Math.max(20, Math.ceil((Math.max(deal.grossYieldPct, deal.targetYieldPct) * 1.25) / 5) * 5);
   return {
@@ -106,12 +110,12 @@ function purchaseVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'p
     sentence,
     track: { min: 0, max, target: deal.targetYieldPct, me: deal.grossYieldPct, unit: 'pct', targetLabel: `Your target ${pct(deal.targetYieldPct)}` },
     keys: [
-      { label: 'Est. revenue', value: gbp(deal.grossRevenue), sub: rateLine(input.quick) || 'a year, gross' },
-      { label: 'Cash needed', value: gbp(deal.cashRequired), sub: `${gbpK(deal.askingPrice * (deal.depositPct / 100))} deposit · ${gbpK(deal.stampDuty)} stamp duty · ${gbpK(deal.setupCost)} setup` },
-      { label: 'Monthly cashflow', value: signedGbp(cash), sub: `after a ${gbp(deal.mortgageMonthly)} mortgage`, tone: cash >= 0 ? 'works' : 'no' },
+      { label: 'Est. revenue', value: absGbp(deal.grossRevenue), sub: rateLine(input.quick) || 'a year, gross' },
+      { label: 'Cash needed', value: absGbp(deal.cashRequired), sub: `${gbpK(deal.askingPrice * (deal.depositPct / 100))} deposit · ${gbpK(deal.stampDuty)} stamp duty · ${gbpK(deal.setupCost)} setup` },
+      { label: 'Monthly cashflow', value: signedGbp(cash), sub: `after a ${absGbp(deal.mortgageMonthly)} mortgage`, tone: cash >= 0 ? 'works' : 'no' },
       licensingKey(input.quick),
     ],
-    ceiling: tone === 'works' ? `You could pay up to ${gbp(deal.maxPriceForTargetYield)} and still hit your ${pct(deal.targetYieldPct)} target.` : `Offer ${gbp(deal.maxPriceForTargetYield)} or less to reach your ${pct(deal.targetYieldPct)} target.`,
+    ceiling: tone === 'works' ? `You could pay up to ${absGbp(deal.maxPriceForTargetYield)} and still hit your ${pct(deal.targetYieldPct)} target.` : `Offer ${absGbp(deal.maxPriceForTargetYield)} or less to reach your ${pct(deal.targetYieldPct)} target.`,
     number: pct(deal.grossYieldPct, 1),
     numberLabel: 'yield',
   };
@@ -120,15 +124,15 @@ function purchaseVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'p
 function rentVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'rent-to-rent' }>): Verdict {
   const m = deal.monthlyMargin;
   const tone: VerdictTone = m >= deal.targetMarginPcm ? 'works' : m >= 0 ? 'tight' : 'no';
-  const rent = `${gbp(deal.advertisedRentPcm)} a month`;
+  const rent = `${absGbp(deal.advertisedRentPcm)} a month`;
   const headline = tone === 'works' ? `Works at ${rent}` : tone === 'tight' ? `Tight at ${rent}` : `Doesn’t work at ${rent}`;
-  const ceilingRent = gbp(deal.maxRentForTargetMargin);
+  const ceilingRent = absGbp(deal.maxRentForTargetMargin);
   const sentence =
     (tone === 'works'
-      ? `${gbp(m)} a month left after rent, bills and management, against your ${gbp(deal.targetMarginPcm)} target.`
+      ? `${absGbp(m)} a month left after rent, bills and management, against your ${absGbp(deal.targetMarginPcm)} target.`
       : tone === 'tight'
-        ? `Clears ${gbp(m)} a month after rent, bills and management, under your ${gbp(deal.targetMarginPcm)} target. The rent would need to be ${ceilingRent} or below.`
-        : `Loses ${gbp(m)} a month after rent, bills and management. The rent would need to be ${ceilingRent} or below for your ${gbp(deal.targetMarginPcm)} margin.`) + limitedNote(input.quick);
+        ? `Clears ${absGbp(m)} a month after rent, bills and management, under your ${absGbp(deal.targetMarginPcm)} target. The rent would need to be ${ceilingRent} or below.`
+        : `Loses ${absGbp(m)} a month after rent, bills and management. The rent would need to be ${ceilingRent} or below for your ${absGbp(deal.targetMarginPcm)} margin.`) + limitedNote(input.quick);
   const occ = input.quick?.estimate?.occupancy ?? null;
   const min = Math.min(-300, Math.floor(m / 100) * 100);
   const max = Math.max(1000, Math.ceil((Math.max(m, deal.targetMarginPcm) * 1.5) / 100) * 100);
@@ -137,15 +141,15 @@ function rentVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'rent-
     chip: VERDICT_CHIPS[tone],
     headline,
     sentence,
-    track: { min, max, target: deal.targetMarginPcm, me: m, unit: 'gbp', targetLabel: `Your target ${gbp(deal.targetMarginPcm)}` },
+    track: { min, max, target: deal.targetMarginPcm, me: m, unit: 'gbp', targetLabel: `Your target ${absGbp(deal.targetMarginPcm)}` },
     keys: [
-      { label: 'Monthly margin', value: `${m < 0 ? '−' : ''}${gbp(m)}`, sub: `after ${gbp(deal.advertisedRentPcm)} rent and ${gbp(deal.monthlyOperating)} running costs`, tone: m >= deal.targetMarginPcm ? 'works' : m >= 0 ? 'tight' : 'no' },
+      { label: 'Monthly margin', value: `${m < 0 ? '−' : ''}${absGbp(m)}`, sub: `after ${absGbp(deal.advertisedRentPcm)} rent and ${absGbp(deal.monthlyOperating)} running costs`, tone: m >= deal.targetMarginPcm ? 'works' : m >= 0 ? 'tight' : 'no' },
       { label: 'Breakeven occupancy', value: deal.breakevenOccupancyPct === null ? '—' : pct(deal.breakevenOccupancyPct), sub: occ === null ? 'of nights, to cover rent and bills' : `area runs at ${Math.round(occ)}%`, tone: deal.breakevenOccupancyPct !== null && occ !== null ? (deal.breakevenOccupancyPct <= occ ? 'works' : 'no') : undefined },
-      { label: 'Rent ceiling', value: ceilingRent, sub: `for a ${gbp(deal.targetMarginPcm)} monthly margin` },
+      { label: 'Rent ceiling', value: ceilingRent, sub: `for a ${absGbp(deal.targetMarginPcm)} monthly margin` },
       licensingKey(input.quick),
     ],
     ceiling: 'Landlord consent and a company let are needed for rent-to-rent; ask before viewing.',
-    number: `${m < 0 ? '−' : ''}${gbp(m)}/mo`,
+    number: `${m < 0 ? '−' : ''}${absGbp(m)}/mo`,
     numberLabel: 'margin',
   };
 }
@@ -155,27 +159,32 @@ function strVerdict(input: DealVerdictInput): Verdict {
   const tracked = quick?.tracked ?? null;
   const beds = input.bedrooms ?? tracked?.bedrooms ?? null;
   const bedLabel = beds === null ? 'property' : `${beds}-bed`;
-  const typical = quick?.area?.bedroomStat?.grossRevenue ?? quick?.area?.headline.grossRevenue ?? null;
-  const typicalSamples = quick?.area?.bedroomStat?.samples ?? quick?.area?.headline.totalSamples ?? 0;
+  // Revenue and sample count always come from the same figure: the bedroom
+  // stat when it has revenue, else the all-sizes headline (labelled as such).
+  const bs = quick?.area?.bedroomStat ?? null;
+  const typicalStat = bs?.grossRevenue ? { rev: bs.grossRevenue, samples: bs.samples, label: bedLabel } : quick?.area?.headline.grossRevenue ? { rev: quick.area.headline.grossRevenue, samples: quick.area.headline.totalSamples, label: 'property' } : null;
+  const typical = typicalStat?.rev ?? null;
+  const typicalSamples = typicalStat?.samples ?? 0;
+  const typicalLabel = typicalStat?.label ?? bedLabel;
   const areaName = quick?.area?.name ?? 'this area';
   if (tracked) {
     const diff = typical ? Math.round(((tracked.annualRevenue - typical) / typical) * 100) : null;
-    const diffText = diff === null ? `No area average for a ${bedLabel} here to compare against.` : diff >= 0 ? `${diff}% above a typical ${bedLabel} here.` : `${Math.abs(diff)}% below a typical ${bedLabel} here.`;
-    const sentence = `${diffText} Booked ${Math.round(tracked.occupancy * 100)}% of nights at ${gbp(tracked.adr)}, with ${tracked.reviewCount} reviews. A benchmark for what a well-run ${bedLabel} in ${areaName} can do.` + limitedNote(quick);
+    const diffText = diff === null ? `No area average for a ${bedLabel} here to compare against.` : diff >= 0 ? `${diff}% above a typical ${typicalLabel} here.` : `${Math.abs(diff)}% below a typical ${typicalLabel} here.`;
+    const sentence = `${diffText} Booked ${Math.round(tracked.occupancy * 100)}% of nights at ${absGbp(tracked.adr)}, with ${tracked.reviewCount} reviews. A benchmark for what a well-run ${bedLabel} in ${areaName} can do.` + limitedNote(quick);
     return {
       tone: 'info',
       chip: VERDICT_CHIPS.info,
-      headline: `Earning about ${gbp(tracked.annualRevenue)} a year`,
+      headline: `Earning about ${absGbp(tracked.annualRevenue)} a year`,
       sentence,
-      track: typical ? { min: 0, max: Math.ceil((Math.max(tracked.annualRevenue, typical) * 1.3) / 10000) * 10000, target: typical, me: tracked.annualRevenue, unit: 'gbpk', targetLabel: `Area ${bedLabel} ${gbpK(typical)}` } : null,
+      track: typical ? { min: 0, max: Math.ceil((Math.max(tracked.annualRevenue, typical) * 1.3) / 10000) * 10000, target: typical, me: tracked.annualRevenue, unit: 'gbpk', targetLabel: `Area ${typicalLabel} ${gbpK(typical)}` } : null,
       keys: [
-        { label: 'This listing', value: gbp(tracked.annualRevenue), sub: 'trailing 12 months, tracked' },
-        { label: `Area typical ${bedLabel}`, value: typical ? gbp(typical) : '—', sub: typical ? `${typicalSamples} reports` : 'no area figure yet' },
-        { label: 'Rate and occupancy', value: `${gbp(tracked.adr)} · ${Math.round(tracked.occupancy * 100)}%`, sub: 'a night · of nights booked' },
+        { label: 'This listing', value: absGbp(tracked.annualRevenue), sub: 'trailing 12 months, tracked' },
+        { label: `Area typical ${typicalLabel}`, value: typical ? absGbp(typical) : '—', sub: typical ? `${typicalSamples} reports` : 'no area figure yet' },
+        { label: 'Rate and occupancy', value: `${absGbp(tracked.adr)} · ${Math.round(tracked.occupancy * 100)}%`, sub: 'a night · of nights booked' },
         licensingKey(quick),
       ],
       ceiling: `Nothing to buy or rent here: use it to price a ${bedLabel} of your own nearby.`,
-      number: gbp(tracked.annualRevenue),
+      number: absGbp(tracked.annualRevenue),
       numberLabel: 'earns / yr',
     };
   }
@@ -185,17 +194,17 @@ function strVerdict(input: DealVerdictInput): Verdict {
   return {
     tone: 'info',
     chip: VERDICT_CHIPS.info,
-    headline: `A ${bedLabel} like this earns about ${gbp(est.grossRevenue)} a year`,
+    headline: `A ${bedLabel} like this earns about ${absGbp(est.grossRevenue)} a year`,
     sentence: `${est.note}. ${quick?.trackedMissing ? 'Our data partner does not track this listing, so this is the area figure, not its own.' : 'This is the area figure, not the listing’s own.'}` + limitedNote(quick),
     track: null,
     keys: [
-      { label: 'Est. revenue', value: gbp(est.grossRevenue), sub: rateLine(quick) || 'a year, gross' },
-      { label: 'Rate and occupancy', value: `${est.adr ? gbp(est.adr) : '—'} · ${est.occupancy === null ? '—' : `${Math.round(est.occupancy)}%`}`, sub: 'a night · of nights booked' },
+      { label: 'Est. revenue', value: absGbp(est.grossRevenue), sub: rateLine(quick) || 'a year, gross' },
+      { label: 'Rate and occupancy', value: `${est.adr ? absGbp(est.adr) : '—'} · ${est.occupancy === null ? '—' : `${Math.round(est.occupancy)}%`}`, sub: 'a night · of nights booked' },
       { label: 'Competition nearby', value: comps ? String(comps.count) : '—', sub: comps?.medianRevenue ? `tracked within 1 km · median ${gbpK(comps.medianRevenue)}` : 'tracked Airbnbs within 1 km' },
       licensingKey(quick),
     ],
     ceiling: `Nothing to buy or rent here: use it to price a ${bedLabel} of your own nearby.`,
-    number: gbp(est.grossRevenue),
+    number: absGbp(est.grossRevenue),
     numberLabel: 'est. / yr',
   };
 }
@@ -207,12 +216,12 @@ function unknownVerdict(input: DealVerdictInput): Verdict {
     return {
       tone: 'info',
       chip: VERDICT_CHIPS.info,
-      headline: `Earns about ${gbp(est.grossRevenue)} a year here`,
+      headline: `Earns about ${absGbp(est.grossRevenue)} a year here`,
       sentence: `${est.note}. No ${input.kind === 'rent' ? 'rent' : 'price'} on the listing, so there is no deal to test; add one in the full report.` + limitedNote(input.quick),
       track: null,
-      keys: [{ label: 'Est. revenue', value: gbp(est.grossRevenue), sub: rateLine(input.quick) || 'a year, gross' }, licensingKey(input.quick)],
+      keys: [{ label: 'Est. revenue', value: absGbp(est.grossRevenue), sub: rateLine(input.quick) || 'a year, gross' }, licensingKey(input.quick)],
       ceiling: null,
-      number: gbp(est.grossRevenue),
+      number: absGbp(est.grossRevenue),
       numberLabel: 'est. / yr',
     };
   }
@@ -254,7 +263,7 @@ export interface AreaVerdictInput {
   competition: 'Open' | 'Moderate' | 'Busy' | 'Saturated' | null;
   directBooking: 'Low' | 'Moderate' | 'Strong' | null;
   licensing: { status: 'confirmed-licensed' | 'confirmed-unrestricted' | 'unconfirmed'; headline: string; regionLabel: string };
-  trend: 'up' | 'flat' | 'down' | 'insufficient' | null;
+  trend: Direction | null;
   /** The member's fit, when goals exist. */
   fit: { score: number; inBudget: boolean | null; hasBedrooms: boolean | null; inRange: boolean | null; distanceMiles: number | null } | null;
   targetYieldPct: number | null;
@@ -265,8 +274,6 @@ export interface AreaVerdict extends Verdict {
   reasons: string[];
   fit: number | null;
 }
-
-const TREND_TEXT: Record<string, string> = { up: 'Rising enquiries', down: 'Enquiries falling', flat: 'Steady enquiries', insufficient: 'Building history' };
 
 export function areaVerdict(a: AreaVerdictInput): AreaVerdict {
   const warn: string[] = [];
@@ -293,12 +300,14 @@ export function areaVerdict(a: AreaVerdictInput): AreaVerdict {
   const reasons = [...warn, ...good].slice(0, 3);
 
   const bedLabel = a.bedroom ? `${a.bedroom}-bed` : 'property';
-  const figures = a.grossRevenue ? `A typical ${bedLabel} here grosses ${gbp(a.grossRevenue)} a year${a.occupancy !== null ? ` at ${Math.round(a.occupancy)}% occupancy` : ''}${a.yieldPct !== null ? `, a ${a.yieldPct.toFixed(1)}% yield on average prices` : ''}.` : 'Not enough reports yet for a typical revenue figure.';
+  const figures = a.grossRevenue ? `A typical ${bedLabel} here grosses ${absGbp(a.grossRevenue)} a year${a.occupancy !== null ? ` at ${Math.round(a.occupancy)}% occupancy` : ''}${a.yieldPct !== null ? `, a ${a.yieldPct.toFixed(1)}% yield on average prices` : ''}.` : 'Not enough reports yet for a typical revenue figure.';
 
   let tone: VerdictTone;
   let headline: string;
   if (f) {
-    tone = f.score >= 70 ? 'works' : f.score >= 55 ? 'tight' : 'no';
+    // Same bands as the fit grade shown beside it: A/B fits, C is partial, D/E does not.
+    const grade = gradeFor(f.score).grade;
+    tone = grade === 'A' || grade === 'B' ? 'works' : grade === 'C' ? 'tight' : 'no';
     headline = tone === 'works' ? `${a.name} fits your goals` : tone === 'tight' ? `${a.name} is a partial fit` : `${a.name} doesn’t fit your goals`;
   } else {
     tone = 'info';
@@ -313,12 +322,12 @@ export function areaVerdict(a: AreaVerdictInput): AreaVerdict {
     sentence,
     track: null,
     keys: [
-      { label: `Typical ${bedLabel} revenue`, value: a.grossRevenue ? gbp(a.grossRevenue) : '—', sub: `${a.occupancy !== null ? `${Math.round(a.occupancy)}% occupied · ` : ''}${a.samples} report${a.samples === 1 ? '' : 's'}` },
+      { label: `Typical ${bedLabel} revenue`, value: a.grossRevenue ? absGbp(a.grossRevenue) : '—', sub: `${a.occupancy !== null ? `${Math.round(a.occupancy)}% occupied · ` : ''}${a.samples} report${a.samples === 1 ? '' : 's'}` },
       { label: 'Gross yield', value: a.yieldPct !== null ? `${a.yieldPct.toFixed(1)}%` : '—', sub: a.yieldPct !== null ? `on the average ${bedLabel} price` : 'no property-value data', tone: yieldTone },
       { label: 'Competition', value: a.competition ?? '—', sub: a.directBooking ? `${a.directBooking.toLowerCase()} direct-booking potential` : 'no direct-booking data' },
       { label: 'Licensing', value: a.licensing.status === 'confirmed-unrestricted' ? 'None required' : a.licensing.status === 'confirmed-licensed' ? 'Licence needed' : 'Unconfirmed', sub: a.licensing.regionLabel, tone: a.licensing.status === 'confirmed-licensed' ? 'tight' : undefined },
     ],
-    ceiling: a.trend ? `${TREND_TEXT[a.trend]} over the last six months.` : null,
+    ceiling: a.trend ? `${trendLabel(a.trend)} over the last six months.` : null,
     number: a.yieldPct !== null ? `${a.yieldPct.toFixed(1)}%` : a.grossRevenue ? gbpK(a.grossRevenue) : '—',
     numberLabel: a.yieldPct !== null ? `yield${a.grade ? ` · ${a.grade}` : ''}` : a.grossRevenue ? 'rev / yr' : 'no data',
     reasons,

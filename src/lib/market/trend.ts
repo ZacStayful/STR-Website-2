@@ -14,6 +14,12 @@
 import type { MonthBucket } from './types.ts';
 
 export type Direction = 'up' | 'flat' | 'down' | 'insufficient';
+
+/** The one phrase for an enquiry direction, used by rows, cards and verdicts alike. */
+export function trendLabel(direction: Direction | null | undefined): string | null {
+  if (!direction) return null;
+  return { up: 'Rising enquiries', down: 'Enquiries falling', flat: 'Steady enquiries', insufficient: 'Building history' }[direction];
+}
 export type TrendMetric = 'reports' | 'avg_adr' | 'avg_occupancy' | 'avg_gross_revenue';
 
 export interface TrendResult {
