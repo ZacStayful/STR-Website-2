@@ -1,36 +1,81 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Stayful Intelligence
 
-## Getting Started
+The Stayful Property Analyser, Market Explorer and browser extension.
+Next.js (App Router) on Vercel, Supabase for auth and data, Stripe for billing.
 
-First, run the development server:
+## Running locally
 
 ```bash
+npm install
+cp .env.example .env.local   # then fill it in — see the comments in that file
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Command | What it does |
+|---|---|
+| `npm run dev` | Dev server on http://localhost:3000 |
+| `npm test` | Unit tests (`node --test`, no bundler) |
+| `npm run lint` | ESLint. Should report 0 errors |
+| `npm run build` | Production build |
+| `npm run build:extension` | Builds the Chrome extension into `extension/dist` |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Tests run under Node's native type stripping, not a bundler. That means a test
+file must use **relative imports with explicit `.ts` extensions** — no `@/`
+aliases — and must not reach any module that imports `server-only`. This is why
+the billing logic lives in `src/lib/**` with the Stripe and Supabase clients
+injected, rather than inside the route handlers.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Deploying
 
-## Learn More
+Vercel deploys `main` automatically. Two things are **not** automated, and both
+have to be done by hand.
 
-To learn more about Next.js, take a look at the following resources:
+### 1. Run `supabase/schema.sql` after any merge that changes it
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Paste the whole file into the Supabase SQL editor. It is idempotent — every
+statement is `create ... if not exists`, `add column if not exists` or
+`drop policy if exists` — so re-running it is safe and is the intended way to
+apply a change.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**This is not optional and it is not cosmetic.** The access gates select a fixed
+column list (`ACCESS_COLUMNS` in `src/lib/access.ts`). A PostgREST select naming
+a column that does not exist fails the whole query, the gate reads a null
+profile, and every member — admins included — is redirected to the paywall. A
+merge that adds a column and is not followed by this step takes the whole site
+down. That has happened once already.
 
-## Deploy on Vercel
+So: merge, run the schema, then check that a member page loads.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 2. Enable the Stripe webhook events
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Six of them, listed with what each is for in `.env.example`. The endpoint is
+`/api/stripe/webhook`.
+
+`customer.subscription.updated` is the one to double-check: it carries pause,
+resume and scheduled cancellation. Without it `/account` still looks correct,
+because the server actions write the columns directly, but the row quietly
+drifts out of step with Stripe from then on.
+
+### Environment variables
+
+Set on Vercel to match `.env.local`. `.env.example` documents every variable,
+which are required, and what breaks without them.
+
+## Layout
+
+| Path | What lives there |
+|---|---|
+| `src/app/(marketing)` | Public pages: landing, pricing, features, upgrade paywall |
+| `src/app/(auth)` | Sign in, sign up, password reset |
+| `src/app/estimate` | The analyser |
+| `src/app/markets` | Market Explorer |
+| `src/app/reports` | Saved report history |
+| `src/app/account` | Plan management: pause, cancel, sign out |
+| `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
+| `src/lib/access.ts` | Who may use what. Every gate funnels through `hasAccess` |
+| `src/lib/billing/` | Stripe webhook logic, injected clients so it can be tested |
+| `supabase/schema.sql` | The entire schema, run by hand |
+| `extension/` | Chrome extension source |
+
+Scheduled jobs are declared in `vercel.json` and live under
+`src/app/api/internal/`.

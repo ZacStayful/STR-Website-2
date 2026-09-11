@@ -6,6 +6,7 @@ import {
   hasAccess,
   trialBannerVariant,
 } from "@/lib/access";
+import { formatPlanDate } from "@/lib/subscription";
 import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
 import { AppSwitcher } from "@/components/AppSwitcher";
@@ -38,6 +39,7 @@ export default async function ReportsLayout({ children }: { children: React.Reac
         <TrialBanner
           variant={bannerVariant}
           remaining={freeReportsRemaining(profile)}
+          pausedUntil={formatPlanDate(profile.subscription_paused_until)}
           checkoutHref={checkoutUrlFor(user.id, user.email ?? null)}
         />
       )}

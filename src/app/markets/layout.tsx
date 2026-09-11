@@ -6,6 +6,7 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { TrialBanner } from "@/components/TrialBanner";
 import { getMarketAccess } from "@/lib/market/gate";
 import { freeReportsRemaining, trialBannerVariant } from "@/lib/access";
+import { formatPlanDate } from "@/lib/subscription";
 import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
 import { marketingFontClasses } from "@/lib/marketing-fonts";
@@ -83,6 +84,7 @@ export default async function MarketsLayout({ children }: { children: React.Reac
         <TrialBanner
           variant={bannerVariant}
           remaining={freeReportsRemaining(profile)}
+          pausedUntil={formatPlanDate(profile.subscription_paused_until)}
           checkoutHref={checkoutUrlFor(user.id, user.email ?? null)}
         />
       )}

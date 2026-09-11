@@ -5,11 +5,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
   ACCESS_COLUMNS,
   FREE_RUNS,
+  accountStatus,
   hasAccess,
   isLapsedSubscriber,
 } from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
 import { checkoutUrlFor } from "@/lib/billing";
+import { formatPlanDate } from "@/lib/subscription";
+import { resumeFromUpgradeAction } from "@/app/account/actions";
 import { Icon } from "@/lib/icons";
 import { safeInternalPath } from "@/lib/safe-path";
 
@@ -60,6 +63,45 @@ export default async function UpgradePage({
   const lapsed = profile ? isLapsedSubscriber(profile) : false;
   const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
 
+  // A paused member gets their own screen. They already HAVE a subscription,
+  // so the checkout link must not be on this page at all — following it would
+  // start a second subscription and bill them twice. The only way out of a
+  // pause is to resume the one they have.
+  if (profile && accountStatus(profile) === "paused") {
+    const until = formatPlanDate(
+      (profile as { subscription_paused_until?: string | null }).subscription_paused_until ?? null,
+    );
+    return (
+      <section className="upgrade section">
+        <div className="wrap-narrow">
+          <div className="eyebrow">Plan paused</div>
+          <h1 className="upgrade-title">
+            {firstName ? `${firstName}, your` : "Your"} plan is paused
+            {until ? ` until ${until}` : ""}.
+          </h1>
+          <p className="lede">
+            Reports and the Market Explorer are switched off while your plan is
+            paused, and you are not being charged. Everything you have saved is
+            exactly where you left it. Restart whenever you are ready — it also
+            starts again on its own{until ? ` on ${until}` : ""}.
+          </p>
+
+          <div className="upgrade-ctas">
+            <form action={resumeFromUpgradeAction}>
+              <button className="btn btn-primary" type="submit">
+                Restart my plan now <Icon name="arrow" size={14} />
+              </button>
+            </form>
+          </div>
+
+          <p className="upgrade-foot">
+            <Link href="/account">Manage your plan</Link>.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="upgrade section">
       <div className="wrap-narrow">
@@ -98,8 +140,8 @@ export default async function UpgradePage({
         </div>
 
         <p className="upgrade-foot">
-          Self-serve Stripe checkout is coming soon. In the meantime, every
-          subscription is set up by hand the same day you book.{" "}
+          You can pause or cancel any time from{" "}
+          <Link href="/account">your account</Link>.{" "}
           <Link href="/pricing">See full pricing</Link>.
         </p>
       </div>

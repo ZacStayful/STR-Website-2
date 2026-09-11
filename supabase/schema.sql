@@ -51,6 +51,11 @@ alter table public.profiles add column if not exists mobile text;
 alter table public.profiles add column if not exists monday_item_id text;
 alter table public.profiles add column if not exists reports_run integer not null default 0;
 alter table public.profiles add column if not exists last_seen_at timestamptz;
+-- Declared in the create-table block above but never given a catch-up alter, so
+-- it is missing on any project created before it was added. The column grants
+-- further down name it, and `grant update (...)` errors on a column that does
+-- not exist — which would take the whole permission change down with it.
+alter table public.profiles add column if not exists updated_at timestamptz not null default now();
 alter table public.profiles add column if not exists reports_total integer not null default 0;
 alter table public.profiles add column if not exists plan_source text;
 alter table public.profiles add column if not exists subscription_started_at timestamptz;
@@ -350,3 +355,65 @@ drop policy if exists "Users can read own extension tokens" on public.extension_
 create policy "Users can read own extension tokens"
   on public.extension_tokens for select
   using (auth.uid() = user_id);
+
+-- =========================
+-- Self-serve plan management: pause / cancel
+-- =========================
+-- Pause is a WINDOW, not a flag, and both ends mirror Stripe:
+--
+--   subscription_paused_from   the current period end at the moment they hit
+--                              pause. The member keeps the time they already
+--                              paid for; the pause bites afterwards.
+--   subscription_paused_until  pause_collection.resumes_at.
+--
+-- Access is withheld only BETWEEN the two (see src/lib/access.ts -> isPaused).
+-- Because it is a time comparison rather than a stored boolean, an auto-resume
+-- heals itself on the next page read even if the resume webhook never lands —
+-- nothing here needs a cron.
+--
+-- subscription_cancel_at mirrors Stripe's cancel_at, set by cancel_at_period_end.
+-- The member keeps full access until then and can undo it.
+alter table public.profiles add column if not exists subscription_paused_from timestamptz;
+alter table public.profiles add column if not exists subscription_paused_until timestamptz;
+alter table public.profiles add column if not exists subscription_cancel_at timestamptz;
+alter table public.profiles add column if not exists subscription_current_period_end timestamptz;
+-- What the cancel retention flow captured. Reporting only, never gating.
+alter table public.profiles add column if not exists cancel_reason text;
+alter table public.profiles add column if not exists cancel_reason_comment text;
+alter table public.profiles add column if not exists cancel_reason_at timestamptz;
+
+-- ---------------------------------------------------------------
+-- Lock the billing columns to the service role
+-- ---------------------------------------------------------------
+-- "Users can update own profile" above has no column restriction, so until now
+-- any signed-in member could `update profiles set plan = 'pro'` with the anon
+-- key — or reset reports_run to zero for endless free reports. Shipping a
+-- self-serve billing UI makes that the obvious thing to try.
+--
+-- Column-level grants fail closed: anything not listed here simply cannot be
+-- written by a user session, whoever they are. Every column a user session
+-- legitimately writes is listed; billing and usage counters deliberately are
+-- not, and are written only by the webhook and the /account server actions via
+-- the service-role client. Adding a user-writable column later means adding it
+-- to this list.
+revoke update on public.profiles from anon, authenticated;
+grant update (
+  full_name,
+  mobile,
+  monday_item_id,
+  last_seen_at,
+  market_goals,
+  market_goals_updated_at,
+  alert_weekly,
+  sourcing_alerts,
+  sourcing_last_sent_at,
+  updated_at
+) on public.profiles to authenticated;
+
+-- The update policy had no `with check`, so a row could be re-pointed at
+-- another user id. Re-create it with both halves.
+drop policy if exists "Users can update own profile" on public.profiles;
+create policy "Users can update own profile"
+  on public.profiles for update
+  using (auth.uid() = id)
+  with check (auth.uid() = id);

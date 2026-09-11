@@ -10,19 +10,27 @@
  * can never touch reports_run — viewing the explorer must not consume a free run.
  */
 
-import { hasAccess, type Profile } from '../access.ts';
+import { hasAccess, type AccessProfile } from '../access.ts';
 import { isAdminEmail } from '../admin.ts';
 
 export type MarketAccessState = 'anon' | 'blocked' | 'ok';
 
-export type MarketAccessProfile = Pick<Profile, 'plan' | 'reports_run' | 'stripe_subscription_id'>;
+/**
+ * Whatever the caller selected. Deliberately the tolerant shape rather than a
+ * required Pick: rows come back from an untyped Supabase client, and a route
+ * that legitimately selects a few extra columns should not have to restate
+ * every access column to type-check. Select ACCESS_COLUMNS and the runtime
+ * answer is right; accountStatus copes with anything missing.
+ */
+export type MarketAccessProfile = AccessProfile;
 
 export function marketAccessState(
   user: { email?: string | null } | null | undefined,
   profile: MarketAccessProfile | null | undefined,
+  now: number = Date.now(),
 ): MarketAccessState {
   if (!user) return 'anon';
   if (isAdminEmail(user.email)) return 'ok';
   if (!profile) return 'blocked';
-  return hasAccess(profile) ? 'ok' : 'blocked';
+  return hasAccess(profile, now) ? 'ok' : 'blocked';
 }

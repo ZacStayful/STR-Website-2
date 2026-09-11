@@ -43,6 +43,7 @@ const STATUS_LABEL: Record<AccountStatus, string> = {
   free_trial: "Free trial",
   trial_expired: "Trial used up",
   lapsed: "Lapsed",
+  paused: "Paused",
 };
 
 function fmtDate(iso: string | null): string {

@@ -44,3 +44,23 @@ test('does not mutate the profile', () => {
   marketAccessState(user, p);
   assert.equal(JSON.stringify(p), before);
 });
+
+test('a paused member is blocked from the explorer', () => {
+  // The Stripe status stays 'active' through a pause, so a gate reading the
+  // status alone would let them straight in.
+  const now = Date.parse('2026-06-15T12:00:00Z');
+  const paused = {
+    plan: 'pro' as const,
+    plan_source: 'stripe',
+    reports_run: 0,
+    stripe_subscription_id: 'sub_1',
+    stripe_subscription_status: 'active',
+    subscription_paused_from: '2026-06-01T00:00:00Z',
+    subscription_paused_until: '2026-09-01T00:00:00Z',
+  };
+  assert.equal(marketAccessState(user, paused, now), 'blocked');
+
+  // ...and let back in by the clock alone once the window closes.
+  const after = Date.parse('2026-09-02T00:00:00Z');
+  assert.equal(marketAccessState(user, paused, after), 'ok');
+});

@@ -7,6 +7,7 @@ import {
   freeReportsRemaining,
   hasAccess,
 } from "@/lib/access";
+import { formatPlanDate } from "@/lib/subscription";
 import { isAdminEmail } from "@/lib/admin";
 import { TrialBanner } from "@/components/TrialBanner";
 import { AppSwitcher } from "@/components/AppSwitcher";
