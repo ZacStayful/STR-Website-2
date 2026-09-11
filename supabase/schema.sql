@@ -51,6 +51,11 @@ alter table public.profiles add column if not exists mobile text;
 alter table public.profiles add column if not exists monday_item_id text;
 alter table public.profiles add column if not exists reports_run integer not null default 0;
 alter table public.profiles add column if not exists last_seen_at timestamptz;
+-- Declared in the create-table block above but never given a catch-up alter, so
+-- it is missing on any project created before it was added. The column grants
+-- further down name it, and `grant update (...)` errors on a column that does
+-- not exist — which would take the whole permission change down with it.
+alter table public.profiles add column if not exists updated_at timestamptz not null default now();
 alter table public.profiles add column if not exists reports_total integer not null default 0;
 alter table public.profiles add column if not exists plan_source text;
 alter table public.profiles add column if not exists subscription_started_at timestamptz;

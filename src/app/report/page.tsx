@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Mail, FileText, Loader2, AlertCircle, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -156,9 +157,9 @@ export default function ReportPage() {
 
           <p className="mt-6 text-center text-xs text-muted-foreground">
             {`Don't have a report yet? `}
-            <a href="/" className="font-medium text-primary underline underline-offset-2">
+            <Link href="/" className="font-medium text-primary underline underline-offset-2">
               Run your free property analysis
-            </a>
+            </Link>
           </p>
         </div>
       </section>

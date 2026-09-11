@@ -41,8 +41,8 @@ let lastScrollY = 0;
 let lastScrollTime = 0;
 let scrollStopTimer: ReturnType<typeof setTimeout> | null = null;
 let sectionObserver: IntersectionObserver | null = null;
-let visibleSections = new Set<string>();
-let sectionTimers = new Map<string, number>(); // sectionId -> timestamp when became visible
+const visibleSections = new Set<string>();
+const sectionTimers = new Map<string, number>(); // sectionId -> timestamp when became visible
 let initialized = false;
 
 // ─── Helpers ──────────────────────────────────────────────────────
