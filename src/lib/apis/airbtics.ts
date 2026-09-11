@@ -1690,7 +1690,7 @@ async function getShortLetDataFromMarkets(
       searchBroadened = true;
       searchRadiusKm = radiusKm;
 
-      const broaderResult = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
+      const broaderResult = await fetchNearbyListings(lat, lng, apiKey, radiusKm).catch(() => null);
       if (broaderResult) {
         const result = extractComparables(broaderResult, guests, lat, lng);
         comparables = result.comparables;
@@ -1846,9 +1846,12 @@ function extractComparables(
   return { comparables, totalMatches: guestMatches.length };
 }
 
+const BOUNDS_TIMEOUT_MS = 15_000;
+
 /**
  * Fetches nearby listings within a bounding box using the bounds endpoint.
- * Cost: $0.05/call
+ * Cost: $0.05/call. Gives up after BOUNDS_TIMEOUT_MS (the callers all treat
+ * a thrown error as "no comps", which is the right degradation).
  */
 async function fetchNearbyListings(
   lat: number,
@@ -1885,6 +1888,8 @@ async function fetchNearbyListings(
     },
     body: JSON.stringify(body),
     cache: 'no-store',
+    // A hung bounds call must not take the whole request down with it.
+    signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
   });
 
   console.log(`[DEBUG] listings/search/bounds HTTP status: ${response.status}`);
