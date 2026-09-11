@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createAdminClient } from '../supabase/admin';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { createSupabaseServerClient } from '../supabase/server';
 import { detectListingUrl, SERVER_FETCHABLE, SOURCE_LABELS } from './detect';
 import { parseListing, PARSER_VERSIONS } from './parsers/index';
@@ -9,6 +9,8 @@ import { reverseGeocode } from '../apis/geocode';
 import { snapshotToPrefill, postcodeAreaOf, type NormaliseResult } from './normalise';
 import type { DetectedListing, ListingSnapshot } from './types';
 import type { QuickEstimate } from './quick-types';
+import { quickEstimate } from './quick';
+import type { MarketGoals } from '../market/goals';
 
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -16,9 +18,6 @@ export type ResolveOutcome =
   | { ok: true; detected: DetectedListing; snapshot: ListingSnapshot; prefill: NormaliseResult['prefill']; warnings: string[]; fromCache: boolean }
   | { ok: false; code: 'unsupported_url' | 'needs_extension' | 'blocked' | 'not_found' | 'unreadable' | 'paused' | 'disabled'; message: string; detected: DetectedListing | null };
 
-function hasServiceRole(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
 
 async function readSnapshot(canonicalUrl: string): Promise<ListingSnapshot | null> {
   if (!hasServiceRole()) return null;
@@ -49,7 +48,7 @@ export async function resolveListing(url: string, opts: { html?: string; refresh
     let html = opts.html ?? null;
     if (!html) {
       if (!SERVER_FETCHABLE.has(detected.source)) {
-        return { ok: false, code: 'needs_extension', message: `${SOURCE_LABELS[detected.source]} blocks automated access. The Stayful browser extension (coming soon) reads the page for you; for now, enter the details manually.`, detected };
+        return { ok: false, code: 'needs_extension', message: `${SOURCE_LABELS[detected.source]} blocks automated access. Open the listing with the Stayful browser extension installed (see /extension) and it reads the page for you; otherwise enter the details manually.`, detected };
       }
       const fetched = await fetchListingHtml(detected.source, detected.canonicalUrl);
       if (!fetched.ok) {
@@ -75,16 +74,94 @@ export async function resolveListing(url: string, opts: { html?: string; refresh
         snapshot.locationConfidence = 'reverse-geocoded';
       }
     }
-    await writeSnapshot(snapshot);
+    // Only pages we fetched ourselves go into the shared cache: HTML handed
+    // over by a member's browser is trusted for that member alone, never as
+    // the snapshot every other member sees for the URL.
+    if (!opts.html) await writeSnapshot(snapshot);
   }
   const { prefill, warnings } = snapshotToPrefill(snapshot);
   return { ok: true, detected, snapshot, prefill, warnings, fromCache: Boolean(cached) };
 }
 
-/** Upserts the member's own record of this listing (RLS-scoped session client). */
-export async function recordCheckedListing(userId: string, snapshot: ListingSnapshot, quick: QuickEstimate | null): Promise<string | null> {
+const DEFAULT_RESOLVES_PER_DAY = 30;
+
+export interface CheckListingInput {
+  userId: string;
+  goals: MarketGoals | null;
+  /** Page HTML from the member's browser (extension); omitted for server fetches. */
+  html?: string;
+  refresh?: boolean;
+  /** Record the listing in the member's pipeline (default true). */
+  save?: boolean;
+  /** Token-authenticated callers have no session cookies and use the service role. */
+  admin?: boolean;
+}
+
+export interface CheckedListingPayload {
+  snapshot: ListingSnapshot;
+  prefill: NormaliseResult['prefill'];
+  warnings: string[];
+  quick: QuickEstimate;
+  checkedListingId: string | null;
+  fromCache: boolean;
+}
+
+export type CheckListingOutcome =
+  | { ok: true; body: CheckedListingPayload }
+  | { ok: false; code: Extract<ResolveOutcome, { ok: false }>['code'] | 'cap'; message: string; detected: DetectedListing | null };
+
+/**
+ * The whole "check a listing" step shared by the site's paste box and the
+ * extension: daily cap, resolve, free quick view with the member's finance
+ * defaults, and the pipeline record. Never consumes a report run.
+ */
+export async function checkListingForMember(url: string, input: CheckListingInput): Promise<CheckListingOutcome> {
+  const cap = Number(process.env.LISTING_RESOLVES_PER_DAY ?? DEFAULT_RESOLVES_PER_DAY);
+  const used = await resolvesToday(input.userId, { admin: input.admin });
+  if (Number.isFinite(cap) && cap > 0 && used >= cap) {
+    return { ok: false, code: 'cap', message: `You have checked ${cap} listings today. Try again tomorrow.`, detected: detectListingUrl(url) };
+  }
+  const resolved = await resolveListing(url, { html: input.html, refresh: input.refresh });
+  if (!resolved.ok) return { ok: false, code: resolved.code, message: resolved.message, detected: resolved.detected };
+
+  const snap = resolved.snapshot;
+  const price = snap.kind === 'sale' ? resolved.prefill.purchasePrice : snap.kind === 'rent' ? resolved.prefill.advertisedRent : null;
+  const quick = await quickEstimate(
+    {
+      kind: snap.kind,
+      postcode: snap.postcode ?? null,
+      outcode: snap.outcode ?? null,
+      bedrooms: resolved.prefill.bedrooms,
+      bathrooms: resolved.prefill.bathrooms,
+      lat: snap.lat ?? null,
+      lng: snap.lng ?? null,
+      airbnbId: snap.source === 'airbnb' ? snap.id : null,
+      price: price ?? null,
+      finance: input.goals?.finance ?? null,
+    },
+    { mode: 'quick', userId: input.userId },
+  );
+  const checkedListingId = input.save === false ? null : await recordCheckedListing(input.userId, snap, quick, { admin: input.admin });
+  return { ok: true, body: { snapshot: snap, prefill: resolved.prefill, warnings: resolved.warnings, quick, checkedListingId, fromCache: resolved.fromCache } };
+}
+
+/**
+ * Callers with a browser session use the RLS-scoped client; the extension's
+ * token-authenticated routes have no cookies and pass `admin: true` after
+ * verifying the token themselves.
+ */
+export interface ClientChoice {
+  admin?: boolean;
+}
+
+async function clientFor(opts: ClientChoice | undefined) {
+  return opts?.admin ? createAdminClient() : await createSupabaseServerClient();
+}
+
+/** Upserts the member's own record of this listing. */
+export async function recordCheckedListing(userId: string, snapshot: ListingSnapshot, quick: QuickEstimate | null, opts?: ClientChoice): Promise<string | null> {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await clientFor(opts);
     const row = {
       user_id: userId,
       canonical_url: snapshot.canonicalUrl,
@@ -114,9 +191,9 @@ export async function recordCheckedListing(userId: string, snapshot: ListingSnap
 }
 
 /** How many listings this member has resolved today (for the daily cap). */
-export async function resolvesToday(userId: string): Promise<number> {
+export async function resolvesToday(userId: string, opts?: ClientChoice): Promise<number> {
   try {
-    const supabase = await createSupabaseServerClient();
+    const supabase = await clientFor(opts);
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
     // last_checked_at is set only when a listing is resolved; pipeline edits touch updated_at, not this.

@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createAdminClient } from '../../supabase/admin';
+import { createAdminClient, hasServiceRole } from '../../supabase/admin';
 import type { TrackedListing } from '../../listing/competitors';
 import type { ShortLetComparable } from '../../types';
 
@@ -8,9 +8,6 @@ import type { ShortLetComparable } from '../../types';
  * Rung-1 sources: answers we already hold in our own database. Free.
  */
 
-function hasServiceRole(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
 
 /**
  * A comparable we already stored for this Airbnb listing id in a recent

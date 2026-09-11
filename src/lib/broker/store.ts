@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createAdminClient } from '../supabase/admin';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import type { BrokerLedger, BrokerStore, CachedAnswer, CallRecord, ProviderName } from './types';
 import { memoryLedger, memoryStore } from './resolve';
 
@@ -11,9 +11,6 @@ import { memoryLedger, memoryStore } from './resolve';
  * cross-request caching or spend tracking.
  */
 
-function hasServiceRole(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
-}
 
 const fallbackStore = memoryStore();
 const fallbackLedger = memoryLedger();
