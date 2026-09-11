@@ -13,6 +13,17 @@ export type MaxDistance = 25 | 50 | 100;
 export type Management = 'self' | 'managed';
 export type RiskAppetite = 'cautious' | 'balanced' | 'tolerant';
 
+/** Finance defaults used by the deal maths on any listing the member checks. */
+export interface FinanceGoals {
+  depositPct: number; // 25
+  mortgageRatePct: number; // 5.5
+  termYears: number; // 25
+  targetYieldPct: number; // 10
+  targetMarginPcm: number; // 500
+}
+
+export const DEFAULT_FINANCE_GOALS: FinanceGoals = { depositPct: 25, mortgageRatePct: 5.5, termYears: 25, targetYieldPct: 10, targetMarginPcm: 500 };
+
 export interface MarketGoals {
   version: 1;
   home: { postcode: string; lat: number | null; lng: number | null } | null;
@@ -22,6 +33,7 @@ export interface MarketGoals {
   priorities: { yield: Priority; revenue: Priority; lowCompetition: Priority; directBookings: Priority };
   management: Management;
   riskAppetite: RiskAppetite;
+  finance: FinanceGoals;
 }
 
 export const DEFAULT_GOALS: MarketGoals = {
@@ -33,6 +45,7 @@ export const DEFAULT_GOALS: MarketGoals = {
   priorities: { yield: 2, revenue: 2, lowCompetition: 2, directBookings: 2 },
   management: 'managed',
   riskAppetite: 'balanced',
+  finance: DEFAULT_FINANCE_GOALS,
 };
 
 export const PRIORITY_LABELS: Record<Priority, string> = { 0: 'Not important', 1: 'Nice to have', 2: 'Important', 3: 'Essential' };
@@ -44,6 +57,24 @@ export function normalisePostcode(raw: string): string | null {
   if (v.length < 5 || v.length > 7) return null;
   const spaced = `${v.slice(0, -3)} ${v.slice(-3)}`;
   return UK_POSTCODE.test(spaced) ? spaced : null;
+}
+
+function financeField(v: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof v === 'string' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) && n >= min && n <= max ? n : fallback;
+}
+
+/** Tolerant parse: any missing or silly value falls back to the default. */
+export function parseFinanceGoals(raw: unknown): FinanceGoals {
+  const f = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const d = DEFAULT_FINANCE_GOALS;
+  return {
+    depositPct: financeField(f.depositPct, d.depositPct, 0, 100),
+    mortgageRatePct: financeField(f.mortgageRatePct, d.mortgageRatePct, 0, 25),
+    termYears: financeField(f.termYears, d.termYears, 1, 40),
+    targetYieldPct: financeField(f.targetYieldPct, d.targetYieldPct, 1, 50),
+    targetMarginPcm: financeField(f.targetMarginPcm, d.targetMarginPcm, 0, 20000),
+  };
 }
 
 function priority(v: unknown): Priority | null {
@@ -83,7 +114,7 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
   const management: Management = o.management === 'self' ? 'self' : 'managed';
   const riskAppetite: RiskAppetite = o.riskAppetite === 'cautious' || o.riskAppetite === 'tolerant' ? o.riskAppetite : 'balanced';
 
-  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite };
+  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance) };
 }
 
 /** Build goals from the questionnaire form (FormData-like getter). */
@@ -106,6 +137,13 @@ export function goalsFromForm(get: (key: string) => string | null): MarketGoals 
     },
     management: get('management'),
     riskAppetite: get('riskAppetite'),
+    finance: {
+      depositPct: get('f_depositPct'),
+      mortgageRatePct: get('f_mortgageRatePct'),
+      termYears: get('f_termYears'),
+      targetYieldPct: get('f_targetYieldPct'),
+      targetMarginPcm: get('f_targetMarginPcm'),
+    },
   })!;
 }
 

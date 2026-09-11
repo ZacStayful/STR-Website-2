@@ -136,3 +136,95 @@ alter table public.profiles add column if not exists alert_weekly boolean not nu
 alter table public.saved_areas add column if not exists last_alerted_direction text;
 alter table public.saved_areas add column if not exists last_alerted_tier text;
 alter table public.saved_areas add column if not exists last_alerted_at timestamptz;
+
+-- =========================
+-- Data broker: shared cache + spend ledger (service role only)
+-- =========================
+-- broker_cache holds every paid answer keyed by question + params so the
+-- same postcode / grid cell / listing is never bought twice inside its TTL.
+-- provider_calls records every call (cache hits included) so daily budgets
+-- per provider and per member can be enforced and spend shown on /admin.
+create table if not exists public.broker_cache (
+  question text not null,
+  key text not null,
+  value jsonb not null,
+  provider text not null,
+  level int not null default 1,
+  fetched_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  primary key (question, key)
+);
+alter table public.broker_cache enable row level security;
+
+create table if not exists public.provider_calls (
+  id bigint generated always as identity primary key,
+  at timestamptz not null default now(),
+  provider text not null,
+  question text not null,
+  key text,
+  cost_pence int not null default 0,
+  cache_hit boolean not null default false,
+  user_id uuid,
+  ok boolean not null default true,
+  ms int
+);
+create index if not exists provider_calls_at_provider_idx on public.provider_calls (at desc, provider);
+create index if not exists provider_calls_user_at_idx on public.provider_calls (user_id, at desc);
+alter table public.provider_calls enable row level security;
+
+-- =========================
+-- Listing links: snapshots + a member's checked listings
+-- =========================
+-- listing_snapshots: one parsed snapshot per canonical listing URL, shared by
+-- every member who pastes it (typed fields only, never page HTML).
+create table if not exists public.listing_snapshots (
+  canonical_url text primary key,
+  source text not null,
+  snapshot jsonb not null,
+  fetched_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+alter table public.listing_snapshots enable row level security;
+
+-- checked_listings: a member's own list of listings they have looked at,
+-- with the quick figures, deal maths and (later) pipeline status.
+create table if not exists public.checked_listings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  canonical_url text not null,
+  source text not null,
+  kind text not null,
+  postcode text,
+  postcode_area text,
+  lat double precision,
+  lng double precision,
+  snapshot jsonb not null,
+  quick_estimate jsonb,
+  deal jsonb,
+  status text not null default 'watching',
+  notes text,
+  price_history jsonb not null default '[]'::jsonb,
+  listing_status text,
+  share_token text unique,
+  last_checked_at timestamptz,
+  analysed_report_id uuid,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, canonical_url)
+);
+create index if not exists checked_listings_user_idx on public.checked_listings (user_id, updated_at desc);
+alter table public.checked_listings enable row level security;
+drop policy if exists "Users can manage own checked listings" on public.checked_listings;
+create policy "Users can manage own checked listings"
+  on public.checked_listings for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+-- Report history: every full analysis is kept so it can be reopened.
+alter table public.saved_searches add column if not exists postcode text;
+alter table public.saved_searches add column if not exists postcode_area text;
+alter table public.saved_searches add column if not exists bedrooms int;
+alter table public.saved_searches add column if not exists kind text;
+alter table public.saved_searches add column if not exists source_listing jsonb;
+alter table public.saved_searches add column if not exists deal jsonb;
+alter table public.saved_searches add column if not exists checked_listing_id uuid;

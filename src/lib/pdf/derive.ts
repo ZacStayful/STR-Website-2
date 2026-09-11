@@ -71,8 +71,19 @@ export interface PdfExpenses {
   selfManaged: boolean;
 }
 
+export interface PdfDeal {
+  kind: "purchase" | "rent-to-rent";
+  basisLabel: string;
+  sourceUrl: string | null;
+  metrics: { label: string; value: string; sub?: string }[];
+  cashflow: { month: number; revenue: number; operating: number; fixed: number; net: number }[];
+  note: string;
+}
+
 export interface PdfReportData {
   property: { address: string; bedrooms: number; sleeps: number };
+  /** Deal economics when the report came from a listing (or an estimated value). */
+  deal?: PdfDeal;
   overview: {
     grossRevenue: number;
     netRevenue: number;
@@ -475,4 +486,52 @@ export function sanitiseAddressForFilename(address: string): string {
     .replace(/[^a-zA-Z0-9 ,\-]/g, "")
     .replace(/\s+/g, "_")
     .slice(0, 80) || "Property";
+}
+
+/** Builds the deal page data from the listing-link additions on a result. */
+export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
+  const d = result.deal;
+  if (!d) return undefined;
+  const cashflow = (result.cashflow ?? []).map((m) => ({ month: m.month, revenue: m.revenue, operating: m.operating, fixed: m.fixed, net: m.net }));
+  const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+  const basisLabel =
+    d.basis === "asking-price" ? `Based on the asking price of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`
+    : d.basis === "advertised-rent" ? `Based on the advertised rent of ${gbp(d.kind === "rent-to-rent" ? d.advertisedRentPcm : 0)} pcm`
+    : `Based on the estimated property value of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`;
+  if (d.kind === "purchase") {
+    return {
+      kind: "purchase",
+      basisLabel,
+      sourceUrl: result.sourceListing?.url ?? null,
+      metrics: [
+        { label: "Gross yield", value: `${d.grossYieldPct}%`, sub: `on ${gbp(d.askingPrice)}` },
+        { label: "Net yield", value: `${d.netYieldPct}%`, sub: "after running costs" },
+        { label: "Monthly cashflow", value: `${d.cashflowMonthly < 0 ? "-" : ""}${gbp(Math.abs(d.cashflowMonthly))}`, sub: `after ${gbp(d.mortgageMonthly)} mortgage` },
+        { label: "Cash on cash", value: `${d.cashOnCashPct}%`, sub: `on ${gbp(d.cashRequired)} in` },
+        { label: "Stamp duty", value: gbp(d.stampDuty), sub: "additional-property rate" },
+        { label: "Setup budget", value: gbp(d.setupCost) },
+        { label: `Max price for ${d.targetYieldPct}% yield`, value: gbp(d.maxPriceForTargetYield) },
+        { label: "Net operating / yr", value: gbp(d.netOperating), sub: "before mortgage" },
+      ],
+      cashflow,
+      note: "Yield and cashflow use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £250 a month bills; mortgage assumes the deposit, rate and term in your Stayful goal profile. Stamp duty is the England and Northern Ireland additional-property rate. Not financial advice.",
+    };
+  }
+  return {
+    kind: "rent-to-rent",
+    basisLabel,
+    sourceUrl: result.sourceListing?.url ?? null,
+    metrics: [
+      { label: "Monthly margin", value: `${d.monthlyMargin < 0 ? "-" : ""}${gbp(Math.abs(d.monthlyMargin))}`, sub: `after ${gbp(d.advertisedRentPcm)} rent` },
+      { label: "Annual margin", value: `${d.annualMargin < 0 ? "-" : ""}${gbp(Math.abs(d.annualMargin))}` },
+      { label: "Breakeven occupancy", value: d.breakevenOccupancyPct === null ? "—" : `${d.breakevenOccupancyPct}%`, sub: "covers rent and bills" },
+      { label: "Payback of setup", value: d.paybackMonths === null ? "Never" : `${d.paybackMonths} months`, sub: `${gbp(d.setupCost)} setup` },
+      { label: "Monthly gross", value: gbp(d.monthlyGross) },
+      { label: "Running costs", value: gbp(d.monthlyOperating), sub: "platform, management, cleaning, bills" },
+      { label: "Net before rent", value: gbp(d.monthlyNetBeforeRent) },
+      { label: `Max rent for ${gbp(d.targetMarginPcm)} margin`, value: gbp(d.maxRentForTargetMargin) },
+    ],
+    cashflow,
+    note: "Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £250 a month bills. Not financial advice.",
+  };
 }

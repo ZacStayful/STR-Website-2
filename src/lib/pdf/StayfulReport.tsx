@@ -5,6 +5,7 @@ import { Page2Revenue } from "./pages/Page2Revenue";
 import { Page3Comparables } from "./pages/Page3Comparables";
 import { Page4LocalRisk } from "./pages/Page4LocalRisk";
 import { Page6SetupCosts } from "./pages/Page6SetupCosts";
+import { Page7Deal } from "./pages/Page7Deal";
 import type { PdfReportData } from "./derive";
 
 export function StayfulReport({ data }: { data: PdfReportData }) {
@@ -19,6 +20,7 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
       <Page3Comparables data={data} />
       <Page4LocalRisk data={data} />
       {data.setup && <Page6SetupCosts data={data.setup} />}
+      {data.deal && <Page7Deal deal={data.deal} />}
     </Document>
   );
 }
