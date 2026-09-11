@@ -1,0 +1,56 @@
+{
+  "manifest_version": 3,
+  "name": "Stayful Intelligence (dev)",
+  "version": "0.1.0",
+  "description": "See what a Rightmove, Zoopla, OnTheMarket, Airbnb or Booking.com listing would earn as a short-term let, and save it to your Stayful pipeline.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://intelligence.stayful.co.uk/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.rightmove.co.uk/properties/*",
+        "https://*.zoopla.co.uk/for-sale/details/*",
+        "https://*.zoopla.co.uk/to-rent/details/*",
+        "https://*.zoopla.co.uk/new-homes/details/*",
+        "https://www.onthemarket.com/details/*",
+        "https://www.airbnb.co.uk/rooms/*",
+        "https://www.airbnb.com/rooms/*",
+        "https://www.booking.com/hotel/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Stayful Intelligence",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://intelligence.stayful.co.uk/*",
+      "http://localhost:3000/*"
+    ]
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2IIRU3LhAHZn6gi8dOG7uuLkqYyLcq52nUzvvq+1qo3UAc/bMYjy6C99hGBK9pLsvupx8h1guspTBYbmGAgtsfdEnwOSnPLl8nx+akGN3Gqed2/ZgXlneDZe/yciL0QLr6pvPL97OXm0F0fxwRoNe5T7wBblWvblP0tO3hSWkx8YyGsT3D1CjtYuov2g9lLaLqPne72B8ahawUfcE+LfiZUfWhk03f+0pjBYnFb4Zd+xOmGLLpWrsuD2mrgnosZS+xXjcasRPZI53jSX820MkFIaOYrS5oWyq9kQSDIdBYk9DjfkO8eZgExoiySkFfzYpYyBLaYgic2zg8w4h+at5wIDAQAB"
+}
