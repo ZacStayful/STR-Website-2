@@ -35,14 +35,19 @@ export function ExplorerShell({
   userEmail = null,
   trends = null,
   alertWeekly = true,
+  sourcingAlerts = false,
   listings: initialListings = [],
   initialSidePane = "areas",
   initialActiveListing = null,
+  initialCheckUrl = null,
 }: {
   cards: AreaCardData[];
   /** Monthly series from /api/market-trends, or null when unavailable. */
   trends?: MarketTrendsResponse | null;
   alertWeekly?: boolean;
+  sourcingAlerts?: boolean;
+  /** A listing URL prefilled in the paste box (from the sourcing email's "Add to pipeline"); the member still clicks Check. */
+  initialCheckUrl?: string | null;
   /** The member's checked listings (deal pipeline). */
   listings?: CheckedListingRow[];
   /** Open on the pipeline instead of the areas list (deep links / fixtures). */
@@ -250,7 +255,7 @@ export function ExplorerShell({
           setMobilePane("list");
         }}
       />
-      <ListingCheck onResolved={onResolved} />
+      <ListingCheck onResolved={onResolved} initialUrl={initialCheckUrl} />
       {trends && <MarketPulse national={trends.national} compact />}
 
       <div className="mx-explorer-body">
@@ -349,7 +354,7 @@ export function ExplorerShell({
         </div>
       </div>
 
-      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} alertWeekly={alertWeekly} onClose={closeGoals} />}
+      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} alertWeekly={alertWeekly} sourcingAlerts={sourcingAlerts} onClose={closeGoals} />}
     </div>
   );
 }

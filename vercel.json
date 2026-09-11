@@ -4,6 +4,14 @@
     {
       "path": "/api/internal/alerts",
       "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/internal/listing-recheck",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/internal/sourcing",
+      "schedule": "0 7 * * *"
     }
   ]
 }

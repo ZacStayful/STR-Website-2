@@ -60,15 +60,18 @@ export function dealReturn(deal: Deal | null): number | null {
  * score) with how the deal itself stacks up against the member's targets.
  */
 export function listingFit(row: CheckedListingRow, areaFit: number | null): number | null {
-  const base = areaFit ?? row.quick?.area?.score ?? null;
-  const d = row.deal;
-  if (base === null && !d) return null;
+  return blendFit(row.deal, areaFit ?? row.quick?.area?.score ?? null);
+}
+
+/** 60% area fit, 40% how the deal stacks against the member's targets; null when neither is known. */
+export function blendFit(deal: Deal | null, areaFit: number | null): number | null {
   let dealPoints: number | null = null;
-  if (d?.kind === 'purchase') dealPoints = Math.max(0, Math.min(100, (d.grossYieldPct / d.targetYieldPct) * 60));
-  if (d?.kind === 'rent-to-rent') dealPoints = Math.max(0, Math.min(100, 50 + (d.monthlyMargin / Math.max(1, d.targetMarginPcm)) * 25));
-  if (base === null) return Math.round(dealPoints!);
-  if (dealPoints === null) return Math.round(base);
-  return Math.round(base * 0.6 + dealPoints * 0.4);
+  if (deal?.kind === 'purchase') dealPoints = Math.max(0, Math.min(100, (deal.grossYieldPct / deal.targetYieldPct) * 60));
+  if (deal?.kind === 'rent-to-rent') dealPoints = Math.max(0, Math.min(100, 50 + (deal.monthlyMargin / Math.max(1, deal.targetMarginPcm)) * 25));
+  if (areaFit === null && dealPoints === null) return null;
+  if (areaFit === null) return Math.round(dealPoints!);
+  if (dealPoints === null) return Math.round(areaFit);
+  return Math.round(areaFit * 0.6 + dealPoints * 0.4);
 }
 
 export function sortListings(rows: CheckedListingRow[], key: ListingSort, areaFit: (row: CheckedListingRow) => number | null): CheckedListingRow[] {

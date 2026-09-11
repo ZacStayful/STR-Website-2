@@ -57,6 +57,7 @@ export default async function AreaPage({
       userEmail={user.email}
       trends={trends}
       alertWeekly={user.alertWeekly}
+      sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
       initialArea={meta.code}
       initialAreaName={hasData ? null : meta.name}

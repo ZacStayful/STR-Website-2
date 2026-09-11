@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { saveMarketGoalsAction, clearMarketGoalsAction, type GoalsState } from "../../actions";
-import { DEFAULT_GOALS, PRIORITY_LABELS, type MarketGoals, type Priority } from "@/lib/market/goals";
+import { DEFAULT_GOALS, PRIORITY_LABELS, SOURCING_KIND_LABELS, type MarketGoals, type Priority, type SourcingKind } from "@/lib/market/goals";
 import { BUDGET_LABELS } from "@/lib/market/filters";
 
 const initial: GoalsState = { error: null, warning: null, saved: false };
@@ -29,7 +29,7 @@ function PriorityPills({ name, value, label, help }: { name: string; value: Prio
   );
 }
 
-export function GoalsModal({ goals, alertWeekly = true, onClose }: { goals: MarketGoals | null; alertWeekly?: boolean; onClose: () => void }) {
+export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = false, onClose }: { goals: MarketGoals | null; alertWeekly?: boolean; sourcingAlerts?: boolean; onClose: () => void }) {
   const g = goals ?? DEFAULT_GOALS;
   const [state, action, pending] = useActionState(saveMarketGoalsAction, initial);
   const [clearing, startClear] = useTransition();
@@ -139,6 +139,19 @@ export function GoalsModal({ goals, alertWeekly = true, onClose }: { goals: Mark
             <label className="mx-check">
               <input type="checkbox" name="alertWeekly" value="1" defaultChecked={alertWeekly} />
               <span>Email me weekly when a saved area’s enquiry trend flips or its data becomes Confirmed.</span>
+            </label>
+            <label className="mx-check">
+              <input type="checkbox" name="sourcingAlerts" value="1" defaultChecked={sourcingAlerts} />
+              <span>Email me new listings that fit these goals (daily, only when there is something new). Listings you save are re-checked for price drops automatically.</span>
+            </label>
+            <label>
+              <span>Sourcing looks for</span>
+              <select name="sourcingKind" defaultValue={g.sourcingKind} className="mx-select mx-select--block">
+                {(Object.keys(SOURCING_KIND_LABELS) as SourcingKind[]).map((k) => (
+                  <option key={k} value={k}>{SOURCING_KIND_LABELS[k]}</option>
+                ))}
+              </select>
+              <small>Rent-to-rent picks are priced on the advertised rent; purchases on the asking price and your finance defaults above.</small>
             </label>
           </section>
 

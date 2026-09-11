@@ -5,9 +5,14 @@ import { Link2, Loader2 } from "lucide-react";
 import { detectListingUrl, SOURCE_LABELS } from "@/lib/listing/detect";
 import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "@/app/estimate/_components/listing-client-types";
 
-/** "Check a listing" paste box under the goal bar. */
-export function ListingCheck({ onResolved }: { onResolved: (r: ResolvedListing) => void }) {
-  const [url, setUrl] = useState("");
+/**
+ * "Check a listing" paste box under the goal bar. `initialUrl` (from a
+ * `/markets?check=` deep link in the sourcing email) only prefills the box:
+ * the member still clicks Check, so a plain link can never add listings to
+ * their pipeline or spend their daily checks on their behalf.
+ */
+export function ListingCheck({ onResolved, initialUrl = null }: { onResolved: (r: ResolvedListing) => void; initialUrl?: string | null }) {
+  const [url, setUrl] = useState(initialUrl ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const detected = detectListingUrl(url);
@@ -44,6 +49,7 @@ export function ListingCheck({ onResolved }: { onResolved: (r: ResolvedListing) 
           className="mx-search-input"
           placeholder="Check a listing: paste a Rightmove, OnTheMarket or Airbnb link"
           value={url}
+          autoFocus={Boolean(initialUrl)}
           onChange={(e) => {
             setUrl(e.target.value);
             setError(null);
@@ -61,7 +67,7 @@ export function ListingCheck({ onResolved }: { onResolved: (r: ResolvedListing) 
       <button type="button" className="mx-cta mx-cta--sm" onClick={run} disabled={busy || !url.trim()}>
         {busy ? <Loader2 size={14} className="mx-spin" aria-hidden /> : "Check listing"}
       </button>
-      {detected && !error && !busy && <span className="mx-listing-check-hint">{SOURCE_LABELS[detected.source]} · free quick view, no report used</span>}
+      {detected && !error && !busy && <span className="mx-listing-check-hint">{SOURCE_LABELS[detected.source]} · {initialUrl && url === initialUrl ? "press Check listing to add it to your pipeline" : "free quick view, no report used"}</span>}
       {error && <span className="mx-listing-check-error" role="alert">{error}</span>}
     </div>
   );

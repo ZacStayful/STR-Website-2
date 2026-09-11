@@ -24,6 +24,9 @@ export interface FinanceGoals {
 
 export const DEFAULT_FINANCE_GOALS: FinanceGoals = { depositPct: 25, mortgageRatePct: 5.5, termYears: 25, targetYieldPct: 10, targetMarginPcm: 500 };
 
+/** What the daily deal-sourcing digest should look for. */
+export type SourcingKind = 'sale' | 'rent' | 'both';
+
 export interface MarketGoals {
   version: 1;
   home: { postcode: string; lat: number | null; lng: number | null } | null;
@@ -34,6 +37,8 @@ export interface MarketGoals {
   management: Management;
   riskAppetite: RiskAppetite;
   finance: FinanceGoals;
+  /** Buy-to-let (sale), rent-to-rent (rent) or both. Default sale. */
+  sourcingKind: SourcingKind;
 }
 
 export const DEFAULT_GOALS: MarketGoals = {
@@ -46,7 +51,14 @@ export const DEFAULT_GOALS: MarketGoals = {
   management: 'managed',
   riskAppetite: 'balanced',
   finance: DEFAULT_FINANCE_GOALS,
+  sourcingKind: 'sale',
 };
+
+export const SOURCING_KIND_LABELS: Record<SourcingKind, string> = { sale: 'Properties to buy', rent: 'Properties to rent (rent-to-rent)', both: 'Both' };
+
+export function isSourcingKind(v: unknown): v is SourcingKind {
+  return v === 'sale' || v === 'rent' || v === 'both';
+}
 
 export const PRIORITY_LABELS: Record<Priority, string> = { 0: 'Not important', 1: 'Nice to have', 2: 'Important', 3: 'Essential' };
 
@@ -114,7 +126,9 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
   const management: Management = o.management === 'self' ? 'self' : 'managed';
   const riskAppetite: RiskAppetite = o.riskAppetite === 'cautious' || o.riskAppetite === 'tolerant' ? o.riskAppetite : 'balanced';
 
-  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance) };
+  const sourcingKind: SourcingKind = isSourcingKind(o.sourcingKind) ? o.sourcingKind : 'sale';
+
+  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance), sourcingKind };
 }
 
 /** Build goals from the questionnaire form (FormData-like getter). */
@@ -144,6 +158,7 @@ export function goalsFromForm(get: (key: string) => string | null): MarketGoals 
       targetYieldPct: get('f_targetYieldPct'),
       targetMarginPcm: get('f_targetMarginPcm'),
     },
+    sourcingKind: get('sourcingKind'),
   })!;
 }
 

@@ -45,9 +45,10 @@ export async function saveMarketGoalsAction(_prev: GoalsState, formData: FormDat
   }
 
   const alertWeekly = formData.get('alertWeekly') === '1';
+  const sourcingAlerts = formData.get('sourcingAlerts') === '1';
   const { error } = await supabase
     .from('profiles')
-    .update({ market_goals: goals, market_goals_updated_at: new Date().toISOString(), alert_weekly: alertWeekly })
+    .update({ market_goals: goals, market_goals_updated_at: new Date().toISOString(), alert_weekly: alertWeekly, sourcing_alerts: sourcingAlerts })
     .eq('id', user.id);
   if (error) return { error: 'Could not save your goals. Please try again.', warning: null, saved: false };
 
