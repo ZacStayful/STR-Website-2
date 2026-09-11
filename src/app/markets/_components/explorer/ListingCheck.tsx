@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Link2, Loader2 } from "lucide-react";
 import { detectListingUrl, SOURCE_LABELS } from "@/lib/listing/detect";
-import type { ResolvedListing } from "@/app/estimate/_components/listing-client-types";
+import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "@/app/estimate/_components/listing-client-types";
 
 /** "Check a listing" paste box under the goal bar. */
 export function ListingCheck({ onResolved }: { onResolved: (r: ResolvedListing) => void }) {
@@ -21,20 +21,15 @@ export function ListingCheck({ onResolved }: { onResolved: (r: ResolvedListing) 
     setError(null);
     try {
       const res = await fetch("/api/listing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
-      // The route always answers JSON; anything else is the platform (a gateway timeout, a proxy error page).
-      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-      if (!data || typeof data !== "object") {
-        setError(res.status === 504 || res.status === 502 ? "Stayful took too long reading that listing. Please try again in a moment." : `Something went wrong on our side (HTTP ${res.status}). Please try again.`);
+      const result = await readResolvedListing(res);
+      if (!result.ok) {
+        setError(result.error);
         return;
       }
-      if (!res.ok || data.error) {
-        setError(typeof data.error === "string" ? data.error : "Could not read that listing.");
-        return;
-      }
-      onResolved(data as unknown as ResolvedListing);
+      onResolved(result.listing);
       setUrl("");
     } catch {
-      setError("Could not reach the server. Check your connection and try again.");
+      setError(RESOLVE_NETWORK_ERROR);
     } finally {
       setBusy(false);
     }
