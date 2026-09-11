@@ -1,10 +1,10 @@
 import 'server-only';
 
 import { unstable_cache } from 'next/cache';
-import { after } from 'next/server';
 import { buildAreaCards, pickSampleArea, type AreaCardData, type SampleArea } from './explorer';
 import { getManagedAreas } from './managed-areas';
 import { withTimeout } from '../timeout';
+import { keepAlive } from '../keep-alive';
 
 /**
  * Hourly-cached entry points for the /markets pages.
@@ -32,22 +32,21 @@ export async function getAreaCards(): Promise<AreaCardData[]> {
 }
 
 /**
- * The cards if they are ready within `ms`, else `null`. On a cold cache the
- * full build (dozens of PropertyData calls) can take longer than an API
- * request may wait; the build is kept alive with `after()` so it still lands
- * in the cache for the next caller, and this caller degrades to "no area
- * context" instead of a timeout.
+ * The cards if they are ready within `ms`, `[]` if the build failed, and
+ * `null` only when it is still running. On a cold cache the full build
+ * (dozens of PropertyData calls) can take longer than an API request may
+ * wait; the build is kept alive so it can still land in the cache for the
+ * next caller (within the route's maxDuration; a /markets page render also
+ * warms it), and this caller degrades to "no area context" instead of a
+ * timeout.
  */
 export async function getAreaCardsWithin(ms: number): Promise<AreaCardData[] | null> {
-  const build = getAreaCards();
+  const build = getAreaCards().catch((err) => {
+    console.error('[market] area cards build failed:', err);
+    return [] as AreaCardData[];
+  });
   const cards = await withTimeout<AreaCardData[] | null>(build, ms, null);
-  if (cards === null) {
-    try {
-      after(() => build.catch(() => undefined));
-    } catch {
-      // Outside a request scope (tests, scripts): nothing to keep alive.
-    }
-  }
+  if (cards === null) keepAlive(build);
   return cards;
 }
 
