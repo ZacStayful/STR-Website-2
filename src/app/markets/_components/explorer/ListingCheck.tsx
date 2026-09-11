@@ -26,15 +26,20 @@ export function ListingCheck({ onResolved, initialUrl = null }: { onResolved: (r
     setError(null);
     try {
       const res = await fetch("/api/listing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setError(data.error ?? "Could not read that listing.");
+      // The route always answers JSON; anything else is the platform (a gateway timeout, a proxy error page).
+      const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      if (!data || typeof data !== "object") {
+        setError(res.status === 504 || res.status === 502 ? "Stayful took too long reading that listing. Please try again in a moment." : `Something went wrong on our side (HTTP ${res.status}). Please try again.`);
         return;
       }
-      onResolved(data as ResolvedListing);
+      if (!res.ok || data.error) {
+        setError(typeof data.error === "string" ? data.error : "Could not read that listing.");
+        return;
+      }
+      onResolved(data as unknown as ResolvedListing);
       setUrl("");
     } catch {
-      setError("Could not reach the server. Please try again.");
+      setError("Could not reach the server. Check your connection and try again.");
     } finally {
       setBusy(false);
     }

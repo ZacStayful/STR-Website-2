@@ -66,6 +66,6 @@ export interface QuickEstimate {
   trackedMissing: boolean;
   pmiMarket: { adr: number | null; occupancy: number | null; revenueAnnual: number | null; activeListings: number | null; supplyGrowthPct: number | null; grade: string | null; updatedAt: string | null } | null;
   deal: Deal | null;
-  /** Provider budget stopped a lookup; the UI says so instead of showing nothing. */
+  /** A lookup was skipped (provider budget spent, or it took longer than the request could wait); the UI says so instead of showing nothing. */
   limited: boolean;
 }

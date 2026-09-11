@@ -3,7 +3,10 @@ import { checkListingForMember } from '@/lib/listing/server';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-export const maxDuration = 30;
+// Worst case is a slow portal fetch (12 s) + reverse geocode (6 s) + the
+// quick view's own budget (~26 s across its serial steps); everything inside
+// degrades to `limited` rather than hanging, so this ceiling is a backstop.
+export const maxDuration = 60;
 
 /**
  * POST { url, save?: boolean, refresh?: boolean }
@@ -25,14 +28,26 @@ export async function POST(request: Request) {
   const url = typeof body.url === 'string' ? body.url.trim().slice(0, 2048) : '';
   if (!url) return Response.json({ error: 'Paste a listing link.' }, { status: 400 });
 
-  const supabase = await createSupabaseServerClient();
-  const { data: profile } = await supabase.from('profiles').select('market_goals').eq('id', access.user.id).single();
-  const goals = parseMarketGoals(profile?.market_goals);
-
-  const outcome = await checkListingForMember(url, { userId: access.user.id, goals, save: body.save !== false, refresh: body.refresh === true });
-  if (!outcome.ok) {
-    const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
-    return Response.json({ error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
+  try {
+    const goals = await loadGoals(access.user.id);
+    const outcome = await checkListingForMember(url, { userId: access.user.id, goals, save: body.save !== false, refresh: body.refresh === true });
+    if (!outcome.ok) {
+      const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
+      return Response.json({ error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
+    }
+    return Response.json(outcome.body);
+  } catch (err) {
+    console.error('[listing] resolve failed:', err);
+    return Response.json({ error: 'We could not read that listing just now. Please try again in a moment.' }, { status: 500 });
   }
-  return Response.json(outcome.body);
+}
+
+async function loadGoals(userId: string) {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data: profile } = await supabase.from('profiles').select('market_goals').eq('id', userId).single();
+    return parseMarketGoals(profile?.market_goals);
+  } catch {
+    return null;
+  }
 }

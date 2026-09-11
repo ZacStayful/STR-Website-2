@@ -3,7 +3,8 @@ import { quickEstimate } from '@/lib/listing/quick';
 import { normalisePostcode, parseMarketGoals } from '@/lib/market/goals';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
-export const maxDuration = 30;
+// The quick view budgets its own lookups (see QUICK_BUDGET_MS); this is a backstop.
+export const maxDuration = 60;
 
 /**
  * POST { postcode?, outcode?, bedrooms, bathrooms?, lat?, lng?, airbnbId?, price?, kind }

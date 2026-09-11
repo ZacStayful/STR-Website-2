@@ -1,9 +1,10 @@
 import 'server-only';
 
-import { getAreaCards } from '../market/cached';
+import { getAreaCardsWithin } from '../market/cached';
 import { fetchMarketTrends } from '../market/trends-client';
 import { areaTrend } from '../market/trend';
-import { ask, listingPerformance, nearbyListings, postcodeRevenue, strMarket, type BrokerContext } from '../broker';
+import { ask, listingPerformance, nearbyListings, postcodeRevenue, strMarket, type BrokerContext, type ResolveResult } from '../broker';
+import { withTimeout } from '../timeout';
 import { matchTracked, rankCompetitors, summariseCompetitors, type TrackedListing } from './competitors';
 import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type FinanceDefaults } from './deal';
 import type { ListingKind } from './types';
@@ -26,9 +27,35 @@ export interface QuickInput {
 
 const TREND_LABEL: Record<string, string> = { up: 'Rising enquiries', flat: 'Steady', down: 'Falling enquiries', insufficient: 'Building history' };
 
-async function areaSlice(code: string | null, bedrooms: number): Promise<QuickArea | null> {
+/**
+ * Time budget. The quick view sits inside one API request (a pasted link
+ * has already spent up to ~18 s being fetched and geocoded), so every
+ * lookup gets a few seconds and the answer degrades to `limited` instead
+ * of the whole request timing out. Slow lookups keep running in the
+ * background and fill their caches for the next caller.
+ */
+export const QUICK_BUDGET_MS = {
+  area: 8_000,
+  postcode: 6_000,
+  nearby: 8_000,
+  tracked: 8_000,
+  pmiMarket: 10_000,
+} as const;
+
+function unavailable<T>(): ResolveResult<T> {
+  return { value: null, provider: null, level: null, cached: false, stale: false, unavailable: true, updatedAt: null, costPence: 0 };
+}
+
+async function areaSlice(code: string | null, bedrooms: number, onTimeout: () => void): Promise<QuickArea | null> {
   if (!code) return null;
-  const [cards, trends] = await Promise.all([getAreaCards().catch(() => []), fetchMarketTrends().catch(() => null)]);
+  const [cards, trends] = await Promise.all([
+    getAreaCardsWithin(QUICK_BUDGET_MS.area).catch(() => null),
+    withTimeout(fetchMarketTrends().catch(() => null), QUICK_BUDGET_MS.area, null),
+  ]);
+  if (cards === null) {
+    onTimeout();
+    return null;
+  }
   const card = cards.find((c) => c.code === code);
   if (!card) return null;
   const t = trends ? areaTrend(trends.areas?.[code], { excludeLast: true }) : null;
@@ -63,11 +90,19 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
   const areaCode = postcodeAreaOf(outcode);
   const hasPoint = typeof input.lat === 'number' && typeof input.lng === 'number';
   let limited = false;
+  const timedOut = () => {
+    limited = true;
+  };
+  const bounded = <T>(p: Promise<ResolveResult<T>>, ms: number) =>
+    withTimeout(p, ms, () => {
+      timedOut();
+      return unavailable<T>();
+    });
 
   const [area, pcRes, nearbyRes] = await Promise.all([
-    areaSlice(areaCode, input.bedrooms),
-    input.postcode ? ask(postcodeRevenue, { postcode: input.postcode, bedrooms: input.bedrooms }, ctx) : Promise.resolve(null),
-    hasPoint ? ask(nearbyListings, { lat: input.lat!, lng: input.lng! }, ctx) : Promise.resolve(null),
+    areaSlice(areaCode, input.bedrooms, timedOut),
+    input.postcode ? bounded(ask(postcodeRevenue, { postcode: input.postcode, bedrooms: input.bedrooms }, ctx), QUICK_BUDGET_MS.postcode) : Promise.resolve(null),
+    hasPoint ? bounded(ask(nearbyListings, { lat: input.lat!, lng: input.lng! }, ctx), QUICK_BUDGET_MS.nearby) : Promise.resolve(null),
   ]);
 
   const nearby: TrackedListing[] | null = nearbyRes?.value ?? null;
@@ -79,7 +114,7 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
     const hit = nearby ? matchTracked(nearby, input.airbnbId) : null;
     if (hit) tracked = { ...hit, provider: nearbyRes?.provider ?? 'airbtics', updatedAt: nearbyRes?.updatedAt ?? null };
     else {
-      const perf = await ask(listingPerformance, { listingId: input.airbnbId, lat: input.lat ?? undefined, lng: input.lng ?? undefined }, ctx);
+      const perf = await bounded(ask(listingPerformance, { listingId: input.airbnbId, lat: input.lat ?? undefined, lng: input.lng ?? undefined }, ctx), QUICK_BUDGET_MS.tracked);
       if (perf.value) tracked = { ...perf.value, provider: perf.provider ?? 'internal', updatedAt: perf.updatedAt };
       else trackedMissing = true;
       if (perf.unavailable && !perf.value) limited = true;
@@ -108,7 +143,7 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
   // Last resort: PMI's area snapshot for the outcode (3 credits, cached a week).
   let pmiMarket: QuickEstimate['pmiMarket'] = null;
   if (!estimate && outcode) {
-    const m = await ask(strMarket, { outcode, bedrooms: input.bedrooms }, ctx);
+    const m = await bounded(ask(strMarket, { outcode, bedrooms: input.bedrooms }, ctx), QUICK_BUDGET_MS.pmiMarket);
     if (m.value) {
       const bb = m.value.byBedrooms.find((b) => b.bedrooms === input.bedrooms);
       pmiMarket = { adr: m.value.adr, occupancy: m.value.occupancy, revenueAnnual: m.value.revenueAnnual, activeListings: m.value.activeListings, supplyGrowthPct: m.value.supplyGrowthPct, grade: m.value.grade, updatedAt: m.updatedAt };
