@@ -3,7 +3,8 @@ import { json, preflight } from '@/lib/extension/cors';
 import { checkListingForMember } from '@/lib/listing/server';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+// Same ceiling as /api/listing/resolve: the quick view budgets its own lookups.
+export const maxDuration = 60;
 
 const MAX_HTML_BYTES = 3 * 1024 * 1024;
 
@@ -30,12 +31,17 @@ export async function POST(request: Request) {
   let html = typeof body.html === 'string' && body.html.length > 0 ? body.html : undefined;
   if (html && html.length > MAX_HTML_BYTES) html = html.slice(0, MAX_HTML_BYTES);
 
-  const outcome = await checkListingForMember(url, { userId: access.user.id, goals: access.goals, html, save: body.save !== false, admin: true });
-  if (!outcome.ok) {
-    const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
-    return json(request, { error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
+  try {
+    const outcome = await checkListingForMember(url, { userId: access.user.id, goals: access.goals, html, save: body.save !== false, admin: true });
+    if (!outcome.ok) {
+      const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
+      return json(request, { error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
+    }
+    return json(request, outcome.body);
+  } catch (err) {
+    console.error('[ext] check failed:', err);
+    return json(request, { error: 'Stayful could not read that listing just now. Please try again in a moment.' }, { status: 500 });
   }
-  return json(request, outcome.body);
 }
 
 export function OPTIONS(request: Request) {

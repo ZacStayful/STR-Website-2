@@ -21,7 +21,9 @@ async function api<T>(path: string, init: { method?: 'GET' | 'POST'; body?: unkn
     headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: init.body ? JSON.stringify(init.body) : undefined,
   });
-  const data = (await res.json().catch(() => ({ error: `Unexpected response (${res.status}).` }))) as T;
+  // A non-JSON answer is the platform, not the API: a gateway timeout page, a proxy error.
+  const fallback = res.status === 504 || res.status === 502 ? 'Stayful took too long reading that listing. Please try again in a moment.' : `Stayful returned an unexpected response (${res.status}). Please try again.`;
+  const data = (await res.json().catch(() => ({ error: fallback }))) as T;
   return { status: res.status, data };
 }
 
