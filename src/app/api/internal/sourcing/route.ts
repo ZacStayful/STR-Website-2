@@ -37,7 +37,7 @@ function maxQueries(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 150;
 }
 
-type ProfileRow = { id: string; email: string | null; market_goals: unknown; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null };
+type ProfileRow = { id: string; email: string | null; market_goals: unknown; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null; subscription_paused_from: string | null; subscription_paused_until: string | null; subscription_cancel_at: string | null };
 
 interface Member {
   id: string;

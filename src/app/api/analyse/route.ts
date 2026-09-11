@@ -7,6 +7,7 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import {
   ACCESS_COLUMNS,
   accountStatus,
@@ -617,10 +618,14 @@ export async function POST(request: Request) {
         // is the free-trial allowance and only advances for free-trial users —
         // burning a subscriber's allowance would leave them at "0 free reports
         // left" the moment their subscription ever lapsed.
+        // Written with the service-role client, not the member's session: the
+        // usage counters are no longer grantable to `authenticated` (see the
+        // column grants in supabase/schema.sql), because a member who can
+        // write reports_run can hand themselves unlimited free reports.
         if (userId) {
           try {
-            const supabase = await createSupabaseServerClient();
-            const { data: current } = await supabase
+            const admin = createAdminClient();
+            const { data: current } = await admin
               .from('profiles')
               .select('reports_run, reports_total')
               .eq('id', userId)
@@ -630,7 +635,7 @@ export async function POST(request: Request) {
               reports_total: (current?.reports_total ?? 0) + 1,
             };
             if (countRun) update.reports_run = (current?.reports_run ?? 0) + 1;
-            await supabase.from('profiles').update(update).eq('id', userId);
+            await admin.from('profiles').update(update).eq('id', userId);
           } catch (err) {
             console.error('[api/analyse] reports_run hook failed:', err);
           }

@@ -1,4 +1,5 @@
 import { extensionAccess } from '@/lib/extension/auth';
+import { accessDenied } from '@/lib/access';
 import { json, preflight } from '@/lib/extension/cors';
 import { checkListingForMember } from '@/lib/listing/server';
 
@@ -18,7 +19,10 @@ const MAX_HTML_BYTES = 3 * 1024 * 1024;
 export async function POST(request: Request) {
   const access = await extensionAccess(request);
   if (access.state === 'anon') return json(request, { error: 'Not connected. Open the Stayful site and connect the extension.', code: 'not_connected' }, { status: 401 });
-  if (access.state !== 'ok' || !access.user) return json(request, { error: 'Your plan does not include listing checks.', code: 'no_access', upgradeUrl: '/upgrade' }, { status: 402 });
+  if (access.state !== 'ok' || !access.user) {
+    const denied = accessDenied(access.profile, 'listing checks');
+    return json(request, { ...denied, code: 'no_access', reason: denied.code }, { status: 402 });
+  }
 
   let body: { url?: unknown; html?: unknown; save?: unknown };
   try {

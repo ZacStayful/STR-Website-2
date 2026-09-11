@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import { subscriptionStateFromStripe } from "@/lib/subscription";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -147,6 +148,14 @@ async function applySubscriptionState(
     customerId: string | null;
     subscriptionId: string | null;
     startedAt?: string | null;
+    /**
+     * The subscription this state came from, when there is one. Every
+     * pause/cancel column is re-derived from it, so a replayed event writes
+     * the same row and an auto-resume clears the pause by itself. Absent only
+     * on the checkout fallback that has no subscription to read, where the
+     * same columns are cleared instead.
+     */
+    subscription?: Stripe.Subscription | null;
   },
 ): Promise<void> {
   const live = LIVE_STATUSES.has(state.status);
@@ -170,6 +179,26 @@ async function applySubscriptionState(
     update.subscription_ended_at = null;
   } else {
     update.subscription_ended_at = new Date().toISOString();
+  }
+
+  // Self-serve pause and cancel. Always written, never merged: these columns
+  // are a projection of the subscription, so re-deriving the whole set is what
+  // makes a replayed event a no-op and lets an auto-resume (which arrives as
+  // `pause_collection: null`) clear the window on its own. A member who
+  // re-subscribes after lapsing gets a clean slate for the same reason.
+  const derived = state.subscription
+    ? subscriptionStateFromStripe(state.subscription)
+    : null;
+  update.subscription_paused_from = derived?.pausedFrom ?? null;
+  update.subscription_paused_until = derived?.pausedUntil ?? null;
+  update.subscription_cancel_at = derived?.cancelAt ?? null;
+  update.subscription_current_period_end = derived?.currentPeriodEnd ?? null;
+  if (!derived?.cancelAt) {
+    // The cancellation was undone, or the subscription is gone. Either way the
+    // captured reason no longer describes anything.
+    update.cancel_reason = null;
+    update.cancel_reason_comment = null;
+    update.cancel_reason_at = null;
   }
 
   const { error } = await admin.from("profiles").update(update).eq("id", profile.id);
@@ -300,6 +329,7 @@ async function syncSubscription(
     customerId,
     subscriptionId: effective.id,
     startedAt: isoFromUnix(effective.start_date),
+    subscription: effective,
   });
 
   await mirrorToMonday(profile.email ?? email, before, isLive);

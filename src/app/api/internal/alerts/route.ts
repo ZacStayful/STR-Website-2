@@ -29,7 +29,7 @@ export const maxDuration = 60;
 
 type Row = SavedAreaState & {
   user_id: string;
-  profiles: { email: string | null; alert_weekly: boolean; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null } | null;
+  profiles: { email: string | null; alert_weekly: boolean; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null; subscription_paused_from: string | null; subscription_paused_until: string | null; subscription_cancel_at: string | null } | null;
 };
 
 export async function GET(request: Request) {

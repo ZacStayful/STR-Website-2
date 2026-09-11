@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createAdminClient } from '../supabase/admin';
-import { ACCESS_COLUMNS, freeReportsRemaining } from '../access';
+import { ACCESS_COLUMNS, freeReportsRemaining, type AccessProfile } from '../access';
 import { marketAccessState, type MarketAccessState } from '../market/access';
 import { parseMarketGoals, type MarketGoals } from '../market/goals';
 import { verifyExtensionToken } from './tokens';
@@ -21,10 +21,12 @@ export interface ExtensionAccess {
   // has no count to show). Derived here because accountStatus needs the whole
   // access column set, which only this module fetches.
   freeReportsLeft: number | null;
+  /** The access columns, so callers can build a paused-aware 402. */
+  profile: AccessProfile | null;
   goals: MarketGoals | null;
 }
 
-const NONE: ExtensionAccess = { state: 'anon', user: null, tokenId: null, plan: null, reportsRun: null, freeReportsLeft: null, goals: null };
+const NONE: ExtensionAccess = { state: 'anon', user: null, tokenId: null, plan: null, reportsRun: null, freeReportsLeft: null, profile: null, goals: null };
 
 export function bearerToken(request: Request): string | null {
   const auth = request.headers.get('authorization') ?? '';
@@ -47,6 +49,7 @@ export async function extensionAccess(request: Request): Promise<ExtensionAccess
     plan: p.plan,
     reportsRun: p.reports_run,
     freeReportsLeft: freeReportsRemaining(p),
+    profile: p,
     goals: parseMarketGoals(p.market_goals),
   };
 }

@@ -46,7 +46,18 @@ type State =
   | { kind: 'busy' }
   | { kind: 'result'; data: CheckResponse }
   | { kind: 'error'; message: string; code?: string; upgradeUrl?: string }
-  | { kind: 'locked'; site: string; reason: 'not_connected' | 'no_access' };
+  | {
+      kind: 'locked';
+      site: string;
+      reason: 'not_connected' | 'no_access';
+      // Supplied by the server for the no_access case. A paused member needs a
+      // different message and a different destination from someone who never
+      // subscribed — sending them to checkout would start a second
+      // subscription. Falls back to the generic upgrade copy when absent.
+      message?: string;
+      href?: string;
+      cta?: string;
+    };
 
 let currentUrl = '';
 let host: HTMLElement | null = null;
@@ -151,7 +162,7 @@ function render(state: State, site: string) {
       body =
         state.reason === 'not_connected'
           ? `${header()}<div class="body"><div class="title">See what this would earn as a short-term let</div><div class="lock">Estimated revenue, area score and deal maths for every listing you open. Connect the extension to your Stayful account to unlock it.</div><a class="cta" href="${esc(site)}/extension/connect" target="_blank" rel="noopener">Connect Stayful</a></div>`
-          : `${header()}<div class="body"><div class="title">Your plan does not include listing checks</div><div class="lock">Upgrade to see revenue estimates and deal maths on every listing.</div><a class="cta" href="${esc(site)}/upgrade" target="_blank" rel="noopener">Upgrade</a></div>`;
+          : `${header()}<div class="body"><div class="title">${esc(state.message ?? 'Your plan does not include listing checks')}</div><div class="lock">${esc(state.message ? 'Open your Stayful account to sort it out.' : 'Upgrade to see revenue estimates and deal maths on every listing.')}</div><a class="cta" href="${esc(site + (state.href ?? '/upgrade'))}" target="_blank" rel="noopener">${esc(state.cta ?? 'Upgrade')}</a></div>`;
       break;
   }
   let bar = r.querySelector('.bar') as HTMLElement | null;
@@ -181,7 +192,18 @@ async function runCheck() {
     const res = await send<CheckResult>({ type: 'check', url: currentUrl, html: document.documentElement.outerHTML });
     if (res.ok) render({ kind: 'result', data: res.data }, site);
     else if (res.error.code === 'not_connected') render({ kind: 'locked', site, reason: 'not_connected' }, site);
-    else if (res.error.code === 'no_access') render({ kind: 'locked', site, reason: 'no_access' }, site);
+    else if (res.error.code === 'no_access')
+      render(
+        {
+          kind: 'locked',
+          site,
+          reason: 'no_access',
+          message: res.error.reason === 'paused' ? res.error.error : undefined,
+          href: res.error.reason === 'paused' ? res.error.upgradeUrl : undefined,
+          cta: res.error.reason === 'paused' ? 'Restart my plan' : undefined,
+        },
+        site,
+      );
     else render({ kind: 'error', message: res.error.error, code: res.error.code, upgradeUrl: res.error.upgradeUrl }, site);
   } catch (err) {
     render({ kind: 'error', message: (err as Error).message || 'Could not reach Stayful.' }, site);

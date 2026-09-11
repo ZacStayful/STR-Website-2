@@ -70,7 +70,7 @@ interface Row {
   created_at: string;
 }
 
-type Profile = { email: string | null; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null };
+type Profile = { email: string | null; plan: "free" | "pro"; plan_source: string | null; reports_run: number; stripe_subscription_id: string | null; stripe_subscription_status: string | null; subscription_paused_from: string | null; subscription_paused_until: string | null; subscription_cancel_at: string | null };
 
 function lastSeen(r: Row): number {
   return new Date(r.rechecked_at ?? r.last_checked_at ?? r.created_at).getTime();
