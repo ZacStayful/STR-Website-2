@@ -23,7 +23,7 @@ export async function grantPlanCycle(userId: string, planCode: string, sourceRef
   if (existing) return; // replay
   await expirePlanGrants(userId, 'renewal');
   await grant(userId, 'plan', plan.monthlyCreditPence, { expiresAt: periodEnd, sourceRef, description: `${plan.name} plan credit` });
-  await admin.from('profiles').update({ plan_code: planCode, plan: 'pro' }).eq('id', userId);
+  await admin.from('profiles').update({ plan_code: planCode, plan: 'pro', hit_zero_at: null }).eq('id', userId);
   if (opts.notify !== false && opts.email) {
     void planRenewedEmail(opts.email, { planName: plan.name, creditPence: plan.monthlyCreditPence, periodEnd: periodEnd?.toISOString() ?? null }).catch(() => {});
     void syncMonday(userId, opts.email).catch(() => {});
