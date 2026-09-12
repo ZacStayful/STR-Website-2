@@ -37,7 +37,8 @@ interface TxRow {
 }
 
 const ACTION_LABELS: Record<string, string> = {
-  report: 'Full property report',
+  report: 'Property report',
+  report_enhanced: 'Enhanced property report (with PMI second opinion)',
   quick_view: 'Listing check (quick view)',
   narrate: 'AI narration',
   speak: 'AI voice',

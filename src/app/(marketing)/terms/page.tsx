@@ -23,7 +23,7 @@ export default function TermsPage() {
 
         <h2 id="credit">2. Credit</h2>
         <ul>
-          <li><strong>How credit works.</strong> Paid features (property reports, listing checks, AI narration, address and market lookups) use credit. Each action shows an estimate before it runs and the exact amount used afterwards on your billing page.</li>
+          <li><strong>How credit works.</strong> Paid features (property reports, the optional PMI second opinion, listing checks, AI narration, address and market lookups) use credit. Each action shows an estimate before it runs and the exact amount used afterwards on your billing page.</li>
           <li><strong>Welcome credit</strong> is a one-off promotional grant for new accounts. It is not transferable, has no cash value and may be withheld or reversed where an account is created to abuse the offer (for example with temporary email addresses or a mobile number already used on another account).</li>
           <li><strong>Plan credit</strong> is added at the start of each billing period of a subscription and expires, unused, at the end of that period. It does not roll over.</li>
           <li><strong>Top-up credit</strong> is bought as a one-off payment, never expires while your account is open, and is spent at a higher rate than plan credit (currently 1.5× — shown on every top-up screen).</li>

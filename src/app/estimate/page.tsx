@@ -84,7 +84,7 @@ import { AccuracyPanel } from "@/components/AccuracyPanel";
 import { SetupCalculator } from "@/components/SetupCalculator";
 import { AnalyserNarrator } from "@/components/AnalyserNarrator";
 import { ListingLinkBox } from "./_components/ListingLinkBox";
-import { CostHint } from "@/components/credit/CostHint";
+import { ReportOptions } from "@/components/credit/ReportOptions";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
@@ -398,6 +398,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const [loading, setLoading] = useState(false);
 
   const creditCtx = useCreditOptional();
+  // Standard report by default; the PMI second opinion is a paid add-on chosen per report.
+  const [enhanced, setEnhanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(initialResult ?? null);
   const [showPresentation, setShowPresentation] = useState(false);
@@ -595,7 +597,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     e.preventDefault();
     setError(null);
     // Credit check before anything is spent; opens the top-up modal when short.
-    if (!(await preflight("report"))) return;
+    if (!(await preflight(enhanced ? "report_enhanced" : "report"))) return;
     setLoading(true);
     setProgress(0);
     setCompletedStages(new Set());
@@ -615,6 +617,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           parking,
           outdoorSpace,
           propertyType,
+          enhanced,
           ...(purchasePrice !== "" && Number(purchasePrice) > 0 && { purchasePrice: Number(purchasePrice) }),
           ...(advertisedRent !== "" && Number(advertisedRent) > 0 && { advertisedRent: Number(advertisedRent) }),
           ...(listing && {
@@ -3385,7 +3388,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   </div>
                 )}
 
-                <CostHint action="report" className="text-xs text-muted-foreground" />
+                <ReportOptions enhanced={enhanced} onChange={setEnhanced} disabled={loading} />
                 <Button type="submit" className="w-full" disabled={loading}>
                   <Search className="mr-2 h-4 w-4" aria-hidden="true" />
                   Get Free Analysis

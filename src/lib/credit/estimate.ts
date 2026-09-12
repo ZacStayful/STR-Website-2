@@ -8,7 +8,12 @@
 import type { UnitCostTable } from './costs.ts';
 import { priceFor, round4 } from './pricing.ts';
 
-export type CreditAction = 'report' | 'quick_view' | 'narrate' | 'speak' | 'autocomplete' | 'geocode';
+export type CreditAction = 'report' | 'report_enhanced' | 'quick_view' | 'narrate' | 'speak' | 'autocomplete' | 'geocode';
+
+/** The standard report is Airbtics + PropertyData; enhanced adds the PMI second opinion. */
+export function reportAction(enhanced: boolean): CreditAction {
+  return enhanced ? 'report_enhanced' : 'report';
+}
 
 export interface EstimateLine {
   provider: string;
@@ -44,6 +49,7 @@ export function estimateAction(table: UnitCostTable, action: CreditAction, opts:
   let lines: EstimateLine[] = [];
   switch (action) {
     case 'report':
+    case 'report_enhanced':
       lines = [
         line(table, 'google', 'geocode', 1),
         line(table, 'propertydata', 'floor_areas', 1),
@@ -60,7 +66,7 @@ export function estimateAction(table: UnitCostTable, action: CreditAction, opts:
         line(table, 'airbtics', 'bounds', 1, true),
         line(table, 'google', 'places_nearby', 6),
         line(table, 'ticketmaster', 'event_search', 1),
-        ...(opts.pmiSecondOpinion === false ? [] : [line(table, 'pmi', 'str_estimate', 1)]),
+        ...((opts.pmiSecondOpinion ?? action === 'report_enhanced') ? [line(table, 'pmi', 'str_estimate', 1)] : []),
         ...(opts.priceLabs ? [line(table, 'pricelabs', 'revenue_estimate', 1)] : []),
       ];
       break;

@@ -88,6 +88,7 @@ export function formatGbp(pence: number): string {
 
 export const ACTION_LABELS: Record<string, string> = {
   report: 'report',
+  report_enhanced: 'enhanced report',
   quick_view: 'listing check',
   narrate: 'AI narration',
   speak: 'voice summary',

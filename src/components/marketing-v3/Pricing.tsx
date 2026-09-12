@@ -13,7 +13,8 @@ import { SubscribeButton } from "@/components/credit/SubscribeButton";
  */
 export async function Pricing({ signupHref = "/signup", signedIn = false, currentPlanCode = null, compact = false }: { signupHref?: string; signedIn?: boolean; currentPlanCode?: string | null; compact?: boolean }) {
   const [plans, settings, table] = await Promise.all([getPlans(), getBillingSettings(), getUnitCostTable()]);
-  const report = estimateAction(table, "report", { pmiSecondOpinion: process.env.PMI_SECOND_OPINION !== "false" }).typicalBasePence;
+  const report = estimateAction(table, "report").typicalBasePence;
+  const enhanced = estimateAction(table, "report_enhanced").typicalBasePence;
   const reportsFor = (pence: number) => (report > 0 ? Math.floor((pence / report) * 10) / 10 : 0);
   const fmtReports = (n: number) => `${n.toFixed(1).replace(/\.0$/, "")} report${n === 1 ? "" : "s"}`;
   const monthly = plans.filter((p) => p.active && p.interval === "month").sort((a, b) => a.sort - b.sort);
@@ -36,7 +37,7 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
         </div>
         <ul className="plan-features">
           <li><Icon name="check" size={13} color="var(--sage-500)" /> {formatGbp(p.monthlyCreditPence).replace(".00", "")} credit a month, spent at the standard rate</li>
-          <li><Icon name="check" size={13} color="var(--sage-500)" /> Full 10-section reports, Market Explorer, listing checks</li>
+          <li><Icon name="check" size={13} color="var(--sage-500)" /> Full 10-section reports (optional PMI second opinion), Market Explorer, listing checks</li>
           <li><Icon name="check" size={13} color="var(--sage-500)" /> Deal pipeline, PDF export, saved reports</li>
           {perkLines(p.perks).map((l) => (
             <li key={l}><Icon name="check" size={13} color="var(--sage-500)" /> {l}</li>
@@ -60,7 +61,7 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
               Then pay for what you use.
             </h2>
             <p className="lede">
-              Every account starts with {formatGbp(settings.welcomeGrantPence).replace(".00", "")} of credit — about {fmtReports(reportsFor(settings.welcomeGrantPence))} — and no card. A full report uses about {formatGbp(report)} of plan credit. Subscribe for monthly credit, or top up as you go.
+              Every account starts with {formatGbp(settings.welcomeGrantPence).replace(".00", "")} of credit — about {fmtReports(reportsFor(settings.welcomeGrantPence))} — and no card. A property report uses about {formatGbp(report)} of plan credit (about {formatGbp(enhanced)} with the optional PMI second opinion). Subscribe for monthly credit, or top up as you go.
             </p>
           </div>
         )}

@@ -59,7 +59,7 @@ async function sendTransitionEmail(to, firstName, creditPence, renewsAt) {
 
 We're moving Stayful to usage-based credit. Your Pro subscription stays exactly the same price, and from your next renewal it gives you £${(creditPence / 100).toFixed(2)} of credit every month instead of unlimited reports.
 
-Every report shows what it will use before you run it (about £7.30 for a full report), so you always know where you stand. If you ever need more, you can top up in one click or move to the Scale plan.
+Every report shows what it will use before you run it (about £3.50 for a standard report, or £7.25 with the PMI second opinion), so you always know where you stand. If you ever need more, you can top up in one click or move to the Scale plan.
 
 ${when ? `Your next renewal is on ${when}. Until then nothing changes.` : 'Until your next renewal nothing changes.'}
 

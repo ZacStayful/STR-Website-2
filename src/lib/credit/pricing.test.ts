@@ -49,8 +49,8 @@ test('low-balance state: 80% of allowance → low, nothing spendable → out', (
   assert.equal(lowBalanceState({ cycleAllowancePence: 0, cycleUsedPence: 0, spendableBasePence: 0.2 }), 'out');
 });
 
-test('report estimate includes every unit and separates worst case', () => {
-  const e = estimateAction(table, 'report');
+test('enhanced report estimate includes every unit and separates worst case', () => {
+  const e = estimateAction(table, 'report_enhanced');
   const units = new Set(e.lines.map((l) => unitKey(l.provider, l.unit)));
   for (const k of ['google:geocode', 'propertydata:floor_areas', 'propertydata:valuation_rent', 'propertydata:valuation_sale', 'airbtics:report_all', 'airbtics:bounds', 'google:places_nearby', 'ticketmaster:event_search', 'pmi:str_estimate']) {
     assert.ok(units.has(k), `missing ${k}`);
@@ -61,11 +61,13 @@ test('report estimate includes every unit and separates worst case', () => {
   assert.ok(e.maxBasePence > 900 && e.maxBasePence < 1100, `max ${e.maxBasePence}`);
 });
 
-test('report estimate drops PMI and adds PriceLabs on request', () => {
-  const noPmi = estimateAction(table, 'report', { pmiSecondOpinion: false });
+test('standard report has no PMI; enhanced adds it; PriceLabs on request', () => {
+  const standard = estimateAction(table, 'report');
+  const enhanced = estimateAction(table, 'report_enhanced');
   const withPl = estimateAction(table, 'report', { priceLabs: true });
-  assert.ok(noPmi.typicalBasePence < 400);
-  assert.ok(withPl.typicalBasePence > estimateAction(table, 'report').typicalBasePence);
+  assert.ok(standard.typicalBasePence < 400, `standard ${standard.typicalBasePence}`);
+  assert.ok(enhanced.typicalBasePence - standard.typicalBasePence > 300);
+  assert.ok(withPl.typicalBasePence > standard.typicalBasePence);
 });
 
 test('formatGbp', () => {

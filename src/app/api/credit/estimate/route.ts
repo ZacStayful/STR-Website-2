@@ -8,7 +8,7 @@ import { typicalActionSpend } from '@/lib/credit/history';
 
 export const dynamic = 'force-dynamic';
 
-const ACTIONS: CreditAction[] = ['report', 'quick_view', 'narrate', 'speak', 'autocomplete', 'geocode'];
+const ACTIONS: CreditAction[] = ['report', 'report_enhanced', 'quick_view', 'narrate', 'speak', 'autocomplete', 'geocode'];
 
 /**
  * GET ?action=report — what the action will cost and whether the member can
@@ -22,8 +22,9 @@ export async function GET(request: Request) {
   if (!action || !ACTIONS.includes(action)) return Response.json({ error: 'Unknown action.' }, { status: 400 });
 
   const table = await getUnitCostTable();
-  const est = estimateAction(table, action, { pmiSecondOpinion: process.env.PMI_SECOND_OPINION !== 'false', priceLabs: process.env.PRICELABS_AS_PRIMARY === 'true' });
-  const [balance, typical] = await Promise.all([getBalance(member.id), action === 'report' ? typicalActionSpend('report') : Promise.resolve(null)]);
+  const pmiAvailable = process.env.PMI_SECOND_OPINION !== 'false';
+  const est = estimateAction(table, action, { pmiSecondOpinion: action === 'report_enhanced' && pmiAvailable, priceLabs: process.env.PRICELABS_AS_PRIMARY === 'true' });
+  const [balance, typical] = await Promise.all([getBalance(member.id), action === 'report' || action === 'report_enhanced' ? typicalActionSpend(action) : Promise.resolve(null)]);
   const typicalBasePence = typical ?? est.typicalBasePence;
   const from = member.admin ? 'plan' : paidFrom(balance.buckets, typicalBasePence, balance.rates);
   const sufficient = member.admin || !isEnforcing() || balance.spendableBasePence >= est.maxBasePence;

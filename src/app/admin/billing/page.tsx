@@ -64,7 +64,8 @@ export default async function BillingAdminPage() {
   const rawTotal = (calls.data ?? []).reduce((n, r) => n + (r.ok && !r.cache_hit ? Number(r.cost_pence) || 0 : 0), 0);
 
   const rows = [...table.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.unit.localeCompare(b.unit)).map((u) => ({ ...u, stat: stats.get(`${u.provider}:${u.unit}`) ?? null }));
-  const report = estimateAction(table, "report", { pmiSecondOpinion: process.env.PMI_SECOND_OPINION !== "false" });
+  const report = estimateAction(table, "report");
+  const enhanced = estimateAction(table, "report_enhanced");
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
@@ -85,7 +86,7 @@ export default async function BillingAdminPage() {
         <div className="rounded-xl border border-border bg-card p-4"><div className="text-2xl font-semibold">{formatGbp(houseBase)}</div><div className="text-xs text-muted-foreground">House spend (unbilled), 7 days</div></div>
       </div>
       <p className="mt-3 text-sm text-muted-foreground">
-        A full report is quoted at <strong>{formatGbp(report.typicalBasePence)}</strong> typical / {formatGbp(report.maxBasePence)} worst case at the plan rate ({formatGbp(report.typicalBasePence * settings.spendRates.topup)} from top-up credit).
+        A standard report is quoted at <strong>{formatGbp(report.typicalBasePence)}</strong> typical / {formatGbp(report.maxBasePence)} worst case at the plan rate ({formatGbp(report.typicalBasePence * settings.spendRates.topup)} from top-up credit); the enhanced report with the PMI second opinion is <strong>{formatGbp(enhanced.typicalBasePence)}</strong> / {formatGbp(enhanced.maxBasePence)}.
       </p>
 
       <BillingAdminClient rows={rows} settings={settings} codes={(codes.data ?? []).map((c) => ({ code: String(c.code), kind: String(c.kind), amountPence: Number(c.amount_pence), maxRedemptions: c.max_redemptions === null ? null : Number(c.max_redemptions), redeemedCount: Number(c.redeemed_count) || 0, expiresAt: (c.expires_at as string | null) ?? null, active: c.active !== false, createdBy: (c.created_by as string | null) ?? null, referral: Boolean(c.owner_user_id) }))} />

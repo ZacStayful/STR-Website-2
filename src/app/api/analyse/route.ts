@@ -10,7 +10,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { startAction, actionSpend } from '@/lib/credit/action';
 import { runMetered } from '@/lib/credit/context';
-import { estimateAction } from '@/lib/credit/estimate';
+import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { getUnitCostTable } from '@/lib/credit/unit-costs';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { insufficientCreditResponse } from '@/lib/credit/http';
@@ -125,13 +125,16 @@ export async function POST(request: Request) {
   }
 
   // Validate input
-  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, purchasePrice, advertisedRent, sourceListing, checkedListingId } = body as {
+  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, purchasePrice, advertisedRent, sourceListing, checkedListingId, enhanced } = body as {
     address: unknown; postcode: unknown; email: unknown;
     bedrooms: unknown; guests: unknown;
     bathrooms: unknown; parking: unknown; outdoorSpace: unknown;
     propertyType: unknown;
-    purchasePrice: unknown; advertisedRent: unknown; sourceListing: unknown; checkedListingId: unknown;
+    purchasePrice: unknown; advertisedRent: unknown; sourceListing: unknown; checkedListingId: unknown; enhanced: unknown;
   };
+  // Standard report = Airbtics + PropertyData. Enhanced adds the PMI second
+  // opinion (50 PMI credits), chosen per report on the form; PMI_SECOND_OPINION=false is the kill switch.
+  const wantEnhanced = enhanced === true && process.env.PMI_SECOND_OPINION !== 'false';
   const emailStr = typeof email === 'string' && email.includes('@') ? email.trim() : null;
 
   // ── Listing-link inputs (all optional) ──
@@ -244,12 +247,13 @@ export async function POST(request: Request) {
   // src/lib/credit/meter.ts); the reservation guarantees the report can
   // never run partially unpaid. Admins run free; shadow mode never blocks.
   const priceLabsEnabled = process.env.PRICELABS_AS_PRIMARY === 'true';
-  const estimate = estimateAction(await getUnitCostTable(), 'report', { pmiSecondOpinion: process.env.PMI_SECOND_OPINION !== 'false', priceLabs: priceLabsEnabled });
+  const reportKind = reportAction(wantEnhanced);
+  const estimate = estimateAction(await getUnitCostTable(), reportKind, { priceLabs: priceLabsEnabled });
   let action;
   try {
-    action = await startAction({ userId, admin: isAdmin || Boolean(isCalibrationBypass), action: 'report', maxBasePence: estimate.maxBasePence });
+    action = await startAction({ userId, admin: isAdmin || Boolean(isCalibrationBypass), action: reportKind, maxBasePence: estimate.maxBasePence });
   } catch (err) {
-    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, 'report');
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, reportKind);
     throw err;
   }
   const meterCtx = action.ctx;
@@ -373,7 +377,7 @@ export async function POST(request: Request) {
           return null;
         });
         const secondOpinionPromise = (async () => {
-          if (process.env.PMI_SECOND_OPINION === 'false') return null;
+          if (!wantEnhanced) return null;
           const r = await ask(
             strSecondOpinion,
             { postcode: property.postcode, bedrooms: property.bedrooms, bathrooms: validBathrooms, propertyType: mappedPropertyType === 'flat' ? 'apartment' : 'house' },
