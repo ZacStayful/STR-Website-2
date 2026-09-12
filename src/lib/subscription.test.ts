@@ -146,3 +146,38 @@ test('dates render as en-GB, and bad input renders as nothing', () => {
     assert.equal(formatPlanDate(bad), null, String(bad));
   }
 });
+
+test('a subscription that has ended has no pause window', () => {
+  // Found by driving the real API: Stripe leaves pause_collection in place on a
+  // cancelled subscription, so someone who cancelled while a pause was booked
+  // keeps a stale window. Access was never wrong — they are refused either way
+  // — but the account page would call them "paused until <date>" and offer a
+  // Resume button that acts on a deleted subscription.
+  const stale = {
+    pause_collection: { behavior: 'void', resumes_at: unix('2026-12-12T00:00:00Z') },
+    metadata: { [PAUSED_FROM_KEY]: '2026-10-12T00:00:00.000Z' },
+  };
+  for (const dead of ['canceled', 'unpaid', 'incomplete_expired']) {
+    const s = subscriptionStateFromStripe(sub({ status: dead, ...stale }));
+    assert.equal(s.pausedFrom, null, dead);
+    assert.equal(s.pausedUntil, null, dead);
+    assert.equal(s.active, false, dead);
+  }
+});
+
+test('a live subscription keeps its pause window', () => {
+  // The counterpart: pause_collection leaves the status on 'active', and those
+  // must still derive a window or the pause does nothing at all.
+  for (const alive of ['active', 'trialing', 'past_due']) {
+    const s = subscriptionStateFromStripe(
+      sub({
+        status: alive,
+        pause_collection: { behavior: 'void', resumes_at: unix('2026-12-12T00:00:00Z') },
+        metadata: { [PAUSED_FROM_KEY]: '2026-10-12T00:00:00.000Z' },
+      }),
+    );
+    assert.equal(s.pausedFrom, '2026-10-12T00:00:00.000Z', alive);
+    assert.equal(s.pausedUntil, '2026-12-12T00:00:00.000Z', alive);
+    assert.equal(s.active, false, alive);
+  }
+});
