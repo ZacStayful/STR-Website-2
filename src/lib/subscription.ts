@@ -108,7 +108,15 @@ const LIVE = new Set(['active', 'trialing', 'past_due'])
 export function subscriptionStateFromStripe(sub: Stripe.Subscription): SubscriptionState {
   const status = String(sub.status ?? '').trim().toLowerCase()
   const currentPeriodEnd = subscriptionPeriodEnd(sub)
-  const resumesAt = sub.pause_collection?.resumes_at
+
+  // Stripe leaves pause_collection in place on a subscription that has ended,
+  // so a member who cancelled while a pause was booked keeps a stale window.
+  // A subscription that is over has no pause window: without this, the account
+  // page would call them "paused until <date>" and offer a Resume button that
+  // acts on a deleted subscription and dead-ends on an error. Access was never
+  // wrong — they are refused throughout — but the wording and the button were.
+  const live = LIVE.has(status)
+  const resumesAt = live ? sub.pause_collection?.resumes_at : undefined
   const pausedUntil =
     typeof resumesAt === 'number' && Number.isFinite(resumesAt)
       ? new Date(resumesAt * 1000)
@@ -116,7 +124,7 @@ export function subscriptionStateFromStripe(sub: Stripe.Subscription): Subscript
 
   return {
     status,
-    active: LIVE.has(status) && !sub.pause_collection,
+    active: live && !sub.pause_collection,
     pausedFrom: pausedFrom(sub, pausedUntil),
     pausedUntil: pausedUntil?.toISOString() ?? null,
     cancelAt: toIso(sub.cancel_at),
