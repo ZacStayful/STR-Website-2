@@ -56,6 +56,16 @@ resume and scheduled cancellation. Without it `/account` still looks correct,
 because the server actions write the columns directly, but the row quietly
 drifts out of step with Stripe from then on.
 
+More than one endpoint is supported, and needs one secret per endpoint. Stripe
+signs each delivery with the secret of the endpoint it came from, so a second
+endpoint whose secret is not configured has every delivery refused with a 400.
+Put the second in `STRIPE_WEBHOOK_SECRET2`; every configured secret is tried
+until one verifies, and each delivery logs which position matched so the
+endpoints can be told apart without exposing a secret. Any event enabled on
+both endpoints arrives twice, which is harmless — the handler re-derives the
+whole row from each event, so a repeat write is identical, and the CRM mirror
+only fires on a real change of state.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
