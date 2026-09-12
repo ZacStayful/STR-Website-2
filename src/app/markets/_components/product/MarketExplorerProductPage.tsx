@@ -181,7 +181,7 @@ export async function MarketExplorerProductPage() {
             </div>
             <div className="final-cta-meta">
               <span><Icon name="check" size={13} /> Free trial · No card</span>
-              <span><Icon name="check" size={13} /> 5 free property analyses included</span>
+              <span><Icon name="check" size={13} /> £20 of free credit included</span>
               <span><Icon name="check" size={13} /> Cancel any time</span>
             </div>
           </div>

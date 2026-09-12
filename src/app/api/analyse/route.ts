@@ -7,8 +7,13 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { hasAccess } from '@/lib/access';
 import { isAdminEmail } from '@/lib/admin';
+import { startAction, actionSpend } from '@/lib/credit/action';
+import { runMetered } from '@/lib/credit/context';
+import { estimateAction } from '@/lib/credit/estimate';
+import { getUnitCostTable } from '@/lib/credit/unit-costs';
+import { InsufficientCreditError } from '@/lib/credit/ledger';
+import { insufficientCreditResponse } from '@/lib/credit/http';
 import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '@/lib/broker';
 import { matchTracked, rankCompetitors, summariseCompetitors } from '@/lib/listing/competitors';
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '@/lib/listing/deal';
@@ -81,6 +86,7 @@ export async function POST(request: Request) {
   let userName: string | null = null;
   let userMobile: string | null = null;
   let finance: FinanceGoals = DEFAULT_FINANCE_GOALS;
+  let isAdmin = false;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
     const {
@@ -94,16 +100,13 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select('plan, reports_run, full_name, mobile, stripe_subscription_id, market_goals')
+      .select('full_name, mobile, market_goals')
       .eq('id', user.id)
       .single();
-    // Admins (matched by verified auth email) bypass the free-report limit.
-    if (!profile || (!isAdminEmail(user.email) && !hasAccess(profile))) {
-      return Response.json(
-        { error: "You've used all 5 of your free reports. Subscribe to continue running analyses.", upgradeUrl: '/upgrade' },
-        { status: 402 },
-      );
+    if (!profile) {
+      return Response.json({ error: 'Your account is not set up yet. Please sign in again.' }, { status: 403 });
     }
+    isAdmin = isAdminEmail(user.email);
     userName = profile.full_name ?? null;
     userMobile = profile.mobile ?? null;
     userId = user.id;
@@ -236,8 +239,24 @@ export async function POST(request: Request) {
   };
   const mappedPropertyType = propertyType ? propertyTypeMap[propertyType as string] ?? 'flat' : 'flat';
 
+  // ─── Credit: reserve the worst-case cost before anything is spent ─────
+  // Every provider call below is metered against this action (see
+  // src/lib/credit/meter.ts); the reservation guarantees the report can
+  // never run partially unpaid. Admins run free; shadow mode never blocks.
+  const priceLabsEnabled = process.env.PRICELABS_AS_PRIMARY === 'true';
+  const estimate = estimateAction(await getUnitCostTable(), 'report', { pmiSecondOpinion: process.env.PMI_SECOND_OPINION !== 'false', priceLabs: priceLabsEnabled });
+  let action;
+  try {
+    action = await startAction({ userId, admin: isAdmin || Boolean(isCalibrationBypass), action: 'report', maxBasePence: estimate.maxBasePence });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, 'report');
+    throw err;
+  }
+  const meterCtx = action.ctx;
+  const finishAction = action.finish;
+
   // ─── Streaming SSE Response ──────────────────────────────────
-  const stream = new ReadableStream({
+  const stream = runMetered(meterCtx, () => new ReadableStream({
     async start(controller) {
       const send = (data: Record<string, unknown>) => {
         controller.enqueue(new TextEncoder().encode(sseEvent(data)));
@@ -303,7 +322,6 @@ export async function POST(request: Request) {
         // When enabled and successful, PriceLabs RE OVERRIDES the V4
         // headline below. When it fails (missing key, 401, 429 quota
         // exhausted, 500), V4 result stays unchanged.
-        const priceLabsEnabled = process.env.PRICELABS_AS_PRIMARY === 'true';
         const priceLabsPromise: Promise<Awaited<ReturnType<typeof fetchPriceLabsRevenueEstimate>>> = priceLabsEnabled
           ? fetchPriceLabsRevenueEstimate({
               address: property.address,
@@ -565,7 +583,9 @@ export async function POST(request: Request) {
           }
         }
 
-        send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
+        // What this report actually used, so the UI can show it.
+        const spend = userId ? await actionSpend(meterCtx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 })) : { basePence: 0, chargedPence: 0 };
+        send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result, credit: { actionId: meterCtx.actionId, basePence: spend.basePence, chargedPence: spend.chargedPence } });
 
         // Generate the PDF report and upload it to the user's enquiry row
         // (Monday "Reports" file column), matched by email. Awaited before
@@ -593,32 +613,24 @@ export async function POST(request: Request) {
           }
         }
 
-        // Count this run against the user's 5 free reports.
+        // Usage is now metered per provider call (credit ledger); just mark the visit.
         if (userId) {
           try {
             const supabase = await createSupabaseServerClient();
-            const { data: current } = await supabase
-              .from('profiles')
-              .select('reports_run')
-              .eq('id', userId)
-              .single();
-            const next = (current?.reports_run ?? 0) + 1;
-            await supabase
-              .from('profiles')
-              .update({ reports_run: next, last_seen_at: new Date().toISOString() })
-              .eq('id', userId);
+            await supabase.from('profiles').update({ last_seen_at: new Date().toISOString() }).eq('id', userId);
           } catch (err) {
-            console.error('[api/analyse] reports_run hook failed:', err);
+            console.error('[api/analyse] last_seen hook failed:', err);
           }
         }
       } catch (err) {
         console.error('Unexpected error in /api/analyse:', err);
         send({ stage: 'error', progress: 0, message: 'An unexpected error occurred. Please try again.' });
       } finally {
+        await finishAction().catch(() => {});
         controller.close();
       }
     },
-  });
+  }));
 
   return new Response(stream, {
     headers: {

@@ -1,6 +1,9 @@
 import { extensionAccess } from '@/lib/extension/auth';
 import { json, preflight } from '@/lib/extension/cors';
 import { checkListingForMember } from '@/lib/listing/server';
+import { isAdminEmail } from '@/lib/admin';
+import { insufficientCreditPayload } from '@/lib/credit/http';
+import { siteUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 // Same ceiling as /api/listing/resolve: the quick view budgets its own lookups.
@@ -32,8 +35,12 @@ export async function POST(request: Request) {
   if (html && html.length > MAX_HTML_BYTES) html = html.slice(0, MAX_HTML_BYTES);
 
   try {
-    const outcome = await checkListingForMember(url, { userId: access.user.id, goals: access.goals, html, save: body.save !== false, admin: true });
+    const outcome = await checkListingForMember(url, { userId: access.user.id, goals: access.goals, html, save: body.save !== false, admin: true, adminUser: isAdminEmail(access.user.email) });
     if (!outcome.ok) {
+      if (outcome.code === 'insufficient_credit') {
+        const payload = insufficientCreditPayload(outcome, 'quick_view');
+        return json(request, { ...payload, topupUrl: siteUrl(payload.topupUrl), upgradeUrl: siteUrl(payload.upgradeUrl) }, { status: 402 });
+      }
       const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
       return json(request, { error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
     }

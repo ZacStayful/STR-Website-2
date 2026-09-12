@@ -6,7 +6,10 @@ import { diffListing, parseHistory, pendingEntries, markNotified, dealAtNewPrice
 import type { ListingSnapshot, ListingSource, ListingStatus } from "@/lib/listing/types";
 import type { QuickEstimate } from "@/lib/listing/quick-types";
 import type { Deal } from "@/lib/listing/deal";
-import { marketAccessState } from "@/lib/market/access";
+import { runMetered, newActionId } from "@/lib/credit/context";
+import { getBalance } from "@/lib/credit/ledger";
+import { isEnforcing } from "@/lib/credit/http";
+import { isAdminEmail } from "@/lib/admin";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
@@ -69,7 +72,7 @@ interface Row {
   created_at: string;
 }
 
-type Profile = { email: string | null; plan: "free" | "pro"; reports_run: number; stripe_subscription_id: string | null };
+type Profile = { email: string | null; plan_code: string | null };
 
 function lastSeen(r: Row): number {
   return new Date(r.rechecked_at ?? r.last_checked_at ?? r.created_at).getTime();
@@ -133,9 +136,18 @@ export async function GET(request: Request) {
   for (const r of airbnb) {
     if (Date.now() - started > AIRBNB_BUDGET_MS) break;
     const snap = r.snapshot;
-    const quick = await quickEstimate(
-      { kind: "str", postcode: snap.postcode ?? r.postcode, outcode: snap.outcode, bedrooms: snap.bedrooms ?? 2, bathrooms: snap.bathrooms, lat: snap.lat ?? r.lat, lng: snap.lng ?? r.lng, airbnbId: snap.id },
-      { mode: "cron", userId: r.user_id },
+    if (isEnforcing()) {
+      const bal = await getBalance(r.user_id).catch(() => null);
+      if (bal && bal.spendableBasePence <= 0) {
+        summary.skipped += 1;
+        continue;
+      }
+    }
+    const quick = await runMetered({ userId: r.user_id, admin: false, action: "cron:recheck", actionId: newActionId() }, () =>
+      quickEstimate(
+        { kind: "str", postcode: snap.postcode ?? r.postcode, outcode: snap.outcode, bedrooms: snap.bedrooms ?? 2, bathrooms: snap.bathrooms, lat: snap.lat ?? r.lat, lng: snap.lng ?? r.lng, airbnbId: snap.id },
+        { mode: "cron", userId: r.user_id },
+      ),
     );
     if (quick.limited && !quick.estimate && !quick.tracked) {
       // Provider budget spent: keep last month's figures and try again next run.
@@ -155,7 +167,9 @@ export async function GET(request: Request) {
     }
     if (!first) await sleep(1000);
     first = false;
-    const res = await resolveListing(url, { refresh: true });
+    // One page fetch however many members watch it; the nominal cost goes to the first.
+    const payer = members[0]?.user_id ?? null;
+    const res = await runMetered({ userId: payer, admin: false, action: "cron:recheck", actionId: newActionId() }, () => resolveListing(url, { refresh: true }));
     summary.fetched += 1;
     if (!res.ok && res.code === "paused") {
       summary.paused = true;
@@ -202,7 +216,7 @@ export async function GET(request: Request) {
   // send. Listings the member has since Passed are left alone.
   const { data: pendingData, error: pendErr } = await admin
     .from("checked_listings")
-    .select("id, user_id, canonical_url, snapshot, price_history, profiles!inner(email, plan, reports_run, stripe_subscription_id)")
+    .select("id, user_id, canonical_url, snapshot, price_history, profiles!inner(email, plan_code)")
     .neq("status", "passed")
     .contains("price_history", [{ notified: false }]);
   if (pendErr) console.error("[recheck] pending select failed:", pendErr.message);
@@ -217,8 +231,8 @@ export async function GET(request: Request) {
   }
   const perUser: { user: string; items: number; sent: boolean; reason?: string }[] = [];
   for (const [userId, { profile, items }] of byUser) {
-    if (!profile || marketAccessState({ email: profile.email }, profile) !== "ok" || !profile.email) {
-      perUser.push({ user: userId, items: items.length, sent: false, reason: "no_access" });
+    if (!profile || !profile.email) {
+      perUser.push({ user: userId, items: items.length, sent: false, reason: "no_email" });
       continue;
     }
     if (!isEmailConfigured()) {

@@ -9,6 +9,10 @@ import { mondayQuery } from '@/lib/apis/monday';
 import { getMarketAccess } from '@/lib/market/gate';
 import { isPipelineStatus } from '@/lib/listing/pipeline';
 import { randomBytes } from 'node:crypto';
+import { isAdminEmail } from '@/lib/admin';
+import { startAction } from '@/lib/credit/action';
+import { runMetered } from '@/lib/credit/context';
+import { InsufficientCreditError } from '@/lib/credit/ledger';
 
 export type GoalsState = { error: string | null; warning: string | null; saved: boolean };
 
@@ -35,11 +39,20 @@ export async function saveMarketGoalsAction(_prev: GoalsState, formData: FormDat
       goals.home = previous.home; // unchanged postcode: keep the cached coordinates
     } else {
       try {
-        const { lat, lng } = await geocodePostcode(goals.home.postcode);
-        goals.home = { ...goals.home, lat, lng };
+        const action = await startAction({ userId: user.id, admin: isAdminEmail(user.email), action: 'geocode' });
+        try {
+          const { lat, lng } = await runMetered(action.ctx, () => geocodePostcode(goals.home!.postcode));
+          goals.home = { ...goals.home, lat, lng };
+        } finally {
+          await action.finish().catch(() => {});
+        }
       } catch (err) {
-        console.warn('[markets/goals] geocode failed:', (err as Error)?.message ?? err);
-        warning = `We couldn't place ${goals.home.postcode} on the map, so distance ranking is off until you try again.`;
+        if (err instanceof InsufficientCreditError) {
+          warning = `You're out of credit, so we couldn't place ${goals.home.postcode} on the map. Top up or upgrade and save again to turn distance ranking on.`;
+        } else {
+          console.warn('[markets/goals] geocode failed:', (err as Error)?.message ?? err);
+          warning = `We couldn't place ${goals.home.postcode} on the map, so distance ranking is off until you try again.`;
+        }
       }
     }
   }

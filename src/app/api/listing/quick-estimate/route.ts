@@ -2,6 +2,13 @@ import { getMarketAccess } from '@/lib/market/gate';
 import { quickEstimate } from '@/lib/listing/quick';
 import { normalisePostcode, parseMarketGoals } from '@/lib/market/goals';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { isAdminEmail } from '@/lib/admin';
+import { startAction } from '@/lib/credit/action';
+import { runMetered } from '@/lib/credit/context';
+import { estimateAction } from '@/lib/credit/estimate';
+import { getUnitCostTable } from '@/lib/credit/unit-costs';
+import { InsufficientCreditError } from '@/lib/credit/ledger';
+import { insufficientCreditResponse } from '@/lib/credit/http';
 
 // The quick view budgets its own lookups (see QUICK_BUDGET_MS); this is a backstop.
 export const maxDuration = 60;
@@ -33,20 +40,35 @@ export async function POST(request: Request) {
   const { data: profile } = await supabase.from('profiles').select('market_goals').eq('id', access.user.id).single();
   const goals = parseMarketGoals(profile?.market_goals);
 
-  const quick = await quickEstimate(
-    {
-      kind,
-      postcode,
-      outcode,
-      bedrooms,
-      bathrooms: num(b.bathrooms, 1, 10) ?? undefined,
-      lat: num(b.lat, 49, 61),
-      lng: num(b.lng, -9, 3),
-      airbnbId: typeof b.airbnbId === 'string' && /^\d{4,24}$/.test(b.airbnbId) ? b.airbnbId : null,
-      price: num(b.price, 1, 50_000_000),
-      finance: goals?.finance ?? null,
-    },
-    { mode: 'quick', userId: access.user.id },
-  );
-  return Response.json({ quick });
+  const member = access.user;
+  const estimate = estimateAction(await getUnitCostTable(), 'quick_view');
+  let action;
+  try {
+    action = await startAction({ userId: member.id, admin: isAdminEmail(member.email), action: 'quick_view', maxBasePence: estimate.maxBasePence });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, 'quick_view');
+    throw err;
+  }
+  try {
+    const quick = await runMetered(action.ctx, () =>
+      quickEstimate(
+        {
+          kind,
+          postcode,
+          outcode,
+          bedrooms,
+          bathrooms: num(b.bathrooms, 1, 10) ?? undefined,
+          lat: num(b.lat, 49, 61),
+          lng: num(b.lng, -9, 3),
+          airbnbId: typeof b.airbnbId === 'string' && /^\d{4,24}$/.test(b.airbnbId) ? b.airbnbId : null,
+          price: num(b.price, 1, 50_000_000),
+          finance: goals?.finance ?? null,
+        },
+        { mode: 'quick', userId: member.id },
+      ),
+    );
+    return Response.json({ quick });
+  } finally {
+    await action.finish().catch(() => {});
+  }
 }

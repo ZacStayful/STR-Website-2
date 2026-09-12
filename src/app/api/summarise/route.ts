@@ -1,6 +1,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { AnalysisResult } from "@/lib/types";
+import { isAdminEmail } from "@/lib/admin";
+import { startAction } from "@/lib/credit/action";
+import { runMetered } from "@/lib/credit/context";
+import { estimateAction } from "@/lib/credit/estimate";
+import { getUnitCostTable } from "@/lib/credit/unit-costs";
+import { InsufficientCreditError } from "@/lib/credit/ledger";
+import { insufficientCreditResponse } from "@/lib/credit/http";
+import { meter, approxTokens } from "@/lib/credit/meter";
+
+const NARRATOR_MODEL = "claude-opus-4-8";
+const NARRATOR_MAX_TOKENS = 600;
 
 // The model call is short (a ~120-word spoken summary at low effort), but give
 // it more than the 10s Hobby default so it never gets cut off mid-stream.
@@ -93,16 +104,42 @@ export async function POST(request: Request) {
   }
 
   const client = new Anthropic({ apiKey });
+  const facts = buildFacts(result);
+
+  // Credit: reserve the ceiling (prompt tokens + max_tokens of output), then
+  // charge the actual token usage the API reports.
+  const inputTokens = approxTokens(NARRATOR_SYSTEM + facts) + 50;
+  const estimate = estimateAction(await getUnitCostTable(), "narrate", { inputTokens, maxOutputTokens: NARRATOR_MAX_TOKENS });
+  let action;
+  try {
+    action = await startAction({ userId: user.id, admin: isAdminEmail(user.email), action: "narrate", maxBasePence: estimate.maxBasePence });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, "narrate");
+    throw err;
+  }
 
   try {
-    const message = await client.messages.create({
-      model: "claude-opus-4-8",
-      max_tokens: 600,
-      // Low effort + a tight system prompt keeps this fast and cheap — it's a
-      // narration task, not a reasoning one.
-      output_config: { effort: "low" },
-      system: NARRATOR_SYSTEM,
-      messages: [{ role: "user", content: buildFacts(result) }],
+    const message = await runMetered(action.ctx, async () => {
+      const msg = await meter(
+        { provider: "anthropic", unit: "output_token", quantityFrom: (m: Anthropic.Message) => m.usage.output_tokens, description: "AI narration (output tokens)" },
+        () =>
+          client.messages.create({
+            model: NARRATOR_MODEL,
+            max_tokens: NARRATOR_MAX_TOKENS,
+            // Low effort + a tight system prompt keeps this fast and cheap — it's a
+            // narration task, not a reasoning one.
+            output_config: { effort: "low" },
+            system: NARRATOR_SYSTEM,
+            messages: [{ role: "user", content: facts }],
+          }),
+      );
+      // Input side of the same call, priced from the usage the API returned.
+      await meter({ provider: "anthropic", unit: "input_token", quantity: msg.usage.input_tokens, description: "AI narration (input tokens)", skipPreflight: true }, async () => msg);
+      const cacheRead = msg.usage.cache_read_input_tokens ?? 0;
+      if (cacheRead > 0) await meter({ provider: "anthropic", unit: "cache_read_token", quantity: cacheRead, skipPreflight: true }, async () => msg);
+      const cacheWrite = msg.usage.cache_creation_input_tokens ?? 0;
+      if (cacheWrite > 0) await meter({ provider: "anthropic", unit: "cache_write_token", quantity: cacheWrite, skipPreflight: true }, async () => msg);
+      return msg;
     });
 
     const summary = message.content
@@ -122,5 +159,7 @@ export async function POST(request: Request) {
       { error: "Could not generate a summary right now. Please try again." },
       { status: 502 },
     );
+  } finally {
+    await action.finish().catch(() => {});
   }
 }

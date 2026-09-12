@@ -1,46 +1,38 @@
 export type Profile = {
   id: string
   email: string | null
+  /** Legacy flag kept in sync for the Monday mirror: 'pro' while a subscription is active. */
   plan: 'free' | 'pro'
+  /** Subscription tier ('starter' | 'pro' | 'scale' | 'pro_annual'); null = pay-as-you-go on credit. */
+  plan_code: string | null
   trial_ends_at: string
   reports_run: number
   stripe_customer_id: string | null
   stripe_subscription_id: string | null
   stripe_subscription_status: string | null
+  stripe_price_id: string | null
+  stripe_default_payment_method_id: string | null
+  current_period_end: string | null
+  cancel_at_period_end: boolean
 }
 
-// Free users get a fixed number of analyses before they must subscribe.
-// (Previously the trial was time-based — 14 days — now it's usage-based.)
-export const FREE_RUNS = 5
+// Access is no longer a boolean: every signed-in member can open the app and
+// every paid action is charged to their credit balance (src/lib/credit). The
+// only thing a plan changes is how much credit arrives each month and which
+// perks apply (src/lib/credit/perks.ts).
 
-export function isPro(profile: Pick<Profile, 'plan'>): boolean {
-  return profile.plan === 'pro'
+export function isPro(profile: Pick<Profile, 'plan_code'> | null | undefined): boolean {
+  return Boolean(profile?.plan_code)
 }
 
-// How many free reports the user has left (never negative).
-export function runsRemaining(profile: Pick<Profile, 'reports_run'>): number {
-  return Math.max(0, FREE_RUNS - (profile.reports_run ?? 0))
+export const PLAN_NAMES: Record<string, string> = {
+  starter: 'Starter',
+  pro: 'Pro',
+  scale: 'Scale',
+  pro_annual: 'Pro (annual)',
 }
 
-export function hasFreeRunsLeft(profile: Pick<Profile, 'reports_run'>): boolean {
-  return (profile.reports_run ?? 0) < FREE_RUNS
-}
-
-// Someone who subscribed at least once (has a Stripe subscription on record)
-// but isn't currently Pro — i.e. they cancelled or their subscription lapsed.
-// These users must re-subscribe; they do NOT fall back to the free tier.
-export function isLapsedSubscriber(
-  profile: Pick<Profile, 'plan' | 'stripe_subscription_id'>,
-): boolean {
-  return !!profile.stripe_subscription_id && profile.plan !== 'pro'
-}
-
-export function hasAccess(
-  profile: Pick<Profile, 'plan' | 'reports_run' | 'stripe_subscription_id'>,
-): boolean {
-  if (isPro(profile)) return true
-  // Former subscribers who cancelled are sent to the paywall — no falling
-  // back onto the free-report allowance.
-  if (isLapsedSubscriber(profile)) return false
-  return hasFreeRunsLeft(profile)
+export function planName(code: string | null | undefined): string {
+  if (!code) return 'Pay as you go'
+  return PLAN_NAMES[code] ?? code
 }

@@ -11,6 +11,11 @@ import type { DetectedListing, ListingSnapshot } from './types';
 import type { QuickEstimate } from './quick-types';
 import { quickEstimate } from './quick';
 import type { MarketGoals } from '../market/goals';
+import { startAction } from '../credit/action';
+import { runMetered } from '../credit/context';
+import { estimateAction } from '../credit/estimate';
+import { getUnitCostTable } from '../credit/unit-costs';
+import { InsufficientCreditError } from '../credit/ledger';
 
 const SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -95,6 +100,8 @@ export interface CheckListingInput {
   save?: boolean;
   /** Token-authenticated callers have no session cookies and use the service role. */
   admin?: boolean;
+  /** The member is an admin account: metered but never charged. */
+  adminUser?: boolean;
 }
 
 export interface CheckedListingPayload {
@@ -108,7 +115,8 @@ export interface CheckedListingPayload {
 
 export type CheckListingOutcome =
   | { ok: true; body: CheckedListingPayload }
-  | { ok: false; code: Extract<ResolveOutcome, { ok: false }>['code'] | 'cap'; message: string; detected: DetectedListing | null };
+  | { ok: false; code: Extract<ResolveOutcome, { ok: false }>['code'] | 'cap'; message: string; detected: DetectedListing | null }
+  | { ok: false; code: 'insufficient_credit'; message: string; detected: DetectedListing | null; requiredPence: number; availablePence: number };
 
 /**
  * The whole "check a listing" step shared by the site's paste box and the
@@ -121,28 +129,46 @@ export async function checkListingForMember(url: string, input: CheckListingInpu
   if (Number.isFinite(cap) && cap > 0 && used >= cap) {
     return { ok: false, code: 'cap', message: `You have checked ${cap} listings today. Try again tomorrow.`, detected: detectListingUrl(url) };
   }
-  const resolved = await resolveListing(url, { html: input.html, refresh: input.refresh });
-  if (!resolved.ok) return { ok: false, code: resolved.code, message: resolved.message, detected: resolved.detected };
+  // Credit: the quick view's worst case (page fetch, reverse geocode, Airbtics
+  // bounds, PMI area snapshot) is reserved up front and settled per call.
+  const estimate = estimateAction(await getUnitCostTable(), 'quick_view');
+  let action;
+  try {
+    action = await startAction({ userId: input.userId, admin: input.adminUser, action: 'quick_view', maxBasePence: estimate.maxBasePence });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) {
+      return { ok: false, code: 'insufficient_credit', message: "You're out of credit. Top up or upgrade to keep checking listings.", detected: detectListingUrl(url), requiredPence: err.requiredPence, availablePence: err.availablePence };
+    }
+    throw err;
+  }
+  try {
+    return await runMetered(action.ctx, async (): Promise<CheckListingOutcome> => {
+      const resolved = await resolveListing(url, { html: input.html, refresh: input.refresh });
+      if (!resolved.ok) return { ok: false, code: resolved.code, message: resolved.message, detected: resolved.detected };
 
-  const snap = resolved.snapshot;
-  const price = snap.kind === 'sale' ? resolved.prefill.purchasePrice : snap.kind === 'rent' ? resolved.prefill.advertisedRent : null;
-  const quick = await quickEstimate(
-    {
-      kind: snap.kind,
-      postcode: snap.postcode ?? null,
-      outcode: snap.outcode ?? null,
-      bedrooms: resolved.prefill.bedrooms,
-      bathrooms: resolved.prefill.bathrooms,
-      lat: snap.lat ?? null,
-      lng: snap.lng ?? null,
-      airbnbId: snap.source === 'airbnb' ? snap.id : null,
-      price: price ?? null,
-      finance: input.goals?.finance ?? null,
-    },
-    { mode: 'quick', userId: input.userId },
-  );
-  const checkedListingId = input.save === false ? null : await recordCheckedListing(input.userId, snap, quick, { admin: input.admin });
-  return { ok: true, body: { snapshot: snap, prefill: resolved.prefill, warnings: resolved.warnings, quick, checkedListingId, fromCache: resolved.fromCache } };
+      const snap = resolved.snapshot;
+      const price = snap.kind === 'sale' ? resolved.prefill.purchasePrice : snap.kind === 'rent' ? resolved.prefill.advertisedRent : null;
+      const quick = await quickEstimate(
+        {
+          kind: snap.kind,
+          postcode: snap.postcode ?? null,
+          outcode: snap.outcode ?? null,
+          bedrooms: resolved.prefill.bedrooms,
+          bathrooms: resolved.prefill.bathrooms,
+          lat: snap.lat ?? null,
+          lng: snap.lng ?? null,
+          airbnbId: snap.source === 'airbnb' ? snap.id : null,
+          price: price ?? null,
+          finance: input.goals?.finance ?? null,
+        },
+        { mode: 'quick', userId: input.userId },
+      );
+      const checkedListingId = input.save === false ? null : await recordCheckedListing(input.userId, snap, quick, { admin: input.admin });
+      return { ok: true, body: { snapshot: snap, prefill: resolved.prefill, warnings: resolved.warnings, quick, checkedListingId, fromCache: resolved.fromCache } };
+    });
+  } finally {
+    await action.finish().catch(() => {});
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 import { extensionAccess } from '@/lib/extension/auth';
 import { json, preflight } from '@/lib/extension/cors';
-import { runsRemaining } from '@/lib/access';
+import { formatGbp } from '@/lib/credit/pricing';
 
 export const runtime = 'nodejs';
 
@@ -11,8 +11,10 @@ export async function GET(request: Request) {
   return json(request, {
     email: access.user?.email ?? null,
     state: access.state,
-    plan: access.plan,
-    runsRemaining: access.plan === 'pro' ? null : runsRemaining({ reports_run: access.reportsRun ?? 0 }),
+    planCode: access.planCode,
+    balancePence: access.balancePence,
+    balanceLabel: access.balancePence === null ? null : formatGbp(access.balancePence),
+    outOfCredit: access.spendableBasePence !== null && access.spendableBasePence <= 0,
   });
 }
 

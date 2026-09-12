@@ -1,6 +1,10 @@
 /**
  * Google Geocoding API — converts a UK postcode to lat/lng coordinates.
+ * Every call is metered (src/lib/credit/meter.ts) against whoever is running
+ * the current action.
  */
+
+import { meter } from '../credit/meter';
 
 export async function geocodePostcode(
   postcode: string,
@@ -13,7 +17,7 @@ export async function geocodePostcode(
   const encodedPostcode = encodeURIComponent(postcode.trim() + ', UK');
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedPostcode}&key=${apiKey}`;
 
-  const response = await fetch(url);
+  const response = await meter({ provider: 'google', unit: 'geocode', key: postcode.trim().toUpperCase(), failed: (r) => !r.ok }, () => fetch(url));
 
   if (!response.ok) {
     throw new Error(
@@ -47,7 +51,7 @@ export async function reverseGeocode(lat: number, lng: number): Promise<{ postco
   if (!apiKey) return null;
   try {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&result_type=postal_code&region=gb&key=${apiKey}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(REVERSE_GEOCODE_TIMEOUT_MS) });
+    const res = await meter({ provider: 'google', unit: 'reverse_geocode', key: `${lat.toFixed(4)},${lng.toFixed(4)}`, failed: (r) => !r.ok }, () => fetch(url, { signal: AbortSignal.timeout(REVERSE_GEOCODE_TIMEOUT_MS) }));
     if (!res.ok) return null;
     const data = await res.json();
     if (data.status !== 'OK' || !Array.isArray(data.results)) return null;

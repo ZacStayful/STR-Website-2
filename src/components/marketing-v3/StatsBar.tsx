@@ -2,7 +2,7 @@ const STATS = [
   { num: "10", label: "Section deep-dive", sub: "From intake to risk assessment" },
   { num: "4+", label: "Live data sources", sub: "Airbnb, PropertyData, Google, Ticketmaster" },
   { num: "10–20s", label: "End-to-end analysis", sub: "Live comparables and demand drivers" },
-  { num: "Try for free", label: "Start your free trial", sub: "Get 5 free reports today" },
+  { num: "Try for free", label: "Start your free trial", sub: "£20 of free credit today" },
 ];
 
 const DATA_SOURCES = [

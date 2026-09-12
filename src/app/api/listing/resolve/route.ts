@@ -2,6 +2,8 @@ import { getMarketAccess } from '@/lib/market/gate';
 import { checkListingForMember } from '@/lib/listing/server';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { isAdminEmail } from '@/lib/admin';
+import { insufficientCreditResponse } from '@/lib/credit/http';
 
 // Worst case is a slow portal fetch (12 s) + reverse geocode (6 s) + the
 // quick view's own budget (~26 s across its serial steps); everything inside
@@ -30,8 +32,9 @@ export async function POST(request: Request) {
 
   try {
     const goals = await loadGoals(access.user.id);
-    const outcome = await checkListingForMember(url, { userId: access.user.id, goals, save: body.save !== false, refresh: body.refresh === true });
+    const outcome = await checkListingForMember(url, { userId: access.user.id, goals, save: body.save !== false, refresh: body.refresh === true, adminUser: isAdminEmail(access.user.email) });
     if (!outcome.ok) {
+      if (outcome.code === 'insufficient_credit') return insufficientCreditResponse(outcome, 'quick_view');
       const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
       return Response.json({ error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
     }

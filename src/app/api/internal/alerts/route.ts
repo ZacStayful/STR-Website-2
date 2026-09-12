@@ -4,7 +4,6 @@ import { fetchMarketTrends } from "@/lib/market/trends-client";
 import { areaTrend, type AreaTrend } from "@/lib/market/trend";
 import { digestChanges, digestEmail, type ListingWeekChange, type SavedAreaState } from "@/lib/market/alerts";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
-import { marketAccessState } from "@/lib/market/access";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
@@ -28,7 +27,7 @@ export const maxDuration = 60;
 
 type Row = SavedAreaState & {
   user_id: string;
-  profiles: { email: string | null; alert_weekly: boolean; plan: "free" | "pro"; reports_run: number; stripe_subscription_id: string | null } | null;
+  profiles: { email: string | null; alert_weekly: boolean; plan_code: string | null } | null;
 };
 
 export async function GET(request: Request) {
@@ -52,7 +51,7 @@ export async function GET(request: Request) {
 
   const { data: saved, error } = await admin
     .from("saved_areas")
-    .select("user_id, postcode_area, last_alerted_direction, last_alerted_tier, profiles!inner(email, alert_weekly, plan, reports_run, stripe_subscription_id)")
+    .select("user_id, postcode_area, last_alerted_direction, last_alerted_tier, profiles!inner(email, alert_weekly, plan_code)")
     .eq("profiles.alert_weekly", true);
   if (error) {
     console.error("[alerts] saved_areas query failed:", error.message);
@@ -71,7 +70,7 @@ export async function GET(request: Request) {
   const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).getTime();
   const { data: moved, error: movedError } = await admin
     .from("checked_listings")
-    .select("id, user_id, snapshot, price_history, profiles!inner(email, alert_weekly, plan, reports_run, stripe_subscription_id)")
+    .select("id, user_id, snapshot, price_history, profiles!inner(email, alert_weekly, plan_code)")
     .eq("profiles.alert_weekly", true)
     .neq("status", "passed")
     .neq("price_history", "[]");
@@ -89,9 +88,8 @@ export async function GET(request: Request) {
   const toRecord: { user_id: string; postcode_area: string; last_alerted_direction: string; last_alerted_tier: string; last_alerted_at: string }[] = [];
 
   for (const [userId, { profile, rows, listings }] of byUser) {
-    // Same rule as the explorer: lapsed / exhausted accounts get no paid figures.
-    if (!profile || marketAccessState({ email: profile.email }, profile) !== "ok") {
-      summary.push({ user: userId, changes: 0, listings: 0, sent: false, recorded: 0, reason: "no_access" });
+    if (!profile) {
+      summary.push({ user: userId, changes: 0, listings: 0, sent: false, recorded: 0, reason: "no_profile" });
       continue;
     }
     const changes = digestChanges(rows, cardByCode, trendByCode);

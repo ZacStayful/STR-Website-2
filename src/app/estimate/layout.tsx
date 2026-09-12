@@ -1,19 +1,14 @@
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, isPro, runsRemaining } from "@/lib/access";
-import { isAdminEmail } from "@/lib/admin";
-import { TrialBanner } from "@/components/TrialBanner";
-import { AppSwitcher } from "@/components/AppSwitcher";
-import { checkoutUrlFor } from "@/lib/billing";
+import { AppShell } from "@/components/AppShell";
 import { ensureEnquiry } from "@/lib/apis/monday";
 
-// Server component that wraps /estimate. Fetches the current user's profile,
-// runs hasAccess() against plan + reports_run (5 free reports, then pro),
-// bounces users who've used all their free reports to /upgrade, and
-// (fire-and-forget) updates the Monday CRM with last_seen_at. Anyone not
-// logged in is already redirected to /login by the middleware
-// (proxy.ts → PROTECTED_PREFIXES).
+// Server component that wraps /estimate. Any signed-in member may open the
+// analyser; each report is charged to their credit when it runs (see
+// /api/analyse and src/lib/credit). Also mirrors last_seen_at and backfills
+// the Monday CRM row. Anyone not logged in is already redirected to /login by
+// the middleware (proxy.ts → PROTECTED_PREFIXES).
 export default async function EstimateLayout({
   children,
 }: {
@@ -32,17 +27,11 @@ export default async function EstimateLayout({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select(
-      "plan, reports_run, monday_item_id, stripe_subscription_id, email, full_name, mobile, created_at",
-    )
+    .select("monday_item_id, email, full_name, mobile, created_at")
     .eq("id", user.id)
     .single();
 
-  // Admins (matched by verified auth email) have unlimited access — they never
-  // hit the free-report limit or the paywall.
-  const admin = isAdminEmail(user.email);
-
-  if (!profile || (!admin && !hasAccess(profile))) {
+  if (!profile) {
     redirect("/upgrade");
   }
 
@@ -60,7 +49,7 @@ export default async function EstimateLayout({
 
   // Resilient Monday CRM backfill. The primary trial→Monday push happens once
   // in /auth/callback; if Monday was unconfigured or unreachable at that
-  // instant the row is never created and never retried. Every trial user must
+  // instant the row is never created and never retried. Every member must
   // visit /estimate to use the product, so retry here until the profile is
   // linked. ensureEnquiry dedupes by email, so this can't create a second row,
   // and it short-circuits cheaply when Monday isn't configured. after() keeps
@@ -86,19 +75,9 @@ export default async function EstimateLayout({
     });
   }
 
-  // Trial countdown banner for free users (Pro users and admins have unlimited
-  // access, so no banner for them).
-  const showTrialBanner = !admin && !isPro(profile);
-  const remaining = runsRemaining(profile);
-  const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
-
   return (
-    <>
-      <AppSwitcher active="estimate" admin={admin} />
-      {showTrialBanner && (
-        <TrialBanner remaining={remaining} checkoutHref={checkoutHref} />
-      )}
+    <AppShell active="estimate" redirectTo="/estimate">
       {children}
-    </>
+    </AppShell>
   );
 }

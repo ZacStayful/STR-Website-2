@@ -17,6 +17,7 @@
  */
 
 import type { LongLetData, PropertyDataValuation } from '../types';
+import { meter } from '../credit/meter';
 
 // ─── Bedroom-scaled defaults ────────────────────────────────────
 // More realistic than a single static default for all property sizes.
@@ -63,7 +64,7 @@ export async function getFloorArea(
     url.searchParams.set('key', apiKey);
     url.searchParams.set('postcode', postcode);
 
-    const response = await fetch(url.toString());
+    const response = await meter({ provider: 'propertydata', unit: 'floor_areas', key: postcode, failed: (r) => !r.ok }, () => fetch(url.toString()));
     if (!response.ok) {
       console.log(`PropertyData /floor-areas: HTTP ${response.status}`);
       return fallbackResult;
@@ -245,7 +246,7 @@ async function tryPropertyDataCall(
       url.searchParams.set(key, value);
     }
 
-    const response = await fetch(url.toString());
+    const response = await meter({ provider: 'propertydata', unit: 'valuation_rent', key: params.postcode ?? null, failed: (r) => !r.ok }, () => fetch(url.toString()));
 
     if (!response.ok) {
       console.log(`PropertyData: HTTP ${response.status} for params:`, params);
@@ -331,7 +332,7 @@ export async function fetchPropertyValuation(
       const safeUrl = url.toString().replace(apiKey!, '<redacted>');
       console.log(`[PropertyData] GET ${safeUrl}`);
 
-      const response = await fetch(url.toString(), { cache: 'no-store' });
+      const response = await meter({ provider: 'propertydata', unit: 'valuation_sale', key: params.postcode ?? null, failed: (r) => !r.ok }, () => fetch(url.toString(), { cache: 'no-store' }));
       if (!response.ok) {
         const body = await response.text().catch(() => '');
         console.log(`[PropertyData] /valuation-sale HTTP ${response.status}: ${body.slice(0, 300)}`);

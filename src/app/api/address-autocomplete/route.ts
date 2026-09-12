@@ -1,6 +1,19 @@
 // Proxy to Google Places Autocomplete (New API). Keeps the API key server-side
 // and biases results to the UK. Returns a trimmed shape so the client component
 // doesn't have to know about Google's nested response format.
+//
+// Credit: Google bills one autocomplete SESSION (typing → selection) when the
+// client passes a session token, so the member is charged once per session —
+// the first request debits, later keystrokes in the same session log at £0.
+// Signed-out callers are house spend (rate limited by IP as before).
+
+import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { isAdminEmail } from '@/lib/admin';
+import { startAction } from '@/lib/credit/action';
+import { runMetered } from '@/lib/credit/context';
+import { meter } from '@/lib/credit/meter';
+import { InsufficientCreditError } from '@/lib/credit/ledger';
+import { INSUFFICIENT_CREDIT_CODE } from '@/lib/credit/http';
 
 // ─── Rate Limiter (in-memory, per IP) ────────────────────────────
 // More generous than /api/analyse because autocomplete fires per keystroke:
@@ -84,25 +97,53 @@ export async function GET(request: Request) {
   };
   if (sessionToken) body.sessionToken = sessionToken;
 
+  // Who pays: the signed-in member (once per session), else the house.
+  let userId: string | null = null;
+  let admin = false;
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data } = await supabase.auth.getUser();
+    userId = data.user?.id ?? null;
+    admin = isAdminEmail(data.user?.email);
+  } catch {
+    userId = null;
+  }
+  const sessionId = /^[0-9a-f-]{36}$/i.test(sessionToken) ? sessionToken : undefined;
+
+  let action;
+  try {
+    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) return Response.json({ suggestions: [], code: INSUFFICIENT_CREDIT_CODE }, { status: 402 });
+    throw err;
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': apiKey,
-        'X-Goog-FieldMask':
-          'suggestions.placePrediction.placeId,' +
-          'suggestions.placePrediction.text,' +
-          'suggestions.placePrediction.structuredFormat',
-      },
-      body: JSON.stringify(body),
-      cache: 'no-store',
-    });
+    upstream = await runMetered(action.ctx, () =>
+      meter({ provider: 'google', unit: 'autocomplete_session', key: sessionId, description: 'Address lookup', failed: (r) => !r.ok }, () =>
+        fetch('https://places.googleapis.com/v1/places:autocomplete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': apiKey,
+            'X-Goog-FieldMask':
+              'suggestions.placePrediction.placeId,' +
+              'suggestions.placePrediction.text,' +
+              'suggestions.placePrediction.structuredFormat',
+          },
+          body: JSON.stringify(body),
+          cache: 'no-store',
+        }),
+      ),
+    );
   } catch (err) {
+    if (err instanceof InsufficientCreditError) return Response.json({ suggestions: [], code: INSUFFICIENT_CREDIT_CODE }, { status: 402 });
     console.error('[autocomplete] upstream fetch failed:', err);
     // Degrade gracefully — UI falls back to manual entry.
     return Response.json({ suggestions: [] });
+  } finally {
+    await action.finish().catch(() => {});
   }
 
   if (!upstream.ok) {

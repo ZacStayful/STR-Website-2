@@ -3,17 +3,24 @@ import { getAreaCards } from "@/lib/market/cached";
 import { parseMarketGoals, type MarketGoals } from "@/lib/market/goals";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
 import { areaCentroid } from "@/lib/market/area-centroids";
-import { marketAccessState } from "@/lib/market/access";
 import { ask, sourcingListings } from "@/lib/broker";
+import { runMetered, newActionId } from "@/lib/credit/context";
+import { getBalance } from "@/lib/credit/ledger";
+import { isEnforcing } from "@/lib/credit/http";
+import { perksFor, sourcingRunsToday } from "@/lib/credit/perks";
+import { isAdminEmail } from "@/lib/admin";
 import { queriesForGoals, dealForSourced, rankPicks, sourcingEmail, type AreaRef, type SourcedListing, type SourcingQuery } from "@/lib/listing/sourcing";
 import { sendEmail, isEmailConfigured } from "@/lib/email/send";
 import { siteUrl } from "@/lib/url";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
-// ─── Daily deal-sourcing digest ────────────────────────────────────────
-// Vercel cron (vercel.json, 07:00 UTC). Ships dark: SOURCING_ENABLED=true turns
-// it on, and only members who ticked "deal sourcing" under Edit goals are
-// included. For each member: their saved areas plus areas within their
+// ─── Deal-sourcing digest ─────────────────────────────────────────────
+// Vercel cron (vercel.json, 07:00 UTC daily). Ships dark: SOURCING_ENABLED=true
+// turns it on, and only members who ticked "deal sourcing" under Edit goals are
+// included. Cadence comes from the member's plan perks: weekly (Mondays) for
+// free / Starter / Pro, daily for Scale. Each query's provider call is charged
+// to the first member who wanted it (later members share the cached answer for
+// free); members with no spendable credit are skipped for the run. For each member: their saved areas plus areas within their
 // distance limit (best fit first, capped at five) × buy / rent-to-rent ×
 // budget × bedrooms become queries; identical queries are shared across
 // members and answered once a day by the broker (PMI listings, then an
@@ -36,7 +43,7 @@ function maxQueries(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 150;
 }
 
-type ProfileRow = { id: string; email: string | null; market_goals: unknown; plan: "free" | "pro"; reports_run: number; stripe_subscription_id: string | null };
+type ProfileRow = { id: string; email: string | null; market_goals: unknown; plan_code: string | null };
 
 interface Member {
   id: string;
@@ -69,7 +76,7 @@ export async function GET(request: Request) {
 
   const { data: profiles, error } = await admin
     .from("profiles")
-    .select("id, email, market_goals, plan, reports_run, stripe_subscription_id")
+    .select("id, email, market_goals, plan_code")
     .eq("sourcing_alerts", true)
     .not("market_goals", "is", null);
   if (error) {
@@ -90,9 +97,20 @@ export async function GET(request: Request) {
       skipped.push({ user: p.id, reason: "no_goals" });
       continue;
     }
-    if (!p.email || marketAccessState({ email: p.email }, p) !== "ok") {
-      skipped.push({ user: p.id, reason: "no_access" });
+    if (!p.email) {
+      skipped.push({ user: p.id, reason: "no_email" });
       continue;
+    }
+    if (!sourcingRunsToday(perksFor(p.plan_code).sourcingCadence)) {
+      skipped.push({ user: p.id, reason: "not_today" });
+      continue;
+    }
+    if (!isAdminEmail(p.email) && isEnforcing()) {
+      const bal = await getBalance(p.id).catch(() => null);
+      if (bal && bal.spendableBasePence <= 0) {
+        skipped.push({ user: p.id, reason: "no_credit" });
+        continue;
+      }
     }
     const areaFit = new Map<string, number | null>();
     const refs: AreaRef[] = cards.map((card) => {
@@ -110,8 +128,8 @@ export async function GET(request: Request) {
   }
 
   // Shared query set, most-wanted first, capped per run.
-  const demand = new Map<string, { query: SourcingQuery; members: number }>();
-  for (const m of members) for (const q of m.queries) demand.set(q.key, { query: q, members: (demand.get(q.key)?.members ?? 0) + 1 });
+  const demand = new Map<string, { query: SourcingQuery; members: number; payer: Member }>();
+  for (const m of members) for (const q of m.queries) demand.set(q.key, { query: q, members: (demand.get(q.key)?.members ?? 0) + 1, payer: demand.get(q.key)?.payer ?? m });
   const queries = [...demand.values()].sort((a, b) => b.members - a.members).slice(0, maxQueries());
 
   const summary = { dry, optedIn: (profiles ?? []).length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, newListings: 0, emails: 0, emailFailures: 0, ranOutOfTime: false };
@@ -122,12 +140,12 @@ export async function GET(request: Request) {
   // Answer each query through the broker (cached a day), remember every listing seen.
   const byQuery = new Map<string, SourcedListing[]>();
   const seenUrls = new Set<string>();
-  for (const { query } of queries) {
+  for (const { query, payer } of queries) {
     if (Date.now() - started > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       break;
     }
-    const res = await ask(sourcingListings, query, { mode: "cron" });
+    const res = await runMetered({ userId: payer.id, admin: isAdminEmail(payer.email), action: "cron:sourcing", actionId: newActionId() }, () => ask(sourcingListings, query, { mode: "cron", userId: payer.id }));
     if (!res.value) {
       summary.unavailable += 1;
       continue;

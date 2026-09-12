@@ -17,6 +17,7 @@
  *   4. listings/search/bounds — nearby comparables ($0.05)
  */
 
+import { meter } from '../credit/meter';
 import type {
   ShortLetData,
   ShortLetComparable,
@@ -480,27 +481,35 @@ async function fetchReportAll(
   };
   console.log('[DEBUG] report/all POST body:', JSON.stringify(reportBody));
 
-  const createRes = await fetch(`${BASE_URL}/report/all`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
+  const created = await meter(
+    {
+      provider: 'airbtics',
+      unit: 'report_all',
+      key: cacheKey,
+      failed: (r) => !r.ok || r.data?.message === 'insufficient_credits' || !r.data?.message?.report_id,
     },
-    body: JSON.stringify(reportBody),
-    cache: 'no-store',
-  });
-
-  console.log(`[DEBUG] report/all HTTP status: ${createRes.status}`);
-
-  if (!createRes.ok) {
-    const errBody = await createRes.text().catch(() => '<unreadable body>');
-    console.error(
-      `[DEBUG] Airbtics report/all POST failed HTTP ${createRes.status} body: ${errBody.slice(0, 500)}`,
-    );
-    return null;
-  }
-
-  const createData = await createRes.json();
+    async () => {
+      const res = await fetch(`${BASE_URL}/report/all`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+        },
+        body: JSON.stringify(reportBody),
+        cache: 'no-store',
+      });
+      console.log(`[DEBUG] report/all HTTP status: ${res.status}`);
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '<unreadable body>');
+        console.error(`[DEBUG] Airbtics report/all POST failed HTTP ${res.status} body: ${errBody.slice(0, 500)}`);
+        return { ok: false as const, status: res.status, data: null as Record<string, any> | null };
+      }
+      const data = (await res.json()) as Record<string, any>;
+      return { ok: true as const, status: res.status, data };
+    },
+  );
+  if (!created.ok) return null;
+  const createData = created.data!;
   console.log('[DEBUG] report/all raw response:', JSON.stringify(createData).slice(0, 2000));
 
   if (createData.message === 'insufficient_credits') {
@@ -1880,17 +1889,21 @@ async function fetchNearbyListings(
   console.log(`[DEBUG] listings/search/bounds radius: ${radiusKm}km (${radiusMetres}m)`);
   console.log('[DEBUG] listings/search/bounds body:', JSON.stringify(body));
 
-  const response = await fetch(`${BASE_URL}/listings/search/bounds`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-    },
-    body: JSON.stringify(body),
-    cache: 'no-store',
-    // A hung bounds call must not take the whole request down with it.
-    signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
-  });
+  const response = await meter(
+    { provider: 'airbtics', unit: 'bounds', key: `${lat.toFixed(3)},${lng.toFixed(3)}|${radiusKm}`, failed: (r) => !r.ok },
+    () =>
+      fetch(`${BASE_URL}/listings/search/bounds`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+        },
+        body: JSON.stringify(body),
+        cache: 'no-store',
+        // A hung bounds call must not take the whole request down with it.
+        signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
+      }),
+  );
 
   console.log(`[DEBUG] listings/search/bounds HTTP status: ${response.status}`);
 
@@ -1969,10 +1982,12 @@ async function fetchMarketSummary(
 
   console.log(`[DEBUG] markets/summary URL: ${url.toString()}`);
 
-  const response = await fetch(url.toString(), {
-    headers: { 'x-api-key': apiKey },
-    cache: 'no-store',
-  });
+  const response = await meter({ provider: 'airbtics', unit: 'market_summary', key: `${marketId}|${bedrooms}`, failed: (r) => !r.ok }, () =>
+    fetch(url.toString(), {
+      headers: { 'x-api-key': apiKey },
+      cache: 'no-store',
+    }),
+  );
 
   console.log(`[DEBUG] markets/summary HTTP status: ${response.status}`);
   if (!response.ok) return null;
@@ -2055,10 +2070,12 @@ async function findMarketId(postcode: string, apiKey: string): Promise<number | 
   url.searchParams.set('query', searchQuery);
   url.searchParams.set('country_code', 'GB');
 
-  const response = await fetch(url.toString(), {
-    headers: { 'x-api-key': apiKey },
-    cache: 'no-store',
-  });
+  const response = await meter({ provider: 'airbtics', unit: 'market_search', key: cacheKey, failed: (r) => !r.ok }, () =>
+    fetch(url.toString(), {
+      headers: { 'x-api-key': apiKey },
+      cache: 'no-store',
+    }),
+  );
 
   if (!response.ok) {
     marketIdCache.set(cacheKey, { id: null, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -2100,10 +2117,12 @@ async function fetchMetric(
 
   console.log(`[DEBUG] markets/metrics/${metric} URL: ${url.toString()}`);
 
-  const response = await fetch(url.toString(), {
-    headers: { 'x-api-key': apiKey },
-    cache: 'no-store',
-  });
+  const response = await meter({ provider: 'airbtics', unit: `metric_${metric}`, key: `${marketId}|${bedrooms}`, failed: (r) => !r.ok }, () =>
+    fetch(url.toString(), {
+      headers: { 'x-api-key': apiKey },
+      cache: 'no-store',
+    }),
+  );
 
   console.log(`[DEBUG] markets/metrics/${metric} HTTP status: ${response.status}`);
 

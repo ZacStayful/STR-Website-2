@@ -16,6 +16,8 @@
  * returns 429 — we handle it gracefully like any other failure.
  */
 
+import { meter } from '../credit/meter';
+
 const RE_ENDPOINT = 'https://api.pricelabs.co/v1/revenue/estimator';
 // PriceLabs docs say 6-8s for 350 listings; allow 30s for safety
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -91,15 +93,19 @@ export async function fetchPriceLabsRevenueEstimate(params: {
   try {
     const safeUrl = url.toString().replace(apiKey, '<redacted>');
     console.log(`[PriceLabs RE] GET ${safeUrl}`);
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        'X-API-Key': apiKey,
-        'Accept': 'application/json',
-      },
-      signal: controller.signal,
-      cache: 'no-store',
-    });
+    const response = await meter(
+      { provider: 'pricelabs', unit: 'revenue_estimate', key: `${params.address}|${bedroomCat}`, failed: (r) => !r.ok },
+      () =>
+        fetch(url.toString(), {
+          method: 'GET',
+          headers: {
+            'X-API-Key': apiKey,
+            'Accept': 'application/json',
+          },
+          signal: controller.signal,
+          cache: 'no-store',
+        }),
+    );
     clearTimeout(timer);
 
     console.log(`[PriceLabs RE] HTTP ${response.status}`);

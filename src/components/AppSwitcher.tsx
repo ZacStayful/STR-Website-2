@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { CreditBadge } from "@/components/credit/CreditBadge";
 
-// Thin strip shown to signed-in users so they can move between the two
-// members-only surfaces (the analyser and the Market Explorer). Admins also
-// get the admin dashboard link that used to live inline in estimate/layout.
-export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "reports"; admin?: boolean }) {
+// Thin strip shown to signed-in users so they can move between the members-only
+// surfaces (the analyser, the Market Explorer, saved reports and billing).
+// Admins also get the admin dashboard link. The credit badge reads the
+// balance from the surrounding CreditProvider (see AppShell).
+export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "reports" | "account"; admin?: boolean }) {
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
     fontWeight: 600,
@@ -20,6 +22,7 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
         gap: 18,
         justifyContent: "center",
         alignItems: "center",
+        flexWrap: "wrap",
         padding: "7px 12px",
         fontSize: 13,
         background: "#2E3D2B",
@@ -37,11 +40,15 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
       <Link href="/reports" style={linkStyle(active === "reports")} aria-current={active === "reports" ? "page" : undefined}>
         My reports
       </Link>
+      <Link href="/account/billing" style={linkStyle(active === "account")} aria-current={active === "account" ? "page" : undefined}>
+        Billing
+      </Link>
       {admin && (
         <Link href="/admin" style={linkStyle(false)}>
           Dashboard
         </Link>
       )}
+      <CreditBadge />
     </nav>
   );
 }

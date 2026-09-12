@@ -2,102 +2,93 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { hasAccess, FREE_RUNS, isLapsedSubscriber } from "@/lib/access";
 import { isAdminEmail } from "@/lib/admin";
-import { checkoutUrlFor } from "@/lib/billing";
-import { Icon } from "@/lib/icons";
 import { safeInternalPath } from "@/lib/safe-path";
+import { getCreditSummary } from "@/lib/credit/summary";
+import { formatGbp } from "@/lib/credit/pricing";
+import { planName } from "@/lib/access";
+import { Pricing } from "@/components/marketing-v3/Pricing";
+import { TopupCard } from "@/components/credit/TopupCard";
 
 export const metadata: Metadata = {
-  title: "Upgrade — Stayful Intelligence",
-  description:
-    "You've used all 5 free reports on the Stayful Property Analyser. Subscribe to continue running unlimited reports.",
+  title: "Choose a plan — Stayful Intelligence",
+  description: "Subscribe for monthly credit at the best rate, or top up as you go.",
   robots: { index: false, follow: false },
 };
 
+export const dynamic = "force-dynamic";
+
+/**
+ * The plan chooser for signed-in members: current balance, the four tiers
+ * (Stripe Checkout / portal), and a one-click top-up as the secondary option.
+ */
 export default async function UpgradePage({
   searchParams,
 }: {
   searchParams: Promise<{ redirect?: string }>;
 }) {
   const { redirect: redirectParam } = await searchParams;
-  // Where to send the user once they have access — the analyser by default,
-  // or the Market Explorer when that's what they were trying to open.
   const wanted = safeInternalPath(redirectParam, "/estimate");
   const back = /^\/(upgrade|login|signup)(\/|\?|$)/.test(wanted) ? "/estimate" : wanted;
-  const fromMarkets = back.startsWith("/markets");
 
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  // Middleware already gates /upgrade to logged-in users. Defensive guard.
   if (!user) {
     redirect(`/login?redirect=${encodeURIComponent(`/upgrade?redirect=${back}`)}`);
   }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("plan, reports_run, full_name, stripe_subscription_id")
-    .eq("id", user.id)
-    .single();
-
-  // If they still have free reports left, they're already pro, or they're an
-  // admin, send them straight back to the analyser — they shouldn't be on the
-  // upgrade page.
-  if (isAdminEmail(user.email) || (profile && hasAccess(profile))) {
-    redirect(back);
-  }
-
-  const firstName =
-    profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
-  const lapsed = profile ? isLapsedSubscriber(profile) : false;
-  const checkoutHref = checkoutUrlFor(user.id, user.email ?? null);
+  const { data: profile } = await supabase.from("profiles").select("plan_code, full_name, cancel_at_period_end, current_period_end").eq("id", user.id).single();
+  const admin = isAdminEmail(user.email);
+  const summary = await getCreditSummary(user.id).catch(() => null);
+  const firstName = profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
+  const out = summary?.outOfCredit ?? false;
 
   return (
-    <section className="upgrade section">
-      <div className="wrap-narrow">
-        <div className="eyebrow">Subscription required</div>
-        <h1 className="upgrade-title">
-          {lapsed
-            ? `${firstName ? `${firstName}, your` : "Your"} subscription has ended.`
-            : `${firstName ? `${firstName}, you've` : "You've"} used all ${FREE_RUNS} free reports.`}
-        </h1>
-        <p className="lede">
-          {lapsed
-            ? `Your Stayful subscription has been cancelled, so ${fromMarkets ? "the Market Explorer and the analyser are" : "analyser access is"} paused. Re-subscribe to pick up right where you left off — unlimited reports, no free-report limit.`
-            : fromMarkets
-              ? `You've run your ${FREE_RUNS} free analyses, which also covers the Market Explorer. Subscribe below for unlimited reports and full Market Explorer access.`
-              : `You've run your ${FREE_RUNS} free analyses. To keep running reports, you'll need a paid subscription — subscribe below for unlimited reports.`}
-        </p>
-
-        <div className="upgrade-pricing">
-          <article className="upgrade-tier">
-            <div className="upgrade-tier-head">Monthly</div>
-            <div className="upgrade-tier-price">£39.99<span>/mo</span></div>
-            <div className="upgrade-tier-meta">Unlimited analyses · cancel any time</div>
-          </article>
-          <article className="upgrade-tier upgrade-tier-featured">
-            <div className="upgrade-tier-tag">Save 25%</div>
-            <div className="upgrade-tier-head">Annual</div>
-            <div className="upgrade-tier-price">£360<span>/yr</span></div>
-            <div className="upgrade-tier-meta">12 months unlimited · paid annually</div>
-          </article>
+    <>
+      <section className="upgrade section">
+        <div className="wrap-narrow">
+          <div className="eyebrow">{profile?.plan_code ? "Your plan" : "Choose a plan"}</div>
+          <h1 className="upgrade-title">
+            {profile
+              ? out
+                ? `${firstName ? `${firstName}, you're` : "You're"} out of credit.`
+                : profile.plan_code
+                  ? `${firstName ? `${firstName}, you're` : "You're"} on ${planName(profile.plan_code)}.`
+                  : `${firstName ? `${firstName}, pick` : "Pick"} a plan or top up.`
+              : "Your account isn't set up yet."}
+          </h1>
+          <p className="lede">
+            {!profile
+              ? "We couldn't find your profile. Sign out and back in, or email hello@stayful.co.uk and we'll fix it."
+              : admin
+                ? "Admin accounts run everything free; this page is what members see."
+                : summary
+                  ? `You have ${formatGbp(summary.totalPence)} of credit${summary.cycle?.planName ? ` (${formatGbp(summary.buckets.planPence)} of this month's ${summary.cycle.planName} credit left)` : ""}. Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${summary.rates.topup}× the plan rate.`
+                  : "Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at 1.5× the plan rate."}
+          </p>
+          {profile?.plan_code && (
+            <p className="upgrade-foot">
+              {profile.cancel_at_period_end ? `Your subscription ends on ${profile.current_period_end ? new Date(profile.current_period_end).toLocaleDateString("en-GB") : "the period end"}.` : "Choosing another plan opens the billing portal where the change is prorated."}{" "}
+              <Link href="/account/billing">Manage billing</Link>
+            </p>
+          )}
         </div>
+      </section>
 
-        <div className="upgrade-ctas">
-          <a className="btn btn-primary" href={checkoutHref}>
-            Subscribe now <Icon name="arrow" size={14} />
-          </a>
-        </div>
+      <Pricing signedIn currentPlanCode={profile?.plan_code ?? null} compact />
 
-        <p className="upgrade-foot">
-          Self-serve Stripe checkout is coming soon. In the meantime, every
-          subscription is set up by hand the same day you book.{" "}
-          <Link href="/pricing">See full pricing</Link>.
-        </p>
-      </div>
-    </section>
+      {profile && !admin && summary && (
+        <section className="section">
+          <div className="wrap-narrow">
+            <TopupCard presets={summary.topupPresetsPence} hasSavedCard={summary.hasSavedCard} topupRate={summary.rates.topup} heading="Or top up now" />
+            <p className="upgrade-foot" style={{ marginTop: 16 }}>
+              <Link href={back}>← Back</Link>
+            </p>
+          </div>
+        </section>
+      )}
+    </>
   );
 }
