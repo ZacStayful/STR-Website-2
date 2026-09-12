@@ -11,7 +11,21 @@ import { getStoredSessions } from "@/lib/tracker";
 export default function HeatmapOverlay() {
   const [active, setActive] = useState(false);
   const [session, setSession] = useState<SessionData | null>(null);
+  // Click dots are coloured by age, so rendering needs a clock. Reading it
+  // during render is impure; it is taken on the same 3-second tick that
+  // refreshes the session instead. Behaviour is unchanged, because that tick
+  // is already the only thing that re-renders this overlay.
+  const [now, setNow] = useState(0);
 
+  // Reading the URL flag and localStorage is a mount-time read of two external
+  // stores, neither of which exists during SSR, so it cannot move into a lazy
+  // useState initialiser. set-state-in-effect guards against cascading
+  // renders; here that is one extra render on mount, of a developer-only
+  // overlay that is inert unless ?heatmap=true is in the URL.
+  // useSyncExternalStore would satisfy the rule properly but needs a cached
+  // snapshot, and getStoredSessions() allocates a fresh array per call — which
+  // would spin. Not worth the risk for a debug tool.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("heatmap") !== "true") return;
@@ -22,6 +36,7 @@ export default function HeatmapOverlay() {
     const sessions = getStoredSessions();
     if (sessions.length > 0) {
       setSession(sessions[sessions.length - 1]);
+      setNow(Date.now());
     }
 
     // Refresh every 3 seconds to pick up live data
@@ -29,15 +44,15 @@ export default function HeatmapOverlay() {
       const updated = getStoredSessions();
       if (updated.length > 0) {
         setSession(updated[updated.length - 1]);
+        setNow(Date.now());
       }
     }, 3000);
 
     return () => clearInterval(interval);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!active || !session) return null;
-
-  const now = Date.now();
 
   return (
     <>

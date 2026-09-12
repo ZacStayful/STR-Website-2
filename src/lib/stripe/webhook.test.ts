@@ -165,3 +165,94 @@ test('charge.refunded on a top-up claws the credit back', async () => {
   await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', amount_refunded: 2500 }), deps);
   assert.deepEqual(deps.calls.refundTopup![0], ['u1', 'pi:pi_9', 2500, 'refunded']);
 });
+
+// ---------------------------------------------------------------------------
+// Pause / cancel mirroring and event-order guards
+// ---------------------------------------------------------------------------
+
+const subObj = (over: Record<string, unknown> = {}) => ({
+  id: 'sub_1',
+  status: 'active',
+  customer: 'cus_1',
+  cancel_at_period_end: false,
+  cancel_at: null,
+  start_date: 1_700_000_000,
+  pause_collection: null,
+  metadata: {},
+  items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] },
+  ...over,
+});
+
+test('a pause writes both ends of the window and keeps the plan and credit', async () => {
+  const deps = fakeDeps();
+  const r = await handleStripeEvent(
+    ev('customer.subscription.updated', subObj({ pause_collection: { behavior: 'void', resumes_at: 1_810_000_000 }, metadata: { stayful_paused_from: '2027-01-15T00:00:00.000Z' } })),
+    deps,
+  );
+  assert.equal(r.handled, true);
+  assert.equal(deps.calls.expirePlanGrants, undefined);
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(patch.subscription_paused_from, '2027-01-15T00:00:00.000Z');
+  assert.equal(patch.subscription_paused_until, new Date(1_810_000_000 * 1000).toISOString());
+  assert.equal(patch.plan_code, 'starter');
+  assert.equal(patch.plan_source, 'stripe');
+  // A pause is not churn — no cancellation reaches the CRM.
+  assert.equal(deps.calls.onSubscriptionCancelled, undefined);
+});
+
+test('an auto-resume clears the pause window by itself', async () => {
+  const deps = fakeDeps();
+  await handleStripeEvent(ev('customer.subscription.updated', subObj()), deps);
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(patch.subscription_paused_from, null);
+  assert.equal(patch.subscription_paused_until, null);
+  assert.equal(patch.subscription_ended_at, null);
+  assert.equal(patch.subscription_started_at, new Date(1_700_000_000 * 1000).toISOString());
+});
+
+test('a scheduled cancellation stores the date; undoing it clears the captured reason', async () => {
+  const deps = fakeDeps();
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000 })), deps);
+  const booked = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(booked.subscription_cancel_at, new Date(1_800_000_000 * 1000).toISOString());
+  assert.equal('cancel_reason' in booked, false);
+
+  await handleStripeEvent(ev('customer.subscription.updated', subObj()), deps);
+  const undone = deps.calls.updateProfile![1][1] as Record<string, unknown>;
+  assert.equal(undone.subscription_cancel_at, null);
+  assert.equal(undone.cancel_reason, null);
+  assert.equal(undone.cancel_reason_at, null);
+});
+
+test('a late delete for a superseded subscription does not expire the credit the customer is paying for', async () => {
+  const deps = fakeDeps();
+  deps.listSubscriptions = async () => [subObj({ id: 'sub_new', status: 'active' }) as unknown as Stripe.Subscription];
+  const r = await handleStripeEvent(ev('customer.subscription.deleted', subObj({ status: 'canceled' })), deps);
+  assert.equal(r.handled, false);
+  assert.equal(deps.calls.expirePlanGrants, undefined);
+  assert.equal(deps.calls.updateProfile, undefined);
+});
+
+test('customer.subscription.created links a subscription arranged by hand in the dashboard', async () => {
+  const deps = fakeDeps();
+  deps.findUserBySubscription = async () => null;
+  const r = await handleStripeEvent(ev('customer.subscription.created', subObj({ id: 'sub_hand' })), deps);
+  assert.equal(r.handled, true);
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(patch.stripe_subscription_id, 'sub_hand');
+  assert.equal(patch.stripe_customer_id, 'cus_1');
+  assert.equal(patch.plan_code, 'starter');
+  // Credit is not granted here — it follows invoice.paid.
+  assert.equal(deps.calls.grantPlanCycle, undefined);
+});
+
+test('a manual plan grant is not revoked by a stray dead-subscription event', async () => {
+  const deps = fakeDeps();
+  const manual = { id: 'u1', email: 'a@example.com', plan_code: 'pro', plan_source: 'manual' };
+  deps.findUserBySubscription = async () => manual;
+  await handleStripeEvent(ev('customer.subscription.deleted', subObj({ status: 'canceled' })), deps);
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(patch.stripe_subscription_status, 'canceled');
+  assert.equal('plan_code' in patch, false);
+  assert.equal('plan' in patch, false);
+});

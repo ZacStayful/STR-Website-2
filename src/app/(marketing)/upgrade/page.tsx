@@ -6,7 +6,9 @@ import { isAdminEmail } from "@/lib/admin";
 import { safeInternalPath } from "@/lib/safe-path";
 import { getCreditSummary } from "@/lib/credit/summary";
 import { formatGbp } from "@/lib/credit/pricing";
-import { planName } from "@/lib/access";
+import { ACCESS_COLUMNS, accountStatus, planName } from "@/lib/access";
+import { formatPlanDate } from "@/lib/subscription";
+import { resumeFromUpgradeAction } from "@/app/account/actions";
 import { Pricing } from "@/components/marketing-v3/Pricing";
 import { TopupCard } from "@/components/credit/TopupCard";
 
@@ -39,7 +41,12 @@ export default async function UpgradePage({
     redirect(`/login?redirect=${encodeURIComponent(`/upgrade?redirect=${back}`)}`);
   }
 
-  const { data: profile } = await supabase.from("profiles").select("plan_code, full_name, cancel_at_period_end, current_period_end").eq("id", user.id).single();
+  const { data: profile } = await supabase.from("profiles").select(`${ACCESS_COLUMNS}, full_name, cancel_at_period_end, current_period_end, subscription_paused_until`).eq("id", user.id).single();
+  // A paused member already has a subscription: choosing a plan below opens the
+  // portal rather than a second Checkout, but the quickest way back is to
+  // restart the one they have.
+  const paused = profile ? accountStatus(profile) === "paused" : false;
+  const pausedUntil = paused ? formatPlanDate((profile as { subscription_paused_until?: string | null } | null)?.subscription_paused_until ?? null) : null;
   const admin = isAdminEmail(user.email);
   const summary = await getCreditSummary(user.id).catch(() => null);
   const firstName = profile?.full_name?.toString().trim().split(/\s+/)[0] ?? null;
@@ -68,7 +75,19 @@ export default async function UpgradePage({
                   ? `You have ${formatGbp(summary.totalPence)} of credit${summary.cycle?.planName ? ` (${formatGbp(summary.buckets.planPence)} of this month's ${summary.cycle.planName} credit left)` : ""}. Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${summary.rates.topup}× the plan rate.`
                   : "Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at 1.5× the plan rate."}
           </p>
-          {profile?.plan_code && (
+          {paused && (
+            <div className="upgrade-ctas" style={{ marginTop: 16 }}>
+              <form action={resumeFromUpgradeAction}>
+                <button className="btn btn-primary" type="submit">
+                  Restart my plan now
+                </button>
+              </form>
+              <p className="upgrade-foot" style={{ marginTop: 8 }}>
+                Your plan is paused{pausedUntil ? ` until ${pausedUntil}` : ""}: no plan credit arrives and you are not charged, but any credit you have still works. <Link href="/account">Manage your plan</Link>.
+              </p>
+            </div>
+          )}
+          {profile?.plan_code && !paused && (
             <p className="upgrade-foot">
               {profile.cancel_at_period_end ? `Your subscription ends on ${profile.current_period_end ? new Date(profile.current_period_end).toLocaleDateString("en-GB") : "the period end"}.` : "Choosing another plan opens the billing portal where the change is prorated."}{" "}
               <Link href="/account/billing">Manage billing</Link>

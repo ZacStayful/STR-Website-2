@@ -1,4 +1,5 @@
 import { getMarketAccess } from '@/lib/market/gate';
+import { accessDenied } from '@/lib/access';
 import { checkListingForMember } from '@/lib/listing/server';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
@@ -19,7 +20,7 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   const access = await getMarketAccess();
   if (access.state === 'anon') return Response.json({ error: 'Sign in to check a listing.' }, { status: 401 });
-  if (access.state !== 'ok' || !access.user) return Response.json({ error: 'Your plan does not include listing checks.', upgradeUrl: '/upgrade' }, { status: 402 });
+  if (access.state !== 'ok' || !access.user) return Response.json(accessDenied(access.profile, 'listing checks'), { status: 402 });
 
   let body: { url?: unknown; save?: unknown; refresh?: unknown };
   try {

@@ -20,10 +20,14 @@ export function Hero() {
   const [stepIndex, setStepIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // Drives the demo progress bar while the stage is "loading".
+  //
+  // The bar is zeroed by whatever moves the stage INTO "loading" — reset() does
+  // it today — rather than here. Resetting state synchronously inside an effect
+  // costs an extra render pass and is what react-hooks/set-state-in-effect
+  // flags; this effect owns the interval and nothing else.
   useEffect(() => {
     if (stage !== "loading") return;
-    setProgress(0);
-    setStepIndex(0);
     let p = 0;
     const t = setInterval(() => {
       p += 4;

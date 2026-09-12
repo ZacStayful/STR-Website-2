@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { creditFetch } from "@/lib/credit/client";
 import { Input } from "@/components/ui/input";
 import { Loader2, MapPin } from "lucide-react";
@@ -59,11 +59,21 @@ export function AddressAutocomplete({ onSelect, onUseManual, disabled }: Address
   const inputRef = useRef<HTMLInputElement>(null);
 
   // One session token per mount. Google bills an entire autocomplete session
-  // (typing → selection) as a single unit when a token is passed.
-  const sessionToken = useMemo(
-    () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
-    [],
-  );
+  // (typing → selection) as a single unit when a token is passed, so this value
+  // must stay identical from the first keystroke through to the selection — it
+  // is also what the credit ledger charges once per session.
+  //
+  // A ref filled on first use, not useMemo: React is free to discard a memo and
+  // recompute it, which would split one session in two and bill it twice. It is
+  // also only ever read inside the fetch effect, never during render.
+  const sessionTokenRef = useRef<string | null>(null);
+  const sessionToken = () => {
+    sessionTokenRef.current ??=
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    return sessionTokenRef.current;
+  };
 
   const debouncedQuery = useDebouncedValue(query, 300);
 
@@ -81,7 +91,7 @@ export function AddressAutocomplete({ onSelect, onUseManual, disabled }: Address
     setError(null);
 
     // Out-of-credit here is silent (empty suggestions); the address can still be typed by hand.
-    creditFetch(`/api/address-autocomplete?q=${encodeURIComponent(q)}&session=${encodeURIComponent(sessionToken)}`, {
+    creditFetch(`/api/address-autocomplete?q=${encodeURIComponent(q)}&session=${encodeURIComponent(sessionToken())}`, {
       signal: controller.signal,
     }, { silent: true })
       .then((res) => res.json())
@@ -97,7 +107,8 @@ export function AddressAutocomplete({ onSelect, onUseManual, disabled }: Address
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [debouncedQuery, sessionToken]);
+    // sessionToken is a ref read, stable for the life of the mount.
+  }, [debouncedQuery]);
 
   // Close dropdown when clicking outside.
   useEffect(() => {

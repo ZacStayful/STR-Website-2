@@ -1,6 +1,7 @@
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { getAreaCards } from "@/lib/market/cached";
+import { accessDenied } from "@/lib/access";
 import { getMarketAccess } from "@/lib/market/gate";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
 import { loadExplorerUser } from "@/app/markets/_lib/loadExplorerUser";
@@ -10,9 +11,9 @@ export const runtime = "nodejs";
 
 // Members-only, like the explorer itself: 401 signed out, 402 without access.
 export async function GET(request: Request) {
-  const { state, user: authUser } = await getMarketAccess();
+  const { state, user: authUser, profile } = await getMarketAccess();
   if (state === "anon") return Response.json({ error: "Sign in to download area reports." }, { status: 401 });
-  if (state !== "ok") return Response.json({ error: "Subscribe to download area reports.", upgradeUrl: "/upgrade?redirect=/markets" }, { status: 402 });
+  if (state !== "ok") return Response.json(accessDenied(profile, "area reports"), { status: 402 });
 
   const code = (new URL(request.url).searchParams.get("area") ?? "").trim().toUpperCase();
   if (!/^[A-Z]{1,2}$/.test(code)) return Response.json({ error: "Unknown area" }, { status: 400 });

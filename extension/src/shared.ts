@@ -27,6 +27,8 @@ export interface CheckResponse {
 export interface ApiError {
   error: string;
   code?: string;
+  /** The derived account status behind a no_access refusal, e.g. 'paused'. */
+  reason?: string;
   upgradeUrl?: string;
   topupUrl?: string;
   requiredPence?: number;

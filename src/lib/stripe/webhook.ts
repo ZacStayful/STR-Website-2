@@ -10,13 +10,22 @@
 
 import type Stripe from 'stripe';
 import { planForPriceId, topupPenceForPriceId, type Env } from './prices.ts';
+import { subscriptionStateFromStripe } from '../subscription.ts';
+
+export interface WebhookUser {
+  id: string;
+  email: string | null;
+  plan_code: string | null;
+  /** 'manual' marks a plan granted by hand that a stray Stripe event must not revoke. */
+  plan_source?: string | null;
+}
 
 export interface WebhookDeps {
   env?: Env;
-  findUserBySubscription(subscriptionId: string): Promise<{ id: string; email: string | null; plan_code: string | null } | null>;
-  findUserByCustomer(customerId: string): Promise<{ id: string; email: string | null; plan_code: string | null } | null>;
-  findUserByEmail(email: string): Promise<{ id: string; email: string | null; plan_code: string | null } | null>;
-  findUserById(userId: string): Promise<{ id: string; email: string | null; plan_code: string | null } | null>;
+  findUserBySubscription(subscriptionId: string): Promise<WebhookUser | null>;
+  findUserByCustomer(customerId: string): Promise<WebhookUser | null>;
+  findUserByEmail(email: string): Promise<WebhookUser | null>;
+  findUserById(userId: string): Promise<WebhookUser | null>;
   updateProfile(userId: string, patch: Record<string, unknown>): Promise<void>;
   grantPlanCycle(userId: string, planCode: string, sourceRef: string, periodEnd: Date | null, email: string | null): Promise<void>;
   grantUpgradeDifference(userId: string, fromPlanCode: string | null, toPlanCode: string, sourceRef: string, periodEnd: Date | null): Promise<void>;
@@ -25,6 +34,8 @@ export interface WebhookDeps {
   savePaymentMethod(userId: string, customerId: string | null, paymentMethodId: string): Promise<void>;
   retrievePaymentIntent(id: string): Promise<Stripe.PaymentIntent | null>;
   retrieveSubscription(id: string): Promise<Stripe.Subscription | null>;
+  /** Every subscription the customer holds; used to spot a late delete for a superseded plan. */
+  listSubscriptions?(customerId: string): Promise<Stripe.Subscription[]>;
   refundTopup?(userId: string, sourceRef: string, amountPence: number, reason: string): Promise<void>;
   onSubscriptionStarted(email: string): Promise<void>;
   onSubscriptionCancelled(email: string): Promise<void>;
@@ -52,6 +63,38 @@ function priceIdOf(sub: Stripe.Subscription | null): string | null {
   return sub?.items?.data?.[0]?.price?.id ?? null;
 }
 
+const LIVE_STATUSES = new Set(['active', 'trialing', 'past_due']);
+
+function isoFromUnix(seconds: number | null | undefined): string | null {
+  if (!seconds) return null;
+  const d = new Date(seconds * 1000);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
+ * The self-serve pause / cancel columns, re-derived in full from the
+ * subscription so a replayed event writes the same row and an auto-resume
+ * (which arrives as `pause_collection: null`) clears the window by itself.
+ * Shared with the /account server actions via subscriptionStateFromStripe.
+ */
+function subscriptionColumns(sub: Stripe.Subscription): Record<string, unknown> {
+  const state = subscriptionStateFromStripe(sub);
+  const patch: Record<string, unknown> = {
+    subscription_paused_from: state.pausedFrom,
+    subscription_paused_until: state.pausedUntil,
+    subscription_cancel_at: state.cancelAt,
+    subscription_current_period_end: state.currentPeriodEnd,
+  };
+  if (!state.cancelAt) {
+    // The cancellation was undone, or the subscription is gone. Either way the
+    // captured reason no longer describes anything.
+    patch.cancel_reason = null;
+    patch.cancel_reason_comment = null;
+    patch.cancel_reason_at = null;
+  }
+  return patch;
+}
+
 export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult> {
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`));
@@ -76,13 +119,20 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
           patch.stripe_subscription_id = subId;
           patch.stripe_subscription_status = 'active';
           patch.plan = 'pro';
+          patch.subscription_ended_at = null;
+          if (user.plan_source !== 'manual') patch.plan_source = 'stripe';
           const sub = await deps.retrieveSubscription(subId);
           const code = planForPriceId(priceIdOf(sub), env);
           if (code) patch.plan_code = code;
           if (sub) {
+            patch.stripe_subscription_status = sub.status;
             patch.stripe_price_id = priceIdOf(sub);
             patch.current_period_end = periodEndOf(sub)?.toISOString() ?? null;
             patch.cancel_at_period_end = Boolean(sub.cancel_at_period_end);
+            patch.subscription_started_at = isoFromUnix(sub.start_date) ?? new Date().toISOString();
+            Object.assign(patch, subscriptionColumns(sub));
+          } else {
+            patch.subscription_started_at = new Date().toISOString();
           }
         }
         await deps.updateProfile(user.id, patch);
@@ -139,11 +189,18 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         stripe_subscription_id: subId,
         stripe_subscription_status: sub?.status ?? 'active',
         stripe_price_id: priceId,
+        plan_code: planCode,
         current_period_end: periodEnd?.toISOString() ?? null,
         cancel_at_period_end: Boolean(sub?.cancel_at_period_end),
         plan: 'pro',
+        subscription_ended_at: null,
       };
+      if (user.plan_source !== 'manual') patch.plan_source = 'stripe';
       if (id(invoice.customer)) patch.stripe_customer_id = id(invoice.customer);
+      if (sub) {
+        patch.subscription_started_at = isoFromUnix(sub.start_date);
+        Object.assign(patch, subscriptionColumns(sub));
+      }
       await deps.updateProfile(user.id, patch);
 
       const reason = invoice.billing_reason;
@@ -166,30 +223,57 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       return { handled: false, note: `billing_reason ${reason} ignored` };
     }
 
+    // `created` matters for subscriptions set up by hand in the Stripe
+    // dashboard: there is no Checkout Session for those, so this is the only
+    // event that can link them to a profile (credit still follows invoice.paid).
+    case 'customer.subscription.created':
     case 'customer.subscription.updated':
     case 'customer.subscription.deleted': {
       const sub = event.data.object as Stripe.Subscription;
+      const customerId = id(sub.customer);
       let user = await deps.findUserBySubscription(sub.id);
-      if (!user && id(sub.customer)) user = await deps.findUserByCustomer(id(sub.customer)!);
+      if (!user && customerId) user = await deps.findUserByCustomer(customerId);
       if (!user) return { handled: false, note: 'no user for subscription' };
-      const ended = event.type === 'customer.subscription.deleted' || ['canceled', 'unpaid', 'incomplete_expired'].includes(sub.status);
+      const ended = event.type === 'customer.subscription.deleted' || !LIVE_STATUSES.has(sub.status);
+
+      // Don't let a dead subscription end the plan when the customer still has
+      // a live one. Switching plan (monthly → annual) cancels the old
+      // subscription and creates a new one, and Stripe does not guarantee
+      // event order — a late `sub_old.deleted` would otherwise expire the
+      // credit a customer is paying for on sub_new (whose own events carry
+      // the right state).
+      if (ended && customerId && deps.listSubscriptions) {
+        const live = (await deps.listSubscriptions(customerId)).find((s) => s.id !== sub.id && LIVE_STATUSES.has(s.status));
+        if (live) return { handled: false, note: `ignoring ${sub.id} (${sub.status}); customer still has live subscription ${live.id}` };
+      }
+
       const priceId = priceIdOf(sub);
       const planCode = planForPriceId(priceId, env);
+      const manual = user.plan_source === 'manual';
       const patch: Record<string, unknown> = {
+        stripe_subscription_id: sub.id,
         stripe_subscription_status: sub.status,
         cancel_at_period_end: Boolean(sub.cancel_at_period_end),
         current_period_end: periodEndOf(sub)?.toISOString() ?? null,
+        ...subscriptionColumns(sub),
       };
+      if (customerId) patch.stripe_customer_id = customerId;
       if (ended) {
-        Object.assign(patch, { plan: 'free', plan_code: null, stripe_price_id: null });
+        // A plan granted by hand is a deliberate decision that outranks Stripe;
+        // record what Stripe said but keep the override.
+        if (!manual) Object.assign(patch, { plan: 'free', plan_code: null, stripe_price_id: null, plan_source: 'stripe' });
+        patch.subscription_ended_at = new Date().toISOString();
         await deps.updateProfile(user.id, patch);
         await deps.expirePlanGrants(user.id, 'subscription_ended');
         if (user.email) await deps.onSubscriptionCancelled(user.email);
         return { handled: true, note: 'subscription ended; plan credit expired' };
       }
+      patch.subscription_ended_at = null;
+      patch.subscription_started_at = isoFromUnix(sub.start_date);
+      if (!manual) patch.plan_source = 'stripe';
       if (planCode) Object.assign(patch, { plan_code: planCode, stripe_price_id: priceId, plan: 'pro' });
       await deps.updateProfile(user.id, patch);
-      return { handled: true };
+      return { handled: true, note: sub.pause_collection ? 'subscription state mirrored (paused)' : 'subscription state mirrored' };
     }
 
     case 'invoice.payment_failed': {

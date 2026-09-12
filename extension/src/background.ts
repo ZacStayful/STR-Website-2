@@ -45,13 +45,13 @@ async function status(): Promise<StatusResult> {
 async function check(url: string, html: string, save: boolean): Promise<CheckResult> {
   const s = await settings();
   if (!s.token) return { ok: false, status: 401, error: { error: 'Not connected.', code: 'not_connected' } };
-  const { status, data } = await api<CheckResponse & { error?: string; code?: string; upgradeUrl?: string }>('/api/ext/check', {
+  const { status, data } = await api<CheckResponse & { error?: string; code?: string; reason?: string; upgradeUrl?: string }>('/api/ext/check', {
     method: 'POST',
     body: { url, html: html.length > MAX_HTML ? html.slice(0, MAX_HTML) : html, save },
   });
   if (status === 401) await chrome.storage.local.remove('token');
   if (data.code === 'no_answer' && (status === 504 || status === 502)) return { ok: false, status, error: { error: GATEWAY_TIMEOUT, code: data.code } };
-  if (status !== 200 || data.error) return { ok: false, status, error: { error: data.error ?? `Stayful returned ${status}.`, code: data.code, upgradeUrl: data.upgradeUrl } };
+  if (status !== 200 || data.error) return { ok: false, status, error: { error: data.error ?? `Stayful returned ${status}.`, code: data.code, reason: data.reason, upgradeUrl: data.upgradeUrl } };
   return { ok: true, data };
 }
 

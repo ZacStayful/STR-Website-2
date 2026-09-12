@@ -46,7 +46,18 @@ type State =
   | { kind: 'busy' }
   | { kind: 'result'; data: CheckResponse }
   | { kind: 'error'; message: string; code?: string; upgradeUrl?: string }
-  | { kind: 'locked'; site: string; reason: 'not_connected' | 'no_access' | 'no_credit' };
+  | {
+      kind: 'locked';
+      site: string;
+      reason: 'not_connected' | 'no_access' | 'no_credit';
+      // Supplied by the server for the no_access case. A paused member needs a
+      // different message and a different destination from someone whose
+      // account never finished setting up. Falls back to the generic copy when
+      // absent.
+      message?: string;
+      href?: string;
+      cta?: string;
+    };
 
 let currentUrl = '';
 let host: HTMLElement | null = null;
@@ -153,7 +164,7 @@ function render(state: State, site: string) {
           ? `${header()}<div class="body"><div class="title">See what this would earn as a short-term let</div><div class="lock">Estimated revenue, area score and deal maths for every listing you open. Connect the extension to your Stayful account to unlock it.</div><a class="cta" href="${esc(site)}/extension/connect" target="_blank" rel="noopener">Connect Stayful</a></div>`
           : state.reason === 'no_credit'
             ? `${header()}<div class="body"><div class="title">You're out of credit</div><div class="lock">Listing checks use a little credit each. Top up in one click or upgrade your plan to keep going.</div><a class="cta" href="${esc(site)}/account/billing#topup" target="_blank" rel="noopener">Top up</a> <a class="cta" href="${esc(site)}/upgrade" target="_blank" rel="noopener">Upgrade</a></div>`
-            : `${header()}<div class="body"><div class="title">Your account isn't set up yet</div><div class="lock">Open the Stayful site to finish setting up, then try again.</div><a class="cta" href="${esc(site)}/upgrade" target="_blank" rel="noopener">Open Stayful</a></div>`;
+            : `${header()}<div class="body"><div class="title">${esc(state.message ?? "Your account isn't set up yet")}</div><div class="lock">${esc(state.message ? 'Open your Stayful account to sort it out.' : 'Open the Stayful site to finish setting up, then try again.')}</div><a class="cta" href="${esc(site + (state.href ?? '/upgrade'))}" target="_blank" rel="noopener">${esc(state.cta ?? 'Open Stayful')}</a></div>`;
       break;
   }
   let bar = r.querySelector('.bar') as HTMLElement | null;
@@ -184,7 +195,18 @@ async function runCheck() {
     if (res.ok) render({ kind: 'result', data: res.data }, site);
     else if (res.error.code === 'not_connected') render({ kind: 'locked', site, reason: 'not_connected' }, site);
     else if (res.error.code === 'insufficient_credit') render({ kind: 'locked', site, reason: 'no_credit' }, site);
-    else if (res.error.code === 'no_access') render({ kind: 'locked', site, reason: 'no_access' }, site);
+    else if (res.error.code === 'no_access')
+      render(
+        {
+          kind: 'locked',
+          site,
+          reason: 'no_access',
+          message: res.error.reason === 'paused' ? res.error.error : undefined,
+          href: res.error.reason === 'paused' ? res.error.upgradeUrl : undefined,
+          cta: res.error.reason === 'paused' ? 'Restart my plan' : undefined,
+        },
+        site,
+      );
     else render({ kind: 'error', message: res.error.error, code: res.error.code, upgradeUrl: res.error.upgradeUrl }, site);
   } catch (err) {
     render({ kind: 'error', message: (err as Error).message || 'Could not reach Stayful.' }, site);

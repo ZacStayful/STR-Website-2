@@ -2,7 +2,8 @@ import Link from "next/link";
 import { CreditBadge } from "@/components/credit/CreditBadge";
 
 // Thin strip shown to signed-in users so they can move between the members-only
-// surfaces (the analyser, the Market Explorer, saved reports and billing).
+// surfaces (the analyser, the Market Explorer, saved reports, the account
+// page and billing).
 // Admins also get the admin dashboard link. The credit badge reads the
 // balance from the surrounding CreditProvider (see AppShell).
 export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "reports" | "account"; admin?: boolean }) {
@@ -40,7 +41,10 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
       <Link href="/reports" style={linkStyle(active === "reports")} aria-current={active === "reports" ? "page" : undefined}>
         My reports
       </Link>
-      <Link href="/account/billing" style={linkStyle(active === "account")} aria-current={active === "account" ? "page" : undefined}>
+      <Link href="/account" style={linkStyle(active === "account")} aria-current={active === "account" ? "page" : undefined}>
+        Account
+      </Link>
+      <Link href="/account/billing" style={linkStyle(false)}>
         Billing
       </Link>
       {admin && (

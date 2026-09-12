@@ -7,6 +7,7 @@ import { getNearbyEvents } from '@/lib/apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/pricelabs';
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { isAdminEmail } from '@/lib/admin';
 import { startAction, actionSpend } from '@/lib/credit/action';
 import { runMetered } from '@/lib/credit/context';
@@ -617,13 +618,20 @@ export async function POST(request: Request) {
           }
         }
 
-        // Usage is now metered per provider call (credit ledger); just mark the visit.
+        // Usage is metered per provider call (credit ledger). reports_total is
+        // a reporting counter only, written with the service-role client: the
+        // usage counters are not grantable to `authenticated` (see the column
+        // grants in supabase/schema.sql).
         if (userId) {
           try {
-            const supabase = await createSupabaseServerClient();
-            await supabase.from('profiles').update({ last_seen_at: new Date().toISOString() }).eq('id', userId);
+            const admin = createAdminClient();
+            const { data: current } = await admin.from('profiles').select('reports_total').eq('id', userId).single();
+            await admin
+              .from('profiles')
+              .update({ last_seen_at: new Date().toISOString(), reports_total: (current?.reports_total ?? 0) + 1 })
+              .eq('id', userId);
           } catch (err) {
-            console.error('[api/analyse] last_seen hook failed:', err);
+            console.error('[api/analyse] usage hook failed:', err);
           }
         }
       } catch (err) {

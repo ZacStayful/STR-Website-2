@@ -10,9 +10,9 @@ import { setSubscriptionCancelled, setSubscriptionStarted } from '../apis/monday
 import { getPlan } from '../credit/plans';
 import type { WebhookDeps } from './webhook';
 
-type UserRow = { id: string; email: string | null; plan_code: string | null };
+type UserRow = { id: string; email: string | null; plan_code: string | null; plan_source: string | null };
 
-const SELECT = 'id, email, plan_code';
+const SELECT = 'id, email, plan_code, plan_source';
 
 /** The real dependencies for handleStripeEvent (the tests inject fakes). */
 export function liveWebhookDeps(): WebhookDeps {
@@ -45,6 +45,14 @@ export function liveWebhookDeps(): WebhookDeps {
         return await stripe.subscriptions.retrieve(id);
       } catch {
         return null;
+      }
+    },
+    listSubscriptions: async (customerId) => {
+      try {
+        return (await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })).data;
+      } catch (err) {
+        console.error('[stripe/webhook] could not list subscriptions', customerId, err);
+        return [];
       }
     },
     refundTopup: async (userId, sourceRef, amountPence, reason) => {
