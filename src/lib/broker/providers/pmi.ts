@@ -7,7 +7,7 @@ import 'server-only';
  * nothing here is called outside the broker's budgeted rungs.
  */
 
-import { meter } from '../../credit/meter';
+import { meter } from '../../credit/meter.ts';
 
 const BASE = (process.env.PMI_API_BASE ?? 'https://api.propertymarketintel.com/v1').replace(/\/$/, '');
 const TIMEOUT_MS = 20_000;

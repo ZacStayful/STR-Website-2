@@ -17,7 +17,7 @@
  */
 
 import type { LongLetData, PropertyDataValuation } from '../types';
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 
 // ─── Bedroom-scaled defaults ────────────────────────────────────
 // More realistic than a single static default for all property sizes.

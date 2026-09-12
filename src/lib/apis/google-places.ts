@@ -3,7 +3,7 @@
  */
 
 import type { DemandDrivers, NearbyAmenity } from '../types';
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 
 const SEARCH_RADIUS = 5000; // metres
 const AIRPORT_SEARCH_RADIUS = 50_000; // metres — real airports are further away

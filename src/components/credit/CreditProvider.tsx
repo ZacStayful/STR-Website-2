@@ -80,7 +80,9 @@ export function CreditProvider({ initial, children }: { initial: CreditSnapshot 
   // Returning from Stripe Checkout (?topup=1 / ?subscribed=1) — pull the fresh balance.
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
-    if (p.has("topup") || p.has("subscribed")) void refresh();
+    if (!p.has("topup") && !p.has("subscribed")) return;
+    const t = setTimeout(() => void refresh(), 0);
+    return () => clearTimeout(t);
   }, [refresh]);
 
   const value = useMemo(() => ({ credit, refresh, openOutOfCredit, toast }), [credit, refresh, openOutOfCredit, toast]);

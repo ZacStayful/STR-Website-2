@@ -4,7 +4,7 @@
  * the current action.
  */
 
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 
 export async function geocodePostcode(
   postcode: string,

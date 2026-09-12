@@ -230,3 +230,45 @@ export async function uploadPdfToMonday(
 export async function syncTimeOnSiteToMonday(_email: string, _seconds: number): Promise<void> {
   return;
 }
+
+// ─── Billing state mirror ─────────────────────────────────────────────
+// Optional columns on the enquiry board so sales can see plan, balance and
+// who has hit £0 without topping up. Configure the column ids with
+// MONDAY_COL_PLAN, MONDAY_COL_CREDIT, MONDAY_COL_LAST_TOPUP,
+// MONDAY_COL_BILLING_STATUS and MONDAY_COL_HIT_ZERO; unset columns are
+// skipped, so this is a no-op until the board has them.
+
+const BILLING_COL = {
+  plan: process.env.MONDAY_COL_PLAN || null,
+  credit: process.env.MONDAY_COL_CREDIT || null,
+  lastTopup: process.env.MONDAY_COL_LAST_TOPUP || null,
+  status: process.env.MONDAY_COL_BILLING_STATUS || null,
+  hitZero: process.env.MONDAY_COL_HIT_ZERO || null,
+};
+
+export function mondayBillingConfigured(): boolean {
+  return Boolean(token()) && Object.values(BILLING_COL).some(Boolean);
+}
+
+export async function setBillingState(
+  email: string,
+  state: { planCode?: string | null; balancePence?: number; lastTopupAt?: string | null; status?: string; hitZeroAt?: string | null },
+): Promise<void> {
+  if (!mondayBillingConfigured()) return;
+  const itemId = await findEnquiryByEmail(email);
+  if (!itemId) return;
+  const values: Record<string, unknown> = {};
+  if (BILLING_COL.plan && state.planCode !== undefined) values[BILLING_COL.plan] = state.planCode ?? "Pay as you go";
+  if (BILLING_COL.credit && state.balancePence !== undefined) values[BILLING_COL.credit] = (state.balancePence / 100).toFixed(2);
+  if (BILLING_COL.lastTopup && state.lastTopupAt) values[BILLING_COL.lastTopup] = dateValue(state.lastTopupAt);
+  if (BILLING_COL.status && state.status) values[BILLING_COL.status] = state.status;
+  if (BILLING_COL.hitZero && state.hitZeroAt !== undefined) values[BILLING_COL.hitZero] = state.hitZeroAt ? dateValue(state.hitZeroAt) : null;
+  if (Object.keys(values).length === 0) return;
+  const mutation = `mutation ($boardId: ID!, $itemId: ID!, $values: JSON!) {
+    change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $values) { id }
+  }`;
+  await mondayQuery(mutation, { boardId: BOARD_ID, itemId, values: JSON.stringify(values) });
+}
+
+/** The member ran out of credit (first time this cycle). */
+export const flagHitZero = (email: string, when?: string) => setBillingState(email, { hitZeroAt: when ?? new Date().toISOString(), status: "Hit zero" });

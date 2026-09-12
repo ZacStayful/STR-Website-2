@@ -20,6 +20,7 @@ interface ProfileRow {
   email: string | null;
   full_name: string | null;
   plan: string | null;
+  plan_code: string | null;
   reports_run: number | null;
   created_at: string | null;
   last_seen_at: string | null;
@@ -79,7 +80,7 @@ export default async function AdminPage() {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from("profiles")
-      .select("id, email, full_name, plan, reports_run, created_at, last_seen_at")
+      .select("id, email, full_name, plan, plan_code, reports_run, created_at, last_seen_at")
       .order("created_at", { ascending: false })
       .limit(2000);
     if (error) throw error;
@@ -90,7 +91,7 @@ export default async function AdminPage() {
   }
 
   const total = rows.length;
-  const pro = rows.filter((r) => r.plan === "pro").length;
+  const pro = rows.filter((r) => r.plan_code || r.plan === "pro").length;
   const free = total - pro;
   const totalReports = rows.reduce((s, r) => s + (r.reports_run ?? 0), 0);
   const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -115,9 +116,14 @@ export default async function AdminPage() {
             Signed in as {user.email}. This page is only visible to admins.
           </p>
         </div>
-        <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
-          → Analyser
-        </Link>
+        <span className="flex gap-4">
+          <Link href="/admin/billing" className="text-sm font-medium text-primary hover:underline">
+            Billing admin
+          </Link>
+          <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
+            → Analyser
+          </Link>
+        </span>
       </div>
 
       {loadError && (
@@ -200,8 +206,8 @@ export default async function AdminPage() {
                   <td className="p-3 text-foreground">{r.email ?? "—"}</td>
                   <td className="p-3 text-muted-foreground">{r.full_name ?? "—"}</td>
                   <td className="p-3">
-                    <span className={r.plan === "pro" ? "font-medium text-primary" : "text-muted-foreground"}>
-                      {r.plan ?? "free"}
+                    <span className={r.plan_code ? "font-medium text-primary" : "text-muted-foreground"}>
+                      {r.plan_code ?? "pay as you go"}
                     </span>
                   </td>
                   <td className="p-3 text-muted-foreground">{r.reports_run ?? 0}</td>

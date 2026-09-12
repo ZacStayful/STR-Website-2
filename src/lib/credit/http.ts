@@ -3,7 +3,7 @@
  * the client interceptor agree on its shape.
  */
 
-import { InsufficientCreditError } from './ledger';
+import { InsufficientCreditError } from './ledger.ts';
 
 export const INSUFFICIENT_CREDIT_CODE = 'insufficient_credit';
 

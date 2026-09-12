@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { grant } from './ledger';
+import { grant, redeemCode, CodeError } from './ledger';
 import { getBillingSettings } from './unit-costs';
 import { isDisposableEmail, normaliseMobile } from './abuse';
 
@@ -45,7 +45,26 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
   }
   const settings = await getBillingSettings();
   await grant(userId, 'welcome', settings.welcomeGrantPence, { sourceRef: `welcome:${userId}`, description: 'Welcome credit' });
+  await redeemPendingReferral(userId);
   return { granted: true, withheld: null };
+}
+
+/** Redeems the referral code remembered at signup (sf_ref cookie), if any. */
+async function redeemPendingReferral(userId: string): Promise<void> {
+  try {
+    const { cookies } = await import('next/headers');
+    const jar = await cookies();
+    const code = jar.get('sf_ref')?.value;
+    if (!code) return;
+    await redeemCode(userId, code);
+    try {
+      jar.delete('sf_ref');
+    } catch {
+      /* read-only cookie store in a server component: the code is single-use anyway */
+    }
+  } catch (err) {
+    if (!(err instanceof CodeError)) console.warn('[credit] referral redemption failed:', (err as Error).message);
+  }
 }
 
 export const WELCOME_WITHHELD_COPY: Record<string, string> = {

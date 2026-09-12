@@ -1,11 +1,9 @@
-import 'server-only';
-
-import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { currentMeter, type MeterContext } from './context';
-import { priceFor, round4 } from './pricing';
-import { getUnitCostTable } from './unit-costs';
-import { actionAlreadyCharged, debit, getBalance, InsufficientCreditError } from './ledger';
-import { isEnforcing } from './http';
+import { adminClient, hasServiceRole } from './db.ts';
+import { currentMeter, type MeterContext } from './context.ts';
+import { priceFor, round4 } from './pricing.ts';
+import { getUnitCostTable } from './unit-costs.ts';
+import { actionAlreadyCharged, debit, getBalance, InsufficientCreditError } from './ledger.ts';
+import { isEnforcing } from './http.ts';
 
 /**
  * The single entry point every paid provider call goes through.
@@ -61,7 +59,7 @@ interface CallLog {
 async function logCall(c: CallLog): Promise<number | null> {
   if (!hasServiceRole()) return null;
   try {
-    const { data, error } = await createAdminClient()
+    const { data, error } = await (await adminClient())
       .from('provider_calls')
       .insert({
         provider: c.provider,
@@ -166,8 +164,10 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
           provider_call_id: callId,
         },
       });
+      // Threshold emails, Monday flag and auto top-up; never blocks the request.
+      void import('./after-debit.ts').then((m) => m.afterDebit(userId!)).catch(() => {});
       if (callId !== null && txId !== null) {
-        const admin = createAdminClient();
+        const admin = await adminClient();
         const { data: tx } = await admin.from('credit_transactions').select('amount_pence').eq('id', txId).single();
         const charged = round4(Math.abs(Number(tx?.amount_pence ?? price.basePence)));
         void admin.from('provider_calls').update({ charged_pence: charged }).eq('id', callId).then(({ error }) => {

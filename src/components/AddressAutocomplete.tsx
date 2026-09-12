@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { creditFetch } from "@/lib/credit/client";
 import { Input } from "@/components/ui/input";
 import { Loader2, MapPin } from "lucide-react";
 
@@ -79,9 +80,10 @@ export function AddressAutocomplete({ onSelect, onUseManual, disabled }: Address
     setLoading(true);
     setError(null);
 
-    fetch(`/api/address-autocomplete?q=${encodeURIComponent(q)}&session=${encodeURIComponent(sessionToken)}`, {
+    // Out-of-credit here is silent (empty suggestions); the address can still be typed by hand.
+    creditFetch(`/api/address-autocomplete?q=${encodeURIComponent(q)}&session=${encodeURIComponent(sessionToken)}`, {
       signal: controller.signal,
-    })
+    }, { silent: true })
       .then((res) => res.json())
       .then((data: { suggestions?: Suggestion[]; error?: string }) => {
         setSuggestions(Array.isArray(data.suggestions) ? data.suggestions : []);

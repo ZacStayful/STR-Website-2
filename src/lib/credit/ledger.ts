@@ -1,9 +1,7 @@
-import 'server-only';
-
-import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import type { Buckets, SpendRates } from './pricing';
-import { round4 } from './pricing';
-import { getBillingSettings } from './unit-costs';
+import { adminClient, hasServiceRole } from './db.ts';
+import type { Buckets, SpendRates } from './pricing.ts';
+import { round4 } from './pricing.ts';
+import { getBillingSettings } from './unit-costs.ts';
 
 /**
  * Thin wrappers over the credit_* Postgres functions (service role). Every
@@ -15,8 +13,12 @@ import { getBillingSettings } from './unit-costs';
 
 export class InsufficientCreditError extends Error {
   readonly code = 'insufficient_credit';
-  constructor(readonly requiredPence: number, readonly availablePence: number) {
+  readonly requiredPence: number;
+  readonly availablePence: number;
+  constructor(requiredPence: number, availablePence: number) {
     super('insufficient_credit');
+    this.requiredPence = requiredPence;
+    this.availablePence = availablePence;
   }
 }
 
@@ -70,7 +72,7 @@ function throwRpc(err: RpcError, what: string): never {
 
 export async function getBalance(userId: string): Promise<Balance> {
   if (!hasServiceRole()) return EMPTY_BALANCE;
-  const [{ data, error }, settings] = await Promise.all([createAdminClient().rpc('credit_available', { p_user: userId }), getBillingSettings()]);
+  const [{ data, error }, settings] = await Promise.all([(await adminClient()).rpc('credit_available', { p_user: userId }), getBillingSettings()]);
   if (error) throwRpc(error, 'credit_available');
   const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | undefined;
   const n = (k: string) => round4(Number(row?.[k] ?? 0) || 0);
@@ -88,14 +90,14 @@ export async function getBalance(userId: string): Promise<Balance> {
 export async function reserve(userId: string, action: string, actionId: string, maxBasePence: number, ttlMinutes = 10): Promise<string | null> {
   if (!hasServiceRole()) return null;
   if (maxBasePence <= 0) return null;
-  const { data, error } = await createAdminClient().rpc('credit_reserve', { p_user: userId, p_action: action, p_action_id: actionId, p_max_base: round4(maxBasePence), p_ttl: `${ttlMinutes} minutes` });
+  const { data, error } = await (await adminClient()).rpc('credit_reserve', { p_user: userId, p_action: action, p_action_id: actionId, p_max_base: round4(maxBasePence), p_ttl: `${ttlMinutes} minutes` });
   if (error) throwRpc(error, 'credit_reserve');
   return (data as string | null) ?? null;
 }
 
 export async function release(reservationId: string | null | undefined): Promise<void> {
   if (!reservationId || !hasServiceRole()) return;
-  const { error } = await createAdminClient().rpc('credit_release', { p_reservation: reservationId });
+  const { error } = await (await adminClient()).rpc('credit_release', { p_reservation: reservationId });
   if (error) console.error('[credit] credit_release failed:', error.message);
 }
 
@@ -115,7 +117,7 @@ export interface DebitMeta {
 
 export async function debit(userId: string, basePence: number, opts: { reservationId?: string | null; allowNegative?: boolean; meta?: DebitMeta } = {}): Promise<number | null> {
   if (!hasServiceRole() || basePence <= 0) return null;
-  const { data, error } = await createAdminClient().rpc('credit_debit', {
+  const { data, error } = await (await adminClient()).rpc('credit_debit', {
     p_user: userId,
     p_base_pence: round4(basePence),
     p_reservation: opts.reservationId ?? null,
@@ -128,7 +130,7 @@ export async function debit(userId: string, basePence: number, opts: { reservati
 
 export async function refund(transactionId: number, basePence?: number, reason?: string): Promise<number | null> {
   if (!hasServiceRole()) return null;
-  const { data, error } = await createAdminClient().rpc('credit_refund', { p_transaction_id: transactionId, p_base_pence: basePence ?? null, p_reason: reason ?? null });
+  const { data, error } = await (await adminClient()).rpc('credit_refund', { p_transaction_id: transactionId, p_base_pence: basePence ?? null, p_reason: reason ?? null });
   if (error) throwRpc(error, 'credit_refund');
   return (data as number | null) ?? null;
 }
@@ -136,7 +138,7 @@ export async function refund(transactionId: number, basePence?: number, reason?:
 export async function grant(userId: string, kind: GrantKind, amountPence: number, opts: { expiresAt?: string | Date | null; sourceRef?: string | null; description?: string | null } = {}): Promise<string | null> {
   if (!hasServiceRole()) return null;
   const expires = opts.expiresAt instanceof Date ? opts.expiresAt.toISOString() : (opts.expiresAt ?? null);
-  const { data, error } = await createAdminClient().rpc('credit_grant', {
+  const { data, error } = await (await adminClient()).rpc('credit_grant', {
     p_user: userId,
     p_kind: kind,
     p_amount: round4(amountPence),
@@ -150,27 +152,29 @@ export async function grant(userId: string, kind: GrantKind, amountPence: number
 
 export async function expirePlanGrants(userId: string, reason: string): Promise<number> {
   if (!hasServiceRole()) return 0;
-  const { data, error } = await createAdminClient().rpc('credit_expire_plan_grants', { p_user: userId, p_reason: reason });
+  const { data, error } = await (await adminClient()).rpc('credit_expire_plan_grants', { p_user: userId, p_reason: reason });
   if (error) throwRpc(error, 'credit_expire_plan_grants');
   return Number(data ?? 0) || 0;
 }
 
 export async function expireDueGrants(): Promise<number> {
   if (!hasServiceRole()) return 0;
-  const { data, error } = await createAdminClient().rpc('credit_expire_due');
+  const { data, error } = await (await adminClient()).rpc('credit_expire_due');
   if (error) throwRpc(error, 'credit_expire_due');
   return Number(data ?? 0) || 0;
 }
 
 export class CodeError extends Error {
-  constructor(readonly reason: string) {
+  readonly reason: string;
+  constructor(reason: string) {
     super(reason);
+    this.reason = reason;
   }
 }
 
 export async function redeemCode(userId: string, code: string): Promise<{ kind: string; amountPence: number }> {
   if (!hasServiceRole()) throw new CodeError('not_configured');
-  const { data, error } = await createAdminClient().rpc('credit_redeem_code', { p_user: userId, p_code: code });
+  const { data, error } = await (await adminClient()).rpc('credit_redeem_code', { p_user: userId, p_code: code });
   if (error) {
     if (error.code === 'P0403') throw new CodeError(error.message || 'code_invalid');
     throwRpc(error, 'credit_redeem_code');
@@ -182,6 +186,6 @@ export async function redeemCode(userId: string, code: string): Promise<{ kind: 
 /** True when a debit for this action id already exists (once-per-action charges). */
 export async function actionAlreadyCharged(actionId: string): Promise<boolean> {
   if (!hasServiceRole()) return false;
-  const { data } = await createAdminClient().from('credit_transactions').select('id').eq('action_id', actionId).eq('kind', 'debit').limit(1);
+  const { data } = await (await adminClient()).from('credit_transactions').select('id').eq('action_id', actionId).eq('kind', 'debit').limit(1);
   return (data?.length ?? 0) > 0;
 }

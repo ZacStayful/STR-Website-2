@@ -1,9 +1,12 @@
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { handleStripeEvent } from "@/lib/stripe/webhook";
+import { liveWebhookDeps } from "@/lib/stripe/deps";
 
-// Stripe webhook: grants Pro (unlimited) access when a user pays, and
-// revokes it if their subscription later lapses/cancels. Runs on Node
-// (needs the raw request body for signature verification).
+// Stripe webhook: turns money into credit. Subscriptions grant a plan cycle
+// on every paid invoice, top-ups grant on payment, cancellations expire plan
+// credit. Every event id is recorded first so a retry can never double-grant.
+// Runs on Node (needs the raw request body for signature verification).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -29,83 +32,29 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient();
 
-  try {
-    switch (event.type) {
-      // Fired when a Payment Link / Checkout completes successfully.
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const userId = session.client_reference_id;
-        const email =
-          session.customer_details?.email ?? session.customer_email ?? null;
-
-        const update = {
-          plan: "pro",
-          stripe_customer_id:
-            typeof session.customer === "string" ? session.customer : null,
-          stripe_subscription_id:
-            typeof session.subscription === "string" ? session.subscription : null,
-          stripe_subscription_status: "active",
-        };
-
-        // Prefer the exact user id we tagged the link with; fall back to
-        // email. Capture the row's email so we can mirror to the CRM.
-        let paidEmail = email;
-        if (userId) {
-          const { data } = await admin
-            .from("profiles")
-            .update(update)
-            .eq("id", userId)
-            .select("email")
-            .single();
-          paidEmail = paidEmail ?? data?.email ?? null;
-        } else if (email) {
-          await admin.from("profiles").update(update).eq("email", email);
-        } else {
-          console.warn("[stripe/webhook] completed session with no user id or email");
-        }
-
-        // Log the "Sign up started" (paid) date on the Monday enquiry.
-        if (paidEmail) {
-          const { setSubscriptionStarted } = await import("@/lib/apis/monday");
-          await setSubscriptionStarted(paidEmail);
-        }
-        break;
-      }
-
-      // Keep access in sync if the subscription changes or is cancelled.
-      case "customer.subscription.updated":
-      case "customer.subscription.deleted": {
-        const sub = event.data.object as Stripe.Subscription;
-        const active = sub.status === "active" || sub.status === "trialing";
-        const { data } = await admin
-          .from("profiles")
-          .update({
-            plan: active ? "pro" : "free",
-            stripe_subscription_status: sub.status,
-          })
-          .eq("stripe_subscription_id", sub.id)
-          .select("email")
-          .single();
-
-        // On cancellation/lapse, log the "Cancel date" on the Monday enquiry.
-        if (!active && data?.email) {
-          const { setSubscriptionCancelled } = await import("@/lib/apis/monday");
-          await setSubscriptionCancelled(data.email);
-        }
-        break;
-      }
-
-      default:
-        // Ignore other event types.
-        break;
-    }
-  } catch (err) {
-    console.error("[stripe/webhook] handler error:", err);
-    return new Response("Webhook handler error.", { status: 500 });
+  // Idempotency: claim the event id; a duplicate delivery is acknowledged and skipped.
+  const { data: claimed, error: claimError } = await admin
+    .from("stripe_events")
+    .insert({ id: event.id, type: event.type })
+    .select("id")
+    .maybeSingle();
+  if (claimError && claimError.code !== "23505") {
+    console.error("[stripe/webhook] could not record event:", claimError.message);
+  }
+  if (!claimed && claimError?.code === "23505") {
+    const { data: prior } = await admin.from("stripe_events").select("processed_at").eq("id", event.id).maybeSingle();
+    if (prior?.processed_at) return Response.json({ received: true, duplicate: true });
+    // Claimed earlier but never finished (handler error): fall through and retry.
   }
 
-  return new Response(JSON.stringify({ received: true }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  try {
+    const result = await handleStripeEvent(event, liveWebhookDeps());
+    await admin.from("stripe_events").update({ processed_at: new Date().toISOString(), error: null }).eq("id", event.id);
+    if (result.note) console.log(`[stripe/webhook] ${event.type}: ${result.note}`);
+    return Response.json({ received: true, handled: result.handled });
+  } catch (err) {
+    console.error("[stripe/webhook] handler error:", err);
+    await admin.from("stripe_events").update({ error: String((err as Error)?.message ?? err).slice(0, 500) }).eq("id", event.id);
+    return new Response("Webhook handler error.", { status: 500 });
+  }
 }

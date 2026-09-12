@@ -30,6 +30,13 @@ export interface CreditSummary {
 }
 
 export async function getCreditSummary(userId: string): Promise<CreditSummary> {
+  // Annual subscribers are credited month by month; make sure this month's slot exists.
+  try {
+    const { ensureAnnualMonthlyGrant } = await import('../stripe/grants');
+    await ensureAnnualMonthlyGrant(userId);
+  } catch {
+    /* never block the summary */
+  }
   const [balance, settings] = await Promise.all([getBalance(userId), getBillingSettings()]);
   interface BillingProfile {
     plan_code: string | null;

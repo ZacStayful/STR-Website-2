@@ -17,7 +17,7 @@
  *   4. listings/search/bounds — nearby comparables ($0.05)
  */
 
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 import type {
   ShortLetData,
   ShortLetComparable,
@@ -191,6 +191,32 @@ void GOOD_OPERATOR_UPLIFT;
 // so the same property only costs $0.50 once.
 const reportCache = new Map<string, { reportId: string; expiresAt: number }>();
 const REPORT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours (reports don't change that fast)
+
+interface AirbticsReportCreate {
+  message?: 'insufficient_credits' | { report_id?: string } | string;
+}
+
+async function readPersistedReportId(cacheKey: string): Promise<{ reportId: string; expiresAt: number } | null> {
+  try {
+    const { brokerStore } = await import('../broker/store.ts');
+    const hit = await brokerStore().get<{ reportId: string }>('airbticsReport', cacheKey);
+    if (!hit?.value?.reportId) return null;
+    const expiresAt = new Date(hit.expiresAt).getTime();
+    return expiresAt > Date.now() ? { reportId: hit.value.reportId, expiresAt } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function persistReportId(cacheKey: string, reportId: string, ttlMs: number): Promise<void> {
+  try {
+    const { brokerStore } = await import('../broker/store.ts');
+    const now = new Date();
+    await brokerStore().set('airbticsReport', cacheKey, { value: { reportId }, provider: 'airbtics', level: 4, fetchedAt: now.toISOString(), expiresAt: new Date(now.getTime() + ttlMs).toISOString() });
+  } catch (err) {
+    console.warn('[Airbtics] could not persist report id:', (err as Error).message);
+  }
+}
 
 // ─── In-memory cache for market_id lookups ──────────────────────
 const marketIdCache = new Map<string, { id: number | null; expiresAt: number }>();
@@ -459,12 +485,22 @@ async function fetchReportAll(
   const accommodates = guests;
   const bathrooms = formBathrooms ?? Math.max(1, Math.ceil(bedrooms * 0.75));
 
-  // Check cache first — reading existing reports is FREE
+  // Check cache first — reading existing reports is FREE. The in-memory map is
+  // an L1; the broker cache table keeps the report id across deploys and
+  // instances so a member re-running the same property is never charged twice.
   const cacheKey = `${postcode.replace(/\s+/g, '').toUpperCase()}_${bedrooms}bed`;
-  const cached = reportCache.get(cacheKey);
+  let cached = reportCache.get(cacheKey);
+  if (!cached || Date.now() >= cached.expiresAt) {
+    const persisted = await readPersistedReportId(cacheKey);
+    if (persisted) {
+      cached = persisted;
+      reportCache.set(cacheKey, persisted);
+    }
+  }
   if (cached && Date.now() < cached.expiresAt) {
     console.log(`Airbtics report/all: using cached report ${cached.reportId} (FREE)`);
-    const cachedResult = await readReport(cached.reportId, apiKey);
+    const reportId = cached.reportId;
+    const cachedResult = await meter({ provider: 'airbtics', unit: 'report_read', key: cacheKey, cacheHit: () => true }, () => readReport(reportId, apiKey));
     if (cachedResult) return cachedResult;
     // Cache miss (report deleted?) — fall through to create new one
   }
@@ -486,7 +522,7 @@ async function fetchReportAll(
       provider: 'airbtics',
       unit: 'report_all',
       key: cacheKey,
-      failed: (r) => !r.ok || r.data?.message === 'insufficient_credits' || !r.data?.message?.report_id,
+      failed: (r) => !r.ok || r.data?.message === 'insufficient_credits' || typeof r.data?.message !== 'object' || !r.data?.message?.report_id,
     },
     async () => {
       const res = await fetch(`${BASE_URL}/report/all`, {
@@ -502,9 +538,9 @@ async function fetchReportAll(
       if (!res.ok) {
         const errBody = await res.text().catch(() => '<unreadable body>');
         console.error(`[DEBUG] Airbtics report/all POST failed HTTP ${res.status} body: ${errBody.slice(0, 500)}`);
-        return { ok: false as const, status: res.status, data: null as Record<string, any> | null };
+        return { ok: false as const, status: res.status, data: null as AirbticsReportCreate | null };
       }
-      const data = (await res.json()) as Record<string, any>;
+      const data = (await res.json()) as AirbticsReportCreate;
       return { ok: true as const, status: res.status, data };
     },
   );
@@ -517,7 +553,7 @@ async function fetchReportAll(
     return null;
   }
 
-  const reportId = createData?.message?.report_id;
+  const reportId = typeof createData.message === 'object' && createData.message ? createData.message.report_id : undefined;
   if (!reportId) {
     console.error('[DEBUG] Airbtics report/all: no report_id in response', createData);
     return null;
@@ -527,6 +563,7 @@ async function fetchReportAll(
 
   // Cache the report ID for 24h — future reads are FREE
   reportCache.set(cacheKey, { reportId, expiresAt: Date.now() + REPORT_CACHE_TTL_MS });
+  void persistReportId(cacheKey, reportId, REPORT_CACHE_TTL_MS);
 
   // Step 2: Poll for completion
   const startTime = Date.now();

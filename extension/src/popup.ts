@@ -12,7 +12,8 @@ function connectedView(st: Extract<StatusResult, { connected: true }>): string {
     <button class="cta secondary" id="retry">Try again</button>
     <button class="cta secondary" id="disconnect">Disconnect</button>`;
   }
-  const plan = me.plan === 'pro' ? 'Pro' : me.runsRemaining !== null ? `Trial · ${me.runsRemaining} free report${me.runsRemaining === 1 ? '' : 's'} left` : 'Member';
+  const planName = me.planCode ? ({ starter: 'Starter', pro: 'Pro', scale: 'Scale', pro_annual: 'Pro (annual)' } as Record<string, string>)[me.planCode] ?? me.planCode : 'Pay as you go';
+  const plan = `${planName}${me.balanceLabel ? ` · ${me.balanceLabel} credit` : ''}${me.outOfCredit ? ' · out of credit' : ''}`;
   return `
     <p><strong>Connected</strong>${me.email ? ` as ${esc(me.email)}` : ''}</p>
     <p class="muted">${esc(plan)}${me.state !== 'ok' ? ' · your plan does not include listing checks' : ''}</p>

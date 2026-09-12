@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { creditFetch, notifyCreditChanged } from "@/lib/credit/client";
 import { Link2, Loader2, Search, SlidersHorizontal, Star, Target, X } from "lucide-react";
 import { BUDGET_LABELS, isBudget, isBeds, isConf, type Region } from "@/lib/market/filters";
 import { describeGoals } from "@/lib/market/goals";
@@ -101,7 +102,8 @@ export function TopBar({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/listing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: text.trim() }) });
+      const res = await creditFetch("/api/listing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: text.trim() }) });
+      if (res.ok) notifyCreditChanged();
       const result = await readResolvedListing(res);
       if (!result.ok) {
         setError(result.error);

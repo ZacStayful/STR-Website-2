@@ -4,7 +4,7 @@
  */
 
 import type { NearbyEvent } from '../types';
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 
 export async function getNearbyEvents(
   lat: number,

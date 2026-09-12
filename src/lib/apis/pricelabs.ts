@@ -16,7 +16,7 @@
  * returns 429 — we handle it gracefully like any other failure.
  */
 
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 
 const RE_ENDPOINT = 'https://api.pricelabs.co/v1/revenue/estimator';
 // PriceLabs docs say 6-8s for 350 listings; allow 30s for safety

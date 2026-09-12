@@ -3,7 +3,7 @@ import 'server-only';
 import type { ListingSource } from './types';
 import { SERVER_FETCHABLE } from './detect';
 import { brokerStore } from '../broker/store';
-import { meter } from '../credit/meter';
+import { meter } from '../credit/meter.ts';
 
 /**
  * Fetches one listing page from our servers. Deliberately narrow:

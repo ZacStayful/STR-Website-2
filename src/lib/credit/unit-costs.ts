@@ -1,8 +1,6 @@
-import 'server-only';
-
-import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP } from './costs';
-import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing';
+import { adminClient, hasServiceRole } from './db.ts';
+import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP } from './costs.ts';
+import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -42,7 +40,7 @@ export async function getUnitCostTable(): Promise<UnitCostTable> {
   if (tableCache && Date.now() - tableCache.at < CACHE_MS) return tableCache.table;
   if (!hasServiceRole()) return seedTable();
   try {
-    const { data, error } = await createAdminClient().from('unit_costs').select('provider, unit, label, unit_cost_pence, markup, notes');
+    const { data, error } = await (await adminClient()).from('unit_costs').select('provider, unit, label, unit_cost_pence, markup, notes');
     if (error) throw new Error(error.message);
     const table: UnitCostTable = seedTable();
     for (const r of data ?? []) {
@@ -61,7 +59,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
   if (settingsCache && Date.now() - settingsCache.at < CACHE_MS) return settingsCache.settings;
   if (!hasServiceRole()) return DEFAULT_BILLING_SETTINGS;
   try {
-    const { data, error } = await createAdminClient().from('billing_settings').select('key, value');
+    const { data, error } = await (await adminClient()).from('billing_settings').select('key, value');
     if (error) throw new Error(error.message);
     const kv = new Map<string, unknown>((data ?? []).map((r) => [String(r.key), r.value]));
     const num = (k: string, d: number) => {
@@ -94,7 +92,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
 /** Inserts any seed rows missing from unit_costs. Never overwrites an edit. */
 export async function syncUnitCosts(): Promise<number> {
   if (!hasServiceRole()) return 0;
-  const admin = createAdminClient();
+  const admin = await adminClient();
   const { data } = await admin.from('unit_costs').select('provider, unit');
   const have = new Set((data ?? []).map((r) => unitKey(String(r.provider), String(r.unit))));
   const missing = UNIT_COST_SEED.filter((s) => !have.has(unitKey(s.provider, s.unit)));
@@ -109,7 +107,7 @@ export async function syncUnitCosts(): Promise<number> {
 }
 
 export async function updateUnitCost(provider: string, unit: string, patch: { unitCostPence?: number; markup?: number; notes?: string | null }, updatedBy: string): Promise<void> {
-  const admin = createAdminClient();
+  const admin = await adminClient();
   const row: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: updatedBy };
   if (patch.unitCostPence !== undefined) row.unit_cost_pence = patch.unitCostPence;
   if (patch.markup !== undefined) row.markup = patch.markup;
@@ -120,7 +118,7 @@ export async function updateUnitCost(provider: string, unit: string, patch: { un
 }
 
 export async function updateBillingSetting(key: string, value: unknown): Promise<void> {
-  const admin = createAdminClient();
+  const admin = await adminClient();
   const { error } = await admin.from('billing_settings').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
   if (error) throw new Error(error.message);
   invalidateCreditCaches();

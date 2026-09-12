@@ -39,6 +39,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/estimate', request.url))
   }
 
+  // /signup?ref=CODE → remembered for 30 days so the referral is credited
+  // once the account is confirmed (src/lib/credit/welcome.ts).
+  const ref = request.nextUrl.searchParams.get('ref')
+  if (pathname === '/signup' && ref && /^[A-Z0-9]{4,20}$/i.test(ref)) {
+    response.cookies.set('sf_ref', ref.toUpperCase(), { maxAge: 60 * 60 * 24 * 30, path: '/', sameSite: 'lax', httpOnly: true })
+  }
+
   return response
 }
 
