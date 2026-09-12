@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { creditFetch, notifyCreditChanged } from '@/lib/credit/client';
 import { Link2, Loader2, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +29,8 @@ export function ListingLinkBox({ onResolved, initialUrl, compact }: { onResolved
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch('/api/listing/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+      const res = await creditFetch('/api/listing/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+      if (res.ok) notifyCreditChanged();
       const result = await readResolvedListing(res);
       if (!result.ok) {
         setError(result.error);

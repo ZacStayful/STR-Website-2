@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { marketAccessState } from './access.ts';
-import { FREE_RUNS } from '../access.ts';
 
-const free = { plan: 'free' as const, reports_run: 0, stripe_subscription_id: null };
 const user = { email: 'someone@example.com' };
+const free = { id: 'u1', plan_code: null };
 
 test('no user → anon', () => {
   assert.equal(marketAccessState(null, free), 'anon');
@@ -15,52 +14,22 @@ test('user with no profile row → blocked', () => {
   assert.equal(marketAccessState(user, null), 'blocked');
 });
 
-test('free user with runs left → ok', () => {
-  assert.equal(marketAccessState(user, { ...free, reports_run: FREE_RUNS - 1 }), 'ok');
+test('pay-as-you-go member (no plan) → ok; credit is checked per action, not here', () => {
+  assert.equal(marketAccessState(user, free), 'ok');
 });
 
-test('free user with all runs used → blocked', () => {
-  assert.equal(marketAccessState(user, { ...free, reports_run: FREE_RUNS }), 'blocked');
-  assert.equal(marketAccessState(user, { ...free, reports_run: FREE_RUNS + 3 }), 'blocked');
-});
-
-test('lapsed subscriber → blocked even with runs left', () => {
-  assert.equal(marketAccessState(user, { ...free, stripe_subscription_id: 'sub_1' }), 'blocked');
-});
-
-test('pro → ok', () => {
-  assert.equal(marketAccessState(user, { plan: 'pro', reports_run: 99, stripe_subscription_id: 'sub_1' }), 'ok');
+test('subscriber → ok', () => {
+  assert.equal(marketAccessState(user, { id: 'u2', plan_code: 'pro' }), 'ok');
 });
 
 test('admin email → ok regardless of profile', () => {
   const admin = { email: 'zac@stayful.co.uk' };
   assert.equal(marketAccessState(admin, null), 'ok');
-  assert.equal(marketAccessState(admin, { ...free, reports_run: FREE_RUNS, stripe_subscription_id: 'sub_x' }), 'ok');
 });
 
 test('does not mutate the profile', () => {
-  const p = { ...free, reports_run: 2 };
+  const p = { ...free };
   const before = JSON.stringify(p);
   marketAccessState(user, p);
   assert.equal(JSON.stringify(p), before);
-});
-
-test('a paused member is blocked from the explorer', () => {
-  // The Stripe status stays 'active' through a pause, so a gate reading the
-  // status alone would let them straight in.
-  const now = Date.parse('2026-06-15T12:00:00Z');
-  const paused = {
-    plan: 'pro' as const,
-    plan_source: 'stripe',
-    reports_run: 0,
-    stripe_subscription_id: 'sub_1',
-    stripe_subscription_status: 'active',
-    subscription_paused_from: '2026-06-01T00:00:00Z',
-    subscription_paused_until: '2026-09-01T00:00:00Z',
-  };
-  assert.equal(marketAccessState(user, paused, now), 'blocked');
-
-  // ...and let back in by the clock alone once the window closes.
-  const after = Date.parse('2026-09-02T00:00:00Z');
-  assert.equal(marketAccessState(user, paused, after), 'ok');
 });

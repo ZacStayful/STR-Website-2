@@ -15,7 +15,7 @@ export default async function CheckEmailPage({ searchParams }: { searchParams: S
       <h1 className="text-2xl font-semibold text-foreground">Check your email</h1>
       <p className="mt-3 text-sm text-muted-foreground">
         We&apos;ve sent a confirmation link{email ? ` to ${email}` : ''}. Click it to
-        activate your account and get your 5 free reports.
+        activate your account and get your £20 of free credit.
       </p>
 
       <ResendButton email={email ?? ''} next={nextPath} />

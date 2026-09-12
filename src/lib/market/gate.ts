@@ -3,7 +3,6 @@ import 'server-only';
 import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '../supabase/server';
-import { ACCESS_COLUMNS } from '../access';
 import { marketAccessState, type MarketAccessProfile, type MarketAccessState } from './access';
 
 export interface MarketAccess {
@@ -36,7 +35,7 @@ export const getMarketAccess = cache(async (): Promise<MarketAccess> => {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select(ACCESS_COLUMNS)
+    .select('id, plan_code')
     .eq('id', user.id)
     .single();
 
@@ -44,10 +43,10 @@ export const getMarketAccess = cache(async (): Promise<MarketAccess> => {
 });
 
 /**
- * For pages under /markets. Sends signed-in users without access to /upgrade
- * with THEIR path as the return URL (so a deep link to an area survives the
- * paywall), and returns whether the page may render market data ('ok') or
- * must render the public product page instead ('anon').
+ * For pages under /markets. A signed-in user with no profile row ('blocked')
+ * is sent to /upgrade with THEIR path as the return URL; otherwise returns
+ * whether the page may render market data ('ok') or must render the public
+ * product page instead ('anon'). Credit is checked per paid action, not here.
  */
 export async function requireMarketAccess(returnPath: string): Promise<'anon' | 'ok'> {
   const { state } = await getMarketAccess();

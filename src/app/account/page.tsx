@@ -7,7 +7,6 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import {
   ACCESS_COLUMNS,
   accountStatus,
-  freeReportsRemaining,
   isCancelScheduled,
   isPauseScheduled,
 } from '@/lib/access';
@@ -18,8 +17,10 @@ import {
   formatPlanDate,
   subscriptionStateFromStripe,
 } from '@/lib/subscription';
-import { getStripe, stripeConfigured } from '@/lib/stripe';
-import { checkoutUrlFor } from '@/lib/billing';
+import { getStripe, stripeConfigured } from '@/lib/stripe/client';
+import { getPlan } from '@/lib/credit/plans';
+import { getCreditSummary } from '@/lib/credit/summary';
+import { formatGbp } from '@/lib/credit/pricing';
 import { BRAND } from '@/lib/brand';
 import { ManagePlan } from './ManagePlan';
 import type { PlanView } from './plan-view';
@@ -101,6 +102,13 @@ export default async function AccountPage({
   const cancelScheduled = isCancelScheduled(profile);
   const pauseScheduled = isPauseScheduled(profile);
 
+  // What the plan card says about the tier: price and the credit it brings.
+  const plan = await getPlan((profile.plan_code as string | null) ?? null).catch(() => null);
+  const planLabel = plan
+    ? `Stayful ${plan.name} — ${formatGbp(plan.pricePence).replace('.00', '')} a ${plan.interval === 'year' ? 'year' : 'month'}, ${formatGbp(plan.monthlyCreditPence).replace('.00', '')} of credit every month`
+    : null;
+  const credit = await getCreditSummary(user.id).catch(() => null);
+
   // A subscription arranged by hand has no Stripe record we can drive, so it
   // gets a route to a human instead of buttons that would throw.
   const managedByUs =
@@ -128,8 +136,8 @@ export default async function AccountPage({
     pausedUntil: formatPlanDate(profile.subscription_paused_until as string | null),
     pauseFrom: formatPlanDate(periodEnd),
     pauseChoices,
-    freeReportsLeft: freeReportsRemaining(profile),
-    checkoutHref: checkoutUrlFor(user.id, user.email ?? null),
+    planLabel,
+    checkoutHref: '/upgrade',
     contactHref: `mailto:${BRAND.contactEmail}?subject=${encodeURIComponent('Change my Stayful plan')}`,
   };
 
@@ -158,21 +166,23 @@ export default async function AccountPage({
         <ManagePlan view={view} />
 
         <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5">
-          <h2 className="text-base font-semibold">Your usage</h2>
+          <h2 className="text-base font-semibold">Credit and usage</h2>
           <dl className="mt-3 grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <dt className="text-[#7a8274]">Credit balance</dt>
+              <dd className="mt-0.5 text-lg font-semibold">
+                {credit ? formatGbp(credit.totalPence) : '—'}
+              </dd>
+            </div>
             <div>
               <dt className="text-[#7a8274]">Reports run</dt>
               <dd className="mt-0.5 text-lg font-semibold">{reportsTotal}</dd>
             </div>
-            <div>
-              <dt className="text-[#7a8274]">Free reports left</dt>
-              <dd className="mt-0.5 text-lg font-semibold">
-                {view.freeReportsLeft === null ? 'Unlimited' : view.freeReportsLeft}
-              </dd>
-            </div>
           </dl>
           <p className="mt-3 text-xs text-[#7a8274]">
-            Reopening a saved report never counts as a run.
+            Every report, quick view and narration is charged to your credit as you go.{' '}
+            <Link href="/account/billing" className="underline">Top up, see your usage history and manage billing</Link>.
+            Reopening a saved report never costs anything.
           </p>
         </section>
 

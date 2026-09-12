@@ -3,6 +3,7 @@ import 'server-only';
 import type { ListingSource } from './types';
 import { SERVER_FETCHABLE } from './detect';
 import { brokerStore } from '../broker/store';
+import { meter } from '../credit/meter.ts';
 
 /**
  * Fetches one listing page from our servers. Deliberately narrow:
@@ -57,11 +58,16 @@ function looksBlocked(status: number, html: string): boolean {
   return /just a moment|challenge-platform|cf-chl|access denied|captcha|awswaf|are you a human|unusual traffic/.test(head);
 }
 
-export async function fetchListingHtml(source: ListingSource, url: string): Promise<FetchOutcome> {
+export async function fetchListingHtml(source: ListingSource, url: string, opts: { unit?: 'listing_page' | 'search_page' } = {}): Promise<FetchOutcome> {
   if (!SERVER_FETCHABLE.has(source)) return { ok: false, reason: 'unsupported' };
   if (!serverFetchEnabled(source)) return { ok: false, reason: 'disabled' };
   const breaker = await readBreaker(source);
   if (breaker.pausedUntil && new Date(breaker.pausedUntil).getTime() > Date.now()) return { ok: false, reason: 'paused' };
+  // Nominal bandwidth cost per page, metered against whoever is running the action.
+  return meter({ provider: 'onthemarket', unit: opts.unit ?? 'listing_page', key: url, failed: (r) => !r.ok }, () => fetchListingHtmlRaw(source, url, breaker));
+}
+
+async function fetchListingHtmlRaw(source: ListingSource, url: string, breaker: BreakerState): Promise<FetchOutcome> {
 
   const host = new URL(url).hostname;
   const controller = new AbortController();

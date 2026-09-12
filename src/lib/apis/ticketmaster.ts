@@ -4,6 +4,7 @@
  */
 
 import type { NearbyEvent } from '../types';
+import { meter } from '../credit/meter.ts';
 
 export async function getNearbyEvents(
   lat: number,
@@ -26,7 +27,7 @@ export async function getNearbyEvents(
   url.searchParams.set('countryCode', 'GB');
   url.searchParams.set('startDateTime', now);
 
-  const response = await fetch(url.toString());
+  const response = await meter({ provider: 'ticketmaster', unit: 'event_search', key: `${lat.toFixed(3)},${lng.toFixed(3)}`, failed: (r) => !r.ok }, () => fetch(url.toString()));
 
   if (!response.ok) {
     throw new Error(

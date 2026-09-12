@@ -48,8 +48,10 @@ So: merge, run the schema, then check that a member page loads.
 
 ### 2. Enable the Stripe webhook events
 
-Six of them, listed with what each is for in `.env.example`. The endpoint is
-`/api/stripe/webhook`.
+Ten of them, listed with what each is for in `.env.example`. The endpoint is
+`/api/stripe/webhook`. `invoice.paid` is what turns a subscription payment into
+plan credit and `payment_intent.succeeded` is what credits a one-click top-up,
+so without those two people pay and nothing arrives.
 
 `customer.subscription.updated` is the one to double-check: it carries pause,
 resume and scheduled cancellation. Without it `/account` still looks correct,
@@ -62,9 +64,9 @@ endpoint whose secret is not configured has every delivery refused with a 400.
 Put the second in `STRIPE_WEBHOOK_SECRET2`; every configured secret is tried
 until one verifies, and each delivery logs which position matched so the
 endpoints can be told apart without exposing a secret. Any event enabled on
-both endpoints arrives twice, which is harmless — the handler re-derives the
-whole row from each event, so a repeat write is identical, and the CRM mirror
-only fires on a real change of state.
+both endpoints arrives twice, which is harmless — every event id is recorded
+in `stripe_events` before it is handled, so a repeat delivery is acknowledged
+and skipped and can never grant credit twice.
 
 ### Environment variables
 
@@ -80,10 +82,12 @@ which are required, and what breaks without them.
 | `src/app/estimate` | The analyser |
 | `src/app/markets` | Market Explorer |
 | `src/app/reports` | Saved report history |
-| `src/app/account` | Plan management: pause, cancel, sign out |
+| `src/app/account` | Plan management (pause, cancel, sign out) and `/account/billing`: credit balance, top-ups, usage history |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
-| `src/lib/access.ts` | Who may use what. Every gate funnels through `hasAccess` |
-| `src/lib/billing/` | Stripe webhook logic, injected clients so it can be tested |
+| `src/lib/access.ts` | Billing state of an account: subscriber, paused, lapsed, pay-as-you-go |
+| `src/lib/credit/` | The credit ledger: unit costs, metering, reservations, estimates, plans, perks |
+| `src/lib/stripe/` | Stripe: Checkout, one-click top-ups, portal, grants and the webhook handler (injected deps so it can be tested) |
+| `src/lib/billing/` | Webhook signature verification against every configured secret |
 | `supabase/schema.sql` | The entire schema, run by hand |
 | `extension/` | Chrome extension source |
 

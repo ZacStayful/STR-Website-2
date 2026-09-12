@@ -82,7 +82,7 @@ function PlanSummary({ view }: { view: PlanView }) {
 
   if (view.managedByUs) {
     return line(
-      'Stayful Pro — managed by our team.',
+      `${view.planLabel ?? 'Stayful subscription'} — managed by our team.`,
       'Your subscription was set up by hand, so changes go through us rather than this page.',
     );
   }
@@ -91,14 +91,14 @@ function PlanSummary({ view }: { view: PlanView }) {
     case 'paused':
       return line(
         view.pausedUntil ? `Paused until ${view.pausedUntil}.` : 'Your plan is paused.',
-        'Reports and the Market Explorer are switched off until then. Everything you have saved is untouched.',
+        "You're not being charged and no plan credit arrives until then. Any credit you already have still works, and everything you have saved is untouched.",
       );
     case 'paid':
     case 'subscription_trial':
       if (view.cancelScheduled) {
         return line(
           view.endsOn ? `Your plan ends on ${view.endsOn}.` : 'Your plan is ending.',
-          'You keep full access until then, and nothing more will be charged.',
+          "Your plan credit is yours until then, and nothing more will be charged. Top-up credit never expires.",
         );
       }
       if (view.pauseScheduled) {
@@ -106,22 +106,20 @@ function PlanSummary({ view }: { view: PlanView }) {
           view.pausesOn && view.pausedUntil
             ? `Paused from ${view.pausesOn} until ${view.pausedUntil}.`
             : 'A pause is booked.',
-          'Nothing changes before then — you keep the time you have already paid for.',
+          'Nothing changes before then — you keep the credit you have already paid for.',
         );
       }
       return line(
-        'Stayful Pro — £39.99 a month, unlimited reports.',
-        view.renewsOn ? `Renews on ${view.renewsOn}.` : null,
+        `${view.planLabel ?? 'Stayful subscription'}.`,
+        view.renewsOn ? `Renews on ${view.renewsOn}, when your next month of plan credit arrives.` : null,
       );
-    case 'free_trial':
+    case 'free':
       return line(
-        `Free trial — ${view.freeReportsLeft ?? 0} of 5 reports left.`,
-        'Subscribe for unlimited reports and full Market Explorer access.',
+        'Pay as you go.',
+        "You're using welcome and top-up credit. Subscribe for monthly credit at the standard rate — top-up credit is spent at 1.5× that rate.",
       );
-    case 'trial_expired':
-      return line('Free trial — all 5 reports used.', 'Subscribe to keep running reports.');
     case 'lapsed':
-      return line('No active subscription.', 'Re-subscribe to pick up where you left off.');
+      return line('No active subscription.', 'Any credit you have left still works. Re-subscribe for monthly credit at the standard rate.');
   }
 }
 
@@ -144,12 +142,13 @@ function PlanActions({
     );
   }
 
-  if (view.status === 'free_trial' || view.status === 'trial_expired' || view.status === 'lapsed') {
+  if (view.status === 'free' || view.status === 'lapsed') {
     return (
-      <div className="mt-4">
+      <div className="mt-4 flex flex-wrap items-center gap-3">
         <a href={view.checkoutHref} className={PRIMARY}>
-          {view.status === 'lapsed' ? 'Re-subscribe' : 'Subscribe'}
+          {view.status === 'lapsed' ? 'Re-subscribe' : 'Choose a plan'}
         </a>
+        <a href="/account/billing#topup" className={QUIET}>Top up instead</a>
       </div>
     );
   }
@@ -307,7 +306,7 @@ function PauseExplainer({ view }: { view: PlanView }) {
   return (
     <p className="mt-4 text-xs text-[#7a8274]">
       {view.pauseFrom
-        ? `Nothing changes before ${view.pauseFrom} — you keep the time you have already paid for. After that you won't be charged and reports switch off, then everything starts again by itself on the date you pick.`
+        ? `Nothing changes before ${view.pauseFrom} — you keep the credit you have already paid for. After that you won't be charged and no new plan credit arrives, then everything starts again by itself on the date you pick.`
         : "You won't be charged while your plan is paused, and it starts again by itself on the date you pick."}{' '}
       Your saved reports, watchlist and deal pipeline stay exactly as they are.
     </p>

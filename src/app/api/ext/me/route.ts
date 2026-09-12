@@ -1,5 +1,6 @@
 import { extensionAccess } from '@/lib/extension/auth';
 import { json, preflight } from '@/lib/extension/cors';
+import { formatGbp } from '@/lib/credit/pricing';
 
 export const runtime = 'nodejs';
 
@@ -10,9 +11,10 @@ export async function GET(request: Request) {
   return json(request, {
     email: access.user?.email ?? null,
     state: access.state,
-    plan: access.plan,
-    // null for subscribers — they have no free-report count to show.
-    runsRemaining: access.freeReportsLeft,
+    planCode: access.planCode,
+    balancePence: access.balancePence,
+    balanceLabel: access.balancePence === null ? null : formatGbp(access.balancePence),
+    outOfCredit: access.spendableBasePence !== null && access.spendableBasePence <= 0,
   });
 }
 

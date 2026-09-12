@@ -29,7 +29,7 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: "What does it cost?",
-    a: "Free trial — run 5 full reports at no cost, no card required. Subscription is £39.99/month for unlimited analyses, or £360/year (saving 25% paid annually). Cancel any time, no contract.",
+    a: "Every account starts with £20 of free credit, no card required — about five standard reports, or two with the PMI second opinion added. After that, subscribe for monthly credit (Starter £19, Pro £39.99, Scale £99, or Pro annual £360) or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.5× the plan rate. Cancel any time, no contract.",
   },
   {
     q: "Can I use this for properties I don't own yet?",

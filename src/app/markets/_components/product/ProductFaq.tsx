@@ -18,7 +18,7 @@ const FAQS = [
   },
   {
     q: "Do I get it on the free trial?",
-    a: "Yes. The Market Explorer is included from the moment you sign up, alongside your 5 free property analyses. Using the explorer never uses up a free report.",
+    a: "Yes. The Market Explorer is included from the moment you sign up, alongside £20 of free credit. Browsing the explorer is free; only paid lookups such as listing checks use credit.",
   },
   {
     q: "Can I check a specific property I've found online?",

@@ -48,7 +48,8 @@ export interface PlanView {
   /** When a pause booked today would start — the end of the paid period. */
   pauseFrom: string | null;
   pauseChoices: { months: PauseMonths; until: string }[];
-  freeReportsLeft: number | null;
+  /** "Stayful Pro — £39.99 a month, £50 of credit every month", or null off-plan. */
+  planLabel: string | null;
   checkoutHref: string;
   contactHref: string;
 }

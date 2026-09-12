@@ -8,13 +8,13 @@ import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '@/lib/apis/
 import { calculateFinancials, assessRisk, generateVerdict } from '@/lib/analysis';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import {
-  ACCESS_COLUMNS,
-  accountStatus,
-  countsAgainstFreeTrial,
-  hasAccess,
-} from '@/lib/access';
 import { isAdminEmail } from '@/lib/admin';
+import { startAction, actionSpend } from '@/lib/credit/action';
+import { runMetered } from '@/lib/credit/context';
+import { estimateAction, reportAction } from '@/lib/credit/estimate';
+import { getUnitCostTable } from '@/lib/credit/unit-costs';
+import { InsufficientCreditError } from '@/lib/credit/ledger';
+import { insufficientCreditResponse } from '@/lib/credit/http';
 import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '@/lib/broker';
 import { matchTracked, rankCompetitors, summariseCompetitors } from '@/lib/listing/competitors';
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '@/lib/listing/deal';
@@ -86,9 +86,8 @@ export async function POST(request: Request) {
   let userEmail: string | null = null;
   let userName: string | null = null;
   let userMobile: string | null = null;
-  // Whether this run should be counted against the free-report allowance.
-  let countRun = false;
   let finance: FinanceGoals = DEFAULT_FINANCE_GOALS;
+  let isAdmin = false;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
     const {
@@ -102,29 +101,13 @@ export async function POST(request: Request) {
     }
     const { data: profile } = await supabase
       .from('profiles')
-      .select(`${ACCESS_COLUMNS}, full_name, mobile, market_goals`)
+      .select('full_name, mobile, market_goals')
       .eq('id', user.id)
       .single();
-    // Admins (matched by verified auth email) bypass the free-report limit.
-    const isAdmin = isAdminEmail(user.email);
-    if (!profile || (!isAdmin && !hasAccess(profile))) {
-      // A lapsed subscriber has never had a free trial to use up — telling
-      // them they've "used all 5 free reports" is both wrong and confusing.
-      const lapsed = !!profile && accountStatus(profile) === 'lapsed';
-      return Response.json(
-        {
-          error: lapsed
-            ? 'Your subscription has ended. Re-subscribe to keep running analyses.'
-            : "You've used all 5 of your free reports. Subscribe to continue running analyses.",
-          upgradeUrl: '/upgrade',
-        },
-        { status: 402 },
-      );
+    if (!profile) {
+      return Response.json({ error: 'Your account is not set up yet. Please sign in again.' }, { status: 403 });
     }
-    // Only free-trial users burn a report credit. Counting a subscriber's
-    // runs would quietly exhaust an allowance they'd be dropped onto if their
-    // subscription ever lapsed, hard-paywalling a customer mid-session.
-    countRun = !isAdmin && countsAgainstFreeTrial(profile);
+    isAdmin = isAdminEmail(user.email);
     userName = profile.full_name ?? null;
     userMobile = profile.mobile ?? null;
     userId = user.id;
@@ -143,13 +126,16 @@ export async function POST(request: Request) {
   }
 
   // Validate input
-  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, purchasePrice, advertisedRent, sourceListing, checkedListingId } = body as {
+  const { address, postcode, email, bedrooms, guests, bathrooms, parking, outdoorSpace, propertyType, purchasePrice, advertisedRent, sourceListing, checkedListingId, enhanced } = body as {
     address: unknown; postcode: unknown; email: unknown;
     bedrooms: unknown; guests: unknown;
     bathrooms: unknown; parking: unknown; outdoorSpace: unknown;
     propertyType: unknown;
-    purchasePrice: unknown; advertisedRent: unknown; sourceListing: unknown; checkedListingId: unknown;
+    purchasePrice: unknown; advertisedRent: unknown; sourceListing: unknown; checkedListingId: unknown; enhanced: unknown;
   };
+  // Standard report = Airbtics + PropertyData. Enhanced adds the PMI second
+  // opinion (50 PMI credits), chosen per report on the form; PMI_SECOND_OPINION=false is the kill switch.
+  const wantEnhanced = enhanced === true && process.env.PMI_SECOND_OPINION !== 'false';
   const emailStr = typeof email === 'string' && email.includes('@') ? email.trim() : null;
 
   // ── Listing-link inputs (all optional) ──
@@ -257,8 +243,25 @@ export async function POST(request: Request) {
   };
   const mappedPropertyType = propertyType ? propertyTypeMap[propertyType as string] ?? 'flat' : 'flat';
 
+  // ─── Credit: reserve the worst-case cost before anything is spent ─────
+  // Every provider call below is metered against this action (see
+  // src/lib/credit/meter.ts); the reservation guarantees the report can
+  // never run partially unpaid. Admins run free; shadow mode never blocks.
+  const priceLabsEnabled = process.env.PRICELABS_AS_PRIMARY === 'true';
+  const reportKind = reportAction(wantEnhanced);
+  const estimate = estimateAction(await getUnitCostTable(), reportKind, { priceLabs: priceLabsEnabled });
+  let action;
+  try {
+    action = await startAction({ userId, admin: isAdmin || Boolean(isCalibrationBypass), action: reportKind, maxBasePence: estimate.maxBasePence });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, reportKind);
+    throw err;
+  }
+  const meterCtx = action.ctx;
+  const finishAction = action.finish;
+
   // ─── Streaming SSE Response ──────────────────────────────────
-  const stream = new ReadableStream({
+  const stream = runMetered(meterCtx, () => new ReadableStream({
     async start(controller) {
       const send = (data: Record<string, unknown>) => {
         controller.enqueue(new TextEncoder().encode(sseEvent(data)));
@@ -324,7 +327,6 @@ export async function POST(request: Request) {
         // When enabled and successful, PriceLabs RE OVERRIDES the V4
         // headline below. When it fails (missing key, 401, 429 quota
         // exhausted, 500), V4 result stays unchanged.
-        const priceLabsEnabled = process.env.PRICELABS_AS_PRIMARY === 'true';
         const priceLabsPromise: Promise<Awaited<ReturnType<typeof fetchPriceLabsRevenueEstimate>>> = priceLabsEnabled
           ? fetchPriceLabsRevenueEstimate({
               address: property.address,
@@ -376,7 +378,7 @@ export async function POST(request: Request) {
           return null;
         });
         const secondOpinionPromise = (async () => {
-          if (process.env.PMI_SECOND_OPINION === 'false') return null;
+          if (!wantEnhanced) return null;
           const r = await ask(
             strSecondOpinion,
             { postcode: property.postcode, bedrooms: property.bedrooms, bathrooms: validBathrooms, propertyType: mappedPropertyType === 'flat' ? 'apartment' : 'house' },
@@ -586,7 +588,9 @@ export async function POST(request: Request) {
           }
         }
 
-        send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
+        // What this report actually used, so the UI can show it.
+        const spend = userId ? await actionSpend(meterCtx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 })) : { basePence: 0, chargedPence: 0 };
+        send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result, credit: { actionId: meterCtx.actionId, basePence: spend.basePence, chargedPence: spend.chargedPence } });
 
         // Generate the PDF report and upload it to the user's enquiry row
         // (Monday "Reports" file column), matched by email. Awaited before
@@ -614,40 +618,31 @@ export async function POST(request: Request) {
           }
         }
 
-        // reports_total counts every report for usage reporting. reports_run
-        // is the free-trial allowance and only advances for free-trial users —
-        // burning a subscriber's allowance would leave them at "0 free reports
-        // left" the moment their subscription ever lapsed.
-        // Written with the service-role client, not the member's session: the
-        // usage counters are no longer grantable to `authenticated` (see the
-        // column grants in supabase/schema.sql), because a member who can
-        // write reports_run can hand themselves unlimited free reports.
+        // Usage is metered per provider call (credit ledger). reports_total is
+        // a reporting counter only, written with the service-role client: the
+        // usage counters are not grantable to `authenticated` (see the column
+        // grants in supabase/schema.sql).
         if (userId) {
           try {
             const admin = createAdminClient();
-            const { data: current } = await admin
+            const { data: current } = await admin.from('profiles').select('reports_total').eq('id', userId).single();
+            await admin
               .from('profiles')
-              .select('reports_run, reports_total')
-              .eq('id', userId)
-              .single();
-            const update: Record<string, unknown> = {
-              last_seen_at: new Date().toISOString(),
-              reports_total: (current?.reports_total ?? 0) + 1,
-            };
-            if (countRun) update.reports_run = (current?.reports_run ?? 0) + 1;
-            await admin.from('profiles').update(update).eq('id', userId);
+              .update({ last_seen_at: new Date().toISOString(), reports_total: (current?.reports_total ?? 0) + 1 })
+              .eq('id', userId);
           } catch (err) {
-            console.error('[api/analyse] reports_run hook failed:', err);
+            console.error('[api/analyse] usage hook failed:', err);
           }
         }
       } catch (err) {
         console.error('Unexpected error in /api/analyse:', err);
         send({ stage: 'error', progress: 0, message: 'An unexpected error occurred. Please try again.' });
       } finally {
+        await finishAction().catch(() => {});
         controller.close();
       }
     },
-  });
+  }));
 
   return new Response(stream, {
     headers: {

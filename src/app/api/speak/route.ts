@@ -1,4 +1,10 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isAdminEmail } from "@/lib/admin";
+import { startAction } from "@/lib/credit/action";
+import { runMetered } from "@/lib/credit/context";
+import { InsufficientCreditError } from "@/lib/credit/ledger";
+import { insufficientCreditResponse } from "@/lib/credit/http";
+import { meter } from "@/lib/credit/meter";
 
 // Streams audio back from ElevenLabs. Give it headroom over the 10s Hobby
 // default so longer summaries finish synthesising.
@@ -36,29 +42,44 @@ export async function POST(request: Request) {
     return Response.json({ error: "No text to speak." }, { status: 400 });
   }
 
+  // Credit: ElevenLabs bills per character, known before the call.
+  let action;
+  try {
+    action = await startAction({ userId: user.id, admin: isAdminEmail(user.email), action: "speak" });
+  } catch (err) {
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, "speak");
+    throw err;
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "content-type": "application/json",
-          accept: "audio/mpeg",
-        },
-        body: JSON.stringify({
-          text,
-          // Turbo v2.5: low-latency (~250ms TTFB), good quality — best fit for
-          // a snappy narrator. stability/similarity_boost are floats here.
-          model_id: "eleven_turbo_v2_5",
-          voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.0 },
-        }),
-      },
+    upstream = await runMetered(action.ctx, () =>
+      meter(
+        { provider: "elevenlabs", unit: "character", quantity: text.length, description: "AI narration voice", failed: (r) => !r.ok },
+        () =>
+          fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
+            method: "POST",
+            headers: {
+              "xi-api-key": apiKey,
+              "content-type": "application/json",
+              accept: "audio/mpeg",
+            },
+            body: JSON.stringify({
+              text,
+              // Turbo v2.5: low-latency (~250ms TTFB), good quality — best fit for
+              // a snappy narrator. stability/similarity_boost are floats here.
+              model_id: "eleven_turbo_v2_5",
+              voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.0 },
+            }),
+          }),
+      ),
     );
   } catch (err) {
+    if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, "speak");
     console.error("[api/speak] network error:", err);
     return Response.json({ error: "Could not reach the voice service." }, { status: 502 });
+  } finally {
+    await action.finish().catch(() => {});
   }
 
   if (!upstream.ok || !upstream.body) {

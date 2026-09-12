@@ -1,30 +1,16 @@
 import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { handleStripeEvent, type Crm } from "@/lib/billing/webhook";
+import { handleStripeEvent } from "@/lib/stripe/webhook";
+import { liveWebhookDeps } from "@/lib/stripe/deps";
 import { SECRET_VARS, verifyWebhook, webhookSecrets } from "@/lib/billing/webhook-secrets";
 
-// Stripe webhook. Grants Pro (unlimited) access when someone pays, revokes it
-// when their subscription lapses, and mirrors pause and cancel state onto the
-// profile. Runs on Node because signature verification needs the raw body.
-//
-// All the logic lives in src/lib/billing/webhook.ts so it can be driven by fake
-// clients in a test. This file only does what cannot be faked: read the env,
-// verify the signature, and build the real dependencies.
+// Stripe webhook: turns money into credit. Subscriptions grant a plan cycle
+// on every paid invoice, top-ups grant on payment, cancellations expire plan
+// credit, and pause / cancel state is mirrored onto the profile. Every event
+// id is recorded first so a retry can never double-grant.
+// Runs on Node (needs the raw request body for signature verification).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// The Monday mirror, imported lazily so an unconfigured CRM costs nothing on
-// the events that never reach it.
-const mondayCrm: Crm = {
-  async subscriptionStarted(email) {
-    const { setSubscriptionStarted } = await import("@/lib/apis/monday");
-    await setSubscriptionStarted(email);
-  },
-  async subscriptionCancelled(email) {
-    const { setSubscriptionCancelled } = await import("@/lib/apis/monday");
-    await setSubscriptionCancelled(email);
-  },
-};
 
 export async function POST(request: Request) {
   const secretKey = process.env.STRIPE_SECRET_KEY;
@@ -32,51 +18,49 @@ export async function POST(request: Request) {
   // delivery is signed only with the secret of the endpoint it came from.
   const secrets = webhookSecrets(process.env);
   if (!secretKey || secrets.length === 0) {
-    console.error(
-      `[stripe/webhook] not configured — need STRIPE_SECRET_KEY and at least one of ${SECRET_VARS.join(", ")}`,
-    );
+    console.error(`[stripe/webhook] not configured — need STRIPE_SECRET_KEY and at least one of ${SECRET_VARS.join(", ")}`);
     return new Response("Stripe is not configured.", { status: 500 });
   }
 
   const stripe = new Stripe(secretKey);
   const rawBody = await request.text();
 
-  const verified = verifyWebhook(
-    stripe,
-    rawBody,
-    request.headers.get("stripe-signature"),
-    secrets,
-  );
+  const verified = verifyWebhook(stripe, rawBody, request.headers.get("stripe-signature"), secrets);
   if (!verified) {
     // Never log the secrets, only how many were tried.
-    console.error(
-      `[stripe/webhook] signature verification failed against all ${secrets.length} configured secret(s)`,
-    );
+    console.error(`[stripe/webhook] signature verification failed against all ${secrets.length} configured secret(s)`);
     return new Response("Invalid signature.", { status: 400 });
   }
-
   const { event, position } = verified;
   // The position identifies which endpoint sent this, without exposing the
-  // secret. Once only one position ever appears, the other endpoint is unused
-  // and can be deleted.
-  console.log(
-    `[stripe/webhook] ${event.type} verified with secret ${position}/${secrets.length}`,
-  );
+  // secret. Once only one position ever appears, the other endpoint is unused.
+  console.log(`[stripe/webhook] ${event.type} verified with secret ${position}/${secrets.length}`);
 
-  try {
-    await handleStripeEvent(
-      { admin: createAdminClient(), stripe, crm: mondayCrm },
-      event,
-    );
-  } catch (err) {
-    // 500 so Stripe retries. A write that failed here is what leaves a paying
-    // customer on the free-trial banner, so it must never be swallowed.
-    console.error("[stripe/webhook] handler error:", err);
-    return new Response("Webhook handler error.", { status: 500 });
+  const admin = createAdminClient();
+
+  // Idempotency: claim the event id; a duplicate delivery is acknowledged and skipped.
+  const { data: claimed, error: claimError } = await admin
+    .from("stripe_events")
+    .insert({ id: event.id, type: event.type })
+    .select("id")
+    .maybeSingle();
+  if (claimError && claimError.code !== "23505") {
+    console.error("[stripe/webhook] could not record event:", claimError.message);
+  }
+  if (!claimed && claimError?.code === "23505") {
+    const { data: prior } = await admin.from("stripe_events").select("processed_at").eq("id", event.id).maybeSingle();
+    if (prior?.processed_at) return Response.json({ received: true, duplicate: true });
+    // Claimed earlier but never finished (handler error): fall through and retry.
   }
 
-  return new Response(JSON.stringify({ received: true }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  try {
+    const result = await handleStripeEvent(event, liveWebhookDeps());
+    await admin.from("stripe_events").update({ processed_at: new Date().toISOString(), error: null }).eq("id", event.id);
+    if (result.note) console.log(`[stripe/webhook] ${event.type}: ${result.note}`);
+    return Response.json({ received: true, handled: result.handled });
+  } catch (err) {
+    console.error("[stripe/webhook] handler error:", err);
+    await admin.from("stripe_events").update({ error: String((err as Error)?.message ?? err).slice(0, 500) }).eq("id", event.id);
+    return new Response("Webhook handler error.", { status: 500 });
+  }
 }

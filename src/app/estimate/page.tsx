@@ -84,6 +84,9 @@ import { AccuracyPanel } from "@/components/AccuracyPanel";
 import { SetupCalculator } from "@/components/SetupCalculator";
 import { AnalyserNarrator } from "@/components/AnalyserNarrator";
 import { ListingLinkBox } from "./_components/ListingLinkBox";
+import { ReportOptions } from "@/components/credit/ReportOptions";
+import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
+import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
 import { CashflowChart } from "./_components/CashflowChart";
@@ -393,6 +396,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const setupSnapshotRef = useRef<import("@/components/SetupCalculator").SetupCalculatorSnapshot | null>(null);
 
   const [loading, setLoading] = useState(false);
+
+  const creditCtx = useCreditOptional();
+  // Standard report by default; the PMI second opinion is a paid add-on chosen per report.
+  const [enhanced, setEnhanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(initialResult ?? null);
   const [showPresentation, setShowPresentation] = useState(false);
@@ -519,7 +526,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     autoListingRef.current = true;
     (async () => {
       try {
-        const res = await fetch("/api/listing/resolve", {
+        const res = await creditFetch("/api/listing/resolve", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
@@ -588,14 +595,16 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError(null);
+    // Credit check before anything is spent; opens the top-up modal when short.
+    if (!(await preflight(enhanced ? "report_enhanced" : "report"))) return;
+    setLoading(true);
     setProgress(0);
     setCompletedStages(new Set());
     setCurrentMessage("Starting analysis...");
 
     try {
-      const res = await fetch("/api/analyse", {
+      const res = await creditFetch("/api/analyse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -608,6 +617,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           parking,
           outdoorSpace,
           propertyType,
+          enhanced,
           ...(purchasePrice !== "" && Number(purchasePrice) > 0 && { purchasePrice: Number(purchasePrice) }),
           ...(advertisedRent !== "" && Number(advertisedRent) > 0 && { advertisedRent: Number(advertisedRent) }),
           ...(listing && {
@@ -687,6 +697,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
               if (event.stage === "complete" && event.data) {
                 setResult(event.data as AnalysisResult);
+                if (event.credit && typeof event.credit.chargedPence === "number" && event.credit.chargedPence > 0) creditCtx?.toast(`This report used ${formatCredit(event.credit.chargedPence)} of credit`);
+                notifyCreditChanged();
                 setLoading(false);
                 return;
               }
@@ -3376,6 +3388,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   </div>
                 )}
 
+                <ReportOptions enhanced={enhanced} onChange={setEnhanced} disabled={loading} />
                 <Button type="submit" className="w-full" disabled={loading}>
                   <Search className="mr-2 h-4 w-4" aria-hidden="true" />
                   Get Free Analysis

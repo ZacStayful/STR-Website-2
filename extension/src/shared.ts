@@ -30,13 +30,18 @@ export interface ApiError {
   /** The derived account status behind a no_access refusal, e.g. 'paused'. */
   reason?: string;
   upgradeUrl?: string;
+  topupUrl?: string;
+  requiredPence?: number;
+  availablePence?: number;
 }
 
 export interface MeResponse {
   email: string | null;
   state: 'ok' | 'blocked';
-  plan: 'free' | 'pro' | null;
-  runsRemaining: number | null;
+  planCode: string | null;
+  balancePence: number | null;
+  balanceLabel: string | null;
+  outOfCredit: boolean;
 }
 
 export type Message =

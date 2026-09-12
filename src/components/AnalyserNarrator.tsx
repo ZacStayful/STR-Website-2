@@ -5,6 +5,7 @@ import { X, Play, Pause, RotateCcw, Volume2, Loader2 } from "lucide-react";
 import { JarvisEye } from "@/components/JarvisEye";
 import type { JARVISState } from "@/types/jarvis";
 import type { AnalysisResult } from "@/lib/types";
+import { creditFetch, notifyCreditChanged } from "@/lib/credit/client";
 
 interface AnalyserNarratorProps {
   result: AnalysisResult;
@@ -72,7 +73,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
     setBusy(true);
     setEyeState("thinking");
     try {
-      const res = await fetch("/api/speak", {
+      const res = await creditFetch("/api/speak", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text }),
@@ -91,6 +92,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       }
 
       const blob = await res.blob();
+      notifyCreditChanged();
       revokeUrl();
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
@@ -136,7 +138,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
     setBusy(true);
     setEyeState("thinking");
     try {
-      const res = await fetch("/api/summarise", {
+      const res = await creditFetch("/api/summarise", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ result }),
@@ -152,6 +154,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
         return;
       }
       setSummary(data.summary);
+      notifyCreditChanged();
       setBusy(false);
       await speak(data.summary);
     } catch (err) {

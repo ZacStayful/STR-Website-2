@@ -2,6 +2,9 @@ import { extensionAccess } from '@/lib/extension/auth';
 import { accessDenied } from '@/lib/access';
 import { json, preflight } from '@/lib/extension/cors';
 import { checkListingForMember } from '@/lib/listing/server';
+import { isAdminEmail } from '@/lib/admin';
+import { insufficientCreditPayload } from '@/lib/credit/http';
+import { siteUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
 // Same ceiling as /api/listing/resolve: the quick view budgets its own lookups.
@@ -20,7 +23,8 @@ export async function POST(request: Request) {
   const access = await extensionAccess(request);
   if (access.state === 'anon') return json(request, { error: 'Not connected. Open the Stayful site and connect the extension.', code: 'not_connected' }, { status: 401 });
   if (access.state !== 'ok' || !access.user) {
-    const denied = accessDenied(access.profile, 'listing checks');
+    // 'blocked' only ever means the profile row is missing, so there is no profile to pass.
+    const denied = accessDenied(null, 'listing checks');
     return json(request, { ...denied, code: 'no_access', reason: denied.code }, { status: 402 });
   }
 
@@ -36,8 +40,12 @@ export async function POST(request: Request) {
   if (html && html.length > MAX_HTML_BYTES) html = html.slice(0, MAX_HTML_BYTES);
 
   try {
-    const outcome = await checkListingForMember(url, { userId: access.user.id, goals: access.goals, html, save: body.save !== false, admin: true });
+    const outcome = await checkListingForMember(url, { userId: access.user.id, goals: access.goals, html, save: body.save !== false, admin: true, adminUser: isAdminEmail(access.user.email) });
     if (!outcome.ok) {
+      if (outcome.code === 'insufficient_credit') {
+        const payload = insufficientCreditPayload(outcome, 'quick_view');
+        return json(request, { ...payload, topupUrl: siteUrl(payload.topupUrl), upgradeUrl: siteUrl(payload.upgradeUrl) }, { status: 402 });
+      }
       const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
       return json(request, { error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
     }

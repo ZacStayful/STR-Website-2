@@ -3,6 +3,7 @@
  */
 
 import type { DemandDrivers, NearbyAmenity } from '../types';
+import { meter } from '../credit/meter.ts';
 
 const SEARCH_RADIUS = 5000; // metres
 const AIRPORT_SEARCH_RADIUS = 50_000; // metres — real airports are further away
@@ -71,17 +72,18 @@ async function searchNearbyByType(
     },
   };
 
-  const response = await fetch(
-    'https://places.googleapis.com/v1/places:searchNearby',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Goog-Api-Key': apiKey,
-        'X-Goog-FieldMask': FIELD_MASK,
-      },
-      body: JSON.stringify(body),
-    },
+  const response = await meter(
+    { provider: 'google', unit: 'places_nearby', key: `${includedType}|${lat.toFixed(3)},${lng.toFixed(3)}`, failed: (r) => !r.ok },
+    () =>
+      fetch('https://places.googleapis.com/v1/places:searchNearby', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': FIELD_MASK,
+        },
+        body: JSON.stringify(body),
+      }),
   );
 
   if (!response.ok) {

@@ -43,6 +43,10 @@ export function brokerLedger(): BrokerLedger {
   const admin = createAdminClient();
   return {
     async record(c: CallRecord): Promise<void> {
+      // Paid, successful rungs are written (and charged) by meter() inside the
+      // provider client; writing them here too would double-count spend. The
+      // broker still records cache hits and failures.
+      if (c.ok && !c.cacheHit && c.costPence > 0) return;
       const { error } = await admin.from('provider_calls').insert({
         provider: c.provider,
         question: c.question,

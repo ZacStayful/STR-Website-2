@@ -7,6 +7,8 @@ import 'server-only';
  * nothing here is called outside the broker's budgeted rungs.
  */
 
+import { meter } from '../../credit/meter.ts';
+
 const BASE = (process.env.PMI_API_BASE ?? 'https://api.propertymarketintel.com/v1').replace(/\/$/, '');
 const TIMEOUT_MS = 20_000;
 
@@ -16,6 +18,8 @@ export class PmiError extends Error {
   }
 }
 
+const PMI_UNITS: Record<string, string> = { '/valuations/str-estimate': 'str_estimate', '/str/market': 'str_market', '/listings': 'listings', '/account': 'account' };
+
 async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}): Promise<T | null> {
   const key = process.env.PMI_API_KEY;
   if (!key) return null;
@@ -24,13 +28,18 @@ async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Rec
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      method: init.method ?? 'GET',
-      headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
-      body: init.body ? JSON.stringify(init.body) : undefined,
-      cache: 'no-store',
-      signal: controller.signal,
-    });
+    const res = await meter(
+      // Every PMI path bills credits: str-estimate 50, str/market 3, listings 1, account 0.
+      { provider: 'pmi', unit: PMI_UNITS[path] ?? 'other', key: url.pathname + url.search, failed: (r) => !r.ok && r.status !== 404 },
+      () =>
+        fetch(url, {
+          method: init.method ?? 'GET',
+          headers: { Authorization: `Bearer ${key}`, Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+          body: init.body ? JSON.stringify(init.body) : undefined,
+          cache: 'no-store',
+          signal: controller.signal,
+        }),
+    );
     if (res.status === 404) return null;
     if (!res.ok) {
       const text = await res.text().catch(() => '');

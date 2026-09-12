@@ -12,7 +12,7 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
   const nextPath = safeInternalPath(next, '/estimate')
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
-      <h1 className="text-2xl font-semibold text-foreground">Start with 5 free reports</h1>
+      <h1 className="text-2xl font-semibold text-foreground">Start with £20 of free credit</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Full access to the analyser and Market Explorer. No card required.
       </p>

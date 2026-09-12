@@ -14,7 +14,7 @@ import { parseOnTheMarketSearch, onTheMarketSearchUrl, type SourcedListing, type
 export async function fetchOnTheMarketSearch(q: SourcingQuery): Promise<SourcedListing[] | null> {
   const url = onTheMarketSearchUrl(q);
   if (!url) return null;
-  const res = await fetchListingHtml('onthemarket', url);
+  const res = await fetchListingHtml('onthemarket', url, { unit: 'search_page' });
   if (!res.ok) return null;
   const list = parseOnTheMarketSearch(res.html, q.kind);
   return list.length > 0 ? list : null;

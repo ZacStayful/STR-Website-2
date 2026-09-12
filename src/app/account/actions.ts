@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getStripe, stripeConfigured } from '@/lib/stripe'
+import { getStripe, stripeConfigured } from '@/lib/stripe/client'
 import {
   PAUSED_FROM_KEY,
   formatPlanDate,

@@ -1,115 +1,96 @@
-import Link from "next/link";
 import { Icon } from "@/lib/icons";
+import { getPlans, type BillingPlan } from "@/lib/credit/plans";
+import { getBillingSettings, getUnitCostTable } from "@/lib/credit/unit-costs";
+import { estimateAction } from "@/lib/credit/estimate";
+import { formatGbp } from "@/lib/credit/pricing";
+import { perkLines } from "@/lib/credit/perks";
+import { SubscribeButton } from "@/components/credit/SubscribeButton";
 
-interface Plan {
-  name: string;
-  price: string;
-  priceSub?: string;
-  sub: string;
-  features: string[];
-  cta: string;
-  hl?: boolean;
-  tag?: string;
-}
+/**
+ * The plan grid, shared by the marketing pages and /upgrade. Plans, credit
+ * amounts and perks come from `billing_plans`; the "≈ N reports" line uses the
+ * live unit-cost table so the page can never drift from what we charge.
+ */
+export async function Pricing({ signupHref = "/signup", signedIn = false, currentPlanCode = null, compact = false }: { signupHref?: string; signedIn?: boolean; currentPlanCode?: string | null; compact?: boolean }) {
+  const [plans, settings, table] = await Promise.all([getPlans(), getBillingSettings(), getUnitCostTable()]);
+  const report = estimateAction(table, "report").typicalBasePence;
+  const enhanced = estimateAction(table, "report_enhanced").typicalBasePence;
+  const reportsFor = (pence: number) => (report > 0 ? Math.floor((pence / report) * 10) / 10 : 0);
+  const fmtReports = (n: number) => `${n.toFixed(1).replace(/\.0$/, "")} report${n === 1 ? "" : "s"}`;
+  const monthly = plans.filter((p) => p.active && p.interval === "month").sort((a, b) => a.sort - b.sort);
+  const annual = plans.find((p) => p.active && p.interval === "year") ?? null;
+  const topupReport = Math.round(report * settings.spendRates.topup);
 
-const PLANS: Plan[] = [
-  {
-    name: "5 free reports",
-    price: "Free",
-    priceSub: "5 reports",
-    sub: "Full access — no card required",
-    features: [
-      "Full 10-section report",
-      "5 free reports to start",
-      "Market Explorer: UK area rankings",
-      "Paste any Rightmove, OnTheMarket or Airbnb link",
-      "Live comparables",
-      "Forecast & risk",
-      "Setup cost quote",
-    ],
-    cta: "Start free trial",
-  },
-  {
-    name: "Analyser",
-    price: "£39.99",
-    priceSub: "/month",
-    sub: "Unlimited analyses · cancel any time",
-    features: [
-      "Everything in Free",
-      "Unlimited reports",
-      "Full Market Explorer: goal-based ranking, competition & trends",
-      "Deal pipeline, listing compare & shareable deal sheets",
-      "Saved reports",
-      "PDF export with branding",
-      "Priority data refresh",
-      "Email support",
-    ],
-    cta: "Start free trial",
-    hl: true,
-    tag: "Most popular",
-  },
-  {
-    name: "Annual",
-    price: "£360",
-    priceSub: "/year",
-    sub: "Save 25% paid annually",
-    features: [
-      "Everything in Analyser",
-      "Save 25% · pay annually",
-      "Quarterly market briefing",
-      "Phone support",
-      "Early access to new modules",
-    ],
-    cta: "Start free trial",
-  },
-];
+  const card = (p: BillingPlan, hl: boolean, tag?: string) => {
+    const perMonth = p.interval === "year" ? Math.round(p.pricePence / 12) : p.pricePence;
+    const bonus = p.monthlyCreditPence - perMonth;
+    return (
+      <div key={p.code} className={"plan" + (hl ? " hl" : "")}>
+        {tag && <div className="plan-tag">{tag}</div>}
+        <div className="plan-name">{p.name}</div>
+        <div className="plan-price-row">
+          <span className="plan-price">{formatGbp(p.pricePence).replace(".00", "")}</span>
+          <span className="plan-price-sub">/{p.interval === "year" ? "year" : "month"}</span>
+        </div>
+        <div className="plan-sub">
+          {formatGbp(p.monthlyCreditPence).replace(".00", "")} of credit every month{bonus > 0 ? ` (${Math.round((bonus / perMonth) * 100)}% bonus)` : ""} · ≈ {fmtReports(reportsFor(p.monthlyCreditPence))}
+        </div>
+        <ul className="plan-features">
+          <li><Icon name="check" size={13} color="var(--sage-500)" /> {formatGbp(p.monthlyCreditPence).replace(".00", "")} credit a month, spent at the standard rate</li>
+          <li><Icon name="check" size={13} color="var(--sage-500)" /> Full 10-section reports (optional PMI second opinion), Market Explorer, listing checks</li>
+          <li><Icon name="check" size={13} color="var(--sage-500)" /> Deal pipeline, PDF export, saved reports</li>
+          {perkLines(p.perks).map((l) => (
+            <li key={l}><Icon name="check" size={13} color="var(--sage-500)" /> {l}</li>
+          ))}
+          <li><Icon name="check" size={13} color="var(--sage-500)" /> Cancel any time · unused plan credit resets monthly</li>
+        </ul>
+        <SubscribeButton planCode={p.code} label={signedIn ? `Choose ${p.name}` : "Start free"} className={"btn " + (hl ? "btn-primary" : "btn-ghost")} signedIn={signedIn} signupHref={signupHref} current={currentPlanCode === p.code} />
+      </div>
+    );
+  };
 
-export function Pricing({ signupHref = "/signup" }: { signupHref?: string }) {
   return (
     <section className="pricing section" id="pricing">
       <div className="wrap-narrow">
-        <div className="pricing-head">
-          <div className="eyebrow">Pricing</div>
-          <h2>
-            One report. £0.
-            <br />
-            Unlimited reports. £39.99.
-          </h2>
-          <p className="lede">
-            No sales call to start. Run your first property free, then subscribe
-            if you want more.
-          </p>
-        </div>
+        {!compact && (
+          <div className="pricing-head">
+            <div className="eyebrow">Pricing</div>
+            <h2>
+              {formatGbp(settings.welcomeGrantPence).replace(".00", "")} of credit free.
+              <br />
+              Then pay for what you use.
+            </h2>
+            <p className="lede">
+              Every account starts with {formatGbp(settings.welcomeGrantPence).replace(".00", "")} of credit — about {fmtReports(reportsFor(settings.welcomeGrantPence))} — and no card. A property report uses about {formatGbp(report)} of plan credit (about {formatGbp(enhanced)} with the optional PMI second opinion). Subscribe for monthly credit, or top up as you go.
+            </p>
+          </div>
+        )}
         <div className="pricing-grid">
-          {PLANS.map((p) => (
-            <div key={p.name} className={"plan" + (p.hl ? " hl" : "")}>
-              {p.tag && <div className="plan-tag">{p.tag}</div>}
-              <div className="plan-name">{p.name}</div>
+          {!signedIn && (
+            <div className="plan">
+              <div className="plan-name">Free to start</div>
               <div className="plan-price-row">
-                <span className="plan-price">{p.price}</span>
-                {p.priceSub && <span className="plan-price-sub">{p.priceSub}</span>}
+                <span className="plan-price">{formatGbp(settings.welcomeGrantPence).replace(".00", "")}</span>
+                <span className="plan-price-sub">credit, no card</span>
               </div>
-              <div className="plan-sub">{p.sub}</div>
+              <div className="plan-sub">≈ {fmtReports(reportsFor(settings.welcomeGrantPence))} · then top up or subscribe</div>
               <ul className="plan-features">
-                {p.features.map((f) => (
-                  <li key={f}>
-                    <Icon name="check" size={13} color="var(--sage-500)" /> {f}
-                  </li>
-                ))}
+                <li><Icon name="check" size={13} color="var(--sage-500)" /> Full 10-section report</li>
+                <li><Icon name="check" size={13} color="var(--sage-500)" /> Market Explorer: UK area rankings</li>
+                <li><Icon name="check" size={13} color="var(--sage-500)" /> Paste any Rightmove, OnTheMarket or Airbnb link</li>
+                <li><Icon name="check" size={13} color="var(--sage-500)" /> Live comparables, forecast &amp; risk</li>
+                <li><Icon name="check" size={13} color="var(--sage-500)" /> Top-ups from {formatGbp(settings.topupPresetsPence[0] ?? 1000).replace(".00", "")}</li>
               </ul>
-              <Link
-                href={signupHref}
-                className={"btn " + (p.hl ? "btn-primary" : "btn-ghost")}
-                style={{ width: "100%", justifyContent: "center" }}
-              >
-                {p.cta} <Icon name="arrow" size={14} />
-              </Link>
+              <a href={signupHref} className="btn btn-ghost" style={{ width: "100%", justifyContent: "center" }}>
+                Start free <Icon name="arrow" size={14} />
+              </a>
             </div>
-          ))}
+          )}
+          {monthly.map((p, i) => card(p, p.code === "pro", p.code === "pro" ? "Most popular" : i === monthly.length - 1 ? "Best value" : undefined))}
+          {annual && card(annual, false, "Save 25%")}
         </div>
         <div className="pricing-foot muted">
-          All prices ex VAT · Cancel any time, no contract · UK businesses can pay
-          annually by invoice
+          All prices ex VAT · Cancel any time, no contract · Plan credit resets each month; top-up credit never expires but is spent at {settings.spendRates.topup}× the plan rate (a report costs about {formatGbp(topupReport)} of top-up credit vs {formatGbp(report)} of plan credit).
         </div>
       </div>
     </section>
