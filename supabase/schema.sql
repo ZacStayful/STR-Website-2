@@ -461,13 +461,15 @@ create table if not exists public.unit_costs (
   provider text not null,
   unit text not null,
   label text not null,
-  unit_cost_pence numeric(12,4) not null default 0,   -- our real cost per unit
+  unit_cost_pence numeric(16,8) not null default 0,   -- our real cost per unit (per-token prices need 8 decimals)
   markup numeric(6,2) not null default 5,             -- base charge = unit_cost × markup
   notes text,
   updated_at timestamptz not null default now(),
   updated_by text,
   primary key (provider, unit)
 );
+-- Per-token prices are fractions of a thousandth of a penny; 4 decimals rounded them to 0.
+alter table public.unit_costs alter column unit_cost_pence type numeric(16,8);
 alter table public.unit_costs enable row level security;   -- no policies: service role only (raw costs never reach a browser)
 
 -- ── Small key/value settings ──
@@ -521,13 +523,14 @@ create table if not exists public.credit_transactions (
   provider text,
   unit text,
   quantity numeric(14,4),
-  unit_cost_pence numeric(12,4),
+  unit_cost_pence numeric(16,8),
   markup numeric(6,2),
   raw_cost_pence numeric(14,4),
   description text,
   provider_call_id bigint,
   metadata jsonb
 );
+alter table public.credit_transactions alter column unit_cost_pence type numeric(16,8);
 create index if not exists credit_transactions_user_at_idx on public.credit_transactions (user_id, at desc);
 create index if not exists credit_transactions_action_idx on public.credit_transactions (action_id) where action_id is not null;
 alter table public.credit_transactions enable row level security;
