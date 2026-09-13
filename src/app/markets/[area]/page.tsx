@@ -5,13 +5,16 @@ import { getMarketAccess, requireMarketAccess } from "@/lib/market/gate";
 import { areaMetaForSlug } from "@/lib/market/areas";
 import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "../_components/product/MarketExplorerProductPage";
-import { ExplorerShell } from "../_components/explorer/ExplorerShell";
+import { MarketPage } from "../_components/explorer/v2/market/MarketPage";
 import { loadExplorerUser } from "../_lib/loadExplorerUser";
 import { isSortKey } from "@/lib/market/rank";
+import { isTabKey } from "@/lib/market/tab-model";
 
-// Deep link into the explorer with one area's drawer open. Members-only and
-// rendered per request; the metadata is static (no live figures) because it
-// resolves even for signed-out visitors, who get the product page.
+// One market as a full page: overview, sub-markets, listings, occupancy,
+// revenue, rates, seasonality, competition, licensing, long-let vs
+// short-let and the member's deals. Members-only and rendered per request;
+// the metadata is static (no live figures) because it resolves even for
+// signed-out visitors, who get the product page.
 export async function generateMetadata({ params }: { params: Promise<{ area: string }> }): Promise<Metadata> {
   const { area: slug } = await params;
   const meta = areaMetaForSlug(slug);
@@ -33,7 +36,7 @@ export default async function AreaPage({
   searchParams,
 }: {
   params: Promise<{ area: string }>;
-  searchParams: Promise<{ sort?: string; district?: string }>;
+  searchParams: Promise<{ sort?: string; district?: string; tab?: string }>;
 }) {
   const { area: slug } = await params;
   const meta = areaMetaForSlug(slug);
@@ -45,25 +48,24 @@ export default async function AreaPage({
   if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort, district }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
-  const { cards, regions, national } = snapshot;
-  const hasData = cards.some((c) => c.code === meta.code);
-  // ?district=NG7 opens a sub-market inside the area; anything that is not one of its districts is ignored.
+  const [{ sort, district, tab }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
+  const { cards } = snapshot;
+  const card = cards.find((c) => c.code === meta.code) ?? null;
+  // ?district=NG7 opens a sub-market inside the area; anything that is not one of its districts is ignored by the page.
   const initialDistrict = typeof district === "string" && /^[A-Z]{1,2}\d[A-Z\d]?$/i.test(district) ? district.toUpperCase() : null;
 
   return (
-    <ExplorerShell
+    <MarketPage
+      card={card}
+      areaName={meta.name}
       cards={cards}
-      regions={regions}
-      national={national}
       goals={user.goals}
       savedAreas={user.savedAreas}
       userEmail={user.email}
       alertWeekly={user.alertWeekly}
       sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
-      initialArea={meta.code}
-      initialAreaName={hasData ? null : meta.name}
+      initialTab={isTabKey(tab) ? tab : "overview"}
       initialDistrict={initialDistrict}
       initialSort={isSortKey(sort) ? sort : "stayful"}
     />
