@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { Icon } from "@/lib/icons";
 import { Pricing } from "@/components/marketing-v3/Pricing";
-import { getSampleArea } from "@/lib/market/cached";
+import { getNationalSeries, getSampleArea } from "@/lib/market/cached";
 import { STR_LICENSING } from "@/lib/data/str-licensing";
 import { ProductHeroVisual } from "./ProductHeroVisual";
 import { ProductWalkthrough } from "./ProductWalkthrough";
 import { ProductFaq } from "./ProductFaq";
 import { SampleArea } from "./SampleArea";
 import { MarketPulse } from "../explorer/MarketPulse";
-import { fetchMarketTrends } from "@/lib/market/trends-client";
 
 const SIGNUP = "/signup?next=/markets";
 const LOGIN = "/login?redirect=/markets";
@@ -20,7 +19,7 @@ const LOGIN = "/login?redirect=/markets";
  * ONE live sample area — never the full dataset.
  */
 export async function MarketExplorerProductPage() {
-  const [sample, trends] = await Promise.all([getSampleArea(), fetchMarketTrends()]);
+  const [sample, national] = await Promise.all([getSampleArea(), getNationalSeries().catch(() => [])]);
   const licensingEntries = Object.keys(STR_LICENSING).length;
   const areaCount = sample?.totalAreas ?? null;
   const reportCount = sample?.totalSamples ?? null;
@@ -107,13 +106,13 @@ export async function MarketExplorerProductPage() {
       {sample?.card.score && <SampleArea sample={sample} />}
 
       {/* ── Nationwide pulse (real, national-only figures) ── */}
-      {trends && (
+      {national.length > 0 && (
         <section className="section-tight mxp-pulse-section">
           <div className="wrap-narrow">
             <div className="eyebrow">Live right now</div>
             <h2>Is the UK market getting stronger?</h2>
             <p className="lede">The explorer watches every analysis run through Stayful. This is the nationwide picture today; members see it area by area.</p>
-            <div className="mx mxp-sample"><MarketPulse national={trends.national} /></div>
+            <div className="mx mxp-sample"><MarketPulse national={national} /></div>
           </div>
         </section>
       )}

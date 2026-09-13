@@ -2,7 +2,6 @@ import 'server-only';
 
 import { getAreaCards, getAreaCardsWithin } from '../market/cached';
 import { keepAlive } from '../keep-alive';
-import { fetchMarketTrends } from '../market/trends-client';
 import { areaTrend } from '../market/trend';
 import { ask, listingPerformance, nearbyListings, postcodeRevenue, strMarket, type BrokerContext, type ResolveResult } from '../broker';
 import { withTimeout } from '../timeout';
@@ -11,6 +10,7 @@ import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type FinanceDefaults } f
 import type { ListingKind } from './types';
 import { postcodeAreaOf } from './normalise';
 import type { QuickArea, QuickEstimate, QuickEstimateFigures } from './quick-types';
+import { explainNoEstimate, type NoEstimateInput } from './no-estimate';
 
 export interface QuickInput {
   kind: ListingKind;
@@ -50,17 +50,14 @@ function unavailable<T>(): ResolveResult<T> {
 
 async function areaSlice(code: string | null, bedrooms: number, budgetMs: number | null, onTimeout: () => void): Promise<QuickArea | null> {
   if (!code) return null;
-  const [cards, trends] = await Promise.all([
-    budgetMs === null ? getAreaCards().catch(() => []) : getAreaCardsWithin(budgetMs),
-    budgetMs === null ? fetchMarketTrends().catch(() => null) : withTimeout(fetchMarketTrends().catch(() => null), budgetMs, null),
-  ]);
+  const cards = budgetMs === null ? await getAreaCards().catch(() => []) : await getAreaCardsWithin(budgetMs);
   if (cards === null) {
     onTimeout();
     return null;
   }
   const card = cards.find((c) => c.code === code);
   if (!card) return null;
-  const t = trends ? areaTrend(trends.areas?.[code], { excludeLast: true }) : null;
+  const t = areaTrend(card.series, { excludeLast: true });
   const bs = card.byBedrooms.find((b) => b.bedrooms === bedrooms) ?? null;
   return {
     code: card.code,
@@ -70,7 +67,8 @@ async function areaSlice(code: string | null, bedrooms: number, budgetMs: number
     grade: card.score?.grade ?? null,
     gradeLabel: card.score?.gradeLabel ?? null,
     confidence: { tier: card.confidence.tier, label: card.confidence.label },
-    competition: card.competition ? { label: card.competition.label, percentile: card.competition.percentile } : null,
+    competition: card.competition ? { label: card.competition.label, intensity: card.competition.intensity, tone: card.competition.tone } : null,
+    seasonality: card.seasonality ? { score: card.seasonality.score, label: card.seasonality.label } : null,
     directBooking: card.directBooking ? { score: card.directBooking.score, label: card.directBooking.label } : null,
     licensing: { status: card.licensing.status, headline: card.licensing.headline },
     managedByStayful: card.managedByStayful,
@@ -148,8 +146,10 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
 
   // Last resort: PMI's area snapshot for the outcode (3 credits, cached a week).
   let pmiMarket: QuickEstimate['pmiMarket'] = null;
+  let pmiStatus: NoEstimateInput['pmi'] = 'not-tried';
   if (!estimate && outcode) {
     const m = await bounded(ask(strMarket, { outcode, bedrooms: input.bedrooms }, ctx), QUICK_BUDGET_MS.pmiMarket);
+    pmiStatus = m.value ? 'no-data' : m.unavailable ? 'skipped' : 'no-data';
     if (m.value) {
       const bb = m.value.byBedrooms.find((b) => b.bedrooms === input.bedrooms);
       pmiMarket = { adr: m.value.adr, occupancy: m.value.occupancy, revenueAnnual: m.value.revenueAnnual, activeListings: m.value.activeListings, supplyGrowthPct: m.value.supplyGrowthPct, grade: m.value.grade, updatedAt: m.updatedAt };
@@ -158,6 +158,23 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
     } else if (m.unavailable) limited = true;
   }
 
+  // No figure from any rung: say exactly what each one needed and found.
+  const noEstimate = estimate
+    ? null
+    : explainNoEstimate({
+        postcode: input.postcode ?? null,
+        outcode,
+        bedrooms: input.bedrooms,
+        areaName: area?.name ?? null,
+        postcodeSamples: !input.postcode ? null : pcRes && !pcRes.unavailable ? (pc?.samples ?? 0) : null,
+        sameSizeEarning: nearby ? nearby.filter((l) => l.bedrooms === input.bedrooms && l.annualRevenue > 0).length : null,
+        nearbyTotal: nearby ? nearby.length : null,
+        nearbySkipped: Boolean(hasPoint && nearbyRes?.unavailable),
+        areaBedroomSamples: area?.bedroomStat?.samples ?? 0,
+        areaSamples: area?.headline.totalSamples ?? 0,
+        pmi: pmiStatus,
+      });
+
   let deal: QuickEstimate['deal'] = null;
   if (estimate && input.price && input.price > 0) {
     const base = { grossRevenue: estimate.grossRevenue, adr: estimate.adr ?? 0, bedrooms: input.bedrooms, finance: { ...DEFAULT_FINANCE, ...(input.finance ?? {}) } };
@@ -165,5 +182,5 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
     if (input.kind === 'rent') deal = rentToRentDeal(input.price, base);
   }
 
-  return { area, estimate, competitors, tracked, trackedMissing, pmiMarket, deal, limited };
+  return { area, estimate, competitors, tracked, trackedMissing, pmiMarket, deal, limited, noEstimate };
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { Bar, BarChart, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Cell, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { RATING_FLOOR, RATING_GOOD, REVIEW_THRESHOLD } from "@/lib/market/competition";
 import type { AreaTrend } from "@/lib/market/trend";
 import { formatMonth, type TrendResult } from "@/lib/market/trend";
 import { gbp } from "@/lib/market/format";
@@ -32,7 +33,12 @@ export function TrendCharts({ trend, name }: { trend: AreaTrend; name: string })
     adr: b.reports >= MIN ? b.avg_adr : null,
     occ: b.reports >= MIN ? b.avg_occupancy : null,
     rev: b.reports >= MIN ? b.avg_gross_revenue : null,
+    rated: b.rated_reports ?? 0,
+    reviews: (b.rated_reports ?? 0) >= MIN ? b.avg_review_count ?? null : null,
+    rating: (b.rated_reports ?? 0) >= MIN ? b.avg_rating ?? null : null,
   }));
+  const hasCompetition = data.some((d) => d.reviews !== null || d.rating !== null);
+  const axis = { axisLine: false, tickLine: false, tick: { fill: "#7a8274", fontSize: 11 }, interval: "preserveStartEnd" as const };
   const tip = { borderRadius: 10, border: "1px solid #e4e7dc", fontSize: 12 };
   return (
     <div className="mx-panel">
@@ -79,6 +85,43 @@ export function TrendCharts({ trend, name }: { trend: AreaTrend; name: string })
           </div>
         );
       })}
+      <div className="mx-trend-chart-title" style={{ marginTop: 14, fontSize: "0.86rem" }}>Competition over time</div>
+      <p style={{ color: "var(--mx-muted)", marginTop: 2 }}>The average review count and rating of the comparables analysed by the reports run in each month. {REVIEW_THRESHOLD}+ reviews is an established market; {RATING_GOOD}★ and above with fewer reviews is an opportunity.</p>
+      {hasCompetition ? (
+        <>
+          <div className="mx-trend-kpis">
+            <Arrow t={trend.reviews} label="avg reviews" fmt={(v) => String(Math.round(v))} />
+            <Arrow t={trend.rating} label="avg rating" fmt={(v) => `${v.toFixed(2)}★`} />
+          </div>
+          <div className="mx-trend-chart" role="img" aria-label={`Average review count of comparables by month for ${name}`}>
+            <div className="mx-trend-chart-title">Average reviews per comparable</div>
+            <ResponsiveContainer width="100%" height={130}>
+              <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="month" {...axis} />
+                <YAxis hide domain={[0, (max: number) => Math.max(max * 1.15, REVIEW_THRESHOLD * 1.15)]} />
+                <ReferenceLine y={REVIEW_THRESHOLD} stroke="#9a7b2e" strokeDasharray="4 3" label={{ value: `${REVIEW_THRESHOLD} reviews`, position: "insideTopRight", fill: "#9a7b2e", fontSize: 10 }} />
+                <Tooltip contentStyle={tip} formatter={(v) => [String(Math.round(Number(v))), "Avg reviews"]} labelFormatter={(_, p) => formatMonth(String(p?.[0]?.payload?.key ?? ""))} />
+                <Line type="monotone" dataKey="reviews" stroke={INK} strokeWidth={2} dot={{ r: 3, fill: INK, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="mx-trend-chart" role="img" aria-label={`Average rating of comparables by month for ${name}`}>
+            <div className="mx-trend-chart-title">Average rating</div>
+            <ResponsiveContainer width="100%" height={130}>
+              <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <XAxis dataKey="month" {...axis} />
+                <YAxis hide domain={[4.2, 5]} />
+                <ReferenceLine y={RATING_GOOD} stroke="#3f7a4a" strokeDasharray="4 3" label={{ value: `${RATING_GOOD}★`, position: "insideTopRight", fill: "#3f7a4a", fontSize: 10 }} />
+                <ReferenceLine y={RATING_FLOOR} stroke="#b3452f" strokeDasharray="4 3" label={{ value: `${RATING_FLOOR}★`, position: "insideBottomRight", fill: "#b3452f", fontSize: 10 }} />
+                <Tooltip contentStyle={tip} formatter={(v) => [`${Number(v).toFixed(2)}★`, "Avg rating"]} labelFormatter={(_, p) => formatMonth(String(p?.[0]?.payload?.key ?? ""))} />
+                <Line type="monotone" dataKey="rating" stroke={INK} strokeWidth={2} dot={{ r: 3, fill: INK, strokeWidth: 0 }} connectNulls isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      ) : (
+        <p className="mx-muted-p">No month yet has {MIN} reports with review data; the competition lines appear as reports come in.</p>
+      )}
       <p className="mx-disclaimer" style={{ marginTop: 10 }}>Months with fewer than {MIN} reports are drawn hollow and excluded from the trend arrows; the current month is shown but not counted until it is complete.</p>
     </div>
   );

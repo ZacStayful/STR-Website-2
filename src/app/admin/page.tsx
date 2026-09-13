@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getMarketSnapshot } from "@/lib/market/cached";
 import { isAdminEmail } from "@/lib/admin";
 import { spendSummary } from "@/lib/broker/store";
 import { pmiAccount, pmiConfigured } from "@/lib/broker/providers/pmi";
@@ -33,21 +34,10 @@ function fmtDate(iso: string | null): string {
 }
 
 async function getMarketHealth(): Promise<{ areas: number; samples: number } | null> {
-  const secret = process.env.INTERNAL_API_SECRET;
-  if (!secret) return null;
-  const base = (process.env.MARKET_STATS_API_URL ?? "https://stayful-str-estimate-software.vercel.app").replace(/\/$/, "");
   try {
-    const r = await fetch(`${base}/api/market-stats`, {
-      headers: { "x-internal-secret": secret },
-      next: { revalidate: 300 },
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    const areas = Array.isArray(d.areas) ? d.areas : [];
-    return {
-      areas: areas.length,
-      samples: areas.reduce((s: number, a: { total_sample_count?: number }) => s + (a.total_sample_count ?? 0), 0),
-    };
+    const snapshot = await getMarketSnapshot();
+    if (snapshot.cards.length === 0) return null;
+    return { areas: snapshot.cards.length, samples: snapshot.totalReports };
   } catch {
     return null;
   }

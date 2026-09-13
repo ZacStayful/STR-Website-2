@@ -30,9 +30,14 @@ test('personal and distance sorts use the personal score', () => {
   assert.deepEqual(sortRows(rows, 'distance').map((r) => r.card.code), ['B', 'A', 'C']);
 });
 
-test('least competitive puts low percentiles first', () => {
-  const rows = [row('A', { competition: { percentile: 80 } }), row('B', { competition: { percentile: 10 } }), row('C')];
+test('least competitive puts low intensity first', () => {
+  const rows = [row('A', { competition: { intensity: 80 } }), row('B', { competition: { intensity: 10 } }), row('C')];
   assert.deepEqual(sortRows(rows, 'competition').map((r) => r.card.code), ['B', 'A', 'C']);
+});
+
+test('steadiest income sorts by the seasonality score', () => {
+  const rows = [row('A', { seasonality: { score: 40 } }), row('B', { seasonality: { score: 90 } }), row('C')];
+  assert.deepEqual(sortRows(rows, 'seasonality').map((r) => r.card.code), ['B', 'A', 'C']);
 });
 
 test('saved-first pins starred areas, ties fall back to confidence then score then name', () => {

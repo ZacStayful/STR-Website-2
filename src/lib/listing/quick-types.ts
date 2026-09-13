@@ -5,6 +5,7 @@
  */
 import type { Deal } from './deal.ts';
 import type { CompetitorSummary, TrackedListing } from './competitors.ts';
+import type { NoEstimate } from './no-estimate.ts';
 
 /** Property Market Intel's own projection for the property (full reports only). */
 export interface SecondOpinion {
@@ -28,7 +29,9 @@ export interface QuickArea {
   grade: string | null;
   gradeLabel: string | null;
   confidence: { tier: string; label: string };
-  competition: { label: string; percentile: number } | null;
+  /** Review-based competition band; older stored rows carry `percentile` instead of `intensity`. */
+  competition: { label: string; intensity?: number; tone?: string; percentile?: number } | null;
+  seasonality?: { score: number; label: string } | null;
   directBooking: { score: number; label: string } | null;
   licensing: { status: string; headline: string };
   managedByStayful: boolean;
@@ -68,4 +71,6 @@ export interface QuickEstimate {
   deal: Deal | null;
   /** A lookup was skipped (provider budget spent, or it took longer than the request could wait); the UI says so instead of showing nothing. */
   limited: boolean;
+  /** Why there is no estimate, rung by rung (only when `estimate` is null; older stored rows lack it). */
+  noEstimate?: NoEstimate | null;
 }

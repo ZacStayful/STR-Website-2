@@ -709,3 +709,31 @@
   .mx-vrow .mx-fitring, .mx-vrow-save { display: none; }
   .mx-chip-text { max-width: 160px; }
 }
+
+/* ── Regions › areas › districts ── */
+.mx-breadcrumb { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 0.74rem; color: var(--mx-muted); margin-bottom: 4px; }
+.mx-breadcrumb-item { display: inline-flex; align-items: center; gap: 2px; }
+.mx-breadcrumb button { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: var(--mx-sage-deep-2); cursor: pointer; }
+.mx-breadcrumb button:hover { text-decoration: underline; }
+.mx-breadcrumb b { font-weight: 600; color: var(--mx-ink); }
+.mx-vrow-stats { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 0.78rem; color: var(--mx-ink); font-variant-numeric: tabular-nums; }
+.mx-vrow-stats span + span::before { content: "·"; color: var(--mx-muted); margin-right: 8px; }
+.mx-vrow-stats .mx-key-chip::before { content: none; }
+.mx-vrow--region { grid-template-columns: 30px minmax(0, 1fr) auto; }
+.mx-vrow--district { grid-template-columns: minmax(0, 1fr) auto; padding: 10px 12px; }
+.mx-vrow--early { background: #fafbf7; }
+.mx-vrow--early .mx-vrow-title strong, .mx-vrow--early .mx-vrow-big { color: var(--mx-muted); }
+.mx-districts { border: 1px solid var(--mx-line); border-radius: 12px; overflow: hidden; margin-top: 8px; }
+.mx-districts .mx-vrow:last-child { border-bottom: 0; }
+.mx-key-chip { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--mx-line); font-size: 0.68rem; font-weight: 600; color: var(--mx-ink); background: #fff; }
+.mx-key-chip--works { border-color: var(--mx-works); color: var(--mx-works); }
+.mx-key-chip--no { border-color: var(--mx-no); color: var(--mx-no); }
+.mx-key-chip--tight { border-color: var(--mx-tight); color: var(--mx-tight); }
+.mx-key-chip--info { border-color: #4e6f8f; color: #4e6f8f; }
+.mx-season-bars { margin-top: 6px; }
+.mx-why-list { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 6px; }
+.mx-why-list li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; font-size: 0.8rem; color: var(--mx-ink); }
+.mx-why-list li b { font-weight: 600; }
+.mx-why-list li small { display: block; color: var(--mx-muted); }
+.mx-why-list .mx-why-short { color: var(--mx-no); }
+.mx-why-list .mx-why-other { color: var(--mx-muted); }

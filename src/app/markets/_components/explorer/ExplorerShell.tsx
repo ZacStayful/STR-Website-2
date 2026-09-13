@@ -11,9 +11,12 @@ import { TopBar } from "./TopBar";
 import { GoalsModal } from "./GoalsModal";
 import { AreaList } from "./AreaList";
 import { DetailDrawer } from "./DetailDrawer";
-import { DEFAULT_FILTERS, type AreaCardData, type ExplorerRow, type Filters, type MapMetric, type MarketGoals, type SortKey } from "./types";
+import { DistrictDrawer } from "./DistrictDrawer";
+import { RegionList } from "./RegionList";
+import { DEFAULT_FILTERS, type AreaCardData, type Crumb, type ExplorerRow, type Filters, type MapMetric, type MarketGoals, type RegionCardData, type SortKey } from "./types";
 import { areaTrend, pulse, trendLabel } from "@/lib/market/trend";
-import type { MarketTrendsResponse } from "@/lib/market/types";
+import type { MonthBucket } from "@/lib/market/types";
+import { regionForSlug } from "@/lib/market/regions";
 import { ListingsPane } from "./ListingsPane";
 import { ListingDrawer } from "./ListingDrawer";
 import { ListingCompare } from "./ListingCompare";
@@ -26,14 +29,17 @@ const DISMISS_KEY = "mx_goals_dismissed";
 
 export function ExplorerShell({
   cards,
+  regions = [],
+  national = [],
   goals,
   savedAreas,
   initialArea = null,
   initialAreaName = null,
+  initialRegion = null,
+  initialDistrict = null,
   initialSort = "stayful",
   initialQuery = "",
   userEmail = null,
-  trends = null,
   alertWeekly = true,
   sourcingAlerts = false,
   listings: initialListings = [],
@@ -42,8 +48,13 @@ export function ExplorerShell({
   initialCheckUrl = null,
 }: {
   cards: AreaCardData[];
-  /** Monthly series from /api/market-trends, or null when unavailable. */
-  trends?: MarketTrendsResponse | null;
+  /** Region cards (the top level) and the nationwide monthly series, from the same snapshot. */
+  regions?: RegionCardData[];
+  national?: MonthBucket[];
+  /** Region slug to open on, "all" for the flat area list, null for the region step. */
+  initialRegion?: string | "all" | null;
+  /** Postcode district to open inside `initialArea` (deep link). */
+  initialDistrict?: string | null;
   alertWeekly?: boolean;
   sourcingAlerts?: boolean;
   /** A listing URL prefilled in the search box (from the sourcing email's "Add to pipeline"); the member still clicks Check. */
@@ -65,6 +76,17 @@ export function ExplorerShell({
 }) {
   const [selected, setSelected] = useState<string | null>(initialArea);
   const [hover, setHover] = useState<string | null>(null);
+  // Regions › areas › districts. A deep-linked area lands inside its region;
+  // otherwise the member starts at the region step (or the flat list on ?region=all).
+  const [region, setRegion] = useState<string | "all" | null>(() => {
+    if (initialArea) return cards.find((c) => c.code === initialArea)?.region.slug ?? initialRegion ?? "all";
+    return initialRegion;
+  });
+  const [district, setDistrict] = useState<string | null>(() => {
+    if (!initialArea || !initialDistrict) return null;
+    return cards.find((c) => c.code === initialArea)?.districts.some((d) => d.code === initialDistrict) ? initialDistrict : null;
+  });
+  const [regionHover, setRegionHover] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>({ ...DEFAULT_FILTERS, q: initialQuery });
   const [sort, setSort] = useState<SortKey>(isSortKey(initialSort) ? initialSort : "stayful");
   const [compare, setCompare] = useState<string[]>([]);
@@ -107,9 +129,9 @@ export function ExplorerShell({
         card,
         personal: goals ? personaliseScore(personalInputFor(card, goals), goals) : null,
         saved: saved.has(card.code),
-        trend: trends ? areaTrend(trends.areas[card.code]) : null,
+        trend: areaTrend(card.series),
       })),
-    [cards, goals, saved, trends],
+    [cards, goals, saved],
   );
 
   // The trend sort only makes sense once a handful of areas have a direction;
@@ -120,6 +142,7 @@ export function ExplorerShell({
   const q = filters.q.trim().toLowerCase();
   const visible = useMemo(() => {
     const filtered = rows.filter(({ card: c, saved: isSaved }) => {
+      if (region && region !== "all" && c.region.slug !== region) return false;
       if (q && !(c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q))) return false;
       if (filters.region !== "any" && c.licensing.nation !== filters.region) return false;
       if (!hasBeds(c.headline.bedroomsAvailable, filters.beds)) return false;
@@ -130,22 +153,64 @@ export function ExplorerShell({
       return true;
     });
     return sortRows(filtered, effectiveSort, filters.savedOnly);
-  }, [rows, q, filters, bedroom, effectiveSort]);
+  }, [rows, q, filters, bedroom, effectiveSort, region]);
 
   const byCode = useMemo(() => new Map(rows.map((r) => [r.card.code, r])), [rows]);
   const selectedRow = selected ? byCode.get(selected) ?? null : null;
+  const districtRow = selectedRow && district ? selectedRow.card.districts.find((d) => d.code === district) ?? null : null;
 
-  // Keep the URL in step with the selection (deep links survive refresh/share).
+  // Keep the URL in step with the level and selection (deep links survive refresh/share).
+  const syncUrl = useCallback((code: string | null, reg: string | "all" | null, dist: string | null) => {
+    try {
+      const row = code ? byCode.get(code) : null;
+      const u = new URL(window.location.href);
+      u.pathname = row ? `/markets/${row.card.slug}` : "/markets";
+      u.searchParams.delete("region");
+      u.searchParams.delete("district");
+      if (!row && reg) u.searchParams.set("region", reg);
+      if (row && dist) u.searchParams.set("district", dist);
+      window.history.replaceState(null, "", u.toString());
+    } catch { /* ignore */ }
+  }, [byCode]);
+
   const select = useCallback(
     (code: string | null) => {
       setSelected(code);
-      if (code) setMobilePane("list");
+      setDistrict(null);
       const row = code ? byCode.get(code) : null;
-      const path = row ? `/markets/${row.card.slug}` : "/markets";
-      try { window.history.replaceState(null, "", `${path}${window.location.search}`); } catch { /* ignore */ }
+      // Landing on an area from the map or a deep link puts its region on the trail.
+      const nextRegion = row ? row.card.region.slug : region;
+      if (row) setRegion(nextRegion);
+      if (code) setMobilePane("list");
+      syncUrl(code, nextRegion, null);
     },
-    [byCode],
+    [byCode, region, syncUrl],
   );
+
+  const openRegion = useCallback((slug: string | "all" | null) => {
+    setRegion(slug);
+    setSelected(null);
+    setDistrict(null);
+    setMobilePane("list");
+    syncUrl(null, slug, null);
+  }, [syncUrl]);
+
+  const openDistrict = useCallback((code: string | null) => {
+    setDistrict(code);
+    setMobilePane("list");
+    syncUrl(selected, region, code);
+  }, [selected, region, syncUrl]);
+
+  const regionMeta = region && region !== "all" ? regionForSlug(region) : null;
+  const crumbs: Crumb[] = [
+    { label: "Regions", onClick: () => openRegion(null) },
+    ...(region === "all" ? [{ label: "All areas", onClick: selectedRow ? () => openRegion("all") : undefined }] : []),
+    ...(regionMeta ? [{ label: regionMeta.name, onClick: selectedRow ? () => openRegion(regionMeta.slug) : undefined }] : []),
+    ...(selectedRow ? [{ label: selectedRow.card.name, onClick: districtRow ? () => openDistrict(null) : undefined }] : []),
+    ...(districtRow ? [{ label: districtRow.code }] : []),
+  ];
+  // Every area on the map at the region step; only the region's areas once inside one.
+  const mapRows = region === null ? rows : visible;
 
   const updateSort = (s: SortKey) => {
     setSort(s);
@@ -237,7 +302,7 @@ export function ExplorerShell({
 
   const listingsShown = sidePane === "listings";
   const drawerShown = listingsShown ? !!activeListingRow : !!selectedRow || (!!initialAreaName && !!selected);
-  const nationalPulse = trends ? pulse(trends.national) : null;
+  const nationalPulse = national.length > 0 ? pulse(national) : null;
   const pulseLabel = nationalPulse && nationalPulse.enquiries.direction !== "insufficient" ? trendLabel(nationalPulse.enquiries.direction) : null;
 
   return (
@@ -268,7 +333,7 @@ export function ExplorerShell({
       <div className="mx-explorer-body">
         <div className="mx-explorer-map">
           <MapPane
-            rows={visible}
+            rows={mapRows}
             selected={selected}
             hover={hover}
             onSelect={select}
@@ -319,6 +384,15 @@ export function ExplorerShell({
               />
               </>
             )
+          ) : selectedRow && districtRow ? (
+            <DistrictDrawer
+              key={`${selectedRow.card.code}-${districtRow.code}`}
+              district={districtRow}
+              area={selectedRow.card}
+              bedroom={bedroom}
+              crumbs={crumbs}
+              onClose={() => openDistrict(null)}
+            />
           ) : selectedRow ? (
             <DetailDrawer
               row={selectedRow}
@@ -327,9 +401,21 @@ export function ExplorerShell({
               comparing={compare.includes(selectedRow.card.code)}
               compareDisabled={compare.length >= MAX_COMPARE}
               userEmail={userEmail}
+              crumbs={crumbs}
               onClose={() => select(null)}
               onToggleCompare={() => toggleCompare(selectedRow.card.code)}
               onToggleSaved={() => toggleSaved(selectedRow.card.code)}
+              onOpenDistrict={openDistrict}
+            />
+          ) : region === null && !q && !filters.savedOnly ? (
+            <RegionList
+              regions={regions}
+              sort={effectiveSort}
+              sortLabel={SORT_LABELS[effectiveSort]}
+              hover={regionHover}
+              onHover={setRegionHover}
+              onSelect={openRegion}
+              onAll={() => openRegion("all")}
             />
           ) : initialAreaName && selected ? (
             <aside className="mx-drawer">
@@ -344,12 +430,14 @@ export function ExplorerShell({
           ) : (
             <AreaList
               rows={visible}
-              total={rows.length}
+              total={region && region !== "all" ? rows.filter((r) => r.card.region.slug === region).length : rows.length}
               selected={selected}
               hover={hover}
               bedroom={bedroom}
               goals={goals}
               sortLabel={SORT_LABELS[effectiveSort]}
+              crumbs={crumbs}
+              scopeName={regionMeta?.name ?? null}
               onSelect={select}
               onHover={setHover}
               onToggleSaved={toggleSaved}

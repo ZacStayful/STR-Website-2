@@ -1,113 +1,104 @@
 /**
- * Competition intensity, RELATIVE to every other UK area in the explorer.
+ * Competition for a market, from the reviews of its comparable listings.
  *
- * Rather than guessing fixed thresholds, each area is percentile-ranked
- * against the others on the signals that describe how crowded and entrenched
- * a market is, then the percentiles are blended:
+ * Absolute bands, not a rank against other areas, so a label only changes
+ * when the market's own data changes. Two signals: the average review
+ * count of the comparables each report analysed (how established the
+ * hosts are) and their average rating (how well guests are served).
  *
- *   listing density   50   listings per km² around analysed properties
- *   review depth      30   average reviews per comparable (entrenched hosts)
- *   listing age       20   average years listed
+ *                     reviews ≥ 100        reviews < 100
+ *   rating ≥ 4.8      Competitive          Opportunity
+ *   4.6 ≤ rating < 4.8 Busy but beatable   Emerging
+ *   rating < 4.6      Busy but beatable    Weak
  *
- * A signal an area lacks is dropped and the remaining weights renormalised.
- * Higher percentile = more competitive. Labels by quartile of the blend:
- * Open (<25) · Moderate (<50) · Busy (<75) · Saturated. Self-calibrates as
- * data grows; null until at least MIN_AREAS areas carry a signal, because a
- * percentile among two areas means nothing.
+ * 100+ reviews is an established market. Under 100 with hosts rated 4.8+
+ * is the sweet spot: guests come and like it, and nobody owns it yet.
+ * Under 4.6 with few reviews is a market short-lets have not proved in.
+ * A missing rating counts as below the floor; missing reviews as none.
+ *
+ * `intensity` (0–100, higher = more competitive) keeps a number for the
+ * map ramp, the "least competitive" sort and the personal fit; reviews
+ * carry 70 points (full at 200) and rating 30 (4.4 → 5.0).
+ * Null until MIN_RATED_REPORTS reports carry review data.
  */
 
-export type CompetitionLabel = 'Open' | 'Moderate' | 'Busy' | 'Saturated';
+export type CompetitionLabel = 'Weak' | 'Emerging' | 'Opportunity' | 'Busy but beatable' | 'Competitive';
+export type CompetitionTone = 'no' | 'tight' | 'works' | 'info';
 
-export interface CompetitionComponent {
-  key: 'density' | 'reviews' | 'age';
-  label: string;
-  weight: number;
-  /** Raw area value, or null when unknown. */
-  value: number | null;
-  /** 0–100 rank among areas with this signal, or null when unknown. */
-  percentile: number | null;
-  detail: string;
-}
-
-export interface CompetitionRank {
-  percentile: number; // 0–100 blended, higher = more competitive
-  label: CompetitionLabel;
-  components: CompetitionComponent[];
-  sampleCount: number;
-  /** How many areas this ranking was computed against. */
-  areasRanked: number;
-}
+export const MIN_RATED_REPORTS = 3;
+export const REVIEW_THRESHOLD = 100;
+export const RATING_GOOD = 4.8;
+export const RATING_FLOOR = 4.6;
 
 export interface CompetitionInput {
-  code: string;
-  density: number | null;
+  rating: number | null;
   reviews: number | null;
-  age: number | null;
   sampleCount: number;
 }
 
-export const MIN_AREAS = 5;
-
-const WEIGHTS = { density: 50, reviews: 30, age: 20 } as const;
-
-export function competitionLabel(percentile: number): CompetitionLabel {
-  if (percentile < 25) return 'Open';
-  if (percentile < 50) return 'Moderate';
-  if (percentile < 75) return 'Busy';
-  return 'Saturated';
+export interface CompetitionBand {
+  label: CompetitionLabel;
+  tone: CompetitionTone;
+  intensity: number; // 0–100, higher = more competitive
+  rating: number | null;
+  reviews: number | null;
+  sampleCount: number;
+  explanation: string;
 }
 
-/** Percentile rank (0–100) of each value among the non-null values. Ties share a rank. */
-function percentiles(values: (number | null)[]): (number | null)[] {
-  const known = values.filter((v): v is number => v !== null);
-  if (known.length < 2) return values.map(() => null);
-  const sorted = [...known].sort((a, b) => a - b);
-  return values.map((v) => {
-    if (v === null) return null;
-    const below = sorted.filter((x) => x < v).length;
-    const equal = sorted.filter((x) => x === v).length;
-    // mid-rank for ties, scaled so the min is 0 and the max is 100
-    const rank = below + (equal - 1) / 2;
-    return Math.round((rank / (sorted.length - 1)) * 100);
-  });
+export const COMPETITION_LABELS: CompetitionLabel[] = ['Weak', 'Emerging', 'Opportunity', 'Busy but beatable', 'Competitive'];
+
+export function competitionLabelFor(rating: number | null, reviews: number | null): CompetitionLabel {
+  const r = rating ?? 0;
+  const n = reviews ?? 0;
+  if (n >= REVIEW_THRESHOLD) return r >= RATING_GOOD ? 'Competitive' : 'Busy but beatable';
+  if (r >= RATING_GOOD) return 'Opportunity';
+  if (r >= RATING_FLOOR) return 'Emerging';
+  return 'Weak';
 }
 
-function fmt(v: number | null, unit: string, dp = 0): string {
-  return v === null ? 'No data' : `${v.toFixed(dp)} ${unit}`;
-}
-
-export function rankCompetition(inputs: CompetitionInput[]): Map<string, CompetitionRank | null> {
-  const out = new Map<string, CompetitionRank | null>();
-  const withSignal = inputs.filter((i) => i.density !== null || i.reviews !== null || i.age !== null);
-  if (withSignal.length < MIN_AREAS) {
-    for (const i of inputs) out.set(i.code, null);
-    return out;
+export function competitionTone(label: CompetitionLabel): CompetitionTone {
+  switch (label) {
+    case 'Competitive': return 'info';
+    case 'Opportunity': return 'works';
+    case 'Weak': return 'no';
+    default: return 'tight';
   }
+}
 
-  const pDensity = percentiles(inputs.map((i) => i.density));
-  const pReviews = percentiles(inputs.map((i) => i.reviews));
-  const pAge = percentiles(inputs.map((i) => i.age));
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
-  inputs.forEach((i, idx) => {
-    const components: CompetitionComponent[] = [
-      { key: 'density', label: 'Listing density', weight: WEIGHTS.density, value: i.density, percentile: pDensity[idx], detail: fmt(i.density, 'listings / km²', 1) },
-      { key: 'reviews', label: 'Review depth', weight: WEIGHTS.reviews, value: i.reviews, percentile: pReviews[idx], detail: fmt(i.reviews, 'avg reviews per listing') },
-      { key: 'age', label: 'Listing age', weight: WEIGHTS.age, value: i.age, percentile: pAge[idx], detail: fmt(i.age, 'yrs listed on average', 1) },
-    ];
-    const present = components.filter((c) => c.percentile !== null);
-    if (present.length === 0) {
-      out.set(i.code, null);
-      return;
-    }
-    const wTotal = present.reduce((s, c) => s + c.weight, 0);
-    const blended = Math.round(present.reduce((s, c) => s + (c.percentile ?? 0) * c.weight, 0) / wTotal);
-    out.set(i.code, {
-      percentile: blended,
-      label: competitionLabel(blended),
-      components,
-      sampleCount: i.sampleCount,
-      areasRanked: withSignal.length,
-    });
-  });
-  return out;
+export function competitionIntensity(rating: number | null, reviews: number | null): number {
+  const fromReviews = 70 * clamp01((reviews ?? 0) / 200);
+  const fromRating = 30 * clamp01(((rating ?? 4.4) - 4.4) / 0.6);
+  return Math.round(fromReviews + fromRating);
+}
+
+/** Short guidance for each band, used under the gauge and in the PDF. */
+export function competitionMeaning(label: CompetitionLabel): string {
+  switch (label) {
+    case 'Competitive': return 'established, well-rated hosts: a new listing needs to match a high bar';
+    case 'Opportunity': return 'guests rate hosts highly and few are established: room to enter';
+    case 'Busy but beatable': return 'plenty of established hosts, but guests are not consistently delighted';
+    case 'Emerging': return 'a young market with decent ratings; demand still proving itself';
+    default: return 'few reviews and lower ratings: short-lets have not proved themselves here yet';
+  }
+}
+
+export function competitionBand(input: CompetitionInput): CompetitionBand | null {
+  if (input.sampleCount < MIN_RATED_REPORTS) return null;
+  if (input.rating === null && input.reviews === null) return null;
+  const label = competitionLabelFor(input.rating, input.reviews);
+  const rating = input.rating === null ? null : Math.round(input.rating * 100) / 100;
+  const reviews = input.reviews === null ? null : Math.round(input.reviews);
+  const figures = [rating === null ? null : `${rating.toFixed(2)}★`, reviews === null ? null : `${reviews} reviews`].filter(Boolean).join(' from ');
+  return {
+    label,
+    tone: competitionTone(label),
+    intensity: competitionIntensity(input.rating, input.reviews),
+    rating,
+    reviews,
+    sampleCount: input.sampleCount,
+    explanation: `Hosts average ${figures || 'no review data'}: ${competitionMeaning(label)}.`,
+  };
 }

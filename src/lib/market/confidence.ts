@@ -20,6 +20,8 @@ export interface Confidence {
 
 export const CONFIRMED_MIN_SAMPLES = 10;
 export const BUILDING_MIN_SAMPLES = 5;
+/** Reports a postcode district needs before its own figures are shown. */
+export const MIN_DISTRICT_SAMPLES = 3;
 
 export function areaConfidence(totalSamples: number): Confidence {
   if (totalSamples >= CONFIRMED_MIN_SAMPLES) {

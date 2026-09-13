@@ -20,7 +20,9 @@ export function trendLabel(direction: Direction | null | undefined): string | nu
   if (!direction) return null;
   return { up: 'Rising enquiries', down: 'Enquiries falling', flat: 'Steady enquiries', insufficient: 'Building history' }[direction];
 }
-export type TrendMetric = 'reports' | 'avg_adr' | 'avg_occupancy' | 'avg_gross_revenue';
+export type TrendMetric = 'reports' | 'avg_adr' | 'avg_occupancy' | 'avg_gross_revenue' | 'avg_rating' | 'avg_review_count';
+/** Which count a month must clear to qualify: every report, or only those with review data. */
+export type TrendCountField = 'reports' | 'rated_reports';
 
 export interface TrendResult {
   direction: Direction;
@@ -38,9 +40,15 @@ export interface TrendOptions {
   flatBand: number;
   /** Drop the final bucket (the running, partial month) before comparing. */
   excludeLast: boolean;
+  /** The per-month count `minSamplesPerMonth` applies to (default: all reports). */
+  countField: TrendCountField;
 }
 
-export const DEFAULT_TREND_OPTIONS: TrendOptions = { minSamplesPerMonth: 3, window: 3, flatBand: 0.03, excludeLast: false };
+export const DEFAULT_TREND_OPTIONS: TrendOptions = { minSamplesPerMonth: 3, window: 3, flatBand: 0.03, excludeLast: false, countField: 'reports' };
+
+function countOf(b: MonthBucket, field: TrendCountField): number {
+  return field === 'rated_reports' ? b.rated_reports ?? 0 : b.reports;
+}
 
 const INSUFFICIENT: TrendResult = { direction: 'insufficient', deltaPct: null, recent: null, prior: null, monthsUsed: 0, recentMonths: 0, priorMonths: 0 };
 
@@ -67,7 +75,7 @@ export function trendDirection(input: MonthBucket[], metric: TrendMetric, opts: 
     const delta = (recent - prior) / prior;
     return { direction: direction(delta, o.flatBand), deltaPct: Math.round(delta * 1000) / 1000, recent, prior, monthsUsed: o.window * 2, recentMonths: o.window, priorMonths: o.window };
   }
-  const qualifying = series.filter((b) => b.reports >= o.minSamplesPerMonth && b[metric] !== null).map((b) => b[metric] as number);
+  const qualifying = series.filter((b) => countOf(b, o.countField) >= o.minSamplesPerMonth && b[metric] !== null && b[metric] !== undefined).map((b) => b[metric] as number);
   const recentVals = qualifying.slice(-o.window);
   const priorVals = qualifying.slice(-o.window * 2, -o.window);
   if (recentVals.length < 2 || priorVals.length < 2) return { ...INSUFFICIENT, monthsUsed: qualifying.length };
@@ -91,6 +99,9 @@ export interface AreaTrend {
   revenue: TrendResult;
   adr: TrendResult;
   occupancy: TrendResult;
+  /** Competition over time: the comparables' average review count and rating. */
+  reviews: TrendResult;
+  rating: TrendResult;
   /** Months (in the window) with at least one report. */
   monthsWithData: number;
   /** First month with data, or null. */
@@ -112,6 +123,8 @@ export function areaTrend(series: MonthBucket[] | undefined, opts: Partial<Trend
     revenue: trendDirection(series, 'avg_gross_revenue', o),
     adr: trendDirection(series, 'avg_adr', o),
     occupancy: trendDirection(series, 'avg_occupancy', o),
+    reviews: trendDirection(series, 'avg_review_count', { ...o, countField: 'rated_reports' }),
+    rating: trendDirection(series, 'avg_rating', { ...o, countField: 'rated_reports' }),
     monthsWithData: withData.length,
     since: withData[0]?.month ?? null,
     series,

@@ -4,7 +4,7 @@ import type { AreaCardData } from './explorer.ts';
 import type { PersonalScore } from './personalise.ts';
 import type { AreaTrend } from './trend.ts';
 
-export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy' | 'competition' | 'directBooking' | 'distance' | 'trend';
+export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy' | 'competition' | 'seasonality' | 'directBooking' | 'distance' | 'trend';
 
 export const SORT_LABELS: Record<SortKey, string> = {
   stayful: 'Stayful score',
@@ -13,6 +13,7 @@ export const SORT_LABELS: Record<SortKey, string> = {
   yield: 'Yield-on-cost',
   occupancy: 'Occupancy',
   competition: 'Least competitive',
+  seasonality: 'Steadiest income',
   directBooking: 'Direct-booking potential',
   distance: 'Closest to home',
   trend: 'Rising enquiries',
@@ -38,7 +39,8 @@ export function sortValue(row: ExplorerRow, key: SortKey): number | null {
     case 'revenue': return c.headline.grossRevenue;
     case 'yield': return c.yieldOnCost?.grossYieldPct ?? null;
     case 'occupancy': return c.headline.occupancy;
-    case 'competition': return c.competition ? 100 - c.competition.percentile : null;
+    case 'competition': return c.competition ? 100 - c.competition.intensity : null;
+    case 'seasonality': return c.seasonality?.score ?? null;
     case 'directBooking': return c.directBooking?.score ?? null;
     case 'distance': return row.personal?.fit.distanceMiles === null || row.personal?.fit.distanceMiles === undefined ? null : -row.personal.fit.distanceMiles;
     case 'trend': return row.trend && row.trend.enquiries.direction !== 'insufficient' ? row.trend.enquiries.deltaPct : null;
