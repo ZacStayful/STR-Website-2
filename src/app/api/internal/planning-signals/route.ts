@@ -23,7 +23,7 @@ export const maxDuration = 60;
 
 const TIME_BUDGET_MS = 50_000;
 const MAX_PER_RUN = 9;
-const CONCURRENCY = 3;
+const CONCURRENCY = 2; // PlanIt rate-limits bursts; two areas (four requests) at a time is comfortable
 
 export async function GET(request: Request) {
   if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
