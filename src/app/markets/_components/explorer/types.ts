@@ -34,10 +34,3 @@ export interface Filters {
 }
 
 export const DEFAULT_FILTERS: Filters = { q: "", region: "any", budget: "any", beds: "any", conf: "any", savedOnly: false };
-
-/** One step of the Regions › Area › District trail. */
-export interface Crumb {
-  label: string;
-  /** Absent on the current (last) step. */
-  onClick?: () => void;
-}

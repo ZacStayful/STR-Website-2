@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
 import type { ExplorerRow } from "@/lib/market/rank";
 import { gbp, pct } from "@/lib/market/format";
@@ -12,6 +11,8 @@ import { ConfidenceBadge } from "./ConfidenceBadge";
 export const MAX_COMPARE = 4;
 
 // Numeric rows where a higher value is "better" (highlighted as the winner).
+// The docked tray that used to live here was replaced by the v2 CompareDock;
+// the modal, the cap and bestIndex are shared by the area and listing comparisons.
 export function bestIndex(values: (number | null)[]): number {
   let best = -1;
   let bestVal = -Infinity;
@@ -136,50 +137,5 @@ export function CompareModal({ rows, bedroom, onClose }: { rows: ExplorerRow[]; 
         <p className="mx-cmp-note">Best value in each row is highlighted. Figures are indicative averages{bedroom != null ? ` for ${bedroom}-bed properties` : ""}.</p>
       </div>
     </div>
-  );
-}
-
-export function CompareBar({
-  rows,
-  bedroom,
-  onRemove,
-  onClear,
-}: {
-  rows: ExplorerRow[];
-  bedroom: number | null;
-  onRemove: (code: string) => void;
-  onClear: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  if (rows.length === 0) return null;
-
-  const cards = rows.map((r) => r.card);
-
-  return (
-    <>
-      <div className="mx-cmp-tray" role="region" aria-label="Areas to compare">
-        <div className="mx-cmp-tray-chips">
-          {cards.map((c) => (
-            <span key={c.code} className="mx-cmp-chip">
-              {c.name}
-              <button type="button" aria-label={`Remove ${c.name}`} onClick={() => onRemove(c.code)}>×</button>
-            </span>
-          ))}
-        </div>
-        <div className="mx-cmp-tray-actions">
-          <button type="button" className="mx-pill" onClick={onClear}>Clear</button>
-          <button
-            type="button"
-            className="mx-cta mx-cta--sm"
-            disabled={cards.length < 2}
-            onClick={() => setOpen(true)}
-          >
-            Compare {cards.length} area{cards.length === 1 ? "" : "s"}
-          </button>
-        </div>
-      </div>
-
-      {open && <CompareModal rows={rows} bedroom={bedroom} onClose={() => setOpen(false)} />}
-    </>
   );
 }
