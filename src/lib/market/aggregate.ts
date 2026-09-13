@@ -19,6 +19,7 @@
  */
 
 import { regionForArea } from './regions.ts';
+import { meanPlanning, planningByArea, type PlanningByArea, type PlanningSignal } from './planning.ts';
 import type { AreaCompetitionRaw, AreaDemandRaw, MarketAggregate, MarketArea, MarketBedroomAgg, MarketDistrict, MarketRegion, MarketSnapshot, MonthBucket, SeasonalityRaw } from './types.ts';
 
 export interface ReportRow {
@@ -52,6 +53,8 @@ export interface AggregateOptions {
   months?: number;
   /** Row sources that feed the monthly series (default: every source). */
   seriesSources?: readonly string[];
+  /** Planning signals per postcode area (large applications nearby), from area_planning_signals. */
+  planning?: PlanningSignal[];
 }
 
 export const DEFAULT_SERIES_SOURCES: readonly string[] = ['analyser', 'monday_backfill'];
@@ -147,9 +150,29 @@ function share(rows: ReportRow[], pick: (r: ReportRow) => number | null): number
   return known.filter((v) => v > 0).length / known.length;
 }
 
-function demandOf(rows: ReportRow[]): AreaDemandRaw | null {
+/** Planning counts for a level: the area's own signal, or the mean over several areas (a region). */
+export interface PlanningInput {
+  large_planning_apps_12m: number | null;
+  large_planning_apps_prev_12m: number | null;
+  planning_fetched_at: string | null;
+}
+
+const NO_PLANNING: PlanningInput = { large_planning_apps_12m: null, large_planning_apps_prev_12m: null, planning_fetched_at: null };
+
+function planningForAreas(byArea: PlanningByArea, areaCodes: string[]): PlanningInput {
+  const signals = areaCodes.map((c) => byArea.get(c)).filter((s): s is PlanningSignal => Boolean(s));
+  if (signals.length === 0) return NO_PLANNING;
+  const fetched = signals.map((s) => s.fetched_at).filter((v): v is string => Boolean(v)).sort();
+  return {
+    large_planning_apps_12m: meanPlanning(signals.map((s) => s.large_apps_12m)),
+    large_planning_apps_prev_12m: meanPlanning(signals.map((s) => s.large_apps_prev_12m)),
+    planning_fetched_at: fetched[0] ?? null,
+  };
+}
+
+function demandOf(rows: ReportRow[], planning: PlanningInput): AreaDemandRaw | null {
   const withData = rows.filter((r) => [r.demand_hospitals, r.demand_universities, r.demand_transport, r.demand_events].some((v) => v !== null && Number.isFinite(v)));
-  if (withData.length === 0) return null;
+  if (withData.length === 0 && planning.large_planning_apps_12m === null) return null;
   const events = withData.map((r) => r.demand_events).filter((v): v is number => v !== null && Number.isFinite(v) && v >= 0);
   return {
     sample_count: withData.length,
@@ -157,9 +180,7 @@ function demandOf(rows: ReportRow[]): AreaDemandRaw | null {
     share_university: share(withData, (r) => r.demand_universities),
     share_transport: share(withData, (r) => r.demand_transport),
     avg_events: mean(events),
-    large_planning_apps_12m: null,
-    large_planning_apps_prev_12m: null,
-    planning_fetched_at: null,
+    ...planning,
   };
 }
 
@@ -200,12 +221,12 @@ function seriesOf(rows: ReportRow[], months: string[], sources: readonly string[
 }
 
 /** The figures for one level (region, area or district) from its rows. */
-export function aggregateRows(rows: ReportRow[], months: string[], opts: AggregateOptions = {}): MarketAggregate {
+export function aggregateRows(rows: ReportRow[], months: string[], opts: AggregateOptions = {}, planning: PlanningInput = NO_PLANNING): MarketAggregate {
   return {
     total_sample_count: rows.length,
     by_bedrooms: bedroomGroups(rows),
     competition: competitionOf(rows),
-    demand: demandOf(rows),
+    demand: demandOf(rows, planning),
     series: seriesOf(rows, months, opts.seriesSources ?? DEFAULT_SERIES_SOURCES),
     seasonality: seasonalityOf(rows),
   };
@@ -228,16 +249,19 @@ export function buildSnapshot(input: ReportRow[], opts: AggregateOptions = {}): 
   const now = opts.now ?? new Date();
   const months = monthKeys(now, opts.months ?? DEFAULT_MONTHS);
   const rows = input.filter((r) => positive(r.gross_revenue));
+  const planning = planningByArea(opts.planning ?? []);
 
   const byArea = groupBy(rows, (r) => (r.postcode_area ? r.postcode_area.trim().toUpperCase() : null));
   const areas: MarketArea[] = [...byArea.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([postcode_area, areaRows]) => {
+      // Planning applications are counted around the area's centre, so its districts share the figure.
+      const areaPlanning = planningForAreas(planning, [postcode_area]);
       const byDistrict = groupBy(areaRows, (r) => r.district);
       const districts: MarketDistrict[] = [...byDistrict.entries()]
-        .map(([district, districtRows]) => ({ district, postcode_area, ...aggregateRows(districtRows, months, opts) }))
+        .map(([district, districtRows]) => ({ district, postcode_area, ...aggregateRows(districtRows, months, opts, areaPlanning) }))
         .sort((a, b) => b.total_sample_count - a.total_sample_count || a.district.localeCompare(b.district));
-      return { postcode_area, ...aggregateRows(areaRows, months, opts), districts };
+      return { postcode_area, ...aggregateRows(areaRows, months, opts, areaPlanning), districts };
     });
 
   const byRegion = groupBy(rows, (r) => (r.postcode_area ? regionForArea(r.postcode_area).slug : null));
@@ -245,7 +269,7 @@ export function buildSnapshot(input: ReportRow[], opts: AggregateOptions = {}): 
     .map(([slug, regionRows]) => {
       const meta = regionForArea(regionRows[0].postcode_area);
       const areaCodes = [...new Set(regionRows.map((r) => r.postcode_area!.trim().toUpperCase()))].sort();
-      return { slug, name: meta.slug === slug ? meta.name : slug, areas: areaCodes, ...aggregateRows(regionRows, months, opts) };
+      return { slug, name: meta.slug === slug ? meta.name : slug, areas: areaCodes, ...aggregateRows(regionRows, months, opts, planningForAreas(planning, areaCodes)) };
     })
     .sort((a, b) => b.total_sample_count - a.total_sample_count || a.name.localeCompare(b.name));
 

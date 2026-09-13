@@ -3,6 +3,7 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import type { ReportRow } from './aggregate';
 import { toReportRow } from './report-row';
+import type { PlanningSignal } from './planning';
 
 /**
  * Loads the analyser reports the Market Explorer is built from.
@@ -49,4 +50,21 @@ export async function loadReportRows(): Promise<ReportRow[]> {
     if (rows.length < PAGE) break;
   }
   return out;
+}
+
+/** Planning signals per postcode area (large applications nearby), refreshed by /api/internal/planning-signals. */
+export async function loadPlanningSignals(): Promise<PlanningSignal[]> {
+  if (!hasServiceRole()) return [];
+  const admin = createAdminClient();
+  const { data, error } = await admin.from('area_planning_signals').select('postcode_area, large_apps_12m, large_apps_prev_12m, fetched_at');
+  if (error) {
+    console.warn('[market] area_planning_signals select failed:', error.message);
+    return [];
+  }
+  return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
+    postcode_area: String(r.postcode_area ?? '').toUpperCase(),
+    large_apps_12m: typeof r.large_apps_12m === 'number' ? r.large_apps_12m : null,
+    large_apps_prev_12m: typeof r.large_apps_prev_12m === 'number' ? r.large_apps_prev_12m : null,
+    fetched_at: typeof r.fetched_at === 'string' ? r.fetched_at : null,
+  }));
 }
