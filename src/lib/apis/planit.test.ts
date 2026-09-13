@@ -20,6 +20,8 @@ test('the request asks for one large application page in a radius and window', (
 test('only a non-negative numeric total is read', () => {
   assert.equal(parsePlanItTotal({ total: 16, records: [] }), 16);
   assert.equal(parsePlanItTotal({ total: 0 }), 0);
+  assert.equal(parsePlanItTotal({ total: null, records: [] }), 0);
+  assert.equal(parsePlanItTotal({ total: null, records: [{}] }), null);
   assert.equal(parsePlanItTotal({ total: '16' }), null);
   assert.equal(parsePlanItTotal({ records: [] }), null);
   assert.equal(parsePlanItTotal(null), null);

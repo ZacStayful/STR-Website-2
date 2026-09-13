@@ -45,7 +45,7 @@ export async function GET(request: Request) {
   const signals = ((signalRows ?? []) as PlanningSignal[]).map((s) => ({ ...s, postcode_area: s.postcode_area.toUpperCase() }));
   const due = areasToRefresh(codes, signals, now).filter((c) => areaCentroid(c) !== null);
 
-  const done: { area: string; large_apps_12m: number; large_apps_prev_12m: number }[] = [];
+  const done: { area: string; large_apps_12m: number; large_apps_prev_12m: number; radius_km: number }[] = [];
   const failed: string[] = [];
   const queue = due.slice(0, MAX_PER_RUN);
   const worker = async () => {
@@ -55,7 +55,7 @@ export async function GET(request: Request) {
         return;
       }
       if (dry) {
-        done.push({ area: code, large_apps_12m: -1, large_apps_prev_12m: -1 });
+        done.push({ area: code, large_apps_12m: -1, large_apps_prev_12m: -1, radius_km: PLANNING_RADIUS_KM });
         continue;
       }
       const c = areaCentroid(code)!;
@@ -66,13 +66,13 @@ export async function GET(request: Request) {
       }
       const { error } = await admin
         .from("area_planning_signals")
-        .upsert({ postcode_area: code, lat: c.lat, lng: c.lng, radius_km: PLANNING_RADIUS_KM, large_apps_12m: counts.recent, large_apps_prev_12m: counts.prior, fetched_at: now.toISOString(), source: "planit" }, { onConflict: "postcode_area" });
+        .upsert({ postcode_area: code, lat: c.lat, lng: c.lng, radius_km: counts.radiusKm, large_apps_12m: counts.recent, large_apps_prev_12m: counts.prior, fetched_at: now.toISOString(), source: "planit" }, { onConflict: "postcode_area" });
       if (error) {
         console.error("[planning-signals] upsert failed:", error.message);
         failed.push(code);
         continue;
       }
-      done.push({ area: code, large_apps_12m: counts.recent, large_apps_prev_12m: counts.prior });
+      done.push({ area: code, large_apps_12m: counts.recent, large_apps_prev_12m: counts.prior, radius_km: counts.radiusKm });
     }
   };
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));

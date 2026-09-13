@@ -10,8 +10,9 @@
  */
 
 const BASE = 'https://www.planit.org.uk/api/applics/json';
-// PlanIt counts across a large radius can take 20–30 s for a big city.
-const TIMEOUT_MS = 45_000;
+// PlanIt counts across a large radius can take 20–30 s for a big city; its
+// own data source gives up at 45 s, so wait a little longer for that answer.
+const TIMEOUT_MS = 50_000;
 
 export interface PlanItWindow {
   start: string; // YYYY-MM-DD
@@ -28,11 +29,17 @@ export function planningWindows(now: Date): { recent: PlanItWindow; prior: PlanI
   return { recent: { start: mid, end }, prior: { start, end: mid } };
 }
 
-/** The application count in a PlanIt response, or null when the shape is wrong. */
+/**
+ * The application count in a PlanIt response, or null when the shape is
+ * wrong. PlanIt answers `total: null` with an empty `records` list when
+ * nothing matches, which is a count of zero, not a failure.
+ */
 export function parsePlanItTotal(body: unknown): number | null {
   if (!body || typeof body !== 'object') return null;
-  const total = (body as { total?: unknown }).total;
-  return typeof total === 'number' && Number.isFinite(total) && total >= 0 ? Math.round(total) : null;
+  const { total, records } = body as { total?: unknown; records?: unknown };
+  if (typeof total === 'number' && Number.isFinite(total) && total >= 0) return Math.round(total);
+  if (total === null && Array.isArray(records) && records.length === 0) return 0;
+  return null;
 }
 
 export function planItUrl(lat: number, lng: number, radiusKm: number, window: PlanItWindow): string {
@@ -66,12 +73,26 @@ export async function countLargeApplications(lat: number, lng: number, radiusKm:
   }
 }
 
-/** Both windows for a point, fetched together; null when either fails. */
-export async function countLargeApplicationsBothWindows(lat: number, lng: number, radiusKm: number, now: Date): Promise<{ recent: number; prior: number } | null> {
+export interface PlanningCounts {
+  recent: number;
+  prior: number;
+  /** The radius the counts were taken at (halved from the request when PlanIt timed out). */
+  radiusKm: number;
+}
+
+/**
+ * Both windows for a point, fetched together. PlanIt's own data source
+ * times out over a dense city at a wide radius, so the radius halves (down
+ * to a quarter of the request) before giving up. Null when nothing worked.
+ */
+export async function countLargeApplicationsBothWindows(lat: number, lng: number, radiusKm: number, now: Date): Promise<PlanningCounts | null> {
   const w = planningWindows(now);
-  const [recent, prior] = await Promise.all([
-    countLargeApplications(lat, lng, radiusKm, w.recent),
-    countLargeApplications(lat, lng, radiusKm, w.prior),
-  ]);
-  return recent === null || prior === null ? null : { recent, prior };
+  for (const r of [radiusKm, radiusKm / 2, radiusKm / 4]) {
+    const [recent, prior] = await Promise.all([
+      countLargeApplications(lat, lng, r, w.recent),
+      countLargeApplications(lat, lng, r, w.prior),
+    ]);
+    if (recent !== null && prior !== null) return { recent, prior, radiusKm: r };
+  }
+  return null;
 }
