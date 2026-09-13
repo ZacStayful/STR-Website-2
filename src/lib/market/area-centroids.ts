@@ -126,6 +126,16 @@ export const AREA_CENTROIDS: Record<string, { lat: number; lng: number }> = {
   ZE: { lat: 60.0463, lng: -1.2518 },
 };
 
+/**
+ * Areas the GeoJSON does not cover, placed by hand at their main city so
+ * distance ranking and the planning-signals search still work. Kept in
+ * the generator template so a rebuild does not drop them.
+ */
+export const MANUAL_CENTROIDS: Record<string, { lat: number; lng: number }> = {
+  BT: { lat: 54.5973, lng: -5.9301 }, // Belfast city centre (Northern Ireland)
+};
+
 export function areaCentroid(code: string): { lat: number; lng: number } | null {
-  return AREA_CENTROIDS[code.trim().toUpperCase()] ?? null;
+  const key = code.trim().toUpperCase();
+  return AREA_CENTROIDS[key] ?? MANUAL_CENTROIDS[key] ?? null;
 }

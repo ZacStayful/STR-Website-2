@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AREA_REGION, REGIONS, isRegionSlug, regionForArea, regionForSlug } from './regions.ts';
-import { AREA_CENTROIDS } from './area-centroids.ts';
+import { AREA_CENTROIDS, MANUAL_CENTROIDS, areaCentroid } from './area-centroids.ts';
 
 test('every mapped postcode area resolves to a real region', () => {
-  for (const code of Object.keys(AREA_CENTROIDS)) {
+  for (const code of [...Object.keys(AREA_CENTROIDS), ...Object.keys(MANUAL_CENTROIDS)]) {
     assert.notEqual(regionForArea(code).slug, 'other', `${code} has no region`);
   }
+  assert.ok(areaCentroid('bt'), 'Northern Ireland has a hand-placed centroid');
 });
 
 test('spot checks and the four nations', () => {
