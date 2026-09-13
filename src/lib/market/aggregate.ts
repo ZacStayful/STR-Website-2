@@ -12,8 +12,8 @@
  *   • occupancy is 0–100 (source.ts normalises ≤1 → ×100)
  *   • the district is the postcode's outward code; rows without a full
  *     postcode (the Monday backfill) count for their area and region only
- *   • the monthly series only takes real analyser runs by default: the
- *     backfill carries one artificial date and would read as a spike
+ *   • every source feeds the monthly series by default (the Monday backfill
+ *     included, at the date it was loaded); `seriesSources` narrows it
  *   • every average ignores nulls and non-positive values and is null when
  *     nothing qualifies (never 0 or NaN)
  */
@@ -50,11 +50,11 @@ export interface AggregateOptions {
   now?: Date;
   /** Months in the trend window, the running month included. */
   months?: number;
-  /** Row sources that feed the monthly series. */
+  /** Row sources that feed the monthly series (default: every source). */
   seriesSources?: readonly string[];
 }
 
-export const DEFAULT_SERIES_SOURCES: readonly string[] = ['analyser'];
+export const DEFAULT_SERIES_SOURCES: readonly string[] = ['analyser', 'monday_backfill'];
 const DEFAULT_MONTHS = 12;
 
 const FULL_POSTCODE = /^([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})$/;

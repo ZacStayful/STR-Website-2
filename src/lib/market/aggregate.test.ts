@@ -40,13 +40,15 @@ test('monthKeys ends with the running month', () => {
   assert.equal(MONTHS[11], '2026-09');
 });
 
-test('backfill rows count in the totals but not in the monthly series', () => {
+test('backfill rows count in the totals and in the monthly series, and can be narrowed out', () => {
   const rows = [row(), row(), row({ source: 'monday_backfill', district: null, created_at: '2026-07-16T00:00:00Z', comp_avg_rating: null, comp_avg_review_count: null, monthly: null })];
   const agg = aggregateRows(rows, MONTHS);
   assert.equal(agg.total_sample_count, 3);
   assert.equal(agg.by_bedrooms[0].sample_count, 3);
   const july = agg.series!.find((b) => b.month === '2026-07')!;
-  assert.equal(july.reports, 0);
+  assert.equal(july.reports, 1);
+  assert.equal(july.rated_reports, 0);
+  assert.equal(aggregateRows(rows, MONTHS, { seriesSources: ['analyser'] }).series!.find((b) => b.month === '2026-07')!.reports, 0);
   const aug = agg.series!.find((b) => b.month === '2026-08')!;
   assert.equal(aug.reports, 2);
   assert.equal(aug.rated_reports, 2);
