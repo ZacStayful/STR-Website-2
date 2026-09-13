@@ -111,3 +111,29 @@ test('regions union their areas at row level and the national series covers ever
   assert.equal(snap.generated_at, NOW.toISOString());
   assert.equal(snap.months.length, 12);
 });
+
+test('planning signals reach the area, its districts and the region mean', () => {
+  const rows = [row({ postcode_area: 'M', district: 'M1' }), row({ postcode_area: 'L', district: 'L1' }), row({ postcode_area: 'EH', district: 'EH1' })];
+  const planning = [
+    { postcode_area: 'M', large_apps_12m: 40, large_apps_prev_12m: 20, fetched_at: '2026-09-01T00:00:00Z' },
+    { postcode_area: 'l', large_apps_12m: 10, large_apps_prev_12m: 10, fetched_at: '2026-08-01T00:00:00Z' },
+  ];
+  const snap = buildSnapshot(rows, { now: NOW, planning });
+  const m = snap.areas.find((a) => a.postcode_area === 'M')!;
+  assert.equal(m.demand!.large_planning_apps_12m, 40);
+  assert.equal(m.demand!.large_planning_apps_prev_12m, 20);
+  assert.equal(m.districts![0].demand!.large_planning_apps_12m, 40);
+  const nw = snap.regions.find((r) => r.slug === 'north-west')!;
+  assert.equal(nw.demand!.large_planning_apps_12m, 25);
+  assert.equal(nw.demand!.planning_fetched_at, '2026-08-01T00:00:00Z');
+  assert.equal(snap.areas.find((a) => a.postcode_area === 'EH')!.demand!.large_planning_apps_12m, null);
+});
+
+test('a planning signal alone gives an area demand data', () => {
+  const bare = row({ demand_hospitals: null, demand_universities: null, demand_transport: null, demand_events: null });
+  const none = aggregateRows([bare], MONTHS);
+  assert.equal(none.demand, null);
+  const withPlanning = aggregateRows([bare], MONTHS, {}, { large_planning_apps_12m: 12, large_planning_apps_prev_12m: 9, planning_fetched_at: '2026-09-01T00:00:00Z' });
+  assert.equal(withPlanning.demand!.large_planning_apps_12m, 12);
+  assert.equal(withPlanning.demand!.share_hospital, null);
+});

@@ -3,7 +3,7 @@ import 'server-only';
 import { unstable_cache } from 'next/cache';
 import { buildExplorerData, pickSampleArea, type AreaCardData, type ExplorerData, type SampleArea } from './explorer';
 import { buildSnapshot } from './aggregate';
-import { loadReportRows } from './source';
+import { loadPlanningSignals, loadReportRows } from './source';
 import { getManagedAreas } from './managed-areas';
 import { withTimeout } from '../timeout';
 import { keepAlive } from '../keep-alive';
@@ -27,14 +27,14 @@ const TAG = 'market-area-cards';
 // The data cache persists across deployments, so bump this key whenever the
 // aggregation or card logic changes; otherwise the previous build's snapshot
 // is served until it expires.
-const CACHE_KEY = 'market-snapshot-v4';
+const CACHE_KEY = 'market-snapshot-v5';
 
 const EMPTY: ExplorerData = { cards: [], regions: [], national: [], generatedAt: '', totalReports: 0 };
 
 async function buildExplorerWithManaged(): Promise<ExplorerData> {
-  const [rows, managed] = await Promise.all([loadReportRows(), getManagedAreas()]);
+  const [rows, planning, managed] = await Promise.all([loadReportRows(), loadPlanningSignals(), getManagedAreas()]);
   if (rows.length === 0) return EMPTY;
-  return buildExplorerData(buildSnapshot(rows), { managedAreas: managed });
+  return buildExplorerData(buildSnapshot(rows, { planning }), { managedAreas: managed });
 }
 
 const cachedSnapshot = unstable_cache(buildExplorerWithManaged, [CACHE_KEY], { revalidate: CACHE_SECONDS, tags: [TAG] });

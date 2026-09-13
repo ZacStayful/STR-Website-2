@@ -949,3 +949,22 @@ begin
     update profiles set welcome_checked_at = now() where id = p.id;
   end loop;
 end $$;
+
+-- =========================
+-- Market Explorer: planning signals (direct-booking "contractor projects")
+-- =========================
+-- One row per postcode area: large planning applications PlanIt holds within
+-- radius_km of the area's centre over the last 12 months and the 12 before.
+-- Written by /api/internal/planning-signals (service role) and read into the
+-- explorer snapshot; no member-facing policy, so RLS with no policies.
+create table if not exists public.area_planning_signals (
+  postcode_area text primary key,
+  lat numeric,
+  lng numeric,
+  radius_km numeric,
+  large_apps_12m integer,
+  large_apps_prev_12m integer,
+  fetched_at timestamptz default now(),
+  source text default 'planit'
+);
+alter table public.area_planning_signals enable row level security;
