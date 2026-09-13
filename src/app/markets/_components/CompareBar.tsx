@@ -24,6 +24,121 @@ export function bestIndex(values: (number | null)[]): number {
   return best;
 }
 
+/** The side-by-side table, as a modal. Shared by the docked tray below and the v2 compare dock. */
+export function CompareModal({ rows, bedroom, onClose }: { rows: ExplorerRow[]; bedroom: number | null; onClose: () => void }) {
+  const cards = rows.map((r) => r.card);
+  const hasPersonal = rows.some((r) => r.personal);
+  const stats = cards.map((c) => activeAreaStats(c, bedroom));
+  const scoreBest = bestIndex(cards.map((c) => c.score?.score ?? null));
+  const personalBest = bestIndex(rows.map((r) => r.personal?.score ?? null));
+  const compBest = bestIndex(cards.map((c) => (c.competition ? 100 - c.competition.intensity : null)));
+  const seasonBest = bestIndex(cards.map((c) => c.seasonality?.score ?? null));
+  const dbBest = bestIndex(cards.map((c) => c.directBooking?.score ?? null));
+  const revBest = bestIndex(stats.map((s) => s.revenue));
+  const adrBest = bestIndex(stats.map((s) => s.adr));
+  const occBest = bestIndex(stats.map((s) => s.occupancy));
+  const yieldBest = bestIndex(stats.map((s) => s.yieldPct));
+
+  const cell = (best: boolean) => (best ? "mx-cmp-best" : undefined);
+
+  return (
+    <div className="mx-cmp-overlay" role="dialog" aria-modal="true" aria-label="Area comparison" onClick={onClose}>
+      <div className="mx-cmp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="mx-cmp-modal-head">
+          <h2>Compare areas{bedroom != null ? ` · ${bedroom}-bed` : ""}</h2>
+          <button type="button" className="mx-cmp-close" aria-label="Close" onClick={onClose}>×</button>
+        </div>
+        <div className="mx-cmp-scroll">
+          <table className="mx-cmp-table">
+            <thead>
+              <tr>
+                <th className="mx-cmp-rowlabel" />
+                {cards.map((c) => (
+                  <th key={c.code}>
+                    <Link href={`/markets/${c.slug}`}>{c.name}</Link>
+                    <span className="mx-cmp-code">{c.code}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th className="mx-cmp-rowlabel" title="Stayful transparent 0–100 investment score">Stayful score</th>
+                {cards.map((c, i) => (
+                  <td key={c.code} className={cell(i === scoreBest)}>
+                    {c.score ? `${c.score.score} · ${c.score.grade}` : "—"}
+                  </td>
+                ))}
+              </tr>
+              {hasPersonal && (
+                <tr>
+                  <th className="mx-cmp-rowlabel" title="The Stayful score re-weighted by your goals">Your fit</th>
+                  {rows.map((r, i) => (
+                    <td key={r.card.code} className={cell(i === personalBest)}>{r.personal ? `${r.personal.score} · ${r.personal.grade}` : "—"}</td>
+                  ))}
+                </tr>
+              )}
+              <tr>
+                <th className="mx-cmp-rowlabel">Avg revenue / yr</th>
+                {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === revBest)}>{gbp(s.revenue)}</td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel">Occupancy</th>
+                {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === occBest)}>{pct(s.occupancy, 0)}</td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel">Daily rate</th>
+                {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === adrBest)}>{gbp(s.adr)}</td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel" title="Gross annual revenue ÷ property value">Yield-on-cost</th>
+                {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === yieldBest)}>{s.yieldPct !== null ? pct(s.yieldPct, 1) : "—"}</td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel" title="From the reviews of each report's comparables: average rating and review count">Competition</th>
+                {cards.map((c, i) => (
+                  <td key={c.code} className={cell(i === compBest)} title={c.competition?.explanation}>{c.competition ? `${c.competition.label}${c.competition.rating !== null ? ` · ${c.competition.rating.toFixed(2)}★` : ""}${c.competition.reviews !== null ? ` · ${c.competition.reviews} reviews` : ""}` : "—"}</td>
+                ))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel" title="How evenly revenue spreads across the year (100 = perfectly even)">Seasonality</th>
+                {cards.map((c, i) => (
+                  <td key={c.code} className={cell(i === seasonBest)} title={c.seasonality?.explanation}>{c.seasonality ? `${c.seasonality.score} · ${c.seasonality.label}` : "—"}</td>
+                ))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel" title="Contractors, hospitals, universities, events, transport">Direct-booking potential</th>
+                {cards.map((c, i) => (
+                  <td key={c.code} className={cell(i === dbBest)}>{c.directBooking ? `${c.directBooking.score} · ${c.directBooking.label}` : "—"}</td>
+                ))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel">Short vs long-let</th>
+                {cards.map((c) => (<td key={c.code}><VerdictLabel verdict={c.verdict} compact /></td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel">Licensing</th>
+                {cards.map((c) => (<td key={c.code}><LicensingBadge status={c.licensing.status} label={c.licensing.headline} /></td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel">Data confidence</th>
+                {stats.map((s, i) => (<td key={cards[i].code}><ConfidenceBadge confidence={s.confidence} samples={s.samples} /></td>))}
+              </tr>
+              <tr>
+                <th className="mx-cmp-rowlabel" />
+                {cards.map((c) => (
+                  <td key={c.code}><Link href={`/markets/${c.slug}`} className="mx-cta mx-cta--sm">Full report →</Link></td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="mx-cmp-note">Best value in each row is highlighted. Figures are indicative averages{bedroom != null ? ` for ${bedroom}-bed properties` : ""}.</p>
+      </div>
+    </div>
+  );
+}
+
 export function CompareBar({
   rows,
   bedroom,
@@ -39,19 +154,6 @@ export function CompareBar({
   if (rows.length === 0) return null;
 
   const cards = rows.map((r) => r.card);
-  const hasPersonal = rows.some((r) => r.personal);
-  const stats = cards.map((c) => activeAreaStats(c, bedroom));
-  const scoreBest = bestIndex(cards.map((c) => c.score?.score ?? null));
-  const personalBest = bestIndex(rows.map((r) => r.personal?.score ?? null));
-  const compBest = bestIndex(cards.map((c) => (c.competition ? 100 - c.competition.intensity : null)));
-  const seasonBest = bestIndex(cards.map((c) => c.seasonality?.score ?? null));
-  const dbBest = bestIndex(cards.map((c) => c.directBooking?.score ?? null));
-  const revBest = bestIndex(stats.map((s) => s.revenue));
-  const adrBest = bestIndex(stats.map((s) => s.adr));
-  const occBest = bestIndex(stats.map((s) => s.occupancy));
-  const yieldBest = bestIndex(stats.map((s) => s.yieldPct));
-
-  const cell = (best: boolean) => (best ? "mx-cmp-best" : undefined);
 
   return (
     <>
@@ -77,102 +179,7 @@ export function CompareBar({
         </div>
       </div>
 
-      {open && (
-        <div className="mx-cmp-overlay" role="dialog" aria-modal="true" aria-label="Area comparison" onClick={() => setOpen(false)}>
-          <div className="mx-cmp-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mx-cmp-modal-head">
-              <h2>Compare areas{bedroom != null ? ` · ${bedroom}-bed` : ""}</h2>
-              <button type="button" className="mx-cmp-close" aria-label="Close" onClick={() => setOpen(false)}>×</button>
-            </div>
-            <div className="mx-cmp-scroll">
-              <table className="mx-cmp-table">
-                <thead>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" />
-                    {cards.map((c) => (
-                      <th key={c.code}>
-                        <Link href={`/markets/${c.slug}`}>{c.name}</Link>
-                        <span className="mx-cmp-code">{c.code}</span>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" title="Stayful transparent 0–100 investment score">Stayful score</th>
-                    {cards.map((c, i) => (
-                      <td key={c.code} className={cell(i === scoreBest)}>
-                        {c.score ? `${c.score.score} · ${c.score.grade}` : "—"}
-                      </td>
-                    ))}
-                  </tr>
-                  {hasPersonal && (
-                    <tr>
-                      <th className="mx-cmp-rowlabel" title="The Stayful score re-weighted by your goals">Your fit</th>
-                      {rows.map((r, i) => (
-                        <td key={r.card.code} className={cell(i === personalBest)}>{r.personal ? `${r.personal.score} · ${r.personal.grade}` : "—"}</td>
-                      ))}
-                    </tr>
-                  )}
-                  <tr>
-                    <th className="mx-cmp-rowlabel">Avg revenue / yr</th>
-                    {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === revBest)}>{gbp(s.revenue)}</td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel">Occupancy</th>
-                    {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === occBest)}>{pct(s.occupancy, 0)}</td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel">Daily rate</th>
-                    {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === adrBest)}>{gbp(s.adr)}</td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" title="Gross annual revenue ÷ property value">Yield-on-cost</th>
-                    {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === yieldBest)}>{s.yieldPct !== null ? pct(s.yieldPct, 1) : "—"}</td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" title="From the reviews of each report's comparables: average rating and review count">Competition</th>
-                    {cards.map((c, i) => (
-                      <td key={c.code} className={cell(i === compBest)} title={c.competition?.explanation}>{c.competition ? `${c.competition.label}${c.competition.rating !== null ? ` · ${c.competition.rating.toFixed(2)}★` : ""}${c.competition.reviews !== null ? ` · ${c.competition.reviews} reviews` : ""}` : "—"}</td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" title="How evenly revenue spreads across the year (100 = perfectly even)">Seasonality</th>
-                    {cards.map((c, i) => (
-                      <td key={c.code} className={cell(i === seasonBest)} title={c.seasonality?.explanation}>{c.seasonality ? `${c.seasonality.score} · ${c.seasonality.label}` : "—"}</td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" title="Contractors, hospitals, universities, events, transport">Direct-booking potential</th>
-                    {cards.map((c, i) => (
-                      <td key={c.code} className={cell(i === dbBest)}>{c.directBooking ? `${c.directBooking.score} · ${c.directBooking.label}` : "—"}</td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel">Short vs long-let</th>
-                    {cards.map((c) => (<td key={c.code}><VerdictLabel verdict={c.verdict} compact /></td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel">Licensing</th>
-                    {cards.map((c) => (<td key={c.code}><LicensingBadge status={c.licensing.status} label={c.licensing.headline} /></td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel">Data confidence</th>
-                    {stats.map((s, i) => (<td key={cards[i].code}><ConfidenceBadge confidence={s.confidence} samples={s.samples} /></td>))}
-                  </tr>
-                  <tr>
-                    <th className="mx-cmp-rowlabel" />
-                    {cards.map((c) => (
-                      <td key={c.code}><Link href={`/markets/${c.slug}`} className="mx-cta mx-cta--sm">Full report →</Link></td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p className="mx-cmp-note">Best value in each row is highlighted. Figures are indicative averages{bedroom != null ? ` for ${bedroom}-bed properties` : ""}.</p>
-          </div>
-        </div>
-      )}
+      {open && <CompareModal rows={rows} bedroom={bedroom} onClose={() => setOpen(false)} />}
     </>
   );
 }

@@ -19,6 +19,8 @@ export interface GeoFeature {
 export interface AreaPath {
   area: string; // postcode area, uppercase
   d: string;
+  /** Projected bounding box [x0, y0, x1, y1] in viewBox units, for zooming a map onto one area. */
+  bbox: [number, number, number, number];
 }
 
 // One in-flight/settled load per page, however many maps mount.
@@ -82,15 +84,20 @@ export function useUkGeo(): { features: GeoFeature[] | null; paths: AreaPath[]; 
     if (!features || !project) return [];
     return features.map((f) => {
       let d = "";
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (const poly of f.geometry.coordinates)
         for (const ring of poly) {
           ring.forEach(([lng, lat], i) => {
             const [x, y] = project(lng, lat);
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
             d += (i === 0 ? "M" : "L") + x.toFixed(1) + " " + y.toFixed(1);
           });
           d += "Z";
         }
-      return { area: f.properties.area.toUpperCase(), d };
+      return { area: f.properties.area.toUpperCase(), d, bbox: [x0, y0, x1, y1] as [number, number, number, number] };
     });
   }, [features, project]);
 

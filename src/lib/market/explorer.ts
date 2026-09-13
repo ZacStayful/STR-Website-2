@@ -118,6 +118,14 @@ export interface LevelFigures {
   /** Reports carrying a monthly breakdown (shown when seasonality is null). */
   monthlyReports: number;
   series: MonthBucket[];
+  /** Short-let listings per km² around the analysed addresses (mean over the comparables), or null. */
+  listingDensity: number | null;
+  /** Mean age in years of the comparables' listings, or null. */
+  listingAge: number | null;
+}
+
+function round1(v: number | null | undefined): number | null {
+  return v === null || v === undefined ? null : Math.round(v * 10) / 10;
 }
 
 function levelFigures(agg: MarketAggregate): LevelFigures {
@@ -133,6 +141,8 @@ function levelFigures(agg: MarketAggregate): LevelFigures {
     ratedReports: agg.competition?.sample_count ?? 0,
     monthlyReports: agg.seasonality?.sample_count ?? 0,
     series: agg.series ?? [],
+    listingDensity: round1(agg.competition?.avg_listing_density),
+    listingAge: round1(agg.competition?.avg_listing_age),
   };
 }
 
@@ -170,6 +180,8 @@ export function districtCard(d: MarketDistrict): DistrictCardData {
     figures.byBedrooms = [];
     figures.yieldOnCost = null;
     figures.series = [];
+    figures.listingDensity = null;
+    figures.listingAge = null;
   }
   return { ...figures, code: d.district, areaCode: d.postcode_area, ready };
 }

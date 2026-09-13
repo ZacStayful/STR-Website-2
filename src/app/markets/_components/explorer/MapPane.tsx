@@ -30,6 +30,7 @@ export function metricValue(row: ExplorerRow, m: MapMetric): number | null {
     case "yield": return c.yieldOnCost?.grossYieldPct ?? null;
     case "occupancy": return c.headline.occupancy;
     case "revenue": return c.headline.grossRevenue;
+    case "adr": return c.headline.adr;
     case "competition": return c.competition?.intensity ?? null;
     case "seasonality": return c.seasonality?.score ?? null;
     case "directBooking": return c.directBooking?.score ?? null;
@@ -38,7 +39,7 @@ export function metricValue(row: ExplorerRow, m: MapMetric): number | null {
 }
 
 function fmtMetric(v: number, m: MapMetric): string {
-  if (m === "revenue") return gbp(v);
+  if (m === "revenue" || m === "adr") return gbp(v);
   if (m === "occupancy" || m === "yield") return `${v.toFixed(m === "yield" ? 1 : 0)}%`;
   if (m === "competition" || m === "seasonality") return `${Math.round(v)}/100`;
   return String(Math.round(v));
