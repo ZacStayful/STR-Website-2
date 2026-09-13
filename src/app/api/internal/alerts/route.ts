@@ -1,6 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAreaCards } from "@/lib/market/cached";
-import { fetchMarketTrends } from "@/lib/market/trends-client";
 import { areaTrend, type AreaTrend } from "@/lib/market/trend";
 import { digestChanges, digestEmail, type ListingWeekChange, type SavedAreaState } from "@/lib/market/alerts";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
@@ -42,12 +41,12 @@ export async function GET(request: Request) {
     return Response.json({ error: "Storage not configured" }, { status: 503 });
   }
 
-  const [cards, trends] = await Promise.all([getAreaCards(), fetchMarketTrends()]);
-  // Without both feeds we cannot judge a change; bail rather than record a
+  const cards = await getAreaCards();
+  // Without the snapshot we cannot judge a change; bail rather than record a
   // baseline of "insufficient" that would produce a mass digest next week.
-  if (cards.length === 0 || !trends) return Response.json({ error: "Market data unavailable; nothing recorded" }, { status: 503 });
+  if (cards.length === 0) return Response.json({ error: "Market data unavailable; nothing recorded" }, { status: 503 });
   const cardByCode = new Map(cards.map((c) => [c.code, c]));
-  const trendByCode = new Map<string, AreaTrend | null>(cards.map((c) => [c.code, areaTrend(trends.areas[c.code])]));
+  const trendByCode = new Map<string, AreaTrend | null>(cards.map((c) => [c.code, areaTrend(c.series)]));
 
   const { data: saved, error } = await admin
     .from("saved_areas")

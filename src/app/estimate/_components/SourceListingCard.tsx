@@ -1,6 +1,6 @@
 'use client';
 
-import { ExternalLink, MapPin, BedDouble, Bath, Star, TrendingUp, TrendingDown, Minus, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { ExternalLink, MapPin, BedDouble, Bath, Star, TrendingUp, TrendingDown, Minus, ShieldCheck, AlertTriangle, XCircle, MinusCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SOURCE_LABELS } from '@/lib/listing/detect';
 import type { ListingSnapshot } from '@/lib/listing/types';
@@ -113,6 +113,26 @@ export function SourceListingCard({ snapshot, quick, warnings, onChange, compact
           )}
           {quick.limited && ' Some lookups were skipped this time (paused for today or too slow); check again later for the rest.'}
         </p>
+      )}
+
+      {!compact && quick && !est && quick.noEstimate && (
+        <div className="mt-3 rounded-md border border-border bg-muted/40 p-3">
+          <p className="text-xs font-semibold text-foreground">Why there’s no estimate yet</p>
+          <ul className="mt-1.5 space-y-1.5">
+            {quick.noEstimate.reasons.map((r) => (
+              <li key={r.source} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+                {r.status === 'short' ? <XCircle className="mt-0.5 h-3 w-3 shrink-0 text-destructive" aria-hidden="true" /> : <MinusCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />}
+                <span>
+                  <span className="font-medium text-foreground">{r.label}</span>
+                  {r.found !== null ? <span className="text-foreground"> · {r.found} of {r.needed}</span> : null}
+                  <br />
+                  {r.detail}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-foreground">{quick.noEstimate.unlock}</p>
+        </div>
       )}
 
       {warnings && warnings.length > 0 && (

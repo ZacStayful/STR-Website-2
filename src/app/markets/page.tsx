@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { getAreaCards } from "@/lib/market/cached";
+import { getMarketSnapshot } from "@/lib/market/cached";
 import { getMarketAccess, requireMarketAccess } from "@/lib/market/gate";
 import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "./_components/product/MarketExplorerProductPage";
 import { ExplorerShell } from "./_components/explorer/ExplorerShell";
 import { loadExplorerUser } from "./_lib/loadExplorerUser";
-import { fetchMarketTrends } from "@/lib/market/trends-client";
 import { isSortKey } from "@/lib/market/rank";
+import { isRegionSlug } from "@/lib/market/regions";
 import { detectListingUrl } from "@/lib/listing/detect";
 
 // Signed-out visitors get the public, indexable product page at this URL;
@@ -34,13 +34,16 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default async function MarketsPage({ searchParams }: { searchParams: Promise<{ sort?: string; q?: string; pane?: string; listing?: string; check?: string }> }) {
+export default async function MarketsPage({ searchParams }: { searchParams: Promise<{ sort?: string; q?: string; pane?: string; listing?: string; check?: string; region?: string }> }) {
   // Members only. Signed-out visitors get the public product page; blocked
   // users are redirected to /upgrade; nothing below runs for either.
   if ((await requireMarketAccess("/markets")) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort, q, pane, listing, check }, cards, user, trends] = await Promise.all([searchParams, getAreaCards(), loadExplorerUser(access.user), fetchMarketTrends()]);
+  const [{ sort, q, pane, listing, check, region }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
+  const { cards, regions, national } = snapshot;
+  // ?region=north-west opens that region's areas; ?region=all is the flat list; otherwise start at the regions.
+  const initialRegion = region === "all" ? "all" : isRegionSlug(region) ? region : null;
   // Deep links from the re-check and sourcing emails: open the pipeline on a
   // listing the member already has, or prefill the paste box with a new URL
   // (never auto-checked: a link must not be able to spend the member's checks).
@@ -62,13 +65,15 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
   return (
     <ExplorerShell
       cards={cards}
+      regions={regions}
+      national={national}
       goals={user.goals}
       savedAreas={user.savedAreas}
       userEmail={user.email}
-      trends={trends}
       alertWeekly={user.alertWeekly}
       sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
+      initialRegion={initialRegion}
       initialSidePane={sidePane}
       initialActiveListing={activeListing}
       initialCheckUrl={checkUrl}

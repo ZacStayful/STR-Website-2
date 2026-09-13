@@ -1,21 +1,28 @@
 /**
- * Server-side Market Explorer aggregator. Assembles the per-area card data the
- * /markets pages render: headline stats, yield-on-cost, long-let vs short-let
- * verdict, licensing flag, transparent score and confidence tier.
- * SERVER ONLY (uses the market client + PropertyData).
+ * Server-side Market Explorer card builder. Turns the snapshot from
+ * aggregate.ts into the cards the /markets pages render, at every level:
+ * regions, areas and districts all carry the same headline (revenue,
+ * occupancy, daily rate), direct-booking potential, seasonality and
+ * competition, plus a monthly series for the trend charts. Areas also get
+ * yield-on-cost, the long-let verdict, licensing, the transparent score
+ * and the confidence tier.
+ * SERVER ONLY (areas call PropertyData for the long-let comparator).
  */
 
-import { fetchMarketStats } from './client.ts';
 import { computeYieldOnCost, type YieldOnCost } from './yield.ts';
 import { computeAreaVerdict, type AreaVerdict } from './verdict.ts';
 import { computeAreaScore, type AreaScore } from './score.ts';
-import { areaConfidence, type Confidence } from './confidence.ts';
-import { rankCompetition, type CompetitionRank } from './competition.ts';
+import { areaConfidence, MIN_DISTRICT_SAMPLES, type Confidence } from './confidence.ts';
+import { competitionBand, type CompetitionBand } from './competition.ts';
+import { areaSeasonality, type Seasonality } from './seasonality.ts';
 import { areaDirectBooking, type DirectBooking } from './direct-booking.ts';
 import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
-import type { MarketArea, MarketBedroomAgg } from './types.ts';
+import { regionForArea, regionForSlug, type RegionMeta } from './regions.ts';
+import type { MarketAggregate, MarketArea, MarketBedroomAgg, MarketDistrict, MarketRegion, MarketSnapshot, MonthBucket } from './types.ts';
+
+export { MIN_DISTRICT_SAMPLES };
 
 function weighted(groups: MarketBedroomAgg[], value: (g: MarketBedroomAgg) => number | null): number | null {
   let sum = 0;
@@ -37,7 +44,7 @@ export interface AreaHeadline {
   bedroomsAvailable: number[];
 }
 
-export function areaHeadline(area: MarketArea): AreaHeadline {
+export function areaHeadline(area: MarketAggregate): AreaHeadline {
   const gross = weighted(area.by_bedrooms, (g) => g.avg_gross_revenue);
   const adr = weighted(area.by_bedrooms, (g) => g.avg_adr);
   const occ = weighted(area.by_bedrooms, (g) => g.avg_occupancy);
@@ -51,7 +58,7 @@ export function areaHeadline(area: MarketArea): AreaHeadline {
 }
 
 /** Per-bedroom stats so the client can show bedroom-specific figures when the
- *  bedroom filter is used (instead of the area-blended headline). */
+ *  bedroom filter is used (instead of the blended headline). */
 export interface BedroomStat {
   bedrooms: number;
   samples: number;
@@ -64,7 +71,7 @@ export interface BedroomStat {
   grossYieldPct: number | null;
 }
 
-export function bedroomStats(area: MarketArea): BedroomStat[] {
+export function bedroomStats(area: MarketAggregate): BedroomStat[] {
   return area.by_bedrooms
     .map((g) => {
       const mid =
@@ -90,68 +97,110 @@ export function bedroomStats(area: MarketArea): BedroomStat[] {
     .sort((a, b) => a.bedrooms - b.bedrooms);
 }
 
-export interface AreaCardData {
-  code: string;
-  slug: string;
-  name: string;
+/** Competition band for a level, from the reviews of its comparables. */
+export function competitionFor(agg: MarketAggregate): CompetitionBand | null {
+  const c = agg.competition;
+  if (!c) return null;
+  return competitionBand({ rating: c.avg_rating, reviews: c.avg_review_count, sampleCount: c.sample_count });
+}
+
+/** The figures shared by every level. */
+export interface LevelFigures {
   headline: AreaHeadline;
   byBedrooms: BedroomStat[];
   yieldOnCost: YieldOnCost | null;
-  verdict: AreaVerdict | null;
-  licensing: LicensingEntry;
-  score: AreaScore | null;
   confidence: Confidence;
-  /** Relative competition rank (Phase 2); null until enough areas carry signals. */
-  competition: CompetitionRank | null;
+  competition: CompetitionBand | null;
+  seasonality: Seasonality | null;
   directBooking: DirectBooking | null;
-  /** Stayful already manages properties in this postcode area. */
-  managedByStayful: boolean;
+  /** Rated reports behind the competition band (shown when it is null). */
+  ratedReports: number;
+  /** Reports carrying a monthly breakdown (shown when seasonality is null). */
+  monthlyReports: number;
+  series: MonthBucket[];
 }
 
-async function buildCard(area: MarketArea): Promise<AreaCardData> {
-  const meta = areaMetaForCode(area.postcode_area);
-  const longLetRent = await getAreaLongLetRent(area);
-  const headline = areaHeadline(area);
-  const yieldOnCost = computeYieldOnCost(area);
-  const licensing = getLicensing(area.postcode_area);
+function levelFigures(agg: MarketAggregate): LevelFigures {
+  const headline = areaHeadline(agg);
   return {
-    code: meta.code,
-    slug: meta.slug,
-    name: meta.name,
     headline,
-    byBedrooms: bedroomStats(area),
-    yieldOnCost,
-    verdict: computeAreaVerdict(area, longLetRent),
-    licensing,
-    score: computeAreaScore({
-      grossYieldPct: yieldOnCost?.grossYieldPct ?? null,
-      occupancyPct: headline.occupancy,
-      grossRevenue: headline.grossRevenue,
-      licensing: licensing.status,
-    }),
+    byBedrooms: bedroomStats(agg),
+    yieldOnCost: computeYieldOnCost(agg),
     confidence: areaConfidence(headline.totalSamples),
-    competition: null, // filled in once every area is known (relative rank)
-    directBooking: areaDirectBooking(area.demand),
-    managedByStayful: false, // filled in by the caller from the managed-areas lookup
+    competition: competitionFor(agg),
+    seasonality: areaSeasonality(agg.seasonality),
+    directBooking: areaDirectBooking(agg.demand),
+    ratedReports: agg.competition?.sample_count ?? 0,
+    monthlyReports: agg.seasonality?.sample_count ?? 0,
+    series: agg.series ?? [],
   };
 }
 
-/** Attach the relative competition rank; needs every area at once. */
-export function withCompetition(cards: AreaCardData[], areas: MarketArea[]): AreaCardData[] {
-  const byCode = new Map(areas.map((a) => [a.postcode_area.toUpperCase(), a]));
-  const ranks = rankCompetition(
-    cards.map((c) => {
-      const comp = byCode.get(c.code)?.competition ?? null;
-      return {
-        code: c.code,
-        density: comp?.avg_listing_density ?? null,
-        reviews: comp?.avg_review_count ?? null,
-        age: comp?.avg_listing_age ?? null,
-        sampleCount: comp?.sample_count ?? 0,
-      };
+export interface DistrictCardData extends LevelFigures {
+  code: string; // outward code, e.g. NG7
+  areaCode: string;
+  /** False until MIN_DISTRICT_SAMPLES reports: the figures are withheld. */
+  ready: boolean;
+}
+
+export interface RegionCardData extends LevelFigures {
+  slug: string;
+  name: string;
+  areaCodes: string[];
+}
+
+export interface AreaCardData extends LevelFigures {
+  code: string;
+  slug: string;
+  name: string;
+  region: RegionMeta;
+  verdict: AreaVerdict | null;
+  licensing: LicensingEntry;
+  score: AreaScore | null;
+  /** Stayful already manages properties in this postcode area. */
+  managedByStayful: boolean;
+  districts: DistrictCardData[];
+}
+
+export function districtCard(d: MarketDistrict): DistrictCardData {
+  const ready = d.total_sample_count >= MIN_DISTRICT_SAMPLES;
+  const figures = levelFigures(d);
+  if (!ready) {
+    figures.headline = { ...figures.headline, grossRevenue: null, adr: null, occupancy: null };
+    figures.byBedrooms = [];
+    figures.yieldOnCost = null;
+    figures.series = [];
+  }
+  return { ...figures, code: d.district, areaCode: d.postcode_area, ready };
+}
+
+export function regionCard(r: MarketRegion): RegionCardData {
+  const meta = regionForSlug(r.slug);
+  return { ...levelFigures(r), slug: r.slug, name: meta?.name ?? r.name, areaCodes: r.areas };
+}
+
+async function buildAreaCard(area: MarketArea): Promise<AreaCardData> {
+  const meta = areaMetaForCode(area.postcode_area);
+  const longLetRent = await getAreaLongLetRent(area);
+  const figures = levelFigures(area);
+  const licensing = getLicensing(area.postcode_area);
+  return {
+    ...figures,
+    code: meta.code,
+    slug: meta.slug,
+    name: meta.name,
+    region: regionForArea(meta.code),
+    verdict: computeAreaVerdict(area, longLetRent),
+    licensing,
+    score: computeAreaScore({
+      grossYieldPct: figures.yieldOnCost?.grossYieldPct ?? null,
+      occupancyPct: figures.headline.occupancy,
+      grossRevenue: figures.headline.grossRevenue,
+      licensing: licensing.status,
     }),
-  );
-  return cards.map((c) => ({ ...c, competition: ranks.get(c.code) ?? null }));
+    managedByStayful: false, // filled in by the caller from the managed-areas lookup
+    districts: (area.districts ?? []).map(districtCard),
+  };
 }
 
 export interface BuildOptions {
@@ -159,29 +208,38 @@ export interface BuildOptions {
   managedAreas?: ReadonlySet<string>;
 }
 
+export interface ExplorerData {
+  cards: AreaCardData[];
+  regions: RegionCardData[];
+  national: MonthBucket[];
+  generatedAt: string;
+  totalReports: number;
+}
+
 /**
- * All area cards for the /markets index. Sorted by data confidence first
- * (Confirmed areas surface above thin/Early ones), then by score, then yield —
+ * Every card for the explorer. Areas are sorted by data confidence first
+ * (Confirmed areas surface above thin/Early ones), then by score, then yield,
  * so the most trustworthy areas lead while everything stays visible.
  * Uncached: pages go through `cached.ts`, which wraps this in an hourly cache.
  */
-export async function buildAreaCards(opts: BuildOptions = {}): Promise<AreaCardData[]> {
-  const data = await fetchMarketStats({});
-  if (!data) return [];
-  const built = await Promise.all(
-    data.areas.map((a) => buildCard(a).catch(() => null)),
-  );
-  const cards = withCompetition(
-    built.filter((c): c is AreaCardData => c !== null),
-    data.areas,
-  ).map((c) => ({ ...c, managedByStayful: opts.managedAreas?.has(c.code) ?? false }));
-  return cards
+export async function buildExplorerData(snapshot: MarketSnapshot, opts: BuildOptions = {}): Promise<ExplorerData> {
+  const built = await Promise.all(snapshot.areas.map((a) => buildAreaCard(a).catch(() => null)));
+  const cards = built
+    .filter((c): c is AreaCardData => c !== null)
+    .map((c) => ({ ...c, managedByStayful: opts.managedAreas?.has(c.code) ?? false }))
     .sort(
       (a, b) =>
         b.confidence.rank - a.confidence.rank ||
         (b.score?.score ?? -1) - (a.score?.score ?? -1) ||
         (b.yieldOnCost?.grossYieldPct ?? -1) - (a.yieldOnCost?.grossYieldPct ?? -1),
     );
+  return {
+    cards,
+    regions: snapshot.regions.map(regionCard),
+    national: snapshot.national,
+    generatedAt: snapshot.generated_at,
+    totalReports: snapshot.total_reports,
+  };
 }
 
 export interface SampleArea {

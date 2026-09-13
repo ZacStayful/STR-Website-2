@@ -43,7 +43,8 @@ export function CompareBar({
   const stats = cards.map((c) => activeAreaStats(c, bedroom));
   const scoreBest = bestIndex(cards.map((c) => c.score?.score ?? null));
   const personalBest = bestIndex(rows.map((r) => r.personal?.score ?? null));
-  const compBest = bestIndex(cards.map((c) => (c.competition ? 100 - c.competition.percentile : null)));
+  const compBest = bestIndex(cards.map((c) => (c.competition ? 100 - c.competition.intensity : null)));
+  const seasonBest = bestIndex(cards.map((c) => c.seasonality?.score ?? null));
   const dbBest = bestIndex(cards.map((c) => c.directBooking?.score ?? null));
   const revBest = bestIndex(stats.map((s) => s.revenue));
   const adrBest = bestIndex(stats.map((s) => s.adr));
@@ -118,21 +119,27 @@ export function CompareBar({
                     {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === revBest)}>{gbp(s.revenue)}</td>))}
                   </tr>
                   <tr>
-                    <th className="mx-cmp-rowlabel">ADR</th>
-                    {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === adrBest)}>{gbp(s.adr)}</td>))}
-                  </tr>
-                  <tr>
                     <th className="mx-cmp-rowlabel">Occupancy</th>
                     {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === occBest)}>{pct(s.occupancy, 0)}</td>))}
+                  </tr>
+                  <tr>
+                    <th className="mx-cmp-rowlabel">Daily rate</th>
+                    {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === adrBest)}>{gbp(s.adr)}</td>))}
                   </tr>
                   <tr>
                     <th className="mx-cmp-rowlabel" title="Gross annual revenue ÷ property value">Yield-on-cost</th>
                     {stats.map((s, i) => (<td key={cards[i].code} className={cell(i === yieldBest)}>{s.yieldPct !== null ? pct(s.yieldPct, 1) : "—"}</td>))}
                   </tr>
                   <tr>
-                    <th className="mx-cmp-rowlabel" title="Relative to every other UK area: listing density, review depth, listing age">Competition</th>
+                    <th className="mx-cmp-rowlabel" title="From the reviews of each report's comparables: average rating and review count">Competition</th>
                     {cards.map((c, i) => (
-                      <td key={c.code} className={cell(i === compBest)}>{c.competition ? `${c.competition.label} · ${c.competition.percentile}th` : "—"}</td>
+                      <td key={c.code} className={cell(i === compBest)} title={c.competition?.explanation}>{c.competition ? `${c.competition.label}${c.competition.rating !== null ? ` · ${c.competition.rating.toFixed(2)}★` : ""}${c.competition.reviews !== null ? ` · ${c.competition.reviews} reviews` : ""}` : "—"}</td>
+                    ))}
+                  </tr>
+                  <tr>
+                    <th className="mx-cmp-rowlabel" title="How evenly revenue spreads across the year (100 = perfectly even)">Seasonality</th>
+                    {cards.map((c, i) => (
+                      <td key={c.code} className={cell(i === seasonBest)} title={c.seasonality?.explanation}>{c.seasonality ? `${c.seasonality.score} · ${c.seasonality.label}` : "—"}</td>
                     ))}
                   </tr>
                   <tr>

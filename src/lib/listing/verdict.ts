@@ -9,6 +9,7 @@ import type { ListingKind } from './types.ts';
 import type { QuickEstimate } from './quick-types.ts';
 import { gradeFor } from '../market/score.ts';
 import { trendLabel, type Direction } from '../market/trend.ts';
+import { competitionTone, type CompetitionLabel } from '../market/competition.ts';
 
 export type VerdictTone = 'works' | 'tight' | 'no' | 'info' | 'unknown';
 
@@ -225,14 +226,18 @@ function unknownVerdict(input: DealVerdictInput): Verdict {
       numberLabel: 'est. / yr',
     };
   }
+  const why = input.quick?.noEstimate ?? null;
+  const shortReasons = why ? why.reasons.filter((r) => r.status === 'short' && r.found !== null).slice(0, 2) : [];
+  const keys: VerdictKey[] = shortReasons.map((r) => ({ label: r.label, value: `${r.found} of ${r.needed}`, sub: r.detail, tone: 'no' as const }));
+  if (input.quick?.area) keys.push(licensingKey(input.quick));
   return {
     tone: 'unknown',
     chip: VERDICT_CHIPS.unknown,
     headline: 'Not enough data yet',
-    sentence: 'We have no revenue figures for this postcode yet. A full report runs live comparables for the exact address.' + limitedNote(input.quick),
+    sentence: (why ? `${why.summary} ${why.unlock}` : 'We have no revenue figures for this postcode yet. A full report runs live comparables for the exact address.') + limitedNote(input.quick),
     track: null,
-    keys: input.quick?.area ? [licensingKey(input.quick)] : [],
-    ceiling: null,
+    keys,
+    ceiling: why ? why.unlock : null,
     number: '—',
     numberLabel: 'no estimate',
   };
@@ -256,12 +261,15 @@ export interface AreaVerdictInput {
   /** Figures for the bedroom count in play (or the area headline). */
   grossRevenue: number | null;
   occupancy: number | null;
+  adr: number | null;
   yieldPct: number | null;
   samples: number;
   grade: string | null;
   gradeLabel: string | null;
-  competition: 'Open' | 'Moderate' | 'Busy' | 'Saturated' | null;
+  competition: CompetitionLabel | null;
   directBooking: 'Low' | 'Moderate' | 'Strong' | null;
+  directBookingScore: number | null;
+  seasonality: { score: number; label: string } | null;
   licensing: { status: 'confirmed-licensed' | 'confirmed-unrestricted' | 'unconfirmed'; headline: string; regionLabel: string };
   trend: Direction | null;
   /** The member's fit, when goals exist. */
@@ -292,8 +300,10 @@ export function areaVerdict(a: AreaVerdictInput): AreaVerdict {
   }
   if (a.licensing.status === 'confirmed-licensed') warn.push('Licence required');
   else if (a.licensing.status === 'confirmed-unrestricted') good.push('No licence needed');
-  if (a.competition === 'Open') good.push('Quiet competition');
-  if (a.competition === 'Busy' || a.competition === 'Saturated') warn.push('Busy market');
+  if (a.competition === 'Opportunity') good.push('Room for new listings');
+  if (a.competition === 'Competitive' || a.competition === 'Busy but beatable') warn.push('Competitive market');
+  if (a.competition === 'Weak') warn.push('Weak short-let demand');
+  if (a.seasonality?.label === 'Highly seasonal') warn.push('Highly seasonal income');
   if (a.trend === 'up') good.push('Rising enquiries');
   if (a.trend === 'down') warn.push('Enquiries falling');
   if (a.directBooking === 'Strong') good.push('Strong direct bookings');
@@ -322,14 +332,18 @@ export function areaVerdict(a: AreaVerdictInput): AreaVerdict {
     sentence,
     track: null,
     keys: [
-      { label: `Typical ${bedLabel} revenue`, value: a.grossRevenue ? absGbp(a.grossRevenue) : '—', sub: `${a.occupancy !== null ? `${Math.round(a.occupancy)}% occupied · ` : ''}${a.samples} report${a.samples === 1 ? '' : 's'}` },
+      { label: 'Avg revenue', value: a.grossRevenue ? absGbp(a.grossRevenue) : '—', sub: `a year, gross · ${a.samples} report${a.samples === 1 ? '' : 's'}${a.bedroom ? ` · ${bedLabel}` : ''}` },
+      { label: 'Occupancy', value: a.occupancy !== null ? `${Math.round(a.occupancy)}%` : '—', sub: 'of nights booked' },
+      { label: 'Daily rate', value: a.adr !== null ? absGbp(a.adr) : '—', sub: 'average per booked night' },
       { label: 'Gross yield', value: a.yieldPct !== null ? `${a.yieldPct.toFixed(1)}%` : '—', sub: a.yieldPct !== null ? `on the average ${bedLabel} price` : 'no property-value data', tone: yieldTone },
-      { label: 'Competition', value: a.competition ?? '—', sub: a.directBooking ? `${a.directBooking.toLowerCase()} direct-booking potential` : 'no direct-booking data' },
+      { label: 'Direct booking', value: a.directBookingScore !== null ? `${a.directBookingScore}/100` : '—', sub: a.directBooking ? `${a.directBooking.toLowerCase()} potential` : 'no demand-driver data' },
+      { label: 'Seasonality', value: a.seasonality ? `${a.seasonality.score}/100` : '—', sub: a.seasonality ? a.seasonality.label.toLowerCase() : 'needs monthly figures' },
+      { label: 'Competition', value: a.competition ?? '—', sub: a.competition ? 'from comparables’ reviews' : 'needs rated reports', tone: a.competition ? competitionTone(a.competition) : undefined },
       { label: 'Licensing', value: a.licensing.status === 'confirmed-unrestricted' ? 'None required' : a.licensing.status === 'confirmed-licensed' ? 'Licence needed' : 'Unconfirmed', sub: a.licensing.regionLabel, tone: a.licensing.status === 'confirmed-licensed' ? 'tight' : undefined },
     ],
     ceiling: a.trend ? `${trendLabel(a.trend)} over the last six months.` : null,
-    number: a.yieldPct !== null ? `${a.yieldPct.toFixed(1)}%` : a.grossRevenue ? gbpK(a.grossRevenue) : '—',
-    numberLabel: a.yieldPct !== null ? `yield${a.grade ? ` · ${a.grade}` : ''}` : a.grossRevenue ? 'rev / yr' : 'no data',
+    number: a.grossRevenue ? gbpK(a.grossRevenue) : '—',
+    numberLabel: a.grossRevenue ? 'avg rev / yr' : 'no data',
     reasons,
     fit: f?.score ?? null,
   };

@@ -1,9 +1,11 @@
 "use client";
 
 import { Star } from "lucide-react";
+import { gbpCompact, pct } from "@/lib/market/format";
+import { Breadcrumb } from "./Breadcrumb";
 import { FitRing } from "./VerdictBits";
 import { areaVerdictFor } from "./verdicts";
-import type { ExplorerRow, MarketGoals } from "./types";
+import type { Crumb, ExplorerRow, MarketGoals } from "./types";
 
 /**
  * One area, one line of reasons, one number. Everything else waits for the
@@ -32,6 +34,10 @@ export function AreaListRow({
 }) {
   const c = row.card;
   const v = areaVerdictFor(row, bedroom, goals);
+  const bed = bedroom != null ? c.byBedrooms.find((b) => b.bedrooms === bedroom) ?? null : null;
+  const occ = bed ? bed.occupancy : c.headline.occupancy;
+  const adr = bed ? bed.adr : c.headline.adr;
+  const samples = bed ? bed.samples : c.headline.totalSamples;
   return (
     <div
       className={"mx-vrow" + (selected ? " is-open" : "") + (hovered ? " is-hover" : "")}
@@ -57,8 +63,14 @@ export function AreaListRow({
           <span className={`mx-conf-dot mx-conf-dot--${c.confidence.tier}`} title={`${c.confidence.label} · ${c.headline.totalSamples} samples`} />
           {c.managedByStayful && <span className="mx-managed" title="Stayful already manages properties here">Stayful manages here</span>}
         </div>
+        <div className="mx-vrow-stats">
+          <span>{pct(occ, 0)} occupied</span>
+          <span>{gbpCompact(adr)} a night</span>
+          <span>{samples} report{samples === 1 ? "" : "s"}</span>
+          {c.districts.length > 0 && <span>{c.districts.filter((d) => d.ready).length} sub-market{c.districts.filter((d) => d.ready).length === 1 ? "" : "s"}</span>}
+        </div>
         <div className="mx-vrow-why">
-          {v.reasons.length > 0 ? v.reasons.map((r) => <span key={r}>{r}</span>) : <span>{c.confidence.label} data · {c.headline.totalSamples} reports</span>}
+          {v.reasons.length > 0 ? v.reasons.map((r) => <span key={r}>{r}</span>) : <span>{c.confidence.label} data</span>}
         </div>
       </div>
       <div className="mx-vrow-end">
@@ -90,6 +102,9 @@ export function AreaList(props: {
   bedroom: number | null;
   goals: MarketGoals | null;
   sortLabel: string;
+  crumbs?: Crumb[];
+  /** The level being listed, for the heading (e.g. "North West"). */
+  scopeName?: string | null;
   onSelect: (code: string | null) => void;
   onHover: (code: string | null) => void;
   onToggleSaved: (code: string) => void;
@@ -100,8 +115,9 @@ export function AreaList(props: {
     <div className="mx-listings">
       <div className="mx-pane-head">
         <div>
-          <h2>{props.goals ? "Areas ranked for you" : "Areas ranked"}</h2>
-          <p>{rows.length} of {props.total} areas{rows.length !== props.total ? " match your filters" : ""} · by {props.sortLabel.toLowerCase()}</p>
+          {props.crumbs && props.crumbs.length > 0 && <Breadcrumb crumbs={props.crumbs} />}
+          <h2>{props.scopeName ? `${props.scopeName} areas${props.goals ? " for you" : ""}` : props.goals ? "Areas ranked for you" : "Areas ranked"}</h2>
+          <p>{rows.length} of {props.total} areas{rows.length !== props.total ? " match your filters" : ""} · by {props.sortLabel.toLowerCase()} · click an area for its sub-markets</p>
         </div>
       </div>
       {rows.length === 0 ? (

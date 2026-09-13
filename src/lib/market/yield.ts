@@ -17,7 +17,7 @@
  * enough data to compute a yield" and hide the stat.
  */
 
-import type { MarketArea, MarketBedroomAgg } from './types';
+import type { MarketAggregate, MarketBedroomAgg } from './types';
 
 export interface YieldOnCost {
   /** Gross annual revenue as a % of property value. */
@@ -54,7 +54,7 @@ function weighted(
   return { mean: weightedSum / samples, samples };
 }
 
-export function computeYieldOnCost(area: MarketArea): YieldOnCost | null {
+export function computeYieldOnCost(area: MarketAggregate): YieldOnCost | null {
   // Only groups with BOTH a property value and gross revenue can back a yield.
   const backed = area.by_bedrooms.filter(
     (g) => midpoint(g) !== null && g.avg_gross_revenue !== null,

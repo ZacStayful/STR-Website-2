@@ -283,6 +283,22 @@ export function ListingDrawer({
                 )}
                 {quick?.pmiMarket?.revenueAnnual && <p className="mx-muted-p">Property Market Intel puts the area at {gbp(quick.pmiMarket.revenueAnnual)} a year{quick.pmiMarket.grade ? ` (grade ${quick.pmiMarket.grade})` : ""}.</p>}
               </>
+            ) : quick?.noEstimate ? (
+              <>
+                <p>No source had enough data for a figure. What each one needed, and what it found:</p>
+                <ul className="mx-why-list">
+                  {quick.noEstimate.reasons.map((r) => (
+                    <li key={r.source}>
+                      <span className={r.status === "short" ? "mx-why-short" : "mx-why-other"} aria-hidden>{r.status === "short" ? "✕" : "–"}</span>
+                      <span>
+                        <b>{r.label}</b>{r.found !== null ? ` · ${r.found} of ${r.needed}` : ""}
+                        <small>{r.detail}</small>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mx-muted-p">{quick.noEstimate.unlock}</p>
+              </>
             ) : (
               <p>We have no revenue figures for this postcode yet. The full report runs live comparables for the exact address.</p>
             )}

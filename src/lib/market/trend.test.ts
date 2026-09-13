@@ -74,3 +74,18 @@ test('pulse: last full month vs the one before, running month separate', () => {
 test('formatMonth', () => {
   assert.equal(formatMonth('2026-09'), 'Sep 2026');
 });
+
+test('review and rating trends only count months with enough rated reports', () => {
+  const r = (month: string, rated: number, reviews: number): MonthBucket => ({ ...b(month, 5), rated_reports: rated, avg_review_count: reviews, avg_rating: 4.8 });
+  const thin = [r('2026-01', 1, 50), r('2026-02', 1, 50), r('2026-03', 1, 50), r('2026-04', 1, 90), r('2026-05', 1, 90), r('2026-06', 1, 90)];
+  assert.equal(trendDirection(thin, 'avg_review_count', { countField: 'rated_reports' }).direction, 'insufficient');
+  assert.equal(trendDirection(thin, 'avg_review_count').direction, 'up'); // every month has 5 reports
+  const rated = thin.map((x) => ({ ...x, rated_reports: 3 }));
+  const t = trendDirection(rated, 'avg_review_count', { countField: 'rated_reports' });
+  assert.equal(t.direction, 'up');
+  assert.equal(t.recent, 90);
+  // buckets without the optional fields never throw
+  const a = areaTrend([b('2026-03', 5), b('2026-04', 5), b('2026-05', 5), b('2026-06', 5), b('2026-07', 5), b('2026-08', 5), b('2026-09', 1)])!;
+  assert.equal(a.reviews.direction, 'insufficient');
+  assert.equal(a.rating.direction, 'insufficient');
+});

@@ -1,5 +1,12 @@
 # Market Explorer — Build Handback
 
+> **Superseded (Sept 2026):** the explorer no longer calls the estimate-software
+> `/api/market-stats` and `/api/market-trends` endpoints. It builds one hourly
+> snapshot straight from the `analyser_reports` table (`src/lib/market/source.ts`
+> → `aggregate.ts` → `explorer.ts`), which gives regions › areas › districts,
+> review-based competition bands, seasonality and the monthly trend series from
+> the same rows. The notes below describe the original build.
+
 Status at handback: **All phases complete.** Score signed off (option 1, as
 proposed) and built. Occupancy fix actioned and merged. Everything is in PRs.
 

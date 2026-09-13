@@ -59,7 +59,7 @@ export interface PersonalInput {
   grossYieldPct: number | null;
   grossRevenue: number | null;
   occupancyPct: number | null;
-  competitionPercentile: number | null; // higher = more competitive
+  competitionIntensity: number | null; // 0–100, higher = more competitive
   directBookingScore: number | null;
   licensing: LicensingStatus;
   propertyValueMid: number | null; // for the chosen bedroom count when available
@@ -110,7 +110,7 @@ export function personaliseScore(input: PersonalInput, goals: MarketGoals): Pers
     { key: 'yield', label: 'Yield-on-cost', weight: weights.yield, earned: input.grossYieldPct === null ? null : frac(input.grossYieldPct, 4, 14) * weights.yield, detail: input.grossYieldPct === null ? 'No property-value data' : `${input.grossYieldPct.toFixed(1)}% gross yield` },
     { key: 'revenue', label: 'Revenue scale', weight: weights.revenue, earned: input.grossRevenue === null ? null : frac(input.grossRevenue, 15000, 45000) * weights.revenue, detail: input.grossRevenue === null ? 'No revenue data' : `£${Math.round(input.grossRevenue).toLocaleString('en-GB')}/yr` },
     { key: 'occupancy', label: 'Occupancy', weight: weights.occupancy, earned: input.occupancyPct === null ? null : frac(input.occupancyPct, 40, 75) * weights.occupancy, detail: input.occupancyPct === null ? 'No occupancy data' : `${Math.round(input.occupancyPct)}% occupancy` },
-    { key: 'competition', label: 'Low competition', weight: weights.competition, earned: input.competitionPercentile === null ? null : (1 - input.competitionPercentile / 100) * weights.competition, detail: input.competitionPercentile === null ? 'Not enough areas to compare' : `More competitive than ${input.competitionPercentile}% of areas` },
+    { key: 'competition', label: 'Low competition', weight: weights.competition, earned: input.competitionIntensity === null ? null : (1 - input.competitionIntensity / 100) * weights.competition, detail: input.competitionIntensity === null ? 'Not enough rated reports' : `Competition intensity ${input.competitionIntensity}/100` },
     { key: 'directBooking', label: 'Direct-booking potential', weight: weights.directBooking, earned: input.directBookingScore === null ? null : (input.directBookingScore / 100) * weights.directBooking, detail: input.directBookingScore === null ? 'No demand data' : `${input.directBookingScore}/100` },
     { key: 'regulatory', label: 'Regulatory ease', weight: weights.regulatory, earned: regulatoryFraction(input.licensing, goals.riskAppetite) * weights.regulatory, detail: input.licensing === 'confirmed-unrestricted' ? 'No licence required' : input.licensing === 'confirmed-licensed' ? 'Licence required' : 'Licensing unconfirmed' },
     { key: 'distance', label: 'Distance from home', weight: weights.distance, earned: distanceFrac === null ? null : distanceFrac * weights.distance, detail: distanceMiles === null ? 'No home postcode set' : goals.maxDistanceMiles ? `${distanceMiles} mi (limit ${goals.maxDistanceMiles})` : `${distanceMiles} mi, anywhere is fine` },
@@ -153,7 +153,7 @@ export function personalInputFor(card: AreaCardData, goals: MarketGoals): Person
     grossYieldPct: card.yieldOnCost?.grossYieldPct ?? null,
     grossRevenue: card.headline.grossRevenue,
     occupancyPct: card.headline.occupancy,
-    competitionPercentile: card.competition?.percentile ?? null,
+    competitionIntensity: card.competition?.intensity ?? null,
     directBookingScore: card.directBooking?.score ?? null,
     licensing: card.licensing.status,
     propertyValueMid: group?.propertyValueMid ?? card.yieldOnCost?.propertyValueMid ?? null,

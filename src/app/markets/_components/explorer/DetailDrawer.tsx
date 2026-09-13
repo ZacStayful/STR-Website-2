@@ -5,19 +5,21 @@ import { useEffect } from "react";
 import { ArrowRight, Download, Star, X } from "lucide-react";
 import { gbp, pct } from "@/lib/market/format";
 import { trendLabel } from "@/lib/market/trend";
-import { Gauge, BedroomBars } from "./Charts";
+import { BedroomBars } from "./Charts";
+import { Breadcrumb } from "./Breadcrumb";
+import { CompetitionFold, SeasonalityFold, SubMarketsFold } from "./LevelFolds";
 import { ManagedEnquiry } from "./ManagedEnquiry";
 import { TrendCharts } from "./TrendCharts";
 import { VerdictLabel } from "../VerdictLabel";
 import { KeyTiles, Kv, VerdictBlock, Working } from "./VerdictBits";
 import { areaVerdictFor } from "./verdicts";
-import type { ExplorerRow, MarketGoals } from "./types";
+import type { Crumb, ExplorerRow, MarketGoals } from "./types";
 
 function points(earned: number | null, weight: number): string {
   return earned === null ? "excluded" : `${Math.round(earned * 10) / 10} / ${Math.round(weight * 10) / 10}`;
 }
 
-/** The area card: one verdict, four tiles, then the working folded away. */
+/** The area card: one verdict, the fixed tiles, then the working folded away. */
 export function DetailDrawer({
   row,
   bedroom,
@@ -25,9 +27,11 @@ export function DetailDrawer({
   comparing,
   compareDisabled,
   userEmail,
+  crumbs = [],
   onClose,
   onToggleCompare,
   onToggleSaved,
+  onOpenDistrict,
 }: {
   row: ExplorerRow;
   bedroom: number | null;
@@ -35,9 +39,11 @@ export function DetailDrawer({
   comparing: boolean;
   compareDisabled: boolean;
   userEmail: string | null;
+  crumbs?: Crumb[];
   onClose: () => void;
   onToggleCompare: () => void;
   onToggleSaved: () => void;
+  onOpenDistrict: (code: string) => void;
 }) {
   const c = row.card;
   const h = c.headline;
@@ -53,13 +59,14 @@ export function DetailDrawer({
   }, [onClose]);
 
   const trendWord = trendLabel(row.trend?.enquiries.direction)?.toLowerCase() ?? null;
-  const metaLine = [trendWord, c.competition ? `${c.competition.label.toLowerCase()} competition` : null, lic.headline.toLowerCase()].filter(Boolean).join(" · ");
+  const metaLine = [trendWord, c.competition ? `${c.competition.label.toLowerCase()} competition` : null, c.seasonality ? c.seasonality.label.toLowerCase() : null, lic.headline.toLowerCase()].filter(Boolean).join(" · ");
 
   return (
     <aside className="mx-drawer mx-deal" aria-label={`${c.name} details`}>
       <div className="mx-deal-head mx-deal-head--area">
         <div className="mx-deal-title">
-          <div className="mx-eyebrow">{c.code} postcode area · {lic.regionLabel}</div>
+          <Breadcrumb crumbs={crumbs} />
+          <div className="mx-eyebrow">{c.code} postcode area · {c.region.name} · {lic.regionLabel}</div>
           <h2>{c.name}</h2>
           <div className="mx-deal-meta">{metaLine}{c.managedByStayful && <> · <span className="mx-managed">Stayful manages here</span></>}</div>
         </div>
@@ -86,7 +93,7 @@ export function DetailDrawer({
           <span className="mx-eyebrow">Show the working</span>
 
           {c.score && (
-            <Working title={`Stayful score ${c.score.score} · ${c.score.grade}`} small={c.score.partial ? "partial: no property-value data" : "yield, occupancy, revenue, competition, licensing"}>
+            <Working title={`Stayful score ${c.score.score} · ${c.score.grade}`} small={c.score.partial ? "partial: no property-value data" : "yield, occupancy, revenue, licensing"}>
               <Kv rows={c.score.components.map((k) => ({ k: k.label, v: points(k.earned, k.weight) }))} />
               <p className="mx-muted-p">{c.score.components.map((k) => k.detail).join(" · ")}</p>
             </Working>
@@ -99,25 +106,14 @@ export function DetailDrawer({
             </Working>
           )}
 
-          <Working title="Competition and direct bookings" small={[c.competition ? `${c.competition.label.toLowerCase()} market` : null, c.directBooking ? `${c.directBooking.label.toLowerCase()} direct-booking potential` : null].filter(Boolean).join(" · ") || "not enough data yet"}>
-            <div className="mx-gauges">
-              {c.competition ? (
-                <Gauge value={c.competition.percentile} label={`${c.competition.label} market`} sub={`More competitive than ${c.competition.percentile}% of ${c.competition.areasRanked} areas`} amber />
-              ) : (
-                <div className="mx-gauge mx-gauge--empty"><div className="mx-gauge-label">Competition</div><div className="mx-gauge-sub">Not enough areas with listing data to compare yet.</div></div>
-              )}
-              {c.directBooking ? (
-                <Gauge value={c.directBooking.score} label={`${c.directBooking.label} direct-booking potential`} sub={c.directBooking.contractorTrend ? `Contractor projects ${c.directBooking.contractorTrend === "up" ? "rising" : c.directBooking.contractorTrend === "down" ? "falling" : "steady"}` : "From local demand drivers"} />
-              ) : (
-                <div className="mx-gauge mx-gauge--empty"><div className="mx-gauge-label">Direct-booking potential</div><div className="mx-gauge-sub">No demand-driver data for this area yet.</div></div>
-              )}
-            </div>
-            {c.competition && <Kv rows={c.competition.components.map((k) => ({ k: k.label, v: k.percentile === null ? "—" : `${k.percentile}th pct` }))} />}
-            {c.directBooking && <Kv rows={c.directBooking.components.map((k) => ({ k: k.label, v: k.earned === null ? "—" : `${Math.round(k.earned)} / ${k.weight}` }))} />}
-          </Working>
+          <SubMarketsFold districts={c.districts} areaName={c.name} onOpen={onOpenDistrict} />
+
+          <CompetitionFold f={c} />
+
+          <SeasonalityFold f={c} />
 
           {row.trend && (
-            <Working title="Enquiry trend" small={trendWord ?? undefined}>
+            <Working title="Trend" small={trendWord ?? undefined}>
               <TrendCharts trend={row.trend} name={c.name} />
             </Working>
           )}

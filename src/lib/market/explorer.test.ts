@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bedroomStats } from './explorer.ts';
-import type { MarketArea, MarketBedroomAgg } from './types.ts';
+import { bedroomStats, competitionFor, districtCard, regionCard, MIN_DISTRICT_SAMPLES } from './explorer.ts';
+import type { MarketArea, MarketBedroomAgg, MarketDistrict, MarketRegion } from './types.ts';
 
 function group(p: Partial<MarketBedroomAgg>): MarketBedroomAgg {
   return {
@@ -41,4 +41,34 @@ test('yield is null when a bedroom group has no property value', () => {
 test('carries the bedroom sample count through', () => {
   const [b] = bedroomStats(area([group({ bedrooms: 2, sample_count: 5 })]));
   assert.equal(b.samples, 5);
+});
+
+test('a district withholds its figures until it has enough reports', () => {
+  const thin: MarketDistrict = { district: 'NG7', postcode_area: 'NG', total_sample_count: MIN_DISTRICT_SAMPLES - 1, by_bedrooms: [group({ sample_count: 2 })], series: [{ month: '2026-08', reports: 2, avg_adr: 1, avg_occupancy: 1, avg_gross_revenue: 1 }] };
+  const d = districtCard(thin);
+  assert.equal(d.ready, false);
+  assert.equal(d.headline.grossRevenue, null);
+  assert.equal(d.headline.totalSamples, 2);
+  assert.deepEqual(d.byBedrooms, []);
+  assert.deepEqual(d.series, []);
+  const ok = districtCard({ ...thin, total_sample_count: MIN_DISTRICT_SAMPLES, by_bedrooms: [group({ sample_count: 3 })] });
+  assert.equal(ok.ready, true);
+  assert.equal(ok.headline.grossRevenue, 30000);
+  assert.equal(ok.code, 'NG7');
+  assert.equal(ok.areaCode, 'NG');
+});
+
+test('a region card blends its bedroom groups by sample count', () => {
+  const r: MarketRegion = { slug: 'north-west', name: 'North West', areas: ['L', 'M'], total_sample_count: 12, by_bedrooms: [group({ bedrooms: 1, sample_count: 4, avg_gross_revenue: 20000 }), group({ bedrooms: 2, sample_count: 8, avg_gross_revenue: 32000 })] };
+  const c = regionCard(r);
+  assert.equal(c.name, 'North West');
+  assert.equal(c.headline.grossRevenue, 28000);
+  assert.deepEqual(c.areaCodes, ['L', 'M']);
+  assert.equal(c.confidence.tier, 'confirmed');
+});
+
+test('competitionFor maps the raw review averages to a band', () => {
+  const a = { ...area([group({})]), competition: { sample_count: 3, avg_rating: 4.85, avg_review_count: 60, avg_listing_age: null, avg_listing_density: null } };
+  assert.equal(competitionFor(a)!.label, 'Opportunity');
+  assert.equal(competitionFor(area([group({})])), null);
 });

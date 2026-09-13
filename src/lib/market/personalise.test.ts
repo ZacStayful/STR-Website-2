@@ -4,7 +4,7 @@ import { personaliseScore, personalInputFor, type PersonalInput } from './person
 import { DEFAULT_GOALS, type MarketGoals } from './goals.ts';
 
 const input = (over: Partial<PersonalInput> = {}): PersonalInput => ({
-  code: 'M', grossYieldPct: 9, grossRevenue: 28000, occupancyPct: 63, competitionPercentile: 50,
+  code: 'M', grossYieldPct: 9, grossRevenue: 28000, occupancyPct: 63, competitionIntensity: 50,
   directBookingScore: 50, licensing: 'confirmed-unrestricted', propertyValueMid: 300000, bedroomsAvailable: [1, 2, 3],
   ...over,
 });
@@ -18,14 +18,14 @@ test('score is 0–100 and every component is explained', () => {
 });
 
 test('perfect inputs score 100 regardless of weights', () => {
-  const s = personaliseScore(input({ grossYieldPct: 20, grossRevenue: 60000, occupancyPct: 90, competitionPercentile: 0, directBookingScore: 100 }), goals())!;
+  const s = personaliseScore(input({ grossYieldPct: 20, grossRevenue: 60000, occupancyPct: 90, competitionIntensity: 0, directBookingScore: 100 }), goals())!;
   assert.equal(s.score, 100);
   assert.equal(s.grade, 'A');
 });
 
 test('priority extremes flip a ranking between a high-yield/busy area and a low-yield/open one', () => {
-  const busyHighYield = input({ code: 'A', grossYieldPct: 13, competitionPercentile: 95 });
-  const openLowYield = input({ code: 'B', grossYieldPct: 6, competitionPercentile: 5 });
+  const busyHighYield = input({ code: 'A', grossYieldPct: 13, competitionIntensity: 95 });
+  const openLowYield = input({ code: 'B', grossYieldPct: 6, competitionIntensity: 5 });
   const yieldFirst = goals({ priorities: { yield: 3, revenue: 2, lowCompetition: 0, directBookings: 2 } });
   const quietFirst = goals({ priorities: { yield: 0, revenue: 2, lowCompetition: 3, directBookings: 2 } });
   assert.ok(personaliseScore(busyHighYield, yieldFirst)!.score > personaliseScore(openLowYield, yieldFirst)!.score);

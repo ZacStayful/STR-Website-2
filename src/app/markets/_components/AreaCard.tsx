@@ -71,12 +71,12 @@ export function AreaCard({
             <div className="mx-stat-lbl">Avg revenue</div>
           </div>
           <div className="mx-stat">
-            <div className="mx-stat-val">{gbpCompact(s.adr)}</div>
-            <div className="mx-stat-lbl">ADR</div>
-          </div>
-          <div className="mx-stat">
             <div className="mx-stat-val">{pct(s.occupancy, 0)}</div>
             <div className="mx-stat-lbl">Occupancy</div>
+          </div>
+          <div className="mx-stat">
+            <div className="mx-stat-val">{gbpCompact(s.adr)}</div>
+            <div className="mx-stat-lbl">Daily rate</div>
           </div>
         </div>
 

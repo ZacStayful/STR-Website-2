@@ -78,9 +78,14 @@ export function AreaReport({ card, personal, generatedAt }: { card: AreaCardData
 
         <View style={s.row}>
           <MetricCard label="Avg gross revenue / yr" value={gbp(h.grossRevenue)} />
-          <MetricCard label="Average daily rate" value={gbp(h.adr)} />
           <MetricCard label="Occupancy" value={pct(h.occupancy, 0)} />
+          <MetricCard label="Average daily rate" value={gbp(h.adr)} />
           <MetricCard label="Gross yield-on-cost" value={y ? pct(y.grossYieldPct, 1) : "—"} sub={y ? `on ~${gbp(y.propertyValueMid)} value` : "no value data"} />
+        </View>
+        <View style={s.row}>
+          <MetricCard label="Direct-booking potential" value={card.directBooking ? `${card.directBooking.score}/100` : "—"} sub={card.directBooking?.label} />
+          <MetricCard label="Seasonality" value={card.seasonality ? `${card.seasonality.score}/100` : "—"} sub={card.seasonality?.label ?? "needs monthly figures"} />
+          <MetricCard label="Competition" value={card.competition?.label ?? "—"} sub={card.competition ? `${card.competition.rating?.toFixed(2) ?? "—"}★ · ${card.competition.reviews ?? "—"} reviews` : "needs rated reports"} />
         </View>
 
         {card.score && (
@@ -115,17 +120,33 @@ export function AreaReport({ card, personal, generatedAt }: { card: AreaCardData
         {card.competition ? (
           <>
             <Text style={s.body}>
-              {card.name} is more competitive than {card.competition.percentile}% of the {card.competition.areasRanked} UK areas we track ({card.competition.label}). Based on {card.competition.sampleCount} reports with listing data.
+              {card.name} is {card.competition.label.toLowerCase()}: {card.competition.explanation} Based on {card.competition.sampleCount} reports with review data.
             </Text>
             <View style={s.table}>
-              <Row head cols={["Signal", "This area", "Percentile"]} widths={[30, 50, 20]} />
-              {card.competition.components.map((c) => (
-                <Row key={c.key} cols={[c.label, c.detail, c.percentile === null ? "—" : `${c.percentile}th`]} widths={[30, 50, 20]} />
+              <Row head cols={["Signal", "This area", ""]} widths={[30, 50, 20]} />
+              <Row cols={["Average rating", card.competition.rating === null ? "—" : `${card.competition.rating.toFixed(2)} out of 5`, ""]} widths={[30, 50, 20]} />
+              <Row cols={["Average reviews", card.competition.reviews === null ? "—" : `${card.competition.reviews} per comparable listing`, ""]} widths={[30, 50, 20]} />
+              <Row cols={["Rated reports", String(card.competition.sampleCount), ""]} widths={[30, 50, 20]} />
+            </View>
+            <Text style={s.note}>Bands: 100+ reviews is an established market (Competitive at 4.8★ and above, Busy but beatable below); under 100 reviews with hosts rated 4.8★+ is an Opportunity, 4.6–4.8★ Emerging, under 4.6★ Weak.</Text>
+          </>
+        ) : (
+          <Text style={s.body}>Needs at least 3 reports with review data to place this area ({card.ratedReports} so far).</Text>
+        )}
+
+        <H2>Seasonality</H2>
+        {card.seasonality ? (
+          <>
+            <Text style={s.body}>{card.seasonality.score}/100 — {card.seasonality.label}. {card.seasonality.explanation} From {card.seasonality.sampleCount} reports with a monthly breakdown.</Text>
+            <View style={s.table}>
+              <Row head cols={["Month", "", "Share of annual revenue"]} widths={[30, 30, 40]} />
+              {card.seasonality.profile.map((share, i) => (
+                <Row key={i} hl={i % 2 === 1} cols={[["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][i], "", `${Math.round(share * 100)}%`]} widths={[30, 30, 40]} />
               ))}
             </View>
           </>
         ) : (
-          <Text style={s.body}>Not enough areas carry listing data yet to rank competition.</Text>
+          <Text style={s.body}>Needs at least 3 reports with a monthly breakdown ({card.monthlyReports} so far).</Text>
         )}
 
         <H2>Direct-booking potential</H2>
@@ -155,6 +176,23 @@ export function AreaReport({ card, personal, generatedAt }: { card: AreaCardData
             />
           ))}
         </View>
+
+        {card.districts.length > 0 && (
+          <>
+            <H2>Sub-markets</H2>
+            <View style={s.table}>
+              <Row head cols={["District", "Reports", "Avg revenue", "Occupancy", "Daily rate", "Competition"]} widths={[14, 12, 20, 16, 16, 22]} />
+              {card.districts.map((d, i) => (
+                <Row
+                  key={d.code}
+                  hl={i % 2 === 1}
+                  widths={[14, 12, 20, 16, 16, 22]}
+                  cols={d.ready ? [d.code, String(d.headline.totalSamples), gbp(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(d.headline.adr), d.competition?.label ?? "—"] : [d.code, String(d.headline.totalSamples), `Early — ${d.headline.totalSamples} of 3`, "", "", ""]}
+                />
+              ))}
+            </View>
+          </>
+        )}
 
         <H2>Short-let vs long-let</H2>
         {v ? (

@@ -1,34 +1,52 @@
 import 'server-only';
 
 import { unstable_cache } from 'next/cache';
-import { buildAreaCards, pickSampleArea, type AreaCardData, type SampleArea } from './explorer';
+import { buildExplorerData, pickSampleArea, type AreaCardData, type ExplorerData, type SampleArea } from './explorer';
+import { buildSnapshot } from './aggregate';
+import { loadReportRows } from './source';
 import { getManagedAreas } from './managed-areas';
 import { withTimeout } from '../timeout';
 import { keepAlive } from '../keep-alive';
+import type { MonthBucket } from './types';
 
 /**
- * Hourly-cached entry points for the /markets pages.
+ * Hourly-cached entry point for everything the Market Explorer shows.
  *
- * The routes render per request (the access gate reads the session), so the
- * card build — which calls PropertyData once per area — must not run per
- * request. `unstable_cache` keeps it to once an hour. An empty result
- * (upstream down / not configured) is not treated as a hit, so a blip doesn't
- * blank the explorer for an hour. Kept separate from explorer.ts so the pure
- * logic stays runnable under `node --test`.
+ * One snapshot: the reports are loaded once, aggregated once (regions,
+ * areas, districts, monthly series) and the cards built once, so every
+ * figure, label and chart on the explorer comes from the same data. The
+ * routes render per request (the access gate reads the session), so the
+ * build — which calls PropertyData once per area — must not run per
+ * request; `unstable_cache` keeps it to once an hour. An empty result
+ * (no service role / query failed) is not treated as a hit, so a blip
+ * doesn't blank the explorer for an hour. Kept separate from explorer.ts
+ * so the pure logic stays runnable under `node --test`.
  */
 const CACHE_SECONDS = 3600;
 const TAG = 'market-area-cards';
 
-async function buildCardsWithManaged(): Promise<AreaCardData[]> {
-  const managed = await getManagedAreas();
-  return buildAreaCards({ managedAreas: managed });
+const EMPTY: ExplorerData = { cards: [], regions: [], national: [], generatedAt: '', totalReports: 0 };
+
+async function buildExplorerWithManaged(): Promise<ExplorerData> {
+  const [rows, managed] = await Promise.all([loadReportRows(), getManagedAreas()]);
+  if (rows.length === 0) return EMPTY;
+  return buildExplorerData(buildSnapshot(rows), { managedAreas: managed });
 }
 
-const cachedAreaCards = unstable_cache(buildCardsWithManaged, ['market-area-cards-v2'], { revalidate: CACHE_SECONDS, tags: [TAG] });
+const cachedSnapshot = unstable_cache(buildExplorerWithManaged, ['market-snapshot-v3'], { revalidate: CACHE_SECONDS, tags: [TAG] });
+
+export async function getMarketSnapshot(): Promise<ExplorerData> {
+  const data = await cachedSnapshot();
+  return data.cards.length > 0 ? data : buildExplorerWithManaged();
+}
 
 export async function getAreaCards(): Promise<AreaCardData[]> {
-  const cards = await cachedAreaCards();
-  return cards.length > 0 ? cards : buildCardsWithManaged();
+  return (await getMarketSnapshot()).cards;
+}
+
+/** The nationwide monthly series (market pulse), from the same snapshot. */
+export async function getNationalSeries(): Promise<MonthBucket[]> {
+  return (await getMarketSnapshot()).national;
 }
 
 /**

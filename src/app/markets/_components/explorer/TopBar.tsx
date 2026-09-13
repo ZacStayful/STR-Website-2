@@ -173,8 +173,8 @@ export function TopBar({
                 <button type="button" className="mx-cmp-close" aria-label="Close filters" onClick={() => setFiltersOpen(false)}><X size={16} /></button>
               </div>
               <div className="mx-filters-pop-section">
-                <span className="mx-eyebrow">Region</span>
-                <div className="mx-filter-group" role="group" aria-label="Region">
+                <span className="mx-eyebrow">Nation</span>
+                <div className="mx-filter-group" role="group" aria-label="Nation">
                   {REGIONS.map((r) => (
                     <button key={r.key} type="button" className="mx-pill mx-pill--sm" aria-pressed={filters.region === r.key} onClick={() => set({ region: r.key })}>{r.label}</button>
                   ))}
