@@ -54,22 +54,36 @@ export function planItUrl(lat: number, lng: number, radiusKm: number, window: Pl
   return u.toString();
 }
 
-/** Large applications started in the window within `radiusKm` of a point; null on any failure. */
+const RATE_LIMIT_PAUSE_MS = 6_000;
+const RATE_LIMIT_RETRIES = 2;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Large applications started in the window within `radiusKm` of a point;
+ * null on any failure. A 429 is PlanIt asking for a pause, not a sign the
+ * radius is too wide, so it waits and retries before giving up.
+ */
 export async function countLargeApplications(lat: number, lng: number, radiusKm: number, window: PlanItWindow): Promise<number | null> {
-  try {
-    const res = await fetch(planItUrl(lat, lng, radiusKm, window), {
-      headers: { accept: 'application/json', 'user-agent': 'Stayful Market Explorer (planning signals)' },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      cache: 'no-store',
-    });
-    if (!res.ok) {
-      console.warn(`[planit] HTTP ${res.status} for ${lat.toFixed(3)},${lng.toFixed(3)}`);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(planItUrl(lat, lng, radiusKm, window), {
+        headers: { accept: 'application/json', 'user-agent': 'Stayful Market Explorer (planning signals)' },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        cache: 'no-store',
+      });
+      if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+        await sleep(RATE_LIMIT_PAUSE_MS * (attempt + 1));
+        continue;
+      }
+      if (!res.ok) {
+        console.warn(`[planit] HTTP ${res.status} for ${lat.toFixed(3)},${lng.toFixed(3)} at ${radiusKm} km`);
+        return null;
+      }
+      return parsePlanItTotal(await res.json());
+    } catch (err) {
+      console.warn('[planit] fetch failed:', (err as Error)?.message ?? err);
       return null;
     }
-    return parsePlanItTotal(await res.json());
-  } catch (err) {
-    console.warn('[planit] fetch failed:', (err as Error)?.message ?? err);
-    return null;
   }
 }
 
