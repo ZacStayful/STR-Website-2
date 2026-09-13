@@ -960,3 +960,79 @@
   .mx2-market-thumb { display: none; }
   .mx2-fit-tag { margin-left: 0; }
 }
+
+/* ═══ v2 find screen (phase 4) ═══════════════════════════════════════ */
+.mx2-find { display: flex; flex-direction: column; min-height: calc(100dvh - 120px); background: var(--mx-bg); }
+.mx2-find-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px 12px; flex-wrap: wrap; }
+.mx2-find-title { margin: 0; font-size: 28px; }
+.mx2-find-region .mx2-btn { border-color: transparent; background: transparent; padding: 0 4px; gap: 10px; }
+.mx2-find-region .mx2-btn:hover { border-color: var(--mx-line); }
+.mx2-find-region .mx2-btn svg { width: 20px; height: 20px; }
+.mx2-find-head-actions { display: flex; gap: 8px; align-items: center; }
+.mx2-pane-toggle { display: none; }
+.mx2-filterbar { padding: 0 24px 12px; border-bottom: 1px solid var(--mx-line); }
+.mx2-filterbar-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mx2-find-search { flex: 1 1 260px; height: 42px; padding-right: 6px; }
+.mx2-find-search.is-link { border-color: var(--mx-sage-deep); }
+.mx2-find-search .mx-cta--sm { height: 30px; padding: 0 12px; white-space: nowrap; }
+.mx2-filterbar .mx-filters-wrap .mx-chip { height: 36px; border-radius: 999px; font-weight: 600; font-size: 0.84rem; }
+.mx2-find-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 42%); flex: 1; min-height: 0; }
+.mx2-find-cards { padding: 16px 24px 32px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.mx2-grid-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.mx2-seg-count { background: rgba(255,255,255,0.25); border-radius: 999px; font-size: 11px; padding: 0 6px; }
+.mx2-seg button[aria-pressed="false"] .mx2-seg-count { background: var(--mx-line); color: var(--mx-ink); }
+.mx2-shown { font-size: 14px; white-space: nowrap; color: var(--mx-body); }
+.mx2-sort { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--mx-body); }
+.mx2-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.mx2-find-map { position: relative; border-left: 1px solid var(--mx-line); background: #f2f4ee; min-height: 520px; }
+.mx2-find-map .mx-mappane { top: 0; }
+.mx2-find-listing { overflow: hidden; display: flex; flex-direction: column; background: var(--mx-bg); }
+.mx2-find-listing .mx-drawer { min-height: 0; }
+/* Market card */
+.mx2-mcard { gap: 0; padding: 0; cursor: pointer; animation: mx2-in 0.18s ease-out; box-shadow: 0 0 0 2px transparent; transition: box-shadow 0.12s; }
+.mx2-mcard.is-hover { box-shadow: 0 0 0 2px var(--mx-sage-deep); }
+.mx2-mcard.is-comparing { box-shadow: 0 0 0 2px var(--mx-ink); }
+.mx2-mcard.is-hover.is-comparing { box-shadow: 0 0 0 2px var(--mx-sage-deep), 0 0 0 4px var(--mx-ink); }
+.mx2-mcard:focus-visible { outline: 2px solid var(--mx-sage-deep); outline-offset: 2px; }
+.mx2-mcard-head { display: flex; align-items: center; gap: 12px; padding: 12px 12px 8px; }
+.mx2-mcard-title { min-width: 0; flex: 1; }
+.mx2-mcard-name { font-family: var(--font-playfair), Georgia, serif; font-weight: 600; font-size: 17px; line-height: 1.2; color: var(--mx-ink); }
+.mx2-mcard-sub { font-size: 11px; color: var(--mx-muted); margin-top: 2px; }
+.mx2-mcard-heart { border: 0; background: none; padding: 6px; cursor: pointer; color: var(--mx-muted); display: inline-flex; border-radius: 8px; }
+.mx2-mcard-heart.is-on, .mx2-mcard-heart:hover { color: var(--mx-sage-deep); }
+.mx2-mcard-heart:focus-visible { outline: 2px solid var(--mx-sage-deep); }
+.mx2-mcard-code { width: 48px; height: 48px; flex: none; border-radius: 50%; border: 4px solid var(--mx-line); display: grid; place-items: center; font-family: var(--font-playfair), Georgia, serif; font-weight: 600; font-size: 14px; color: var(--mx-ink); }
+.mx2-mcard-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 8px 12px 12px; gap: 8px; }
+.mx2-mcard-kpis > div { border-left: 2px solid var(--mx-line); padding-left: 8px; min-width: 0; }
+.mx2-mcard-kpis b { display: block; font-family: var(--font-playfair), Georgia, serif; font-weight: 600; font-size: 18px; line-height: 1.1; color: var(--mx-ink); }
+.mx2-mcard-kpis span { display: block; font-size: 11px; color: var(--mx-muted); margin-top: 3px; }
+.mx2-mcard-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--mx-line); font-size: 11px; color: var(--mx-muted); flex-wrap: wrap; }
+.mx2-mcard-fit { margin-left: auto; white-space: nowrap; }
+.mx2-mcard-fit b { color: var(--mx-ink); }
+.mx2-link { border: 0; background: none; padding: 0; font: inherit; color: var(--mx-sage-deep-2); text-decoration: underline; cursor: pointer; }
+.mx2-mcard-compare { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; color: var(--mx-ink); }
+.mx2-mcard-compare input { accent-color: var(--mx-sage-deep); margin: 0; }
+.mx2-mcard-compare input:disabled { cursor: not-allowed; }
+.mx2-mcard--district.is-early { background: #fafbf7; }
+.mx2-mcard-early { padding: 4px 12px 12px; font-size: 12px; color: var(--mx-muted); display: flex; flex-direction: column; gap: 4px; }
+.mx2-mcard-early b { color: var(--mx-ink); font-weight: 600; }
+.mx2-find .mx-listings { background: #fff; border: 1px solid var(--mx-line); border-radius: 16px; overflow: hidden; }
+.mx2-find .mx-listings .mx-list { overflow: visible; }
+@media (max-width: 960px) {
+  .mx2-find-body { grid-template-columns: minmax(0, 1fr); }
+  .mx2-find-map { border-left: none; min-height: 0; }
+  .mx2-find-map .mx-mappane { position: relative; height: 60dvh; }
+  .mx2-find-listing { height: auto; }
+  .mx2-pane-toggle { display: inline-flex; }
+  .mx2-find.pane-cards .mx2-find-map { display: none; }
+  .mx2-find.pane-map .mx2-find-cards { display: none; }
+  .mx2-find.has-listing .mx2-find-map { display: block; }
+  .mx2-find.has-listing.pane-map .mx2-find-cards { display: none; }
+}
+@media (max-width: 520px) {
+  .mx2-find-head, .mx2-filterbar, .mx2-find-cards { padding-left: 16px; padding-right: 16px; }
+  .mx2-find-title { font-size: 24px; }
+  .mx2-card-grid { grid-template-columns: 1fr; }
+  .mx2-sort { margin-left: 0; }
+}
+.mx2-mcard-sub .mx-managed { display: inline-block; white-space: nowrap; vertical-align: middle; margin-top: 2px; }

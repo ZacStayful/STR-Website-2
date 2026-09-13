@@ -21,6 +21,9 @@ export const MAP_METRICS: { key: MapMetric; label: string; needsGoals?: boolean 
   { key: "accuracy", label: "Data accuracy" },
 ];
 
+/** The three views of the find screen: postcode areas, their districts, or the member's deals. */
+export type Level = "markets" | "sub" | "deals";
+
 export interface Filters {
   q: string;
   region: Region;
