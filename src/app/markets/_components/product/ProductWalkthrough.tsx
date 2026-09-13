@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@/lib/icons";
-import { MockCompare, MockGauges, MockGoalChips, MockMapPane, MockRankedList, MockScoreTable, MockTrend } from "./ProductMocks";
+import { MockCardGrid, MockCompare, MockDeals, MockFilterBar, MockGauges, MockGoalChips, MockLevelRow, MockMapPane, MockPerformance, MockTabs, MockTrend } from "./ProductMocks";
 
 interface Step {
   id: string;
@@ -21,11 +21,11 @@ const STEPS: Step[] = [
     number: "01",
     icon: "map",
     title: "See the whole UK, ranked.",
-    subtitle: "Every postcode area on one map, shaded by what matters to you.",
+    subtitle: "Every postcode area as a card, and on one map, shaded in four clear bands.",
     description:
-      "Start with the map. Every area we hold data for is coloured by its score, yield, occupancy or revenue, so the strongest markets jump out before you read a single number. Hover for the headline, click for the full picture.",
-    bullets: ["Colour the map by score, yield, occupancy or revenue", "Confidence tiers show how much real data sits behind each area", "Ranked list beside the map, always in sync"],
-    mock: <div className="mxp-mock-split"><MockMapPane compact /><MockRankedList rows={5} dense /></div>,
+      "Start with the map. Every area we hold data for is coloured by its score, your fit, revenue, occupancy, daily rate, yield or competition, in four bands with round-number thresholds, so the strongest markets jump out before you read a single number. Hover a card or an area for the headline, click for the full market page.",
+    bullets: ["Colour the map by score, fit, revenue, occupancy, daily rate, yield or competition", "Confidence tiers show how much real data sits behind each area", "Cards beside the map, always in sync; switch to sub-markets for postcode districts"],
+    mock: <div className="mxp-mock-split"><MockMapPane compact hoverCard={false} /><div className="mxp-mock-stack"><MockLevelRow /><MockCardGrid rows={2} dense hover="HG" /></div></div>,
   },
   {
     id: "goals",
@@ -36,18 +36,18 @@ const STEPS: Step[] = [
     description:
       "Close to home or anywhere in the UK? Maximum yield or maximum revenue? Self-managed or hands-off? Your answers become a personal 'fit' score that sits beside the Stayful score, so the ranking reflects your plan, not a generic one.",
     bullets: ["Home postcode and how far you'll travel", "Budget bracket and bedroom count", "Priorities: yield, revenue, low competition, direct bookings", "Management style and appetite for licensing rules"],
-    mock: <div className="mxp-mock-stack"><MockGoalChips /><MockRankedList rows={4} dense /></div>,
+    mock: <div className="mxp-mock-stack"><MockFilterBar compact /><MockGoalChips /><MockCardGrid rows={2} dense hover={null} /></div>,
   },
   {
     id: "score",
     number: "03",
     icon: "chart",
     title: "A score you can interrogate.",
-    subtitle: "Not a black box. We show our working on every area.",
+    subtitle: "Every market gets its own page. Not a black box: we show our working.",
     description:
-      "Each area gets a 0–100 Stayful score built from four named factors: yield-on-cost, occupancy, revenue scale and regulatory ease. You see the raw figure behind every factor and the points it earned, so you can defend the number to a lender, a partner or yourself.",
-    bullets: ["Yield-on-cost: revenue against what property actually costs there", "Occupancy: whether the area dependably books", "Regulatory ease: licence required, unrestricted or unconfirmed"],
-    mock: <MockScoreTable />,
+      "Click any market and it opens as a full page: eleven tabs covering sub-markets, listings, occupancy, revenue, rates, seasonality, competition, licensing, long-let vs short-let and your own deals there. At the top sits a 0–100 market score built from four named factors — yield-on-cost, occupancy, revenue scale and regulatory ease — with the points each one earned, so you can defend the number to a lender, a partner or yourself.",
+    bullets: ["Yield-on-cost: revenue against what property actually costs there", "Occupancy: whether the area dependably books", "Regulatory ease: licence required, unrestricted or unconfirmed", "Five signals under the score: licensing, long-let vs short-let, yield, confidence, enquiry trend"],
+    mock: <div className="mxp-mock-stack"><MockTabs /><MockPerformance /></div>,
   },
   {
     id: "competition",
@@ -57,7 +57,7 @@ const STEPS: Step[] = [
     subtitle: "Competition and direct-booking potential, side by side.",
     description:
       "How crowded is the market, and how entrenched are the hosts already in it? We rank every area on listing density and review depth. Then we look at what drives guests to book direct — contractor projects, hospitals, universities and events — so you know where you can build repeat business off-platform.",
-    bullets: ["Competition ranked relative to every other UK area", "Direct-booking potential from real local demand drivers", "Licensing rules with cited sources, per area"],
+    bullets: ["Competition in absolute bands, from the reviews of real comparables", "Direct-booking potential from real local demand drivers", "Licensing rules with cited sources, per area"],
     mock: <MockGauges />,
   },
   {
@@ -65,10 +65,10 @@ const STEPS: Step[] = [
     number: "05",
     icon: "users",
     title: "Compare your shortlist head to head.",
-    subtitle: "Up to four areas in one table, best value highlighted.",
+    subtitle: "Tick up to four areas; the dock follows you from the map to each market page.",
     description:
-      "Pin the areas you're torn between and compare them line by line: score, revenue, occupancy, yield, competition, licensing and the short-let vs long-let verdict. Then jump straight into the address analyser for a specific property.",
-    bullets: ["Four-way comparison table", "Per-bedroom breakdown for every area", "One click into a full property analysis"],
+      "Tick the areas you're torn between and compare them line by line: score, your fit, revenue, occupancy, daily rate, yield, competition, licensing and the short-let vs long-let verdict, best value highlighted. Then jump straight into the address analyser for a specific property.",
+    bullets: ["Four-way comparison, from the cards or any market page", "Per-bedroom breakdown for every area", "One click into a full property analysis"],
     mock: <MockCompare />,
   },
   {
@@ -80,7 +80,7 @@ const STEPS: Step[] = [
     description:
       "Found a flat on Rightmove or a competitor on Airbnb? Paste the link. We read the price, beds and location, show a free quick view — estimated revenue, area score, competition and, for Airbnbs, what that listing actually earns — and run the deal maths: yield on the asking price or the rent-to-rent margin, with the most you could pay. Save it to your pipeline, compare listings side by side, share a deal sheet, and run the full report when you're serious.",
     bullets: ["Free quick view before you spend a report", "Purchase or rent-to-rent maths with a reverse calculator", "Deal pipeline with status, notes and map pins", "Shareable deal sheet for partners, lenders or landlords"],
-    mock: <div className="mxp-mock-stack"><MockGoalChips /><MockRankedList rows={3} dense /></div>,
+    mock: <MockDeals />,
   },
   {
     id: "trend",
@@ -89,8 +89,8 @@ const STEPS: Step[] = [
     title: "Watch the market move.",
     subtitle: "Is an area getting stronger or weaker? Is the UK?",
     description:
-      "Every analysis run through Stayful adds a data point. Over time the explorer shows whether enquiries, rates and occupancy are rising or falling — for each area and for the country as a whole — so you can time a purchase rather than guess.",
-    bullets: ["Monthly enquiry, ADR and occupancy series per area", "Nationwide market pulse", "Honest 'building history' state until an area has enough months"],
+      "Every analysis run through Stayful adds a data point. Each market page carries twelve months of revenue, daily rate and occupancy, and every headline figure says how it moved against the three months before — for each area and for the country as a whole — so you can time a purchase rather than guess.",
+    bullets: ["Monthly revenue, daily-rate and occupancy charts per market", "Deltas that name their window: 'vs prior 3 months', never a vague 'past year'", "Honest 'building history' state until an area has enough months"],
     mock: <MockTrend />,
   },
 ];
@@ -118,7 +118,7 @@ export function ProductWalkthrough() {
         <div className="walkthrough-intro">
           <div className="eyebrow">How it works</div>
           <h2>
-            Six views.
+            Seven views.
             <br />
             One confident decision.
           </h2>

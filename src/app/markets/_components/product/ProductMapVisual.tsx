@@ -4,8 +4,9 @@ import { useUkGeo, MAP_W, MAP_H } from "../useUkGeo";
 
 /**
  * Non-interactive UK map for the public product page. Shading is ILLUSTRATIVE —
- * a deterministic pattern seeded by the postcode-area code, never real market
- * figures — so the page can look like the explorer without leaking its data.
+ * a deterministic pattern seeded by the postcode-area code, quantised into the
+ * explorer's four bands, never real market figures — so the page can look like
+ * the explorer without leaking its data.
  */
 
 function seed(code: string): number {
@@ -14,11 +15,14 @@ function seed(code: string): number {
   return ((h >>> 0) % 1000) / 1000;
 }
 
-function ramp(t: number): string {
-  const lo = [231, 239, 221];
-  const hi = [58, 86, 52];
-  const ch = (i: number) => Math.round(lo[i] + (hi[i] - lo[i]) * t);
-  return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
+/** The explorer's four quantile bands, lightest to darkest. */
+const BANDS = ["#cdd8c4", "#a2b299", "#6e8467", "#3a5634"];
+const NO_DATA = "#e8e8e2";
+
+function band(t: number): string {
+  // Roughly a third of areas have no data yet; the rest fall into four bands.
+  if (t < 0.34) return NO_DATA;
+  return BANDS[Math.min(3, Math.floor(((t - 0.34) / 0.66) * 4))];
 }
 
 export function ProductMapVisual({ highlight = [], compact = false }: { highlight?: string[]; compact?: boolean }) {
@@ -41,7 +45,7 @@ export function ProductMapVisual({ highlight = [], compact = false }: { highligh
           <path
             key={p.area}
             d={p.d}
-            fill={isHl ? "#2e3d2b" : ramp(0.15 + t * 0.7)}
+            fill={isHl ? "#5d8156" : band(t)}
             stroke="#ffffff"
             strokeWidth={0.5}
             className="mxp-map-area"
