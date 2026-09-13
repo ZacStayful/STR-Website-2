@@ -1,26 +1,23 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { gbp } from "@/lib/market/format";
+import { Crosshair, Minus, Plus } from "lucide-react";
+import { gbp, gbpCompact, pct } from "@/lib/market/format";
+import { bucketIndex, buildBuckets, spreadPalette } from "@/lib/market/buckets";
 import { useUkGeo, MAP_W as W, MAP_H as H } from "../useUkGeo";
 import { MAP_METRICS, type ExplorerRow, type MapMetric } from "./types";
+import { ScoreRing } from "./v2/shared/ScoreRing";
 
 /**
  * Controlled UK choropleth: the shell owns selection/hover, this pane owns
- * zoom/pan. Fill colour follows one metric at a time on a single sage ramp
- * (competition uses amber so "busy" reads as caution, not quality).
+ * zoom/pan. Fill colour follows one metric at a time in up to four quantile
+ * bands (competition uses amber so "busy" reads as caution, not quality).
  */
 
 const TIER_FILL: Record<string, string> = { confirmed: "#4c6b47", building: "#7fa578", early: "#c3d1ab" };
 const NO_DATA_FILL = "#e8e8e2";
-
-function ramp(t: number, amber = false): string {
-  const c = Math.max(0, Math.min(1, t));
-  const lo = amber ? [245, 239, 224] : [231, 239, 221];
-  const hi = amber ? [154, 123, 46] : [58, 86, 52];
-  const ch = (i: number) => Math.round(lo[i] + (hi[i] - lo[i]) * c);
-  return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
-}
+const SAGE_BUCKETS = ["#cdd8c4", "#a2b299", "#6e8467", "#3a5634"];
+const AMBER_BUCKETS = ["#f5efe0", "#e4d3a4", "#c2a95a", "#9a7b2e"];
 
 export function metricValue(row: ExplorerRow, m: MapMetric): number | null {
   const c = row.card;
@@ -39,10 +36,18 @@ export function metricValue(row: ExplorerRow, m: MapMetric): number | null {
 }
 
 function fmtMetric(v: number, m: MapMetric): string {
-  if (m === "revenue" || m === "adr") return gbp(v);
+  if (m === "revenue") return gbpCompact(v);
+  if (m === "adr") return gbp(v);
   if (m === "occupancy" || m === "yield") return `${v.toFixed(m === "yield" ? 1 : 0)}%`;
-  if (m === "competition" || m === "seasonality") return `${Math.round(v)}/100`;
   return String(Math.round(v));
+}
+
+/** The rounding step for the legend thresholds, so bands read as round numbers. */
+function metricStep(m: MapMetric): number {
+  if (m === "revenue") return 1000;
+  if (m === "adr") return 10;
+  if (m === "yield") return 0.5;
+  return 5;
 }
 
 export function MapPane({
@@ -51,6 +56,7 @@ export function MapPane({
   hover,
   onSelect,
   onHover,
+  onOpen,
   metric,
   onMetricChange,
   hasGoals,
@@ -64,6 +70,8 @@ export function MapPane({
   hover: string | null;
   onSelect: (code: string | null) => void;
   onHover: (code: string | null) => void;
+  /** When set, clicking an area calls this instead of toggling the selection (the v2 find screen navigates). */
+  onOpen?: (code: string) => void;
   metric: MapMetric;
   onMetricChange: (m: MapMetric) => void;
   hasGoals: boolean;
@@ -83,21 +91,21 @@ export function MapPane({
 
   const byCode = useMemo(() => new Map(rows.map((r) => [r.card.code, r])), [rows]);
 
-  const domain = useMemo(() => {
+  const scale = useMemo(() => {
     if (metric === "accuracy") return null;
     const vals = rows.map((r) => metricValue(r, metric)).filter((v): v is number => v !== null);
     if (vals.length === 0) return null;
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    return { min, max: max === min ? min + 1 : max };
+    const buckets = buildBuckets(vals, metricStep(metric), (v) => fmtMetric(v, metric));
+    const colours = spreadPalette(metric === "competition" ? AMBER_BUCKETS : SAGE_BUCKETS, buckets.thresholds.length + 1);
+    return { ...buckets, colours };
   }, [rows, metric]);
 
   function fillFor(row: ExplorerRow | undefined): string {
     if (!row) return NO_DATA_FILL;
     if (metric === "accuracy") return TIER_FILL[row.card.confidence.tier];
     const v = metricValue(row, metric);
-    if (v === null || !domain) return NO_DATA_FILL;
-    return ramp((v - domain.min) / (domain.max - domain.min), metric === "competition");
+    if (v === null || !scale) return NO_DATA_FILL;
+    return scale.colours[bucketIndex(v, scale.thresholds)];
   }
 
   function zoomBy(factor: number, cx = W / 2, cy = H / 2) {
@@ -150,7 +158,7 @@ export function MapPane({
     return [...m.values()];
   }, [pins]);
   const hoverRow = hover ? byCode.get(hover) : undefined;
-  const hoverVal = hoverRow && metric !== "accuracy" ? metricValue(hoverRow, metric) : null;
+  const metricLabel = MAP_METRICS.find((m) => m.key === metric)?.label ?? "";
 
   if (failed) {
     return <div className="mx-empty"><h2>Map unavailable</h2><p>We couldn’t load the map right now. The list still works.</p></div>;
@@ -180,16 +188,16 @@ export function MapPane({
                   <path
                     key={p.area}
                     d={p.d}
-                    fill={fillFor(row)}
-                    stroke={isSel ? "#2E3D2B" : "#ffffff"}
+                    fill={isHover && row ? "#5d8156" : fillFor(row)}
+                    stroke={isSel ? "#2E3D2B" : isHover && row ? "#5d8156" : "#ffffff"}
                     strokeWidth={(isSel ? 1.8 : isHover ? 1.1 : 0.4) / view.k}
-                    fillOpacity={row ? (isHover || isSel ? 1 : 0.92) : 0.6}
+                    fillOpacity={row ? 1 : 0.6}
                     style={{ cursor: row ? "pointer" : "default" }}
                     onMouseEnter={() => onHover(p.area)}
                     onMouseLeave={() => onHover(null)}
                     onClick={() => {
-                      if (movedRef.current) return;
-                      if (row) onSelect(isSel ? null : p.area);
+                      if (movedRef.current || !row) return;
+                      if (onOpen) onOpen(p.area); else onSelect(isSel ? null : p.area);
                     }}
                   />
                 );
@@ -233,53 +241,61 @@ export function MapPane({
           </svg>
         )}
 
-        <div className="mx-map-metric" role="group" aria-label="Colour map by">
-          {MAP_METRICS.filter((m) => !m.needsGoals || hasGoals).map((m) => (
-            <button key={m.key} type="button" className="mx-map-metric-btn" aria-pressed={metric === m.key} onClick={() => onMetricChange(m.key)}>
-              {m.label}
-            </button>
-          ))}
+        <div className="mx2-map-ctl">
+          <select
+            className="mx2-select mx2-select--pill"
+            aria-label="Colour map by"
+            value={metric}
+            onChange={(e) => onMetricChange(e.target.value as MapMetric)}
+          >
+            {MAP_METRICS.filter((m) => !m.needsGoals || hasGoals).map((m) => (
+              <option key={m.key} value={m.key}>{m.label}</option>
+            ))}
+          </select>
+          <div className="mx2-map-legend" aria-label={`Legend: ${metricLabel}`}>
+            {metric === "accuracy" ? (
+              <>
+                <div><span style={{ background: TIER_FILL.confirmed }} />Confirmed</div>
+                <div><span style={{ background: TIER_FILL.building }} />Building</div>
+                <div><span style={{ background: TIER_FILL.early }} />Early</div>
+              </>
+            ) : scale ? (
+              scale.labels.map((label, i) => <div key={label}><span style={{ background: scale.colours[i] }} />{label}</div>)
+            ) : null}
+            <div className="mx2-map-legend-muted"><span style={{ background: NO_DATA_FILL, border: "1px solid var(--mx-line)" }} />No data yet</div>
+            {metric === "competition" && <div className="mx2-map-legend-muted">Darker = more competitive</div>}
+            {home && <div><span style={{ background: "#2E3D2B", borderRadius: 99 }} />Your home{home.radiusMiles ? ` · ${home.radiusMiles} mi` : ""}</div>}
+            {pinLegend.map((l) => <div key={l.legend}><span style={{ background: l.colour, borderRadius: 99 }} />{l.legend} ({l.n})</div>)}
+          </div>
         </div>
 
-        <div className="mx-map-zoom">
-          <button type="button" aria-label="Zoom in" onClick={() => zoomBy(1.4)}>+</button>
-          <button type="button" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.4)}>−</button>
-          <button type="button" aria-label="Reset" onClick={() => setView({ k: 1, x: 0, y: 0 })}>⟲</button>
-        </div>
-
-        <div className="mx-map-legend">
-          {metric === "accuracy" ? (
-            <>
-              <div className="mx-map-legend-title">Data accuracy</div>
-              <div><span style={{ background: TIER_FILL.confirmed }} />Confirmed</div>
-              <div><span style={{ background: TIER_FILL.building }} />Building</div>
-              <div><span style={{ background: TIER_FILL.early }} />Early</div>
-              <div><span style={{ background: NO_DATA_FILL }} />No data yet</div>
-            </>
-          ) : (
-            <>
-              <div className="mx-map-legend-title">{MAP_METRICS.find((m) => m.key === metric)?.label}</div>
-              <div className="mx-map-legend-bar" style={{ background: `linear-gradient(90deg, ${ramp(0, metric === "competition")}, ${ramp(1, metric === "competition")})` }} />
-              <div className="mx-map-legend-scale">
-                <span>{domain ? fmtMetric(domain.min, metric) : "low"}</span>
-                <span>{domain ? fmtMetric(domain.max, metric) : "high"}</span>
-              </div>
-              {metric === "competition" && <div style={{ fontSize: "0.7rem", color: "var(--mx-muted)" }}>Darker = more competitive</div>}
-              <div><span style={{ background: NO_DATA_FILL }} />No data</div>
-              {home && <div><span style={{ background: "#2E3D2B", borderRadius: 99 }} />Your home{home.radiusMiles ? ` · ${home.radiusMiles} mi` : ""}</div>}
-              {pinLegend.map((l) => <div key={l.legend}><span style={{ background: l.colour, borderRadius: 99 }} />{l.legend} ({l.n})</div>)}
-            </>
-          )}
+        <div className="mx2-map-zoom">
+          <button type="button" className="mx2-btn mx2-btn--icon" aria-label="Reset" onClick={() => setView({ k: 1, x: 0, y: 0 })}><Crosshair size={16} aria-hidden /></button>
+          <button type="button" className="mx2-btn mx2-btn--icon" aria-label="Zoom in" onClick={() => zoomBy(1.4)}><Plus size={16} aria-hidden /></button>
+          <button type="button" className="mx2-btn mx2-btn--icon" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.4)}><Minus size={16} aria-hidden /></button>
         </div>
 
         {pulse && <div className="mx-map-pulse">{pulse}</div>}
 
-        {hover && (
-          <div className="mx-map-hint">
-            {hoverRow ? hoverRow.card.name : `${hover} — no data yet`}
-            {hoverVal !== null && hoverVal !== undefined ? ` · ${fmtMetric(hoverVal, metric)}` : ""}
+        {hoverRow ? (
+          <div className="mx2-map-pop" aria-hidden="true">
+            <div className="mx2-map-pop-head">
+              <ScoreRing value={hoverRow.card.score?.score ?? null} size={40} label={`Stayful score ${hoverRow.card.score?.score ?? "not yet available"}`} />
+              <div className="mx2-map-pop-name">{hoverRow.card.name}</div>
+            </div>
+            <div className="mx2-map-pop-kpis">
+              <div><b>{gbpCompact(hoverRow.card.headline.grossRevenue)}</b><span>Revenue potential</span></div>
+              <div><b>{pct(hoverRow.card.headline.occupancy, 0)}</b><span>Occupancy</span></div>
+              <div><b>{gbp(hoverRow.card.headline.adr)}</b><span>Daily rate</span></div>
+            </div>
+            {metric !== "accuracy" && metricValue(hoverRow, metric) !== null && (
+              <div className="mx2-map-pop-metric">{metricLabel} · <b>{fmtMetric(metricValue(hoverRow, metric)!, metric)}</b></div>
+            )}
+            <span className="mx2-btn mx2-btn--primary">View market</span>
           </div>
-        )}
+        ) : hover ? (
+          <div className="mx-map-hint">{hover} — no data yet</div>
+        ) : null}
       </div>
     </div>
   );
