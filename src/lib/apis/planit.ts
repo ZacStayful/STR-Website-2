@@ -10,7 +10,8 @@
  */
 
 const BASE = 'https://www.planit.org.uk/api/applics/json';
-const TIMEOUT_MS = 20_000;
+// PlanIt counts across a large radius can take 20–30 s for a big city.
+const TIMEOUT_MS = 45_000;
 
 export interface PlanItWindow {
   start: string; // YYYY-MM-DD
@@ -63,4 +64,14 @@ export async function countLargeApplications(lat: number, lng: number, radiusKm:
     console.warn('[planit] fetch failed:', (err as Error)?.message ?? err);
     return null;
   }
+}
+
+/** Both windows for a point, fetched together; null when either fails. */
+export async function countLargeApplicationsBothWindows(lat: number, lng: number, radiusKm: number, now: Date): Promise<{ recent: number; prior: number } | null> {
+  const w = planningWindows(now);
+  const [recent, prior] = await Promise.all([
+    countLargeApplications(lat, lng, radiusKm, w.recent),
+    countLargeApplications(lat, lng, radiusKm, w.prior),
+  ]);
+  return recent === null || prior === null ? null : { recent, prior };
 }
