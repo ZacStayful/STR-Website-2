@@ -6,7 +6,7 @@ import type { Budget, Beds, Region, Conf } from "@/lib/market/filters";
 
 export type { AreaCardData, DistrictCardData, RegionCardData, PersonalScore, MarketGoals, ExplorerRow, SortKey };
 
-export type MapMetric = "score" | "personal" | "yield" | "occupancy" | "revenue" | "competition" | "seasonality" | "directBooking" | "accuracy";
+export type MapMetric = "score" | "personal" | "yield" | "occupancy" | "revenue" | "adr" | "competition" | "seasonality" | "directBooking" | "accuracy";
 
 export const MAP_METRICS: { key: MapMetric; label: string; needsGoals?: boolean }[] = [
   { key: "score", label: "Stayful score" },
@@ -14,11 +14,15 @@ export const MAP_METRICS: { key: MapMetric; label: string; needsGoals?: boolean 
   { key: "yield", label: "Yield" },
   { key: "occupancy", label: "Occupancy" },
   { key: "revenue", label: "Revenue" },
+  { key: "adr", label: "Daily rate" },
   { key: "competition", label: "Competition" },
   { key: "seasonality", label: "Seasonality" },
   { key: "directBooking", label: "Direct booking" },
   { key: "accuracy", label: "Data accuracy" },
 ];
+
+/** The three views of the find screen: postcode areas, their districts, or the member's deals. */
+export type Level = "markets" | "sub" | "deals";
 
 export interface Filters {
   q: string;
@@ -30,10 +34,3 @@ export interface Filters {
 }
 
 export const DEFAULT_FILTERS: Filters = { q: "", region: "any", budget: "any", beds: "any", conf: "any", savedOnly: false };
-
-/** One step of the Regions › Area › District trail. */
-export interface Crumb {
-  label: string;
-  /** Absent on the current (last) step. */
-  onClick?: () => void;
-}

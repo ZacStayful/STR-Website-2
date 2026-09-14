@@ -51,3 +51,8 @@ test('trend sort uses the enquiry delta and ignores insufficient areas', () => {
   const rows = [{ ...row('A'), trend: t('up', 0.2) }, { ...row('B'), trend: t('insufficient', null) }, { ...row('C'), trend: t('down', -0.1) }];
   assert.deepEqual(sortRows(rows, 'trend').map((r) => r.card.code), ['A', 'C', 'B']);
 });
+
+test('daily rate sorts by the headline ADR with nulls last', () => {
+  const rows = [row('A', { headline: { grossRevenue: 1, adr: 90, occupancy: 1, totalSamples: 1, bedroomsAvailable: [] } }), row('B', { headline: { grossRevenue: 1, adr: null, occupancy: 1, totalSamples: 1, bedroomsAvailable: [] } }), row('C', { headline: { grossRevenue: 1, adr: 140, occupancy: 1, totalSamples: 1, bedroomsAvailable: [] } })];
+  assert.deepEqual(sortRows(rows, 'adr').map((r) => r.card.code), ['C', 'A', 'B']);
+});

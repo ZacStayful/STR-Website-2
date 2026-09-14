@@ -58,6 +58,16 @@ test('a district withholds its figures until it has enough reports', () => {
   assert.equal(ok.areaCode, 'NG');
 });
 
+test('a district carries its localities from the table, or none', () => {
+  const base = { postcode_area: 'NG', total_sample_count: MIN_DISTRICT_SAMPLES, by_bedrooms: [group({ sample_count: 3 })] };
+  const ng7 = districtCard({ ...base, district: 'NG7' });
+  assert.equal(ng7.locality, 'Lenton');
+  assert.deepEqual(ng7.localities.slice(0, 2), ['Lenton', 'Radford']);
+  const unknown = districtCard({ ...base, district: 'NG99' });
+  assert.equal(unknown.locality, null);
+  assert.deepEqual(unknown.localities, []);
+});
+
 test('a region card blends its bedroom groups by sample count', () => {
   const r: MarketRegion = { slug: 'north-west', name: 'North West', areas: ['L', 'M'], total_sample_count: 12, by_bedrooms: [group({ bedrooms: 1, sample_count: 4, avg_gross_revenue: 20000 }), group({ bedrooms: 2, sample_count: 8, avg_gross_revenue: 32000 })] };
   const c = regionCard(r);
@@ -71,4 +81,14 @@ test('competitionFor maps the raw review averages to a band', () => {
   const a = { ...area([group({})]), competition: { sample_count: 3, avg_rating: 4.85, avg_review_count: 60, avg_listing_age: null, avg_listing_density: null } };
   assert.equal(competitionFor(a)!.label, 'Opportunity');
   assert.equal(competitionFor(area([group({})])), null);
+});
+
+test('listing density and age surface from the competition averages, rounded, and are withheld for thin districts', () => {
+  const comp = { sample_count: 3, avg_rating: 4.7, avg_review_count: 40, avg_listing_age: 2.46, avg_listing_density: 12.34 };
+  const d = districtCard({ district: 'NG7', postcode_area: 'NG', total_sample_count: MIN_DISTRICT_SAMPLES, by_bedrooms: [group({ sample_count: 3 })], competition: comp });
+  assert.equal(d.listingDensity, 12.3);
+  assert.equal(d.listingAge, 2.5);
+  const thin = districtCard({ district: 'NG7', postcode_area: 'NG', total_sample_count: 1, by_bedrooms: [group({ sample_count: 1 })], competition: comp });
+  assert.equal(thin.listingDensity, null);
+  assert.equal(regionCard({ slug: 'x', name: 'X', areas: [], total_sample_count: 1, by_bedrooms: [group({})] }).listingDensity, null);
 });

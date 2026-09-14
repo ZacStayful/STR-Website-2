@@ -6,6 +6,7 @@ import { PDF_COLORS } from "../theme";
 import { HeaderBar, FooterBar } from "../components/Chrome";
 import { H1, H2, SectionLabel, Divider, MetricCard, Pill, BASE_PAGE_STYLES } from "../components/Primitives";
 import { gbp, pct } from "@/lib/market/format";
+import { districtLabel } from "@/lib/market/labels";
 
 /**
  * One-page-per-section Market Explorer area report: headline stats, the
@@ -181,13 +182,13 @@ export function AreaReport({ card, personal, generatedAt }: { card: AreaCardData
           <>
             <H2>Sub-markets</H2>
             <View style={s.table}>
-              <Row head cols={["District", "Reports", "Avg revenue", "Occupancy", "Daily rate", "Competition"]} widths={[14, 12, 20, 16, 16, 22]} />
+              <Row head cols={["Sub-market", "Reports", "Avg revenue", "Occupancy", "Daily rate", "Competition"]} widths={[28, 10, 17, 14, 13, 18]} />
               {card.districts.map((d, i) => (
                 <Row
                   key={d.code}
                   hl={i % 2 === 1}
-                  widths={[14, 12, 20, 16, 16, 22]}
-                  cols={d.ready ? [d.code, String(d.headline.totalSamples), gbp(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(d.headline.adr), d.competition?.label ?? "—"] : [d.code, String(d.headline.totalSamples), `Early — ${d.headline.totalSamples} of 3`, "", "", ""]}
+                  widths={[28, 10, 17, 14, 13, 18]}
+                  cols={d.ready ? [districtLabel(d), String(d.headline.totalSamples), gbp(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(d.headline.adr), d.competition?.label ?? "—"] : [districtLabel(d), String(d.headline.totalSamples), `Early — ${d.headline.totalSamples} of 3`, "", "", ""]}
                 />
               ))}
             </View>
