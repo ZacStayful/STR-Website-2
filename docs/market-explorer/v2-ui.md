@@ -70,11 +70,12 @@ PDF and e-mails agree.
   London areas), so "BD postcode area" no longer appears for a real area. The
   code-only fallback fires only for a code that is not a postcode area.
 - District localities live in `src/lib/market/district-localities.ts` (lead
-  first, from the Royal Mail / Wikipedia district lists). They cover every
-  district of the areas with live data plus the major cities; add an area's
-  districts when it starts reporting. The snapshot carries them as
-  `DistrictCardData.locality` / `localities`, and search on `/markets` matches
-  them ("clarendon" finds LE2).
+  first, from the Royal Mail / Wikipedia district lists): the live areas and
+  major cities in that file, the rest of the UK split by region under
+  `src/lib/market/localities/`. Every postcode area is covered; a district
+  missing from the table still falls back to its code. The snapshot carries
+  them as `DistrictCardData.locality` / `localities`, and search on `/markets`
+  matches them ("clarendon" finds LE2).
 - Slugs and URLs are unchanged (`/markets/leicester?district=LE2`); the bare
   code (`/markets/le`) is an alias for the named slug.
 

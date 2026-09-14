@@ -45,3 +45,13 @@ test('every listed district belongs to a named area, is upper-case and has at le
   assert.deepEqual(districtLocalities('le2').slice(0, 2), ['Clarendon Park', 'Knighton']);
   assert.deepEqual(districtLocalities('ZZ1'), []);
 });
+
+test('every postcode area has at least one district with localities', () => {
+  const byArea = new Map<string, number>();
+  for (const d of listedDistricts()) {
+    const area = d.replace(/\d+$/, '');
+    byArea.set(area, (byArea.get(area) ?? 0) + 1);
+  }
+  for (const a of AREA_META) assert.ok((byArea.get(a.code) ?? 0) > 0, `${a.code} (${a.name}) has no districts listed`);
+  assert.ok(listedDistricts().length > 2000, `only ${listedDistricts().length} districts listed`);
+});

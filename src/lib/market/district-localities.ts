@@ -4,13 +4,35 @@
  * ("Leicester LE2"). The first name is the lead locality used in titles; the
  * rest appear as "also …" in subtitles and are searchable.
  *
- * Coverage: every district of the areas with live data plus the major cities
- * in `areas.ts`. A district that is not listed falls back to its code, so
- * nothing breaks when a new area starts reporting — add its districts here
- * when it does. Names follow the Royal Mail / Wikipedia postcode district
- * lists; check any entry you rely on against those before quoting it.
+ * Coverage: every UK postcode area. The areas with live data and the major
+ * cities are in this file; the rest are split by region under `localities/`
+ * and merged below. A district that is not listed still falls back to its
+ * code. Names follow the Royal Mail / Wikipedia postcode district lists;
+ * check any entry you rely on against those before quoting it.
  */
-const RAW: Record<string, string> = {
+import { SCOTLAND_NORTH } from './localities/scotland-north.ts';
+import { SCOTLAND_SOUTH } from './localities/scotland-south.ts';
+import { NORTHERN_IRELAND } from './localities/northern-ireland.ts';
+import { WALES } from './localities/wales.ts';
+import { NORTH_EAST } from './localities/north-east.ts';
+import { NORTH_WEST_A } from './localities/north-west-a.ts';
+import { NORTH_WEST_B } from './localities/north-west-b.ts';
+import { YORKSHIRE } from './localities/yorkshire.ts';
+import { EAST_MIDLANDS } from './localities/east-midlands.ts';
+import { WEST_MIDLANDS_A } from './localities/west-midlands-a.ts';
+import { WEST_MIDLANDS_B } from './localities/west-midlands-b.ts';
+import { EAST_OF_ENGLAND_A } from './localities/east-of-england-a.ts';
+import { EAST_OF_ENGLAND_B } from './localities/east-of-england-b.ts';
+import { LONDON_A } from './localities/london-a.ts';
+import { LONDON_B } from './localities/london-b.ts';
+import { LONDON_C } from './localities/london-c.ts';
+import { SOUTH_EAST_A } from './localities/south-east-a.ts';
+import { SOUTH_EAST_B } from './localities/south-east-b.ts';
+import { SOUTH_WEST_A } from './localities/south-west-a.ts';
+import { SOUTH_WEST_B } from './localities/south-west-b.ts';
+import { CROWN_DEPENDENCIES } from './localities/crown-dependencies.ts';
+
+const CORE: Record<string, string> = {
   // ── B · Birmingham ──
   B1: 'City centre, Brindleyplace',
   B2: 'City centre, New Street',
@@ -843,6 +865,31 @@ const RAW: Record<string, string> = {
   YO60: 'Castle Howard, Sheriff Hutton',
   YO61: 'Easingwold',
   YO62: 'Helmsley, Kirkbymoorside',
+};
+
+const RAW: Record<string, string> = {
+  ...CORE,
+  ...SCOTLAND_NORTH,
+  ...SCOTLAND_SOUTH,
+  ...NORTHERN_IRELAND,
+  ...WALES,
+  ...NORTH_EAST,
+  ...NORTH_WEST_A,
+  ...NORTH_WEST_B,
+  ...YORKSHIRE,
+  ...EAST_MIDLANDS,
+  ...WEST_MIDLANDS_A,
+  ...WEST_MIDLANDS_B,
+  ...EAST_OF_ENGLAND_A,
+  ...EAST_OF_ENGLAND_B,
+  ...LONDON_A,
+  ...LONDON_B,
+  ...LONDON_C,
+  ...SOUTH_EAST_A,
+  ...SOUTH_EAST_B,
+  ...SOUTH_WEST_A,
+  ...SOUTH_WEST_B,
+  ...CROWN_DEPENDENCIES,
 };
 
 const CACHE = new Map<string, string[]>();
