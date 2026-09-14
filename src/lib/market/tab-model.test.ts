@@ -31,7 +31,8 @@ function figures(over: Partial<LevelFigures> = {}): LevelFigures {
 
 function district(code: string, ready: boolean): DistrictCardData {
   const f = figures({ headline: { grossRevenue: ready ? 29800 : null, adr: ready ? 134 : null, occupancy: ready ? 61 : null, totalSamples: ready ? 6 : 2, bedroomsAvailable: [2] } });
-  return { ...f, code, areaCode: 'NG', ready };
+  const localities = code === 'NG1' ? ['City centre', 'Lace Market', 'Hockley'] : [];
+  return { ...f, code, areaCode: 'NG', locality: localities[0] ?? null, localities, ready };
 }
 
 function area(over: Partial<AreaCardData> = {}): AreaCardData {

@@ -3,6 +3,7 @@
 import { MIN_DISTRICT_SAMPLES } from "@/lib/market/confidence";
 import type { AreaCardData, DistrictCardData } from "@/lib/market/explorer";
 import { gbp, gbpCompact, pct } from "@/lib/market/format";
+import { subMarketSubtitle, subMarketTitle } from "@/lib/market/labels";
 import { Tag, type TagTone } from "../shared/Tag";
 
 const TIER_TONE: Record<string, TagTone> = { confirmed: "accent", building: "amber", early: "neutral" };
@@ -10,12 +11,13 @@ const TIER_TONE: Record<string, TagTone> = { confirmed: "accent", building: "amb
 /** One postcode district at the sub-market level. Districts carry no score, so the ring slot shows the code. */
 export function SubMarketCard({ area, d, hovered, onHover, onOpen }: { area: AreaCardData; d: DistrictCardData; hovered: boolean; onHover: (on: boolean) => void; onOpen: () => void }) {
   const missing = MIN_DISTRICT_SAMPLES - d.headline.totalSamples;
+  const title = subMarketTitle(area, d);
   return (
     <article
       className={"mx2-card mx2-mcard mx2-mcard--district" + (hovered ? " is-hover" : "") + (d.ready ? "" : " is-early")}
       role="button"
       tabIndex={0}
-      aria-label={`${area.name} ${d.code}: open sub-market`}
+      aria-label={`${title}: open sub-market`}
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -29,8 +31,8 @@ export function SubMarketCard({ area, d, hovered, onHover, onOpen }: { area: Are
       <div className="mx2-mcard-head">
         <div className="mx2-mcard-code" aria-hidden="true">{d.code}</div>
         <div className="mx2-mcard-title">
-          <div className="mx2-mcard-name">{area.name} {d.code}</div>
-          <div className="mx2-mcard-sub">{d.code} postcode district · {area.region.name}</div>
+          <div className="mx2-mcard-name">{title}</div>
+          <div className="mx2-mcard-sub">{subMarketSubtitle(d)}</div>
         </div>
       </div>
       {d.ready ? (

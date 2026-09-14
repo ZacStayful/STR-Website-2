@@ -58,6 +58,16 @@ test('a district withholds its figures until it has enough reports', () => {
   assert.equal(ok.areaCode, 'NG');
 });
 
+test('a district carries its localities from the table, or none', () => {
+  const base = { postcode_area: 'NG', total_sample_count: MIN_DISTRICT_SAMPLES, by_bedrooms: [group({ sample_count: 3 })] };
+  const ng7 = districtCard({ ...base, district: 'NG7' });
+  assert.equal(ng7.locality, 'Lenton');
+  assert.deepEqual(ng7.localities.slice(0, 2), ['Lenton', 'Radford']);
+  const unknown = districtCard({ ...base, district: 'NG99' });
+  assert.equal(unknown.locality, null);
+  assert.deepEqual(unknown.localities, []);
+});
+
 test('a region card blends its bedroom groups by sample count', () => {
   const r: MarketRegion = { slug: 'north-west', name: 'North West', areas: ['L', 'M'], total_sample_count: 12, by_bedrooms: [group({ bedrooms: 1, sample_count: 4, avg_gross_revenue: 20000 }), group({ bedrooms: 2, sample_count: 8, avg_gross_revenue: 32000 })] };
   const c = regionCard(r);

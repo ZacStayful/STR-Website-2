@@ -2,6 +2,7 @@
 
 import { Heart } from "lucide-react";
 import { gbp, gbpCompact, pct } from "@/lib/market/format";
+import { marketSubtitle, marketTitle } from "@/lib/market/labels";
 import { activeAreaStats } from "../../../areaStats";
 import type { ExplorerRow } from "../../types";
 import { ScoreRing } from "../shared/ScoreRing";
@@ -58,8 +59,8 @@ export function MarketCard({
       <div className="mx2-mcard-head">
         <ScoreRing value={c.score?.score ?? null} size={48} label={c.score ? `Market score ${c.score.score} out of 100` : "Market score not yet available"} />
         <div className="mx2-mcard-title">
-          <div className="mx2-mcard-name">{c.name}</div>
-          <div className="mx2-mcard-sub">{c.code} postcode area · {c.region.name}{c.managedByStayful && <> · <span className="mx-managed">Stayful manages here</span></>}</div>
+          <div className="mx2-mcard-name">{marketTitle(c)}</div>
+          <div className="mx2-mcard-sub">{marketSubtitle(c)}{c.managedByStayful && <> · <span className="mx-managed">Stayful manages here</span></>}</div>
         </div>
         <button
           type="button"

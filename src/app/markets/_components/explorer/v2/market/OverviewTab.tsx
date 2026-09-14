@@ -6,6 +6,7 @@ import type { PersonalScore } from "@/lib/market/personalise";
 import type { AreaTrend } from "@/lib/market/trend";
 import { formatMonth } from "@/lib/market/trend";
 import { gbp, gbpCompact, pct } from "@/lib/market/format";
+import { districtLabel } from "@/lib/market/labels";
 import type { CheckedListingRow } from "@/lib/listing/pipeline";
 import type { MarketGoals } from "../../types";
 import { PerformanceCard } from "./PerformanceCard";
@@ -78,7 +79,7 @@ export function OverviewTab({
             rows={topDistricts.map((d) => ({
               key: d.code,
               onClick: () => onOpenDistrict(d.code),
-              cells: [<span key="c"><b>{d.code}</b> <small className="mx2-muted">· {d.headline.totalSamples} reports</small></span>, d.confidence.label, gbpCompact(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(d.headline.adr !== null && d.headline.occupancy !== null ? (d.headline.adr * d.headline.occupancy) / 100 : null), gbp(d.headline.adr)],
+              cells: [<span key="c"><b>{districtLabel(d)}</b> <small className="mx2-muted">· {d.headline.totalSamples} reports</small></span>, d.confidence.label, gbpCompact(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(d.headline.adr !== null && d.headline.occupancy !== null ? (d.headline.adr * d.headline.occupancy) / 100 : null), gbp(d.headline.adr)],
             }))}
             empty={area.districts.length === 0 ? <>Reports for {area.name} do not carry a full postcode yet, so it cannot be split into districts.</> : <>No district has 3 reports yet. {area.districts.length} district{area.districts.length === 1 ? " is" : "s are"} building up.</>}
           />

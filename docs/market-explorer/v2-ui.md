@@ -53,6 +53,31 @@ shape is `AreaCardData` (`src/lib/market/explorer.ts`); districts and regions ca
   key/value list for every data tab from the card or district; it is pure and
   unit-tested.
 
+## Naming markets and sub-markets
+
+Titles are places; codes live in the subtitle. Every name comes from
+`src/lib/market/labels.ts` so cards, breadcrumbs, tables, the source line, the
+PDF and e-mails agree.
+
+| Level | Title | Subtitle | Short form (menus, table cells) |
+|---|---|---|---|
+| Market | Leicester | LE postcode area · East Midlands | — |
+| Sub-market | Leicester · Clarendon Park | LE2 postcode district · also Knighton, Stoneygate, Aylestone & 1 more | Clarendon Park (LE2) |
+| Sub-market, no locality on file | Leicester LE2 | LE2 postcode district | LE2 |
+
+- Every one of the 124 UK postcode areas has a place name in
+  `src/lib/market/areas.ts` (Royal Mail post town; compass quarters for the
+  London areas), so "BD postcode area" no longer appears for a real area. The
+  code-only fallback fires only for a code that is not a postcode area.
+- District localities live in `src/lib/market/district-localities.ts` (lead
+  first, from the Royal Mail / Wikipedia district lists). They cover every
+  district of the areas with live data plus the major cities; add an area's
+  districts when it starts reporting. The snapshot carries them as
+  `DistrictCardData.locality` / `localities`, and search on `/markets` matches
+  them ("clarendon" finds LE2).
+- Slugs and URLs are unchanged (`/markets/leicester?district=LE2`); the bare
+  code (`/markets/le`) is an alias for the named slug.
+
 ## What the design showed that the data does not have
 
 | Design element | Why not | What is shown instead |

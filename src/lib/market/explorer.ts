@@ -19,6 +19,7 @@ import { areaDirectBooking, type DirectBooking } from './direct-booking.ts';
 import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
+import { districtLocalities } from './district-localities.ts';
 import { regionForArea, regionForSlug, type RegionMeta } from './regions.ts';
 import type { MarketAggregate, MarketArea, MarketBedroomAgg, MarketDistrict, MarketRegion, MarketSnapshot, MonthBucket } from './types.ts';
 
@@ -149,6 +150,10 @@ function levelFigures(agg: MarketAggregate): LevelFigures {
 export interface DistrictCardData extends LevelFigures {
   code: string; // outward code, e.g. NG7
   areaCode: string;
+  /** Lead locality for titles ("Lenton"), or null when none is on file; see labels.ts. */
+  locality: string | null;
+  /** Every locality on file, lead first; empty when none. Searchable. */
+  localities: string[];
   /** False until MIN_DISTRICT_SAMPLES reports: the figures are withheld. */
   ready: boolean;
 }
@@ -183,7 +188,8 @@ export function districtCard(d: MarketDistrict): DistrictCardData {
     figures.listingDensity = null;
     figures.listingAge = null;
   }
-  return { ...figures, code: d.district, areaCode: d.postcode_area, ready };
+  const localities = districtLocalities(d.district);
+  return { ...figures, code: d.district, areaCode: d.postcode_area, locality: localities[0] ?? null, localities, ready };
 }
 
 export function regionCard(r: MarketRegion): RegionCardData {

@@ -15,6 +15,7 @@ import { gbp, gbpCompact, pct } from './format.ts';
 import { MONTH_SHORT, MIN_SEASONALITY_REPORTS } from './seasonality.ts';
 import { COMPETITION_LABELS, MIN_RATED_REPORTS, competitionMeaning } from './competition.ts';
 import { MIN_DISTRICT_SAMPLES } from './confidence.ts';
+import { districtLabel } from './labels.ts';
 
 export const TAB_KEYS = ['overview', 'submarkets', 'listings', 'occupancy', 'revenue', 'rates', 'seasonality', 'competition', 'licensing', 'longlet', 'deals'] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
@@ -129,7 +130,7 @@ export function buildTabModel(tab: TabKey, ctx: TabContext): TabModel {
         desc: `Postcode districts inside the ${area.code} area, from the reports run there. A district needs ${MIN_DISTRICT_SAMPLES} reports before its own figures show; until then the area as a whole is the guide.`,
         kpis: [
           { label: 'Districts with figures', value: `${ready.length} of ${area.districts.length}`, sub: 'ready' },
-          { label: 'Best district', value: top ? top.code : '—', sub: top ? `${gbpCompact(top.headline.grossRevenue)} avg revenue` : 'none yet' },
+          { label: 'Best district', value: top ? districtLabel(top) : '—', sub: top ? `${gbpCompact(top.headline.grossRevenue)} avg revenue` : 'none yet' },
           { label: 'Spread', value: byRev.length > 1 && top.headline.grossRevenue !== null && bottom.headline.grossRevenue !== null ? gbpCompact(top.headline.grossRevenue - bottom.headline.grossRevenue) : '—', sub: 'top to bottom district' },
         ],
         table: {
@@ -140,8 +141,8 @@ export function buildTabModel(tab: TabKey, ctx: TabContext): TabModel {
             .map((d) => {
               const missing = MIN_DISTRICT_SAMPLES - d.headline.totalSamples;
               return d.ready
-                ? { key: d.code, district: d.code, cells: [d.code, String(d.headline.totalSamples), d.confidence.label, gbp(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(revpar(d.headline.adr, d.headline.occupancy)), gbp(d.headline.adr), d.competition?.label ?? '—', d.seasonality?.label ?? '—', 'Ready'] }
-                : { key: d.code, district: d.code, muted: true, cells: [d.code, String(d.headline.totalSamples), d.confidence.label, '—', '—', '—', '—', '—', '—', `Early — ${missing} more report${missing === 1 ? '' : 's'} needed`] };
+                ? { key: d.code, district: d.code, cells: [districtLabel(d), String(d.headline.totalSamples), d.confidence.label, gbp(d.headline.grossRevenue), pct(d.headline.occupancy, 0), gbp(revpar(d.headline.adr, d.headline.occupancy)), gbp(d.headline.adr), d.competition?.label ?? '—', d.seasonality?.label ?? '—', 'Ready'] }
+                : { key: d.code, district: d.code, muted: true, cells: [districtLabel(d), String(d.headline.totalSamples), d.confidence.label, '—', '—', '—', '—', '—', '—', `Early — ${missing} more report${missing === 1 ? '' : 's'} needed`] };
             }),
         },
         empty: area.districts.length === 0 ? `Reports for ${area.name} do not carry a full postcode yet, so it cannot be split into districts. New analyser reports add one automatically.` : undefined,

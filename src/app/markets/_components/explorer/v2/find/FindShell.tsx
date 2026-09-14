@@ -8,6 +8,7 @@ import { sortRows, isSortKey } from "@/lib/market/rank";
 import { hasBeds, inBudget, passesConfidence } from "@/lib/market/filters";
 import { areaTrend, pulse, trendLabel } from "@/lib/market/trend";
 import { regionForSlug } from "@/lib/market/regions";
+import { districtMatches } from "@/lib/market/labels";
 import type { MonthBucket } from "@/lib/market/types";
 import type { AreaCardData, DistrictCardData } from "@/lib/market/explorer";
 import { rowFromResolved, type CheckedListingRow, type ListingSort, type PipelineStatus } from "@/lib/listing/pipeline";
@@ -151,7 +152,7 @@ export function FindShell({
   const visible = useMemo(() => {
     const filtered = rows.filter(({ card: c, saved: isSaved }) => {
       if (region && c.region.slug !== region) return false;
-      if (q && !(c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.districts.some((d) => d.code.toLowerCase().startsWith(q)))) return false;
+      if (q && !(c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.districts.some((d) => districtMatches(d, q)))) return false;
       if (filters.region !== "any" && c.licensing.nation !== filters.region) return false;
       if (!hasBeds(c.headline.bedroomsAvailable, filters.beds)) return false;
       const valueMid = bedroom != null ? c.byBedrooms.find((b) => b.bedrooms === bedroom)?.propertyValueMid ?? null : c.yieldOnCost?.propertyValueMid ?? null;

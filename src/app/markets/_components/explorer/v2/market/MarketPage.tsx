@@ -9,6 +9,7 @@ import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
 import { areaTrend } from "@/lib/market/trend";
 import { MIN_DISTRICT_SAMPLES } from "@/lib/market/confidence";
 import { buildTabModel, type TabKey } from "@/lib/market/tab-model";
+import { districtLabel, marketTitle, subMarketTitle } from "@/lib/market/labels";
 import type { AreaCardData } from "@/lib/market/explorer";
 import type { CheckedListingRow } from "@/lib/listing/pipeline";
 import type { ExplorerRow, MarketGoals, SortKey } from "../../types";
@@ -130,7 +131,7 @@ export function MarketPage({
 
   const districtRow = district ? card.districts.find((d) => d.code === district) ?? null : null;
   const scope = districtRow ?? card;
-  const scopeName = districtRow ? `${card.name} ${districtRow.code}` : card.name;
+  const scopeName = districtRow ? subMarketTitle(card, districtRow) : marketTitle(card);
   const trend = areaTrend(scope.series);
   const ctx = { area: card, scope, scopeName, isDistrict: !!districtRow, bedroom, trend, goals };
   const dealsHere = listings.filter((l) => l.postcodeArea === card.code && l.status !== "passed").length;
@@ -163,7 +164,7 @@ export function MarketPage({
             <div className="mx2-section-head"><div><h3>{scopeName}</h3></div></div>
             <div className="mx-empty">
               <h2>Early — {districtRow.headline.totalSamples} of {MIN_DISTRICT_SAMPLES} reports</h2>
-              <p>{districtRow.code} needs {MIN_DISTRICT_SAMPLES - districtRow.headline.totalSamples} more Stayful analyser report{MIN_DISTRICT_SAMPLES - districtRow.headline.totalSamples === 1 ? "" : "s"} before its own figures are shown. Until then, {card.name} as a whole is the guide.</p>
+              <p>{districtLabel(districtRow)} needs {MIN_DISTRICT_SAMPLES - districtRow.headline.totalSamples} more Stayful analyser report{MIN_DISTRICT_SAMPLES - districtRow.headline.totalSamples === 1 ? "" : "s"} before its own figures are shown. Until then, {card.name} as a whole is the guide.</p>
               <button type="button" className="mx2-btn mx2-btn--secondary" onClick={() => changeDistrict(null)}>Show {card.name} as a whole</button>
             </div>
           </div>
@@ -187,7 +188,7 @@ export function MarketPage({
       )}
 
       <p className="mx2-src">
-        {scopeName} figures are averages from {scope.headline.totalSamples} Stayful analyser reports {districtRow ? `in the ${districtRow.code} postcode district` : `across the ${card.code} postcode area`}; indicative, not a guarantee of returns. Licensing is a general guide; confirm with the local authority before buying.
+        {scopeName} figures are averages from {scope.headline.totalSamples} Stayful analyser reports {districtRow ? `in the ${districtRow.code} postcode district${districtRow.locality ? ` (${districtRow.localities.join(", ")})` : ""}` : `across the ${card.code} postcode area`}; indicative, not a guarantee of returns. Licensing is a general guide; confirm with the local authority before buying.
       </p>
       <CtaBand />
       {compare.hydrated && <CompareDock rows={compareRows} bedroom={bedroom} onRemove={compare.remove} onClear={compare.clear} />}

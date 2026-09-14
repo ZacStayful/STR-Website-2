@@ -5,6 +5,7 @@ import { ArrowLeft, ChevronRight, Download, Heart } from "lucide-react";
 import { MIN_DISTRICT_SAMPLES } from "@/lib/market/confidence";
 import type { AreaCardData } from "@/lib/market/explorer";
 import type { PersonalScore } from "@/lib/market/personalise";
+import { districtLabel } from "@/lib/market/labels";
 import { AreaMiniMap } from "../shared/AreaMiniMap";
 import { ChipMenu } from "../shared/ChipMenu";
 import { ShareButton } from "../shared/ShareButton";
@@ -44,6 +45,7 @@ export function MarketHeader({
   onSetGoals: () => void;
 }) {
   const beds = area.headline.bedroomsAvailable.filter((b) => b <= 3);
+  const districtRow = district ? area.districts.find((d) => d.code === district) ?? null : null;
   return (
     <header className="mx2-market-head">
       <div className="mx2-market-row">
@@ -54,13 +56,13 @@ export function MarketHeader({
           <h2>{area.name}</h2>
           <ChevronRight size={16} aria-hidden />
           {area.districts.length > 0 ? (
-            <ChipMenu label={district ?? "All sub-markets"} ariaLabel="Sub-market" className="mx2-crumb-menu">
+            <ChipMenu label={districtRow ? districtLabel(districtRow) : "All sub-markets"} ariaLabel="Sub-market" className="mx2-crumb-menu">
               {(close) => (
                 <>
-                  <button type="button" className="mx2-pop-item" aria-current={district === null} onClick={() => { onDistrict(null); close(); }}>All sub-markets<small>{area.code} area</small></button>
+                  <button type="button" className="mx2-pop-item" aria-current={district === null} onClick={() => { onDistrict(null); close(); }}>All sub-markets<small>{area.code} postcode area</small></button>
                   {area.districts.map((d) => (
                     <button key={d.code} type="button" className="mx2-pop-item" aria-current={district === d.code} onClick={() => { onDistrict(d.code); close(); }}>
-                      {d.code}
+                      {districtLabel(d)}
                       <small>{d.ready ? `${d.headline.totalSamples} reports` : `early · ${d.headline.totalSamples} of ${MIN_DISTRICT_SAMPLES}`}</small>
                     </button>
                   ))}
