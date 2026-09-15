@@ -2,80 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "@/lib/icons";
+import {
+  CASE_STUDIES,
+  METRIC_LABELS,
+  formatMetric,
+  type CaseStudy,
+  type MetricKey,
+} from "@/lib/case-studies-data";
 
-export interface CaseStudy {
-  id: string;
-  title: string;
-  city: string;
-  meta: string;
-  img: string;
-  pdf: string;
-  estimate: { ownerNet: string; adr: string; occ: string };
-  actual: { ownerNet: string; adr: string; occ: string };
-}
-
-const SAMPLES: CaseStudy[] = [
-  {
-    id: "york-park-crescent",
-    title: "17 Park Crescent",
-    city: "York",
-    meta: "3 bed · Sleeps 8",
-    img: "/assets/property-york-park-crescent.png",
-    pdf: "/assets/case-studies/york-park-crescent.pdf",
-    estimate: { ownerNet: "£30,940", adr: "£207", occ: "78%" },
-    actual: { ownerNet: "£34,727", adr: "£123", occ: "73.9%" },
-  },
-  {
-    id: "leeds-beechwood-mount",
-    title: "7 Beechwood Mount",
-    city: "Leeds",
-    meta: "3 bed · Sleeps 8",
-    img: "/assets/property-leeds-beechwood-mount.png",
-    pdf: "/assets/case-studies/leeds-beechwood-mount.pdf",
-    estimate: { ownerNet: "£23,084", adr: "£223", occ: "54%" },
-    actual: { ownerNet: "£25,782", adr: "£133", occ: "50.4%" },
-  },
-  {
-    id: "lincoln-museum-court",
-    title: "Museum Court",
-    city: "Lincoln",
-    meta: "2 bed · Sleeps 6",
-    img: "/assets/property-lincoln-museum-court.png",
-    pdf: "/assets/case-studies/lincoln-museum-court.pdf",
-    estimate: { ownerNet: "£32,364", adr: "£251", occ: "68%" },
-    actual: { ownerNet: "£36,288", adr: "£148", occ: "64.2%" },
-  },
-  {
-    id: "edinburgh-geissler-drive",
-    title: "21 Geissler Drive",
-    city: "Edinburgh",
-    meta: "1 bed · Sleeps 4",
-    img: "/assets/property-edinburgh-geissler-drive.png",
-    pdf: "/assets/case-studies/edinburgh-geissler-drive.pdf",
-    estimate: { ownerNet: "£36,175", adr: "£252", occ: "77%" },
-    actual: { ownerNet: "£46,169", adr: "£171", occ: "78.6%" },
-  },
-  {
-    id: "manchester-eastbank-tower",
-    title: "803 Eastbank Tower",
-    city: "Manchester",
-    meta: "3 bed · Sleeps 8",
-    img: "/assets/property-manchester-eastbank-tower.png",
-    pdf: "/assets/case-studies/manchester-eastbank-tower.pdf",
-    estimate: { ownerNet: "£32,422", adr: "£233", occ: "73%" },
-    actual: { ownerNet: "£35,917", adr: "£140", occ: "68.7%" },
-  },
-  {
-    id: "salisbury-west-street",
-    title: "West Street, Wilton",
-    city: "Salisbury",
-    meta: "2 bed · Sleeps 6",
-    img: "/assets/property-salisbury-west-street.png",
-    pdf: "/assets/case-studies/salisbury-west-street.pdf",
-    estimate: { ownerNet: "£29,557", adr: "£265", occ: "70%" },
-    actual: { ownerNet: "£33,654", adr: "£161", occ: "65.1%" },
-  },
-];
+// Metrics shown on the card face. ADR is absent on purpose — see the note in
+// case-studies-data.ts. It appears on /methodology, where the mismatch
+// between the forecast and actual definitions can be explained properly.
+const CARD_METRICS: MetricKey[] = ["ownerNet", "occupancy"];
 
 export function ReportGallery() {
   const [open, setOpen] = useState<CaseStudy | null>(null);
@@ -99,7 +37,7 @@ export function ReportGallery() {
           </p>
         </div>
         <div className="gallery-grid">
-          {SAMPLES.map((s) => (
+          {CASE_STUDIES.map((s) => (
             <button
               key={s.id}
               className="report-card"
@@ -121,33 +59,25 @@ export function ReportGallery() {
               <div className="report-card-stats report-card-stats-vs">
                 <div className="rc-vs-col">
                   <span className="rc-vs-label">Estimate</span>
-                  <div className="rc-vs-row">
-                    <span>Owner net</span>
-                    <strong>{s.estimate.ownerNet}</strong>
-                  </div>
-                  <div className="rc-vs-row">
-                    <span>ADR</span>
-                    <strong>{s.estimate.adr}</strong>
-                  </div>
-                  <div className="rc-vs-row">
-                    <span>Occ</span>
-                    <strong>{s.estimate.occ}</strong>
-                  </div>
+                  {CARD_METRICS.map((key) => (
+                    <div key={key} className="rc-vs-row">
+                      <span>{METRIC_LABELS[key]}</span>
+                      <strong>
+                        {formatMetric(key, s.metrics[key].forecast)}
+                      </strong>
+                    </div>
+                  ))}
                 </div>
                 <div className="rc-vs-col rc-vs-actual">
                   <span className="rc-vs-label">Actual</span>
-                  <div className="rc-vs-row">
-                    <span>Owner net</span>
-                    <strong>{s.actual.ownerNet}</strong>
-                  </div>
-                  <div className="rc-vs-row">
-                    <span>ADR</span>
-                    <strong>{s.actual.adr}</strong>
-                  </div>
-                  <div className="rc-vs-row">
-                    <span>Occ</span>
-                    <strong>{s.actual.occ}</strong>
-                  </div>
+                  {CARD_METRICS.map((key) => (
+                    <div key={key} className="rc-vs-row">
+                      <span>{METRIC_LABELS[key]}</span>
+                      <strong>
+                        {formatMetric(key, s.metrics[key].actual)}
+                      </strong>
+                    </div>
+                  ))}
                 </div>
               </div>
               <div className="report-card-cta">
