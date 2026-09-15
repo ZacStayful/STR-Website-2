@@ -114,7 +114,7 @@ export function VideoTour() {
           <h2>
             Two minutes.
             <br />
-            Eleven sections.
+            Ten sections.
             <br />
             One real York property.
           </h2>

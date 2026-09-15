@@ -1,5 +1,6 @@
-// 7 FAQs ported from the Drive bundle's app-data.js, with Q6 updated
-// to reflect the user's pricing (£39.99/month or £360/year saving 25%).
+// FAQs ported from the Drive bundle's app-data.js.
+// Q6 deliberately carries no plan prices: live figures come from Supabase via
+// Pricing.tsx, and duplicating them here lets the two drift apart.
 
 export interface FAQItem {
   q: string;
@@ -29,7 +30,7 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: "What does it cost?",
-    a: "Every account starts with £20 of free credit, no card required — about five standard reports, or two with the PMI second opinion added. After that, subscribe for monthly credit (Starter £19, Pro £39.99, Scale £99, or Pro annual £360) or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.5× the plan rate. Cancel any time, no contract.",
+    a: "Every account starts with £20 of free credit, no card required — about five standard reports, or two with the PMI second opinion added. After that, subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.5× the plan rate. Cancel any time, no contract.",
   },
   {
     q: "Can I use this for properties I don't own yet?",
