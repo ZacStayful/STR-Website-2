@@ -11,11 +11,18 @@ export function organizationSchema(): SchemaItem {
     alternateName: BRAND.name,
     url: siteUrl(),
     sameAs: [BRAND.managementUrl],
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: TRUST.googleRatingNumeric,
-      bestRating: 5,
-    },
+    // Emitted only when we can state how many reviews back the score.
+    // A ratingValue without a count is invalid and gets dropped anyway.
+    ...(TRUST.googleReviewCount
+      ? {
+          aggregateRating: {
+            "@type": "AggregateRating",
+            ratingValue: TRUST.googleRatingNumeric,
+            bestRating: 5,
+            ratingCount: TRUST.googleReviewCount,
+          },
+        }
+      : {}),
   };
 }
 

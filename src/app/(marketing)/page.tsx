@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import { Hero } from "@/components/marketing-v3/Hero";
-import { StatsBar } from "@/components/marketing-v3/StatsBar";
+import { ProvenanceBar } from "@/components/marketing-v3/ProvenanceBar";
+import { ProvenanceStrip } from "@/components/marketing-v3/ProvenanceStrip";
+import { AccuracyLedger } from "@/components/marketing-v3/AccuracyLedger";
+import { WhyWeBuilt } from "@/components/marketing-v3/WhyWeBuilt";
 import { HomePulse } from "@/components/marketing-v3/HomePulse";
 import { VideoTour } from "@/components/marketing-v3/VideoTour";
 import { Walkthrough } from "@/components/marketing-v3/Walkthrough";
@@ -11,15 +14,18 @@ import { FAQ } from "@/components/marketing-v3/FAQ";
 import { FinalCTA } from "@/components/marketing-v3/FinalCTA";
 import { Schema } from "@/components/Schema";
 import {
+  faqSchema,
   organizationSchema,
   webApplicationSchema,
   webPageSchema,
 } from "@/lib/schema";
+import { FAQS } from "@/lib/faqs-data";
 import { siteUrl } from "@/lib/url";
 
-const PAGE_TITLE = "Stayful Intelligence — The decision engine for short-term rental";
+const PAGE_TITLE =
+  "Stayful Intelligence — short-term rental data from a real management company";
 const PAGE_DESCRIPTION =
-  "A decision engine for short-term rental — not a revenue calculator. Type a UK postcode and get a 10-section report on what your property could earn, how the market actually behaves and what you'd need to do to win in it.";
+  "Short-term rental intelligence from a company that actually manages the properties. See the income forecasts we produced before six UK short-lets went live, next to what they really earned. Type a UK postcode for a 10-section report.";
 const PAGE_URL = siteUrl("/");
 const LAST_UPDATED = "2026-05-08";
 
@@ -54,15 +60,20 @@ export default function HomePage() {
             description: PAGE_DESCRIPTION,
             dateModified: LAST_UPDATED,
           }),
+          faqSchema(FAQS),
         ]}
       />
 
-      <Hero />
+      <Hero>
+        <ProvenanceStrip />
+      </Hero>
+      <ProvenanceBar />
+      <AccuracyLedger />
       <HomePulse />
-      <StatsBar />
       <VideoTour />
       <Walkthrough />
       <ReportGallery />
+      <WhyWeBuilt variant="landing" />
       <Comparison />
       <Pricing />
       <FAQ />

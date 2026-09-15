@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Icon } from "@/lib/icons";
+import { VerifiedTag } from "./VerifiedTag";
 import {
   CASE_STUDIES,
   METRIC_LABELS,
@@ -23,17 +24,18 @@ export function ReportGallery() {
       <div className="wrap">
         <div className="gallery-head">
           <div>
-            <div className="eyebrow">Sample output</div>
+            <div className="eyebrow">The evidence</div>
             <h2>
-              Six real reports.
+              Six real properties.
               <br />
-              No edits.
+              Open the files.
             </h2>
           </div>
           <p className="lede">
-            Six real properties Stayful analysed in 2025. Each card shows the
-            original Income Estimate next to actual 2025 performance from the
-            Airbnb dashboard — the model vs the result.
+            The full case study behind every row in the ledger — the estimate
+            we produced before the property went live, the year it actually
+            had, and the PDF we would hand a lender. Named addresses, not
+            anonymised comparables.
           </p>
         </div>
         <div className="gallery-grid">
@@ -48,7 +50,7 @@ export function ReportGallery() {
                 style={{ backgroundImage: `url(${s.img})` }}
               >
                 <span className="report-card-tag">
-                  <Icon name="file" size={11} /> Real case study
+                  <VerifiedTag tone="operated" label="Stayful-managed" />
                 </span>
               </div>
               <h3 className="report-card-title">
