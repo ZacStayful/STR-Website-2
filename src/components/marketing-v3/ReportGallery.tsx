@@ -32,10 +32,10 @@ export function ReportGallery() {
             </h2>
           </div>
           <p className="lede">
-            The full case study behind every row in the ledger — the estimate
-            we produced before the property went live, the year it actually
-            had, and the PDF we would hand a lender. Named addresses, not
-            anonymised comparables.
+            The full case study for each of the six — the estimate we produced
+            before the property went live, the year it actually had, and the
+            PDF we would hand a lender. Named addresses, not anonymised
+            comparables.
           </p>
         </div>
         <div className="gallery-grid">

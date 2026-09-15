@@ -10,16 +10,28 @@ const COLS: { name: string; hl?: boolean }[] = [
   { name: "PriceLabs" },
 ];
 
-const ROWS: { l: string; v: CellValue[]; d: string }[] = [
+const ROWS: { l: string; v: CellValue[]; d: string; prov?: boolean }[] = [
   {
-    l: "Long-let vs short-let comparison",
+    l: "Real booking data from properties the vendor operates",
     v: [true, false, false, false],
-    d: "See both income models side by side, so you know which strategy actually wins for this exact property before you commit.",
+    prov: true,
+    d: "Every other tool here infers performance from listings it can see from the outside. We also take the bookings — on our own P&L, for owners who hold us to the number. That is a different kind of data, and it is the only kind that can tell you whether a model was wrong.",
+  },
+  {
+    l: "Forecast vs actual published, property by property",
+    v: [true, false, false, false],
+    prov: true,
+    d: "Modelled figures are easy to publish and impossible to check. We publish the estimate we gave before a property went live, next to what it did over the following twelve months, with the property named and the PDF attached.",
   },
   {
     l: "Live Airbnb comparables",
     v: [true, true, true, true],
     d: "Real, active listings near your postcode — not national averages — so your numbers reflect the market you'd genuinely compete in.",
+  },
+  {
+    l: "Long-let vs short-let comparison",
+    v: [true, false, false, false],
+    d: "See both income models side by side, so you know which strategy actually wins for this exact property before you commit.",
   },
   {
     l: "Average review rating & reviews",
@@ -70,13 +82,16 @@ export function Comparison() {
         <div className="compare-head">
           <div className="eyebrow">Why it&rsquo;s different</div>
           <h2>
-            Most tools tell you what an area earns.
+            Every other platform is guessing
             <br />
-            Stayful tells you what to do.
+            from the outside.
           </h2>
           <p className="lede">
-            A decision engine, not a calculator. Compare the inputs and outputs
-            side by side.
+            Comparables tell you what listings near a postcode appear to earn.
+            That is a reasonable guess, and it is all most of this category
+            has. We start from the same market data, then check it against
+            properties we manage and take bookings for ourselves — which is
+            why the first two rows below are the ones that matter.
           </p>
         </div>
         <div
@@ -92,7 +107,13 @@ export function Comparison() {
             ))}
           </div>
           {ROWS.map((r, ri) => (
-            <div key={ri} className="ct-row">
+            <div
+              key={ri}
+              className={
+                "ct-row" +
+                (r.prov && !ROWS[ri + 1]?.prov ? " ct-row--provenance" : "")
+              }
+            >
               <div className="ct-cell ct-feature">{r.l}</div>
               {r.v.map((val, vi) => (
                 <div

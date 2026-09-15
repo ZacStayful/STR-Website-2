@@ -3389,9 +3389,9 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 }
 .sf-page-v3 .prov-strip-marks {
   display: flex; flex-wrap: wrap; align-items: baseline;
-  gap: 12px 28px;
+  gap: 18px 36px;
 }
-.sf-page-v3 .prov-mark { display: flex; align-items: baseline; gap: 8px; }
+.sf-page-v3 .prov-mark { display: flex; align-items: baseline; gap: 9px; }
 .sf-page-v3 .prov-mark-num {
   font-family: var(--font-serif);
   font-variant-numeric: tabular-nums lining-nums;
@@ -3399,10 +3399,11 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   color: var(--sage-700);
 }
 .sf-page-v3 .prov-mark-label {
-  font-size: 13px; color: var(--ink-mute); max-width: 14ch; line-height: 1.3;
+  font-size: 13px; color: var(--ink-mute); max-width: 11ch; line-height: 1.35;
 }
 .sf-page-v3 .prov-strip-link {
   display: inline-flex; align-items: center; gap: 6px;
+  flex-basis: 100%; width: fit-content; margin-top: 2px;
   font-family: var(--font-mono);
   font-size: 12px; letter-spacing: 0.04em;
   color: var(--sage-600); text-decoration: none;
@@ -4101,3 +4102,6 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .home-pulse-link:hover { text-decoration: underline; }
 .sf-page-v3 .mxp-pulse-section { background: var(--cream); }
 .sf-page-v3 .mxp-pulse-section .lede { max-width: 70ch; margin: 14px 0 22px; }
+
+/* The provenance rows sit above the feature rows, closed by a firmer rule. */
+.sf-page-v3 .ct-row--provenance { border-bottom: 1px solid var(--evidence-line); }
