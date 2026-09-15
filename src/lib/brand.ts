@@ -11,5 +11,10 @@ export const TRUST = {
   revenueEarned: "£3M+",
   googleRating: "4.97",
   googleRatingNumeric: 4.97,
+  // Google requires ratingCount or reviewCount alongside a ratingValue, and
+  // drops the whole aggregateRating without one. Set this to the real number
+  // of reviews behind the 4.97 and organizationSchema() will start emitting
+  // the rating; left undefined, it omits it rather than guessing.
+  googleReviewCount: undefined as number | undefined,
   caption: "Built by the team behind 70+ managed UK short-term lets.",
 } as const;

@@ -32,7 +32,7 @@ export const SECTIONS: AnalyserSection[] = [
     id: "loading",
     number: "02",
     title: "Live data ingest",
-    subtitle: "11 data sources in 10–20 seconds",
+    subtitle: "6 data sources in 10–20 seconds",
     description:
       "While you wait, Stayful pulls live comparables from Airbnb, long-let valuations from PropertyData, amenities from Google Places and demand drivers from Ticketmaster — for your exact postcode.",
     bullets: [

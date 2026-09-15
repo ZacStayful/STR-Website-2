@@ -36,7 +36,7 @@ export function Walkthrough() {
         <div className="walkthrough-intro">
           <div className="eyebrow">The full report</div>
           <h2>
-            Eleven sections.
+            Ten sections.
             <br />
             One decision.
           </h2>

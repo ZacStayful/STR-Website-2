@@ -2,19 +2,27 @@
 
 import { useState } from "react";
 import { Icon } from "@/lib/icons";
-import { FAQS } from "@/lib/faqs-data";
+import { FAQS, type FAQItem } from "@/lib/faqs-data";
 
-export function FAQ() {
+export function FAQ({
+  items = FAQS,
+  eyebrow = "Common questions",
+  heading = "Answers, not pitches.",
+}: {
+  items?: FAQItem[];
+  eyebrow?: string;
+  heading?: string;
+}) {
   const [open, setOpen] = useState<number>(0);
   return (
     <section className="faq section" id="faq">
       <div className="wrap-narrow">
         <div className="faq-head">
-          <div className="eyebrow">Common questions</div>
-          <h2>Answers, not pitches.</h2>
+          <div className="eyebrow">{eyebrow}</div>
+          <h2>{heading}</h2>
         </div>
         <div className="faq-list">
-          {FAQS.map((f, i) => (
+          {items.map((f, i) => (
             <div key={i} className={"faq-row" + (open === i ? " open" : "")}>
               <button
                 className="faq-q"

@@ -10,6 +10,14 @@ export async function HomePulse() {
   return (
     <section className="home-pulse">
       <div className="wrap">
+        <div className="acc-head">
+          <div className="eyebrow">Live, national</div>
+          <h2>The market, right now.</h2>
+          <p className="lede">
+            Built from real analyser runs rather than a static index, so it
+            moves as reports come in.
+          </p>
+        </div>
         <div className="mx mxp-sample">
           <MarketPulse national={national} compact />
         </div>

@@ -13,7 +13,7 @@ const LOADING_STEPS = [
   "Running analysis",
 ];
 
-export function Hero() {
+export function Hero({ children }: { children?: React.ReactNode }) {
   const [postcode, setPostcode] = useState("");
   const [stage, setStage] = useState<DemoStage>("idle");
   const [progress, setProgress] = useState(0);
@@ -70,10 +70,11 @@ export function Hero() {
             <span className="hero-script">answered.</span>
           </h1>
           <p className="lede">
-            A decision engine for short-term rental — not a revenue calculator.
-            Type a postcode and get a 10-section report on what your property
-            could earn, how the market actually behaves and what you&rsquo;d
-            need to do to win in it.
+            A decision engine for short-term rental, built by the management
+            company whose own portfolio it is checked against. Type a postcode
+            and get a 10-section report on what your property could earn, how
+            the market actually behaves and what you&rsquo;d need to do to win
+            in it.
           </p>
 
           <form className="postcode-form" onSubmit={submit}>
@@ -115,6 +116,8 @@ export function Hero() {
               report
             </span>
           </div>
+
+          {children}
         </div>
 
         <div className="hero-demo">

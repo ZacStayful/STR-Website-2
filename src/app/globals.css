@@ -1368,6 +1368,14 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   --line:      rgba(47, 68, 38, 0.16);
   --line-2:    rgba(47, 68, 38, 0.08);
 
+  /* evidence layer — provenance, ledger, verified markers */
+  --evidence-bg:   rgba(47, 68, 38, 0.04);
+  --evidence-line: rgba(47, 68, 38, 0.22);
+  --observed:      var(--sage-700);
+  --modelled:      var(--sage-400);
+  --variance-good: var(--sage-600);
+  --variance-warn: #8a7a3f;
+
   --shadow-sm: 0 1px 2px rgba(34,50,27,0.06);
   --shadow-md: 0 6px 24px -8px rgba(34,50,27,0.18), 0 2px 6px -2px rgba(34,50,27,0.08);
   --shadow-lg: 0 30px 80px -30px rgba(34,50,27,0.32), 0 12px 32px -12px rgba(34,50,27,0.18);
@@ -1564,6 +1572,20 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .gap-32 { gap: 32px; }
 .sf-page-v3 .center  { align-items: center; justify-content: center; }
 .sf-page-v3 .between { justify-content: space-between; }
+
+/* Mono + tabular numerals: the type of a measured value, as opposed to a
+   claimed one. Column alignment is what makes a ledger read as evidence. */
+.sf-page-v3 .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+.sf-page-v3 .figure {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  color: var(--sage-800);
+}
 
 /* ---------- footer ---------- */
 .sf-page-v3 .v3-footer {
@@ -2757,7 +2779,8 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   text-transform: none; color: var(--ink-mute);
 }
 .sf-page-v3 .rc-vs-row > strong {
-  font-family: var(--font-serif); font-size: 15px; font-weight: 500;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 13px; font-weight: 500;
   color: var(--sage-700);
 }
 .sf-page-v3 .rc-vs-actual .rc-vs-row > strong { color: var(--sage-800); }
@@ -3314,6 +3337,285 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   .sf-page-v3 .founders-grid { grid-template-columns: 1fr; gap: 32px; }
 }
 
+/* ===========================================================================
+   v3 — Provenance & evidence
+   The trust layer: where numbers come from, and how the forecasts have done.
+   One grammar throughout — solid dot = observed, hollow dot = modelled —
+   so the tag, the ledger and the source list read as a single system.
+   =========================================================================== */
+
+/* ---------- VerifiedTag ---------- */
+.sf-page-v3 .verified {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.sf-page-v3 .verified-dot {
+  width: 5px; height: 5px; border-radius: 999px;
+  flex: none;
+}
+.sf-page-v3 .verified--operated {
+  background: var(--sage-700); color: var(--sage-50);
+}
+.sf-page-v3 .verified--operated .verified-dot { background: var(--sage-200); }
+.sf-page-v3 .verified--partner {
+  background: var(--evidence-bg); color: var(--sage-600);
+  border: 1px solid var(--line);
+}
+.sf-page-v3 .verified--partner .verified-dot { background: var(--sage-400); }
+.sf-page-v3 .verified--modelled {
+  background: var(--evidence-bg); color: var(--sage-600);
+  border: 1px solid var(--line);
+}
+.sf-page-v3 .verified--modelled .verified-dot {
+  background: transparent; border: 1px solid var(--sage-400);
+}
+
+/* ---------- ProvenanceStrip (in the hero) ---------- */
+.sf-page-v3 .prov-strip {
+  margin-top: 28px; padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+.sf-page-v3 .prov-strip-line {
+  font-size: 15px; color: var(--ink-soft);
+  margin: 0 0 16px; max-width: 46ch;
+}
+.sf-page-v3 .prov-strip-line strong {
+  font-weight: 500; color: var(--sage-700);
+}
+.sf-page-v3 .prov-strip-marks {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 18px 36px;
+}
+.sf-page-v3 .prov-mark { display: flex; align-items: baseline; gap: 9px; }
+.sf-page-v3 .prov-mark-num {
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: 26px; font-weight: 500; line-height: 1;
+  color: var(--sage-700);
+}
+.sf-page-v3 .prov-mark-label {
+  font-size: 13px; color: var(--ink-mute); max-width: 11ch; line-height: 1.35;
+}
+.sf-page-v3 .prov-strip-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex-basis: 100%; width: fit-content; margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px; letter-spacing: 0.04em;
+  color: var(--sage-600); text-decoration: none;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 2px;
+}
+.sf-page-v3 .prov-strip-link:hover { color: var(--sage-700); border-color: var(--sage-400); }
+
+/* ---------- ProvenanceBar (dark band, replaces StatsBar) ---------- */
+.sf-page-v3 .prov-bar { background: var(--sage-700); color: var(--sage-50); padding: 72px 0; }
+.sf-page-v3 .prov-bar .eyebrow { color: var(--sage-200); }
+.sf-page-v3 .prov-bar h2 { color: var(--sage-50); margin: 14px 0 0; }
+.sf-page-v3 .prov-bar .lede { color: var(--sage-100); margin-top: 18px; }
+.sf-page-v3 .prov-bar-head { max-width: 62ch; margin-bottom: 56px; }
+
+.sf-page-v3 .prov-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 40px;
+}
+.sf-page-v3 .prov-col { display: flex; flex-direction: column; gap: 10px; }
+.sf-page-v3 .prov-col-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--sage-300);
+}
+.sf-page-v3 .prov-col h3 {
+  font-size: 22px; font-weight: 500; color: var(--sage-50); margin: 0;
+}
+.sf-page-v3 .prov-col p {
+  font-size: 14px; line-height: 1.6; color: var(--sage-100); margin: 0;
+}
+
+.sf-page-v3 .prov-sources {
+  margin-top: 56px; padding-top: 32px;
+  border-top: 1px solid rgba(232, 237, 217, 0.16);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+}
+.sf-page-v3 .prov-source-group { display: flex; flex-direction: column; gap: 14px; }
+.sf-page-v3 .prov-source-names {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  font-family: var(--font-mono); font-size: 13px; color: var(--sage-100);
+}
+.sf-page-v3 .prov-bar .verified--partner,
+.sf-page-v3 .prov-bar .verified--modelled {
+  background: rgba(232, 237, 217, 0.08);
+  color: var(--sage-100);
+  border-color: rgba(232, 237, 217, 0.22);
+}
+.sf-page-v3 .prov-bar .verified--operated {
+  background: var(--sage-50); color: var(--sage-700);
+}
+.sf-page-v3 .prov-bar .verified--operated .verified-dot { background: var(--sage-600); }
+
+/* ---------- AccuracyLedger ---------- */
+.sf-page-v3 .acc-head { max-width: 62ch; margin-bottom: 44px; }
+.sf-page-v3 .acc-head h2 { margin: 14px 0 0; }
+.sf-page-v3 .acc-head .lede { margin-top: 18px; }
+
+.sf-page-v3 .acc-claims {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px; margin-bottom: 48px;
+}
+.sf-page-v3 .acc-claim {
+  padding: 26px 28px;
+  background: var(--evidence-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--v3-radius);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.sf-page-v3 .acc-claim-num {
+  font-family: var(--font-serif);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: clamp(34px, 3.6vw, 46px); line-height: 1;
+  font-weight: 500; color: var(--sage-700);
+}
+.sf-page-v3 .acc-claim-label { font-size: 15px; color: var(--ink-soft); max-width: 34ch; }
+
+/* A table of record: horizontal hairlines only, no vertical rules, no zebra. */
+.sf-page-v3 .acc-table { border-top: 1px solid var(--evidence-line); }
+.sf-page-v3 .acc-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: 12px;
+  padding: 16px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.sf-page-v3 .acc-row-head {
+  border-bottom: 1px solid var(--evidence-line);
+  padding-top: 10px; padding-bottom: 10px;
+}
+.sf-page-v3 .acc-row-head .acc-cell {
+  font-family: var(--font-mono);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--ink-mute);
+}
+.sf-page-v3 .acc-cell {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px; color: var(--sage-800);
+  text-align: right;
+}
+.sf-page-v3 .acc-cell-prop {
+  text-align: left; display: flex; flex-direction: column; gap: 3px;
+}
+.sf-page-v3 .acc-prop-name {
+  font-family: var(--font-sans); font-size: 15px; font-weight: 500; color: var(--sage-700);
+}
+.sf-page-v3 .acc-prop-meta {
+  font-family: var(--font-mono); font-size: 11px; color: var(--ink-mute);
+  letter-spacing: 0.03em;
+}
+.sf-page-v3 .acc-cell-var { color: var(--variance-good); }
+.sf-page-v3 .acc-cell-var.is-under { color: var(--variance-warn); }
+
+.sf-page-v3 .acc-foot {
+  margin-top: 24px; padding-top: 18px;
+  border-top: 1px solid var(--line-2);
+  font-family: var(--font-mono);
+  font-size: 12px; line-height: 1.7; color: var(--ink-mute);
+  max-width: 88ch;
+}
+.sf-page-v3 .acc-ctas { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 30px; }
+
+.sf-page-v3 .acc-note {
+  margin-top: 48px; padding: 28px 30px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--sage-400);
+  border-radius: var(--v3-radius);
+  background: var(--evidence-bg);
+}
+.sf-page-v3 .acc-note h3 { margin: 0 0 12px; font-size: 22px; }
+.sf-page-v3 .acc-note p { margin: 0 0 12px; font-size: 15px; line-height: 1.7; color: var(--ink-soft); }
+.sf-page-v3 .acc-note p:last-child { margin-bottom: 0; }
+
+/* ---------- SourceLedger (/methodology) ---------- */
+.sf-page-v3 .srcl-list { border-top: 1px solid var(--evidence-line); }
+.sf-page-v3 .srcl-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) 140px;
+  gap: 24px; align-items: start;
+  padding: 22px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.sf-page-v3 .srcl-name {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+}
+.sf-page-v3 .srcl-name strong {
+  font-family: var(--font-mono); font-size: 14px; font-weight: 500;
+  color: var(--sage-700); letter-spacing: -0.01em;
+}
+.sf-page-v3 .srcl-produces { font-size: 13px; color: var(--ink-mute); }
+.sf-page-v3 .srcl-detail { font-size: 14px; line-height: 1.65; color: var(--ink-soft); }
+.sf-page-v3 .srcl-conf { display: flex; flex-direction: column; gap: 7px; }
+.sf-page-v3 .srcl-conf-num {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 13px; color: var(--sage-700);
+}
+.sf-page-v3 .srcl-conf-bar {
+  height: 3px; border-radius: 999px; background: var(--line);
+  overflow: hidden;
+}
+.sf-page-v3 .srcl-conf-fill { height: 100%; background: var(--sage-400); border-radius: 999px; }
+
+/* ---------- MethodNotes (/methodology) ---------- */
+.sf-page-v3 .meth-list { display: flex; flex-direction: column; gap: 34px; }
+.sf-page-v3 .meth-item {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 22px;
+  align-items: start;
+}
+.sf-page-v3 .meth-num {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.1em;
+  color: var(--ink-mute); padding-top: 6px;
+}
+.sf-page-v3 .meth-item h3 { margin: 0 0 8px; font-size: 24px; }
+.sf-page-v3 .meth-item p { margin: 0; font-size: 15px; line-height: 1.7; color: var(--ink-soft); }
+
+
+/* Ledger rows fade in staggered, driven by --i set inline per row. */
+.sf-page-v3 .acc-table.is-visible .acc-row {
+  animation: v3-fade-in 0.5s ease both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 880px) {
+  .sf-page-v3 .prov-grid { grid-template-columns: 1fr; gap: 30px; }
+  .sf-page-v3 .prov-sources { grid-template-columns: 1fr; gap: 26px; }
+  .sf-page-v3 .acc-claims { grid-template-columns: 1fr; gap: 18px; }
+
+  /* The ledger restacks to cards, matching how .gallery-grid behaves. */
+  .sf-page-v3 .acc-table { border-top: none; }
+  .sf-page-v3 .acc-row-head { display: none; }
+  .sf-page-v3 .acc-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 16px;
+    padding: 18px;
+    border: 1px solid var(--line);
+    border-radius: var(--v3-radius);
+    margin-bottom: 14px;
+  }
+  .sf-page-v3 .acc-cell-prop { grid-column: 1 / -1; }
+  .sf-page-v3 .acc-cell { text-align: left; }
+  .sf-page-v3 .acc-cell::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--ink-mute); margin-bottom: 3px;
+  }
+  .sf-page-v3 .srcl-row { grid-template-columns: 1fr; gap: 12px; }
+  .sf-page-v3 .meth-item { grid-template-columns: 1fr; gap: 8px; }
+}
+
 /* v3 — Upgrade page (trial-expired) */
 .sf-page-v3 .upgrade {
   background: var(--cream);
@@ -3529,6 +3831,11 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   @keyframes irisPulse  { 0%, 100% { transform: none; } }
   @keyframes pupilScan  { 0%, 100% { transform: none; } }
   @keyframes ringPulse  { 0%, 100% { opacity: 0.25; transform: none; } }
+
+  .sf-page-v3 .acc-table.is-visible .acc-row {
+    animation: none;
+    animation-delay: 0s;
+  }
 }
 
 
@@ -3795,3 +4102,6 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
 .sf-page-v3 .home-pulse-link:hover { text-decoration: underline; }
 .sf-page-v3 .mxp-pulse-section { background: var(--cream); }
 .sf-page-v3 .mxp-pulse-section .lede { max-width: 70ch; margin: 14px 0 22px; }
+
+/* The provenance rows sit above the feature rows, closed by a firmer rule. */
+.sf-page-v3 .ct-row--provenance { border-bottom: 1px solid var(--evidence-line); }

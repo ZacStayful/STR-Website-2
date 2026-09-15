@@ -3,34 +3,13 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { CaseStudyModal } from "./CaseStudyModal";
+import { DATA_SOURCES } from "@/lib/provenance-data";
+import { CASE_STUDIES, type CaseStudy } from "@/lib/case-studies-data";
 
-interface SourceCard {
-  name: string;
-  detail: string;
-  score: number;
-}
-
-const SOURCES: SourceCard[] = [
-  { name: "Airbnb", detail: "Active local listings", score: 95 },
-  { name: "PropertyData", detail: "Sold comparables", score: 88 },
-  { name: "OpenRent", detail: "Long-let benchmark", score: 92 },
-  { name: "Stayful data", detail: "Real managed costs", score: 100 },
-];
-
-interface CaseStudy {
-  city: string;
-  file: string;
-}
-
-const CASE_STUDIES: CaseStudy[] = [
-  { city: "York", file: "Stayful_CaseStudy_17_Park_Crescent_York.pdf" },
-  { city: "Newcastle", file: "Stayful_CaseStudy_5_Cambourne_Place_Newcastle.pdf" },
-  { city: "London", file: "Stayful_CaseStudy_76_Thornton_Road_London.pdf" },
-  { city: "Bristol", file: "Stayful_CaseStudy_Kinsale_Road_Bristol.pdf" },
-  { city: "Derby", file: "Stayful_CaseStudy_Main_Street_Repton_Derby.pdf" },
-  { city: "Liverpool", file: "Stayful_CaseStudy_Picton_Road_Wavertree_Liverpool.pdf" },
-  { city: "Manchester", file: "Stayful_CaseStudy_X1_Eastbank_Tower_Great_Ancoats_Street_Manchester.pdf" },
-];
+// Sources and case studies come from the canonical modules so this panel,
+// the marketing pages and the footer cannot disagree about what we use or
+// what evidence exists. The previous inline lists named seven case studies,
+// four of which had no real document behind them.
 
 export function AccuracyPanel() {
   const [expanded, setExpanded] = useState(false);
@@ -66,7 +45,7 @@ export function AccuracyPanel() {
         <>
           {/* 4-column source grid */}
           <div className="mt-[14px] grid gap-[10px] grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-            {SOURCES.map((s) => (
+            {DATA_SOURCES.map((s) => (
               <div
                 key={s.name}
                 className="rounded-lg border border-primary-foreground/15 bg-primary-foreground/10"
@@ -76,7 +55,7 @@ export function AccuracyPanel() {
                   {s.name}
                 </p>
                 <p className="text-[11px] text-primary-foreground/70" style={{ marginBottom: 8 }}>
-                  {s.detail}
+                  {s.produces}
                 </p>
                 <div className="flex items-center gap-2">
                   <div
@@ -85,11 +64,11 @@ export function AccuracyPanel() {
                   >
                     <div
                       className="rounded-sm bg-primary-foreground"
-                      style={{ height: 4, width: `${s.score}%` }}
+                      style={{ height: 4, width: `${s.confidence}%` }}
                     />
                   </div>
                   <span className="text-[11px] font-semibold text-primary-foreground">
-                    {s.score}%
+                    {s.confidence}%
                   </span>
                 </div>
               </div>
@@ -104,7 +83,7 @@ export function AccuracyPanel() {
             <div className="flex flex-wrap justify-center gap-1.5">
               {CASE_STUDIES.map((c) => (
                 <button
-                  key={c.city}
+                  key={c.id}
                   type="button"
                   onClick={() => setOpenStudy(c)}
                   className="rounded-full border border-primary-foreground/20 bg-primary-foreground/10 px-3 py-1 text-[11px] font-semibold text-primary-foreground transition-colors hover:bg-primary-foreground/20"
@@ -119,7 +98,7 @@ export function AccuracyPanel() {
 
       <CaseStudyModal
         city={openStudy?.city ?? null}
-        pdfUrl={openStudy ? `/case-studies/${openStudy.file}` : null}
+        pdfUrl={openStudy?.pdf ?? null}
         onClose={() => setOpenStudy(null)}
       />
     </div>

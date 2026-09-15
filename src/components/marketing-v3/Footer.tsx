@@ -32,7 +32,7 @@ export function Footer() {
 
           <div className="v3-footer-col">
             <div className="v3-footer-h">Company</div>
-            <Link href="/about">About</Link>
+            <Link href="/methodology">How we know</Link>
             <Link href="/short-term-vs-long-term-letting">Short-let vs long-let</Link>
             <a href="https://stayful.co.uk" target="_blank" rel="noopener noreferrer">
               Management service
@@ -52,7 +52,7 @@ export function Footer() {
             © {new Date().getFullYear()} Stayful Ltd. Registered in England &amp; Wales.
           </span>
           <span className="muted">
-            Data: Airbtics · PropertyData · Google Places · Ticketmaster
+            Data: Airbtics · PropertyData · Google Places · Ticketmaster · EPC Register · Companies House
           </span>
         </div>
       </div>
