@@ -14,7 +14,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/income-calculator", priority: 0.9, changeFrequency: "monthly" as const },
     { path: "/short-term-vs-long-term-letting", priority: 0.8, changeFrequency: "monthly" as const },
     { path: "/features", priority: 0.8, changeFrequency: "monthly" as const },
-    { path: "/about", priority: 0.7, changeFrequency: "monthly" as const },
+    { path: "/methodology", priority: 0.8, changeFrequency: "monthly" as const },
     { path: "/demo", priority: 0.6, changeFrequency: "monthly" as const },
     { path: "/extension", priority: 0.7, changeFrequency: "monthly" as const },
     { path: "/extension/privacy", priority: 0.3, changeFrequency: "yearly" as const },

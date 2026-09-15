@@ -38,7 +38,7 @@ export function personSchema(opts: {
     name: opts.name,
     jobTitle: opts.jobTitle,
     image: opts.image,
-    url: opts.url ?? siteUrl("/about"),
+    url: opts.url ?? siteUrl("/methodology"),
     worksFor: {
       "@type": "Organization",
       name: BRAND.legalName,
@@ -156,6 +156,39 @@ export function breadcrumbSchema(items: Array<{ name: string; url: string }>): S
       name: item.name,
       item: item.url,
     })),
+  };
+}
+
+/**
+ * schema.org Dataset for the first-party booking data behind the forecasts.
+ * Worth emitting because it is the one claim in this category that is
+ * structurally different: an operated portfolio rather than scraped
+ * comparables.
+ */
+export function datasetSchema(opts: {
+  url: string;
+  temporalCoverage: string;
+}): SchemaItem {
+  return {
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    name: "Stayful managed-portfolio booking data",
+    description:
+      "Nightly rates, occupancy and owner-net revenue recorded from UK short-term rental properties under Stayful management, including direct bookings taken on Stayful's own channels. Used to validate the income forecasts produced by Stayful Intelligence.",
+    url: opts.url,
+    temporalCoverage: opts.temporalCoverage,
+    spatialCoverage: { "@type": "Place", name: "United Kingdom" },
+    creator: {
+      "@type": "Organization",
+      name: BRAND.legalName,
+      url: siteUrl(),
+    },
+    variableMeasured: [
+      "Owner net revenue",
+      "Occupancy rate",
+      "Average daily rate",
+    ],
+    isAccessibleForFree: true,
   };
 }
 
