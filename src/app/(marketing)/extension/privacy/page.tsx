@@ -13,11 +13,11 @@ export default function ExtensionPrivacyPage() {
     <section className="mx-auto max-w-3xl px-5 py-16 text-[#2e3d2b]">
       <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Browser extension</p>
       <h1 className="mt-2 text-3xl font-bold">Privacy notes</h1>
-      <p className="mt-3 text-sm text-[#5a6356]">Last updated 10 September 2026.</p>
+      <p className="mt-3 text-sm text-[#5a6356]">Last updated 16 September 2026.</p>
 
       <h2 className="mt-10 text-lg font-bold">What the extension does</h2>
       <p className="mt-2 text-sm text-[#5a6356]">
-        The Stayful browser extension runs only on property listing pages on Rightmove, Zoopla, OnTheMarket, Airbnb and Booking.com. When you open such a page and are connected to a Stayful account, it reads that page and shows a Stayful panel with an estimate for the property.
+        The Stayful browser extension runs only on property listing pages on Rightmove, Zoopla, OnTheMarket, Airbnb and Booking.com. On such a page it shows a small Stayful bar with a Check button. Nothing is read or sent until you click Check; then it reads the page you are on and shows an estimate for the property.
       </p>
 
       <h2 className="mt-8 text-lg font-bold">What it sends to Stayful</h2>

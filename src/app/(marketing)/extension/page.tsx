@@ -21,8 +21,6 @@ const SITES = [
 ];
 
 export default function ExtensionPage() {
-  const id = process.env.NEXT_PUBLIC_EXTENSION_ID;
-  const storeUrl = id ? `https://chromewebstore.google.com/detail/${id}` : null;
   return (
     <section className="mx-auto max-w-3xl px-5 py-16">
       <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Browser extension</p>
@@ -30,18 +28,18 @@ export default function ExtensionPage() {
       <p className="mt-3 text-base text-[#5a6356]">
         Install the extension and a Stayful panel appears on listing pages as you browse: estimated short-let revenue, the area&apos;s score and competition, and whether the deal works at the asking price or rent. One click saves it to your pipeline or opens the full report.
       </p>
+      {/* The install link lives behind the member gate, on /extension/connect
+          and /account — the Web Store listing is unlisted, so it is handed to
+          members rather than published here. */}
       <div className="mt-6 flex flex-wrap gap-3">
-        {storeUrl ? (
-          <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="rounded-full bg-[#5d8156] px-5 py-2.5 text-sm font-semibold text-white">
-            Add to Chrome
-          </a>
-        ) : (
-          <span className="rounded-full bg-[#e4e7dc] px-5 py-2.5 text-sm font-semibold text-[#5a6356]">Chrome Web Store listing coming soon</span>
-        )}
-        <Link href="/extension/connect" className="rounded-full border border-[#5d8156] px-5 py-2.5 text-sm font-semibold text-[#5d8156]">
-          Connect to my account
+        <Link href="/extension/connect" className="rounded-full bg-[#5d8156] px-5 py-2.5 text-sm font-semibold text-white">
+          Sign in to install
+        </Link>
+        <Link href="/upgrade" className="rounded-full border border-[#5d8156] px-5 py-2.5 text-sm font-semibold text-[#5d8156]">
+          See plans
         </Link>
       </div>
+      <p className="mt-3 text-xs text-[#7a8274]">The extension is part of your Stayful Intelligence membership. Sign in and you will get the install link and a connection token.</p>
 
       <h2 className="mt-12 text-xl font-bold text-[#2e3d2b]">What you see, site by site</h2>
       <ul className="mt-4 divide-y divide-[#e4e7dc] rounded-2xl border border-[#e4e7dc] bg-white">
@@ -55,7 +53,7 @@ export default function ExtensionPage() {
 
       <h2 className="mt-12 text-xl font-bold text-[#2e3d2b]">How it works</h2>
       <ol className="mt-4 space-y-3 text-sm text-[#5a6356]">
-        <li><strong className="text-[#2e3d2b]">1. Install</strong> the extension from the Chrome Web Store.</li>
+        <li><strong className="text-[#2e3d2b]">1. Sign in</strong> and open <Link href="/extension/connect" className="underline">Connect the extension</Link>, where members get the Chrome install link.</li>
         <li><strong className="text-[#2e3d2b]">2. Connect</strong> it to your Stayful account. The extension gets its own token, which you can revoke at any time.</li>
         <li><strong className="text-[#2e3d2b]">3. Browse.</strong> Open a listing on any supported site and the panel appears. Quick views are free for members; a full report uses one of your runs, as on the site.</li>
       </ol>

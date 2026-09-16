@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "build:extension": "node extension/build.mjs",
+    "package:extension": "node extension/package.mjs",
     "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": {

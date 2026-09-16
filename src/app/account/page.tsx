@@ -22,6 +22,7 @@ import { getPlan } from '@/lib/credit/plans';
 import { getCreditSummary } from '@/lib/credit/summary';
 import { formatGbp } from '@/lib/credit/pricing';
 import { BRAND } from '@/lib/brand';
+import { chromeStoreUrl } from '@/lib/extension/store';
 import { ManagePlan } from './ManagePlan';
 import type { PlanView } from './plan-view';
 
@@ -144,6 +145,7 @@ export default async function AccountPage({
   const fullName = (profile.full_name as string | null)?.trim() || null;
   const memberSince = formatPlanDate(profile.created_at as string | null);
   const reportsTotal = Number(profile.reports_total ?? 0);
+  const storeUrl = chromeStoreUrl();
 
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
@@ -191,7 +193,15 @@ export default async function AccountPage({
           <ul className="mt-3 space-y-2 text-sm">
             <li><Link href="/reports" className="underline">My reports</Link></li>
             <li><Link href="/markets" className="underline">Market Explorer</Link></li>
-            <li><Link href="/extension/connect" className="underline">Browser extension</Link></li>
+            <li>
+              <Link href="/extension/connect" className="underline">Browser extension</Link>
+              {storeUrl && (
+                <>
+                  {' · '}
+                  <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="underline">Add to Chrome</a>
+                </>
+              )}
+            </li>
           </ul>
         </section>
 
