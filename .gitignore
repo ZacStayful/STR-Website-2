@@ -45,3 +45,4 @@ scripts/calibration-results.json
 # browser extension build output
 extension/dist
 extension/dev-key.pem
+extension/*.zip

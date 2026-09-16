@@ -1,22 +1,33 @@
 {
   "manifest_version": 3,
   "name": "Stayful Intelligence",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "See what a Rightmove, Zoopla, OnTheMarket, Airbnb or Booking.com listing would earn as a short-term let, and save it to your Stayful pipeline.",
   "permissions": ["storage"],
   "host_permissions": ["https://intelligence.stayful.co.uk/*"],
-  "background": { "service_worker": "background.js", "type": "module" },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "content_scripts": [
     {
       "matches": [
-        "https://www.rightmove.co.uk/properties/*",
+        "https://*.rightmove.co.uk/properties/*",
         "https://*.zoopla.co.uk/for-sale/details/*",
         "https://*.zoopla.co.uk/to-rent/details/*",
         "https://*.zoopla.co.uk/new-homes/details/*",
-        "https://www.onthemarket.com/details/*",
-        "https://www.airbnb.co.uk/rooms/*",
-        "https://www.airbnb.com/rooms/*",
-        "https://www.booking.com/hotel/*"
+        "https://*.onthemarket.com/details/*",
+        "https://*.airbnb.co.uk/rooms/*",
+        "https://*.airbnb.com/rooms/*",
+        "https://*.airbnb.ie/rooms/*",
+        "https://*.airbnb.fr/rooms/*",
+        "https://*.airbnb.de/rooms/*",
+        "https://*.airbnb.es/rooms/*",
+        "https://*.airbnb.it/rooms/*",
+        "https://*.airbnb.nl/rooms/*",
+        "https://*.airbnb.com.au/rooms/*",
+        "https://*.airbnb.ca/rooms/*",
+        "https://*.booking.com/hotel/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"
@@ -25,8 +36,18 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "Stayful Intelligence",
-    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
-  "externally_connectable": { "matches": ["https://intelligence.stayful.co.uk/*"] }
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "externally_connectable": {
+    "matches": ["https://intelligence.stayful.co.uk/*"]
+  }
 }

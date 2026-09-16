@@ -22,7 +22,8 @@ const CSS = `
   .spacer { flex: 1; }
   .x { border: 0; background: transparent; color: #7a8274; font-size: 16px; cursor: pointer; padding: 0 4px; }
   .body { padding: 12px; }
-  .title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .title { font-weight: 600; font-size: 13px; }
+  .title.clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .meta { color: #7a8274; font-size: 12px; margin-top: 2px; }
   .cta { display: inline-block; margin-top: 10px; border: 0; border-radius: 999px; background: #5d8156; color: #fff; font-weight: 600; font-size: 13px; padding: 8px 14px; cursor: pointer; text-decoration: none; }
   .cta.secondary { background: #fff; color: #2e3d2b; border: 1px solid #e4e7dc; }
@@ -127,7 +128,7 @@ function resultHtml(site: string, r: CheckResponse): string {
   const report = `${site}/estimate?listing=${encodeURIComponent(snap.canonicalUrl)}`;
   const explorer = r.checkedListingId ? `${site}/markets?pane=listings&listing=${encodeURIComponent(r.checkedListingId)}` : `${site}/markets?check=${encodeURIComponent(snap.canonicalUrl)}`;
   return `${header()}<div class="body">
-    <div class="title">${esc(snap.title)}</div>
+    <div class="title clip">${esc(snap.title)}</div>
     <div class="meta">${esc(meta)}</div>
     <div class="tiles">${tiles.join('')}</div>
     ${deal}

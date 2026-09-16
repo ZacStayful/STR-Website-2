@@ -18,6 +18,7 @@ npm run dev
 | `npm run lint` | ESLint. Should report 0 errors |
 | `npm run build` | Production build |
 | `npm run build:extension` | Builds the Chrome extension into `extension/dist` |
+| `npm run package:extension` | Builds and zips the extension for the Chrome Web Store |
 
 Tests run under Node's native type stripping, not a bundler. That means a test
 file must use **relative imports with explicit `.ts` extensions** — no `@/`
