@@ -304,8 +304,10 @@ alter table public.saved_searches add column if not exists checked_listing_id uu
 alter table public.checked_listings add column if not exists rechecked_at timestamptz;
 create index if not exists checked_listings_recheck_idx on public.checked_listings (rechecked_at nulls first, last_checked_at);
 
--- sourcing_alerts: opt-in (default OFF) for the daily deal-sourcing email.
--- sourcing_last_sent_at: when the last sourcing email went out.
+-- sourcing_alerts: the daily pick email. Shipped opt-in (default OFF); the
+-- "Daily picks" section at the end of this file flips the default to ON and
+-- backfills. sourcing_last_sent_at: when the last pick went out (informational;
+-- the cron's one-a-day guard reads sourcing_sent, not this).
 alter table public.profiles add column if not exists sourcing_alerts boolean not null default false;
 alter table public.profiles add column if not exists sourcing_last_sent_at timestamptz;
 
@@ -396,6 +398,11 @@ alter table public.profiles add column if not exists cancel_reason_at timestampt
 -- not, and are written only by the webhook and the /account server actions via
 -- the service-role client. Adding a user-writable column later means adding it
 -- to this list.
+-- sourcing_opted_out_at: set when a member turns daily picks off (goals
+-- modal, /picks toggle or the unsubscribe link), cleared when they turn them
+-- back on. Declared here, above the grant, because the grant names it: a
+-- grant on a column that does not exist fails the whole statement.
+alter table public.profiles add column if not exists sourcing_opted_out_at timestamptz;
 revoke update on public.profiles from anon, authenticated;
 grant update (
   full_name,
@@ -407,6 +414,7 @@ grant update (
   alert_weekly,
   sourcing_alerts,
   sourcing_last_sent_at,
+  sourcing_opted_out_at,
   updated_at
 ) on public.profiles to authenticated;
 
@@ -968,3 +976,51 @@ create table if not exists public.area_planning_signals (
   source text default 'planit'
 );
 alter table public.area_planning_signals enable row level security;
+
+-- =========================
+-- Daily picks (one sourced property a day per member)
+-- =========================
+-- Daily picks are ON by default: every member who has signed in at least once
+-- (welcome_checked_at set) gets one listing a day that fits their goals, or a
+-- Stayful house pick when they have no goals, charged at the daily_pick unit
+-- cost. Paused subscriptions are skipped by the cron. Turning picks off writes
+-- sourcing_opted_out_at (declared above the profiles grant), so the backfill
+-- below can never re-enrol someone who opted out. Safe to re-run.
+alter table public.profiles alter column sourcing_alerts set default true;
+update public.profiles
+   set sourcing_alerts = true
+ where sourcing_alerts = false
+   and sourcing_opted_out_at is null
+   and sourcing_last_sent_at is null;
+
+-- sourcing_sent grows from a (user, url) dedupe ledger into the pick record
+-- the member sees on /picks and reacts to from the email. The composite
+-- primary key stays: one listing can never be sent twice to the same member.
+--   status    pending (row inserted before the send, so overlapping runs and a
+--             crash mid-send can never produce two picks) | sent | failed
+--             (Resend refused or timed out; kept so the listing is not retried)
+--   token     public link token for the email buttons (/p/<token>)
+--   basis     goals (from the member's filter) | house (Stayful pick)
+--   reaction  yes | no, reaction_source link (email click) | form (confirmed)
+alter table public.sourcing_sent add column if not exists id uuid not null default gen_random_uuid();
+create unique index if not exists sourcing_sent_id_uidx on public.sourcing_sent (id);
+alter table public.sourcing_sent add column if not exists token text;
+create unique index if not exists sourcing_sent_token_uidx on public.sourcing_sent (token);
+alter table public.sourcing_sent add column if not exists status text not null default 'sent';
+alter table public.sourcing_sent add column if not exists kind text;
+alter table public.sourcing_sent add column if not exists postcode_area text;
+alter table public.sourcing_sent add column if not exists basis text;
+alter table public.sourcing_sent add column if not exists deal jsonb;
+alter table public.sourcing_sent add column if not exists fit integer;
+alter table public.sourcing_sent add column if not exists charged_base_pence numeric(14,4);
+alter table public.sourcing_sent add column if not exists reaction text;
+alter table public.sourcing_sent add column if not exists reaction_source text;
+alter table public.sourcing_sent add column if not exists reasons text[];
+alter table public.sourcing_sent add column if not exists comment text;
+alter table public.sourcing_sent add column if not exists responded_at timestamptz;
+alter table public.sourcing_sent add column if not exists checked_listing_id uuid;
+alter table public.sourcing_sent add column if not exists saved_at timestamptz;
+create index if not exists sourcing_sent_user_sent_idx on public.sourcing_sent (user_id, sent_at desc);
+create index if not exists sourcing_sent_sent_at_idx on public.sourcing_sent (sent_at desc);
+-- Still service-role only (RLS on, no policies): /picks reads and writes
+-- through the admin client after checking the session and filtering by user.

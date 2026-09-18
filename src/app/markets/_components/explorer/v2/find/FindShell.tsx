@@ -58,12 +58,13 @@ export function FindShell({
   goals,
   savedAreas,
   alertWeekly = true,
-  sourcingAlerts = false,
+  sourcingAlerts = true,
   listings: initialListings = [],
   initialRegion = null,
   initialLevel = "markets",
   initialActiveListing = null,
   initialCheckUrl = null,
+  initialGoalsOpen = false,
   initialSort = "stayful",
   initialQuery = "",
 }: {
@@ -81,6 +82,8 @@ export function FindShell({
   initialActiveListing?: string | null;
   /** A listing URL prefilled in the search box (from the sourcing email); the member still clicks Check. */
   initialCheckUrl?: string | null;
+  /** /markets?goals=1 (the "set my filter" button in the pick email) opens the goals modal straight away. */
+  initialGoalsOpen?: boolean;
   initialSort?: SortKey;
   initialQuery?: string;
 }) {
@@ -92,7 +95,7 @@ export function FindShell({
   const [metric, setMetric] = useState<MapMetric>("score");
   const [hover, setHover] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<"cards" | "map">(initialActiveListing ? "map" : "cards");
-  const [goalsOpen, setGoalsOpen] = useState(false);
+  const [goalsOpen, setGoalsOpen] = useState(initialGoalsOpen);
   const [mounted, setMounted] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [saved, setSaved] = useState<Set<string>>(() => new Set(savedAreas));

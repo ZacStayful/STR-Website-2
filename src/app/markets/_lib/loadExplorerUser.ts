@@ -9,7 +9,7 @@ export interface ExplorerUser {
   goals: MarketGoals | null;
   savedAreas: string[];
   alertWeekly: boolean;
-  /** Opted in to the daily deal-sourcing digest (default off). */
+  /** Daily picks on (default on; see sourcing_opted_out_at). */
   sourcingAlerts: boolean;
   /** The member's checked listings (deal pipeline), newest first. */
   listings: CheckedListingRow[];
@@ -21,7 +21,7 @@ export interface ExplorerUser {
  * auth round-trip, not two.
  */
 export async function loadExplorerUser(user: { id: string; email?: string | null } | null): Promise<ExplorerUser> {
-  if (!user) return { email: null, goals: null, savedAreas: [], alertWeekly: true, sourcingAlerts: false, listings: [] };
+  if (!user) return { email: null, goals: null, savedAreas: [], alertWeekly: true, sourcingAlerts: true, listings: [] };
   const supabase = await createSupabaseServerClient();
   const [profileRes, { data: saved }, listingsRes] = await Promise.all([
     supabase.from('profiles').select('market_goals, alert_weekly, sourcing_alerts').eq('id', user.id).single(),
@@ -48,7 +48,7 @@ export async function loadExplorerUser(user: { id: string; email?: string | null
     goals: parseMarketGoals(profile?.market_goals),
     savedAreas: (saved ?? []).map((s: { postcode_area: string }) => s.postcode_area.toUpperCase()),
     alertWeekly: profile?.alert_weekly !== false,
-    sourcingAlerts: profile?.sourcing_alerts === true,
+    sourcingAlerts: profile?.sourcing_alerts !== false,
     listings,
   };
 }

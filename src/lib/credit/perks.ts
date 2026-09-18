@@ -35,13 +35,17 @@ export function perksFor(planCode: string | null | undefined, fromDb?: Partial<P
   };
 }
 
-/** Whether a member on this cadence gets a sourcing run today (weekly = Mondays, UTC). */
+/**
+ * @deprecated Daily picks go to every enrolled member every day; the cadence
+ * perk no longer gates the sourcing cron. Kept so the `billing_plans.perks`
+ * seed and older DB rows still parse.
+ */
 export function sourcingRunsToday(cadence: SourcingCadence, now: Date = new Date()): boolean {
   return cadence === 'daily' || now.getUTCDay() === 1;
 }
 
 export function perkLines(p: PlanPerks): string[] {
-  const lines = [p.sourcingCadence === 'daily' ? 'Daily deal-sourcing digest' : 'Weekly deal-sourcing digest'];
+  const lines = ['One property pick a day by email'];
   if (p.priorityRefresh) lines.push('Priority data refresh');
   if (p.phoneSupport) lines.push('Phone support');
   if (p.quarterlyBriefing) lines.push('Quarterly market briefing');

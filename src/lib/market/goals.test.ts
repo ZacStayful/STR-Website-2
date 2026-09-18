@@ -49,6 +49,21 @@ test('goalsFromForm maps the questionnaire fields', () => {
   assert.equal(g.riskAppetite, 'cautious');
 });
 
+test('maxRentPcm parses a sane band and drops everything else', () => {
+  assert.equal(parseMarketGoals({ version: 1, maxRentPcm: 1200 })!.maxRentPcm, 1200);
+  assert.equal(parseMarketGoals({ version: 1, maxRentPcm: '£1,250' })!.maxRentPcm, 1250);
+  assert.equal(parseMarketGoals({ version: 1, maxRentPcm: 50 })!.maxRentPcm, null);
+  assert.equal(parseMarketGoals({ version: 1, maxRentPcm: 'lots' })!.maxRentPcm, null);
+  assert.equal(parseMarketGoals({ version: 1 })!.maxRentPcm, null);
+  const g = goalsFromForm((k) => ({ sourcingKind: 'rent', maxRentPcm: '1500' } as Record<string, string>)[k] ?? null);
+  assert.equal(g.sourcingKind, 'rent');
+  assert.equal(g.maxRentPcm, 1500);
+  const chips = describeGoals({ ...DEFAULT_GOALS, sourcingKind: 'both', maxRentPcm: 1500 });
+  assert.ok(chips.includes('≤ £1,500 pcm'));
+  // A rent ceiling on a buy-only filter is not shown.
+  assert.ok(!describeGoals({ ...DEFAULT_GOALS, maxRentPcm: 1500 }).some((c) => c.includes('pcm')));
+});
+
 test('describeGoals produces readable chips', () => {
   const chips = describeGoals({ ...DEFAULT_GOALS, home: { postcode: 'NG2 5GB', lat: null, lng: null }, maxDistanceMiles: 50, budget: '200-350', bedrooms: 2, priorities: { ...DEFAULT_GOALS.priorities, yield: 3 } });
   assert.deepEqual(chips, ['≤50 mi of NG2', '£200k–£350k', '2-bed', 'Max yield', 'Managed']);

@@ -36,6 +36,7 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'pmi', unit: 'str_estimate', label: 'PMI STR second opinion (50 credits)', unitCostPence: 75 },
   { provider: 'pmi', unit: 'str_market', label: 'PMI area STR snapshot (3 credits)', unitCostPence: 5 },
   { provider: 'pmi', unit: 'listings', label: 'PMI listings search (1 credit)', unitCostPence: 2 },
+  { provider: 'pmi', unit: 'daily_pick', label: 'Daily pick (a member\'s share of the listings search)', unitCostPence: 2, notes: 'charged per pick emailed; the search itself is house spend' },
   // ── PropertyData (credit-based; estimate) ──
   { provider: 'propertydata', unit: 'floor_areas', label: 'PropertyData /floor-areas', unitCostPence: 2.5, notes: 'estimate — reconcile against the PropertyData invoice' },
   { provider: 'propertydata', unit: 'valuation_rent', label: 'PropertyData /valuation-rent (per attempt)', unitCostPence: 2.5, notes: 'up to 3 attempts per report' },

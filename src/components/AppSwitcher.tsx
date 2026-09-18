@@ -6,7 +6,7 @@ import { CreditBadge } from "@/components/credit/CreditBadge";
 // page and billing).
 // Admins also get the admin dashboard link. The credit badge reads the
 // balance from the surrounding CreditProvider (see AppShell).
-export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "reports" | "account"; admin?: boolean }) {
+export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "picks" | "reports" | "account"; admin?: boolean }) {
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
     fontWeight: 600,
@@ -37,6 +37,9 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
       </Link>
       <Link href="/markets" style={linkStyle(active === "markets")} aria-current={active === "markets" ? "page" : undefined}>
         Market Explorer
+      </Link>
+      <Link href="/picks" style={linkStyle(active === "picks")} aria-current={active === "picks" ? "page" : undefined}>
+        Daily picks
       </Link>
       <Link href="/reports" style={linkStyle(active === "reports")} aria-current={active === "reports" ? "page" : undefined}>
         My reports
