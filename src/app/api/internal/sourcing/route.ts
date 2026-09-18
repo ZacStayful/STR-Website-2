@@ -19,7 +19,8 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 
 // ─── Daily picks ──────────────────────────────────────────────────────
 // Vercel cron (vercel.json: 07:00 UTC, with a resumable second pass at 07:20).
-// Ships dark: SOURCING_ENABLED=true turns it on. Every member with picks on
+// Ships dark: SOURCING_ENABLED=true turns it on (?dry=1 works either way and
+// never writes or sends). Every member with picks on
 // (profiles.sourcing_alerts, default on) who has signed in at least once gets
 // AT MOST ONE listing a day: paused subscriptions, members already sent today
 // and members with less than one pick's worth of credit are skipped.
@@ -91,9 +92,11 @@ type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourc
 export async function GET(request: Request) {
   if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
   if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  if (process.env.SOURCING_ENABLED !== "true") return Response.json({ enabled: false, reason: "SOURCING_ENABLED is not 'true'" });
-
+  // A dry run writes and sends nothing, so it is allowed while sending is off:
+  // that is how the audience and queries are checked before the flag is flipped.
+  const enabled = process.env.SOURCING_ENABLED === "true";
   const dry = new URL(request.url).searchParams.get("dry") === "1";
+  if (!enabled && !dry) return Response.json({ enabled: false, reason: "SOURCING_ENABLED is not 'true'" });
   let admin;
   try {
     admin = createAdminClient();
@@ -214,7 +217,7 @@ export async function GET(request: Request) {
   for (const m of members) for (const q of m.queries) demand.set(q.key, { query: q, members: (demand.get(q.key)?.members ?? 0) + 1 });
   const queries = [...demand.values()].sort((a, b) => b.members - a.members).slice(0, maxQueries());
 
-  const summary = { dry, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, emails: 0, emailFailures: 0, chargedBasePence: 0, hydrated: 0, ranOutOfTime: false, pickBasePence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, emails: 0, emailFailures: 0, chargedBasePence: 0, hydrated: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
     return Response.json({
       ...summary,
