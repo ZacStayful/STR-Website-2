@@ -19,8 +19,8 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 
 // ─── Daily picks ──────────────────────────────────────────────────────
 // Vercel cron (vercel.json: 07:00 UTC, with a resumable second pass at 07:20).
-// Ships dark: SOURCING_ENABLED=true turns it on (?dry=1 works either way and
-// never writes or sends). Every member with picks on
+// Sending is ON unless SOURCING_ENABLED=false, the kill switch (?dry=1 works
+// either way and never writes or sends). Every member with picks on
 // (profiles.sourcing_alerts, default on) who has signed in at least once gets
 // AT MOST ONE listing a day: paused subscriptions, members already sent today
 // and members with less than one pick's worth of credit are skipped.
@@ -94,9 +94,9 @@ export async function GET(request: Request) {
   if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   // A dry run writes and sends nothing, so it is allowed while sending is off:
   // that is how the audience and queries are checked before the flag is flipped.
-  const enabled = process.env.SOURCING_ENABLED === "true";
+  const enabled = process.env.SOURCING_ENABLED !== "false";
   const dry = new URL(request.url).searchParams.get("dry") === "1";
-  if (!enabled && !dry) return Response.json({ enabled: false, reason: "SOURCING_ENABLED is not 'true'" });
+  if (!enabled && !dry) return Response.json({ enabled: false, reason: "SOURCING_ENABLED is 'false'" });
   let admin;
   try {
     admin = createAdminClient();
