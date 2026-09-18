@@ -5,10 +5,34 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
 import { areaMetaForCode } from "@/lib/market/areas";
+import { cookies } from "next/headers";
 import { summarisePicks, cleanReasons, PICK_REASONS, type PickRow } from "@/lib/listing/picks";
+import { sendingEnabled } from "@/lib/listing/picks-run";
+import { sendTestPickAction, dryRunPicksAction } from "./actions";
+
+const RUN_COOKIE = "sf_picks_run";
 
 export const metadata: Metadata = { title: "Daily picks admin — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
+// The test-pick and dry-run actions run the same search as the cron.
+export const maxDuration = 60;
+
+interface LastRun {
+  kind: "test" | "dry";
+  at: string;
+  body: Record<string, unknown>;
+}
+
+async function readLastRun(): Promise<LastRun | null> {
+  try {
+    const raw = (await cookies()).get(RUN_COOKIE)?.value;
+    if (!raw) return null;
+    const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as LastRun;
+    return parsed && (parsed.kind === "test" || parsed.kind === "dry") ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 const DAYS = 30;
 
@@ -61,6 +85,7 @@ export default async function PicksAdminPage() {
 
   const admin = createAdminClient();
   const since = sinceIso(DAYS);
+  const lastRun = await readLastRun();
   const [{ data, error }, { count: enrolled }, { count: optedOut }] = await Promise.all([
     admin
       .from("sourcing_sent")
@@ -93,12 +118,29 @@ export default async function PicksAdminPage() {
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Daily picks</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Last {DAYS} days. {enrolled ?? "—"} members enrolled, {optedOut ?? "—"} opted out. Sending is {process.env.SOURCING_ENABLED === "true" ? "ON" : "OFF (SOURCING_ENABLED is not 'true')"}.</p>
+          <p className="mt-1 text-sm text-muted-foreground">Last {DAYS} days. {enrolled ?? "—"} members enrolled, {optedOut ?? "—"} opted out. Sending is {sendingEnabled() ? "ON" : "OFF (SOURCING_ENABLED=false)"}.</p>
         </div>
         <Link href="/admin" className="text-sm font-medium text-primary hover:underline">← Dashboard</Link>
       </div>
 
       {error && <div className="mb-6 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Could not read sourcing_sent (schema behind?): {error.message}</div>}
+
+      <section className="mb-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Test and dry run</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          <strong>Send me a test pick</strong> runs the real search for your account only and emails you the result (admins are never charged; it ignores the one-a-day guard so you can press it again, but never repeats a listing).{" "}
+          <strong>Dry run</strong> reports who would get what across every enrolled member and writes nothing. Either takes up to a minute.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <form action={sendTestPickAction}>
+            <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Send me a test pick</button>
+          </form>
+          <form action={dryRunPicksAction}>
+            <button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run (everyone)</button>
+          </form>
+        </div>
+        {lastRun && <RunResult run={lastRun} />}
+      </section>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Picks sent" value={s.sent} sub={`${s.failed} failed sends`} />
@@ -171,6 +213,42 @@ export default async function PicksAdminPage() {
           </ul>
         )}
       </section>
+    </div>
+  );
+}
+
+
+function RunResult({ run }: { run: LastRun }) {
+  const b = run.body;
+  const members = Array.isArray(b.members) ? (b.members as { user: string; basis: string; candidates: number; sent: boolean; reason?: string }[]) : [];
+  const skipped = Array.isArray(b.skipped) ? (b.skipped as { user: string; reason: string }[]) : [];
+  const wouldEmail = Array.isArray(b.wouldEmail) ? (b.wouldEmail as { email?: string; basis: string; firstEver: boolean; queries: string[] }[]) : [];
+  const n = (k: string) => (typeof b[k] === "number" ? (b[k] as number) : 0);
+  const headline =
+    typeof b.error === "string"
+      ? `Failed: ${b.error}`
+      : run.kind === "test"
+        ? members.some((m) => m.sent)
+          ? "Sent. Check your inbox."
+          : `Nothing sent${members[0]?.reason ? ` (${members[0].reason})` : skipped[0]?.reason ? ` (${skipped[0].reason})` : ""}.`
+        : `${n("members")} of ${n("enrolled")} enrolled would get a pick from ${n("queries")} shared searches.`;
+  return (
+    <div className="mt-4 rounded-lg bg-muted/60 p-3 text-xs">
+      <p className="text-sm font-medium text-foreground">{run.kind === "test" ? "Test pick" : "Dry run"} · {new Date(run.at).toLocaleTimeString("en-GB")} · {headline}</p>
+      {run.kind === "test" && (
+        <p className="mt-1 text-muted-foreground">
+          searches answered {n("answered")} · unavailable {n("unavailable")} · listings {n("listings")} · candidates {members[0]?.candidates ?? 0} · emails {n("emails")} · failures {n("emailFailures")} · {n("ms")} ms
+        </p>
+      )}
+      {run.kind === "dry" && wouldEmail.length > 0 && (
+        <ul className="mt-2 max-h-48 overflow-auto">
+          {wouldEmail.slice(0, 60).map((w, i) => (
+            <li key={i} className="text-muted-foreground">{w.email ?? "member"} · {w.basis} · {w.firstEver ? "first pick" : "repeat"} · {w.queries.length} searches</li>
+          ))}
+        </ul>
+      )}
+      {skipped.length > 0 && <p className="mt-2 text-muted-foreground">Skipped: {skipped.map((s) => s.reason).join(", ")}</p>}
+      {typeof b.ranOutOfTime === "boolean" && b.ranOutOfTime && <p className="mt-1 text-muted-foreground">Ran out of time; the 07:20 pass finishes what this one did not.</p>}
     </div>
   );
 }
