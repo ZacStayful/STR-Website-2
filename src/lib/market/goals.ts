@@ -39,6 +39,8 @@ export interface MarketGoals {
   finance: FinanceGoals;
   /** Buy-to-let (sale), rent-to-rent (rent) or both. Default sale. */
   sourcingKind: SourcingKind;
+  /** Rent-to-rent ceiling (£ pcm) for the daily pick's rent searches; null = no bound. */
+  maxRentPcm: number | null;
 }
 
 export const DEFAULT_GOALS: MarketGoals = {
@@ -52,6 +54,7 @@ export const DEFAULT_GOALS: MarketGoals = {
   riskAppetite: 'balanced',
   finance: DEFAULT_FINANCE_GOALS,
   sourcingKind: 'sale',
+  maxRentPcm: null,
 };
 
 export const SOURCING_KIND_LABELS: Record<SourcingKind, string> = { sale: 'Properties to buy', rent: 'Properties to rent (rent-to-rent)', both: 'Both' };
@@ -87,6 +90,16 @@ export function parseFinanceGoals(raw: unknown): FinanceGoals {
     targetYieldPct: financeField(f.targetYieldPct, d.targetYieldPct, 1, 50),
     targetMarginPcm: financeField(f.targetMarginPcm, d.targetMarginPcm, 0, 20000),
   };
+}
+
+export const MAX_RENT_PCM_RANGE = { min: 200, max: 10_000 } as const;
+
+/** A rent ceiling is only meaningful in a sane band; anything else means "no bound". */
+export function parseMaxRentPcm(v: unknown): number | null {
+  const n = typeof v === 'string' ? Number(v.replace(/[£,\s]/g, '')) : v;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return null;
+  const r = Math.round(n);
+  return r >= MAX_RENT_PCM_RANGE.min && r <= MAX_RENT_PCM_RANGE.max ? r : null;
 }
 
 function priority(v: unknown): Priority | null {
@@ -127,8 +140,9 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
   const riskAppetite: RiskAppetite = o.riskAppetite === 'cautious' || o.riskAppetite === 'tolerant' ? o.riskAppetite : 'balanced';
 
   const sourcingKind: SourcingKind = isSourcingKind(o.sourcingKind) ? o.sourcingKind : 'sale';
+  const maxRentPcm = parseMaxRentPcm(o.maxRentPcm);
 
-  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance), sourcingKind };
+  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance), sourcingKind, maxRentPcm };
 }
 
 /** Build goals from the questionnaire form (FormData-like getter). */
@@ -159,6 +173,7 @@ export function goalsFromForm(get: (key: string) => string | null): MarketGoals 
       targetMarginPcm: get('f_targetMarginPcm'),
     },
     sourcingKind: get('sourcingKind'),
+    maxRentPcm: get('maxRentPcm'),
   })!;
 }
 
@@ -168,6 +183,7 @@ export function describeGoals(g: MarketGoals): string[] {
   if (g.home) out.push(g.maxDistanceMiles ? `≤${g.maxDistanceMiles} mi of ${g.home.postcode.split(' ')[0]}` : `Near ${g.home.postcode.split(' ')[0]}`);
   if (g.budget) out.push({ u200: 'Under £200k', '200-350': '£200k–£350k', '350-500': '£350k–£500k', '500+': '£500k+' }[g.budget]);
   if (g.bedrooms) out.push(g.bedrooms === 4 ? '4+ bed' : `${g.bedrooms}-bed`);
+  if (g.sourcingKind !== 'sale' && g.maxRentPcm) out.push(`≤ £${g.maxRentPcm.toLocaleString('en-GB')} pcm`);
   const top = (Object.entries(g.priorities) as [keyof MarketGoals['priorities'], Priority][]).filter(([, v]) => v === 3);
   const names: Record<keyof MarketGoals['priorities'], string> = { yield: 'Max yield', revenue: 'Max revenue', lowCompetition: 'Low competition', directBookings: 'Direct bookings' };
   for (const [k] of top) out.push(names[k]);

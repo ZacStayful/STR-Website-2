@@ -34,13 +34,13 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default async function MarketsPage({ searchParams }: { searchParams: Promise<{ sort?: string; q?: string; pane?: string; listing?: string; check?: string; region?: string; level?: string }> }) {
+export default async function MarketsPage({ searchParams }: { searchParams: Promise<{ sort?: string; q?: string; pane?: string; listing?: string; check?: string; region?: string; level?: string; goals?: string }> }) {
   // Members only. Signed-out visitors get the public product page; blocked
   // users are redirected to /upgrade; nothing below runs for either.
   if ((await requireMarketAccess("/markets")) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort, q, pane, listing, check, region, level }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
+  const [{ sort, q, pane, listing, check, region, level, goals: goalsParam }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
   const { cards, regions, national } = snapshot;
   // ?region=north-west narrows to that region; absent (or "all") is every area.
   const initialRegion = isRegionSlug(region) && region !== "all" ? region : null;
@@ -76,6 +76,7 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
       initialLevel={initialLevel}
       initialActiveListing={activeListing}
       initialCheckUrl={checkUrl}
+      initialGoalsOpen={goalsParam === "1"}
       initialSort={isSortKey(sort) ? sort : "stayful"}
       initialQuery={typeof q === "string" ? q.slice(0, 40) : ""}
     />

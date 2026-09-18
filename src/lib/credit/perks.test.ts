@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { perksFor, sourcingRunsToday, FREE_PERKS } from './perks.ts';
+import { perksFor, sourcingRunsToday, perkLines, FREE_PERKS, PLAN_PERKS } from './perks.ts';
 
 test('free and unknown plans get the free perks', () => {
   assert.deepEqual(perksFor(null), FREE_PERKS);
@@ -17,4 +17,10 @@ test('weekly cadence only runs on Mondays (UTC)', () => {
   assert.equal(sourcingRunsToday('weekly', new Date('2026-09-14T07:00:00Z')), true); // Monday
   assert.equal(sourcingRunsToday('weekly', new Date('2026-09-15T07:00:00Z')), false);
   assert.equal(sourcingRunsToday('daily', new Date('2026-09-15T07:00:00Z')), true);
+});
+
+test('every plan advertises the same daily pick line', () => {
+  assert.equal(perkLines(FREE_PERKS)[0], 'One property pick a day by email');
+  assert.equal(perkLines(PLAN_PERKS.scale)[0], 'One property pick a day by email');
+  assert.ok(perkLines(PLAN_PERKS.scale).includes('Phone support'));
 });

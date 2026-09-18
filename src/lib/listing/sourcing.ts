@@ -49,7 +49,7 @@ export interface SourcingQuery {
   minBedrooms: number | null;
 }
 
-/** Purchase budget band → price bounds. Rent queries carry no price bound. */
+/** Purchase budget band → price bounds. Rent queries take their ceiling from goals.maxRentPcm instead. */
 export function budgetBounds(budget: MarketGoals['budget']): { min: number | null; max: number | null } {
   switch (budget) {
     case 'u200':
@@ -111,11 +111,29 @@ export function queriesForGoals(goals: MarketGoals, savedAreas: string[], areas:
   for (const a of areasForGoals(goals, savedAreas, areas)) {
     for (const kind of kinds) {
       const minPrice = kind === 'sale' ? bounds.min : null;
-      const maxPrice = kind === 'sale' ? bounds.max : null;
+      const maxPrice = kind === 'sale' ? bounds.max : goals.maxRentPcm ?? null;
       out.push({ key: queryKey(kind, a.code, minPrice, maxPrice, minBedrooms), kind, area: a.code, areaName: a.name, areaSlug: a.slug, minPrice, maxPrice, minBedrooms });
     }
   }
   return out;
+}
+
+/** A listing's rent as £ pcm (weekly rents × 52 / 12); null for sale prices or unknown. */
+export function rentPcm(price: SourcedListing['price']): number | null {
+  if (!price) return null;
+  if (price.period === 'pcm') return price.amount;
+  if (price.period === 'pw') return Math.round((price.amount * 52) / 12);
+  return null;
+}
+
+/** Whether a listing sits inside its query's price bounds (rent compared per calendar month). */
+export function withinQueryPrice(listing: SourcedListing, q: SourcingQuery): boolean {
+  if (!listing.price) return true;
+  const amount = listing.kind === 'rent' ? rentPcm(listing.price) : listing.price.period === 'total' ? listing.price.amount : null;
+  if (amount === null) return true;
+  if (q.maxPrice && amount > q.maxPrice) return false;
+  if (q.minPrice && amount < q.minPrice) return false;
+  return true;
 }
 
 // ── OnTheMarket search pages ──

@@ -29,10 +29,11 @@ function PriorityPills({ name, value, label, help }: { name: string; value: Prio
   );
 }
 
-export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = false, onClose }: { goals: MarketGoals | null; alertWeekly?: boolean; sourcingAlerts?: boolean; onClose: () => void }) {
+export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = true, onClose }: { goals: MarketGoals | null; alertWeekly?: boolean; sourcingAlerts?: boolean; onClose: () => void }) {
   const g = goals ?? DEFAULT_GOALS;
   const [state, action, pending] = useActionState(saveMarketGoalsAction, initial);
   const [clearing, startClear] = useTransition();
+  const [kind, setKind] = useState<SourcingKind>(g.sourcingKind);
   const router = useRouter();
 
   useEffect(() => {
@@ -135,23 +136,30 @@ export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = false, 
           </section>
 
           <section className="mx-goals-section">
-            <h3>5 · Alerts</h3>
-            <label className="mx-check">
-              <input type="checkbox" name="alertWeekly" value="1" defaultChecked={alertWeekly} />
-              <span>Email me weekly when a saved area’s enquiry trend flips or its data becomes Confirmed.</span>
-            </label>
-            <label className="mx-check">
-              <input type="checkbox" name="sourcingAlerts" value="1" defaultChecked={sourcingAlerts} />
-              <span>Email me new listings that fit these goals (daily, only when there is something new). Listings you save are re-checked for price drops automatically.</span>
-            </label>
+            <h3>5 · Daily pick and alerts</h3>
             <label>
-              <span>Sourcing looks for</span>
-              <select name="sourcingKind" defaultValue={g.sourcingKind} className="mx-select mx-select--block">
+              <span>I’m looking for</span>
+              <select name="sourcingKind" value={kind} onChange={(e) => setKind(e.target.value as SourcingKind)} className="mx-select mx-select--block">
                 {(Object.keys(SOURCING_KIND_LABELS) as SourcingKind[]).map((k) => (
                   <option key={k} value={k}>{SOURCING_KIND_LABELS[k]}</option>
                 ))}
               </select>
               <small>Rent-to-rent picks are priced on the advertised rent; purchases on the asking price and your finance defaults above.</small>
+            </label>
+            {kind !== "sale" && (
+              <label>
+                <span>Max rent for rent-to-rent (£ pcm)</span>
+                <input name="maxRentPcm" type="number" inputMode="numeric" min={200} max={10000} step={50} defaultValue={g.maxRentPcm ?? ""} placeholder="e.g. 1200" className="mx-input" />
+                <small>Leave blank for no ceiling. Rent picks above this are never sent.</small>
+              </label>
+            )}
+            <label className="mx-check">
+              <input type="checkbox" name="sourcingAlerts" value="1" defaultChecked={sourcingAlerts} />
+              <span>Email me one property a day that fits this filter (10p of credit per pick, only when there is something new). Picks you save are re-checked for price drops automatically.</span>
+            </label>
+            <label className="mx-check">
+              <input type="checkbox" name="alertWeekly" value="1" defaultChecked={alertWeekly} />
+              <span>Email me weekly when a saved area’s enquiry trend flips or its data becomes Confirmed.</span>
             </label>
           </section>
 
