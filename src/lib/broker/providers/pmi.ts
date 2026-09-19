@@ -20,7 +20,18 @@ export class PmiError extends Error {
 
 const PMI_UNITS: Record<string, string> = { '/valuations/str-estimate': 'str_estimate', '/str/market': 'str_market', '/listings': 'listings', '/account': 'account' };
 
-async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}): Promise<T | null> {
+/** PMI's free tier allows 2 requests per 10 s; one paced retry covers a burst of listings searches. */
+const RATE_LIMIT_RETRY_PATHS = new Set(['/listings']);
+const RATE_LIMIT_WAIT_MS = 5_500;
+const RATE_LIMIT_MAX_WAIT_MS = 6_000;
+
+function retryAfterMs(res: Response): number {
+  const header = Number(res.headers.get('retry-after'));
+  const ms = Number.isFinite(header) && header > 0 ? header * 1000 : RATE_LIMIT_WAIT_MS;
+  return Math.min(ms, RATE_LIMIT_MAX_WAIT_MS);
+}
+
+async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Record<string, string | number | boolean | undefined>; body?: unknown } = {}, attempt = 0): Promise<T | null> {
   const key = process.env.PMI_API_KEY;
   if (!key) return null;
   const url = new URL(`${BASE}${path}`);
@@ -41,6 +52,12 @@ async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Rec
         }),
     );
     if (res.status === 404) return null;
+    if (res.status === 429 && attempt === 0 && RATE_LIMIT_RETRY_PATHS.has(path)) {
+      // The failed attempt is already on the meter; wait out the window once.
+      clearTimeout(timer);
+      await new Promise((r) => setTimeout(r, retryAfterMs(res)));
+      return pmi<T>(path, init, attempt + 1);
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new PmiError(`PMI ${path} → HTTP ${res.status} ${text.slice(0, 200)}`, res.status);

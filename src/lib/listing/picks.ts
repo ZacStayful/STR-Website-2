@@ -178,6 +178,26 @@ export function applyCandidateFeedback<C extends { listing: SourcedListing }>(ca
 
 // ── The email ──
 
+/**
+ * How many members may receive the same listing in one run. House-pick
+ * members share one candidate pool, so without a cap everyone gets the
+ * single top-ranked listing; with it the next-best listings are used.
+ */
+export const PER_LISTING_CAP = 3;
+
+/**
+ * Picks the best-ranked candidate that has not yet reached the per-run cap,
+ * recording the assignment. Falls back to the top candidate when every
+ * candidate is capped, so a thin pool still yields a pick. `ranked` is the
+ * output of `rankPicks` (best first).
+ */
+export function spreadPick<P extends { listing: { canonicalUrl: string } }>(ranked: P[], assigned: Map<string, number>, cap = PER_LISTING_CAP): P | null {
+  if (ranked.length === 0) return null;
+  const chosen = ranked.find((c) => (assigned.get(c.listing.canonicalUrl) ?? 0) < cap) ?? ranked[0];
+  assigned.set(chosen.listing.canonicalUrl, (assigned.get(chosen.listing.canonicalUrl) ?? 0) + 1);
+  return chosen;
+}
+
 export interface PickEmailInput {
   pick: SourcedPick;
   siteUrl: string;

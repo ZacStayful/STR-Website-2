@@ -14,6 +14,8 @@ import {
   unsubscribeHeaders,
   summarisePicks,
   pickPrice,
+  spreadPick,
+  PER_LISTING_CAP,
   type HouseAreaCard,
   type PickFeedback,
   type PickRow,
@@ -178,4 +180,21 @@ test('summarisePicks counts sent picks, responses, saves, reasons and areas', ()
   assert.deepEqual(s.byBasis.house, { sent: 2, yes: 0, no: 1, saved: 0 });
   assert.deepEqual(s.reasons, [{ key: 'wrong_area', count: 1 }, { key: 'too_expensive', count: 1 }]);
   assert.deepEqual(s.areas[0], { area: 'NG', sent: 2, yes: 1, no: 1 });
+});
+
+test('spreadPick hands the same listing to at most the cap, then moves down the ranking', () => {
+  const ranked = [{ listing: { canonicalUrl: 'https://x/a' }, fit: 90 }, { listing: { canonicalUrl: 'https://x/b' }, fit: 80 }];
+  const assigned = new Map<string, number>();
+  const got = Array.from({ length: PER_LISTING_CAP + 1 }, () => spreadPick(ranked, assigned)!.listing.canonicalUrl);
+  assert.deepEqual(got, [...Array(PER_LISTING_CAP).fill('https://x/a'), 'https://x/b']);
+  assert.equal(assigned.get('https://x/a'), PER_LISTING_CAP);
+  assert.equal(assigned.get('https://x/b'), 1);
+});
+
+test('spreadPick falls back to the top candidate when everything is capped, and returns null for no candidates', () => {
+  const ranked = [{ listing: { canonicalUrl: 'https://x/a' } }];
+  const assigned = new Map<string, number>([['https://x/a', 5]]);
+  assert.equal(spreadPick(ranked, assigned, 1)?.listing.canonicalUrl, 'https://x/a');
+  assert.equal(assigned.get('https://x/a'), 6);
+  assert.equal(spreadPick([], assigned), null);
 });
