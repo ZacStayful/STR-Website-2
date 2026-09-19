@@ -2,11 +2,15 @@ import Link from "next/link";
 import { CreditBadge } from "@/components/credit/CreditBadge";
 
 // Thin strip shown to signed-in users so they can move between the members-only
-// surfaces (the analyser, the Market Explorer, saved reports, the account
-// page and billing).
+// surfaces (the analyser, the Market Explorer, saved reports, inbound leads,
+// the account page and billing).
+//
+// "My reports" and "Leads" are deliberately separate entries: one is the
+// properties a member chose to research, the other is strangers who filled in
+// their funnel. They are different products and never share a list.
 // Admins also get the admin dashboard link. The credit badge reads the
 // balance from the surrounding CreditProvider (see AppShell).
-export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "picks" | "reports" | "account"; admin?: boolean }) {
+export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "picks" | "reports" | "leads" | "account"; admin?: boolean }) {
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
     fontWeight: 600,
@@ -43,6 +47,9 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
       </Link>
       <Link href="/reports" style={linkStyle(active === "reports")} aria-current={active === "reports" ? "page" : undefined}>
         My reports
+      </Link>
+      <Link href="/leads" style={linkStyle(active === "leads")} aria-current={active === "leads" ? "page" : undefined}>
+        Leads
       </Link>
       <Link href="/account" style={linkStyle(active === "account")} aria-current={active === "account" ? "page" : undefined}>
         Account

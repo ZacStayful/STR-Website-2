@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSupabaseSession } from '@/lib/supabase/proxy'
 
-const PROTECTED_PREFIXES = ['/estimate', '/reports', '/picks', '/dashboard', '/account', '/upgrade', '/admin', '/extension/connect']
+const PROTECTED_PREFIXES = ['/estimate', '/reports', '/picks', '/leads', '/dashboard', '/account', '/upgrade', '/admin', '/extension/connect']
 const AUTH_ROUTES = ['/login', '/signup']
 
 function isProtected(pathname: string): boolean {
