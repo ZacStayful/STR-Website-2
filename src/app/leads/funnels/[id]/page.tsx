@@ -6,6 +6,9 @@ import { getFunnel } from "@/lib/funnels";
 import { siteUrl } from "@/lib/url";
 import { SATURATION_GUIDE } from "@/lib/market/competition";
 import { FunnelSettings } from "./FunnelSettings";
+import { CostEstimator } from "./CostEstimator";
+import { funnelCost } from "@/lib/funnels/cost";
+import { getUnitCostTable, getBillingSettings } from "@/lib/credit/unit-costs";
 
 export const metadata: Metadata = {
   title: "Funnel settings — Stayful Intelligence",
@@ -20,6 +23,20 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
 
   const funnel = await getFunnel(user.id, id);
   if (!funnel) notFound();
+
+  // Priced on the server with the SAME table, markup and spend rates the
+  // analyse route charges a real lead with, so the quote and the charge
+  // cannot disagree. The browser only multiplies by the lead count.
+  const [table, settings] = await Promise.all([getUnitCostTable(), getBillingSettings()]);
+  const priceFor = (enhanced: boolean) =>
+    funnelCost({
+      leadsPerMonth: 0,
+      enhanced,
+      table,
+      markup: settings.funnelMarkup,
+      spendRates: settings.spendRates,
+      topupPresetsPence: settings.topupPresetsPence,
+    });
 
   return (
     <main className="min-h-screen bg-background">
@@ -51,6 +68,12 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
           publicUrl={siteUrl(`/f/${funnel.publicToken}`)}
           rotatedAt={funnel.rotatedAt}
           saturationGuide={SATURATION_GUIDE}
+        />
+
+        <CostEstimator
+          perLead={{ standard: priceFor(false), enhanced: priceFor(true) }}
+          reportDepth={funnel.reportDepth}
+          presets={settings.topupPresetsPence}
         />
       </div>
     </main>

@@ -18,7 +18,7 @@ const read = (p: string) => readFileSync(new URL(p, import.meta.url).pathname, '
 
 test('an auto top-up passes the email through to the grant', () => {
   const src = read('../stripe/auto-topup.ts');
-  const call = src.match(/grantTopup\([^)]*\)/s);
+  const call = src.match(/grantTopup\([^)]*\)/);
   assert.ok(call, 'maybeAutoTopup no longer calls grantTopup');
   assert.match(call[0], /email/, 'grantTopup is called without an email — the receipt would not be sent');
 });
