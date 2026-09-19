@@ -16,6 +16,7 @@ const ITEMS = [
   { href: "/leads", label: "Leads" },
   { href: "/leads/funnels", label: "Funnels" },
   { href: "/leads/integrations", label: "Integrations" },
+  { href: "/leads/api", label: "API & MCP" },
 ];
 
 export function LeadsNav() {
