@@ -20,11 +20,20 @@ export function round4(n: number): number {
   return Math.round(n * 10_000) / 10_000;
 }
 
-export function priceFor(table: UnitCostTable, provider: string, unit: string, quantity = 1): Price {
+/**
+ * `markupOverride` prices one action at a different multiplier without
+ * touching the shared `unit_costs` rows — funnel leads are charged at x2
+ * where the analyser charges x5. A non-finite or non-positive override is
+ * ignored rather than honoured: a bad setting must not make provider calls
+ * free. It must be passed to BOTH the estimate and the charge, or the quote
+ * and the debit disagree and the reservation maths breaks.
+ */
+export function priceFor(table: UnitCostTable, provider: string, unit: string, quantity = 1, markupOverride?: number): Price {
   const row = table.get(unitKey(provider, unit));
   if (!row) return { rawPence: 0, basePence: 0, unitCostPence: 0, markup: DEFAULT_MARKUP, found: false };
+  const markup = typeof markupOverride === 'number' && Number.isFinite(markupOverride) && markupOverride > 0 ? markupOverride : row.markup;
   const raw = round4(row.unitCostPence * quantity);
-  return { rawPence: raw, basePence: round4(raw * row.markup), unitCostPence: row.unitCostPence, markup: row.markup, found: true };
+  return { rawPence: raw, basePence: round4(raw * markup), unitCostPence: row.unitCostPence, markup, found: true };
 }
 
 export interface SpendRates {

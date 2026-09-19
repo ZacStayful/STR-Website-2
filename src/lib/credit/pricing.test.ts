@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { seedTable, unitKey } from './costs.ts';
-import { priceFor, spendableBase, paidFrom, toGrantPence, lowBalanceState, formatGbp, DEFAULT_SPEND_RATES } from './pricing.ts';
+import { priceFor, spendableBase, paidFrom, toGrantPence, lowBalanceState, formatGbp, DEFAULT_SPEND_RATES, round4 } from './pricing.ts';
 import { estimateAction } from './estimate.ts';
 
 const table = seedTable();
@@ -74,4 +74,69 @@ test('formatGbp', () => {
   assert.equal(formatGbp(730), '£7.30');
   assert.equal(formatGbp(-48.33), '-£0.48');
   assert.equal(formatGbp(14000, { compact: true }), '£140');
+});
+
+// ─── Funnel markup override ───────────────────────────────────────────
+
+test('an override replaces the row markup on both raw and base', () => {
+  const t = seedTable();
+  const at5 = priceFor(t, 'airbtics', 'report_all', 1);
+  const at2 = priceFor(t, 'airbtics', 'report_all', 1, 2);
+  assert.equal(at5.markup, 5);
+  assert.equal(at2.markup, 2);
+  assert.equal(at2.rawPence, at5.rawPence, 'our raw cost does not change with the markup');
+  assert.equal(round4(at2.basePence), round4(at5.basePence / 5 * 2));
+});
+
+test('a nonsense override is ignored rather than making calls free', () => {
+  const t = seedTable();
+  const normal = priceFor(t, 'airbtics', 'report_all', 1).basePence;
+  for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.equal(priceFor(t, 'airbtics', 'report_all', 1, bad).basePence, normal, `override ${bad} should be ignored`);
+  }
+});
+
+test('an unknown unit stays free whatever the override', () => {
+  const t = seedTable();
+  const p = priceFor(t, 'nope', 'nope', 1, 2);
+  assert.equal(p.found, false);
+  assert.equal(p.basePence, 0);
+});
+
+test('a funnel lead at x2 costs what the pricing was set from', () => {
+  const t = seedTable();
+  const std5 = estimateAction(t, 'report');
+  const std2 = estimateAction(t, 'report', { markupOverride: 2 });
+  const enh2 = estimateAction(t, 'report_enhanced', { markupOverride: 2 });
+
+  // Our raw cost is the x5 base over 5, and must be untouched by the override.
+  const rawTypical = round4(std5.typicalBasePence / 5);
+  assert.equal(round4(std2.typicalBasePence), round4(rawTypical * 2));
+
+  // The figures the funnel pricing was agreed from, in pounds. These are
+  // the REPORT alone. A funnel lead also spends one Google autocomplete
+  // session on the address, which is a separate action (~3p more at x2,
+  // ~4p off a top-up) — that is where the quoted £2.12 / £4.37 per lead
+  // come from, and why those are a few pence above these.
+  const topup = DEFAULT_SPEND_RATES.topup;
+  assert.equal((std2.typicalBasePence / 100).toFixed(2), '1.39', 'standard report base at x2');
+  assert.equal((enh2.typicalBasePence / 100).toFixed(2), '2.89', 'enhanced report base at x2');
+  assert.equal(((std2.typicalBasePence * topup) / 100).toFixed(2), '2.08', 'standard off a top-up');
+  assert.equal(((enh2.typicalBasePence * topup) / 100).toFixed(2), '4.33', 'enhanced off a top-up');
+
+  // And the per-lead totals actually quoted, report + one address lookup.
+  const ac2 = estimateAction(t, 'autocomplete', { markupOverride: 2 });
+  assert.equal((((std2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '2.12');
+  assert.equal((((enh2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '4.37');
+
+  // The worst case is what gets reserved, so it must stay above the typical.
+  assert.ok(std2.maxBasePence > std2.typicalBasePence);
+  assert.equal(round4(std2.maxBasePence), round4(std5.maxBasePence / 5 * 2));
+});
+
+test('the override never changes what the analyser itself charges', () => {
+  const t = seedTable();
+  // A member's own report must still price at x5 when no override is passed.
+  assert.equal(estimateAction(t, 'report').typicalBasePence, estimateAction(t, 'report', {}).typicalBasePence);
+  assert.notEqual(estimateAction(t, 'report').typicalBasePence, estimateAction(t, 'report', { markupOverride: 2 }).typicalBasePence);
 });

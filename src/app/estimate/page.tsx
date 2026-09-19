@@ -85,6 +85,7 @@ import { SetupCalculator } from "@/components/SetupCalculator";
 import { AnalyserNarrator } from "@/components/AnalyserNarrator";
 import { ListingLinkBox } from "./_components/ListingLinkBox";
 import { ReportOptions } from "@/components/credit/ReportOptions";
+import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
@@ -1109,10 +1110,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     const top5Set = new Set(top5Comps);
     const hasTop5 = top5Comps.length >= 5;
 
-    const compsWithRating = comps.filter((c) => c.rating > 0);
-    const avgRating = compsWithRating.length > 0 ? Math.round(compsWithRating.reduce((s, c) => s + c.rating, 0) / compsWithRating.length * 100) / 100 : 0;
-    const compsWithReviews = comps.filter((c) => c.reviewCount > 0);
-    const avgReviews = compsWithReviews.length > 0 ? Math.round(compsWithReviews.reduce((s, c) => s + c.reviewCount, 0) / compsWithReviews.length) : 0;
+    // Shared with the lead-qualification rules so the saturation figure a
+    // customer sets a threshold against is the figure shown here.
+    const avgRating = averageRating(comps) ?? 0;
+    const avgReviews = averageReviewCount(comps) ?? 0;
     const compsWithAge = comps.filter((c) => c.listingAge > 0);
     const avgListingAge = compsWithAge.length > 0 ? Math.round(compsWithAge.reduce((s, c) => s + c.listingAge, 0) / compsWithAge.length * 10) / 10 : 0;
 

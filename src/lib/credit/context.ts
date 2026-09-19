@@ -18,6 +18,12 @@ export interface MeterContext {
   reservationId?: string;
   /** Charge at most once per action (Google autocomplete sessions). */
   oncePerAction?: boolean;
+  /**
+   * Price this action's calls at this multiplier instead of each unit row's
+   * own. Funnel leads run at x2 where the analyser runs at x5. Read by
+   * `meter()` so the charge matches the estimate the caller quoted.
+   */
+  markupOverride?: number;
 }
 
 const als = new AsyncLocalStorage<MeterContext>();

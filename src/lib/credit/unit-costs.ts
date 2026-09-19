@@ -1,5 +1,5 @@
 import { adminClient, hasServiceRole } from './db.ts';
-import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP } from './costs.ts';
+import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP, DEFAULT_FUNNEL_MARKUP } from './costs.ts';
 import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 
 /**
@@ -17,6 +17,13 @@ export interface BillingSettings {
   welcomeGrantPence: number;
   lowBalanceRatio: number;
   baseMarkup: number;
+  /**
+   * Multiplier for white-label funnel leads, which are high volume and
+   * repeat, so they are priced below the x5 the analyser charges. Lives
+   * here rather than on the unit_costs rows so changing it cannot reprice
+   * the members-only analyser by accident.
+   */
+  funnelMarkup: number;
   spendRates: SpendRates;
   topupPresetsPence: number[];
   referralPence: number;
@@ -26,6 +33,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   welcomeGrantPence: 2000,
   lowBalanceRatio: 0.8,
   baseMarkup: DEFAULT_MARKUP,
+  funnelMarkup: DEFAULT_FUNNEL_MARKUP,
   spendRates: DEFAULT_SPEND_RATES,
   topupPresetsPence: [1000, 2500, 5000],
   referralPence: 1000,
@@ -72,6 +80,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       welcomeGrantPence: num('welcome_grant_pence', 2000),
       lowBalanceRatio: num('low_balance_ratio', 0.8),
       baseMarkup: num('base_markup', DEFAULT_MARKUP),
+      funnelMarkup: num('funnel_markup', DEFAULT_FUNNEL_MARKUP),
       spendRates: {
         plan: Number(rates.plan) || 1,
         welcome: Number(rates.welcome) || 1,

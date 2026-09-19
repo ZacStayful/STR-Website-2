@@ -489,6 +489,10 @@ insert into public.billing_settings (key, value) values
   ('welcome_grant_pence', '2000'),
   ('low_balance_ratio', '0.8'),
   ('base_markup', '5'),
+  -- Multiplier for white-label funnel leads (see src/lib/credit/costs.ts).
+  -- Kept apart from base_markup so repricing leads cannot reprice the
+  -- members-only analyser by accident.
+  ('funnel_markup', '2'),
   ('spend_rates', '{"plan":1,"welcome":1,"topup":1.5,"adjustment":1.5}'),
   ('topup_presets_pence', '[1000,2500,5000]'),
   ('referral_pence', '1000')
