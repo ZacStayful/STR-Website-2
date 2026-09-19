@@ -28,8 +28,8 @@ injected, rather than inside the route handlers.
 
 ## Deploying
 
-Vercel deploys `main` automatically. Two things are **not** automated, and both
-have to be done by hand.
+Vercel deploys `main` automatically. Three things are **not** automated, and all
+three have to be done by hand.
 
 ### 1. Run `supabase/schema.sql` after any merge that changes it
 
@@ -68,6 +68,29 @@ endpoints can be told apart without exposing a secret. Any event enabled on
 both endpoints arrives twice, which is harmless — every event id is recorded
 in `stripe_events` before it is handled, so a repeat delivery is acknowledged
 and skipped and can never grant credit twice.
+
+### 3. Create the `brand-assets` storage bucket
+
+Needed before a customer can **upload** a funnel logo. Without it, the upload
+button says logo storage is not set up and points them at the paste-a-URL
+field instead — which still works, so this is degraded rather than broken.
+
+Supabase dashboard → Storage → New bucket:
+
+- Name **`brand-assets`**
+- **Public**, because both surfaces that read a logo are anonymous: the funnel
+  page a prospect opens, and the server-side fetch that embeds it in the PDF
+- File size limit **2 MB**, allowed MIME types **`image/png`, `image/jpeg`**
+
+Those last two are belt and braces. The upload already checks the real byte
+length and sniffs the magic bytes server-side, because an extension is a claim
+rather than evidence — but a bucket that also refuses the wrong thing costs
+nothing.
+
+No storage policy to write: writes are service-role and reads are public.
+
+This one fails at **upload** time, not at deploy time, so nothing will tell you
+it is missing until a customer tries.
 
 ### Environment variables
 

@@ -5,6 +5,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createFunnel, getFunnel, updateFunnel, rotateFunnelToken } from '@/lib/funnels';
 import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, parseHttpsUrl, logoRejectionReason, activationBlockers } from '@/lib/funnels/brand';
 import { parseLeadRules } from '@/lib/leads/rules';
+import { uploadLogo, deleteLogoIfOurs } from '@/lib/funnels/storage';
+import { LOGO_MAX_BYTES } from '@/lib/funnels/brand';
 
 /**
  * Funnel management. Every write goes through the service role (the funnels
@@ -88,6 +90,63 @@ export async function saveBrandAction(_prev: FunnelState, formData: FormData): P
 
   const ok = await updateFunnel(who.id, id, { name: String(formData.get('name') ?? '').trim(), brand });
   if (!ok) return { error: 'We could not save those changes just now. Please try again.' };
+  revalidatePath(`/leads/funnels/${id}`);
+  revalidatePath('/leads/funnels');
+  return { saved: true };
+}
+
+/**
+ * Uploads a logo file and points the funnel's branding at it.
+ *
+ * A customer branding their funnel previously had to host a PNG somewhere
+ * and paste the link — a fine answer for a developer and a poor one for a
+ * property manager with logo.png on their desktop. The paste field stays for
+ * anyone who already hosts their assets.
+ *
+ * The stored shape is identical either way: an https URL in `brand.logoUrl`.
+ * So the funnel page, the PDF and every validation path are untouched by
+ * this, which is the point.
+ */
+export async function uploadLogoAction(_prev: FunnelState, formData: FormData): Promise<FunnelState> {
+  const who = await member();
+  if (!who) return { error: 'Please sign in again.' };
+  const id = String(formData.get('id') ?? '');
+  if (!UUID.test(id)) return { error: 'That funnel could not be found.' };
+
+  // Ownership before anything is read off the request: an id from elsewhere
+  // must not even get as far as costing us the bytes.
+  const funnel = await getFunnel(who.id, id);
+  if (!funnel) return { error: 'That funnel could not be found.' };
+
+  const file = formData.get('logo');
+  if (!(file instanceof File) || file.size === 0) {
+    return { error: 'Choose a PNG or JPEG file to upload.' };
+  }
+  // The declared size, checked before the body is read into memory. The real
+  // length is checked again inside uploadLogo, because this one is a claim.
+  if (file.size > LOGO_MAX_BYTES) {
+    return { error: `That file is too large. Logos have to be under ${Math.round(LOGO_MAX_BYTES / (1024 * 1024))} MB.` };
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const result = await uploadLogo({ userId: who.id, funnelId: id, bytes });
+  if (!result.ok || !result.url) return { error: result.error ?? 'That logo could not be uploaded.' };
+
+  const previous = funnel.brand.logoUrl;
+  const ok = await updateFunnel(who.id, id, { brand: { ...funnel.brand, logoUrl: result.url } });
+  if (!ok) {
+    // The save failed, so the file we just stored is unreferenced. Remove it
+    // rather than leave an orphan nothing will ever look at again.
+    await deleteLogoIfOurs(result.url);
+    return { error: 'We could not save that logo just now. Please try again.' };
+  }
+
+  // Only once the new one is safely stored. Nothing else in this product
+  // ever visits that bucket, so without this every re-upload leaves a file
+  // behind for good — and `deleteLogoIfOurs` ignores a URL that was never
+  // ours, so a customer's own hosted logo is left alone.
+  await deleteLogoIfOurs(previous);
+
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
   return { saved: true };
