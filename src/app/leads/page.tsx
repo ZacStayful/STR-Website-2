@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listFunnels } from "@/lib/funnels";
 import { saturationBand } from "@/lib/market/competition";
+import { PushLeadButton } from "./PushLeadButton";
 
 export const metadata: Metadata = {
   title: "Leads — Stayful Intelligence",
@@ -69,7 +70,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
 
   return (
     <main className="min-h-screen bg-background">
-      <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
+      <div className="mx-auto max-w-4xl px-4 pb-10 sm:px-6">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Leads</h1>
@@ -178,9 +179,16 @@ function LeadRowItem({ lead }: { lead: LeadRow }) {
           </p>
         ) : null}
       </div>
-      <div className="text-right">
-        <p className="text-sm font-semibold text-foreground">{typeof revenue === "number" && revenue > 0 ? gbp(revenue) : "—"}</p>
-        <p className="text-xs text-muted-foreground">projected gross</p>
+      <div className="flex flex-col items-end gap-1.5 text-right">
+        <div>
+          <p className="text-sm font-semibold text-foreground">{typeof revenue === "number" && revenue > 0 ? gbp(revenue) : "—"}</p>
+          <p className="text-xs text-muted-foreground">projected gross</p>
+        </div>
+        {/* Only where it can do something: a queued lead has no report to
+            send, and a qualified one went automatically. */}
+        {lead.status !== "queued" && lead.result ? (
+          <PushLeadButton leadId={lead.id} pushed={lead.status === "pushed"} />
+        ) : null}
       </div>
     </li>
   );

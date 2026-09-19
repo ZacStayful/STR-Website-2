@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/AppShell";
+import { LeadsNav } from "./LeadsNav";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,9 @@ export default async function LeadsLayout({ children }: { children: React.ReactN
 
   return (
     <AppShell active="leads" redirectTo="/leads">
+      <div className="mx-auto max-w-4xl px-4 pt-8 sm:px-6">
+        <LeadsNav />
+      </div>
       {children}
     </AppShell>
   );
