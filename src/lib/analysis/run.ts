@@ -20,6 +20,7 @@ import { matchTracked, rankCompetitors, summariseCompetitors } from '../listing/
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '../listing/deal';
 import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
+import { noticeForFailure, noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
 
 /**
  * One property analysis, end to end: geocode, short-let and long-let data,
@@ -240,23 +241,39 @@ export async function runAnalysis(
         return null;
       });
 
-      const secondOpinionPromise = (async () => {
-        if (!wantEnhanced) return null;
-        const r = await ask(
-          strSecondOpinion,
-          {
-            postcode: property.postcode,
-            bedrooms: property.bedrooms,
-            bathrooms: input.bathrooms,
-            propertyType: input.propertyType === 'flat' ? 'apartment' : 'house',
-          },
-          brokerCtx,
-        );
-        return r.value ? { ...r.value, provider: 'pmi' as const, updatedAt: r.updatedAt } : null;
-      })().catch((err) => {
-        console.error('[analyse] second opinion failed:', err);
-        return null;
-      });
+      // The second opinion is the thing an ENHANCED report is bought for, so
+      // a failure is reported rather than swallowed. It still never fails the
+      // run: the rest of the report is unaffected, and the customer is told
+      // on the report itself instead of quietly receiving a standard one.
+      //
+      // The notice rides on the promise's value rather than a `let` captured
+      // by the callbacks. TypeScript narrows such a variable to `null` at the
+      // point it is read back, so the field's type would claim "always null"
+      // while the runtime value was a notice — compiling fine and lying.
+      type SecondOpinionValue = NonNullable<AnalysisResult['secondOpinion']>;
+      const secondOpinionPromise: Promise<{ value: SecondOpinionValue | null; notice: EnhancedNotice | null }> =
+        (async () => {
+          if (!wantEnhanced) return { value: null, notice: null };
+          const r = await ask(
+            strSecondOpinion,
+            {
+              postcode: property.postcode,
+              bedrooms: property.bedrooms,
+              bathrooms: input.bathrooms,
+              propertyType: input.propertyType === 'flat' ? 'apartment' : 'house',
+            },
+            brokerCtx,
+          );
+          if (r.value) {
+            return { value: { ...r.value, provider: 'pmi' as const, updatedAt: r.updatedAt }, notice: null };
+          }
+          // PMI answered with nothing usable — no error to classify, but the
+          // customer is just as short of the feature they paid for.
+          return { value: null, notice: noticeForEmptyResult() };
+        })().catch((err) => {
+          console.error('[analyse] second opinion failed:', err);
+          return { value: null, notice: noticeForFailure(err) };
+        });
 
       const [shortLetResult, longLetResult, priceLabsResult, saleValuationResult] = await Promise.allSettled([
         shortLetPromise,
@@ -353,7 +370,8 @@ export async function runAnalysis(
       const now = new Date().toISOString();
 
       // ── Deal maths on the asking price / advertised rent (or the estimate) ──
-      const [competitors, secondOpinion] = await Promise.all([competitorsPromise, secondOpinionPromise]);
+      const [competitors, secondOpinionOutcome] = await Promise.all([competitorsPromise, secondOpinionPromise]);
+      const secondOpinion = secondOpinionOutcome.value;
       const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance };
       let deal: DealResult | null = null;
       if (input.rentPcm) deal = { ...rentToRentDeal(input.rentPcm, dealBase), basis: 'advertised-rent' };
@@ -382,6 +400,8 @@ export async function runAnalysis(
         cashflow,
         competitors,
         secondOpinion,
+        // Present only when an enhanced run came back without one.
+        enhancedNotice: secondOpinionOutcome.notice,
       };
 
       // What this report actually used, so the caller can show it.

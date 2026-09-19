@@ -1158,7 +1158,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // The FAQ is a Stayful management-service pitch, so it has no place on a
     // customer's own funnel — see the section itself below.
     const visibleTabs = TAB_SECTIONS
-      .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion)
+      .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion || result?.enhancedNotice)
       .filter((tab) => tab.id !== "faq" || !funnel);
     const activeTabIndex = visibleTabs.findIndex((t) => t.id === activeTab);
     const activeTabInfo = activeTabIndex >= 0 ? { ...visibleTabs[activeTabIndex], num: activeTabIndex + 1 } : undefined;
@@ -1847,7 +1847,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
           {/* ══════════════════════════════════════════════════════════
               Section 1b: The Deal (listing links)
               ══════════════════════════════════════════════════════════ */}
-          {(r.deal || r.secondOpinion) && (
+          {(r.deal || r.secondOpinion || r.enhancedNotice) && (
             <section id="deal" ref={setSectionRef("deal")} className="mb-12">
               <SectionHeading
                 icon={Calculator}
@@ -1872,6 +1872,15 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                   />
                 )}
                 {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} />}
+                {/* An enhanced report that came back without its second
+                    opinion says so here rather than looking like a standard
+                    one. The charge already reflects what actually ran. */}
+                {!r.secondOpinion && r.enhancedNotice && (
+                  <div className="rounded-xl border border-border bg-muted/40 p-4">
+                    <p className="text-sm font-semibold text-foreground">{r.enhancedNotice.headline}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{r.enhancedNotice.message}</p>
+                  </div>
+                )}
               </div>
             </section>
           )}
