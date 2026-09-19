@@ -100,8 +100,8 @@ export function Page1Overview({ data }: { data: PdfReportData }) {
 
   return (
     <Page size="A4" style={BASE_PAGE_STYLES.page}>
-      <HeaderBar />
-      <FooterBar />
+      <HeaderBar brand={data.brand} />
+      <FooterBar brand={data.brand} />
 
       <H1>{data.property.address}</H1>
       <Subtitle>

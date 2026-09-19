@@ -1,6 +1,6 @@
 import React from "react";
-import { View, Text, StyleSheet } from "@react-pdf/renderer";
-import { PDF_COLORS } from "../theme";
+import { View, Text, Image, StyleSheet } from "@react-pdf/renderer";
+import { PDF_COLORS, DEFAULT_PDF_BRAND, type PdfBrand } from "../theme";
 
 const C = PDF_COLORS;
 
@@ -64,23 +64,37 @@ const chromeStyles = StyleSheet.create({
   },
 });
 
-export function HeaderBar() {
+const logoStyle = { height: 16, width: "auto" as const, objectFit: "contain" as const };
+
+/**
+ * The bar at the top of every page. `brand` is absent for the members-only
+ * report, which keeps the Stayful wordmark; a funnel passes its customer's,
+ * and the colours are overridden with a style array rather than by rebuilding
+ * the StyleSheet.
+ */
+export function HeaderBar({ brand = DEFAULT_PDF_BRAND }: { brand?: PdfBrand }) {
   return (
-    <View fixed style={chromeStyles.headerBar}>
-      <Text style={chromeStyles.headerBrand}>STAYFUL</Text>
-      <Text style={chromeStyles.headerMeta}>
+    <View fixed style={[chromeStyles.headerBar, { backgroundColor: brand.primary }]}>
+      {brand.logoDataUri ? (
+        /* This is react-pdf's <Image>, a PDF drawing primitive, not an HTML
+           <img>. Its prop types have no `alt`, and a PDF has no alt-text
+           slot to put one in, so the a11y rule does not apply here. */
+        // eslint-disable-next-line jsx-a11y/alt-text
+        <Image src={brand.logoDataUri} style={logoStyle} />
+      ) : (
+        <Text style={[chromeStyles.headerBrand, { color: brand.onPrimary }]}>{brand.companyName}</Text>
+      )}
+      <Text style={[chromeStyles.headerMeta, { color: brand.onPrimary, opacity: 0.85 }]}>
         Property Income Analysis · Confidential
       </Text>
     </View>
   );
 }
 
-export function FooterBar() {
+export function FooterBar({ brand = DEFAULT_PDF_BRAND }: { brand?: PdfBrand }) {
   return (
     <View fixed style={chromeStyles.footerBar}>
-      <Text style={chromeStyles.footerLeft}>
-        © 2026 Stayful · stayful.co.uk · 07471 321 997
-      </Text>
+      <Text style={chromeStyles.footerLeft}>{brand.contactLine}</Text>
       <Text
         style={chromeStyles.footerRight}
         render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`}

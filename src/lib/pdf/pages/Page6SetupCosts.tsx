@@ -1,6 +1,6 @@
 import React from "react";
 import { Page, View, Text, StyleSheet } from "@react-pdf/renderer";
-import { PDF_COLORS } from "../theme";
+import { PDF_COLORS, type PdfBrand } from "../theme";
 import { HeaderBar, FooterBar, formatGbp } from "../components/Chrome";
 import { H2, Subtitle, BASE_PAGE_STYLES } from "../components/Primitives";
 import type { PdfSetupSnapshot } from "../derive";
@@ -95,11 +95,11 @@ const s = StyleSheet.create({
   },
 });
 
-export function Page6SetupCosts({ data }: { data: PdfSetupSnapshot }) {
+export function Page6SetupCosts({ data, brand }: { data: PdfSetupSnapshot; brand?: PdfBrand }) {
   return (
     <Page size="A4" style={BASE_PAGE_STYLES.page}>
-      <HeaderBar />
-      <FooterBar />
+      <HeaderBar brand={brand} />
+      <FooterBar brand={brand} />
 
       <H2>Property Setup Costs</H2>
       <Subtitle>

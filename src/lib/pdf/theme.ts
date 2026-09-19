@@ -17,3 +17,65 @@ export const PDF_COST_RATES = {
   TOTAL: 0.48,
   LTL_AGENT: 0.10,
 } as const;
+
+// ─── White-label branding ─────────────────────────────────────────────
+//
+// The report a prospect downloads from a customer's funnel must not say
+// Stayful on it. Rather than convert every module-scope StyleSheet in this
+// folder into a factory — ten files, all of them load-bearing for the
+// members-only report — the brand is threaded through `PdfReportData` and
+// applied where it actually shows: the fixed header and footer that appear
+// on every page, and the document metadata.
+
+export interface PdfBrand {
+  /** Shown in the header bar and the footer. */
+  companyName: string;
+  /** Footer line under the name: a website, a phone number, or both. */
+  contactLine: string;
+  /** Header bar background. Defaults to Stayful's green. */
+  primary: string;
+  /** Text on the header bar; derived, so a brand colour cannot hide it. */
+  onPrimary: string;
+  /**
+   * A data URI for the logo, already fetched and validated. A URL is
+   * deliberately not accepted: react-pdf would fetch it during render with
+   * no timeout, so one slow host would hang a report.
+   */
+  logoDataUri?: string;
+}
+
+export const DEFAULT_PDF_BRAND: PdfBrand = {
+  companyName: "STAYFUL",
+  contactLine: "© 2026 Stayful · stayful.co.uk · 07471 321 997",
+  primary: PDF_COLORS.DARK_GREEN,
+  onPrimary: PDF_COLORS.WHITE,
+};
+
+/**
+ * Black or white, whichever stays readable on the given colour. WCAG
+ * relative luminance rather than a channel average, which misjudges greens
+ * and yellows badly.
+ */
+export function readableOnPdf(hex: string): string {
+  const c = hex.replace("#", "");
+  if (c.length !== 6) return PDF_COLORS.WHITE;
+  const channel = (h: string) => {
+    const v = parseInt(h, 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const l = 0.2126 * channel(c.slice(0, 2)) + 0.7152 * channel(c.slice(2, 4)) + 0.0722 * channel(c.slice(4, 6));
+  return l > 0.179 ? "#111111" : PDF_COLORS.WHITE;
+}
+
+/** Fills in whatever a customer did not set, so a page always has a brand. */
+export function pdfBrand(input: Partial<PdfBrand> | null | undefined): PdfBrand {
+  if (!input) return DEFAULT_PDF_BRAND;
+  const primary = input.primary ?? DEFAULT_PDF_BRAND.primary;
+  return {
+    companyName: input.companyName?.trim() || DEFAULT_PDF_BRAND.companyName,
+    contactLine: input.contactLine?.trim() ?? "",
+    primary,
+    onPrimary: input.onPrimary ?? readableOnPdf(primary),
+    logoDataUri: input.logoDataUri,
+  };
+}

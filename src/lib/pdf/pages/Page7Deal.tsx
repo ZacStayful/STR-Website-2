@@ -1,6 +1,6 @@
 import React from "react";
 import { Page, View, Text, StyleSheet } from "@react-pdf/renderer";
-import { PDF_COLORS } from "../theme";
+import { PDF_COLORS, type PdfBrand } from "../theme";
 import { HeaderBar, FooterBar, formatGbp } from "../components/Chrome";
 import { H2, Subtitle, MetricCard, Divider, BASE_PAGE_STYLES } from "../components/Primitives";
 import type { PdfDeal } from "../derive";
@@ -23,11 +23,11 @@ const s = StyleSheet.create({
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Deal economics page: purchase or rent-to-rent, plus the monthly cashflow table. */
-export function Page7Deal({ deal }: { deal: PdfDeal }) {
+export function Page7Deal({ deal, brand }: { deal: PdfDeal; brand?: PdfBrand }) {
   return (
     <Page size="A4" style={BASE_PAGE_STYLES.page}>
-      <HeaderBar />
-      <FooterBar />
+      <HeaderBar brand={brand} />
+      <FooterBar brand={brand} />
       <H2>{deal.kind === "purchase" ? "The Deal: If You Bought It" : "The Deal: Rent-to-Rent"}</H2>
       <Subtitle>{deal.basisLabel}</Subtitle>
       {deal.sourceUrl ? <Text style={s.source}>Source listing: {deal.sourceUrl}</Text> : null}
