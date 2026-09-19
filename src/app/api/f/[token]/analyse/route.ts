@@ -8,6 +8,7 @@ import { ownedFunnelByToken } from '@/lib/funnels';
 import { countAttempt, reserveSpend, settleSpend, capMessage } from '@/lib/funnels/caps';
 import { captureLead, completeLead } from '@/lib/leads/store';
 import { isDisposableEmail } from '@/lib/credit/abuse';
+import { verifyTurnstile } from '@/lib/turnstile/verify';
 
 /**
  * A prospect completing someone's white-label funnel.
@@ -19,15 +20,17 @@ import { isDisposableEmail } from '@/lib/credit/abuse';
  * them may be skipped:
  *
  *   1. the funnel must exist and be live
- *   2. the attempt is counted against the per-IP and daily caps, atomically
- *   3. the lead is captured BEFORE anything is spent, so a dry balance
+ *   2. Turnstile says a person submitted this, BEFORE the caps are counted
+ *      so bot traffic cannot exhaust the customer's daily lead allowance
+ *   3. the attempt is counted against the per-IP and daily caps, atomically
+ *   4. the lead is captured BEFORE anything is spent, so a dry balance
  *      costs the customer an enquiry they never see
- *   4. solvency is checked explicitly, never through isEnforcing() — shadow
+ *   5. solvency is checked explicitly, never through isEnforcing() — shadow
  *      mode is a safety net for members, not permission to spend here
- *   5. the day's spend ceiling is claimed at the run's worst case, then
+ *   6. the day's spend ceiling is claimed at the run's worst case, then
  *      reconciled to the actual afterwards
  *
- * Short of credit at 4 or 5, the lead stays `queued` and nothing is spent.
+ * Short of credit at 5 or 6, the lead stays `queued` and nothing is spent.
  */
 
 export const maxDuration = 60;
@@ -69,18 +72,35 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const forwarded = request.headers.get('x-forwarded-for');
   const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
 
-  // ── 2. Caps, counted atomically. A read-then-check would let concurrent
-  //      submissions all pass; see src/lib/funnels/caps.ts. ──
-  const verdict = await countAttempt(funnel.id, ip, funnel.dailyCap);
-  if (verdict !== 'ok') {
-    return sseOnce({ stage: 'error', progress: 0, message: capMessage(verdict) });
-  }
-
   let body: unknown;
   try {
     body = await request.json();
   } catch {
     return sseOnce({ stage: 'error', progress: 0, message: 'We could not read that submission. Please try again.' });
+  }
+
+  // ── 2. Turnstile, BEFORE the caps are counted. ──
+  //
+  // The ordering is the point. countAttempt deliberately counts refused
+  // attempts too, so a flood shows up afterwards rather than being
+  // invisible — which means a bot that got as far as the cap would burn the
+  // customer's daily lead allowance on its way to being rejected, denying
+  // service to the real prospects the funnel exists for. Turning bots away
+  // first keeps the allowance for people.
+  //
+  // A no-op until the keys are set, and open if Cloudflare cannot be
+  // reached; see src/lib/turnstile/verdict.ts for why that is safe here.
+  const turnstileToken = (body && typeof body === 'object' ? (body as Record<string, unknown>).turnstileToken : null);
+  const human = await verifyTurnstile(typeof turnstileToken === 'string' ? turnstileToken : null, ip);
+  if (!human.allow) {
+    return sseOnce({ stage: 'error', progress: 0, message: human.message });
+  }
+
+  // ── 3. Caps, counted atomically. A read-then-check would let concurrent
+  //      submissions all pass; see src/lib/funnels/caps.ts. ──
+  const verdict = await countAttempt(funnel.id, ip, funnel.dailyCap);
+  if (verdict !== 'ok') {
+    return sseOnce({ stage: 'error', progress: 0, message: capMessage(verdict) });
   }
 
   const parsed = parseAnalysisInput(body);
@@ -103,7 +123,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const wantEnhanced = funnel.reportDepth === 'enhanced';
   const runInput = { ...input, enhancedRequested: wantEnhanced };
 
-  // ── 3. Capture first. An enquiry costs nothing to keep, and losing a real
+  // ── 4. Capture first. An enquiry costs nothing to keep, and losing a real
   //      prospect because a balance ran dry is the outcome worth designing
   //      against. ──
   const leadId = await captureLead({
@@ -130,13 +150,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const markupOverride = settings.funnelMarkup;
   const estimate = estimateAction(await getUnitCostTable(), reportAction(wantEnhanced), { markupOverride });
 
-  // ── 4. Solvency, explicitly. Deliberately NOT isEnforcing(). ──
+  // ── 5. Solvency, explicitly. Deliberately NOT isEnforcing(). ──
   const balance = await getBalance(funnel.userId).catch(() => null);
   if (!balance || balance.spendableBasePence < estimate.maxBasePence) {
     return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });
   }
 
-  // ── 5. Claim today's spend headroom at the worst case. ──
+  // ── 6. Claim today's spend headroom at the worst case. ──
   const claimed = await reserveSpend(funnel.id, estimate.maxBasePence, funnel.dailySpendCapPence);
   if (!claimed) {
     return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });

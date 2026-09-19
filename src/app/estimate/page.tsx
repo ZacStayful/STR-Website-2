@@ -89,6 +89,7 @@ import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
 import { type FunnelMode, funnelAnalyseUrl, funnelLabel } from "@/lib/funnels/mode";
 import { consentText } from "@/lib/funnels/brand";
+import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
@@ -389,6 +390,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   const [leadName, setLeadName] = useState("");
   const [leadPhone, setLeadPhone] = useState("");
   const [consent, setConsent] = useState(false);
+  // Turnstile's solved token. Null until the challenge passes, and null
+  // again once it expires — the widget clears it both ways.
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const listingGuestsRef = useRef<{ bedrooms: string; guests: string } | null>(null);
   const autoListingRef = useRef(false);
   // Whether this render is a public white-label funnel. A ref because the
@@ -461,6 +465,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   // Standard report by default; the PMI second opinion is a paid add-on chosen per report.
   const [enhanced, setEnhanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // A Turnstile token is single-use. If a submission is rejected for ANY
+  // other reason — a postcode we cannot place, a funnel out of credit, a
+  // dropped stream — the token is already spent, and the retry would fail
+  // the security check instead of showing the prospect the real problem.
+  //
+  // Resetting on `error` rather than at each call site covers every path
+  // there is now and every one added later, which matters because the ways a
+  // submission can fail outnumber the ways it can succeed.
+  useEffect(() => {
+    if (!error || !funnel) return;
+    setTurnstileToken(null);
+    resetTurnstile();
+  }, [error, funnel]);
   const [result, setResult] = useState<AnalysisResult | null>(initialResult ?? null);
   const [showPresentation, setShowPresentation] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -688,7 +706,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
           outdoorSpace,
           propertyType,
           enhanced: funnel ? funnel.reportDepth === "enhanced" : enhanced,
-          ...(funnel ? { name: leadName, phone: leadPhone, consent } : {}),
+          ...(funnel ? { name: leadName, phone: leadPhone, consent, turnstileToken } : {}),
           ...(purchasePrice !== "" && Number(purchasePrice) > 0 && { purchasePrice: Number(purchasePrice) }),
           ...(advertisedRent !== "" && Number(advertisedRent) > 0 && { advertisedRent: Number(advertisedRent) }),
           ...(listing && {
@@ -3534,6 +3552,15 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                       ) : null}
                     </span>
                   </label>
+                )}
+
+                {/* Renders nothing when no site key is set, so a funnel that
+                    was live before Turnstile existed is unchanged. */}
+                {funnel && !funnel.preview && (
+                  <TurnstileWidget
+                    siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null}
+                    onToken={setTurnstileToken}
+                  />
                 )}
 
                 {error && (
