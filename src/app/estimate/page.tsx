@@ -87,6 +87,7 @@ import { ListingLinkBox } from "./_components/ListingLinkBox";
 import { ReportOptions } from "@/components/credit/ReportOptions";
 import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
+import { type FunnelMode, funnelAnalyseUrl, funnelLabel } from "@/lib/funnels/mode";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
@@ -320,12 +321,54 @@ const TAB_SECTIONS = [
 // the self-managed management-fee toggle is visible without hunting for it.
 // The real /estimate route renders this with no props (Next passes route
 // props, which are ignored), so behaviour there is unchanged.
+// `funnel` turns this into a public white-label page: the same analyser and
+// the same report, submitted to the funnel's own route and charged to the
+// funnel's OWNER rather than to the person filling it in. Every branch below
+// is guarded `funnel ? … : …` with the members-only path as the default, so
+// /estimate behaves exactly as it did.
 type HomePageProps = {
   initialResult?: AnalysisResult;
   initialExpensesExpanded?: boolean;
+  funnel?: FunnelMode;
 };
 
-export default function HomePage({ initialResult, initialExpensesExpanded }: HomePageProps = {}) {
+/**
+ * The wordmark at the top of every surface. On a funnel it is the customer's
+ * logo, or their name as text when they have not set one — never ours.
+ *
+ * A customer's logo is rendered with a plain <img> rather than next/image on
+ * purpose: next/image refuses any host missing from `images.remotePatterns`,
+ * and the alternative — allowing every host — turns the image optimiser into
+ * an open proxy for arbitrary URLs. Logos are small, so there is nothing to
+ * optimise away.
+ */
+function BrandMark({
+  funnel,
+  width,
+  height,
+  className,
+  priority,
+}: {
+  funnel?: FunnelMode;
+  width: number;
+  height: number;
+  className?: string;
+  priority?: boolean;
+}) {
+  if (!funnel) {
+    return <Image alt="Stayful" width={width} height={height} className={className} src="/images/stayful-logo.png" priority={priority} />;
+  }
+  const label = funnelLabel(funnel);
+  if (funnel.brand.logoUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- see the note above: an arbitrary customer host cannot go through next/image.
+      <img alt={label} src={funnel.brand.logoUrl} width={width} height={height} className={className} loading={priority ? "eager" : "lazy"} />
+    );
+  }
+  return <span className={`font-semibold tracking-tight ${className ?? ""}`}>{label}</span>;
+}
+
+export default function HomePage({ initialResult, initialExpensesExpanded, funnel }: HomePageProps = {}) {
   const [address, setAddress] = useState("");
   const [postcode, setPostcode] = useState("");
   const [email, setEmail] = useState("");
@@ -341,6 +384,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const [advertisedRent, setAdvertisedRent] = useState("");
   const listingGuestsRef = useRef<{ bedrooms: string; guests: string } | null>(null);
   const autoListingRef = useRef(false);
+  // Whether this render is a public white-label funnel. A ref because the
+  // unload handlers below read it without wanting to re-register.
+  const isFunnelRef = useRef(Boolean(funnel));
+  isFunnelRef.current = Boolean(funnel);
 
   // ── Session timer: pushed to Monday via sendBeacon on tab close ──
   const sessionStartRef = useRef(Date.now());
@@ -351,7 +398,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     const pushTime = () => {
       const seconds = Math.round((Date.now() - sessionStartRef.current) / 1000);
       const currentEmail = emailRef.current;
-      if (seconds > 0 && currentEmail && currentEmail.includes("@")) {
+      // Never on a funnel: the email belongs to the customer's prospect, and
+      // beaconing it to our own tracking from their branded page would be
+      // sending their lead's personal data somewhere neither party expects.
+      // Read through a ref so this effect keeps its empty dependency array —
+      // the flag is set once by the server and cannot change.
+      if (!isFunnelRef.current && seconds > 0 && currentEmail && currentEmail.includes("@")) {
         navigator.sendBeacon(
           "/api/track",
           new Blob(
@@ -597,15 +649,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    // Credit check before anything is spent; opens the top-up modal when short.
-    if (!(await preflight(enhanced ? "report_enhanced" : "report"))) return;
+    // Credit check before anything is spent; opens the top-up modal when
+    // short. A funnel prospect has no account and no credit of their own —
+    // solvency is the funnel owner's, checked server-side by its route.
+    if (!funnel && !(await preflight(enhanced ? "report_enhanced" : "report"))) return;
     setLoading(true);
     setProgress(0);
     setCompletedStages(new Set());
     setCurrentMessage("Starting analysis...");
 
     try {
-      const res = await creditFetch("/api/analyse", {
+      // creditFetch exists to intercept a 402 into the member's top-up modal.
+      // On a funnel there is no member and no modal, so plain fetch.
+      const doFetch = funnel ? fetch : creditFetch;
+      const res = await doFetch(funnel ? funnelAnalyseUrl(funnel.token) : "/api/analyse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -618,7 +675,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           parking,
           outdoorSpace,
           propertyType,
-          enhanced,
+          enhanced: funnel ? funnel.reportDepth === "enhanced" : enhanced,
           ...(purchasePrice !== "" && Number(purchasePrice) > 0 && { purchasePrice: Number(purchasePrice) }),
           ...(advertisedRent !== "" && Number(advertisedRent) > 0 && { advertisedRent: Number(advertisedRent) }),
           ...(listing && {
@@ -698,8 +755,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
 
               if (event.stage === "complete" && event.data) {
                 setResult(event.data as AnalysisResult);
-                if (event.credit && typeof event.credit.chargedPence === "number" && event.credit.chargedPence > 0) creditCtx?.toast(`This report used ${formatCredit(event.credit.chargedPence)} of credit`);
-                notifyCreditChanged();
+                if (!funnel) {
+                  if (event.credit && typeof event.credit.chargedPence === "number" && event.credit.chargedPence > 0) creditCtx?.toast(`This report used ${formatCredit(event.credit.chargedPence)} of credit`);
+                  notifyCreditChanged();
+                }
                 setLoading(false);
                 return;
               }
@@ -740,13 +799,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     return (
       <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
         <div className="flex w-full max-w-md flex-col items-center gap-6 text-center">
-          <Image
-            alt="Stayful"
-            width={140}
-            height={45}
-            className="h-10 w-auto"
-            src="/images/stayful-logo.png"
-            priority
+          <BrandMark
+            funnel={funnel} width={140} height={45} className="h-10 w-auto" priority
           />
           <div className="flex items-center gap-3">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
@@ -1088,7 +1142,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
     const y3ExtraMonthlyProfit = Math.round((grossAnnual * 0.5 * 0.15) / 12);
 
     // Current active tab info for progress indicator
-    const visibleTabs = TAB_SECTIONS.filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion);
+    // The FAQ is a Stayful management-service pitch, so it has no place on a
+    // customer's own funnel — see the section itself below.
+    const visibleTabs = TAB_SECTIONS
+      .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion)
+      .filter((tab) => tab.id !== "faq" || !funnel);
     const activeTabIndex = visibleTabs.findIndex((t) => t.id === activeTab);
     const activeTabInfo = activeTabIndex >= 0 ? { ...visibleTabs[activeTabIndex], num: activeTabIndex + 1 } : undefined;
     const sidebarWidth = sidebarCollapsed ? 48 : 200;
@@ -1205,13 +1263,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           {/* Sidebar header */}
           <div className={`flex items-center border-b border-border ${sidebarCollapsed ? "justify-center px-2 py-3" : "justify-between px-4 py-3"}`}>
             {!sidebarCollapsed && (
-              <Image
-                alt="Stayful"
-                width={100}
-                height={32}
-                className="h-7 w-auto"
-                src="/images/stayful-logo.png"
-                priority
+              <BrandMark
+                funnel={funnel} width={100} height={32} className="h-7 w-auto" priority
               />
             )}
             <button
@@ -1356,7 +1409,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement("a");
                       a.href = url;
-                      a.download = `Stayful_Property_Analysis.pdf`;
+                      a.download = `${(funnel ? funnelLabel(funnel) : "Stayful").replace(/[^A-Za-z0-9]+/g, "_")}_Property_Analysis.pdf`;
                       a.click();
                       URL.revokeObjectURL(url);
                     } catch {
@@ -1736,7 +1789,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               ) : (
                 <div className="text-center">
                   <p className="text-sm text-primary-foreground/80">Limited market data available</p>
-                  <p className="text-xs text-primary-foreground/60 mt-1">Book a call with Stayful for a personalised estimate</p>
+                  <p className="text-xs text-primary-foreground/60 mt-1">
+                    {funnel ? `Get in touch with ${funnelLabel(funnel)} for a personalised estimate` : "Book a call with Stayful for a personalised estimate"}
+                  </p>
                 </div>
               )}
             </div>
@@ -1828,7 +1883,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   {r.dataQuality.level === "low" ? "Limited Data Available" : "Data Note"}
                 </p>
                 <p className="text-xs">{r.dataQuality.disclaimer}</p>
-                {r.dataQuality.level === "low" && (
+                {r.dataQuality.level === "low" && !funnel && (
                   <a href="https://calendly.com/zac-stayful/call" target="_blank" rel="noopener noreferrer"
                     className="mt-2 inline-block text-xs font-medium text-primary underline"
                     onClick={() => trackCtaClick("book_call")}>
@@ -2211,20 +2266,38 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                           <>Limited short-term rental data available near <span className="font-medium text-foreground">{r.property.postcode}</span>. This may be a rural or unique area with low competition, which can be advantageous for short-term letting.</>
                         )}
                       </p>
-                      <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
-                        For individual comparable listings with direct Airbnb links, contact Stayful for a comprehensive property assessment.
-                      </p>
-                      <a
-                        href="https://calendly.com/stayful"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
-                        onClick={() => trackCtaClick("book_call")}
-                      >
-                        <Phone className="h-3 w-3" />
-                        Book your profitability action plan
-                        <ExternalLink className="h-3 w-3" />
-                      </a>
+                      {/* On a funnel this is the customer's prospect. Inviting
+                          them to book a call with us, from a page carrying the
+                          customer's logo, is exactly the confusion the
+                          white-label feature exists to prevent. */}
+                      {funnel ? (
+                        funnel.brand.replyToEmail ? (
+                          <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
+                            For individual comparable listings, get in touch with {funnelLabel(funnel)} at{" "}
+                            <a href={`mailto:${funnel.brand.replyToEmail}`} className="font-semibold text-primary hover:underline">
+                              {funnel.brand.replyToEmail}
+                            </a>
+                            .
+                          </p>
+                        ) : null
+                      ) : (
+                        <>
+                          <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
+                            For individual comparable listings with direct Airbnb links, contact Stayful for a comprehensive property assessment.
+                          </p>
+                          <a
+                            href="https://calendly.com/stayful"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+                            onClick={() => trackCtaClick("book_call")}
+                          >
+                            <Phone className="h-3 w-3" />
+                            Book your profitability action plan
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </>
+                      )}
                     </div>
                   </div>
                 </CardContent>
@@ -2772,7 +2845,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               <CardContent className="py-4">
                 <p className="text-sm text-muted-foreground leading-relaxed">
                   <span className="font-bold text-foreground">Direct Booking Tip: </span>
-                  Building direct booking relationships takes time. Stayful focuses on converting platform guests into repeat direct customers, reducing platform fees from 15% to near-zero on direct bookings. By year 3, properties typically achieve 30-50% direct bookings, significantly boosting profitability.
+                  Building direct booking relationships takes time.{" "}
+                  {funnel
+                    ? "Converting platform guests into repeat direct customers reduces platform fees from 15% to near-zero on those bookings."
+                    : "Stayful focuses on converting platform guests into repeat direct customers, reducing platform fees from 15% to near-zero on direct bookings."}{" "}
+                  By year 3, properties typically achieve 30-50% direct bookings, significantly boosting profitability.
                 </p>
               </CardContent>
             </Card>
@@ -2869,7 +2946,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="h-5 w-5 shrink-0 text-warning mt-0.5" />
                   <p className="text-xs leading-relaxed text-muted-foreground">
-                    Risk scores are estimates based on available market data and location analysis. Individual circumstances may vary. We recommend discussing your specific situation with a Stayful advisor.
+                    Risk scores are estimates based on available market data and location analysis. Individual circumstances may vary.{" "}
+                    {funnel
+                      ? `We recommend discussing your specific situation with ${funnelLabel(funnel)}.`
+                      : "We recommend discussing your specific situation with a Stayful advisor."}
                   </p>
                 </div>
               </CardContent>
@@ -2882,6 +2962,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
           {/* ══════════════════════════════════════════════════════════
               FAQ Section (replaced Data Sources)
               ══════════════════════════════════════════════════════════ */}
+          {/* Members-only. This whole section sells Stayful's management
+              service — "With Stayful managing…", "Stayful holds a security
+              deposit", a 30-day notice period. On a white-label funnel it
+              would be marketing us to the customer's own prospect, which is
+              worse than any branding leak. */}
+          {!funnel && (
           <section id="faq" ref={setSectionRef("faq")} className="mb-12">
             <SectionHeading
               icon={HelpCircle}
@@ -3004,29 +3090,27 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
               })}
             </div>
           </section>
+          )}
 
           </div>
 
           {/* Footer */}
           <footer className="border-t border-border bg-muted/30 py-8">
             <div className="mx-auto max-w-5xl px-6 text-center text-sm text-muted-foreground">
-              <Image
-                alt="Stayful"
-                loading="lazy"
-                width={100}
-                height={35}
-                className="mx-auto mb-4 h-8 w-auto opacity-60"
-                src="/images/stayful-logo.png"
+              <BrandMark
+                funnel={funnel} width={100} height={35} className="mx-auto mb-4 h-8 w-auto opacity-60"
               />
               <p>
-                &copy; {new Date().getFullYear()} Stayful. All rights reserved.
+                &copy; {new Date().getFullYear()} {funnel ? funnelLabel(funnel) : "Stayful"}. All rights reserved.
               </p>
             </div>
           </footer>
         </div>
       </main>
-      {/* Floating AI narrator — summarises the report aloud and helps decide */}
-      <AnalyserNarrator result={r} />
+      {/* Floating AI narrator — summarises the report aloud and helps decide.
+          Member-only: it spends the member's credit on /api/speak and
+          /api/summarise, neither of which a funnel prospect can reach. */}
+      {!funnel && <AnalyserNarrator result={r} />}
       </>
     );
   }
@@ -3040,13 +3124,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
         <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10"></div>
         <div className="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col items-center text-center">
-            <Image
-              alt="Stayful"
-              width={180}
-              height={60}
-              className="mb-6 h-12 w-auto sm:h-14"
-              src="/images/stayful-logo.png"
-              priority
+            <BrandMark
+              funnel={funnel} width={180} height={60} className="mb-6 h-12 w-auto sm:h-14" priority
             />
             <h1 className="mb-4 text-3xl font-bold tracking-tight text-primary-foreground sm:text-4xl lg:text-5xl">
               Short-Term Rental Property Analyser
@@ -3114,7 +3193,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                     }}
                   />
                 ) : (
-                  <ListingLinkBox onResolved={applyListing} />
+                  // Member-only: pasting a listing calls /api/listing/resolve,
+                  // which charges credit and needs a session.
+                  !funnel && <ListingLinkBox onResolved={applyListing} />
                 )}
                 {listing && listing.snapshot.kind !== "str" && (
                   <div className="grid grid-cols-2 gap-4">
@@ -3389,7 +3470,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
                   </div>
                 )}
 
-                <ReportOptions enhanced={enhanced} onChange={setEnhanced} disabled={loading} />
+                {/* Member-only: prices the run against the member's own credit
+                    and links to /upgrade. A funnel prospect has neither, and
+                    the depth is the funnel owner's choice, not theirs. */}
+                {!funnel && <ReportOptions enhanced={enhanced} onChange={setEnhanced} disabled={loading} />}
                 <Button type="submit" className="w-full" disabled={loading}>
                   <Search className="mr-2 h-4 w-4" aria-hidden="true" />
                   Get Free Analysis
@@ -3403,16 +3487,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded }: Hom
       {/* Footer */}
       <footer className="border-t border-border bg-muted/30 py-8">
         <div className="mx-auto max-w-7xl px-4 text-center text-sm text-muted-foreground sm:px-6 lg:px-8">
-          <Image
-            alt="Stayful"
-            loading="lazy"
-            width={100}
-            height={35}
-            className="mx-auto mb-4 h-8 w-auto opacity-60"
-            src="/images/stayful-logo.png"
+          <BrandMark
+            funnel={funnel} width={100} height={35} className="mx-auto mb-4 h-8 w-auto opacity-60"
           />
           <p>
-            &copy; {new Date().getFullYear()} Stayful. All rights reserved.
+            &copy; {new Date().getFullYear()} {funnel ? funnelLabel(funnel) : "Stayful"}. All rights reserved.
           </p>
           <p className="mt-2">
             Data sourced from Airbtics, PropertyData, Google Places, Ticketmaster,
