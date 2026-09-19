@@ -6,7 +6,6 @@ import { getFunnel } from "@/lib/funnels";
 import { siteUrl } from "@/lib/url";
 import { SATURATION_GUIDE } from "@/lib/market/competition";
 import { FunnelSettings } from "./FunnelSettings";
-import { toggleFunnelAction } from "../../actions";
 
 export const metadata: Metadata = {
   title: "Funnel settings — Stayful Intelligence",
@@ -32,20 +31,9 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
               {funnel.active ? "Live — this link is accepting enquiries." : "Paused — the link returns a not-found page."}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <form action={toggleFunnelAction}>
-              <input type="hidden" name="id" value={funnel.id} />
-              <button
-                type="submit"
-                className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
-              >
-                {funnel.active ? "Pause" : "Resume"}
-              </button>
-            </form>
-            <Link href="/leads/funnels" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
-              ← Funnels
-            </Link>
-          </div>
+          <Link href="/leads/funnels" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+            ← Funnels
+          </Link>
         </div>
 
         <FunnelSettings
@@ -58,6 +46,7 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
             unqualifiedPolicy: funnel.unqualifiedPolicy,
             dailyCap: funnel.dailyCap,
             dailySpendCapPence: funnel.dailySpendCapPence,
+            active: funnel.active,
           }}
           publicUrl={siteUrl(`/f/${funnel.publicToken}`)}
           rotatedAt={funnel.rotatedAt}

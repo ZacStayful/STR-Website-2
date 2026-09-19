@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createFunnel, getFunnel, updateFunnel, rotateFunnelToken } from '@/lib/funnels';
-import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, logoRejectionReason } from '@/lib/funnels/brand';
+import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, parseHttpsUrl, logoRejectionReason, activationBlockers } from '@/lib/funnels/brand';
 import { parseLeadRules } from '@/lib/leads/rules';
 
 /**
@@ -59,12 +59,18 @@ export async function saveBrandAction(_prev: FunnelState, formData: FormData): P
     return { error: logoRejectionReason(logoRaw) ?? 'That logo could not be used.' };
   }
 
+  const privacyRaw = String(formData.get('privacyUrl') ?? '').trim();
+  if (privacyRaw && !parseHttpsUrl(privacyRaw)) {
+    return { error: 'The privacy policy link needs to be a full https:// address.' };
+  }
+
   const brand = parseBrand({
     companyName: formData.get('companyName'),
     logoUrl: logoRaw,
     primary: formData.get('primary'),
     background: formData.get('background'),
     replyToEmail: formData.get('replyToEmail'),
+    privacyUrl: privacyRaw,
   });
 
   // Tell the customer when a value was dropped, rather than saving silently:
@@ -137,14 +143,31 @@ export async function rotateTokenAction(_prev: FunnelState, formData: FormData):
   return { saved: true, token };
 }
 
-export async function toggleFunnelAction(formData: FormData): Promise<void> {
+/**
+ * Pause or resume. Going live is gated on the customer having supplied a
+ * privacy policy and a company name: they are the data controller for
+ * everyone who fills in their form, and a public page collecting names,
+ * emails and home addresses with nothing to point a prospect at is not
+ * something to ship. Pausing is never gated.
+ */
+export async function toggleFunnelAction(_prev: FunnelState, formData: FormData): Promise<FunnelState> {
   const who = await member();
-  if (!who) return;
+  if (!who) return { error: 'Please sign in again.' };
   const id = String(formData.get('id') ?? '');
-  if (!UUID.test(id)) return;
+  if (!UUID.test(id)) return { error: 'That funnel could not be found.' };
   const funnel = await getFunnel(who.id, id);
-  if (!funnel) return;
-  await updateFunnel(who.id, id, { active: !funnel.active });
+  if (!funnel) return { error: 'That funnel could not be found.' };
+
+  if (!funnel.active) {
+    const missing = activationBlockers(funnel.brand);
+    if (missing.length > 0) {
+      return { error: `Before this funnel can go live, add ${missing.join(' and ')} under Branding.` };
+    }
+  }
+
+  const ok = await updateFunnel(who.id, id, { active: !funnel.active });
+  if (!ok) return { error: 'We could not change that just now. Please try again.' };
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
+  return { saved: true };
 }

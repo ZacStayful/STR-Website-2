@@ -1234,3 +1234,119 @@ create table if not exists public.funnel_hits (
 -- Lets the sweep drop windows that have rolled over.
 create index if not exists funnel_hits_window_idx on public.funnel_hits (window_start);
 alter table public.funnel_hits enable row level security;
+
+-- ── Funnel caps: atomic, because a public endpoint spends real money ──
+--
+-- The members-only daily cap (resolvesToday in src/lib/listing/server.ts)
+-- counts rows and then checks the count. That is fine when the member is one
+-- person clicking a button. On a public funnel, N concurrent requests all read
+-- the same count and all pass it, so a count-then-check does not cap anything.
+--
+-- These do the counting and the checking in ONE statement, so concurrent
+-- requests serialise on the row.
+
+/**
+ * Records an attempt and reports whether it is within the limit.
+ * Returns the new count, or -1 when the attempt is over it. The row still
+ * counts a refused attempt, so a flood shows up afterwards instead of being
+ * invisible. p_limit <= 0 means no limit.
+ */
+create or replace function public.funnel_hit(
+  p_funnel uuid,
+  p_bucket text,
+  p_window timestamptz,
+  p_limit integer
+)
+returns integer
+language plpgsql
+as $$
+declare
+  v_hits integer;
+begin
+  insert into public.funnel_hits (funnel_id, bucket, window_start, hits)
+  values (p_funnel, p_bucket, p_window, 1)
+  on conflict (funnel_id, bucket, window_start)
+    do update set hits = public.funnel_hits.hits + 1
+  returning hits into v_hits;
+
+  if p_limit > 0 and v_hits > p_limit then
+    return -1;
+  end if;
+  return v_hits;
+end;
+$$;
+
+/**
+ * Claims p_base_pence of the funnel's daily spend ceiling BEFORE a run, at the
+ * run's worst case. Returns false when the claim would breach the cap, having
+ * changed nothing.
+ *
+ * Reserving up front and settling afterwards is the same shape as a credit
+ * reservation, and for the same reason: checking the spend so far and then
+ * spending leaves a window where concurrent runs all pass the check and the
+ * day's total sails past the ceiling.
+ */
+create or replace function public.funnel_spend_reserve(
+  p_funnel uuid,
+  p_window timestamptz,
+  p_base_pence numeric,
+  p_cap numeric
+)
+returns boolean
+language plpgsql
+as $$
+declare
+  v_spend numeric;
+begin
+  insert into public.funnel_hits (funnel_id, bucket, window_start, spend_base_pence)
+  values (p_funnel, 'funnel', p_window, p_base_pence)
+  on conflict (funnel_id, bucket, window_start)
+    do update set spend_base_pence = public.funnel_hits.spend_base_pence + p_base_pence
+  returning spend_base_pence into v_spend;
+
+  if p_cap > 0 and v_spend > p_cap then
+    -- Put it back: the caller is not going to run, so the claim must not
+    -- linger and lock out the rest of the day.
+    update public.funnel_hits
+       set spend_base_pence = spend_base_pence - p_base_pence
+     where funnel_id = p_funnel and bucket = 'funnel' and window_start = p_window;
+    return false;
+  end if;
+  return true;
+end;
+$$;
+
+/**
+ * Reconciles a reservation to what the run actually cost. The difference is
+ * usually negative (the reservation is the worst case), which hands unused
+ * headroom back to the rest of the day.
+ */
+create or replace function public.funnel_spend_settle(
+  p_funnel uuid,
+  p_window timestamptz,
+  p_reserved numeric,
+  p_actual numeric
+)
+returns void
+language plpgsql
+as $$
+begin
+  update public.funnel_hits
+     set spend_base_pence = greatest(0, spend_base_pence - p_reserved + p_actual)
+   where funnel_id = p_funnel and bucket = 'funnel' and window_start = p_window;
+end;
+$$;
+
+/** Drops throttle windows that have rolled over. Called by the daily sweep. */
+create or replace function public.funnel_hits_sweep(p_before timestamptz)
+returns integer
+language plpgsql
+as $$
+declare
+  v_deleted integer;
+begin
+  delete from public.funnel_hits where window_start < p_before;
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end;
+$$;

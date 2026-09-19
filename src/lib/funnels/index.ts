@@ -96,11 +96,17 @@ export async function getFunnel(userId: string, id: string): Promise<Funnel | nu
   return data ? toFunnel(data as Record<string, unknown>) : null;
 }
 
+/**
+ * A new funnel starts PAUSED, overriding the column default. Going live is
+ * gated on the customer supplying a privacy policy (see activationBlockers),
+ * and a funnel that was live from the moment it was created would collect a
+ * prospect's details before that gate had ever been applied.
+ */
 export async function createFunnel(userId: string, name: string): Promise<Funnel | null> {
   if (!hasServiceRole()) return null;
   const { data, error } = await createAdminClient()
     .from('funnels')
-    .insert({ user_id: userId, public_token: mintFunnelToken(), name: name.slice(0, 80) || 'My funnel' })
+    .insert({ user_id: userId, public_token: mintFunnelToken(), name: name.slice(0, 80) || 'My funnel', active: false })
     .select(COLUMNS)
     .single();
   if (error || !data) {

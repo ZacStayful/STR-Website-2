@@ -3,7 +3,8 @@
 import { useActionState, useState } from "react";
 import type { FunnelBrand } from "@/lib/funnels/brand";
 import type { LeadRules } from "@/lib/leads/rules";
-import { saveBrandAction, saveRulesAction, rotateTokenAction, type FunnelState } from "../../actions";
+import { activationBlockers } from "@/lib/funnels/brand";
+import { saveBrandAction, saveRulesAction, rotateTokenAction, toggleFunnelAction, type FunnelState } from "../../actions";
 
 interface FunnelView {
   id: string;
@@ -14,6 +15,7 @@ interface FunnelView {
   unqualifiedPolicy: "crm_flagged" | "hold";
   dailyCap: number;
   dailySpendCapPence: number;
+  active: boolean;
 }
 
 interface Props {
@@ -42,12 +44,45 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
   const [brandState, brandAction, brandPending] = useActionState(saveBrandAction, INITIAL);
   const [rulesState, rulesAction, rulesPending] = useActionState(saveRulesAction, INITIAL);
   const [rotateState, rotateAction, rotatePending] = useActionState(rotateTokenAction, INITIAL);
+  const [toggleState, toggleAction, togglePending] = useActionState(toggleFunnelAction, INITIAL);
   const [copied, setCopied] = useState(false);
 
   const url = rotateState.token ? publicUrl.replace(/\/f\/.*$/, `/f/${rotateState.token}`) : publicUrl;
+  const blockers = activationBlockers(funnel.brand);
 
   return (
     <div className="space-y-6">
+      {/* ── Live or paused ── */}
+      <section className="rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">{funnel.active ? "Live" : "Paused"}</h2>
+            <p className={hint}>
+              {funnel.active
+                ? "The link is accepting enquiries and each one is charged to your credit."
+                : "The link returns a not-found page. Nothing is charged while it is paused."}
+            </p>
+          </div>
+          <form action={toggleAction}>
+            <input type="hidden" name="id" value={funnel.id} />
+            <button
+              type="submit"
+              disabled={togglePending}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-60"
+            >
+              {togglePending ? "Working…" : funnel.active ? "Pause" : "Go live"}
+            </button>
+          </form>
+        </div>
+        {blockers.length > 0 && !funnel.active ? (
+          <p className="mt-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
+            Before this funnel can go live, add {blockers.join(" and ")} under Branding. Whoever fills in your form is
+            handing their details to you, not to us, so they need somewhere to read how you will use them.
+          </p>
+        ) : null}
+        <Banner state={toggleState} />
+      </section>
+
       {/* ── The link ── */}
       <section className="rounded-xl border border-border bg-card p-4">
         <h2 className="text-sm font-semibold text-foreground">Your funnel link</h2>
@@ -105,6 +140,16 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
           <div>
             <label className={labelCls} htmlFor="replyToEmail">Reply-to email</label>
             <input id="replyToEmail" name="replyToEmail" type="email" defaultValue={funnel.brand.replyToEmail ?? ""} className={`${field} mt-1`} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className={labelCls} htmlFor="privacyUrl">
+              Privacy policy link <span className="text-muted-foreground">(required to go live)</span>
+            </label>
+            <input id="privacyUrl" name="privacyUrl" type="url" defaultValue={funnel.brand.privacyUrl ?? ""} placeholder="https://yourcompany.com/privacy" className={`${field} mt-1`} />
+            <p className={hint}>
+              Shown beside the consent box your prospect ticks. They are giving their details to you, so the policy has
+              to be yours.
+            </p>
           </div>
           <div className="sm:col-span-2">
             <label className={labelCls} htmlFor="logoUrl">Logo URL</label>

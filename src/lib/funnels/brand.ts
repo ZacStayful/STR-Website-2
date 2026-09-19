@@ -26,6 +26,13 @@ export interface FunnelBrand {
   background: string | null;
   /** Where a prospect's reply should go, shown on the report. */
   replyToEmail: string | null;
+  /**
+   * The customer's own privacy policy. Required before a funnel can go live:
+   * the customer is the data controller for everyone who fills in their form
+   * and Stayful is only the processor, so the consent notice has to point at
+   * their policy, not ours.
+   */
+  privacyUrl: string | null;
 }
 
 export const EMPTY_BRAND: FunnelBrand = {
@@ -34,6 +41,7 @@ export const EMPTY_BRAND: FunnelBrand = {
   primary: null,
   background: null,
   replyToEmail: null,
+  privacyUrl: null,
 };
 
 /** Image types that render both in a browser and in the PDF report. */
@@ -55,6 +63,18 @@ function text(v: unknown, max: number): string | null {
 export function parseHexColour(v: unknown): string | null {
   const t = text(v, 7);
   return t && HEX.test(t) ? t.toLowerCase() : null;
+}
+
+/** Any https URL, for links we only ever render rather than fetch. */
+export function parseHttpsUrl(v: unknown): string | null {
+  const t = text(v, 2048);
+  if (!t) return null;
+  try {
+    const url = new URL(t);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseEmail(v: unknown): string | null {
@@ -108,12 +128,29 @@ export function parseBrand(raw: unknown): FunnelBrand {
     primary: parseHexColour(o.primary),
     background: parseHexColour(o.background),
     replyToEmail: parseEmail(o.replyToEmail),
+    privacyUrl: parseHttpsUrl(o.privacyUrl),
   };
+}
+
+/**
+ * Whether this funnel may be switched live. A public form collecting a named
+ * person's contact details and home address needs a policy to point them at,
+ * and only the customer can supply it.
+ */
+export function activationBlockers(b: FunnelBrand): string[] {
+  const missing: string[] = [];
+  if (!b.privacyUrl) missing.push('a link to your privacy policy');
+  if (!b.companyName) missing.push('your company name');
+  return missing;
+}
+
+export function canActivate(b: FunnelBrand): boolean {
+  return activationBlockers(b).length === 0;
 }
 
 /** True when nothing has been set and the funnel would look like Stayful. */
 export function brandIsEmpty(b: FunnelBrand): boolean {
-  return !b.companyName && !b.logoUrl && !b.primary && !b.background && !b.replyToEmail;
+  return !b.companyName && !b.logoUrl && !b.primary && !b.background && !b.replyToEmail && !b.privacyUrl;
 }
 
 /**
@@ -158,4 +195,14 @@ export function readableOn(hex: string): string {
 /** What the funnel calls itself, falling back to something neutral. */
 export function brandName(b: FunnelBrand): string {
   return b.companyName ?? 'Property income analysis';
+}
+
+/**
+ * The consent a prospect ticks before their details are stored. Names the
+ * CUSTOMER as the controller — they collected the lead, they hold it, and a
+ * prospect asking "who has my data?" has to get their answer, not ours.
+ */
+export function consentText(b: FunnelBrand): string {
+  const who = b.companyName ?? 'the company running this form';
+  return `I agree that ${who} may store my details and contact me about this property.`;
 }
