@@ -88,6 +88,7 @@ import { ReportOptions } from "@/components/credit/ReportOptions";
 import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
 import { type FunnelMode, funnelAnalyseUrl, funnelLabel } from "@/lib/funnels/mode";
+import { consentText } from "@/lib/funnels/brand";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
@@ -382,6 +383,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   const [listing, setListing] = useState<ResolvedListing | null>(null);
   const [purchasePrice, setPurchasePrice] = useState("");
   const [advertisedRent, setAdvertisedRent] = useState("");
+  // Funnel-only: a lead needs a name to be worth anything, a phone number is
+  // optional (it is the field most likely to lose a form fill), and consent
+  // is required because the customer is the data controller.
+  const [leadName, setLeadName] = useState("");
+  const [leadPhone, setLeadPhone] = useState("");
+  const [consent, setConsent] = useState(false);
   const listingGuestsRef = useRef<{ bedrooms: string; guests: string } | null>(null);
   const autoListingRef = useRef(false);
   // Whether this render is a public white-label funnel. A ref because the
@@ -652,6 +659,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // Credit check before anything is spent; opens the top-up modal when
     // short. A funnel prospect has no account and no credit of their own —
     // solvency is the funnel owner's, checked server-side by its route.
+    // A preview is for looking at branding, not for spending money.
+    if (funnel?.preview) {
+      setError("This is a preview. Submissions are disabled here — share your funnel link to take real enquiries.");
+      return;
+    }
     if (!funnel && !(await preflight(enhanced ? "report_enhanced" : "report"))) return;
     setLoading(true);
     setProgress(0);
@@ -676,6 +688,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
           outdoorSpace,
           propertyType,
           enhanced: funnel ? funnel.reportDepth === "enhanced" : enhanced,
+          ...(funnel ? { name: leadName, phone: leadPhone, consent } : {}),
           ...(purchasePrice !== "" && Number(purchasePrice) > 0 && { purchasePrice: Number(purchasePrice) }),
           ...(advertisedRent !== "" && Number(advertisedRent) > 0 && { advertisedRent: Number(advertisedRent) }),
           ...(listing && {
@@ -3448,6 +3461,21 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                   </div>
                 </div>
 
+                {funnel && (
+                  <div className="space-y-2">
+                    <Label htmlFor="lead-name">Your name</Label>
+                    <Input
+                      id="lead-name"
+                      type="text"
+                      required
+                      placeholder="Jane Smith"
+                      value={leadName}
+                      onChange={(e) => setLeadName(e.target.value)}
+                      autoComplete="name"
+                    />
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label htmlFor="email">
                     Email
@@ -3462,6 +3490,42 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     autoComplete="email"
                   />
                 </div>
+
+                {funnel && (
+                  <div className="space-y-2">
+                    <Label htmlFor="lead-phone">
+                      Phone <span className="font-normal text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input
+                      id="lead-phone"
+                      type="tel"
+                      placeholder="07700 900000"
+                      value={leadPhone}
+                      onChange={(e) => setLeadPhone(e.target.value)}
+                      autoComplete="tel"
+                    />
+                  </div>
+                )}
+
+                {funnel && (
+                  <label className="flex items-start gap-2 text-xs text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={consent}
+                      onChange={(e) => setConsent(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                    />
+                    <span>
+                      {consentText(funnel.brand)}{" "}
+                      {funnel.brand.privacyUrl ? (
+                        <a href={funnel.brand.privacyUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                          Read their privacy policy
+                        </a>
+                      ) : null}
+                    </span>
+                  </label>
+                )}
 
                 {error && (
                   <div className="flex items-start gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">

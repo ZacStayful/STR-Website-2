@@ -44,6 +44,14 @@ export interface AnalysisRunOptions {
   admin?: boolean;
   /** Finance assumptions behind the deal maths. Defaults when not supplied. */
   finance?: FinanceGoals;
+  /** Price at this multiplier instead of each unit row's own (funnel leads: 2). */
+  markupOverride?: number;
+  /**
+   * Refuse an unaffordable run even when CREDIT_ENFORCE is off. Public
+   * callers must pass this: shadow mode is a safety net for members, not
+   * permission for a stranger's request to spend a customer's money.
+   */
+  requireCredit?: boolean;
   onProgress?: (event: { stage: string; progress: number; message: string }) => void;
 }
 
@@ -104,12 +112,17 @@ function priceLabsEnabled(): boolean {
  */
 export async function reserveAnalysis(input: AnalysisInput, opts: AnalysisRunOptions): Promise<PreparedAnalysis> {
   const reportKind = reportAction(enhancedEnabled(input.enhancedRequested));
-  const estimate = estimateAction(await getUnitCostTable(), reportKind, { priceLabs: priceLabsEnabled() });
+  const estimate = estimateAction(await getUnitCostTable(), reportKind, {
+    priceLabs: priceLabsEnabled(),
+    markupOverride: opts.markupOverride,
+  });
   const action = await startAction({
     userId: opts.billedUserId,
     admin: Boolean(opts.admin),
     action: reportKind,
     maxBasePence: estimate.maxBasePence,
+    markupOverride: opts.markupOverride,
+    requireCredit: opts.requireCredit,
   });
   return { ctx: action.ctx, finish: action.finish, reportKind, maxBasePence: estimate.maxBasePence };
 }

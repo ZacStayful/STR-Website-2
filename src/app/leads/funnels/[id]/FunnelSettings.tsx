@@ -105,6 +105,19 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
+        <p className="mt-3">
+          <a
+            href={`${url}?preview=1`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          >
+            Preview your funnel
+          </a>
+          <span className={`ml-2 ${hint}`}>
+            Opens the branded page with a sample report. Nothing is charged and no lead is recorded.
+          </span>
+        </p>
         <form action={rotateAction} className="mt-3">
           <input type="hidden" name="id" value={funnel.id} />
           <button

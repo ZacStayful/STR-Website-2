@@ -103,7 +103,8 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
   const userId = ctx?.userId ?? null;
 
   // Preflight: a call with a known cost and no reservation must be affordable.
-  if (billable && known !== null && !ctx?.reservationId && !charge.skipPreflight && isEnforcing()) {
+  // requireCredit makes this apply even when enforcement is globally off.
+  if (billable && known !== null && !ctx?.reservationId && !charge.skipPreflight && (isEnforcing() || ctx?.requireCredit)) {
     const { basePence } = priceFor(table, charge.provider, charge.unit, known, ctx?.markupOverride);
     if (basePence > 0) {
       const bal = await getBalance(userId!);
