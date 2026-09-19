@@ -1028,3 +1028,209 @@ create index if not exists sourcing_sent_user_sent_idx on public.sourcing_sent (
 create index if not exists sourcing_sent_sent_at_idx on public.sourcing_sent (sent_at desc);
 -- Still service-role only (RLS on, no policies): /picks reads and writes
 -- through the admin client after checking the session and filtering by user.
+
+-- =========================
+-- White-label lead funnels
+-- =========================
+-- A customer points their own form (Squarespace, an ad, wherever) at
+-- /f/<public_token>. The prospect fills in a property, gets a report under
+-- the customer's branding, and the run is charged to the CUSTOMER's credit
+-- at the funnel markup — not to the prospect, who never has an account.
+--
+-- Everything here is written through the service-role client. The public
+-- funnel page has no session at all, and the members-only pages read their
+-- own rows through the select policies below. Nothing in this section is
+-- user-writable, so none of it needs a column grant.
+--
+-- Deliberately NOT touching public.profiles: the access gate selects a fixed
+-- column list (ACCESS_COLUMNS in src/lib/access.ts) and a select naming a
+-- missing column fails the whole query and paywalls every member. Funnel
+-- state lives in its own tables so that gate can never be affected.
+
+create table if not exists public.funnels (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  -- The credential in the public URL. Minted server-side, rotatable.
+  public_token text not null unique,
+  name text not null default 'My funnel',
+  -- { logoUrl, primary, accent, companyName, replyToEmail } — see src/lib/funnels.
+  brand jsonb not null default '{}'::jsonb,
+  -- Qualification filter; shape and tolerant parse in src/lib/leads/rules.ts.
+  lead_rules jsonb not null default '{}'::jsonb,
+  report_depth text not null default 'standard',        -- 'standard' | 'enhanced'
+  -- What happens to a lead that fails the filter: push it to the CRM flagged
+  -- as not qualified, or hold it inside Stayful for the customer to review,
+  -- export or promote later.
+  unqualified_policy text not null default 'crm_flagged', -- 'crm_flagged' | 'hold'
+  active boolean not null default true,
+  -- Abuse and cost ceilings, both per UTC day. The spend cap is the backstop
+  -- that turns any residual billing bug into a bounded loss rather than an
+  -- unbounded one, so it applies even when the credit checks all pass.
+  daily_cap integer not null default 100,
+  daily_spend_cap_pence integer not null default 5000,
+  -- Set when the public token was last rotated, so a leaked link can be
+  -- replaced without losing the lead history attached to the funnel.
+  rotated_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists funnels_user_idx on public.funnels (user_id, created_at desc);
+alter table public.funnels enable row level security;
+drop policy if exists "Users can read own funnels" on public.funnels;
+create policy "Users can read own funnels"
+  on public.funnels for select
+  using (auth.uid() = user_id);
+
+-- leads: one row per prospect who completed a funnel.
+--
+-- The analysis lives HERE, in `result`, and never in saved_searches. That
+-- table is the member's own analyser history and is pruned to the newest 200
+-- rows per member (see /api/analyse); funnel leads saving into it would
+-- evict a customer's own reports within weeks. Keeping them apart also keeps
+-- the two features apart in the UI, the API and the billing history, which
+-- is the point: "my reports" and "my leads" are different things.
+create table if not exists public.leads (
+  id uuid primary key default gen_random_uuid(),
+  -- The customer who owns this lead and paid for the report.
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  -- Null once a funnel is deleted: the customer keeps leads they paid for.
+  funnel_id uuid references public.funnels(id) on delete set null,
+  -- ── The prospect ──
+  name text,
+  email text,
+  phone text,
+  -- When they agreed to the customer's privacy notice. The customer is the
+  -- data controller and Stayful the processor, so this is the lawful basis
+  -- for holding the rest of this row.
+  consent_at timestamptz,
+  -- ── The property ──
+  address text,
+  postcode text,
+  postcode_area text,
+  bedrooms integer,
+  -- ── The report ──
+  result jsonb,
+  -- Unguessable path for the prospect's own copy; they have no account.
+  report_token text unique,
+  -- Supabase Storage path of the rendered PDF, once it has been stored.
+  pdf_path text,
+  -- ── Qualification ──
+  qualified boolean,
+  -- The per-rule checks behind `qualified` (LeadVerdict in src/lib/leads/rules.ts),
+  -- so a customer can see WHY a lead did not make the cut.
+  qualification jsonb,
+  -- 'queued'  captured, report not run yet (customer had no credit)
+  -- 'new'     report ran, nothing done with it yet
+  -- 'pushed'  delivered to the customer's CRM
+  -- 'held'    failed the filter on a 'hold' funnel; kept here for review
+  -- 'exported' pulled out via the API or a CSV download
+  status text not null default 'new',
+  crm_item_id text,
+  crm_pushed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists leads_user_created_idx on public.leads (user_id, created_at desc);
+create index if not exists leads_funnel_created_idx on public.leads (funnel_id, created_at desc);
+-- Powers the qualified-vs-unqualified counts on /leads and /api/v1/leads/stats.
+create index if not exists leads_user_qualified_idx on public.leads (user_id, qualified, created_at desc);
+-- The queue drained after a top-up lands; tiny, so keep it partial.
+create index if not exists leads_queued_idx on public.leads (created_at) where status = 'queued';
+alter table public.leads enable row level security;
+drop policy if exists "Users can read own leads" on public.leads;
+create policy "Users can read own leads"
+  on public.leads for select
+  using (auth.uid() = user_id);
+
+-- crm_connections: where a customer's leads are delivered.
+--
+-- Holds encrypted credentials, so it is service-role only: RLS on with NO
+-- policies, like unit_costs. The settings UI reads a sanitised view through
+-- a server component; a raw credential must never reach a browser.
+--
+-- Monday board and column ids differ for every customer, so `config` carries
+-- the field map (board id, group id, and the column id for each of name,
+-- email, phone, report file, date, qualified) rather than assuming ours.
+create table if not exists public.crm_connections (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  provider text not null,                       -- 'monday' | 'webhook'
+  -- AES-256-GCM, stored iv:tag:ciphertext (src/lib/crypto/secrets.ts).
+  credential_enc text,
+  -- Shared secret the webhook payload is signed with, same encryption.
+  webhook_secret_enc text,
+  config jsonb not null default '{}'::jsonb,
+  status text not null default 'unverified',    -- 'unverified' | 'ok' | 'error'
+  last_ok_at timestamptz,
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists crm_connections_user_idx on public.crm_connections (user_id, created_at desc);
+alter table public.crm_connections enable row level security;
+
+-- crm_deliveries: the retry queue behind every CRM push.
+--
+-- A push is never done inline with the prospect's request: the customer's
+-- CRM being down must not cost them the lead or leave the prospect waiting.
+-- /api/internal/crm-deliveries drains this with backoff.
+create table if not exists public.crm_deliveries (
+  id uuid primary key default gen_random_uuid(),
+  lead_id uuid not null references public.leads(id) on delete cascade,
+  connection_id uuid not null references public.crm_connections(id) on delete cascade,
+  status text not null default 'pending',       -- 'pending' | 'sent' | 'failed'
+  attempts integer not null default 0,
+  next_attempt_at timestamptz not null default now(),
+  last_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+-- The cron's only query: what is due, oldest first.
+create index if not exists crm_deliveries_due_idx
+  on public.crm_deliveries (next_attempt_at) where status = 'pending';
+create index if not exists crm_deliveries_lead_idx on public.crm_deliveries (lead_id);
+alter table public.crm_deliveries enable row level security;
+
+-- api_keys: bearer tokens for /api/v1/* and the MCP server.
+--
+-- Same shape and the same hashing as extension_tokens (raw value shown once,
+-- only the SHA-256 stored, so a database read can never impersonate anyone),
+-- but a separate table: the shipped Chrome extension reads extension_tokens
+-- and must not be disturbed. Raw keys are prefixed 'sfk_'.
+create table if not exists public.api_keys (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  token_hash text not null unique,
+  label text,
+  -- e.g. {'leads:read','leads:write','analyse','markets:read'}. Empty means
+  -- read-only, so a key can never gain reach by omission.
+  scopes text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  last_used_at timestamptz,
+  revoked_at timestamptz
+);
+create index if not exists api_keys_user_idx on public.api_keys (user_id, created_at desc);
+alter table public.api_keys enable row level security;
+drop policy if exists "Users can read own api keys" on public.api_keys;
+create policy "Users can read own api keys"
+  on public.api_keys for select
+  using (auth.uid() = user_id);
+
+-- funnel_hits: durable rate limiting and the daily caps.
+--
+-- The in-memory limiter in /api/analyse is per serverless instance, which is
+-- close to no limit at all across a fleet. A public endpoint that spends a
+-- customer's money needs counters that survive a cold start, so they live
+-- here. One row per (funnel, bucket, window): 'funnel' for the daily totals
+-- the caps are checked against, 'ip:<addr>' for per-visitor throttling.
+create table if not exists public.funnel_hits (
+  funnel_id uuid not null references public.funnels(id) on delete cascade,
+  bucket text not null,
+  window_start timestamptz not null,
+  hits integer not null default 0,
+  spend_base_pence numeric(14,4) not null default 0,
+  primary key (funnel_id, bucket, window_start)
+);
+-- Lets the sweep drop windows that have rolled over.
+create index if not exists funnel_hits_window_idx on public.funnel_hits (window_start);
+alter table public.funnel_hits enable row level security;
