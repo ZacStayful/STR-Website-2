@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { postcodeAreaOf } from '../listing/normalise';
 import { evaluateLead, type LeadRules, type LeadVerdict } from './rules';
+import { enqueueDelivery } from '../crm/deliver';
 import type { AnalysisResult } from '../types';
 
 /**
@@ -110,6 +111,25 @@ export async function completeLead(input: {
     console.error('[leads] complete failed:', error.message);
     return null;
   }
+
+  // Delivery is queued HERE rather than in each caller, so the funnel route
+  // and the queue drain cannot drift apart on a customer's policy — and a
+  // future third caller gets it for free.
+  //
+  // A held lead is deliberately not delivered. The customer chose to review
+  // leads that missed their filter themselves; sending them on anyway would
+  // make the setting a lie. They can still promote one by hand, and it is
+  // readable, exportable and reportable here in the meantime.
+  const deliver = verdict.qualified || input.unqualifiedPolicy === 'crm_flagged';
+  if (deliver) {
+    // Never allowed to fail the lead: the report is saved and the customer
+    // can see it. A delivery that cannot be queued is a delivery problem.
+    await enqueueDelivery({ leadId: input.leadId }).catch((err) => {
+      console.error('[leads] could not queue CRM delivery:', err);
+      return { queued: false };
+    });
+  }
+
   return verdict;
 }
 

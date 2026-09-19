@@ -1,13 +1,9 @@
-import React from "react";
-import { renderToBuffer } from "@react-pdf/renderer";
 import type { AnalysisResult } from "@/lib/types";
-import { deriveReportData, buildSetupSnapshot, buildPdfDeal, sanitiseAddressForFilename } from "@/lib/pdf/derive";
 import type { PdfExpenses } from "@/lib/pdf/derive";
-import { StayfulReport } from "@/lib/pdf/StayfulReport";
+import { renderReportPdf, pdfBrandForFunnel, reportFilename } from "@/lib/pdf/render";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { funnelByToken } from "@/lib/funnels";
-import { pdfBrand, type PdfBrand } from "@/lib/pdf/theme";
-import { logoDataUri } from "@/lib/pdf/brand-logo";
+import type { PdfBrand } from "@/lib/pdf/theme";
 
 export const runtime = "nodejs";
 
@@ -40,16 +36,7 @@ async function brandFor(request: Request): Promise<PdfBrand | undefined> {
   if (!token) return undefined;
   const funnel = await funnelByToken(token);
   if (!funnel) return undefined;
-  const b = funnel.brand;
-  const name = b.companyName ?? "Property income analysis";
-  return pdfBrand({
-    companyName: name,
-    // Only what the customer actually gave us; an invented phone number or
-    // website on someone else's report would be worse than a bare footer.
-    contactLine: [name, b.replyToEmail].filter(Boolean).join(" · "),
-    primary: b.primary ?? undefined,
-    logoDataUri: (await logoDataUri(b.logoUrl)) ?? undefined,
-  });
+  return pdfBrandForFunnel(funnel.brand);
 }
 
 interface PdfRequestBody extends AnalysisResult {
@@ -85,17 +72,9 @@ export async function POST(request: Request) {
     return new Response("Missing required analysis data", { status: 400 });
   }
 
-  const data = deriveReportData(body, body.expenses);
-  data.brand = await brandFor(request);
-  data.deal = buildPdfDeal(body);
-  if (body.setup) {
-    const snap = buildSetupSnapshot(body.setup);
-    if (snap) data.setup = snap;
-  }
-  const buffer = await renderToBuffer(<StayfulReport data={data} />);
-
-  const who = (data.brand?.companyName ?? "Stayful").replace(/[^A-Za-z0-9]+/g, "_");
-  const filename = `${who}_Property_Analysis_${sanitiseAddressForFilename(body.property.address)}.pdf`;
+  const brand = await brandFor(request);
+  const buffer = await renderReportPdf(body, { brand, expenses: body.expenses, setup: body.setup });
+  const filename = reportFilename(body, brand);
 
   return new Response(new Uint8Array(buffer), {
     status: 200,
