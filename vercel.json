@@ -18,6 +18,10 @@
 			"schedule": "20 7 * * *"
 		},
 		{
+			"path": "/api/internal/sourcing",
+			"schedule": "40 7 * * *"
+		},
+		{
 			"path": "/api/internal/credit-sweep",
 			"schedule": "0 3 * * *"
 		},

@@ -13,7 +13,7 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, applyCandidateFeedback, spreadPick, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import { resolveListing } from "./server";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
@@ -49,6 +49,8 @@ const HYDRATE_UNTIL_MS = 34_000;
 const NEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const FEEDBACK_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 const PICKS_PER_EMAIL = 1;
+/** How far down a house-pick member's ranking the spread may reach. */
+const SPREAD_DEPTH = 10;
 const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
@@ -118,13 +120,15 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   } catch {
     return { status: 503, body: { error: "Storage not configured" } };
   }
-  const started = Date.now();
-  const elapsed = () => Date.now() - started;
   const nowIso = new Date().toISOString();
   const todayIso = startOfTodayUtc().toISOString();
 
   const cards = await getAreaCards().catch(() => []);
   if (cards.length === 0) return { status: 503, body: { error: "Market data unavailable; nothing sent" } };
+  // The budgets start once the market snapshot is in hand: a cold snapshot
+  // build can take most of a minute and must not eat the query phase.
+  const started = Date.now();
+  const elapsed = () => Date.now() - started;
   const cardByCode = new Map(cards.map((c) => [c.code, c]));
   const price = pickPrice(await getUnitCostTable());
   const pickBasePence = price.basePence;
@@ -229,10 +233,20 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     members.push({ id: p.id, email: p.email, admin: isAdminEmail(p.email), goals, basis, firstEver: !p.sourcing_last_sent_at, queries, areaFit });
   }
 
-  // Shared query set, most-wanted first, capped per run.
-  const demand = new Map<string, { query: SourcingQuery; members: number }>();
-  for (const m of members) for (const q of m.queries) demand.set(q.key, { query: q, members: (demand.get(q.key)?.members ?? 0) + 1 });
-  const queries = [...demand.values()].sort((a, b) => b.members - a.members).slice(0, maxQueries());
+  // Shared query set, capped per run. Searches that serve a member's own
+  // filter go first (they are wanted by one member each and would otherwise
+  // sort last and starve when the budget runs out); house searches follow,
+  // most-wanted first, and the later cron passes finish them from cache.
+  const demand = new Map<string, { query: SourcingQuery; members: number; goals: boolean }>();
+  for (const m of members) {
+    for (const q of m.queries) {
+      const d = demand.get(q.key) ?? { query: q, members: 0, goals: false };
+      d.members += 1;
+      d.goals = d.goals || m.basis === "goals";
+      demand.set(q.key, d);
+    }
+  }
+  const queries = [...demand.values()].sort((a, b) => Number(b.goals) - Number(a.goals) || b.members - a.members).slice(0, maxQueries());
 
   const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, emails: 0, emailFailures: 0, chargedBasePence: 0, hydrated: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
@@ -241,7 +255,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       body: {
         ...summary,
         skipped,
-        wouldQuery: queries.map((q) => ({ key: q.query.key, members: q.members })),
+        wouldQuery: queries.map((q) => ({ key: q.query.key, members: q.members, goals: q.goals })),
         wouldEmail: members.map((m) => ({ user: m.id, email: m.email, basis: m.basis, firstEver: m.firstEver, queries: m.queries.map((q) => q.key) })),
       },
     };
@@ -291,8 +305,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
   // ── One pick per member ──
+  // House-pick members share one pool, so the same listing is handed to at
+  // most PER_LISTING_CAP of them per run; a member's own filter keeps its
+  // true top pick.
   const picks: { member: Member; pick: SourcedPick; candidates: number }[] = [];
   const perUser: { user: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
+  const assigned = new Map<string, number>();
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
     const seen = new Set<string>();
@@ -311,7 +329,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
     }
     const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? []);
-    const [pick] = rankPicks(kept, PICKS_PER_EMAIL);
+    const ranked = rankPicks(kept, m.basis === "goals" ? PICKS_PER_EMAIL : SPREAD_DEPTH);
+    const pick = m.basis === "goals" ? ranked[0] : spreadPick(ranked, assigned);
     if (!pick) {
       perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
       continue;
