@@ -13,8 +13,7 @@
  * logged and swallowed so CRM hiccups never break the user flow.
  */
 
-const MONDAY_API_URL = "https://api.monday.com/v2";
-const MONDAY_API_VERSION = "2024-10";
+import { mondayRequest, mondayUploadFile } from "./monday-client";
 
 const BOARD_ID = process.env.MONDAY_ENQUIRY_BOARD_ID || "18413002067";
 const GROUP_ID = process.env.MONDAY_ENQUIRY_GROUP_ID || "topics";
@@ -42,30 +41,12 @@ export async function mondayQuery<T>(
     console.log("[Monday] skipped — MONDAY_API_KEY not set");
     return null;
   }
-  try {
-    const res = await fetch(MONDAY_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: tok,
-        "Content-Type": "application/json",
-        "API-Version": MONDAY_API_VERSION,
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-    if (!res.ok) {
-      console.error(`[Monday] HTTP ${res.status}: ${await res.text()}`);
-      return null;
-    }
-    const json = (await res.json()) as { data?: T; errors?: unknown };
-    if (json.errors) {
-      console.error("[Monday] GraphQL errors:", JSON.stringify(json.errors));
-      return null;
-    }
-    return json.data ?? null;
-  } catch (err) {
-    console.error("[Monday] Network/parse error:", err);
+  const res = await mondayRequest<T>(tok, query, variables);
+  if (!res.ok) {
+    console.error(`[Monday] ${res.error}`);
     return null;
   }
+  return res.data;
 }
 
 // Monday "date" column value: { date: "YYYY-MM-DD", time: "HH:MM:SS" } in UTC.
@@ -202,25 +183,18 @@ export async function uploadPdfToMonday(
     return;
   }
 
-  try {
-    const query = `mutation ($file: File!) { add_file_to_column(item_id: ${itemId}, column_id: "${COL.file}", file: $file) { id } }`;
-    const blob = new Blob([new Uint8Array(pdfBuffer)], { type: "application/pdf" });
-    const form = new FormData();
-    form.append("query", query);
-    form.append("variables[file]", blob, filename);
-    const res = await fetch("https://api.monday.com/v2/file", {
-      method: "POST",
-      headers: { Authorization: tok, "API-Version": MONDAY_API_VERSION },
-      body: form,
-    });
-    if (!res.ok) {
-      console.error(`[Monday] PDF upload HTTP ${res.status}: ${await res.text()}`);
-      return;
-    }
-    console.log(`[Monday] PDF uploaded for ${email} → item ${itemId}`);
-  } catch (err) {
-    console.error("[Monday] PDF upload error:", err);
+  const upload = await mondayUploadFile({
+    token: tok,
+    itemId,
+    columnId: COL.file,
+    file: pdfBuffer,
+    filename,
+  });
+  if (!upload.ok) {
+    console.error(`[Monday] PDF upload failed for ${email}: ${upload.error}`);
+    return;
   }
+  console.log(`[Monday] PDF uploaded for ${email} → item ${itemId}`);
 }
 
 /**

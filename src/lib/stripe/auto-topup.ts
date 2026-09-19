@@ -5,6 +5,7 @@ import { getBalance } from '../credit/ledger';
 import { getStripe, stripeConfigured } from './client';
 import { grantTopup } from './grants';
 import { cardNeedsUpdateEmail } from '../email/billing';
+import { DEFAULT_TOPUP_THRESHOLD_PENCE } from '../credit/topup-floor';
 
 /**
  * Opt-in auto top-up: when a debit leaves the balance below the member's
@@ -24,7 +25,7 @@ export async function maybeAutoTopup(userId: string): Promise<'charged' | 'skipp
   const last = p.auto_topup_last_at ? new Date(String(p.auto_topup_last_at)).getTime() : 0;
   if (Date.now() - last < 10 * 60 * 1000) return 'skipped';
   const bal = await getBalance(userId);
-  if (bal.spendableBasePence >= Number(p.auto_topup_threshold_pence ?? 500)) return 'skipped';
+  if (bal.spendableBasePence >= Number(p.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE)) return 'skipped';
 
   // Claim the slot before charging so two concurrent debits can't double-charge.
   const now = new Date().toISOString();

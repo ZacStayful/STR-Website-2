@@ -69,6 +69,34 @@ export function summariseCompetitors(listings: TrackedListing[], bedrooms?: numb
   };
 }
 
+/**
+ * Mean of the positive values only, ignoring zeros. A zero review count
+ * means "nobody has reviewed this yet", not "this market averages zero",
+ * so counting zeros would drag a market's saturation reading down and make
+ * a crowded market look open.
+ */
+export function meanOfPositive(values: number[]): number | null {
+  const kept = values.filter((v) => Number.isFinite(v) && v > 0);
+  if (kept.length === 0) return null;
+  return kept.reduce((s, v) => s + v, 0) / kept.length;
+}
+
+/**
+ * Average review count across a report's comparables, rounded to a whole
+ * number. Shared by the analyser UI and the lead-qualification rules so the
+ * figure a customer sets a threshold against is the figure they were shown.
+ * Structurally typed: both `TrackedListing` and `ShortLetComparable` fit.
+ */
+export function averageReviewCount(comps: ReadonlyArray<{ reviewCount: number }>): number | null {
+  return round(meanOfPositive(comps.map((c) => c.reviewCount)));
+}
+
+/** Average guest rating across a report's comparables, to two decimals. */
+export function averageRating(comps: ReadonlyArray<{ rating: number }>): number | null {
+  const mean = meanOfPositive(comps.map((c) => c.rating));
+  return mean === null ? null : Math.round(mean * 100) / 100;
+}
+
 export function matchTracked(listings: TrackedListing[], listingId: string): TrackedListing | null {
   return listings.find((l) => l.listingId === listingId) ?? null;
 }

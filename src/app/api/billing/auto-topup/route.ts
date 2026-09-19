@@ -2,6 +2,7 @@ import { currentMember } from '@/lib/credit/auth';
 import { getBillingSettings } from '@/lib/credit/unit-costs';
 import { loadBillingProfile } from '@/lib/stripe/customer';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { FUNNEL_TOPUP_FLOOR_PENCE, DEFAULT_TOPUP_THRESHOLD_PENCE, hasLiveFunnel } from '@/lib/credit/topup-floor';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,8 +19,19 @@ export async function POST(request: Request) {
   const settings = await getBillingSettings();
   const amount = body.amountPence === null ? null : Number(body.amountPence);
   if (amount !== null && !settings.topupPresetsPence.includes(amount)) return Response.json({ error: 'Choose one of the top-up amounts.' }, { status: 400 });
-  const threshold = Number(body.thresholdPence ?? 500);
+  const threshold = Number(body.thresholdPence ?? DEFAULT_TOPUP_THRESHOLD_PENCE);
   if (!Number.isFinite(threshold) || threshold < 100 || threshold > 10000) return Response.json({ error: 'Threshold must be between £1 and £100.' }, { status: 400 });
+
+  // A live funnel is a public page that strangers can make spend money, and
+  // three concurrent enhanced runs is £18.96 — so a trigger below £20 can be
+  // crossed and overshot before the charge has time to land. An account with
+  // no funnel keeps whatever it set; this is not a rule they need.
+  if (amount !== null && threshold < FUNNEL_TOPUP_FLOOR_PENCE && (await hasLiveFunnel(member.id))) {
+    return Response.json(
+      { error: 'With a funnel live, the automatic top-up trigger has to be at least £20 — enough to cover several leads arriving at once.' },
+      { status: 400 },
+    );
+  }
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });
   if (amount !== null && !profile.stripe_default_payment_method_id) return Response.json({ error: 'Save a card first: make one top-up through checkout, then turn auto top-up on.' }, { status: 400 });

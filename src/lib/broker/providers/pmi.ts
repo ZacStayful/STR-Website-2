@@ -20,8 +20,16 @@ export class PmiError extends Error {
 
 const PMI_UNITS: Record<string, string> = { '/valuations/str-estimate': 'str_estimate', '/str/market': 'str_market', '/listings': 'listings', '/account': 'account' };
 
-/** PMI's free tier allows 2 requests per 10 s; one paced retry covers a burst of listings searches. */
-const RATE_LIMIT_RETRY_PATHS = new Set(['/listings']);
+/**
+ * PMI's free tier allows 2 requests per 10 s; one paced retry covers a burst.
+ *
+ * `/valuations/str-estimate` is the enhanced report's second opinion — the
+ * one thing a customer pays extra FOR — so it belongs here as much as
+ * `/listings` does. Several funnels firing together is enough to trip the
+ * limit, and without the retry that report quietly comes back without the
+ * feature it was bought for.
+ */
+const RATE_LIMIT_RETRY_PATHS = new Set(['/listings', '/valuations/str-estimate']);
 const RATE_LIMIT_WAIT_MS = 5_500;
 const RATE_LIMIT_MAX_WAIT_MS = 6_000;
 

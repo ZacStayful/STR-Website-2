@@ -102,3 +102,88 @@ export function competitionBand(input: CompetitionInput): CompetitionBand | null
     explanation: `Hosts average ${figures || 'no review data'}: ${competitionMeaning(label)}.`,
   };
 }
+
+// ─── Saturation: the review count on its own ──────────────────────────
+//
+// `competitionBand` above pairs reviews with rating, which is the right
+// read for the Market Explorer. Lead qualification needs the simpler
+// question a customer actually asks — how crowded is this market? — and
+// needs it as a number they can set a rule against.
+//
+// Reviews are the proxy for saturation because they accumulate: a market
+// where the average comparable has 200 reviews has hosts who have been
+// booking for years and have the ratings, the photos and the pricing
+// history to prove it. A new listing there starts from nothing against
+// people who already own the search results. Where the average is 40,
+// nobody has that head start yet.
+//
+//   100+     competitive   established hosts; a new listing has to be good
+//   60-99    workable      busy, but not owned — room for a well-run listing
+//   under 60 uncontested   few established hosts; the market is open
+//
+// REVIEW_THRESHOLD (100) is shared with the band above so the two can
+// never drift apart.
+
+export const REVIEW_UNCOMPETITIVE = 60;
+
+export type SaturationLevel = 'uncontested' | 'workable' | 'competitive';
+
+export interface SaturationBand {
+  level: SaturationLevel;
+  /** Average review count of the comparables, rounded. */
+  reviews: number;
+  /** Two or three words for a chip or table cell. */
+  headline: string;
+  /** One sentence a customer can act on. */
+  meaning: string;
+}
+
+export const SATURATION_LEVELS: SaturationLevel[] = ['uncontested', 'workable', 'competitive'];
+
+export function saturationLevelFor(reviews: number): SaturationLevel {
+  if (reviews >= REVIEW_THRESHOLD) return 'competitive';
+  if (reviews >= REVIEW_UNCOMPETITIVE) return 'workable';
+  return 'uncontested';
+}
+
+export const SATURATION_HEADLINES: Record<SaturationLevel, string> = {
+  uncontested: 'Uncontested',
+  workable: 'Workable',
+  competitive: 'Competitive',
+};
+
+export function saturationMeaning(level: SaturationLevel): string {
+  switch (level) {
+    case 'competitive':
+      return 'hosts here are established, so a new listing has to match a high bar on photos, pricing and reviews before it books well';
+    case 'workable':
+      return 'a busy market that nobody owns yet: a well-run listing can take share without a price war';
+    default:
+      return 'few established hosts, so a new listing can build a review history before the market fills up';
+  }
+}
+
+/** Null when there is no review data to band. */
+export function saturationBand(reviews: number | null): SaturationBand | null {
+  if (reviews === null || !Number.isFinite(reviews) || reviews < 0) return null;
+  const rounded = Math.round(reviews);
+  const level = saturationLevelFor(rounded);
+  return {
+    level,
+    reviews: rounded,
+    headline: SATURATION_HEADLINES[level],
+    meaning: saturationMeaning(level),
+  };
+}
+
+/** The explainer shown beside the review-count rule. Ordered least to most crowded. */
+export const SATURATION_GUIDE: Array<{ level: SaturationLevel; range: string; headline: string; meaning: string }> =
+  SATURATION_LEVELS.map((level) => ({
+    level,
+    range:
+      level === 'uncontested' ? `Under ${REVIEW_UNCOMPETITIVE}`
+      : level === 'workable' ? `${REVIEW_UNCOMPETITIVE}–${REVIEW_THRESHOLD - 1}`
+      : `${REVIEW_THRESHOLD}+`,
+    headline: SATURATION_HEADLINES[level],
+    meaning: saturationMeaning(level),
+  }));

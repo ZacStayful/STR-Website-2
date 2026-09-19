@@ -23,6 +23,14 @@ const USD = 79; // pence per dollar
 
 export const DEFAULT_MARKUP = 5;
 
+/**
+ * White-label funnel leads are charged at this multiplier instead. They are
+ * high volume and repeat, so they carry a lower margin than a member's own
+ * one-off report. Overridable per deployment with the `funnel_markup` row in
+ * `billing_settings`.
+ */
+export const DEFAULT_FUNNEL_MARKUP = 2;
+
 export const UNIT_COST_SEED: UnitCostSeed[] = [
   // ── Airbtics ──
   { provider: 'airbtics', unit: 'report_all', label: 'Airbtics report/all (full comps report)', unitCostPence: 0.5 * USD, notes: '$0.50 per POST; GET reads are free' },

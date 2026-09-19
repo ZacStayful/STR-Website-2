@@ -134,8 +134,8 @@ export function Page2Revenue({ data }: { data: PdfReportData }) {
 
   return (
     <Page size="A4" style={BASE_PAGE_STYLES.page}>
-      <HeaderBar />
-      <FooterBar />
+      <HeaderBar brand={data.brand} />
+      <FooterBar brand={data.brand} />
 
       <H2>Revenue Breakdown</H2>
 

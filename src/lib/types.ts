@@ -1,3 +1,5 @@
+import type { EnhancedNotice } from './analysis/enhanced-notice.ts';
+
 // ─── Property Input ───────────────────────────────────────────────
 export interface PropertyInput {
   address: string;
@@ -247,6 +249,15 @@ export interface AnalysisResult {
   cashflow?: CashflowMonth[] | null;
   competitors?: CompetitorsResult | null;
   secondOpinion?: (SecondOpinion & { provider: 'pmi'; updatedAt: string | null }) | null;
+  /**
+   * Set only on an ENHANCED run whose second opinion could not be fetched.
+   * Optional, so every report stored before this existed stays valid.
+   *
+   * Its presence is the difference between a standard report and an enhanced
+   * one that silently became a standard report — see
+   * src/lib/analysis/enhanced-notice.ts.
+   */
+  enhancedNotice?: EnhancedNotice | null;
   /** Row id in saved_searches once the report has been persisted. */
   reportId?: string;
 }

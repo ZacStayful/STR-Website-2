@@ -4,6 +4,7 @@ import type {
   ShortLetComparable,
 } from "@/lib/types";
 import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "@/lib/scores";
+import type { PdfBrand } from "./theme";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -82,6 +83,11 @@ export interface PdfDeal {
 
 export interface PdfReportData {
   property: { address: string; bedrooms: number; sleeps: number };
+  /**
+   * Whose report this is. Absent for the members-only analyser, which keeps
+   * the Stayful chrome; a funnel supplies its customer's.
+   */
+  brand?: PdfBrand;
   /** Deal economics when the report came from a listing (or an estimated value). */
   deal?: PdfDeal;
   overview: {

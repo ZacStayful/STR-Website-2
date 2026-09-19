@@ -103,8 +103,9 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
   const userId = ctx?.userId ?? null;
 
   // Preflight: a call with a known cost and no reservation must be affordable.
-  if (billable && known !== null && !ctx?.reservationId && !charge.skipPreflight && isEnforcing()) {
-    const { basePence } = priceFor(table, charge.provider, charge.unit, known);
+  // requireCredit makes this apply even when enforcement is globally off.
+  if (billable && known !== null && !ctx?.reservationId && !charge.skipPreflight && (isEnforcing() || ctx?.requireCredit)) {
+    const { basePence } = priceFor(table, charge.provider, charge.unit, known, ctx?.markupOverride);
     if (basePence > 0) {
       const bal = await getBalance(userId!);
       if (bal.spendableBasePence < basePence) throw new InsufficientCreditError(basePence, bal.spendableBasePence);
@@ -131,7 +132,7 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
   }
 
   const quantity = charge.quantityFrom ? charge.quantityFrom(result) : (known ?? 1);
-  const price = priceFor(table, charge.provider, charge.unit, quantity);
+  const price = priceFor(table, charge.provider, charge.unit, quantity, ctx?.markupOverride);
 
   // Once-per-action charges (autocomplete sessions): later calls log at £0.
   let alreadyCharged = false;

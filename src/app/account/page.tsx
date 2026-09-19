@@ -192,6 +192,7 @@ export default async function AccountPage({
           <h2 className="text-base font-semibold">Elsewhere</h2>
           <ul className="mt-3 space-y-2 text-sm">
             <li><Link href="/reports" className="underline">My reports</Link></li>
+            <li><Link href="/leads" className="underline">Leads</Link> · enquiries from your white-label funnels, kept apart from your own reports</li>
             <li><Link href="/picks" className="underline">Daily picks</Link> · one property a day by email, turn on or off there</li>
             <li><Link href="/markets" className="underline">Market Explorer</Link></li>
             <li>

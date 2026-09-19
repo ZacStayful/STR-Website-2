@@ -104,8 +104,8 @@ export function Page4LocalRisk({ data }: { data: PdfReportData }) {
 
   return (
     <Page size="A4" style={BASE_PAGE_STYLES.page}>
-      <HeaderBar />
-      <FooterBar />
+      <HeaderBar brand={data.brand} />
+      <FooterBar brand={data.brand} />
 
       <H2>Local Area Demand Intelligence</H2>
 

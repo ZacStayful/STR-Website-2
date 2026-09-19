@@ -2,7 +2,9 @@ import 'server-only';
 
 import { createAdminClient } from '../supabase/admin';
 import { getCreditSummary } from './summary';
-import { lowBalanceEmail, outOfCreditEmail } from '../email/billing';
+import { lowBalanceEmail, outOfCreditEmail, topupComingEmail } from '../email/billing';
+import { shouldWarnBeforeTopup } from './topup-warning';
+import { DEFAULT_TOPUP_THRESHOLD_PENCE } from './topup-floor';
 import { flagHitZero } from '../apis/monday';
 import { maybeAutoTopup } from '../stripe/auto-topup';
 
@@ -16,7 +18,7 @@ export async function afterDebit(userId: string): Promise<void> {
     const admin = createAdminClient();
     const [summary, { data: p }] = await Promise.all([
       getCreditSummary(userId),
-      admin.from('profiles').select('email, last_low_balance_email_at, last_out_of_credit_email_at, hit_zero_at, current_period_end, auto_topup_amount_pence').eq('id', userId).maybeSingle(),
+      admin.from('profiles').select('email, last_low_balance_email_at, last_out_of_credit_email_at, last_topup_warning_email_at, hit_zero_at, current_period_end, auto_topup_amount_pence, auto_topup_threshold_pence').eq('id', userId).maybeSingle(),
     ]);
     if (!p) return;
     const email = (p.email as string | null) ?? null;
@@ -53,6 +55,36 @@ export async function afterDebit(userId: string): Promise<void> {
       }
       return;
     }
+    // Healthy balance, but possibly on the way down towards an automatic
+    // charge. This is the gap the plan called out: today a customer gets a
+    // low-balance email and then a payment, with nothing in between saying
+    // one is coming.
+    //
+    // It sits here rather than in the 'low' branch on purpose. By the time
+    // the balance reads 'low' the charge is imminent or already happening,
+    // and a warning about a payment that is about to be taken in the same
+    // breath is not a warning.
+    if (email) {
+      const decision = shouldWarnBeforeTopup({
+        spendableBasePence: summary.spendableBasePence,
+        thresholdPence: Number(p.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE),
+        autoTopupAmountPence: p.auto_topup_amount_pence ? Number(p.auto_topup_amount_pence) : null,
+        lastWarningAt: (p.last_topup_warning_email_at as string | null) ?? null,
+        cycleStart,
+      });
+      if (decision.warn) {
+        // Stamped before sending, as the other two are: a duplicate email is
+        // a nuisance, and a send that succeeds without being recorded would
+        // repeat on every debit.
+        await admin.from('profiles').update({ last_topup_warning_email_at: now.toISOString() }).eq('id', userId);
+        void topupComingEmail(email, {
+          amountPence: Number(p.auto_topup_amount_pence),
+          thresholdPence: Number(p.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE),
+          remainingPence: summary.spendableBasePence,
+        }).catch(() => {});
+      }
+    }
+
     if (p.auto_topup_amount_pence) await maybeAutoTopup(userId);
   } catch (err) {
     console.error('[credit] afterDebit failed:', err);

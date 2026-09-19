@@ -18,6 +18,23 @@ export interface MeterContext {
   reservationId?: string;
   /** Charge at most once per action (Google autocomplete sessions). */
   oncePerAction?: boolean;
+  /**
+   * Price this action's calls at this multiplier instead of each unit row's
+   * own. Funnel leads run at x2 where the analyser runs at x5. Read by
+   * `meter()` so the charge matches the estimate the caller quoted.
+   */
+  markupOverride?: number;
+  /**
+   * Enforce credit even when CREDIT_ENFORCE is off.
+   *
+   * Shadow mode exists so a billing bug degrades to a warning instead of
+   * locking a member out, and for the members-only app that is the right
+   * default. A PUBLIC endpoint spending a customer's money is the opposite
+   * case: there, an unaffordable run must not proceed whatever the global
+   * flag says, or a customer with a £0 balance gets unlimited leads at our
+   * cost.
+   */
+  requireCredit?: boolean;
 }
 
 const als = new AsyncLocalStorage<MeterContext>();
