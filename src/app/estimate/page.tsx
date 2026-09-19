@@ -1394,7 +1394,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     trackCtaClick("download_pdf");
                     setPdfLoading(true);
                     try {
-                      const res = await fetch("/api/generate-pdf", {
+                      const res = await fetch(funnel ? `/api/generate-pdf?f=${encodeURIComponent(funnel.token)}` : "/api/generate-pdf", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({

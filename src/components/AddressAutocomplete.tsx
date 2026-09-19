@@ -45,9 +45,14 @@ interface AddressAutocompleteProps {
   onSelect: (result: { address: string; postcode: string }) => void;
   onUseManual: (typedQuery: string) => void;
   disabled?: boolean;
+  /**
+   * Public funnel token. Present, the address lookup is charged to the
+   * funnel's owner; absent, to the signed-in member or the house.
+   */
+  funnelToken?: string;
 }
 
-export function AddressAutocomplete({ onSelect, onUseManual, disabled }: AddressAutocompleteProps) {
+export function AddressAutocomplete({ onSelect, onUseManual, disabled, funnelToken}: AddressAutocompleteProps) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,7 +96,8 @@ export function AddressAutocomplete({ onSelect, onUseManual, disabled }: Address
     setError(null);
 
     // Out-of-credit here is silent (empty suggestions); the address can still be typed by hand.
-    creditFetch(`/api/address-autocomplete?q=${encodeURIComponent(q)}&session=${encodeURIComponent(sessionToken())}`, {
+    const billTo = funnelToken ? `&f=${encodeURIComponent(funnelToken)}` : "";
+    creditFetch(`/api/address-autocomplete?q=${encodeURIComponent(q)}&session=${encodeURIComponent(sessionToken())}${billTo}`, {
       signal: controller.signal,
     }, { silent: true })
       .then((res) => res.json())
@@ -108,7 +114,9 @@ export function AddressAutocomplete({ onSelect, onUseManual, disabled }: Address
 
     return () => controller.abort();
     // sessionToken is a ref read, stable for the life of the mount.
-  }, [debouncedQuery]);
+    // funnelToken comes from the server and never changes either, but it is
+    // a prop rather than a ref, so it belongs in the list.
+  }, [debouncedQuery, funnelToken]);
 
   // Close dropdown when clicking outside.
   useEffect(() => {

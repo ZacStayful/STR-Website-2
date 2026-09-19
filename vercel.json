@@ -28,6 +28,10 @@
 		{
 			"path": "/api/internal/planning-signals",
 			"schedule": "0 4 * * *"
+		},
+		{
+			"path": "/api/internal/funnel-queue",
+			"schedule": "*/30 * * * *"
 		}
 	]
 }

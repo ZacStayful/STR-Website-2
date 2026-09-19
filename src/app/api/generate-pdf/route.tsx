@@ -4,8 +4,28 @@ import type { AnalysisResult } from "@/lib/types";
 import { deriveReportData, buildSetupSnapshot, buildPdfDeal, sanitiseAddressForFilename } from "@/lib/pdf/derive";
 import type { PdfExpenses } from "@/lib/pdf/derive";
 import { StayfulReport } from "@/lib/pdf/StayfulReport";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { funnelByToken } from "@/lib/funnels";
 
 export const runtime = "nodejs";
+
+/**
+ * Rendering a PDF is unmetered compute, so this route is gated: a signed-in
+ * member, or a live funnel token for a prospect downloading their own report.
+ * It previously accepted any POST from anyone, which let a stranger spend our
+ * CPU rendering arbitrary payloads.
+ */
+async function authorised(request: Request): Promise<boolean> {
+  const token = new URL(request.url).searchParams.get("f");
+  if (token) return Boolean(await funnelByToken(token));
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data } = await supabase.auth.getUser();
+    return Boolean(data.user);
+  } catch {
+    return false;
+  }
+}
 
 interface PdfRequestBody extends AnalysisResult {
   setup?: {
@@ -25,6 +45,10 @@ interface PdfRequestBody extends AnalysisResult {
 }
 
 export async function POST(request: Request) {
+  if (!(await authorised(request))) {
+    return new Response("Not authorised", { status: 401 });
+  }
+
   let body: PdfRequestBody;
   try {
     body = await request.json();

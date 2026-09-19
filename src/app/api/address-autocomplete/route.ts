@@ -14,6 +14,8 @@ import { runMetered } from '@/lib/credit/context';
 import { meter } from '@/lib/credit/meter';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { INSUFFICIENT_CREDIT_CODE } from '@/lib/credit/http';
+import { ownedFunnelByToken } from '@/lib/funnels';
+import { getBillingSettings } from '@/lib/credit/unit-costs';
 
 // ─── Rate Limiter (in-memory, per IP) ────────────────────────────
 // More generous than /api/analyse because autocomplete fires per keystroke:
@@ -97,22 +99,39 @@ export async function GET(request: Request) {
   };
   if (sessionToken) body.sessionToken = sessionToken;
 
-  // Who pays: the signed-in member (once per session), else the house.
+  // Who pays: the signed-in member (once per session); on a white-label
+  // funnel, the funnel's OWNER; otherwise the house.
+  //
+  // Without the funnel branch an anonymous caller is house spend by design,
+  // which is right for a stray visitor but wrong for a funnel: every lead
+  // that types an address would put a few pence on our bill instead of the
+  // customer's, on a page the customer is monetising.
   let userId: string | null = null;
   let admin = false;
-  try {
-    const supabase = await createSupabaseServerClient();
-    const { data } = await supabase.auth.getUser();
-    userId = data.user?.id ?? null;
-    admin = isAdminEmail(data.user?.email);
-  } catch {
-    userId = null;
+  let markupOverride: number | undefined;
+  const funnelToken = searchParams.get('f');
+  if (funnelToken) {
+    const funnel = await ownedFunnelByToken(funnelToken);
+    // An unknown or paused token bills nobody rather than falling back to
+    // the house: a dead token must not be a way to spend our money.
+    if (!funnel) return Response.json({ suggestions: [] });
+    userId = funnel.userId;
+    markupOverride = (await getBillingSettings()).funnelMarkup;
+  } else {
+    try {
+      const supabase = await createSupabaseServerClient();
+      const { data } = await supabase.auth.getUser();
+      userId = data.user?.id ?? null;
+      admin = isAdminEmail(data.user?.email);
+    } catch {
+      userId = null;
+    }
   }
   const sessionId = /^[0-9a-f-]{36}$/i.test(sessionToken) ? sessionToken : undefined;
 
   let action;
   try {
-    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId });
+    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId, markupOverride, requireCredit: Boolean(funnelToken) });
   } catch (err) {
     if (err instanceof InsufficientCreditError) return Response.json({ suggestions: [], code: INSUFFICIENT_CREDIT_CODE }, { status: 402 });
     throw err;
