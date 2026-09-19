@@ -36,6 +36,22 @@ export function lowBalanceEmail(to: string, opts: { remainingPence: number; plan
   ], { label: 'Top up or upgrade', path: '/account/billing' }));
 }
 
+/**
+ * Sent once, in the band above the auto-top-up trigger. The point is that a
+ * customer should never learn about an automatic charge from the receipt —
+ * they have time here to top up by hand, change the amount, or switch it off.
+ *
+ * It names the exact figure and the exact trigger, because "your balance is
+ * getting low" is what the previous email already said and is not the same
+ * information.
+ */
+export function topupComingEmail(to: string, opts: { amountPence: number; thresholdPence: number; remainingPence: number }) {
+  return send(to, `Heads up: a ${formatGbp(opts.amountPence)} top-up is coming`, layout('An automatic top-up is coming up', [
+    `You have ${formatGbp(opts.remainingPence)} of credit left. When it drops below ${formatGbp(opts.thresholdPence)}, we'll automatically charge your saved card ${formatGbp(opts.amountPence)} so nothing stops running.`,
+    'Nothing has been charged yet. If you would rather change the amount, raise or lower the trigger, or turn automatic top-ups off altogether, you can do all three from your billing page.',
+  ], { label: 'Review automatic top-ups', path: '/account/billing#topup' }));
+}
+
 export function outOfCreditEmail(to: string, opts: { planName: string | null }) {
   return send(to, "You're out of Stayful credit", layout("You're out of credit", [
     `Your ${opts.planName ? `${opts.planName} plan` : 'welcome'} credit is used up, so reports and listing checks are paused.`,

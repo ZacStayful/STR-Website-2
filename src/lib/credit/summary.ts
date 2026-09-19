@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { DEFAULT_TOPUP_THRESHOLD_PENCE } from './topup-floor';
 import { getBalance, type Balance } from './ledger';
 import { getBillingSettings } from './unit-costs';
 import { getPlan } from './plans';
@@ -74,7 +75,7 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     outOfCredit: state === 'out',
     enforcing: isEnforcing(),
     hasSavedCard: Boolean(profile?.stripe_default_payment_method_id),
-    autoTopup: { amountPence: profile?.auto_topup_amount_pence ?? null, thresholdPence: profile?.auto_topup_threshold_pence ?? 500 },
+    autoTopup: { amountPence: profile?.auto_topup_amount_pence ?? null, thresholdPence: profile?.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE },
     topupPresetsPence: settings.topupPresetsPence,
     welcomeWithheldReason: profile?.welcome_withheld_reason ?? null,
   };

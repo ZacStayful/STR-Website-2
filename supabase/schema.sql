@@ -623,7 +623,18 @@ alter table public.profiles add column if not exists welcome_checked_at timestam
 alter table public.profiles add column if not exists welcome_withheld_reason text;
 alter table public.profiles add column if not exists auto_topup_amount_pence int;
 alter table public.profiles add column if not exists auto_topup_threshold_pence int not null default 500;
+-- The £5 default predates funnels and does not even cover ONE worst-case
+-- enhanced run (£6.32), let alone the three concurrent ones a live public
+-- funnel can produce. £20 does.
+--
+-- `add column if not exists` never alters an existing column's default, so
+-- the change needs its own statement. Existing ROWS are deliberately left
+-- alone: re-pointing a customer at a bigger charge than the one they agreed
+-- to is not a migration's decision to make.
+alter table public.profiles alter column auto_topup_threshold_pence set default 2000;
 alter table public.profiles add column if not exists auto_topup_last_at timestamptz;
+-- One pre-charge warning per cycle, in the band above the trigger.
+alter table public.profiles add column if not exists last_topup_warning_email_at timestamptz;
 alter table public.profiles add column if not exists terms_accepted_at timestamptz;
 alter table public.profiles add column if not exists referral_code text;
 alter table public.profiles add column if not exists referred_by_code text;
