@@ -7,7 +7,7 @@
 import type { PickBasis, PickReaction, PickReason, ReactionSource } from './picks.ts';
 import { reasonLabel } from './picks.ts';
 import type { SourcingKind } from './sourcing.ts';
-import { isFlatLike } from './suitability.ts';
+import { propertyKind } from './suitability.ts';
 
 export interface ResponseRow {
   id: string;
@@ -109,12 +109,9 @@ export function priceBand(kind: SourcingKind, amount: number | null): string {
   return amount < 150_000 ? 'Under £150k' : amount < 250_000 ? '£150–250k' : amount < 400_000 ? '£250–400k' : '£400k+';
 }
 
-const HOUSE = /house|bungalow|cottage|terrace|detached|villa|barn|farm/i;
-
 export function typeBand(rawType: string | null, title: string): string {
-  if (isFlatLike(rawType, title)) return 'Flats';
-  if (HOUSE.test(`${rawType ?? ''} ${title}`)) return 'Houses';
-  return 'Other / unknown';
+  const kind = propertyKind(rawType, title);
+  return kind === 'flat' ? 'Flats' : kind === 'house' ? 'Houses' : 'Other / unknown';
 }
 
 export function sizeBand(bedrooms: number | null): string {
@@ -131,14 +128,22 @@ export function weekOf(iso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Below this an area's no rate is noise, so it sorts after the ones with real evidence. */
+export const MIN_AREA_ANSWERS = 3;
+
 function tally() {
   return { yes: 0, no: 0, reasons: new Map<PickReason, number>() };
 }
 type Tally = ReturnType<typeof tally>;
 
 function bump(t: Tally, r: ResponseRow) {
-  if (r.reaction === 'yes') t.yes += 1;
-  else t.no += 1;
+  if (r.reaction === 'yes') {
+    t.yes += 1;
+    // Reasons belong to a no. A yes carrying them (an old row, or a member who
+    // clicked yes after answering no) would push a share above 100%.
+    return;
+  }
+  t.no += 1;
   for (const k of r.reasons) t.reasons.set(k, (t.reasons.get(k) ?? 0) + 1);
 }
 
@@ -210,7 +215,11 @@ export function patternsFromResponses(rows: ResponseRow[]): ResponsePatterns {
     byPrice: cuts(byPrice, ['Under £150k', '£150–250k', '£250–400k', '£400k+', 'Under £800 pcm', '£800–1,200 pcm', '£1,200–2,000 pcm', '£2,000+ pcm', 'Price unknown']),
     byType: cuts(byType, ['Houses', 'Flats', 'Other / unknown']),
     bySize: cuts(bySize, ['1 bed', '2 bed', '3 bed', '4+ bed', 'Size unknown']),
-    byArea: cuts(byArea).slice(0, 15),
+    // Worst first means worst RATE, with a floor on answers so one bad week
+    // for a busy area does not outrank an area nobody ever wants.
+    byArea: cuts(byArea)
+      .sort((a, b) => (b.yes + b.no >= MIN_AREA_ANSWERS ? b.noRate : -1) - (a.yes + a.no >= MIN_AREA_ANSWERS ? a.noRate : -1) || b.no - a.no)
+      .slice(0, 15),
     members: [...byMember.values()]
       .map(({ tally: t, ...m }) => ({ ...m, yes: t.yes, no: t.no, reasons: topReasons(t.reasons) }))
       .filter((m) => m.yes + m.no >= 2)
@@ -222,7 +231,10 @@ export function patternsFromResponses(rows: ResponseRow[]): ResponsePatterns {
 
 function csvCell(v: string | number | null): string {
   if (v === null) return '';
-  const s = String(v);
+  let s = String(v);
+  // Excel runs a cell beginning =, +, - or @ as a formula. Members type the
+  // comment column, so prefix those with an apostrophe before quoting.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

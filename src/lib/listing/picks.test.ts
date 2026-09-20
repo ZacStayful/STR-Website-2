@@ -19,6 +19,8 @@ import {
   dealScoreOf,
   reasonLabel,
   reasonEffect,
+  feedbackRules,
+  ruleApplied,
   type HouseAreaCard,
   type PickFeedback,
   type PickRow,
@@ -223,4 +225,114 @@ test('spreadPick falls back to the top candidate when everything is capped, and 
   assert.equal(spreadPick(ranked, assigned, 1)?.listing.canonicalUrl, 'https://x/a');
   assert.equal(assigned.get('https://x/a'), 6);
   assert.equal(spreadPick([], assigned), null);
+});
+
+// ── Contradictions must cancel, never empty the pool ──
+// Every case below is an input a reviewer ran against the real module and got
+// an empty result from: a member who answers honestly must never be starved of
+// the daily pick they pay for.
+
+const pool = () => [
+  { listing: listing({ id: '140k', price: { amount: 140_000, period: 'total' as const }, bedrooms: 2 }) },
+  { listing: listing({ id: '180k', price: { amount: 180_000, period: 'total' as const }, bedrooms: 3 }) },
+  { listing: listing({ id: '200k', price: { amount: 200_000, period: 'total' as const }, bedrooms: 3 }) },
+  { listing: listing({ id: '260k', price: { amount: 260_000, period: 'total' as const }, bedrooms: 4 }) },
+];
+
+test('an inverted price band cancels instead of dropping every priced candidate', () => {
+  // too_expensive @200k caps at 180k; too_cheap @180k floors at 198k.
+  const fb = [feedback({ reasons: ['too_expensive'], amount: 200_000, kind: 'sale' }), feedback({ reasons: ['too_cheap'], amount: 180_000, kind: 'sale' })];
+  const rules = feedbackRules(fb);
+  assert.equal(rules.cap.sale, undefined);
+  assert.equal(rules.floor.sale, undefined);
+  assert.deepEqual(rules.cancelled.sort(), ['too_cheap', 'too_expensive']);
+  assert.equal(applyCandidateFeedback(pool(), fb).length, 4);
+  // Both ticked on one pick does the same.
+  const one = [feedback({ reasons: ['too_expensive', 'too_cheap'], amount: 180_000, kind: 'sale' })];
+  assert.equal(applyCandidateFeedback(pool(), one).length, 4);
+  // A band that is merely tight still applies.
+  const fine = [feedback({ reasons: ['too_expensive'], amount: 260_000, kind: 'sale' }), feedback({ reasons: ['too_cheap'], amount: 140_000, kind: 'sale' })];
+  assert.deepEqual(applyCandidateFeedback(pool(), fine).map((c) => c.listing.id), ['180k', '200k']);
+  // Each kind is its own band: a rent answer never cancels a sale one.
+  const mixed = feedbackRules([feedback({ reasons: ['too_expensive'], amount: 200_000, kind: 'sale' }), feedback({ reasons: ['too_cheap'], amount: 900, kind: 'rent' })]);
+  assert.equal(mixed.cap.sale, 180_000);
+  assert.equal(mixed.floor.rent, 990);
+  assert.deepEqual(mixed.cancelled, []);
+});
+
+test('a bedroom band fully excluded by a legacy wrong_size cancels', () => {
+  // too_small@2 → min 3, too_big@4 → max 3, wrong_size@3 leaves no open size.
+  const fb = [feedback({ reasons: ['too_small'], bedrooms: 2 }), feedback({ reasons: ['too_big'], bedrooms: 4 }), feedback({ reasons: ['wrong_size'], bedrooms: 3 })];
+  const rules = feedbackRules(fb);
+  assert.equal(rules.minBeds, null);
+  assert.equal(rules.maxBeds, null);
+  assert.ok(rules.cancelled.includes('wrong_size'));
+  const kept = applyCandidateFeedback(pool(), fb).map((c) => c.listing.id);
+  assert.deepEqual(kept, ['140k', '260k']); // only the 3-beds are excluded
+  // Directly contradictory sizes cancel too.
+  const both = feedbackRules([feedback({ reasons: ['too_small'], bedrooms: 4 }), feedback({ reasons: ['too_big'], bedrooms: 3 })]);
+  assert.equal(both.minBeds, null);
+  assert.deepEqual(both.cancelled.sort(), ['too_big', 'too_small']);
+});
+
+test('no_flats and no_houses treat an unknown type as unknown, on both sides', () => {
+  const cands = [
+    { listing: listing({ id: 'flat', rawType: 'Flat', title: '2 bedroom flat for sale' }) },
+    { listing: listing({ id: 'house', rawType: 'Detached bungalow', title: '3 bedroom bungalow for sale' }) },
+    { listing: listing({ id: 'unknown', rawType: null, title: '2 bedroom property for sale in Leicester' }) },
+  ];
+  // "Houses only" must not send an untyped listing that may be a flat.
+  assert.deepEqual(applyCandidateFeedback(cands, [feedback({ reasons: ['no_flats'] })]).map((c) => c.listing.id), ['house']);
+  // "Flats only" is the mirror image, not stricter and not looser.
+  assert.deepEqual(applyCandidateFeedback(cands, [feedback({ reasons: ['no_houses'] })]).map((c) => c.listing.id), ['flat']);
+  assert.equal(applyCandidateFeedback(cands, [feedback({ reasons: ['no_flats'] }), feedback({ reasons: ['no_houses'] })]).length, 3);
+});
+
+test('needs_work keeps listings whose address merely contains the word auction', () => {
+  const fb = [feedback({ reasons: ['needs_work'] })];
+  const keep = [
+    'The Auction House, Stoney Street, Nottingham, NG1',
+    'Flat 6, Auction House, Leeds, LS2',
+    '3 bedroom house for sale in Auction Close, Kettering, NN16',
+  ];
+  for (const title of keep) {
+    assert.equal(applyCandidateFeedback([{ listing: listing({ title }) }], fb).length, 1, title);
+  }
+  const drop = [
+    ['For sale by auction, 12 Mill Lane', undefined],
+    ['Sold via Modern Method of Auction, 3 The Row', undefined],
+    ['2 bedroom house for sale', 'Auction Guide Price'],
+    ['3 bedroom house in need of full modernisation', undefined],
+  ] as const;
+  for (const [title, qualifier] of drop) {
+    assert.equal(applyCandidateFeedback([{ listing: listing({ title, priceQualifier: qualifier ?? null }) }], fb).length, 0, title);
+  }
+});
+
+test('feedbackRules reports which answers changed nothing, so nothing is over-promised', () => {
+  // poor_location with no outcode on the stored listing cannot arm.
+  const noOutcode = feedbackRules([feedback({ reasons: ['poor_location'], outcode: null })]);
+  assert.equal(noOutcode.badOutcodes.size, 0);
+  assert.equal(ruleApplied(noOutcode, 'poor_location'), false);
+  const withOutcode = feedbackRules([feedback({ reasons: ['poor_location'], outcode: 'le2' })]);
+  assert.ok(withOutcode.badOutcodes.has('LE2'));
+  assert.equal(ruleApplied(withOutcode, 'poor_location'), true);
+  // "Too big" on a one-bed has nowhere to go.
+  assert.equal(ruleApplied(feedbackRules([feedback({ reasons: ['too_big'], bedrooms: 1 })]), 'too_big'), false);
+  // seen_it never changes a search.
+  assert.equal(ruleApplied(feedbackRules([feedback({ reasons: ['seen_it'] })]), 'seen_it'), false);
+  // not_str_suitable now does something: it demands a listing that already passes.
+  assert.equal(feedbackRules([feedback({ reasons: ['not_str_suitable'] })]).strictSuitability, true);
+  assert.equal(ruleApplied(feedbackRules([feedback({ reasons: ['not_str_suitable'] })]), 'not_str_suitable'), true);
+  // A link-only click still changes nothing at all.
+  assert.deepEqual(feedbackRules([feedback({ reactionSource: 'link', reasons: [] })]).cancelled, []);
+  assert.equal(feedbackRules([feedback({ reactionSource: 'link', reasons: [] })]).noWork, false);
+});
+
+test('applyQueryFeedback reads the same rule set, so contradictory kinds cancel once', () => {
+  const qs = houseQueries(cards, { ...DEFAULT_GOALS, budget: '200-350' }, 2);
+  const rules = feedbackRules([feedback({ reasons: ['want_r2r'] }), feedback({ reasons: ['want_buy'] })]);
+  assert.equal(rules.wantKind, null);
+  assert.deepEqual(rules.cancelled.sort(), ['want_buy', 'want_r2r']);
+  assert.deepEqual(applyQueryFeedback(qs, [], rules).map((q) => q.kind), ['sale', 'sale']);
 });

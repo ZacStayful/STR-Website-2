@@ -12,11 +12,13 @@ import { getUnitCostTable } from "../credit/unit-costs";
 import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
+import { findOutcode } from "./html";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import type { Deal } from "./deal";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
+import type { AppliedRules } from "./picks";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
 
@@ -95,6 +97,8 @@ interface Member {
   firstEver: boolean;
   queries: SourcingQuery[];
   areaFit: Map<string, number | null>;
+  /** What this member's own answers changed, after contradictions cancel. */
+  rules: AppliedRules;
 }
 
 type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string };
@@ -212,7 +216,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         bedrooms: l?.bedrooms ?? null,
         amount,
         rawType: l?.rawType ?? null,
-        outcode: l?.outcode ?? null,
+        // Older stored snapshots carry no outcode; the postcode still has one.
+        outcode: l?.outcode ?? findOutcode(l?.postcode ?? l?.address ?? null),
         dealScore: dealScoreOf((r.deal as Deal | null) ?? null),
       },
     ]);
@@ -234,6 +239,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       continue;
     }
     const goals = parseMarketGoals(p.market_goals);
+    const rules = feedbackRules(feedbackByUser.get(p.id) ?? []);
     const areaFit = new Map<string, number | null>();
     let queries: SourcingQuery[] = [];
     let basis: PickBasis = "house";
@@ -247,12 +253,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (queries.length > 0) basis = "goals";
     }
     if (queries.length === 0) queries = houseQueries(cards, goals);
-    queries = applyQueryFeedback(queries, feedbackByUser.get(p.id) ?? []);
+    queries = applyQueryFeedback(queries, feedbackByUser.get(p.id) ?? [], rules);
     if (queries.length === 0) {
       skipped.push({ user: p.id, reason: "no_queries" });
       continue;
     }
-    members.push({ id: p.id, email: p.email, admin: isAdminEmail(p.email), goals, basis, firstEver: !p.sourcing_last_sent_at, queries, areaFit });
+    members.push({ id: p.id, email: p.email, admin: isAdminEmail(p.email), goals, basis, firstEver: !p.sourcing_last_sent_at, queries, areaFit, rules });
   }
 
   // Shared query set, capped per run. Searches that carry a member's own
@@ -370,11 +376,14 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
     }
     candidateCount.set(m.id, candidates.length);
-    const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? []);
+    const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
     const precheckOf = new Map(kept.map((c) => [c.listing.canonicalUrl, c.precheck]));
     const list = rankPicks(kept, SPREAD_DEPTH).map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
     const ok = list.filter((p) => p.precheck === "ok");
-    const unknown = list.filter((p) => p.precheck !== "ok");
+    // "Could not be run as a short let": only send this member listings that
+    // already clear the check on the search card, never ones that need the
+    // page to rescue them.
+    const unknown = m.rules.strictSuitability ? [] : list.filter((p) => p.precheck !== "ok");
     if (ok.length + unknown.length === 0) {
       perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
       continue;

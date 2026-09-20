@@ -15,7 +15,7 @@ import { escapeHtml as esc } from '../email/escape.ts';
 import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
 import type { Deal } from './deal.ts';
-import { isFlatLike } from './suitability.ts';
+import { propertyKind } from './suitability.ts';
 
 export type PickBasis = 'goals' | 'house';
 export type PickStatus = 'pending' | 'sent' | 'failed';
@@ -174,7 +174,9 @@ export function dealScoreOf(deal: Deal | null | undefined): number | null {
   return deal.kind === 'purchase' ? deal.grossYieldPct : deal.monthlyMargin;
 }
 
-const NEEDS_WORK = /needs? (?:modernis|renovat|refurb|updating|complet|some work|work throughout)|in need of|renovation project|refurbishment project|doer[- ]upper|fixer[- ]upper|unmodernised|cash buyers? only|for sale by auction|auction/i;
+// "auction" needs context: plenty of ordinary listings sit on Auction Close
+// or in The Auction House, and dropping those loses good picks.
+const NEEDS_WORK = /needs? (?:modernis|renovat|refurb|updating|complet|some work|work throughout)|in need of|renovation project|refurbishment project|doer[- ]upper|fixer[- ]upper|unmodernised|cash buyers? only|(?:by|via|at) auction|modern method of auction|auction (?:guide|lot)\b/i;
 
 /**
  * Only feedback the member confirmed counts: a "no" from the reasons form, or
@@ -185,19 +187,148 @@ export function confirmedNegatives(feedback: PickFeedback[]): PickFeedback[] {
   return feedback.filter((f) => f.reaction === 'no' && (f.reactionSource === 'form' || f.reasons.length > 0));
 }
 
-/** Kind and area preferences change what we search for, not just what we keep. */
-export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedback[]): SourcingQuery[] {
+/**
+ * The rules a member's confirmed answers add up to, AFTER contradictions
+ * cancel. Computed once so the filter and the "here is what changes" screen
+ * can never disagree: a promise the member is shown is a rule that actually
+ * applies. A contradiction that emptied the pool would silently cost them
+ * the daily pick they paid for, so every pair that cannot both hold is
+ * dropped and named in `cancelled`.
+ */
+export interface AppliedRules {
+  /** Max price per kind (sale = total, rent = pcm). */
+  cap: Partial<Record<SourcingKind, number>>;
+  /** Min price per kind. */
+  floor: Partial<Record<SourcingKind, number>>;
+  minBeds: number | null;
+  maxBeds: number | null;
+  badSizes: Set<number>;
+  badTypes: Set<string>;
+  badOutcodes: Set<string>;
+  badAreas: Set<string>;
+  noFlats: boolean;
+  noHouses: boolean;
+  noWork: boolean;
+  /** Only send listings that already pass the short-let check without needing the page. */
+  strictSuitability: boolean;
+  wantKind: SourcingKind | null;
+  /** Min deal score per kind: gross yield % for a purchase, monthly margin £ for rent-to-rent. */
+  minReturn: Partial<Record<SourcingKind, number>>;
+  /** Reasons the member gave that cancelled each other out, so nothing changed for them. */
+  cancelled: PickReason[];
+  /** Reasons that produced no rule at all (no data to key on, or nothing to change). */
+  inert: PickReason[];
+}
+
+const EFFECTIVE: PickReason[] = ['wrong_area', 'poor_location', 'too_expensive', 'too_cheap', 'too_small', 'too_big', 'no_flats', 'no_houses', 'needs_work', 'not_str_suitable', 'poor_return', 'want_r2r', 'want_buy', 'wrong_size', 'wrong_type'];
+
+export function feedbackRules(feedback: PickFeedback[]): AppliedRules {
   const neg = confirmedNegatives(feedback);
-  if (neg.length === 0) return queries;
-  const badAreas = new Set(neg.filter((f) => f.reasons.includes('wrong_area') && f.postcodeArea).map((f) => f.postcodeArea!.toUpperCase()));
-  const wantRent = neg.some((f) => f.reasons.includes('want_r2r'));
-  const wantBuy = neg.some((f) => f.reasons.includes('want_buy'));
+  const r: AppliedRules = {
+    cap: {}, floor: {}, minBeds: null, maxBeds: null,
+    badSizes: new Set(), badTypes: new Set(), badOutcodes: new Set(), badAreas: new Set(),
+    noFlats: false, noHouses: false, noWork: false, strictSuitability: false,
+    wantKind: null, minReturn: {}, cancelled: [], inert: [],
+  };
+  if (neg.length === 0) return r;
+  const given = new Set<PickReason>();
+  let wantRent = false;
+  let wantBuy = false;
+  for (const f of neg) {
+    const has = (k: PickReason) => f.reasons.includes(k);
+    for (const k of f.reasons) given.add(k);
+    if (has('wrong_area') && f.postcodeArea) r.badAreas.add(f.postcodeArea.toUpperCase());
+    if (has('poor_location') && f.outcode) r.badOutcodes.add(f.outcode.toUpperCase());
+    if (has('too_expensive') && f.kind && f.amount) r.cap[f.kind] = Math.min(r.cap[f.kind] ?? Infinity, Math.round(f.amount * 0.9));
+    if (has('too_cheap') && f.kind && f.amount) r.floor[f.kind] = Math.max(r.floor[f.kind] ?? 0, Math.round(f.amount * 1.1));
+    if (has('too_small') && f.bedrooms !== null) r.minBeds = Math.max(r.minBeds ?? 0, f.bedrooms + 1);
+    if (has('too_big') && f.bedrooms !== null && f.bedrooms > 1) r.maxBeds = Math.min(r.maxBeds ?? Infinity, f.bedrooms - 1);
+    if (has('wrong_size') && f.bedrooms !== null) r.badSizes.add(f.bedrooms);
+    if (has('wrong_type') && f.rawType) r.badTypes.add(f.rawType.toLowerCase());
+    if (has('poor_return') && f.kind && typeof f.dealScore === 'number') r.minReturn[f.kind] = Math.max(r.minReturn[f.kind] ?? -Infinity, f.dealScore);
+    if (has('no_flats')) r.noFlats = true;
+    if (has('no_houses')) r.noHouses = true;
+    if (has('needs_work')) r.noWork = true;
+    if (has('not_str_suitable')) r.strictSuitability = true;
+    if (has('want_r2r')) wantRent = true;
+    if (has('want_buy')) wantBuy = true;
+  }
+
+  // ── Contradictions cancel. Each pair would otherwise leave nothing to send. ──
+  const cancel = (...keys: PickReason[]) => {
+    for (const k of keys) if (given.has(k) && !r.cancelled.includes(k)) r.cancelled.push(k);
+  };
+  if (r.noFlats && r.noHouses) {
+    r.noFlats = r.noHouses = false;
+    cancel('no_flats', 'no_houses');
+  }
+  if (wantRent && wantBuy) cancel('want_r2r', 'want_buy');
+  else r.wantKind = wantRent ? 'rent' : wantBuy ? 'sale' : null;
+  // A price ceiling below the floor rejects every priced listing of that kind.
+  for (const kind of ['sale', 'rent'] as SourcingKind[]) {
+    const cap = r.cap[kind];
+    const floor = r.floor[kind];
+    if (cap !== undefined && floor !== undefined && floor > cap) {
+      delete r.cap[kind];
+      delete r.floor[kind];
+      cancel('too_expensive', 'too_cheap');
+    }
+  }
+  if (r.minBeds !== null && r.maxBeds !== null && r.minBeds > r.maxBeds) {
+    r.minBeds = r.maxBeds = null;
+    cancel('too_small', 'too_big');
+  }
+  // A surviving bedroom band whose every value is also excluded by size leaves nothing.
+  if (r.minBeds !== null || r.maxBeds !== null) {
+    const lo = r.minBeds ?? 1;
+    const hi = r.maxBeds ?? Math.max(lo, ...(r.badSizes.size > 0 ? [...r.badSizes] : [lo]));
+    let open = false;
+    for (let b = lo; b <= hi; b += 1) if (!r.badSizes.has(b)) open = true;
+    if (!open) {
+      r.minBeds = r.maxBeds = null;
+      cancel('too_small', 'too_big', 'wrong_size');
+    }
+  }
+
+  // ── Reasons that changed nothing: no data to key on, or nothing to change. ──
+  for (const k of given) {
+    if (r.cancelled.includes(k)) continue;
+    if (!EFFECTIVE.includes(k)) {
+      r.inert.push(k);
+      continue;
+    }
+    const armed =
+      (k === 'wrong_area' && r.badAreas.size > 0) ||
+      (k === 'poor_location' && r.badOutcodes.size > 0) ||
+      (k === 'too_expensive' && Object.keys(r.cap).length > 0) ||
+      (k === 'too_cheap' && Object.keys(r.floor).length > 0) ||
+      (k === 'too_small' && r.minBeds !== null) ||
+      (k === 'too_big' && r.maxBeds !== null) ||
+      (k === 'wrong_size' && r.badSizes.size > 0) ||
+      (k === 'wrong_type' && r.badTypes.size > 0) ||
+      (k === 'poor_return' && Object.keys(r.minReturn).length > 0) ||
+      (k === 'no_flats' && r.noFlats) ||
+      (k === 'no_houses' && r.noHouses) ||
+      (k === 'needs_work' && r.noWork) ||
+      (k === 'not_str_suitable' && r.strictSuitability) ||
+      ((k === 'want_r2r' || k === 'want_buy') && r.wantKind !== null);
+    if (!armed) r.inert.push(k);
+  }
+  return r;
+}
+
+/** True when this reason is actually changing what the member is sent. */
+export function ruleApplied(rules: AppliedRules, reason: PickReason): boolean {
+  return !rules.cancelled.includes(reason) && !rules.inert.includes(reason);
+}
+
+/** Kind and area preferences change what we search for, not just what we keep. */
+export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedback[], rules = feedbackRules(feedback)): SourcingQuery[] {
   const out = new Map<string, SourcingQuery>();
   for (const q of queries) {
-    if (badAreas.has(q.area.toUpperCase())) continue;
+    if (rules.badAreas.has(q.area.toUpperCase())) continue;
     let kind = q.kind;
-    if (wantRent && !wantBuy && kind === 'sale') kind = 'rent';
-    if (wantBuy && !wantRent && kind === 'rent') kind = 'sale';
+    if (rules.wantKind) kind = rules.wantKind;
     // A flipped kind loses the other kind's price bounds (a purchase budget is not a rent ceiling).
     const flipped = kind !== q.kind;
     const minPrice = flipped ? null : q.minPrice;
@@ -213,58 +344,30 @@ export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedb
  * the member already said no to. Each rule is per kind where the rejected
  * pick's kind is known (a purchase budget is not a rent ceiling).
  */
-export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null }>(candidates: C[], feedback: PickFeedback[]): C[] {
-  const neg = confirmedNegatives(feedback);
-  if (neg.length === 0) return candidates;
-  const cap: Partial<Record<SourcingKind, number>> = {};
-  const floor: Partial<Record<SourcingKind, number>> = {};
-  const minReturn: Partial<Record<SourcingKind, number>> = {};
-  let minBeds: number | null = null;
-  let maxBeds: number | null = null;
-  const badSizes = new Set<number>();
-  const badTypes = new Set<string>();
-  const badOutcodes = new Set<string>();
-  let noFlats = false;
-  let noHouses = false;
-  let noWork = false;
-  for (const f of neg) {
-    const has = (r: PickReason) => f.reasons.includes(r);
-    if (has('too_expensive') && f.kind && f.amount) cap[f.kind] = Math.min(cap[f.kind] ?? Infinity, Math.round(f.amount * 0.9));
-    if (has('too_cheap') && f.kind && f.amount) floor[f.kind] = Math.max(floor[f.kind] ?? 0, Math.round(f.amount * 1.1));
-    if (has('too_small') && f.bedrooms !== null) minBeds = Math.max(minBeds ?? 0, f.bedrooms + 1);
-    if (has('too_big') && f.bedrooms !== null && f.bedrooms > 1) maxBeds = Math.min(maxBeds ?? Infinity, f.bedrooms - 1);
-    if (has('wrong_size') && f.bedrooms !== null) badSizes.add(f.bedrooms);
-    if (has('wrong_type') && f.rawType) badTypes.add(f.rawType.toLowerCase());
-    if (has('poor_location') && f.outcode) badOutcodes.add(f.outcode.toUpperCase());
-    if (has('poor_return') && f.kind && typeof f.dealScore === 'number') minReturn[f.kind] = Math.max(minReturn[f.kind] ?? -Infinity, f.dealScore);
-    if (has('no_flats')) noFlats = true;
-    if (has('no_houses')) noHouses = true;
-    if (has('needs_work')) noWork = true;
-  }
-  // Contradictory wishes cancel out rather than emptying the pool.
-  if (noFlats && noHouses) noFlats = noHouses = false;
-  if (minBeds !== null && maxBeds !== null && minBeds > maxBeds) minBeds = maxBeds = null;
+export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
   return candidates.filter((c) => {
     const l = c.listing;
     const amount = l.price ? (l.kind === 'rent' ? (l.price.period === 'pw' ? (l.price.amount * 52) / 12 : l.price.amount) : l.price.amount) : null;
     if (amount !== null) {
-      const limit = cap[l.kind];
+      const limit = rules.cap[l.kind];
       if (limit && amount > limit) return false;
-      const low = floor[l.kind];
+      const low = rules.floor[l.kind];
       if (low && amount < low) return false;
     }
     if (l.bedrooms !== null) {
-      if (badSizes.has(l.bedrooms)) return false;
-      if (minBeds !== null && l.bedrooms < minBeds) return false;
-      if (maxBeds !== null && l.bedrooms > maxBeds) return false;
+      if (rules.badSizes.has(l.bedrooms)) return false;
+      if (rules.minBeds !== null && l.bedrooms < rules.minBeds) return false;
+      if (rules.maxBeds !== null && l.bedrooms > rules.maxBeds) return false;
     }
-    if (l.rawType && badTypes.has(l.rawType.toLowerCase())) return false;
-    if (l.outcode && badOutcodes.has(l.outcode.toUpperCase())) return false;
-    const flat = isFlatLike(l.rawType, l.title);
-    if (noFlats && flat) return false;
-    if (noHouses && !flat) return false;
-    if (noWork && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
-    const need = minReturn[l.kind];
+    if (l.rawType && rules.badTypes.has(l.rawType.toLowerCase())) return false;
+    if (l.outcode && rules.badOutcodes.has(l.outcode.toUpperCase())) return false;
+    // An untyped listing is neither: excluding it under "no houses" would send
+    // a flats-only member nothing, and under "no flats" would send them a flat.
+    const kind = propertyKind(l.rawType, l.title);
+    if (rules.noFlats && kind !== 'house') return false;
+    if (rules.noHouses && kind !== 'flat') return false;
+    if (rules.noWork && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
+    const need = rules.minReturn[l.kind];
     if (need !== undefined) {
       const score = dealScoreOf(c.deal);
       if (score !== null && score <= need) return false;

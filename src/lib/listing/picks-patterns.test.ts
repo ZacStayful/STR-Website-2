@@ -91,3 +91,36 @@ test('responsesCsv quotes commas and quotes', () => {
   assert.ok(line.includes('Too expensive; Wrong area'));
   assert.ok(line.endsWith('https://www.rightmove.co.uk/properties/1'));
 });
+
+test('a yes never contributes reasons, so a share cannot exceed 100%', () => {
+  // A member answers no with a reason, then re-clicks "yes" in the email: the
+  // stored row is a yes still carrying the reason.
+  const p = patternsFromResponses([row({ reaction: 'yes', reasons: ['too_expensive'] }), row({ id: 'r2', reaction: 'no', reasons: ['too_expensive'] })]);
+  assert.equal(p.yes, 1);
+  assert.equal(p.no, 1);
+  assert.deepEqual(p.reasons.map((r) => [r.key, r.count, r.share]), [['too_expensive', 1, 100]]);
+  assert.ok(p.reasons.every((r) => r.share <= 100));
+});
+
+test('areas are ordered worst rate first, with a floor on answers', () => {
+  const rows = [
+    ...Array.from({ length: 10 }, (_, i) => row({ id: `y${i}`, reaction: 'yes', reasons: [], postcodeArea: 'YO', areaName: 'York' })),
+    ...Array.from({ length: 10 }, (_, i) => row({ id: `n${i}`, postcodeArea: 'YO', areaName: 'York' })),
+    ...Array.from({ length: 5 }, (_, i) => row({ id: `h${i}`, postcodeArea: 'HU', areaName: 'Hull' })),
+    row({ id: 'solo', postcodeArea: 'ZZ', areaName: 'Nowhere' }),
+  ];
+  const p = patternsFromResponses(rows);
+  // Hull is 100% no over 5 answers, York 50% over 20: Hull leads.
+  assert.deepEqual(p.byArea.slice(0, 2).map((c) => c.label), ['Hull (HU)', 'York (YO)']);
+  // A single answer at 100% is noise and sorts below both.
+  assert.equal(p.byArea[p.byArea.length - 1].label, 'Nowhere (ZZ)');
+});
+
+test('csvCell neutralises a comment Excel would run as a formula', () => {
+  const csv = responsesCsv([row({ comment: '=cmd|\' /c calc\'!A1' }), row({ id: 'r2', comment: '+1-2' }), row({ id: 'r3', comment: '@SUM(A1)' }), row({ id: 'r4', comment: 'plain text' })]);
+  const lines = csv.trim().split('\r\n').slice(1);
+  assert.ok(lines[0].includes("'=cmd"), lines[0]);
+  assert.ok(lines[1].includes("'+1-2"));
+  assert.ok(lines[2].includes("'@SUM(A1)"));
+  assert.ok(lines[3].includes('plain text') && !lines[3].includes("'plain"));
+});

@@ -7,18 +7,15 @@ import { loadResponses } from "@/lib/listing/picks-server";
 import { filterResponses, patternsFromResponses, type Cut, type ResponseFilter, type ResponseRow } from "@/lib/listing/picks-patterns";
 import { PICK_REASONS, LEGACY_REASONS, reasonLabel, isPickReason, type PickReason } from "@/lib/listing/picks";
 import { formatListingPrice } from "@/lib/listing/format";
+import { WINDOWS, windowFor, oneOf } from "./windows";
 
 export const metadata: Metadata = { title: "Pick responses — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 
-const WINDOWS = [
-  { key: "30", label: "30 days", days: 30 },
-  { key: "90", label: "90 days", days: 90 },
-  { key: "365", label: "12 months", days: 365 },
-  { key: "all", label: "All time", days: null },
-] as const;
-
-type Search = { days?: string; reaction?: string; reason?: string; kind?: string; basis?: string; area?: string; q?: string };
+// Next hands a repeated query param (?q=a&q=b) as an array, so nothing here
+// may assume a string.
+type Param = string | string[] | undefined;
+type Search = { days?: Param; reaction?: Param; reason?: Param; kind?: Param; basis?: Param; area?: Param; q?: Param };
 
 function sinceIso(days: number | null): string | null {
   return days === null ? null : new Date(Date.now() - days * 86_400_000).toISOString();
@@ -92,23 +89,27 @@ export default async function PickResponsesPage({ searchParams }: { searchParams
   if (!isAdminEmail(user.email)) notFound();
 
   const sp = await searchParams;
-  const window = WINDOWS.find((w) => w.key === sp.days) ?? WINDOWS[1];
+  const window = windowFor(oneOf(sp.days));
+  const reactionParam = oneOf(sp.reaction);
+  const reasonParam = oneOf(sp.reason);
+  const kindParam = oneOf(sp.kind);
+  const basisParam = oneOf(sp.basis);
   const filter: ResponseFilter = {
-    reaction: sp.reaction === "yes" || sp.reaction === "no" ? sp.reaction : null,
-    reason: isPickReason(sp.reason) ? (sp.reason as PickReason) : null,
-    kind: sp.kind === "sale" || sp.kind === "rent" ? sp.kind : null,
-    basis: sp.basis === "goals" || sp.basis === "house" ? sp.basis : null,
-    area: sp.area ?? null,
-    q: sp.q ?? null,
+    reaction: reactionParam === "yes" || reactionParam === "no" ? reactionParam : null,
+    reason: isPickReason(reasonParam) ? (reasonParam as PickReason) : null,
+    kind: kindParam === "sale" || kindParam === "rent" ? kindParam : null,
+    basis: basisParam === "goals" || basisParam === "house" ? basisParam : null,
+    area: oneOf(sp.area),
+    q: oneOf(sp.q),
   };
   const all = await loadResponses({ since: sinceIso(window.days) });
   const rows = filterResponses(all, filter);
   const p = patternsFromResponses(rows);
   const comments = rows.filter((r) => r.comment.trim());
 
-  const qs = (over: Partial<Search>) => {
+  const qs = (over: Partial<Record<string, string | undefined>>) => {
     const next = new URLSearchParams();
-    const merged: Search = { days: window.key, reaction: filter.reaction ?? undefined, reason: filter.reason ?? undefined, kind: filter.kind ?? undefined, basis: filter.basis ?? undefined, area: filter.area ?? undefined, q: filter.q ?? undefined, ...over };
+    const merged: Record<string, string | undefined> = { days: window.key, reaction: filter.reaction ?? undefined, reason: filter.reason ?? undefined, kind: filter.kind ?? undefined, basis: filter.basis ?? undefined, area: filter.area ?? undefined, q: filter.q ?? undefined, ...over };
     for (const [k, v] of Object.entries(merged)) if (v) next.set(k, String(v));
     return `?${next.toString()}`;
   };
@@ -227,7 +228,7 @@ export default async function PickResponsesPage({ searchParams }: { searchParams
 
       <section className="mt-6 rounded-xl border border-border bg-card p-5">
         <h2 className="text-base font-semibold text-foreground">Members who answer</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Two or more answers. A member saying no every time with the same reason is a filter we are not honouring.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Two or more answers, most noes first. A member saying no every time with the same reason is a filter we are not honouring.</p>
         {p.members.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">Nobody has answered twice yet.</p>
         ) : (
