@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import type { FunnelBrand } from "@/lib/funnels/brand";
 import type { LeadRules } from "@/lib/leads/rules";
 import { activationBlockers } from "@/lib/funnels/brand";
-import { saveBrandAction, saveRulesAction, rotateTokenAction, toggleFunnelAction, type FunnelState } from "../../actions";
+import { saveBrandAction, saveRulesAction, rotateTokenAction, toggleFunnelAction, uploadLogoAction, type FunnelState } from "../../actions";
 
 interface FunnelView {
   id: string;
@@ -169,7 +169,7 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
             <input id="logoUrl" name="logoUrl" type="url" defaultValue={funnel.brand.logoUrl ?? ""} placeholder="https://…/logo.png" className={`${field} mt-1`} />
             <p className={hint}>
               PNG or JPEG, served over https. Those are the only formats that render both on the page and inside the PDF
-              report — a PDF or SVG logo would show on one and not the other.
+              report — a PDF or SVG logo would show on one and not the other. Or upload a file below.
             </p>
           </div>
           <div>
@@ -198,6 +198,8 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
             <Banner state={brandState} />
           </div>
         </form>
+
+        <LogoUpload funnelId={funnel.id} current={funnel.brand.logoUrl} />
       </section>
 
       {/* ── Which leads you want ── */}
@@ -288,6 +290,62 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
           </div>
         </form>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Uploading a logo file, as an alternative to pasting a URL.
+ *
+ * Its own form rather than a field on the branding one: the branding form
+ * posts text to a server action, and a file needs its own submission. That
+ * also means uploading a logo does not make a customer re-save every other
+ * branding field to keep it.
+ *
+ * The current logo is shown rather than described. A customer checking their
+ * branding wants to see what is live, not read a URL and guess.
+ */
+function LogoUpload({ funnelId, current }: { funnelId: string; current: string | null }) {
+  const [state, action, pending] = useActionState(uploadLogoAction, INITIAL);
+
+  return (
+    <div className="mt-4 rounded-lg border border-border bg-background p-3">
+      <p className="text-xs font-medium text-foreground">Or upload a logo file</p>
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        {current ? (
+          <span className="flex h-12 w-28 shrink-0 items-center justify-center rounded-md border border-border bg-card p-1">
+            {/* A plain img, not next/image: a customer's logo can be on any
+                host, and next/image refuses anything missing from
+                images.remotePatterns. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={current} alt="Your current logo" className="max-h-10 max-w-full object-contain" />
+          </span>
+        ) : (
+          <span className="flex h-12 w-28 shrink-0 items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground">
+            No logo
+          </span>
+        )}
+
+        <form action={action} className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="id" value={funnelId} />
+          <input
+            type="file"
+            name="logo"
+            accept="image/png,image/jpeg"
+            required
+            className="text-xs text-muted-foreground file:mr-2 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
+          />
+          <button
+            type="submit"
+            disabled={pending}
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted disabled:opacity-60"
+          >
+            {pending ? "Uploading…" : "Upload"}
+          </button>
+        </form>
+      </div>
+      <p className={hint}>PNG or JPEG, up to 2 MB. Replacing a logo removes the old one.</p>
+      <Banner state={state} />
     </div>
   );
 }
