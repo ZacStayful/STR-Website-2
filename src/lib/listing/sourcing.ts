@@ -36,6 +36,15 @@ export interface SourcedListing {
   price: { amount: number; period: 'total' | 'pcm' | 'pw' } | null;
   rawType: string | null;
   photo: string | null;
+  /** Short-let suitability evidence (see suitability.ts). Older stored snapshots lack these: read with `?? null` / `?? []`. */
+  tenure?: string | null;
+  /** Portal feature lines / tags ("Tenure: Leasehold", "Chain free"). */
+  features?: string[];
+  priceQualifier?: string | null;
+  /** From the fetched page: `true` flagged, `false` page read and not flagged, `null` page not read. */
+  sharedOwnership?: boolean | null;
+  /** From the fetched page's description: permission (`true`), prohibition (`false`), silent / not read (`null`). */
+  shortLetsPermitted?: boolean | null;
 }
 
 export interface SourcingQuery {
@@ -160,6 +169,8 @@ interface OtmCard {
   location?: { lat?: unknown; lon?: unknown };
   'cover-image'?: { default?: unknown };
   'details-url'?: unknown;
+  features?: unknown;
+  'price-qualifier'?: unknown;
 }
 
 function num(v: unknown): number | null {
@@ -201,6 +212,11 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
       price,
       rawType: str(raw['humanised-property-type']),
       photo: str(cover),
+      tenure: null,
+      features: Array.isArray(raw.features) ? raw.features.map(str).filter((s): s is string => Boolean(s)) : [],
+      priceQualifier: str(raw['price-qualifier']),
+      sharedOwnership: null,
+      shortLetsPermitted: null,
     });
   }
   return out;
@@ -239,6 +255,11 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       price: amount ? { amount, period: kind === 'rent' ? 'pcm' : 'total' } : null,
       rawType: l.property_type ?? null,
       photo: null,
+      tenure: typeof l.tenure === 'string' && l.tenure.trim() ? l.tenure.trim() : null,
+      features: Array.isArray(l.tags) ? l.tags.filter((t): t is string => typeof t === 'string' && t.trim().length > 0) : [],
+      priceQualifier: null,
+      sharedOwnership: null,
+      shortLetsPermitted: null,
     });
   }
   return out;
