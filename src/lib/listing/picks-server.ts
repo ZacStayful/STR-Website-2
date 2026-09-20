@@ -2,9 +2,10 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { areaMetaForCode } from '../market/areas';
-import { isPickToken, cleanReasons, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
+import { isPickToken, cleanReasons, dealScoreOf, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
 import type { SourcedListing } from './sourcing';
 import type { Deal } from './deal';
+import type { ResponseRow } from './picks-patterns';
 
 /**
  * Service-role reads and writes for daily picks. `sourcing_sent` and
@@ -113,6 +114,64 @@ export async function loadPicks(userId: string, limit = 120): Promise<PickView[]
   const rows = (data ?? []) as Record<string, unknown>[];
   const listings = await listingsFor([...new Set(rows.map((r) => String(r.canonical_url)))]);
   return rows.map((r) => toView(r, listings.get(String(r.canonical_url)) ?? null)).filter((v): v is PickView => v !== null);
+}
+
+/**
+ * Every answered pick (admin store), newest answer first, with the member's
+ * email and the listing behind it. Older rows carry no tenure; that reads
+ * as unknown.
+ */
+export async function loadResponses(opts: { since: string | null; limit?: number }): Promise<ResponseRow[]> {
+  if (!hasServiceRole()) return [];
+  const admin = createAdminClient();
+  let q = admin.from('sourcing_sent').select(PICK_COLUMNS).not('reaction', 'is', null).eq('status', 'sent');
+  if (opts.since) q = q.gte('sent_at', opts.since);
+  const { data, error } = await q.order('responded_at', { ascending: false, nullsFirst: false }).limit(opts.limit ?? 5000);
+  if (error) {
+    console.warn('[picks] responses select failed (schema behind?):', error.message);
+    return [];
+  }
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const userIds = [...new Set(rows.map((r) => String(r.user_id)))];
+  const emails = new Map<string, string | null>();
+  for (let i = 0; i < userIds.length; i += 100) {
+    const { data: profiles } = await admin.from('profiles').select('id, email').in('id', userIds.slice(i, i + 100));
+    for (const p of (profiles ?? []) as { id: string; email: string | null }[]) emails.set(p.id, p.email);
+  }
+  const listings = await listingsFor([...new Set(rows.map((r) => String(r.canonical_url)))]);
+  const out: ResponseRow[] = [];
+  for (const raw of rows) {
+    const v = toView(raw, listings.get(String(raw.canonical_url)) ?? null);
+    if (!v || !v.reaction || !v.reactionSource) continue;
+    const l = v.listing;
+    const amount = l.price ? (l.kind === 'rent' ? (l.price.period === 'pw' ? Math.round((l.price.amount * 52) / 12) : l.price.amount) : l.price.period === 'total' ? l.price.amount : null) : null;
+    out.push({
+      id: v.id,
+      userId: v.userId,
+      email: emails.get(v.userId) ?? null,
+      sentAt: v.sentAt,
+      respondedAt: v.respondedAt,
+      reaction: v.reaction,
+      reactionSource: v.reactionSource,
+      reasons: v.reasons,
+      comment: v.comment,
+      kind: v.kind,
+      basis: v.basis,
+      postcodeArea: v.postcodeArea,
+      areaName: v.areaName,
+      title: l.title,
+      address: l.address,
+      url: l.canonicalUrl,
+      bedrooms: l.bedrooms,
+      rawType: l.rawType,
+      tenure: l.tenure ?? null,
+      amount,
+      fit: v.fit,
+      dealScore: dealScoreOf(v.deal),
+      savedAt: v.savedAt,
+    });
+  }
+  return out;
 }
 
 export interface ReactionInput {

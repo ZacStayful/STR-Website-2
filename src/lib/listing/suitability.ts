@@ -91,6 +91,11 @@ export function tenureOf(...values: (string | null | undefined)[]): Tenure {
 }
 
 const FLAT = /\b(?:flat|apartment|maisonette|penthouse|studio|duplex)\b/i;
+
+/** Flat-like by the portal's type or the title: what "no flats" / "no houses" feedback keys on. */
+export function isFlatLike(rawType: string | null | undefined, title: string | null | undefined): boolean {
+  return FLAT.test(`${rawType ?? ''} ${title ?? ''}`);
+}
 const ROOM = /house ?share|flat ?share|home ?share|\broom(?:s)? (?:to rent|to let|in a|in an|available|for rent)|\b(?:single|double|en-?suite) room\b|\blodgers?\b|\bbedsit\b|student room|\bshared (?:house|flat|accommodation)\b/i;
 const SHARED_OWNERSHIP = /shared[- ]ownership|shared[- ]equity|\b\d{1,2}\s?%\s*share\b|\bshare\b[^.]{0,20}\bof (?:a|the|this) (?:home|property|house|flat)|part[- ]buy[- ,]?part[- ]rent|resale share|rent to buy/i;
 const AGE_RESTRICTED = /\bretirement\b|over[- ]?55s?\b|over[- ]?60s?\b|age[- ]restricted|age[- ]exclusive|sheltered (?:housing|accommodation)|assisted living|later living|mccarthy/i;
@@ -136,7 +141,7 @@ export function suitabilityFromListing(l: SourcedListing): Suitability {
     kind: l.kind,
     text: [l.title, l.rawType, l.priceQualifier ?? null, l.tenure ?? null, ...features].filter(Boolean).join(' | '),
     tenure: tenureOf(l.tenure, tenureLine),
-    flatLike: FLAT.test(`${l.rawType ?? ''} ${l.title}`),
+    flatLike: isFlatLike(l.rawType, l.title),
     salePrice: l.kind === 'sale' && l.price?.period === 'total' ? l.price.amount : null,
     sharedOwnership: l.sharedOwnership ?? null,
     shortLetsPermitted: l.shortLetsPermitted ?? null,
@@ -150,7 +155,7 @@ export function suitabilityFromSnapshot(s: ListingSnapshot, kind: SourcingKind):
     kind,
     text: [s.title, s.rawType ?? null, s.price?.qualifier ?? null, s.tenure ?? null, ...s.features].filter(Boolean).join(' | '),
     tenure: tenureOf(s.tenure, ...s.features.filter((x) => /tenure/i.test(x))),
-    flatLike: FLAT.test(`${s.rawType ?? ''} ${s.title}`),
+    flatLike: isFlatLike(s.rawType, s.title),
     salePrice: kind === 'sale' && s.price?.period === 'total' ? s.price.amount : null,
     sharedOwnership: s.sharedOwnership ?? false,
     shortLetsPermitted: s.shortLetsPermitted ?? null,

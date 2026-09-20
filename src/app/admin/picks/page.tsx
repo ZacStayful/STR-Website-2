@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { cookies } from "next/headers";
-import { summarisePicks, cleanReasons, PICK_REASONS, type PickRow } from "@/lib/listing/picks";
+import { summarisePicks, cleanReasons, reasonLabel, type PickRow } from "@/lib/listing/picks";
 import { sendingEnabled } from "@/lib/listing/picks-run";
 import { sendTestPickAction, dryRunPicksAction } from "./actions";
 import { SUITABILITY_REASONS, isUnsuitableReason, type UnsuitableReason } from "@/lib/listing/suitability";
@@ -112,7 +112,7 @@ export default async function PicksAdminPage() {
   }));
   const s = summarisePicks(rows);
   const recent = raw.filter((r) => r.reaction).slice(0, 40);
-  const label = (k: string) => PICK_REASONS.find((r) => r.key === k)?.label ?? k;
+  const label = reasonLabel;
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">
@@ -197,7 +197,10 @@ export default async function PicksAdminPage() {
       </section>
 
       <section className="mt-6 rounded-xl border border-border bg-card p-5">
-        <h2 className="text-base font-semibold text-foreground">Recent responses</h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-base font-semibold text-foreground">Recent responses</h2>
+          <Link href="/admin/picks/responses" className="text-sm font-medium text-primary hover:underline">All responses and patterns →</Link>
+        </div>
         {recent.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">No responses yet.</p>
         ) : (

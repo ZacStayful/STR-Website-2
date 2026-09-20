@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { pickByToken, recordReaction } from "@/lib/listing/picks-server";
-import { PICK_REASONS, isPickToken } from "@/lib/listing/picks";
+import { isPickToken, reasonLabel, reasonEffect } from "@/lib/listing/picks";
+import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
@@ -79,7 +80,29 @@ export default async function PickResponsePage({ params, searchParams }: { param
               {thanks ? (
                 <>
                   <h2 className="text-lg font-bold">Thanks, noted.</h2>
-                  <p className="mt-1 text-sm text-[#5b6657]">{reaction === "yes" ? "More like this coming up." : "Tomorrow’s pick will steer away from this."}</p>
+                  {reaction === "yes" ? (
+                    <p className="mt-1 text-sm text-[#5b6657]">More like this coming up.</p>
+                  ) : pick.reasons.length > 0 ? (
+                    <>
+                      <p className="mt-1 text-sm text-[#5b6657]">Here is what changes from tomorrow:</p>
+                      <ul className="mt-2 space-y-1 text-sm text-[#5b6657]">
+                        {pick.reasons.map((r) => (
+                          <li key={r}>· {reasonEffect(r) ?? `noted: ${reasonLabel(r).toLowerCase()}`}</li>
+                        ))}
+                      </ul>
+                      <p className="mt-3 text-xs text-[#7a8274]">
+                        Want to change more than this? <Link href="/markets?goals=1" className="underline">Edit your filter</Link> and set your area, budget and size directly.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="mt-1 text-sm text-[#5b6657]">Tomorrow’s pick will steer away from this one.</p>
+                      <p className="mt-3 text-sm text-[#5b6657]">
+                        It helps much more if we know <strong>why</strong>.{" "}
+                        <Link href={`/p/${token}?a=no`} className="underline">Tell us in two clicks</Link>.
+                      </p>
+                    </>
+                  )}
                 </>
               ) : reaction === "yes" ? (
                 <>
@@ -95,22 +118,23 @@ export default async function PickResponsePage({ params, searchParams }: { param
                 <form action={submitPickFeedbackAction}>
                   <input type="hidden" name="token" value={token} />
                   <input type="hidden" name="reaction" value="no" />
-                  <h2 className="text-lg font-bold">{reaction === "no" ? "Not for you. What was wrong with it?" : "Is this the kind of property you are looking for?"}</h2>
-                  {reaction !== "no" && (
-                    <p className="mt-2">
-                      <Link href={`/p/${token}?a=yes`} className="mr-2 inline-block rounded-md bg-[#5d8156] px-4 py-2 text-sm font-semibold text-white">Yes, more like this</Link>
-                      <Link href={`/p/${token}?a=no`} className="inline-block rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium">Not for me</Link>
-                    </p>
+                  <h2 className="text-lg font-bold">{reaction === "no" ? "Noted. What was wrong with it?" : "Is this the kind of property you are looking for?"}</h2>
+                  {reaction === "no" ? (
+                    <p className="mt-1 text-sm text-[#5b6657]">Tick whatever fits. Each one changes what we send you tomorrow, so this is the fastest way to get better picks.</p>
+                  ) : (
+                    <>
+                      <p className="mt-2">
+                        <Link href={`/p/${token}?a=yes`} className="mr-2 inline-block rounded-md bg-[#5d8156] px-4 py-2 text-sm font-semibold text-white">Yes, more like this</Link>
+                        <Link href={`/p/${token}?a=no`} className="inline-block rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium">Not for me</Link>
+                      </p>
+                      <p className="mt-2 text-sm text-[#5b6657]">Not for you? Say why below and tomorrow’s pick changes.</p>
+                    </>
                   )}
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {PICK_REASONS.map((r) => (
-                      <label key={r.key} className="flex cursor-pointer items-center gap-1.5 rounded-full border border-[#e4e7dc] bg-[#f7f8f4] px-3 py-1 text-xs">
-                        <input type="checkbox" name="reasons" value={r.key} defaultChecked={pick.reasons.includes(r.key)} />
-                        {r.label}
-                      </label>
-                    ))}
-                  </div>
-                  <textarea name="comment" defaultValue={pick.comment} placeholder="Anything else? (optional)" rows={2} className="mt-3 w-full rounded-md border border-[#e4e7dc] p-2 text-sm" maxLength={1000} />
+                  <ReasonChips selected={pick.reasons} tone="public" />
+                  <label className="mt-3 block text-sm font-medium">
+                    What would you rather have seen?
+                    <textarea name="comment" defaultValue={pick.comment} placeholder="e.g. a 3-bed house in Leicester under £250k, or anything with a garden" rows={2} className="mt-1 w-full rounded-md border border-[#e4e7dc] p-2 text-sm font-normal" maxLength={1000} />
+                  </label>
                   <button type="submit" className="mt-3 rounded-md bg-[#2e3d2b] px-4 py-2 text-sm font-semibold text-white">Send feedback</button>
                 </form>
               )}

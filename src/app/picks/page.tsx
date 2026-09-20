@@ -3,7 +3,8 @@ import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseMarketGoals, describeGoals } from "@/lib/market/goals";
 import { loadPicks, picksEnabled, type PickView } from "@/lib/listing/picks-server";
-import { PICK_REASONS } from "@/lib/listing/picks";
+import { reasonLabel } from "@/lib/listing/picks";
+import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
@@ -157,7 +158,7 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
           <p className="mt-1 text-xs text-muted-foreground">
             {p.fit !== null ? `Fit ${p.fit}/100 · ` : ""}{p.basis === "house" ? "Stayful house pick" : "Picked for your filter"}
             {p.reaction === "yes" && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Liked</span>}
-            {p.reaction === "no" && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold">Passed{p.reasons.length ? `: ${p.reasons.map((r) => PICK_REASONS.find((x) => x.key === r)?.label ?? r).join(", ")}` : ""}</span>}
+            {p.reaction === "no" && <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold">Passed{p.reasons.length ? `: ${p.reasons.map(reasonLabel).join(", ")}` : ""}</span>}
             {p.savedAt && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">In pipeline</span>}
           </p>
         </div>
@@ -190,7 +191,7 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
       </div>
       {showReasons && (
         <div className="mt-3 rounded-lg bg-muted/60 p-3 text-xs">
-          <p className="font-medium text-foreground">What was wrong with it? This is what steers tomorrow’s pick.</p>
+          <p className="font-medium text-foreground">What was wrong with it? Each answer changes what we send you tomorrow.</p>
           <ReasonsForm pick={p} tab={tab} />
         </div>
       )}
@@ -204,15 +205,11 @@ function ReasonsForm({ pick: p, tab }: { pick: PickView; tab: Tab }) {
       <input type="hidden" name="id" value={p.id} />
       <input type="hidden" name="reaction" value="no" />
       <input type="hidden" name="tab" value={tab} />
-      <div className="flex flex-wrap gap-1.5">
-        {PICK_REASONS.map((r) => (
-          <label key={r.key} className="flex cursor-pointer items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1">
-            <input type="checkbox" name="reasons" value={r.key} defaultChecked={p.reasons.includes(r.key)} />
-            {r.label}
-          </label>
-        ))}
-      </div>
-      <textarea name="comment" defaultValue={p.comment} placeholder="Anything else? (optional)" rows={2} maxLength={1000} className="mt-2 w-full rounded-md border border-border bg-card p-2" />
+      <ReasonChips selected={p.reasons} tone="app" />
+      <label className="mt-2 block font-medium text-foreground">
+        What would you rather have seen?
+        <textarea name="comment" defaultValue={p.comment} placeholder="e.g. a 3-bed house in Leicester under £250k, or anything with a garden" rows={2} maxLength={1000} className="mt-1 w-full rounded-md border border-border bg-card p-2 font-normal" />
+      </label>
       <button type="submit" className="mt-2 rounded-md bg-foreground px-3 py-1.5 font-semibold text-background">Send feedback</button>
     </form>
   );
