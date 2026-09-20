@@ -13,7 +13,8 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, applyCandidateFeedback, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import type { Deal } from "./deal";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
 import { sendEmail, isEmailConfigured } from "../email/send";
@@ -178,13 +179,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const sentToday = new Set<string>();
   const feedbackByUser = new Map<string, PickFeedback[]>();
   const feedbackSince = new Date(Date.now() - FEEDBACK_WINDOW_MS).toISOString();
-  type FeedbackRow = { user_id: string; canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown };
+  type FeedbackRow = { user_id: string; canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown; deal: unknown };
   const feedbackRows: FeedbackRow[] = [];
   for (const some of chunk(ids, ID_CHUNK)) {
     const [savedRes, todayRes, fbRes] = await Promise.all([
       admin.from("saved_areas").select("user_id, postcode_area").in("user_id", some),
       admin.from("sourcing_sent").select("user_id").in("user_id", some).gte("sent_at", todayIso),
-      admin.from("sourcing_sent").select("user_id, canonical_url, reaction, reaction_source, reasons, kind, postcode_area").in("user_id", some).not("reaction", "is", null).gte("responded_at", feedbackSince),
+      admin.from("sourcing_sent").select("user_id, canonical_url, reaction, reaction_source, reasons, kind, postcode_area, deal").in("user_id", some).not("reaction", "is", null).gte("responded_at", feedbackSince),
     ]);
     for (const s of (savedRes.data ?? []) as { user_id: string; postcode_area: string }[]) savedByUser.set(s.user_id, [...(savedByUser.get(s.user_id) ?? []), s.postcode_area.toUpperCase()]);
     for (const r of (todayRes.data ?? []) as { user_id: string }[]) sentToday.add(r.user_id);
@@ -211,6 +212,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         bedrooms: l?.bedrooms ?? null,
         amount,
         rawType: l?.rawType ?? null,
+        outcode: l?.outcode ?? null,
+        dealScore: dealScoreOf((r.deal as Deal | null) ?? null),
       },
     ]);
   }

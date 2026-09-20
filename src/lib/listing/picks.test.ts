@@ -16,6 +16,9 @@ import {
   pickPrice,
   spreadPick,
   PER_LISTING_CAP,
+  dealScoreOf,
+  reasonLabel,
+  reasonEffect,
   type HouseAreaCard,
   type PickFeedback,
   type PickRow,
@@ -114,6 +117,29 @@ test('applyCandidateFeedback caps price at 90% of a rejected pick and drops reje
   assert.deepEqual(out.map((c) => c.listing.id), []); // a too dear, b/c wrong size, d flat
   const out2 = applyCandidateFeedback(cands, [feedback({ reasons: ['too_expensive'], amount: 200_000 })]);
   assert.deepEqual(out2.map((c) => c.listing.id), ['a', 'b', 'c', 'd']);
+});
+
+test('the v2 reasons each steer the candidate pool', () => {
+  const cands = [
+    { listing: listing({ id: 'flat2', bedrooms: 2, rawType: 'Flat', outcode: 'NG1', price: { amount: 150_000, period: 'total' } }), deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }) },
+    { listing: listing({ id: 'house3', bedrooms: 3, rawType: 'Terraced house', outcode: 'NG2', price: { amount: 200_000, period: 'total' } }), deal: purchaseDeal(200_000, { grossRevenue: 24_000, adr: 110, bedrooms: 3 }) },
+    { listing: listing({ id: 'house4', bedrooms: 4, rawType: 'Detached house', outcode: 'NG3', price: { amount: 300_000, period: 'total' }, features: ['In need of full renovation'] }), deal: purchaseDeal(300_000, { grossRevenue: 40_000, adr: 150, bedrooms: 4 }) },
+  ];
+  const ids = (out: typeof cands) => out.map((c) => c.listing.id);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['no_flats'] })])), ['house3', 'house4']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['no_houses'] })])), ['flat2']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['no_flats'] }), feedback({ reasons: ['no_houses'] })])), ['flat2', 'house3', 'house4']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['too_small'], bedrooms: 2 })])), ['house3', 'house4']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['too_big'], bedrooms: 4 })])), ['flat2', 'house3']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['too_cheap'], amount: 150_000 })])), ['house3', 'house4']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_location'], outcode: 'ng2' })])), ['flat2', 'house4']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['needs_work'] })])), ['flat2', 'house3']);
+  // Return too low on a 12% yield pick: only better yields survive.
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], dealScore: 12.5 })])), ['flat2', 'house4']);
+  assert.equal(dealScoreOf(cands[0].deal), 16);
+  assert.equal(reasonLabel('wrong_size'), 'Wrong size');
+  assert.ok(reasonEffect('too_expensive'));
+  assert.deepEqual(cleanReasons(['too_small', 'wrong_size', 'bogus']), ['too_small', 'wrong_size']);
 });
 
 test('reasons are cleaned to the known set and tokens are guarded', () => {

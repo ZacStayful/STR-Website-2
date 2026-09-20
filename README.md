@@ -84,6 +84,7 @@ which are required, and what breaks without them.
 | `src/app/markets` | Market Explorer |
 | `src/app/reports` | Saved report history |
 | `src/app/picks` | Daily picks: every property the sourcing cron has emailed the member, with feedback and save-to-pipeline. `src/app/p/[token]` is where the email buttons land (public, token-keyed) |
+| `src/app/admin/picks` | Daily picks admin: the feedback report, the test-pick and dry-run buttons, and `responses` — every answer a member has given, with the pattern cuts and a CSV export |
 | `src/app/account` | Plan management (pause, cancel, sign out) and `/account/billing`: credit balance, top-ups, usage history |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
 | `src/lib/access.ts` | Billing state of an account: subscriber, paused, lapsed, pay-as-you-go |
