@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { round4 } from './pricing';
+import { usageDescription, actionLabel, funnelIdFromMeta } from './usage-label.ts';
 
 /** One row on the usage page: a debit group (an action), a grant, an expiry or a refund. */
 export interface UsageItem {
@@ -16,6 +17,11 @@ export interface UsageItem {
   /** Base pence for debits / refunds. */
   basePence: number | null;
   lines: { provider: string; unit: string; quantity: number | null; basePence: number; amountPence: number; description: string | null; at: string }[];
+  /**
+   * Set when this charge was a funnel lead rather than the member's own
+   * work, so the UI can mark it rather than parsing the description.
+   */
+  funnelId: string | null;
   /** Grant kind for grant/expire rows. */
   grantKind: string | null;
   expiresAt: string | null;
@@ -36,22 +42,10 @@ interface TxRow {
   metadata: Record<string, unknown> | null;
 }
 
-const ACTION_LABELS: Record<string, string> = {
-  report: 'Property report',
-  report_enhanced: 'Enhanced property report (with PMI second opinion)',
-  quick_view: 'Listing check (quick view)',
-  narrate: 'AI narration',
-  speak: 'AI voice',
-  autocomplete: 'Address lookup',
-  geocode: 'Home postcode lookup',
-  'cron:sourcing': 'Deal-sourcing digest',
-  'cron:recheck': 'Saved listing re-check',
-};
-
-export function actionLabel(action: string | null): string {
-  if (!action) return 'Usage';
-  return ACTION_LABELS[action] ?? action;
-}
+// The labels and the funnel wording live in ./usage-label.ts, where they are
+// pure and tested. Re-exported because the billing page imports `actionLabel`
+// from here.
+export { actionLabel };
 
 /**
  * Pages through a member's ledger newest first, grouping every debit of one
@@ -75,10 +69,16 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
     if (r.kind === 'debit' && r.action_id) {
       let item = byAction.get(r.action_id);
       if (!item) {
-        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], grantKind: null, expiresAt: null };
+        // The funnel id is read from the FIRST debit of an action. Every
+        // debit of one action shares a context, so they all carry the same
+        // value — but a provider call that failed and was logged at zero
+        // never reaches the debit path, so later rows can be absent.
+        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
         byAction.set(r.action_id, item);
         items.push(item);
       }
+      // A later row carrying one when the first did not still counts.
+      item.funnelId ??= funnelIdFromMeta(r.metadata);
       item.amountPence = round4(item.amountPence + amount);
       item.basePence = round4((item.basePence ?? 0) + (base ?? 0));
       if (new Date(r.at) > new Date(item.at)) item.at = r.at;
@@ -96,15 +96,57 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
       amountPence: amount,
       basePence: base,
       lines: [],
+      funnelId: null,
       grantKind: typeof meta.grant_kind === 'string' ? meta.grant_kind : null,
       expiresAt: typeof meta.expires_at === 'string' ? meta.expires_at : null,
     });
     if (items.length >= limit) break;
   }
   const sliced = items.slice(0, limit);
+  await describeFunnelRows(userId, sliced);
   const last = sliced[sliced.length - 1];
   const more = rows.length >= limit * 6 || items.length > limit;
   return { items: sliced, nextCursor: more && last ? last.at : null };
+}
+
+/**
+ * Names the funnel rows on one page of history.
+ *
+ * One query for the whole page rather than one per row: a customer running
+ * a hundred leads a month would otherwise turn a billing page into a
+ * hundred round trips.
+ *
+ * A funnel that has since been deleted simply has no name, and
+ * `usageDescription` still calls the row a funnel lead — losing the name is
+ * cosmetic, but describing a lead as the member's own research is wrong.
+ */
+async function describeFunnelRows(userId: string, items: UsageItem[]): Promise<void> {
+  const ids = [...new Set(items.map((i) => i.funnelId).filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return;
+
+  const names = new Map<string, string>();
+  const { data, error } = await createAdminClient()
+    .from('funnels')
+    .select('id, name')
+    .eq('user_id', userId)
+    .in('id', ids);
+  if (error) {
+    // Not worth failing a billing page over. The rows still read as funnel
+    // leads, just without their names.
+    console.error('[credit] funnel names for usage history failed:', error.message);
+  }
+  for (const f of (data ?? []) as Array<{ id: string; name: string | null }>) {
+    if (f.name) names.set(f.id, f.name);
+  }
+
+  for (const item of items) {
+    if (!item.funnelId) continue;
+    item.description = usageDescription({
+      action: item.action,
+      isFunnel: true,
+      funnelName: names.get(item.funnelId) ?? null,
+    });
+  }
 }
 
 /** Median base pence of the last 50 completed actions of this kind, or null when too few. */

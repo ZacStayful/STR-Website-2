@@ -109,6 +109,7 @@ export async function GET(request: Request) {
   let userId: string | null = null;
   let admin = false;
   let markupOverride: number | undefined;
+  let funnelId: string | null = null;
   const funnelToken = searchParams.get('f');
   if (funnelToken) {
     const funnel = await ownedFunnelByToken(funnelToken);
@@ -116,6 +117,7 @@ export async function GET(request: Request) {
     // the house: a dead token must not be a way to spend our money.
     if (!funnel) return Response.json({ suggestions: [] });
     userId = funnel.userId;
+    funnelId = funnel.id;
     markupOverride = (await getBillingSettings()).funnelMarkup;
   } else {
     try {
@@ -131,7 +133,7 @@ export async function GET(request: Request) {
 
   let action;
   try {
-    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId, markupOverride, requireCredit: Boolean(funnelToken) });
+    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId, markupOverride, requireCredit: Boolean(funnelToken), funnelId });
   } catch (err) {
     if (err instanceof InsufficientCreditError) return Response.json({ suggestions: [], code: INSUFFICIENT_CREDIT_CODE }, { status: 402 });
     throw err;

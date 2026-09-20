@@ -113,6 +113,7 @@ export async function GET(request: Request) {
         billedUserId: funnel.userId,
         markupOverride,
         requireCredit: true,
+        funnelId: funnel.id,
       });
       const { result, spend } = await runAnalysis(prepared, parsed.input, {
         billedUserId: funnel.userId,

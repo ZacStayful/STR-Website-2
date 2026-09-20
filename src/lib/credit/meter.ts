@@ -163,6 +163,10 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
           raw_cost_pence: price.rawPence,
           description: charge.description ?? table.get(`${charge.provider}:${charge.unit}`)?.label ?? `${charge.provider} ${charge.unit}`,
           provider_call_id: callId,
+          // Only when there IS one. credit_debit stores every key it does
+          // not recognise, so a null here would write `funnel_id: null` onto
+          // every members-only debit to say nothing.
+          ...(ctx?.funnelId ? { funnel_id: ctx.funnelId } : {}),
         },
       });
       // Threshold emails, Monday flag and auto top-up; never blocks the request.
