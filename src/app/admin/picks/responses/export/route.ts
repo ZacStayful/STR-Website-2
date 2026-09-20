@@ -3,6 +3,7 @@ import { isAdminEmail } from "@/lib/admin";
 import { loadResponses } from "@/lib/listing/picks-server";
 import { filterResponses, responsesCsv } from "@/lib/listing/picks-patterns";
 import { isPickReason, type PickReason } from "@/lib/listing/picks";
+import { windowFor, oneOf } from "../windows";
 
 // ─── Pick responses as a spreadsheet ────────────────────────────────
 // Admin only (same gate as the page). Takes the same query params as
@@ -12,8 +13,6 @@ import { isPickReason, type PickReason } from "@/lib/listing/picks";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DAYS: Record<string, number | null> = { "30": 30, "90": 90, "365": 365, all: null };
-
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
   const {
@@ -22,8 +21,8 @@ export async function GET(request: Request) {
   if (!user || !isAdminEmail(user.email)) return Response.json({ error: "Not found" }, { status: 404 });
 
   const sp = new URL(request.url).searchParams;
-  const daysKey = sp.get("days") ?? "90";
-  const days = daysKey in DAYS ? DAYS[daysKey] : 90;
+  // Same window list and default as the page, so the CSV matches the screen.
+  const days = windowFor(sp.get("days")).days;
   const reason = sp.get("reason");
   const reaction = sp.get("reaction");
   const kind = sp.get("kind");
@@ -35,8 +34,8 @@ export async function GET(request: Request) {
     reason: isPickReason(reason) ? (reason as PickReason) : null,
     kind: kind === "sale" || kind === "rent" ? kind : null,
     basis: basis === "goals" || basis === "house" ? basis : null,
-    area: sp.get("area"),
-    q: sp.get("q"),
+    area: oneOf(sp.get("area")),
+    q: oneOf(sp.get("q")),
   });
 
   const stamp = new Date().toISOString().slice(0, 10);

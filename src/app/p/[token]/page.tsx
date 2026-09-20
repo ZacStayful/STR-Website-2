@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { pickByToken, recordReaction } from "@/lib/listing/picks-server";
-import { isPickToken, reasonLabel, reasonEffect } from "@/lib/listing/picks";
+import { isPickToken, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type PickFeedback } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
@@ -39,6 +39,25 @@ export default async function PickResponsePage({ params, searchParams }: { param
   }
   const reaction = thanks ? (action === "yes" ? "yes" : "no") : action === "yes" || action === "no" ? action : pick.reaction;
   const l = pick.listing;
+  // Only promise what the rules actually do with this answer: a contradictory
+  // pair cancels, and a rule with nothing to key on (no outcode on the stored
+  // listing, a 1-bed rejected as too big) never arms.
+  const answer: PickFeedback = {
+    reaction: "no",
+    reactionSource: "form",
+    reasons: pick.reasons,
+    kind: pick.kind,
+    postcodeArea: pick.postcodeArea,
+    bedrooms: l.bedrooms,
+    amount: l.price ? (pick.kind === "rent" ? (l.price.period === "pw" ? Math.round((l.price.amount * 52) / 12) : l.price.amount) : l.price.period === "total" ? l.price.amount : null) : null,
+    rawType: l.rawType,
+    outcode: l.outcode,
+    dealScore: pick.deal ? (pick.deal.kind === "purchase" ? pick.deal.grossYieldPct : pick.deal.monthlyMargin) : null,
+  };
+  const rules = feedbackRules([answer]);
+  const changed = pick.reasons.filter((r) => ruleApplied(rules, r) && reasonEffect(r));
+  const cancelled = pick.reasons.filter((r) => rules.cancelled.includes(r));
+  const noted = pick.reasons.filter((r) => !changed.includes(r) && !cancelled.includes(r));
   const price = l.price ? formatListingPrice(l.price) : null;
 
   return (
@@ -84,12 +103,28 @@ export default async function PickResponsePage({ params, searchParams }: { param
                     <p className="mt-1 text-sm text-[#5b6657]">More like this coming up.</p>
                   ) : pick.reasons.length > 0 ? (
                     <>
-                      <p className="mt-1 text-sm text-[#5b6657]">Here is what changes from tomorrow:</p>
-                      <ul className="mt-2 space-y-1 text-sm text-[#5b6657]">
-                        {pick.reasons.map((r) => (
-                          <li key={r}>· {reasonEffect(r) ?? `noted: ${reasonLabel(r).toLowerCase()}`}</li>
-                        ))}
-                      </ul>
+                      {changed.length > 0 ? (
+                        <>
+                          <p className="mt-1 text-sm text-[#5b6657]">Here is what changes from tomorrow:</p>
+                          <ul className="mt-2 space-y-1 text-sm text-[#5b6657]">
+                            {changed.map((r) => (
+                              <li key={r}>· {reasonEffect(r)}</li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : (
+                        <p className="mt-1 text-sm text-[#5b6657]">Noted. Tomorrow’s pick will steer away from this one.</p>
+                      )}
+                      {cancelled.length > 0 && (
+                        <p className="mt-3 text-sm text-[#5b6657]">
+                          {cancelled.map(reasonLabel).map((l) => `“${l}”`).join(" and ")} cancel each other out, so nothing changed there. Tell us which one you meant and we will act on it.
+                        </p>
+                      )}
+                      {noted.length > 0 && (
+                        <p className="mt-2 text-xs text-[#7a8274]">
+                          Also noted, though it does not change a search on its own: {noted.map(reasonLabel).join(", ").toLowerCase()}.
+                        </p>
+                      )}
                       <p className="mt-3 text-xs text-[#7a8274]">
                         Want to change more than this? <Link href="/markets?goals=1" className="underline">Edit your filter</Link> and set your area, budget and size directly.
                       </p>

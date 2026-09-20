@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { areaMetaForCode } from '../market/areas';
-import { isPickToken, cleanReasons, dealScoreOf, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
+import { isPickToken, cleanReasons, dealScoreOf, PICK_REASONS, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
 import type { SourcedListing } from './sourcing';
 import type { Deal } from './deal';
 import type { ResponseRow } from './picks-patterns';
@@ -124,14 +124,24 @@ export async function loadPicks(userId: string, limit = 120): Promise<PickView[]
 export async function loadResponses(opts: { since: string | null; limit?: number }): Promise<ResponseRow[]> {
   if (!hasServiceRole()) return [];
   const admin = createAdminClient();
-  let q = admin.from('sourcing_sent').select(PICK_COLUMNS).not('reaction', 'is', null).eq('status', 'sent');
-  if (opts.since) q = q.gte('sent_at', opts.since);
-  const { data, error } = await q.order('responded_at', { ascending: false, nullsFirst: false }).limit(opts.limit ?? 5000);
-  if (error) {
-    console.warn('[picks] responses select failed (schema behind?):', error.message);
-    return [];
+  // PostgREST caps a page at 1000 rows however large the limit, so page it:
+  // a silently truncated store would read as "these are all the answers".
+  const PAGE = 1000;
+  const cap = opts.limit ?? 5000;
+  const rows: Record<string, unknown>[] = [];
+  for (let from = 0; from < cap; from += PAGE) {
+    let q = admin.from('sourcing_sent').select(PICK_COLUMNS).not('reaction', 'is', null).eq('status', 'sent');
+    // The window is on the answer, which is what the page orders and shows;
+    // an answer to an older pick still belongs to the week it was given.
+    if (opts.since) q = q.or(`responded_at.gte.${opts.since},sent_at.gte.${opts.since}`);
+    const { data, error } = await q.order('responded_at', { ascending: false, nullsFirst: false }).range(from, Math.min(from + PAGE, cap) - 1);
+    if (error) {
+      console.warn('[picks] responses select failed (schema behind?):', error.message);
+      break;
+    }
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    if ((data?.length ?? 0) < PAGE) break;
   }
-  const rows = (data ?? []) as Record<string, unknown>[];
   const userIds = [...new Set(rows.map((r) => String(r.user_id)))];
   const emails = new Map<string, string | null>();
   for (let i = 0; i < userIds.length; i += 100) {
@@ -186,11 +196,29 @@ export interface ReactionInput {
  * only sets the reaction; the form sets reasons and comment too and marks
  * the response as confirmed, which is what the cron's feedback rules read.
  */
+/** The reasons already stored on a pick, so a re-submit can keep what the form could not show. */
+async function currentReasons(where: { token: string } | { id: string; userId: string }): Promise<PickReason[]> {
+  const admin = createAdminClient();
+  let q = admin.from('sourcing_sent').select('reasons');
+  q = 'token' in where ? q.eq('token', where.token) : q.eq('id', where.id).eq('user_id', where.userId);
+  const { data } = await q.maybeSingle();
+  return cleanReasons((data as { reasons?: unknown } | null)?.reasons);
+}
+
 export async function recordReaction(where: { token: string } | { id: string; userId: string }, input: ReactionInput): Promise<boolean> {
   if (!hasServiceRole()) return false;
   const patch: Record<string, unknown> = { reaction: input.reaction, reaction_source: input.source, responded_at: new Date().toISOString() };
-  if (input.source === 'form') {
-    patch.reasons = input.reaction === 'no' ? cleanReasons(input.reasons) : [];
+  if (input.reaction === 'yes') {
+    // A yes never carries reasons, whichever way it arrived: a stored row that
+    // said yes with reasons on it would skew every count in the admin report.
+    patch.reasons = [];
+    patch.comment = null;
+  } else if (input.source === 'form') {
+    // Keep any reason the member still has that this form could not show
+    // (an older key), so re-submitting to add a comment never erases it.
+    const shown = new Set<string>(PICK_REASONS.map((r) => r.key));
+    const kept = (await currentReasons(where)).filter((k) => !shown.has(k));
+    patch.reasons = [...new Set([...cleanReasons(input.reasons), ...kept])];
     patch.comment = typeof input.comment === 'string' ? input.comment.trim().slice(0, 1000) || null : null;
   }
   let q = createAdminClient().from('sourcing_sent').update(patch);

@@ -92,9 +92,29 @@ export function tenureOf(...values: (string | null | undefined)[]): Tenure {
 
 const FLAT = /\b(?:flat|apartment|maisonette|penthouse|studio|duplex)\b/i;
 
-/** Flat-like by the portal's type or the title: what "no flats" / "no houses" feedback keys on. */
+/**
+ * Flat-like by the portal's type or the title. Used by the suitability check,
+ * where an untyped property is deliberately treated as flat-like (and so as
+ * leasehold until the page says otherwise). Feedback rules must NOT use this:
+ * they need `propertyKind`, which keeps "unknown" separate from "house".
+ */
 export function isFlatLike(rawType: string | null | undefined, title: string | null | undefined): boolean {
   return FLAT.test(`${rawType ?? ''} ${title ?? ''}`);
+}
+
+const HOUSE = /\b(?:house|bungalow|cottage|terrace[d]?|semi|detached|villa|barn|farmhouse|mews|townhouse|chalet)\b/i;
+
+/**
+ * What kind of property this is, as far as the portal says. `unknown` is a
+ * real answer: a listing with no type and a bare address for a title is
+ * neither a flat nor a house, and a rule that guesses would send a member
+ * exactly what they asked us not to.
+ */
+export function propertyKind(rawType: string | null | undefined, title: string | null | undefined): 'flat' | 'house' | 'unknown' {
+  const text = `${rawType ?? ''} ${title ?? ''}`;
+  if (FLAT.test(text)) return 'flat';
+  if (HOUSE.test(text)) return 'house';
+  return 'unknown';
 }
 const ROOM = /house ?share|flat ?share|home ?share|\broom(?:s)? (?:to rent|to let|in a|in an|available|for rent)|\b(?:single|double|en-?suite) room\b|\blodgers?\b|\bbedsit\b|student room|\bshared (?:house|flat|accommodation)\b/i;
 const SHARED_OWNERSHIP = /shared[- ]ownership|shared[- ]equity|\b\d{1,2}\s?%\s*share\b|\bshare\b[^.]{0,20}\bof (?:a|the|this) (?:home|property|house|flat)|part[- ]buy[- ,]?part[- ]rent|resale share|rent to buy/i;
