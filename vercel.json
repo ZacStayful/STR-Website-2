@@ -10,6 +10,10 @@
 			"schedule": "0 6 * * *"
 		},
 		{
+			"path": "/api/internal/market-warm",
+			"schedule": "45 6 * * *"
+		},
+		{
 			"path": "/api/internal/sourcing",
 			"schedule": "0 7 * * *"
 		},

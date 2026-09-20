@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "../supabase/admin";
-import { getAreaCards } from "../market/cached";
+import { getAreaCardsWithin } from "../market/cached";
 import { parseMarketGoals, describeGoals, type MarketGoals } from "../market/goals";
 import { personaliseScore, personalInputFor } from "../market/personalise";
 import { areaCentroid } from "../market/area-centroids";
@@ -13,8 +13,9 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, spreadPick, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, applyCandidateFeedback, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import { resolveListing } from "./server";
+import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
 
@@ -31,7 +32,11 @@ import { siteUrl } from "../url";
 // (PMI listings, then an OnTheMarket results page) as house spend. Listings
 // first seen in the last week that the member has not been sent are priced
 // on area figures, filtered by the member's confirmed feedback, ranked by fit,
-// and the best one is emailed. The pick row is inserted BEFORE the send
+// and the best one that passes the short-let suitability check (no rooms,
+// no shared ownership, no leasehold without letting permission: see
+// suitability.ts) is emailed. A pick's listing page is read before the send
+// so the verdict comes from the page itself, not just the search card. The
+// pick row is inserted BEFORE the send
 // (status pending → sent / failed): the (user, url) primary key plus the
 // "sent today" guard mean an overlapping run or a crash mid-send can never
 // produce two picks. After a successful send the member is debited one
@@ -41,16 +46,20 @@ import { siteUrl } from "../url";
 // Entry points: /api/internal/sourcing (the cron, secret-gated) and the
 // admin page's "send me a test pick" / "dry run" buttons (session-gated).
 
+/** All budgets count from function entry: the route's maxDuration is 60 s and a pass must never be killed mid-send. */
 const TIME_BUDGET_MS = 50_000;
+/** How long to wait for the market snapshot; on a cold cache the build keeps running for the next pass. */
+const SNAPSHOT_WAIT_MS = 20_000;
 /** The query phase stops here so the send loop always gets time. */
-const QUERY_BUDGET_MS = 25_000;
-/** Photo hydration of picks (one page fetch each) stops here. */
-const HYDRATE_UNTIL_MS = 34_000;
+const QUERY_BUDGET_MS = 30_000;
+/** Page verification of picks (one page fetch per distinct listing) stops here. */
+const VERIFY_UNTIL_MS = 40_000;
 const NEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const FEEDBACK_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
-const PICKS_PER_EMAIL = 1;
-/** How far down a house-pick member's ranking the spread may reach. */
-const SPREAD_DEPTH = 10;
+/** How far down a member's ranking the pick may reach when better candidates are capped or unsuitable. */
+const SPREAD_DEPTH = 40;
+/** How many members may receive the same listing in one day (across passes). */
+const DAILY_LISTING_CAP = 3;
 const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
@@ -88,6 +97,7 @@ interface Member {
 }
 
 type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string };
+type Verdict = Exclude<Suitability, "unknown"> | "unverified";
 
 export interface RunOptions {
   /** Report who would get what; write and send nothing. */
@@ -112,23 +122,32 @@ export function sendingEnabled(): boolean {
  * the admin page (one member, or a dry run). The caller decides who may run it.
  */
 export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
+  const started = Date.now();
+  const elapsed = () => Date.now() - started;
+  const done = (result: RunResult): RunResult => {
+    // One line per pass in the Vercel logs: what was answered, verified, rejected and sent.
+    const lists = new Set(["skipped", "members", "wouldQuery", "wouldEmail"]);
+    const rest = Object.fromEntries(Object.entries(result.body).filter(([k]) => !lists.has(k)));
+    console.log("[sourcing] run", JSON.stringify({ status: result.status, ms: elapsed(), ...rest }));
+    return result;
+  };
   const { dry } = opts;
   const enabled = sendingEnabled();
   let admin;
   try {
     admin = createAdminClient();
   } catch {
-    return { status: 503, body: { error: "Storage not configured" } };
+    return done({ status: 503, body: { error: "Storage not configured" } });
   }
   const nowIso = new Date().toISOString();
   const todayIso = startOfTodayUtc().toISOString();
 
-  const cards = await getAreaCards().catch(() => []);
-  if (cards.length === 0) return { status: 503, body: { error: "Market data unavailable; nothing sent" } };
-  // The budgets start once the market snapshot is in hand: a cold snapshot
-  // build can take most of a minute and must not eat the query phase.
-  const started = Date.now();
-  const elapsed = () => Date.now() - started;
+  // A cold snapshot build (hundreds of PropertyData calls) can take most of a
+  // minute; wait a bounded time, then let it finish in the background for the
+  // next pass rather than be killed at maxDuration mid-send.
+  const cards = await getAreaCardsWithin(SNAPSHOT_WAIT_MS);
+  if (cards === null) return done({ status: 503, body: { error: "snapshot_warming", detail: "Market snapshot still building; the next pass will use it" } });
+  if (cards.length === 0) return done({ status: 503, body: { error: "Market data unavailable; nothing sent" } });
   const cardByCode = new Map(cards.map((c) => [c.code, c]));
   const price = pickPrice(await getUnitCostTable());
   const pickBasePence = price.basePence;
@@ -148,7 +167,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       .range(from, from + PAGE - 1);
     if (error) {
       console.error("[sourcing] profiles select failed:", error.message);
-      return { status: 500, body: { error: "Query failed" } };
+      return done({ status: 500, body: { error: "Query failed" } });
     }
     profiles.push(...((data ?? []) as ProfileRow[]));
     if ((data?.length ?? 0) < PAGE) break;
@@ -233,32 +252,34 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     members.push({ id: p.id, email: p.email, admin: isAdminEmail(p.email), goals, basis, firstEver: !p.sourcing_last_sent_at, queries, areaFit });
   }
 
-  // Shared query set, capped per run. Searches that serve a member's own
-  // filter go first (they are wanted by one member each and would otherwise
-  // sort last and starve when the budget runs out); house searches follow,
-  // most-wanted first, and the later cron passes finish them from cache.
-  const demand = new Map<string, { query: SourcingQuery; members: number; goals: boolean }>();
+  // Shared query set, capped per run. Searches that carry a member's own
+  // filter (their budget, bedrooms, kind, areas) go first: they are wanted by
+  // one member each and would otherwise sort last and starve when the budget
+  // runs out. House searches follow, most-wanted first, and the later cron
+  // passes finish them from cache.
+  const demand = new Map<string, { query: SourcingQuery; members: number; own: boolean }>();
   for (const m of members) {
     for (const q of m.queries) {
-      const d = demand.get(q.key) ?? { query: q, members: 0, goals: false };
+      const d = demand.get(q.key) ?? { query: q, members: 0, own: false };
       d.members += 1;
-      d.goals = d.goals || m.basis === "goals";
+      d.own = d.own || m.goals !== null;
       demand.set(q.key, d);
     }
   }
-  const queries = [...demand.values()].sort((a, b) => Number(b.goals) - Number(a.goals) || b.members - a.members).slice(0, maxQueries());
+  const queries = [...demand.values()].sort((a, b) => Number(b.own) - Number(a.own) || b.members - a.members).slice(0, maxQueries());
 
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, emails: 0, emailFailures: 0, chargedBasePence: 0, hydrated: 0, ranOutOfTime: false, pickBasePence };
+  const unsuitable: Partial<Record<UnsuitableReason, number>> = {};
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, unsuitable, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
-    return {
+    return done({
       status: 200,
       body: {
         ...summary,
         skipped,
-        wouldQuery: queries.map((q) => ({ key: q.query.key, members: q.members, goals: q.goals })),
+        wouldQuery: queries.map((q) => ({ key: q.query.key, members: q.members, own: q.own })),
         wouldEmail: members.map((m) => ({ user: m.id, email: m.email, basis: m.basis, firstEver: m.firstEver, queries: m.queries.map((q) => q.key) })),
       },
-    };
+    });
   }
 
   // ── Answer each query through the broker as house spend; remember every listing seen ──
@@ -304,17 +325,29 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   }
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
-  // ── One pick per member ──
-  // House-pick members share one pool, so the same listing is handed to at
-  // most PER_LISTING_CAP of them per run; a member's own filter keeps its
-  // true top pick.
-  const picks: { member: Member; pick: SourcedPick; candidates: number }[] = [];
-  const perUser: { user: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
+  // The same listing goes to at most DAILY_LISTING_CAP members a day, across
+  // every pass: seed the counter from today's rows (any status).
   const assigned = new Map<string, number>();
+  {
+    const { data: todayRows } = await admin.from("sourcing_sent").select("canonical_url").gte("sent_at", todayIso).range(0, PAGE - 1);
+    for (const r of (todayRows ?? []) as { canonical_url: string }[]) assigned.set(r.canonical_url, (assigned.get(r.canonical_url) ?? 0) + 1);
+  }
+  const reject = (reason: UnsuitableReason) => {
+    unsuitable[reason] = (unsuitable[reason] ?? 0) + 1;
+  };
+
+  // ── Candidates per member: new, unsent, within the query, not obviously unsuitable, ranked ──
+  // Pre-checked 'ok' listings rank ahead of 'unknown' ones (a leasehold flat
+  // whose page has not been read yet) so the page reads go to listings that
+  // are likely to pass.
+  type Ranked = SourcedPick & { precheck: "ok" | "unknown" };
+  const ranked = new Map<string, Ranked[]>();
+  const perUser: { user: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
+  const candidateCount = new Map<string, number>();
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
     const seen = new Set<string>();
-    const candidates: Candidate[] = [];
+    const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
     for (const q of m.queries) {
       for (const l of byQuery.get(q.key) ?? []) {
         if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) continue;
@@ -322,50 +355,67 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) continue;
         if (!withinQueryPrice(l, q)) continue;
         seen.add(l.canonicalUrl);
+        const precheck = suitabilityFromListing(l);
+        if (precheck !== "ok" && precheck !== "unknown") {
+          reject(precheck);
+          continue;
+        }
         const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
         const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
         const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
-        candidates.push({ listing: l, deal: dealForSourced(l, figures, m.goals?.finance ?? null), areaFit, areaName: card?.name ?? q.areaName });
+        candidates.push({ listing: l, deal: dealForSourced(l, figures, m.goals?.finance ?? null), areaFit, areaName: card?.name ?? q.areaName, precheck });
       }
     }
+    candidateCount.set(m.id, candidates.length);
     const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? []);
-    const ranked = rankPicks(kept, m.basis === "goals" ? PICKS_PER_EMAIL : SPREAD_DEPTH);
-    const pick = m.basis === "goals" ? ranked[0] : spreadPick(ranked, assigned);
-    if (!pick) {
+    const precheckOf = new Map(kept.map((c) => [c.listing.canonicalUrl, c.precheck]));
+    const list = rankPicks(kept, SPREAD_DEPTH).map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
+    const ok = list.filter((p) => p.precheck === "ok");
+    const unknown = list.filter((p) => p.precheck !== "ok");
+    if (ok.length + unknown.length === 0) {
       perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
       continue;
     }
-    picks.push({ member: m, pick, candidates: candidates.length });
+    ranked.set(m.id, [...ok, ...unknown]);
+  }
+  const withCandidates = members.filter((m) => ranked.has(m.id));
+
+  if (withCandidates.length > 0 && !isEmailConfigured()) {
+    for (const m of withCandidates) perUser.push({ user: m.id, basis: m.basis, candidates: candidateCount.get(m.id) ?? 0, sent: false, reason: "email_not_configured" });
+    return done({ status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } });
   }
 
-  if (picks.length > 0 && !isEmailConfigured()) {
-    for (const p of picks) perUser.push({ user: p.member.id, basis: p.member.basis, candidates: p.candidates, sent: false, reason: "email_not_configured" });
-    return { status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } };
-  }
-
-  // ── Credit: only members who would actually get a pick, in parallel chunks ──
-  const affordable: typeof picks = [];
-  for (const some of chunk(picks, 10)) {
-    const balances = await Promise.all(some.map((p) => (p.member.admin || pickBasePence <= 0 ? Promise.resolve(null) : getBalance(p.member.id).catch(() => null))));
-    some.forEach((p, i) => {
+  // ── Credit: only members who have a candidate, in parallel chunks ──
+  const affordable: Member[] = [];
+  for (const some of chunk(withCandidates, 10)) {
+    const balances = await Promise.all(some.map((m) => (m.admin || pickBasePence <= 0 ? Promise.resolve(null) : getBalance(m.id).catch(() => null))));
+    some.forEach((m, i) => {
       const bal = balances[i];
-      if (!p.member.admin && pickBasePence > 0 && (!bal || bal.spendableBasePence < pickBasePence)) {
-        perUser.push({ user: p.member.id, basis: p.member.basis, candidates: p.candidates, sent: false, reason: "no_credit" });
+      if (!m.admin && pickBasePence > 0 && (!bal || bal.spendableBasePence < pickBasePence)) {
+        perUser.push({ user: m.id, basis: m.basis, candidates: candidateCount.get(m.id) ?? 0, sent: false, reason: "no_credit" });
         return;
       }
-      affordable.push(p);
+      affordable.push(m);
     });
   }
 
-  // ── Photo hydration: one page fetch per distinct pick without an image, house-metered, while time allows ──
-  const hydrated = new Map<string, SourcedListing>();
-  for (const { pick } of affordable) {
-    const l = pick.listing;
-    if (l.photo || hydrated.has(l.canonicalUrl)) continue;
-    if (elapsed() > HYDRATE_UNTIL_MS) break;
+  // ── Verify each candidate against its listing page (one read per distinct listing, house-metered) ──
+  // The page carries what the search card does not: tenure, the shared-
+  // ownership flag and the description's line on short lets. The merged
+  // listing (photo, confirmed price, evidence) is what gets sent and stored,
+  // so tomorrow's pre-check answers without a fetch.
+  const verdicts = new Map<string, { verdict: Verdict; listing: SourcedListing }>();
+  const verify = async (l: SourcedListing): Promise<{ verdict: Verdict; listing: SourcedListing }> => {
+    const memo = verdicts.get(l.canonicalUrl);
+    if (memo) return memo;
+    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l };
     try {
-      const res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl));
-      if (!res.ok) continue;
+      let res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl));
+      // A snapshot cached before the parsers learned about tenure evidence is re-read once.
+      if (res.ok && res.snapshot.shortLetsPermitted === undefined && elapsed() <= VERIFY_UNTIL_MS) {
+        res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl, { refresh: true }));
+      }
+      if (!res.ok) return { verdict: "unverified", listing: l };
       const s = res.snapshot;
       const merged: SourcedListing = {
         ...l,
@@ -376,27 +426,72 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         bathrooms: s.bathrooms ?? l.bathrooms,
         price: s.price && s.price.period !== "night" ? { amount: s.price.amount, period: s.price.period } : l.price,
         rawType: s.rawType ?? l.rawType,
-        photo: s.photos[0] ?? null,
+        photo: s.photos[0] ?? l.photo,
+        tenure: s.tenure ?? l.tenure ?? null,
+        features: s.features.length > 0 ? s.features : (l.features ?? []),
+        priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
+        sharedOwnership: s.sharedOwnership ?? false,
+        shortLetsPermitted: s.shortLetsPermitted ?? null,
       };
-      hydrated.set(l.canonicalUrl, merged);
-      summary.hydrated += 1;
+      const verdict = suitabilityFromSnapshot(s, l.kind);
+      const out = { verdict, listing: merged };
+      verdicts.set(l.canonicalUrl, out);
+      summary.verified += 1;
       void admin.from("sourced_listings").update({ snapshot: merged }).eq("canonical_url", l.canonicalUrl).then(({ error }) => {
         if (error) console.warn("[sourcing] snapshot refresh failed:", error.message);
       });
+      return out;
     } catch (err) {
-      console.warn("[sourcing] hydration failed:", (err as Error)?.message ?? err);
+      console.warn("[sourcing] verification failed:", (err as Error)?.message ?? err);
+      return { verdict: "unverified", listing: l };
     }
+  };
+
+  // ── One pick per member: the best candidate that passes, under the daily cap ──
+  const picks: { member: Member; pick: SourcedPick; candidates: number }[] = [];
+  for (const m of affordable) {
+    const list = ranked.get(m.id) ?? [];
+    const candidates = candidateCount.get(m.id) ?? 0;
+    // A member's own filter is not capped (their pool is their own); house
+    // members share one pool, so capped listings are skipped unless nothing
+    // else is left.
+    const underCap = m.basis === "goals" ? list : list.filter((p) => (assigned.get(p.listing.canonicalUrl) ?? 0) < DAILY_LISTING_CAP);
+    const order = underCap.length > 0 ? underCap : list;
+    let chosen: SourcedPick | null = null;
+    let outOfTime = false;
+    for (const p of order) {
+      const { verdict, listing } = await verify(p.listing);
+      if (verdict === "ok" || (verdict === "unverified" && p.precheck === "ok")) {
+        chosen = { ...p, listing };
+        break;
+      }
+      if (verdict === "unverified") {
+        // Could not read the page and the card alone cannot clear it.
+        if (elapsed() > VERIFY_UNTIL_MS) {
+          outOfTime = true;
+          break;
+        }
+        continue;
+      }
+      reject(verdict);
+    }
+    if (!chosen) {
+      if (outOfTime) summary.ranOutOfTime = true;
+      perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: outOfTime ? "out_of_time" : "nothing_suitable" });
+      continue;
+    }
+    assigned.set(chosen.listing.canonicalUrl, (assigned.get(chosen.listing.canonicalUrl) ?? 0) + 1);
+    picks.push({ member: m, pick: chosen, candidates });
   }
 
   // ── Send: pending row first, then the email, then the charge ──
   const base = siteUrl();
-  for (const { member: m, pick: raw, candidates } of affordable) {
+  for (const { member: m, pick, candidates } of picks) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
       continue;
     }
-    const pick: SourcedPick = { ...raw, listing: hydrated.get(raw.listing.canonicalUrl) ?? raw.listing };
     const l = pick.listing;
     const token = newPickToken();
     const charge = m.admin ? 0 : pickBasePence;
@@ -444,5 +539,5 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (profErr) console.error("[sourcing] profile update failed:", profErr.message);
   }
 
-  return { status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } };
+  return done({ status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } });
 }

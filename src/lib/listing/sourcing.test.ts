@@ -74,6 +74,8 @@ test('parseOnTheMarketSearch reads sale and rent cards', () => {
   assert.equal(first.postcodeArea, 'NG');
   assert.ok(first.lat && first.lng);
   assert.ok(first.photo?.startsWith('https://'));
+  assert.ok(first.features?.some((f) => /^Tenure: Leasehold/.test(f)));
+  assert.equal(typeof (first.priceQualifier ?? ''), 'string');
   // No agent details survive.
   assert.ok(!JSON.stringify(sale).includes('telephone'));
 
@@ -87,7 +89,7 @@ test('fromPmiListings keeps only listings with a recognisable portal URL', () =>
   const out = fromPmiListings(
     {
       listings: [
-        { address: '1 High St, Nottingham', postcode: 'NG1 1AA', price: 250_000, bedrooms: 2, property_type: 'flat', url: 'https://www.rightmove.co.uk/properties/123#/?channel=RES_BUY' },
+        { address: '1 High St, Nottingham', postcode: 'NG1 1AA', price: 250_000, bedrooms: 2, property_type: 'flat', tenure: 'Leasehold', tags: ['Chain free', 42 as unknown as string], url: 'https://www.rightmove.co.uk/properties/123#/?channel=RES_BUY' },
         { address: '2 Low St', price: 300_000, url: 'https://example.com/x' },
         { address: '3 Mid St', price: 1200, bedrooms: 3, url: 'https://www.zoopla.co.uk/to-rent/details/456/' },
       ],
@@ -100,6 +102,8 @@ test('fromPmiListings keeps only listings with a recognisable portal URL', () =>
   assert.equal(out[0].canonicalUrl, 'https://www.rightmove.co.uk/properties/123');
   assert.equal(out[0].postcode, 'NG1 1AA');
   assert.equal(out[0].postcodeArea, 'NG');
+  assert.equal(out[0].tenure, 'Leasehold');
+  assert.deepEqual(out[0].features, ['Chain free']);
   assert.deepEqual(fromPmiListings(null, 'sale'), []);
 });
 

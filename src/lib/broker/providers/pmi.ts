@@ -21,7 +21,11 @@ export class PmiError extends Error {
 const PMI_UNITS: Record<string, string> = { '/valuations/str-estimate': 'str_estimate', '/str/market': 'str_market', '/listings': 'listings', '/account': 'account' };
 
 /**
- * PMI's free tier allows 2 requests per 10 s; one paced retry covers a burst.
+ * PMI's free tier allows 2 requests per 10 s. A 429 waits out a whole window
+ * once and retries; listings searches (the daily picks cron fires many back
+ * to back) are additionally spaced LISTINGS_INTERVAL_MS apart through one
+ * gate per instance, so a pass rarely trips the limit at all. The Starter
+ * tier lifts the limit; the pacing then costs a few seconds per pass.
  *
  * `/valuations/str-estimate` is the enhanced report's second opinion — the
  * one thing a customer pays extra FOR — so it belongs here as much as
@@ -30,8 +34,22 @@ const PMI_UNITS: Record<string, string> = { '/valuations/str-estimate': 'str_est
  * feature it was bought for.
  */
 const RATE_LIMIT_RETRY_PATHS = new Set(['/listings', '/valuations/str-estimate']);
-const RATE_LIMIT_WAIT_MS = 5_500;
-const RATE_LIMIT_MAX_WAIT_MS = 6_000;
+const PACED_PATHS = new Set(['/listings']);
+const LISTINGS_INTERVAL_MS = 5_100;
+const RATE_LIMIT_WAIT_MS = 10_500;
+const RATE_LIMIT_MAX_WAIT_MS = 11_000;
+let listingsGate: Promise<void> = Promise.resolve();
+let lastListingsAt = 0;
+
+function paceListings(): Promise<void> {
+  const turn = listingsGate.then(async () => {
+    const wait = lastListingsAt + LISTINGS_INTERVAL_MS - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    lastListingsAt = Date.now();
+  });
+  listingsGate = turn.catch(() => undefined);
+  return turn;
+}
 
 function retryAfterMs(res: Response): number {
   const header = Number(res.headers.get('retry-after'));
@@ -44,6 +62,7 @@ async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Rec
   if (!key) return null;
   const url = new URL(`${BASE}${path}`);
   for (const [k, v] of Object.entries(init.query ?? {})) if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
+  if (PACED_PATHS.has(path)) await paceListings();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {

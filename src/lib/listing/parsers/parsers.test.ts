@@ -26,6 +26,8 @@ test('rightmove sale page', () => {
   assert.equal(s.rawType, 'Apartment');
   assert.deepEqual(s.price, { amount: 220000, period: 'total' });
   assert.equal(s.tenure, 'leasehold');
+  assert.equal(s.sharedOwnership, false);
+  assert.equal(s.shortLetsPermitted, null);
   assert.equal(s.councilTaxBand, 'D');
   assert.ok(s.features.includes('Residents Parking'));
   assert.ok(s.photos[0]?.startsWith('https://media.rightmove.co.uk/'));

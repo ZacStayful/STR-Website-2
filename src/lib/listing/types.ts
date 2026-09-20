@@ -56,6 +56,13 @@ export interface ListingSnapshot {
   status?: ListingStatus;
   tenure?: string;
   councilTaxBand?: string;
+  /** The page flags the sale as shared ownership (Rightmove) or the text says so. */
+  sharedOwnership?: boolean;
+  /**
+   * What the description says about short-term letting: `true` permitted,
+   * `false` prohibited, `null` silent. The description itself is not kept.
+   */
+  shortLetsPermitted?: boolean | null;
   features: string[];
   photos: string[];
 

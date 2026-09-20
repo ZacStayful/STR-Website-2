@@ -9,6 +9,7 @@ import { cookies } from "next/headers";
 import { summarisePicks, cleanReasons, PICK_REASONS, type PickRow } from "@/lib/listing/picks";
 import { sendingEnabled } from "@/lib/listing/picks-run";
 import { sendTestPickAction, dryRunPicksAction } from "./actions";
+import { SUITABILITY_REASONS, isUnsuitableReason, type UnsuitableReason } from "@/lib/listing/suitability";
 
 const RUN_COOKIE = "sf_picks_run";
 
@@ -224,6 +225,7 @@ function RunResult({ run }: { run: LastRun }) {
   const skipped = Array.isArray(b.skipped) ? (b.skipped as { user: string; reason: string }[]) : [];
   const wouldEmail = Array.isArray(b.wouldEmail) ? (b.wouldEmail as { email?: string; basis: string; firstEver: boolean; queries: string[] }[]) : [];
   const n = (k: string) => (typeof b[k] === "number" ? (b[k] as number) : 0);
+  const unsuitable = Object.entries((b.unsuitable && typeof b.unsuitable === "object" ? b.unsuitable : {}) as Record<string, number>).filter((e): e is [UnsuitableReason, number] => isUnsuitableReason(e[0]) && e[1] > 0);
   const headline =
     typeof b.error === "string"
       ? `Failed: ${b.error}`
@@ -237,9 +239,10 @@ function RunResult({ run }: { run: LastRun }) {
       <p className="text-sm font-medium text-foreground">{run.kind === "test" ? "Test pick" : "Dry run"} · {new Date(run.at).toLocaleTimeString("en-GB")} · {headline}</p>
       {run.kind === "test" && (
         <p className="mt-1 text-muted-foreground">
-          searches answered {n("answered")} · unavailable {n("unavailable")} · listings {n("listings")} · candidates {members[0]?.candidates ?? 0} · emails {n("emails")} · failures {n("emailFailures")} · {n("ms")} ms
+          searches answered {n("answered")} · unavailable {n("unavailable")} · listings {n("listings")} · candidates {members[0]?.candidates ?? 0} · pages verified {n("verified")} · emails {n("emails")} · failures {n("emailFailures")} · {n("ms")} ms
         </p>
       )}
+      {unsuitable.length > 0 && <p className="mt-1 text-muted-foreground">Rejected as unsuitable for short lets: {unsuitable.map(([k, v]) => `${SUITABILITY_REASONS[k]} ${v}`).join(" · ")}</p>}
       {run.kind === "dry" && wouldEmail.length > 0 && (
         <ul className="mt-2 max-h-48 overflow-auto">
           {wouldEmail.slice(0, 60).map((w, i) => (

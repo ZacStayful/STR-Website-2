@@ -2,6 +2,7 @@ import type { ListingSnapshot, ListingStatus } from '../types.ts';
 import { unflatten } from '../devalue.ts';
 import { jsonAfter, metaContent, titleOf, parsePrice, findOutcode } from '../html.ts';
 import { toNum, toStr, strArray, statusFromText, baseSnapshot, type ParseContext } from './shared.ts';
+import { shortLetsAllowed, stripHtml } from '../suitability.ts';
 
 export const RIGHTMOVE_PARSER_VERSION = 1;
 
@@ -20,8 +21,9 @@ interface RmPropertyData {
   images?: unknown;
   status?: { published?: unknown; archived?: unknown };
   tags?: unknown;
-  text?: { pageTitle?: unknown; propertyPhrase?: unknown };
+  text?: { pageTitle?: unknown; propertyPhrase?: unknown; description?: unknown; shortDescription?: unknown };
   lettings?: { letType?: unknown; furnishType?: unknown } | null;
+  sharedOwnership?: { sharedOwnershipFlag?: unknown } | null;
 }
 
 /** Decodes `window.PAGE_MODEL` (flattened `data` string or a plain object). */
@@ -90,6 +92,15 @@ export function parseRightmove(html: string, ctx: ParseContext): ListingSnapshot
     const furnish = toStr(p.lettings.furnishType);
     if (furnish) snap.features.push(furnish);
   }
+  // Suitability evidence: the description is read here and dropped (never stored).
+  snap.sharedOwnership = false;
+  snap.shortLetsPermitted = null;
+  if (p) {
+    const description = stripHtml([toStr(p.text?.description), toStr(p.text?.shortDescription)].filter((s): s is string => Boolean(s)).join(' '));
+    snap.sharedOwnership = p.sharedOwnership?.sharedOwnershipFlag === true || /shared ownership/i.test(description);
+    snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features].join('. '));
+  }
+
   const images = Array.isArray(p?.images) ? (p.images as { url?: unknown }[]) : [];
   snap.photos = images.map((i) => toStr(i?.url)).filter((u): u is string => Boolean(u)).slice(0, 6);
   if (snap.photos.length === 0) {
