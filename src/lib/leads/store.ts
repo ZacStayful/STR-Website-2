@@ -5,6 +5,9 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { postcodeAreaOf } from '../listing/normalise';
 import { evaluateLead, type LeadRules, type LeadVerdict } from './rules';
 import { enqueueDelivery } from '../crm/deliver';
+import { sendLeadReportEmail } from '../email/lead-report';
+import { getFunnel } from '../funnels';
+import { siteUrl } from '../url';
 import type { AnalysisResult } from '../types';
 
 /**
@@ -130,7 +133,63 @@ export async function completeLead(input: {
     });
   }
 
+  // The prospect's own copy. Sent from here for the same reason the delivery
+  // is queued from here: the funnel route and the queue drain must not drift
+  // apart, and a third caller gets it for free.
+  //
+  // This is not a nicety. Without it the report lives at /r/<token>, is
+  // linked from the customer's CRM row, and is unreachable by the one person
+  // who asked for it — they read it once, close the tab, and it is gone.
+  //
+  // Sent whatever the verdict. A lead that missed the customer's filter did
+  // nothing wrong and cannot see the filter; withholding the report they
+  // asked for would be a strange way to treat them, and the customer is
+  // paying either way.
+  await emailReportToProspect(input.leadId).catch((err) => {
+    // Never fails the lead. The report is saved and the customer has it.
+    console.error('[leads] could not email the report:', err);
+  });
+
   return verdict;
+}
+
+/**
+ * Looks up what the email needs and sends it.
+ *
+ * Reads the lead back rather than taking the values as arguments: the report
+ * token is generated at capture and the brand lives on the funnel, so a
+ * caller would have to fetch both anyway — and one that passed the wrong
+ * token would send a prospect somebody else's report.
+ */
+async function emailReportToProspect(leadId: string): Promise<void> {
+  if (!hasServiceRole()) return;
+
+  const { data } = await createAdminClient()
+    .from('leads')
+    .select('email, address, report_token, user_id, funnel_id')
+    .eq('id', leadId)
+    .maybeSingle();
+  if (!data) return;
+
+  const row = data as {
+    email: string | null;
+    address: string | null;
+    report_token: string | null;
+    user_id: string;
+    funnel_id: string | null;
+  };
+  // No address to send to, or no token to send them: nothing to do.
+  if (!row.email || !row.report_token || !row.funnel_id) return;
+
+  const funnel = await getFunnel(row.user_id, row.funnel_id);
+  if (!funnel) return;
+
+  await sendLeadReportEmail({
+    to: row.email,
+    brand: funnel.brand,
+    reportUrl: siteUrl(`/r/${row.report_token}`),
+    address: row.address,
+  });
 }
 
 /** Marks a queued lead as failed-to-run so the drain cron can retry it. */

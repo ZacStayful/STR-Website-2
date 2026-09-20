@@ -15,9 +15,23 @@ export function isEmailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
-export async function sendEmail(params: { to: string; subject: string; html: string; text: string; headers?: Record<string, string> }): Promise<SendResult> {
+export async function sendEmail(params: {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  headers?: Record<string, string>;
+  /**
+   * Overrides the sender for a white-label funnel email. Build it with
+   * `brandedFrom` in ./from.ts, never by hand: the display name comes from a
+   * customer-supplied company name and goes straight into a header.
+   */
+  from?: string;
+  /** Where a reply goes. `safeReplyTo` in ./from.ts vets it. */
+  replyTo?: string;
+}): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.EMAIL_FROM;
+  const from = params.from ?? process.env.EMAIL_FROM;
   if (!apiKey || !from) {
     console.warn("[email] not configured (RESEND_API_KEY / EMAIL_FROM) — skipping send");
     return { sent: false, reason: "not_configured" };
@@ -26,7 +40,15 @@ export async function sendEmail(params: { to: string; subject: string; html: str
     const res = await fetch(RESEND_ENDPOINT, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [params.to], subject: params.subject, html: params.html, text: params.text, ...(params.headers ? { headers: params.headers } : {}) }),
+      body: JSON.stringify({
+        from,
+        to: [params.to],
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+        ...(params.replyTo ? { reply_to: params.replyTo } : {}),
+        ...(params.headers ? { headers: params.headers } : {}),
+      }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "<unreadable>");
