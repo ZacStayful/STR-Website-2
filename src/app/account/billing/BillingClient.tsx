@@ -375,6 +375,12 @@ function Usage({ initial }: { initial: { items: UsageItem[]; nextCursor: string 
                         ) : (
                           <span className="text-foreground">{it.description}</span>
                         )}
+                        {/* A funnel charge is somebody else's enquiry, not
+                            the member's own research. Marked so a column of
+                            them is scannable without reading each line. */}
+                        {it.funnelId && (
+                          <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">Lead</span>
+                        )}
                         {it.kind === "grant" && it.expiresAt && <span className="ml-2 text-xs text-muted-foreground">expires {fmtDate(it.expiresAt)}</span>}
                         {fromTopup && <span className="ml-2 text-xs text-muted-foreground">({formatGbp(it.basePence ?? 0)} at the top-up rate)</span>}
                       </td>

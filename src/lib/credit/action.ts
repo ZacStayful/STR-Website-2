@@ -19,9 +19,9 @@ export interface StartedAction {
   finish: () => Promise<void>;
 }
 
-export async function startAction(opts: { userId: string | null; admin?: boolean; action: string; maxBasePence?: number; oncePerAction?: boolean; actionId?: string; markupOverride?: number; requireCredit?: boolean }): Promise<StartedAction> {
+export async function startAction(opts: { userId: string | null; admin?: boolean; action: string; maxBasePence?: number; oncePerAction?: boolean; actionId?: string; markupOverride?: number; requireCredit?: boolean; funnelId?: string | null }): Promise<StartedAction> {
   const actionId = opts.actionId ?? newActionId();
-  const ctx: MeterContext = { userId: opts.userId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit };
+  const ctx: MeterContext = { userId: opts.userId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit, funnelId: opts.funnelId ?? null };
   let reservationId: string | null = null;
   if (opts.userId && !opts.admin && (opts.maxBasePence ?? 0) > 0) {
     try {

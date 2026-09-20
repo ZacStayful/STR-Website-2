@@ -168,6 +168,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       billedUserId: funnel.userId,
       markupOverride,
       requireCredit: true,
+      funnelId: funnel.id,
     });
   } catch (err) {
     await settleSpend(funnel.id, estimate.maxBasePence, 0);

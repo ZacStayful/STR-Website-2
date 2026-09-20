@@ -35,6 +35,16 @@ export interface MeterContext {
    * cost.
    */
   requireCredit?: boolean;
+  /**
+   * The funnel this spend belongs to, when it is a lead rather than the
+   * member's own work.
+   *
+   * Written onto each debit so `/account/billing` can tell the two apart.
+   * The rule that My reports and Leads never mix holds in storage,
+   * navigation and the API; the billing history was the last place both
+   * still read "Property report".
+   */
+  funnelId?: string | null;
 }
 
 const als = new AsyncLocalStorage<MeterContext>();

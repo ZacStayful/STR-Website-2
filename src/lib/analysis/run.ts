@@ -48,6 +48,15 @@ export interface AnalysisRunOptions {
   /** Price at this multiplier instead of each unit row's own (funnel leads: 2). */
   markupOverride?: number;
   /**
+   * The funnel this run belongs to, when it is a lead. Tags each debit so
+   * the billing history can tell a lead from the member's own research.
+   *
+   * Read by `reserveAnalysis` only. `runAnalysis` re-enters the context the
+   * reservation already built, so passing it there again would do nothing —
+   * the same is true of `markupOverride` above.
+   */
+  funnelId?: string | null;
+  /**
    * Refuse an unaffordable run even when CREDIT_ENFORCE is off. Public
    * callers must pass this: shadow mode is a safety net for members, not
    * permission for a stranger's request to spend a customer's money.
@@ -124,6 +133,7 @@ export async function reserveAnalysis(input: AnalysisInput, opts: AnalysisRunOpt
     maxBasePence: estimate.maxBasePence,
     markupOverride: opts.markupOverride,
     requireCredit: opts.requireCredit,
+    funnelId: opts.funnelId,
   });
   return { ctx: action.ctx, finish: action.finish, reportKind, maxBasePence: estimate.maxBasePence };
 }
