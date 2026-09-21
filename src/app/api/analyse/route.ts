@@ -206,19 +206,14 @@ export async function POST(request: Request) {
         if (effectiveEmail) {
           try {
             const { uploadPdfToMonday } = await import('@/lib/apis/monday');
-            const React = await import('react');
-            const { renderToBuffer } = await import('@react-pdf/renderer');
-            const { deriveReportData, buildPdfDeal, sanitiseAddressForFilename } = await import('@/lib/pdf/derive');
-            const { StayfulReport } = await import('@/lib/pdf/StayfulReport');
-            const data = deriveReportData(result);
-            data.deal = buildPdfDeal(result);
-            const element = React.createElement(StayfulReport, { data });
-            const buffer = await (renderToBuffer as (e: unknown) => Promise<Buffer>)(element);
-            const filename = `Stayful_Property_Analysis_${sanitiseAddressForFilename(result.property.address)}.pdf`;
+            // The shared renderer, not a hand-built element: this copy and the
+            // one the member downloads then cannot drift apart.
+            const { renderReportPdf, reportFilename } = await import('@/lib/pdf/render');
+            const buffer = await renderReportPdf(result, { preparedFor: effectiveEmail });
             await uploadPdfToMonday(
               { email: effectiveEmail, name: userName ?? undefined, mobile: userMobile ?? undefined },
               buffer,
-              filename,
+              reportFilename(result),
             );
           } catch (err) {
             console.error('[Monday] PDF upload error:', err);

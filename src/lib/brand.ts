@@ -4,6 +4,14 @@ export const BRAND = {
   tagline: "The decision engine for short-term rental",
   managementUrl: "https://stayful.co.uk",
   contactEmail: "hello@stayful.co.uk",
+  /** The address printed on the property report and its call to action. */
+  reportEmail: "info@stayful.co.uk",
+  /**
+   * Where the report's "book your call" button and QR code point. It was
+   * hardcoded in five places, in two different forms; this is the one that
+   * belongs on a report.
+   */
+  bookingUrl: "https://calendly.com/zac-stayful/call",
 } as const;
 
 export const TRUST = {

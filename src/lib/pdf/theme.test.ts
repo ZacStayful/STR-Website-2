@@ -5,7 +5,7 @@ import { pdfBrand, readableOnPdf, DEFAULT_PDF_BRAND, PDF_COLORS } from './theme.
 test('no brand means the members-only report is untouched', () => {
   assert.deepEqual(pdfBrand(null), DEFAULT_PDF_BRAND);
   assert.deepEqual(pdfBrand(undefined), DEFAULT_PDF_BRAND);
-  assert.equal(DEFAULT_PDF_BRAND.companyName, 'STAYFUL');
+  assert.equal(DEFAULT_PDF_BRAND.companyName, 'Stayful');
   assert.equal(DEFAULT_PDF_BRAND.primary, PDF_COLORS.DARK_GREEN);
 });
 
@@ -17,8 +17,8 @@ test('a partial brand fills the gaps rather than rendering blanks', () => {
 });
 
 test('an empty or whitespace name falls back rather than printing nothing', () => {
-  assert.equal(pdfBrand({ companyName: '   ' }).companyName, 'STAYFUL');
-  assert.equal(pdfBrand({ companyName: '' }).companyName, 'STAYFUL');
+  assert.equal(pdfBrand({ companyName: '   ' }).companyName, 'Stayful');
+  assert.equal(pdfBrand({ companyName: '' }).companyName, 'Stayful');
 });
 
 test('header text is derived so a brand colour cannot hide it', () => {
@@ -36,4 +36,26 @@ test('a malformed colour does not produce an unreadable header', () => {
 
 test('an explicit onPrimary is respected over the derived one', () => {
   assert.equal(pdfBrand({ primary: '#ffff00', onPrimary: '#ff0000' }).onPrimary, '#ff0000');
+});
+
+test("a customer's report never carries Stayful's booking link", () => {
+  // The whole point of the white-label chrome: a prospect reading a customer's
+  // report must not be handed a route to book with us instead.
+  const theirs = pdfBrand({ companyName: 'Northern Lets' });
+  assert.equal(theirs.bookingUrl, undefined);
+  assert.equal(theirs.ctaEmail, undefined);
+  // Page six drops the button and the QR entirely rather than inventing one.
+});
+
+test("Stayful's own report keeps its call to action", () => {
+  assert.equal(pdfBrand(null).bookingUrl, DEFAULT_PDF_BRAND.bookingUrl);
+  assert.equal(pdfBrand(null).ctaEmail, DEFAULT_PDF_BRAND.ctaEmail);
+  assert.match(DEFAULT_PDF_BRAND.bookingUrl as string, /^https:\/\/calendly\.com\//);
+  assert.equal(DEFAULT_PDF_BRAND.ctaEmail, 'info@stayful.co.uk');
+});
+
+test('a brand that supplies its own booking details keeps them', () => {
+  const b = pdfBrand({ companyName: 'Northern Lets', bookingUrl: 'https://cal.com/nl', ctaEmail: 'hi@nl.co.uk' });
+  assert.equal(b.bookingUrl, 'https://cal.com/nl');
+  assert.equal(b.ctaEmail, 'hi@nl.co.uk');
 });

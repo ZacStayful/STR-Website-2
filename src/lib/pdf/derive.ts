@@ -1,9 +1,8 @@
-import type {
-  AnalysisResult,
-  RiskLevel,
-  ShortLetComparable,
-} from "@/lib/types";
-import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "@/lib/scores";
+import type { AnalysisResult, ShortLetComparable } from "@/lib/types";
+import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "../scores.ts";
+import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./amenities.ts";
+import { splitAddress, formatIssued } from "./format.ts";
+import { safe } from "./design/charts/geometry.ts";
 import type { PdfBrand } from "./theme";
 
 const MONTH_NAMES = [
@@ -27,6 +26,12 @@ export interface PdfComparable {
   annual: number;
   rating: number;
   top: boolean;
+}
+
+export interface PdfAmenity {
+  name: string;
+  /** 1-5. How many nearby listings already have it. */
+  score: number;
 }
 
 export interface PdfDemandDriver {
@@ -82,7 +87,24 @@ export interface PdfDeal {
 }
 
 export interface PdfReportData {
-  property: { address: string; bedrooms: number; sleeps: number };
+  property: {
+    address: string;
+    bedrooms: number;
+    sleeps: number;
+    postcode: string;
+    /** Street line, with the town split off for the running header. */
+    addressLine: string;
+    /** Town, outward code, or empty when neither is known. */
+    locality: string;
+  };
+  /**
+   * `DD.MM.YYYY`, from the analysis's own creation date. Never the clock: the
+   * prospect's report link re-renders on every click, and a wall-clock date
+   * would change each time they opened it.
+   */
+  issuedAt: string | null;
+  /** Who the report was produced for. Omitted from the page when absent. */
+  preparedFor?: string;
   /**
    * Whose report this is. Absent for the members-only analyser, which keeps
    * the Stayful chrome; a funnel supplies its customer's.
@@ -159,15 +181,26 @@ export interface PdfReportData {
     };
   };
   amenities: {
-    essential: string[];
-    recommended: string[];
-    differentiators: string[];
+    essential: PdfAmenity[];
+    recommended: PdfAmenity[];
+    differentiators: PdfAmenity[];
+    /**
+     * The nightly-rate premium observed across the differentiators, or null
+     * when too few comparables sat either side of the split to say.
+     */
+    premium: { low: number; high: number } | null;
+    /** False when the comparables carried no amenity data and this is the
+     *  standing recommendation rather than a reading of this market. */
+    derived: boolean;
   };
   growth: {
     directBookingPctMonth36: number;
-    repeatCustomers: number;
+    /** Null when no comparable reported bookings, so stay length is unknown. */
+    repeatCustomers: number | null;
     platformFeeSavingsPct: number;
     extraMonthlyProfitYr3: number;
+    /** Measured from the comparables' booking counts. Null when unavailable. */
+    avgStayNights: number | null;
   };
   setup?: PdfSetupSnapshot;
 }
@@ -258,7 +291,7 @@ function formatDistance(km: number | undefined): string {
 }
 
 export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses): PdfReportData {
-  const { property, shortLet, longLet, financials, risk, demandDrivers, nearbyEvents, propertyValuation, dataQuality } = result;
+  const { property, shortLet, financials, risk, demandDrivers, nearbyEvents, propertyValuation, dataQuality } = result;
 
   // ── Overview ──
   const grossAnnual = financials.shortLetGrossAnnual;
@@ -346,35 +379,23 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
   const beatOccupancy = percentile(sortedOcc, 0.75) || compsBenchmark.avgOccupancy;
   const beatRevenue = Math.round(percentile(sortedAnnual, 0.75)) || compsBenchmark.avgAnnual;
 
-  // ── Demand drivers (map to 4-row table) ──
+  // ── Demand drivers ──
+  //
+  // Ordered transport, events, education, healthcare: that is roughly their
+  // strength as a reason a guest books, and the page reads left to right.
+  // Counts carry their unit so a card never reads just "3".
   const drivers: PdfDemandDriver[] = [];
-  if (demandDrivers.hospitals.length > 0) {
-    drivers.push({
-      type: "Healthcare Facilities",
-      nearest: demandDrivers.hospitals[0].name,
-      distance: formatDistance(demandDrivers.hospitals[0].distance),
-      count: String(demandDrivers.hospitals.length),
-      impact: "HIGH",
-    });
-  }
-  if (demandDrivers.universities.length > 0) {
-    drivers.push({
-      type: "Educational Institutions",
-      nearest: demandDrivers.universities[0].name,
-      distance: formatDistance(demandDrivers.universities[0].distance),
-      count: String(demandDrivers.universities.length),
-      impact: "HIGH",
-    });
-  }
-  const transport = [...demandDrivers.trainStations, ...demandDrivers.subwayStations, ...demandDrivers.airports]
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+  const transport = [...demandDrivers.trainStations, ...demandDrivers.busStations, ...demandDrivers.subwayStations, ...demandDrivers.airports]
     .sort((a, b) => (a.distance ?? 999) - (b.distance ?? 999));
   if (transport.length > 0) {
     drivers.push({
       type: "Transport Links",
       nearest: transport[0].name,
       distance: formatDistance(transport[0].distance),
-      count: String(transport.length),
-      impact: "HIGH",
+      count: plural(transport.length, "link", "links"),
+      impact: transport.length >= 3 ? "HIGH" : "MEDIUM",
     });
   }
   if (nearbyEvents.totalEvents > 0) {
@@ -383,8 +404,26 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
       type: "Events & Entertainment",
       nearest: nearest?.venue ?? "Local venues",
       distance: nearest?.distance !== null && nearest?.distance !== undefined ? formatDistance(nearest.distance) : "—",
-      count: `${nearbyEvents.totalEvents.toLocaleString()} events`,
+      count: plural(nearbyEvents.totalEvents, "event", "events"),
       impact: nearbyEvents.totalEvents >= 100 ? "HIGH" : "MEDIUM",
+    });
+  }
+  if (demandDrivers.universities.length > 0) {
+    drivers.push({
+      type: "Educational Institutions",
+      nearest: demandDrivers.universities[0].name,
+      distance: formatDistance(demandDrivers.universities[0].distance),
+      count: plural(demandDrivers.universities.length, "institution", "institutions"),
+      impact: "HIGH",
+    });
+  }
+  if (demandDrivers.hospitals.length > 0) {
+    drivers.push({
+      type: "Healthcare Facilities",
+      nearest: demandDrivers.hospitals[0].name,
+      distance: formatDistance(demandDrivers.hospitals[0].distance),
+      count: plural(demandDrivers.hospitals.length, "facility", "facilities"),
+      impact: "HIGH",
     });
   }
 
@@ -400,36 +439,107 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
     marketDemand: rf[3].score,
   };
 
-  // ── Amenities (Stayful defaults; future: compute from comps) ──
-  const amenities = {
-    essential: ["WiFi (5/5)", "Kitchen (5/5)"],
-    recommended: [
-      "Garden (3/5)",
-      "Workspace (2/5)",
-      "Free Parking (1/5)",
-      "Smart TV (1/5)",
-    ],
-    differentiators: ["Hot Tub", "EV Charger", "Pet Friendly", "Smart Lock", "Pool"],
-  };
+  // ── Amenities, read from the comparable set ──
+  //
+  // What the market already expects, and what would set this listing apart,
+  // is a fact about the neighbours rather than an opinion — so it comes from
+  // how many of them carry each amenity. Comparables stored before the
+  // amenity map was captured have nothing to read, and fall back to the
+  // standing recommendation rather than showing an empty section.
+  const amenityRead = scoreAmenities(
+    shortLet.comparables.map((c) => ({
+      amenities: c.amenities ?? null,
+      nightly: c.averageDailyRate,
+    })),
+  );
+  const asPdfAmenity = (a: AmenityStat) => ({ name: a.name, score: a.score });
+  const amenities = amenityRead
+    ? {
+        essential: amenityRead.essential.map(asPdfAmenity),
+        recommended: amenityRead.edge.map(asPdfAmenity),
+        differentiators: amenityRead.differentiators.map(asPdfAmenity),
+        premium: differentiatorPremium(amenityRead.differentiators),
+        derived: true,
+      }
+    : {
+        essential: [{ name: "WiFi", score: 5 }, { name: "Kitchen", score: 5 }],
+        recommended: [
+          { name: "Garden", score: 3 },
+          { name: "Workspace", score: 2 },
+          { name: "Free parking", score: 1 },
+          { name: "Smart TV", score: 1 },
+        ],
+        differentiators: [
+          { name: "Hot tub", score: 1 },
+          { name: "EV charger", score: 1 },
+          { name: "Pet friendly", score: 1 },
+          { name: "Self check-in", score: 1 },
+          { name: "Pool", score: 1 },
+        ],
+        premium: null,
+        derived: false,
+      };
 
-  // ── Growth (Stayful business defaults) ──
+  // ── Growth, scaled to this property ──
+  //
+  // The direct-booking share is the 30-50% band the location page quotes,
+  // positioned by this property's own direct-booking score. The fee saved is
+  // simply the fee the owner is actually paying.
+  const directBookingPct = Math.round(30 + (directBookingScore / 100) * 20);
+  const netMonthly = netAnnual / 12;
+  const extraMonthlyProfitYr3 = Math.round(netMonthly * (platformPct / 100) * (directBookingPct / 100));
+
+  // Average stay length from the comparables' real booking counts: booked
+  // nights divided by bookings. Without it there is no honest way to turn
+  // occupancy into a number of guests.
+  const stayLengths = shortLet.comparables
+    .map((c) => {
+      const bookings = safe(c.bookings);
+      const nights = safe(c.daysAvailable) * safe(c.occupancyRate);
+      return bookings > 0 && nights > 0 ? nights / bookings : null;
+    })
+    .filter((n): n is number => n !== null && n >= 1 && n <= 30);
+  const avgStayNights = stayLengths.length > 0
+    ? stayLengths.reduce((a, b) => a + b, 0) / stayLengths.length
+    : null;
+
+  // Repeat guests over three years. Every input is measured except the repeat
+  // rate, which tracks the direct-booking score: the same things that make a
+  // location easy to book direct make guests easy to win back.
+  const repeatRate = 0.20 + (directBookingScore / 100) * 0.15;
+  const annualStays = avgStayNights
+    ? (365 * Math.max(0, Math.min(1, shortLet.occupancyRate))) / avgStayNights
+    : null;
+  const repeatCustomers = annualStays
+    ? Math.round(3 * annualStays * repeatRate)
+    : null;
+
   const growth = {
-    directBookingPctMonth36: 50,
-    repeatCustomers: 126,
-    platformFeeSavingsPct: 15,
-    extraMonthlyProfitYr3: Math.round((netAnnual / 12) * 0.15 * 0.80),
+    directBookingPctMonth36: directBookingPct,
+    repeatCustomers,
+    platformFeeSavingsPct: platformPct,
+    extraMonthlyProfitYr3,
+    avgStayNights: avgStayNights ? Math.round(avgStayNights * 10) / 10 : null,
   };
 
   const annualDiff = netAnnual - ltlNet;
   const monthlyDiff = Math.round(annualDiff / 12);
   const percentUplift = ltlNet > 0 ? Math.round((annualDiff / ltlNet) * 100) : 0;
 
+  // The geocoder's town when the analysis captured one; otherwise the address
+  // is parsed, which is what older saved reports rely on.
+  const parsed = splitAddress(property.address, property.postcode);
+
   return {
     property: {
       address: property.address,
       bedrooms: property.bedrooms,
       sleeps: property.guests,
+      postcode: property.postcode,
+      addressLine: parsed.line1,
+      locality: property.locality ?? parsed.locality,
     },
+    issuedAt: formatIssued(result.createdAt) ?? formatIssued(result.updatedAt),
     overview: {
       grossRevenue: grossAnnual,
       netRevenue: netAnnual,

@@ -6,6 +6,11 @@ export interface PropertyInput {
   postcode: string;
   bedrooms: number;
   guests: number;
+  /**
+   * The town, from the geocoder. Optional: analyses saved before this was
+   * captured simply lack it, and the PDF falls back to parsing the address.
+   */
+  locality?: string;
 }
 
 // ─── Short-Term Let Data ──────────────────────────────────────────
@@ -24,6 +29,17 @@ export interface ShortLetComparable {
   daysAvailable: number;
   thumbnailUrl?: string;   // Airbnb listing cover photo (from bounds enrichment)
   amenityCount: number;    // count of amenities listed on the property
+  /**
+   * The raw amenity map, kept so the report can work out which amenities are
+   * expected in this market and which would set a listing apart. Optional:
+   * comparables stored before this was captured only have the count.
+   */
+  amenities?: Record<string, boolean>;
+  /**
+   * Bookings over the last twelve months. Combined with occupancy this gives a
+   * real average stay length, rather than assuming one.
+   */
+  bookings?: number;
 }
 
 // ─── V2 Scenarios (worst/base/best) ─────────────────────────────

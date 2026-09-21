@@ -46,3 +46,6 @@ scripts/calibration-results.json
 extension/dist
 extension/dev-key.pem
 extension/*.zip
+
+# sample PDFs from scripts/render-sample-pdf.mjs
+/.tmp

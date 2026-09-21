@@ -13,15 +13,22 @@ export const runtime = "nodejs";
  * It previously accepted any POST from anyone, which let a stranger spend our
  * CPU rendering arbitrary payloads.
  */
-async function authorised(request: Request): Promise<boolean> {
+interface Caller {
+  ok: boolean;
+  /** The signed-in member's address, for the report cover. Never a prospect's:
+   *  a funnel download is anonymous as far as this route is concerned. */
+  email?: string;
+}
+
+async function authorised(request: Request): Promise<Caller> {
   const token = new URL(request.url).searchParams.get("f");
-  if (token) return Boolean(await funnelByToken(token));
+  if (token) return { ok: Boolean(await funnelByToken(token)) };
   try {
     const supabase = await createSupabaseServerClient();
     const { data } = await supabase.auth.getUser();
-    return Boolean(data.user);
+    return { ok: Boolean(data.user), email: data.user?.email ?? undefined };
   } catch {
-    return false;
+    return { ok: false };
   }
 }
 
@@ -57,7 +64,8 @@ interface PdfRequestBody extends AnalysisResult {
 }
 
 export async function POST(request: Request) {
-  if (!(await authorised(request))) {
+  const caller = await authorised(request);
+  if (!caller.ok) {
     return new Response("Not authorised", { status: 401 });
   }
 
@@ -73,7 +81,12 @@ export async function POST(request: Request) {
   }
 
   const brand = await brandFor(request);
-  const buffer = await renderReportPdf(body, { brand, expenses: body.expenses, setup: body.setup });
+  const buffer = await renderReportPdf(body, {
+    brand,
+    expenses: body.expenses,
+    setup: body.setup,
+    preparedFor: caller.email,
+  });
   const filename = reportFilename(body, brand);
 
   return new Response(new Uint8Array(buffer), {

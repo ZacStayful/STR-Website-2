@@ -162,7 +162,7 @@ export async function runAnalysis(
       const floorAreaPromise = getFloorArea(property.postcode, property.address, property.bedrooms);
 
       // Geocoding first — short-let needs coordinates for nearby listings.
-      let coordinates: { lat: number; lng: number };
+      let coordinates: { lat: number; lng: number; locality?: string };
       try {
         coordinates = await geocodePromise;
       } catch (err) {
@@ -391,7 +391,10 @@ export async function runAnalysis(
       const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm) : null;
 
       const result: AnalysisResult = {
-        property,
+        // The geocoder knows the town; the form only ever had a postcode.
+        property: coordinates.locality
+          ? { ...property, locality: coordinates.locality }
+          : property,
         coordinates,
         shortLet,
         longLet,
