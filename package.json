@@ -9,7 +9,8 @@
     "lint": "eslint",
     "build:extension": "node extension/build.mjs",
     "package:extension": "node extension/package.mjs",
-    "test": "node --test 'src/**/*.test.ts'"
+    "test": "node --test 'src/**/*.test.ts'",
+    "pdf:sample": "node scripts/render-sample-pdf.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.106.0",

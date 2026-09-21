@@ -4,20 +4,10 @@ import { PDF_COLORS, DEFAULT_PDF_BRAND, type PdfBrand } from "../theme";
 
 const C = PDF_COLORS;
 
-export const formatGbp = (value: number): string =>
-  `£${Math.round(value).toLocaleString("en-GB")}`;
-
-export const formatGbpSigned = (value: number): string => {
-  const abs = Math.abs(Math.round(value)).toLocaleString("en-GB");
-  const sign = value >= 0 ? "+" : "−";
-  return `${sign}£${abs}`;
-};
-
-export const formatPercent = (value: number): string =>
-  `${Math.round(value * 100)}%`;
-
-export const formatRating = (value: number): string =>
-  value > 0 ? `${value.toFixed(1)} ★` : "—";
+// These moved to ../format so they can be unit-tested — a test cannot import a
+// .tsx file. Re-exported here because the deal sheet and the area report have
+// imported them from this module since before the report was redesigned.
+export { formatGbp, formatGbpSigned, formatPercent, formatRating } from "../format";
 
 const chromeStyles = StyleSheet.create({
   headerBar: {

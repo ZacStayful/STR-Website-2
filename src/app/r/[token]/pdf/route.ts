@@ -22,7 +22,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   if (!lead) return new Response('Not found', { status: 404 });
 
   const brand = await pdfBrandForFunnel(lead.brand);
-  const buffer = await renderReportPdf(lead.result, { brand });
+  const buffer = await renderReportPdf(lead.result, {
+    brand,
+    preparedFor: lead.email ?? undefined,
+  });
 
   return new Response(new Uint8Array(buffer), {
     status: 200,

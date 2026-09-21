@@ -1,3 +1,5 @@
+import { BRAND } from "../brand.ts";
+
 export const PDF_COLORS = {
   DARK_GREEN: "#5f8257",
   DARK_GREEN_2: "#64826c",
@@ -42,13 +44,26 @@ export interface PdfBrand {
    * no timeout, so one slow host would hang a report.
    */
   logoDataUri?: string;
+  /**
+   * Where the report's call to action sends someone. Deliberately never
+   * defaulted for a supplied brand: a white-label report carrying Stayful's
+   * booking link would be exactly the leak this module exists to prevent.
+   * Absent means the page drops the button and the QR code.
+   */
+  bookingUrl?: string;
+  /** The reply-to on the call to action. Absent means no email line. */
+  ctaEmail?: string;
 }
 
 export const DEFAULT_PDF_BRAND: PdfBrand = {
-  companyName: "STAYFUL",
-  contactLine: "© 2026 Stayful · stayful.co.uk · 07471 321 997",
+  // Sentence case: page six reads "How Stayful grows your returns", and the
+  // chrome uppercases it where the design calls for that.
+  companyName: "Stayful",
+  contactLine: `stayful.co.uk · ${BRAND.reportEmail}`,
   primary: PDF_COLORS.DARK_GREEN,
   onPrimary: PDF_COLORS.WHITE,
+  bookingUrl: BRAND.bookingUrl,
+  ctaEmail: BRAND.reportEmail,
 };
 
 /**
@@ -77,5 +92,8 @@ export function pdfBrand(input: Partial<PdfBrand> | null | undefined): PdfBrand 
     primary,
     onPrimary: input.onPrimary ?? readableOnPdf(primary),
     logoDataUri: input.logoDataUri,
+    // Not filled in from the default: see the note on PdfBrand.bookingUrl.
+    bookingUrl: input.bookingUrl,
+    ctaEmail: input.ctaEmail,
   };
 }

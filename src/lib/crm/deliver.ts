@@ -182,7 +182,7 @@ async function pdfFor(
   if (providerId !== 'monday' || !lead.result) return null;
   try {
     const brand = funnel ? await pdfBrandForFunnel(funnel.brand) : undefined;
-    return await renderReportPdf(lead.result, { brand });
+    return await renderReportPdf(lead.result, { brand, preparedFor: lead.email ?? undefined });
   } catch (err) {
     // A failed render must not cost the customer the lead itself: the item
     // still goes, without its attachment.

@@ -6,9 +6,18 @@
 
 import { meter } from '../credit/meter.ts';
 
-export async function geocodePostcode(
-  postcode: string,
-): Promise<{ lat: number; lng: number }> {
+export interface GeocodeResult {
+  lat: number;
+  lng: number;
+  /**
+   * The town this postcode sits in, when Google reports one. The PDF's running
+   * header reads "<address> · <town>"; older analyses have no locality stored
+   * and fall back to parsing the address string.
+   */
+  locality?: string;
+}
+
+export async function geocodePostcode(postcode: string): Promise<GeocodeResult> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
     throw new Error('GOOGLE_PLACES_API_KEY is not set in environment variables.');
@@ -35,7 +44,17 @@ export async function geocodePostcode(
 
   const { lat, lng } = data.results[0].geometry.location;
 
-  return { lat, lng };
+  // `postal_town` is the name people actually use for where they live;
+  // `locality` and the county are progressively worse stand-ins.
+  const components = (data.results[0].address_components ?? []) as Array<{
+    long_name: string;
+    types: string[];
+  }>;
+  const pick = (type: string) => components.find((c) => c.types.includes(type))?.long_name;
+  const locality =
+    pick('postal_town') ?? pick('locality') ?? pick('administrative_area_level_2');
+
+  return { lat, lng, ...(locality ? { locality } : {}) };
 }
 
 const REVERSE_GEOCODE_TIMEOUT_MS = 6_000;

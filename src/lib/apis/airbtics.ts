@@ -1211,6 +1211,10 @@ function buildDataFromReportComps(
       listingAge,
       daysAvailable: c.active_days_count_ltm ?? 0,
       amenityCount: Object.values(c.amenities ?? {}).filter(Boolean).length,
+      // Kept, not just counted: the report derives which amenities this market
+      // expects from how many nearby listings have each one.
+      ...(c.amenities ? { amenities: c.amenities } : {}),
+      ...(typeof c.no_of_bookings_ltm === 'number' ? { bookings: c.no_of_bookings_ltm } : {}),
     };
   });
 

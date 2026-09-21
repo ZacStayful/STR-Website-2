@@ -18,6 +18,8 @@ import type { AnalysisResult } from '../types';
 
 export interface LeadReport {
   result: AnalysisResult;
+  /** Printed on the report cover. Null when the funnel did not collect one. */
+  email: string | null;
   brand: FunnelBrand;
   /** So the page can render exactly as the funnel that produced it did. */
   funnelToken: string;
@@ -37,13 +39,14 @@ export async function leadByReportToken(token: string): Promise<LeadReport | nul
 
   const { data, error } = await createAdminClient()
     .from('leads')
-    .select('result, funnel_id, funnels ( public_token, brand, report_depth )')
+    .select('result, email, funnel_id, funnels ( public_token, brand, report_depth )')
     .eq('report_token', token)
     .maybeSingle();
   if (error || !data) return null;
 
   const row = data as unknown as {
     result: AnalysisResult | null;
+    email: string | null;
     funnel_id: string | null;
     // A to-one embed comes back as an object at runtime, but the client types
     // it as an array. Accept both rather than betting on one.
@@ -54,6 +57,7 @@ export async function leadByReportToken(token: string): Promise<LeadReport | nul
   const funnel = Array.isArray(row.funnels) ? row.funnels[0] ?? null : row.funnels;
   return {
     result: row.result,
+    email: row.email ?? null,
     brand: parseBrand(funnel?.brand),
     funnelToken: funnel?.public_token ?? '',
     reportDepth: funnel?.report_depth === 'enhanced' ? 'enhanced' : 'standard',

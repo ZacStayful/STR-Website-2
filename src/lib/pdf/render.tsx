@@ -22,11 +22,19 @@ export interface RenderOptions {
   brand?: PdfBrand;
   expenses?: PdfExpenses;
   setup?: Parameters<typeof buildSetupSnapshot>[0];
+  /**
+   * Who the report was produced for, printed on the cover. The analysis does
+   * not carry an email, so each caller supplies the one it knows: the
+   * signed-in member, the lead who filled in the funnel, or nothing.
+   */
+  preparedFor?: string;
 }
 
 export async function renderReportPdf(result: AnalysisResult, opts: RenderOptions = {}): Promise<Buffer> {
   const data = deriveReportData(result, opts.expenses);
   data.brand = opts.brand;
+  // Left off the page entirely when unknown, never as a placeholder.
+  if (opts.preparedFor) data.preparedFor = opts.preparedFor;
   data.deal = buildPdfDeal(result);
   if (opts.setup) {
     const snap = buildSetupSnapshot(opts.setup);
@@ -55,6 +63,11 @@ export async function pdfBrandForFunnel(brand: FunnelBrand): Promise<PdfBrand> {
     contactLine: [name, brand.replyToEmail].filter(Boolean).join(" · "),
     primary: brand.primary ?? undefined,
     logoDataUri: (await logoDataUri(brand.logoUrl)) ?? undefined,
+    // The customer's own reply-to, so the report's call to action reaches
+    // them. `bookingUrl` is deliberately left unset: a funnel has no booking
+    // link to give, and ours must never appear on their report — page six
+    // drops the button and the QR code rather than inventing either.
+    ctaEmail: brand.replyToEmail ?? undefined,
   });
 }
 
