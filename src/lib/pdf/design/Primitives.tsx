@@ -113,8 +113,12 @@ export function DotMeter({ score, max = 5 }: { score: number; max?: number }) {
 }
 
 /**
- * A tick. Drawn rather than typeset: neither DM Sans nor Helvetica carries
- * U+2713, so a checkmark character would come out as a blank box.
+ * A tick, drawn rather than typeset.
+ *
+ * The design's ticks are thin, even strokes, and a path gives exact control
+ * over weight and cap where a glyph would inherit the surrounding font's.
+ * It also sidesteps JetBrains Mono, which has no U+2713 — a tick set beside
+ * mono label text would silently fall back to another face.
  */
 export function Tick({ size = 7, color = C.INK }: { size?: number; color?: string }) {
   return (

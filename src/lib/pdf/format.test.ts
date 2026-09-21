@@ -19,7 +19,8 @@ test('money and percentages format as they always did', () => {
 });
 
 test('the new report prints ratings without a star', () => {
-  // Neither DM Sans nor Helvetica carries U+2605; it would render as a blank box.
+  // The approved design shows ratings bare. Inter has U+2605; this is a
+  // design decision rather than a font limitation.
   assert.equal(formatRatingPlain(4.8), '4.8');
   assert.equal(formatRatingPlain(5), '5.0');
   assert.equal(formatRatingPlain(0), '—');

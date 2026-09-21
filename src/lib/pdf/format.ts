@@ -19,13 +19,19 @@ export const formatGbpSigned = (value: number): string => {
 
 export const formatPercent = (value: number): string => `${Math.round(value * 100)}%`;
 
-/** Legacy: the star is kept for the deal sheet and area report. */
+/**
+ * Kept for the deal sheet and the area report, which import it through
+ * `components/Chrome.tsx`. Neither currently calls it — the property report
+ * was its last caller — and note those documents render in Helvetica, which
+ * has no U+2605, so the star would come out as a blank box if one did.
+ */
 export const formatRating = (value: number): string =>
   value > 0 ? `${value.toFixed(1)} ★` : "—";
 
 /**
- * The new report prints ratings bare. Neither DM Sans nor Helvetica carries
- * U+2605, so a star would render as a blank box.
+ * The property report prints ratings bare, because the approved design does:
+ * the market page shows "4.8", not "4.8 ★". Inter carries U+2605 perfectly
+ * well — this is a design decision, not a font limitation.
  */
 export const formatRatingPlain = (value: number): string =>
   value > 0 ? value.toFixed(1) : "—";
