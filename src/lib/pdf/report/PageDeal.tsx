@@ -41,7 +41,7 @@ export function PageDeal({
               <Card key={m.label} style={{ flex: 1 }}>
                 <Text style={T.label}>{m.label.toUpperCase()}</Text>
                 <Text style={[T.figureMd, { marginTop: 5 }]}>{m.value}</Text>
-                {m.sub ? <Text style={[T.body, { marginTop: 3, color: C.MUTED }]}>{m.sub}</Text> : null}
+                {m.sub ? <Text style={[T.body, { marginTop: 3, color: C.TEXT_MUTED }]}>{m.sub}</Text> : null}
               </Card>
             ))}
           </View>
@@ -84,7 +84,7 @@ export function PageDeal({
             </Text>
           </Link>
         ) : null}
-        <Text style={[T.body, { marginTop: 6, color: C.MUTED, lineHeight: 1.4 }]}>{deal.note}</Text>
+        <Text style={[T.body, { marginTop: 6, color: C.TEXT_MUTED, lineHeight: 1.4 }]}>{deal.note}</Text>
       </View>
     </Sheet>
   );

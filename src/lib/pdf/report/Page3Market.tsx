@@ -159,7 +159,7 @@ export function Page3Market({
                 {i > 0 ? <View style={{ height: 0.6, backgroundColor: C.CREAM, opacity: 0.2 }} /> : null}
                 <View style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
                   <Text style={T.bodyOnDark}>{k}</Text>
-                  <Text style={[T.bodyOnDark, { fontWeight: 700 }]}>{v}</Text>
+                  <Text style={[T.bodyOnDark, { fontWeight: 600 }]}>{v}</Text>
                 </View>
               </View>
             ))}

@@ -107,7 +107,7 @@ export function Page6Plan({
             <Card key={label} style={{ flex: 1 }}>
               <Text style={[T.figureLg, { color: RAMP[0] }]}>{figure}</Text>
               <Text style={[T.bodyBold, { marginTop: 5 }]}>{label}</Text>
-              <Text style={[T.body, { marginTop: 3, color: C.MUTED, lineHeight: 1.4 }]}>{sub}</Text>
+              <Text style={[T.body, { marginTop: 3, color: C.TEXT_MUTED, lineHeight: 1.4 }]}>{sub}</Text>
             </Card>
           ))}
         </View>
@@ -134,7 +134,7 @@ export function Page6Plan({
         <View style={{ backgroundColor: C.INK, borderRadius: 3, padding: 18, flexDirection: "row", gap: 18 }}>
           <View style={{ flex: 1 }}>
             <Text style={T.labelOnDark}>NEXT STEP · FREE 30-MINUTE CALL</Text>
-            <Text style={[T.bodyOnDark, { fontSize: 16, fontWeight: 700, marginTop: 6, lineHeight: 1.3 }]}>
+            <Text style={[T.bodyOnDark, { fontSize: 16, fontWeight: 600, marginTop: 6, lineHeight: 1.3 }]}>
               Book your Airbnb Profitability Action Plan
             </Text>
             <View style={{ marginTop: 9, gap: 5 }}>

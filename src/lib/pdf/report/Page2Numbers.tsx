@@ -17,9 +17,17 @@ import type { PdfReportData } from "../derive";
  * would look comparable; drawn together the difference is the argument.
  */
 
-/** One source of truth for the cost colours, used by both the bar and the table. */
+/**
+ * One source of truth for the cost colours, used by both the bar and the
+ * swatch beside each table row.
+ *
+ * What the owner keeps is the darkest, and each cost is lighter than the one
+ * before: the eye reads the kept share first, which is the point of the page.
+ * ACCENT is not used here — it is the green for dark panels, and on the page
+ * it sits too close to the brand green to separate two adjacent segments.
+ */
 const SEGMENTS = {
-  net: C.ACCENT,
+  net: RAMP[1],
   platform: RAMP[2],
   management: RAMP[3],
   cleaning: RAMP[4],

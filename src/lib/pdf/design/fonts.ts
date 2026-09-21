@@ -6,6 +6,10 @@ export { FONT_FILES, FONT_DIR, fontPath } from "./font-files";
 /**
  * Registers the report's two typefaces.
  *
+ * These are the website's own typefaces — Inter and JetBrains Mono, at the
+ * weights src/lib/marketing-fonts.ts loads — so the report and the site set
+ * type identically.
+ *
  * react-pdf cannot use `next/font` — it needs real font files at render time —
  * so the TTFs are committed under this folder and pinned into each serverless
  * bundle by `outputFileTracingIncludes` in next.config.ts. They live in `src/`
@@ -42,13 +46,14 @@ export function pdfFonts(): PdfFonts {
       if (!p) throw new Error(`missing font file: ${f}`);
       return p;
     });
-    const [sansRegular, sansBold, monoRegular, monoMedium] = paths;
+    const [sansRegular, sansMedium, sansSemiBold, monoRegular, monoMedium] = paths;
 
     Font.register({
       family: "ReportSans",
       fonts: [
         { src: sansRegular, fontWeight: 400 },
-        { src: sansBold, fontWeight: 700 },
+        { src: sansMedium, fontWeight: 500 },
+        { src: sansSemiBold, fontWeight: 600 },
       ],
     });
     Font.register({

@@ -93,7 +93,7 @@ export function Page4Location({
         <Ring value={directBookingScore} label="/ 100" />
         <View style={{ flex: 1 }}>
           <Text style={T.labelOnDark}>{`DIRECT BOOKING POTENTIAL · ${band.label}`}</Text>
-          <Text style={[T.bodyOnDark, { fontSize: 13, fontWeight: 700, marginTop: 5, lineHeight: 1.35 }]}>
+          <Text style={[T.bodyOnDark, { fontSize: 13, fontWeight: 600, marginTop: 5, lineHeight: 1.35 }]}>
             {`By year 3, properties here typically ${band.sentence}.`}
           </Text>
           <Text style={[T.bodyOnDark, { marginTop: 5 }]}>

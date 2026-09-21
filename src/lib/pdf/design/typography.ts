@@ -2,7 +2,7 @@ import { C, SIZE, TRACK } from "./tokens";
 import { pdfFonts } from "./fonts";
 
 /**
- * The report's text roles.
+ * The report's text roles, set in the website's own typefaces.
  *
  * The design uses exactly two voices: a letterspaced uppercase monospace for
  * anything that labels something, and a grotesque for anything that says
@@ -26,7 +26,7 @@ const mono = (size: number, letterSpacing: number, color: string, weight: 400 | 
   color,
 });
 
-const sans = (size: number, weight: 400 | 700, color: string) => ({
+const sans = (size: number, weight: 400 | 500 | 600, color: string) => ({
   fontFamily: F.sans,
   fontWeight: weight,
   fontSize: size,
@@ -41,25 +41,25 @@ export const T = {
   labelOnDark: mono(SIZE.label, TRACK.label, C.CREAM),
   /** Running header, footer, masthead meta. */
   meta: mono(SIZE.meta, TRACK.meta, C.INK),
-  metaMuted: mono(SIZE.meta, TRACK.meta, C.MUTED),
+  metaMuted: mono(SIZE.meta, TRACK.meta, C.TEXT_MUTED),
   /** Table column headings. */
-  tableHead: mono(SIZE.label, TRACK.label, C.MUTED),
+  tableHead: mono(SIZE.label, TRACK.label, C.TEXT_MUTED),
   /** Axis ticks and other very small mono. */
-  micro: mono(SIZE.micro, TRACK.meta, C.MUTED),
+  micro: mono(SIZE.micro, TRACK.meta, C.TEXT_MUTED),
 
   /** The page's one big statement. */
-  display: sans(SIZE.display, 700, C.INK),
+  display: sans(SIZE.display, 600, C.INK),
   /** Section headlines. */
-  headline: sans(SIZE.headline, 700, C.INK),
+  headline: sans(SIZE.headline, 600, C.INK),
   /** The single explanatory line under a headline. */
   lead: sans(SIZE.lead, 400, C.INK),
   body: sans(SIZE.body, 400, C.INK),
   bodyOnDark: sans(SIZE.body, 400, C.CREAM),
-  bodyBold: sans(SIZE.body, 700, C.INK),
+  bodyBold: sans(SIZE.body, 600, C.INK),
 
   /** Figures, in three sizes. */
-  figureXl: sans(SIZE.figureXl, 700, C.CREAM),
-  figureLg: sans(SIZE.figureLg, 700, C.INK),
-  figureMd: sans(SIZE.figureMd, 700, C.INK),
-  figureAccent: sans(SIZE.figureLg, 700, C.ACCENT),
+  figureXl: sans(SIZE.figureXl, 600, C.CREAM),
+  figureLg: sans(SIZE.figureLg, 600, C.INK),
+  figureMd: sans(SIZE.figureMd, 600, C.INK),
+  figureAccent: sans(SIZE.figureLg, 600, C.ACCENT),
 } as const;

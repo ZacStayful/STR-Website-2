@@ -8,9 +8,17 @@ import path from "node:path";
 
 export const FONT_DIR = path.join(process.cwd(), "src", "lib", "pdf", "fonts");
 
+/**
+ * The same two families the website loads (see src/lib/marketing-fonts.ts),
+ * at the same weights: Inter 400/500/600 and JetBrains Mono 400/500. Inter
+ * stops at 600 on the site, so the report's headings are semibold rather than
+ * bold — matching the site matters more than matching the heavier headline in
+ * the reference PDF.
+ */
 export const FONT_FILES = [
-  "DMSans-Regular.ttf",
-  "DMSans-Bold.ttf",
+  "Inter-Regular.ttf",
+  "Inter-Medium.ttf",
+  "Inter-SemiBold.ttf",
   "JetBrainsMono-Regular.ttf",
   "JetBrainsMono-Medium.ttf",
 ] as const;

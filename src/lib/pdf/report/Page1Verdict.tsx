@@ -120,7 +120,7 @@ export function Page1Verdict({
           <View style={{ marginTop: 6, marginBottom: 4 }}>
             <Meter value={overview.occupancy * 100} width={92} />
           </View>
-          <Text style={[T.body, { color: C.MUTED }]}>
+          <Text style={[T.body, { color: C.TEXT_MUTED }]}>
             {`Market average ${formatPercent(overview.marketOccupancy)}`}
           </Text>
         </StatCard>

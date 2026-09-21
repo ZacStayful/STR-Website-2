@@ -33,12 +33,17 @@ test('the files are real TrueType, not an error page or a web format', () => {
   }
 });
 
-test('both weights of both families are registered', () => {
-  // react-pdf throws "Font family not registered" if a style asks for a weight
-  // that was never registered, so the set has to stay complete.
-  assert.equal(FONT_FILES.length, 4);
-  assert.ok(FONT_FILES.some((f) => f.startsWith('DMSans-Regular')));
-  assert.ok(FONT_FILES.some((f) => f.startsWith('DMSans-Bold')));
-  assert.ok(FONT_FILES.some((f) => f.startsWith('JetBrainsMono-Regular')));
-  assert.ok(FONT_FILES.some((f) => f.startsWith('JetBrainsMono-Medium')));
+test('the report ships the same faces and weights as the website', () => {
+  // src/lib/marketing-fonts.ts loads Inter 400/500/600 and JetBrains Mono
+  // 400/500. react-pdf throws "Font family not registered" for a weight that
+  // was never registered, so this set has to stay complete and in step.
+  assert.equal(FONT_FILES.length, 5);
+  for (const expected of [
+    'Inter-Regular', 'Inter-Medium', 'Inter-SemiBold',
+    'JetBrainsMono-Regular', 'JetBrainsMono-Medium',
+  ]) {
+    assert.ok(FONT_FILES.some((f) => f.startsWith(expected)), `${expected} is missing`);
+  }
+  // Inter stops at 600 on the site, so nothing here may imply a bold face.
+  assert.ok(!FONT_FILES.some((f) => f.includes('Bold') && !f.includes('SemiBold')));
 });

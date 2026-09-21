@@ -159,7 +159,7 @@ export function StatCard({
       <Text style={T.label}>{label.toUpperCase()}</Text>
       <Text style={[T.figureLg, { marginTop: 5 }]}>{value}</Text>
       {children}
-      {sub ? <Text style={[T.body, { marginTop: 4, color: C.MUTED }]}>{sub}</Text> : null}
+      {sub ? <Text style={[T.body, { marginTop: 4, color: C.TEXT_MUTED }]}>{sub}</Text> : null}
     </Card>
   );
 }
