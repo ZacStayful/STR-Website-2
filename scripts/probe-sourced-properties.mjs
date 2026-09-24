@@ -60,7 +60,15 @@ for (const cohort of DEFAULT_COHORTS) {
       continue;
     }
     if (body.status === 'error') {
-      console.log(`  ${slug}: rejected — ${body.message ?? 'no message'}`);
+      const message = String(body.message ?? 'no message');
+      // Out of credits is an account problem, not a wrong list name — saying
+      // "rejected" for both would send you renaming slugs that were fine.
+      if (/plan limit|api credits?|quota|exceeded|unauthori[sz]ed|invalid key|api key|subscription/i.test(message)) {
+        console.log(`  ACCOUNT: ${message}`);
+        console.log('  Nothing to learn about slugs or fields until the account can serve this endpoint.');
+        process.exit(1);
+      }
+      console.log(`  ${slug}: slug rejected — ${message}`);
       continue;
     }
     const rows = body.properties ?? body.data ?? body.results ?? body.result ?? [];
