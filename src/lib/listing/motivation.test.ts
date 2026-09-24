@@ -101,13 +101,29 @@ test('a new agent only counts when we knew the old one', () => {
   // Learning the agent for the first time is not the seller changing it — that
   // is decided by the caller, which is why the fact is a boolean.
   assert.ok(!fired({ agentChanged: false }).includes('relisted_new_agent'));
-  assert.equal(
-    motivationFromListing(listing({ agentHash: 'abc' }), { thresholdDays: 150, previousAgentHash: null, now: NOW }).fired.includes('relisted_new_agent'),
-    false,
-  );
-  assert.ok(
-    motivationFromListing(listing({ agentHash: 'abc' }), { thresholdDays: 150, previousAgentHash: 'xyz', now: NOW }).fired.includes('relisted_new_agent'),
-  );
+  const relisted = (previousAgentHash: string | null) =>
+    motivationFromListing(listing({ agentHash: 'kEy1.nowAgentDigestAAAAA' }), { thresholdDays: 150, previousAgentHash, now: NOW }).fired.includes(
+      'relisted_new_agent',
+    );
+  assert.equal(relisted(null), false);
+  assert.ok(relisted('kEy1.oldAgentDigestAAAAA'));
+  // Same agent, same key: nothing has changed.
+  assert.equal(relisted('kEy1.nowAgentDigestAAAAA'), false);
+  // Different key: the digests cannot be compared, so the signal stays silent
+  // rather than firing for every property at once after a key rotation.
+  assert.equal(relisted('kEy2.oldAgentDigestAAAAA'), false);
+});
+
+test('a page read against the stored agent is what the daily pick actually compares', () => {
+  // picks-run.ts scores the fetched page, not the search card, so the snapshot
+  // path is the one that has to honour previousAgentHash. It reads the digest
+  // off the snapshot and the previous one off the row it is about to overwrite.
+  const page = snapshot({ agentHash: 'kEy1.nowAgentDigestAAAAA' });
+  const seen = (previousAgentHash: string | null) =>
+    motivationFromSnapshot(page, 'sale', { thresholdDays: 150, previousAgentHash, now: NOW }).fired.includes('relisted_new_agent');
+  assert.ok(seen('kEy1.oldAgentDigestAAAAA'));
+  assert.equal(seen('kEy1.nowAgentDigestAAAAA'), false);
+  assert.equal(seen(null), false);
 });
 
 // ── Sale wording ──

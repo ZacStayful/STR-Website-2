@@ -97,7 +97,7 @@ test('the agent is reduced to a digest, never stored by name', () => {
   process.env.AGENT_HASH_KEY = 'test-key';
   try {
     const sale = parseOnTheMarketSearch(fixture('onthemarket-search-sale.html'), 'sale');
-    assert.match(sale[0].agentHash!, /^[A-Za-z0-9_-]{22}$/);
+    assert.match(sale[0].agentHash!, /^[A-Za-z0-9_-]{4}\.[A-Za-z0-9_-]{22}$/);
     // Two listings from the same branch must match, or a relist looks like a new agent.
     assert.equal(sale[0].agentHash, sale[1].agentHash);
     assert.ok(!JSON.stringify(sale).toLowerCase().includes('example agent'));

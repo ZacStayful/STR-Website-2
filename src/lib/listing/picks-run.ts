@@ -632,19 +632,33 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // ownership flag and the description's line on short lets. The merged
   // listing (photo, confirmed price, evidence) is what gets sent and stored,
   // so tomorrow's pre-check answers without a fetch.
-  const verdicts = new Map<string, { verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null }>();
-  const verify = async (l: SourcedListing): Promise<{ verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null }> => {
+  // `previousAgentHash` is the agent digest the candidate arrived with, read
+  // before the merge below overwrites it — the stored row's for anything seen
+  // on an earlier run, today's search card for anything new. Only the path
+  // that actually read a page carries one, because with no fresh digest there
+  // is nothing to compare against.
+  //
+  // Card and page digests are never compared against each other, which would
+  // be meaningless: of the page parsers only Rightmove reads an agent at all,
+  // and the two card sources are OnTheMarket (whose page yields none, so the
+  // pair is always half-known) and PMI (which yields none itself). Every pair
+  // that can fire is therefore one Rightmove page against another.
+  type Verified = { verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null; previousAgentHash: string | null };
+  const verdicts = new Map<string, Verified>();
+  const verify = async (l: SourcedListing): Promise<Verified> => {
     const memo = verdicts.get(l.canonicalUrl);
     if (memo) return memo;
-    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l, snapshot: null };
+    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l, snapshot: null, previousAgentHash: null };
     try {
       let res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl));
       // A snapshot cached before the parsers learned about tenure evidence is re-read once.
       if (res.ok && res.snapshot.shortLetsPermitted === undefined && elapsed() <= VERIFY_UNTIL_MS) {
         res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl, { refresh: true }));
       }
-      if (!res.ok) return { verdict: "unverified", listing: l, snapshot: null };
+      if (!res.ok) return { verdict: "unverified", listing: l, snapshot: null, previousAgentHash: null };
       const s = res.snapshot;
+      // Read before the merge below folds it into `merged.agentHash`.
+      const previousAgentHash = l.agentHash ?? null;
       const merged: SourcedListing = {
         ...l,
         title: s.title || l.title,
@@ -668,7 +682,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Liveness before suitability: a sold or let-agreed listing is not a pick
       // however well it scores. The search card cannot know this — only the page can.
       const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
-      const out = { verdict, listing: merged, snapshot: s };
+      const out = { verdict, listing: merged, snapshot: s, previousAgentHash };
       verdicts.set(l.canonicalUrl, out);
       summary.verified += 1;
       void admin.from("sourced_listings").update({ snapshot: merged }).eq("canonical_url", l.canonicalUrl).then(({ error }) => {
@@ -677,7 +691,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       return out;
     } catch (err) {
       console.warn("[sourcing] verification failed:", (err as Error)?.message ?? err);
-      return { verdict: "unverified", listing: l, snapshot: null };
+      return { verdict: "unverified", listing: l, snapshot: null, previousAgentHash: null };
     }
   };
 
@@ -695,7 +709,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     let chosen: SourcedPick | null = null;
     let outOfTime = false;
     for (const p of order) {
-      const { verdict, listing, snapshot } = await verify(p.listing);
+      const { verdict, listing, snapshot, previousAgentHash } = await verify(p.listing);
       // A listing from the back catalogue has usually dropped out of the feed
       // long ago, so "we could not read the page" is not good enough: it may
       // have sold months back. Only a page we actually read can clear it.
@@ -711,6 +725,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               areaMedianDays: areaMedianDays.get(`${listing.kind}|${listing.postcodeArea ?? ""}`) ?? null,
               firstSeenAt: firstSeenIso(listing.canonicalUrl),
               cohort: lookupCohorts(cohortIndex, { uprn: listing.uprn, postcode: listing.postcode, address: listing.address }),
+              // The page we just read against the agent the stored row carried:
+              // a property back on with someone new is a seller out of patience.
+              previousAgentHash,
               now: runNow,
             })
           : p.motivation ?? null;
