@@ -323,3 +323,13 @@ export function meetsMotivationBar(m: Motivation, bar: MotivationBar): boolean {
   if (bar.areaRelative && bar.areaMedianKnown && !m.fired.includes('slower_than_area')) return false;
   return true;
 }
+
+/** Reads back a stored verdict. Anything unrecognised is dropped rather than shown. */
+export function parseMotivation(raw: unknown): Motivation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const fired = Array.isArray(o.fired) ? o.fired.filter(isMotivationSignal) : [];
+  if (fired.length === 0) return null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(100, v) : 0);
+  return { score: num(o.score), firmScore: num(o.firmScore), fired };
+}

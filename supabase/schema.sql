@@ -1390,3 +1390,10 @@ create index if not exists sourced_listings_area_kind_idx
 -- src/lib/listing/picks-server.ts is a fixed select, so a missing column fails
 -- the whole query and takes /picks and /p/[token] down with it.
 alter table public.sourcing_sent add column if not exists relaxation jsonb;
+
+-- The motivation signals that fired for this pick, as they were claimed in the
+-- email. Stored rather than recomputed so the picks page can never disagree
+-- with what the member was actually told: a recomputation would be missing the
+-- area median from the run that produced it, and would quietly drop a reason.
+-- Same deployment rule as above — column first, then the code.
+alter table public.sourcing_sent add column if not exists motivation jsonb;

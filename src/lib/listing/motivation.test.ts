@@ -319,3 +319,26 @@ test('slow for the area is required only when the area is knowable', () => {
   const reallySlow = judgeMotivation(facts({ age: { days: 200, source: 'portal' }, areaMedianDays: 60 }));
   assert.ok(meetsMotivationBar(reallySlow, bar({ areaRelative: true, areaMedianKnown: true })));
 });
+
+// ── Reading a stored verdict back ──
+
+import { parseMotivation } from './motivation.ts';
+
+test('a stored verdict survives the round trip', () => {
+  const m = judgeMotivation(facts({ age: { days: 200, source: 'portal' }, text: 'Chain-free' }));
+  assert.deepEqual(parseMotivation(JSON.parse(JSON.stringify(m))), m);
+});
+
+test('a verdict with nothing in it is not shown at all', () => {
+  for (const bad of [null, undefined, 'x', 42, {}, { fired: [] }, { fired: ['not_a_signal'] }]) {
+    assert.equal(parseMotivation(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('signals we no longer recognise are dropped, not rendered raw', () => {
+  const m = parseMotivation({ score: 50, firmScore: 30, fired: ['long_on_market', 'retired_signal'] })!;
+  assert.deepEqual(m.fired, ['long_on_market']);
+  // A score out of range cannot leak into the UI either.
+  assert.equal(parseMotivation({ score: 9999, firmScore: -5, fired: ['chain_free'] })!.score, 100);
+  assert.equal(parseMotivation({ score: 9999, firmScore: -5, fired: ['chain_free'] })!.firmScore, 0);
+});
