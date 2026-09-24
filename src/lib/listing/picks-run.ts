@@ -14,7 +14,7 @@ import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
-import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, type Motivation } from "./motivation";
+import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import type { Deal } from "./deal";
@@ -74,6 +74,15 @@ const DAILY_LISTING_CAP = 3;
 const GONE_STATUSES: ReadonlySet<string> = new Set(["sold", "let_agreed", "removed"]);
 /** How many already-verified stand-ins to keep per member in case the send collides. */
 const MAX_ALTERNATES = 3;
+/**
+ * The back catalogue a motivated filter may reach into, per run. The whole
+ * point of the filter is listings that have been sitting a long time, and those
+ * are by definition older than the new-listing window every other pick obeys.
+ * Capped and ordered by last sighting so the sweep rotates instead of grinding
+ * over the same rows, and floored so it never trawls years of dead stock.
+ */
+const MOTIVATED_POOL_LIMIT = 600;
+const MOTIVATED_POOL_FLOOR_MS = 18 * 30 * 24 * 60 * 60 * 1000;
 const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
@@ -345,6 +354,50 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   }
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
+  // ── The back catalogue, for members who asked for motivated sellers ──
+  // Every other pick has to be new; this filter is the one case where old is the
+  // point. These rows are read from what we have already stored, so they cost a
+  // query rather than a provider call.
+  const motivatedMembers = members.filter((m) => m.goals && m.goals.motivation.mode !== "off");
+  const olderCandidates = new Map<string, SourcedListing[]>();
+  if (motivatedMembers.length > 0) {
+    const wanted = new Set<string>();
+    for (const m of motivatedMembers) for (const q of m.queries) wanted.add(`${q.kind}|${q.area}`);
+    const areas = [...new Set([...wanted].map((k) => k.split("|")[1]))];
+    const { data: oldRows, error: oldErr } = await admin
+      .from("sourced_listings")
+      .select("canonical_url, kind, postcode_area, snapshot, first_seen_at")
+      .in("postcode_area", areas)
+      .lt("first_seen_at", new Date(cutoff).toISOString())
+      .gt("first_seen_at", new Date(Date.now() - MOTIVATED_POOL_FLOOR_MS).toISOString())
+      .order("last_seen_at", { ascending: false })
+      .limit(MOTIVATED_POOL_LIMIT);
+    if (oldErr) console.error("[sourcing] motivated pool query failed:", oldErr.message);
+    const olderUrls: string[] = [];
+    for (const r of (oldRows ?? []) as { canonical_url: string; kind: string; postcode_area: string | null; snapshot: SourcedListing; first_seen_at: string }[]) {
+      if (!r.snapshot || typeof r.snapshot !== "object") continue;
+      const key = `${r.kind}|${r.postcode_area ?? ""}`;
+      if (!wanted.has(key)) continue;
+      olderCandidates.set(key, [...(olderCandidates.get(key) ?? []), r.snapshot]);
+      olderUrls.push(r.canonical_url);
+      // These rows predate the window `firstSeen` was built for, so seed it here
+      // or their age would fall back to "unknown" and read as brand new.
+      if (!firstSeen.has(r.canonical_url)) firstSeen.set(r.canonical_url, new Date(r.first_seen_at).getTime());
+    }
+    // The dedupe set above only reaches back eight days, which is all the fresh
+    // pool can collide with. A back-catalogue listing may have been emailed
+    // months ago, and (user_id, canonical_url) is unique — so without this the
+    // insert fails and the member loses their pick for the day.
+    for (const someUrls of chunk(olderUrls, URL_CHUNK)) {
+      for (const someIds of chunk(motivatedMembers.map((m) => m.id), ID_CHUNK)) {
+        const { data: past } = await admin.from("sourcing_sent").select("user_id, canonical_url").in("user_id", someIds).in("canonical_url", someUrls);
+        for (const r of (past ?? []) as { user_id: string; canonical_url: string }[]) {
+          sentByUser.set(r.user_id, new Set([...(sentByUser.get(r.user_id) ?? []), r.canonical_url]));
+        }
+      }
+    }
+  }
+
   // What "slow" means round here. Computed from the listings each query already
   // returned, so it costs nothing: no provider call, no extra read. Areas with
   // too thin a sample answer null, and the area test is then skipped rather than
@@ -389,42 +442,53 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
     const seen = new Set<string>();
     const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
-    for (const q of m.queries) {
-      for (const l of byQuery.get(q.key) ?? []) {
-        if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) continue;
-        if ((firstSeen.get(l.canonicalUrl) ?? Date.now()) < cutoff) continue;
-        if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) continue;
-        if (!withinQueryPrice(l, q)) continue;
-        seen.add(l.canonicalUrl);
-        const precheck = suitabilityFromListing(l);
-        if (precheck !== "ok" && precheck !== "unknown") {
-          reject(precheck);
-          continue;
-        }
-        const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
-        const motivation = motiv
-          ? motivationFromListing(l, {
-              thresholdDays: thresholdDaysFor(motiv, l.kind),
-              areaMedianDays: median,
-              firstSeenAt: firstSeenIso(l.canonicalUrl),
-              now: runNow,
-            })
-          : null;
-        const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
-        const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
-        const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
-        candidates.push({
-          listing: l,
-          deal: dealForSourced(l, figures, m.goals?.finance ?? null),
-          areaFit,
-          areaName: card?.name ?? q.areaName,
-          precheck,
-          motivation,
-          motivationQualifies: motiv && motivation
-            ? meetsMotivationBar(motivation, { mode: motiv.mode, areaRelative: motiv.areaRelative, areaMedianKnown: median !== null })
-            : undefined,
-        });
+    const consider = (l: SourcedListing, q: SourcingQuery, fromBackCatalogue: boolean) => {
+      if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) return;
+      // Every ordinary pick has to be new. The back-catalogue pool is the one
+      // exception, because a listing that has been sitting for months is exactly
+      // what its member asked for.
+      if (!fromBackCatalogue && (firstSeen.get(l.canonicalUrl) ?? Date.now()) < cutoff) return;
+      if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) return;
+      if (!withinQueryPrice(l, q)) return;
+      seen.add(l.canonicalUrl);
+      const precheck = suitabilityFromListing(l);
+      if (precheck !== "ok" && precheck !== "unknown") {
+        reject(precheck);
+        return;
       }
+      const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
+      const motivation = motiv
+        ? motivationFromListing(l, {
+            thresholdDays: thresholdDaysFor(motiv, l.kind),
+            areaMedianDays: median,
+            firstSeenAt: firstSeenIso(l.canonicalUrl),
+            now: runNow,
+          })
+        : null;
+      const qualifies = motiv && motivation
+        ? meetsMotivationBar(motivation, { mode: motiv.mode, areaRelative: motiv.areaRelative, areaMedianKnown: median !== null })
+        : undefined;
+      // Reaching back is only justified for a listing that genuinely qualifies.
+      // Under "prefer" nothing is otherwise excluded, and without this the
+      // filter would quietly start posting stale stock with nothing to say for
+      // itself — the opposite of what the member asked for.
+      if (fromBackCatalogue && !meetsMotivationBar(motivation ?? NO_MOTIVATION, { mode: "only", areaRelative: motiv?.areaRelative ?? false, areaMedianKnown: median !== null })) return;
+      const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
+      const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
+      const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
+      candidates.push({
+        listing: l,
+        deal: dealForSourced(l, figures, m.goals?.finance ?? null),
+        areaFit,
+        areaName: card?.name ?? q.areaName,
+        precheck,
+        motivation,
+        motivationQualifies: qualifies,
+      });
+    };
+    for (const q of m.queries) {
+      for (const l of byQuery.get(q.key) ?? []) consider(l, q, false);
+      if (motiv) for (const l of olderCandidates.get(`${q.kind}|${q.area}`) ?? []) consider(l, q, true);
     }
     candidateCount.set(m.id, candidates.length);
     const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
@@ -531,7 +595,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     let outOfTime = false;
     for (const p of order) {
       const { verdict, listing, snapshot } = await verify(p.listing);
-      if (verdict === "ok" || (verdict === "unverified" && p.precheck === "ok")) {
+      // A listing from the back catalogue has usually dropped out of the feed
+      // long ago, so "we could not read the page" is not good enough: it may
+      // have sold months back. Only a page we actually read can clear it.
+      const fromBackCatalogue = (firstSeen.get(p.listing.canonicalUrl) ?? Date.now()) < cutoff;
+      const cardAloneWillDo = p.precheck === "ok" && !fromBackCatalogue;
+      if (verdict === "ok" || (verdict === "unverified" && cardAloneWillDo)) {
         // The card could not see the description, the listing history or the let
         // terms. Now that the page has been read, score it again so the reasons
         // in the email are the best ones we have rather than the cheapest.

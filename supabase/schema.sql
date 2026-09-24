@@ -1361,3 +1361,20 @@ begin
   return v_deleted;
 end;
 $$;
+
+-- =========================
+-- Motivated sellers and landlords
+-- =========================
+-- The motivated-seller filter is the one pick that is allowed to be old: a
+-- listing that has been sitting for months is the whole point of it. Its pool
+-- reads sourced_listings by area and kind, bounded below by an age floor and
+-- ordered by last sighting, so this index carries the filtering columns and
+-- leaves only a small set to sort.
+--
+-- Nothing else is needed. The member's filter rides inside the existing
+-- profiles.market_goals jsonb, and the listing-level fields (listedDate, uprn,
+-- addedOrReduced, agentHash) ride inside sourced_listings.snapshot — so no
+-- column is added to profiles, and ACCESS_COLUMNS in src/lib/access.ts is
+-- untouched.
+create index if not exists sourced_listings_area_kind_idx
+  on public.sourced_listings (postcode_area, kind, first_seen_at desc);
