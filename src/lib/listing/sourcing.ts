@@ -12,10 +12,13 @@ import { escapeHtml as esc } from '../email/escape.ts';
 import { scriptJsonById, parsePrice, findPostcode, findOutcode } from './html.ts';
 import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
+import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
 import type { MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
+import type { Motivation } from './motivation.ts';
+import type { MotivationMode } from '../market/goals.ts';
 
 export type SourcingKind = 'sale' | 'rent';
 
@@ -45,6 +48,19 @@ export interface SourcedListing {
   sharedOwnership?: boolean | null;
   /** From the fetched page's description: permission (`true`), prohibition (`false`), silent / not read (`null`). */
   shortLetsPermitted?: boolean | null;
+  /**
+   * Motivation evidence. All optional: rows stored before these existed read
+   * with `?? null`, and the score treats a missing value as no signal rather
+   * than as a negative one.
+   */
+  /** The portal's own listing date (ISO). Their clock, not our first sighting. */
+  listedDate?: string | null;
+  /** Property identity across listings, so a relist can be matched (PMI `uprn`). */
+  uprn?: string | null;
+  /** OnTheMarket's bucket, verbatim: "Added > 14 days", "Reduced < 14 days". */
+  addedOrReduced?: string | null;
+  /** Keyed digest of the marketing agent. Never the name — see crypto/agent.ts. */
+  agentHash?: string | null;
 }
 
 export interface SourcingQuery {
@@ -135,6 +151,61 @@ export function rentPcm(price: SourcedListing['price']): number | null {
   return null;
 }
 
+// ── How long it has been sitting ──
+
+/**
+ * `portal` is the listing's real age, from the site's own listing date, and
+ * `feed` is a data provider's measured months on market — both are the real
+ * thing. `sighting` is only a floor: it counts from when Stayful first saw the
+ * listing, which may be long after it went up. Anything shown to a member has
+ * to respect the difference — "on the market 5 months" and "we have been
+ * watching it 5 months" are not the same claim.
+ */
+export type AgeSource = 'portal' | 'sighting' | 'feed';
+
+export interface ListingAge {
+  days: number;
+  source: AgeSource;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Older than this and the date is wrong, not the listing. */
+const MAX_PLAUSIBLE_DAYS = 10 * 365;
+
+function daysSince(value: string | null | undefined, now: number): number | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return null;
+  const days = Math.floor((now - t) / DAY_MS);
+  // A future date is a bad date; so is one from before the portals existed.
+  return days >= 0 && days <= MAX_PLAUSIBLE_DAYS ? days : null;
+}
+
+/**
+ * How long the listing has been up, preferring the portal's own date and
+ * falling back to our first sighting. Null when neither is usable — which the
+ * caller must read as "unknown", never as "new".
+ */
+export function ageFromDates(listedDate: string | null | undefined, firstSeenAt: string | null | undefined, now: Date = new Date()): ListingAge | null {
+  const at = now.getTime();
+  const portal = daysSince(listedDate ?? null, at);
+  if (portal !== null) return { days: portal, source: 'portal' };
+  const seen = daysSince(firstSeenAt ?? null, at);
+  return seen === null ? null : { days: seen, source: 'sighting' };
+}
+
+export function listingAge(listing: SourcedListing, firstSeenAt?: string | null, now: Date = new Date()): ListingAge | null {
+  return ageFromDates(listing.listedDate, firstSeenAt, now);
+}
+
+/** The median age of a cohort, for "slower than others round here". Null below `minSample`. */
+export function medianAgeDays(ages: (ListingAge | null)[], minSample = 12): number | null {
+  const days = ages.filter((a): a is ListingAge => a !== null).map((a) => a.days).sort((a, b) => a - b);
+  if (days.length < minSample) return null;
+  const mid = Math.floor(days.length / 2);
+  return days.length % 2 === 0 ? Math.round((days[mid - 1] + days[mid]) / 2) : days[mid];
+}
+
 /** Whether a listing sits inside its query's price bounds (rent compared per calendar month). */
 export function withinQueryPrice(listing: SourcedListing, q: SourcingQuery): boolean {
   if (!listing.price) return true;
@@ -160,6 +231,8 @@ export function onTheMarketSearchUrl(q: SourcingQuery): string | null {
 
 interface OtmCard {
   id?: unknown;
+  'days-since-added-reduced'?: unknown;
+  agent?: { name?: unknown };
   address?: unknown;
   'property-title'?: unknown;
   'humanised-property-type'?: unknown;
@@ -217,6 +290,10 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
       priceQualifier: str(raw['price-qualifier']),
       sharedOwnership: null,
       shortLetsPermitted: null,
+      listedDate: null,
+      uprn: null,
+      addedOrReduced: str(raw['days-since-added-reduced']),
+      agentHash: agentHash(str(raw.agent?.name)),
     });
   }
   return out;
@@ -260,6 +337,10 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       priceQualifier: null,
       sharedOwnership: null,
       shortLetsPermitted: null,
+      listedDate: typeof l.listed_date === 'string' && l.listed_date.trim() ? l.listed_date.trim() : null,
+      uprn: typeof l.uprn === 'string' && l.uprn.trim() ? l.uprn.trim() : null,
+      addedOrReduced: null,
+      agentHash: null,
     });
   }
   return out;
@@ -297,18 +378,42 @@ export interface SourcedPick {
   areaFit: number | null;
   areaName: string;
   fit: number;
+  /** What the motivation read said, so the email can give the reasons. */
+  motivation?: Motivation | null;
+}
+
+/**
+ * How far motivation may move a listing up the ranking under `prefer`. Kept
+ * small on purpose: a seller who wants to deal is worth finding, but the deal
+ * still has to work, and a listing that loses money is dropped before this is
+ * ever applied.
+ */
+export const MOTIVATION_LIFT = 20;
+
+export interface RankCandidate {
+  listing: SourcedListing;
+  deal: Deal | null;
+  areaFit: number | null;
+  areaName: string;
+  motivation?: Motivation | null;
+  /** Whether it clears the member's bar — decided by meetsMotivationBar. */
+  motivationQualifies?: boolean;
 }
 
 /** Ranks candidates for one member, dropping anything without a deal and anything losing money. */
-export function rankPicks(candidates: { listing: SourcedListing; deal: Deal | null; areaFit: number | null; areaName: string }[], limit = 5): SourcedPick[] {
+export function rankPicks(candidates: RankCandidate[], limit = 5, mode: MotivationMode = 'off'): SourcedPick[] {
   const out: SourcedPick[] = [];
   for (const c of candidates) {
     if (!c.deal) continue;
+    // The money test comes first and is never relaxed: motivation is a reason to
+    // look harder at a deal that works, never a story told about one that does not.
     if (c.deal.kind === 'rent-to-rent' && c.deal.monthlyMargin <= 0) continue;
     if (c.deal.kind === 'purchase' && c.deal.grossYieldPct <= 0) continue;
+    if (mode === 'only' && c.motivationQualifies !== true) continue;
     const fit = blendFit(c.deal, c.areaFit);
     if (fit === null) continue;
-    out.push({ ...c, fit });
+    const lift = mode === 'off' ? 0 : Math.round((MOTIVATION_LIFT * (c.motivation?.score ?? 0)) / 100);
+    out.push({ ...c, fit: Math.min(100, fit + lift) });
   }
   return out.sort((a, b) => b.fit - a.fit || dealScore(b.deal) - dealScore(a.deal)).slice(0, limit);
 }

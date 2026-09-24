@@ -13,11 +13,18 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
+import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
+import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
+import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
+import { blendFit } from "./pipeline";
+import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import type { Deal } from "./deal";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
+import type { ListingSnapshot } from "./types";
 import type { AppliedRules } from "./picks";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
@@ -63,6 +70,31 @@ const FEEDBACK_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 const SPREAD_DEPTH = 40;
 /** How many members may receive the same listing in one day (across passes). */
 const DAILY_LISTING_CAP = 3;
+/**
+ * A listing in one of these states cannot be acted on, so it is never sent.
+ * `under_offer` is deliberately absent: chains collapse, and a sale that fell
+ * through is a reason to look harder, not to hide the listing.
+ */
+const GONE_STATUSES: ReadonlySet<string> = new Set(["sold", "let_agreed", "removed"]);
+/** How many already-verified stand-ins to keep per member in case the send collides. */
+const MAX_ALTERNATES = 3;
+/**
+ * The back catalogue a motivated filter may reach into, per run. The whole
+ * point of the filter is listings that have been sitting a long time, and those
+ * are by definition older than the new-listing window every other pick obeys.
+ * Capped and ordered by last sighting so the sweep rotates instead of grinding
+ * over the same rows, and floored so it never trawls years of dead stock.
+ */
+const MOTIVATED_POOL_LIMIT = 600;
+/**
+ * The cohort feed costs one credit per cohort per area, so it is bounded twice:
+ * by how many areas one run will ask about, and by a time budget, because it
+ * runs before the queries that the picks themselves depend on.
+ */
+const COHORT_AREAS_PER_RUN = 12;
+const COHORT_RADIUS_MILES = 10;
+const COHORT_UNTIL_MS = 12_000;
+const MOTIVATED_POOL_FLOOR_MS = 18 * 30 * 24 * 60 * 60 * 1000;
 const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
@@ -101,8 +133,8 @@ interface Member {
   rules: AppliedRules;
 }
 
-type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string };
-type Verdict = Exclude<Suitability, "unknown"> | "unverified";
+type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string; motivation?: Motivation | null; motivationQualifies?: boolean };
+type Verdict = Exclude<Suitability, "unknown"> | "unverified" | "gone";
 
 export interface RunOptions {
   /** Report who would get what; write and send nothing. */
@@ -278,7 +310,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const queries = [...demand.values()].sort((a, b) => Number(b.own) - Number(a.own) || b.members - a.members).slice(0, maxQueries());
 
   const unsuitable: Partial<Record<UnsuitableReason, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, unsuitable, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
     return done({
       status: 200,
@@ -334,6 +366,95 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   }
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
+  // ── What a data provider already knows about these areas ──
+  // Everything else in the motivation read is inferred. This is PropertyData
+  // naming the properties it has measured as continuously marketed for over a
+  // year, cut by more than fifteen percent, or repossessed — facts rather than
+  // adjectives, and the only way to know a listing's real history on the day we
+  // first see it. One credit per cohort per area, as house spend.
+  const cohortIndex = new Map<string, CohortMember>();
+  if (sourcedPropertiesConfigured()) {
+    const motivatedAreas = new Set<string>();
+    for (const m of members) {
+      if (!m.goals || m.goals.motivation.mode === "off") continue;
+      for (const q of m.queries) motivatedAreas.add(q.area);
+    }
+    for (const area of [...motivatedAreas].slice(0, COHORT_AREAS_PER_RUN)) {
+      if (elapsed() > COHORT_UNTIL_MS) break;
+      const c = areaCentroid(area);
+      if (!c) continue;
+      try {
+        const rows = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => fetchCohorts({ lat: c.lat, lng: c.lng }, COHORT_RADIUS_MILES));
+        for (const [k, v] of indexCohorts(rows)) if (!cohortIndex.has(k)) cohortIndex.set(k, v);
+      } catch (err) {
+        // A cohort feed that is down must never cost anyone their daily pick.
+        console.warn("[sourcing] cohort feed failed for", area, (err as Error)?.message ?? err);
+      }
+    }
+  }
+
+  // ── The back catalogue, for members who asked for motivated sellers ──
+  // Every other pick has to be new; this filter is the one case where old is the
+  // point. These rows are read from what we have already stored, so they cost a
+  // query rather than a provider call.
+  const motivatedMembers = members.filter((m) => m.goals && m.goals.motivation.mode !== "off");
+  const olderCandidates = new Map<string, SourcedListing[]>();
+  if (motivatedMembers.length > 0) {
+    const wanted = new Set<string>();
+    for (const m of motivatedMembers) for (const q of m.queries) wanted.add(`${q.kind}|${q.area}`);
+    const areas = [...new Set([...wanted].map((k) => k.split("|")[1]))];
+    const { data: oldRows, error: oldErr } = await admin
+      .from("sourced_listings")
+      .select("canonical_url, kind, postcode_area, snapshot, first_seen_at")
+      .in("postcode_area", areas)
+      .lt("first_seen_at", new Date(cutoff).toISOString())
+      .gt("first_seen_at", new Date(Date.now() - MOTIVATED_POOL_FLOOR_MS).toISOString())
+      .order("last_seen_at", { ascending: false })
+      .limit(MOTIVATED_POOL_LIMIT);
+    if (oldErr) console.error("[sourcing] motivated pool query failed:", oldErr.message);
+    const olderUrls: string[] = [];
+    for (const r of (oldRows ?? []) as { canonical_url: string; kind: string; postcode_area: string | null; snapshot: SourcedListing; first_seen_at: string }[]) {
+      if (!r.snapshot || typeof r.snapshot !== "object") continue;
+      const key = `${r.kind}|${r.postcode_area ?? ""}`;
+      if (!wanted.has(key)) continue;
+      olderCandidates.set(key, [...(olderCandidates.get(key) ?? []), r.snapshot]);
+      olderUrls.push(r.canonical_url);
+      // These rows predate the window `firstSeen` was built for, so seed it here
+      // or their age would fall back to "unknown" and read as brand new.
+      if (!firstSeen.has(r.canonical_url)) firstSeen.set(r.canonical_url, new Date(r.first_seen_at).getTime());
+    }
+    // The dedupe set above only reaches back eight days, which is all the fresh
+    // pool can collide with. A back-catalogue listing may have been emailed
+    // months ago, and (user_id, canonical_url) is unique — so without this the
+    // insert fails and the member loses their pick for the day.
+    for (const someUrls of chunk(olderUrls, URL_CHUNK)) {
+      for (const someIds of chunk(motivatedMembers.map((m) => m.id), ID_CHUNK)) {
+        const { data: past } = await admin.from("sourcing_sent").select("user_id, canonical_url").in("user_id", someIds).in("canonical_url", someUrls);
+        for (const r of (past ?? []) as { user_id: string; canonical_url: string }[]) {
+          sentByUser.set(r.user_id, new Set([...(sentByUser.get(r.user_id) ?? []), r.canonical_url]));
+        }
+      }
+    }
+  }
+
+  // What "slow" means round here. Computed from the listings each query already
+  // returned, so it costs nothing: no provider call, no extra read. Areas with
+  // too thin a sample answer null, and the area test is then skipped rather than
+  // failed — see meetsMotivationBar.
+  const runNow = new Date();
+  const firstSeenIso = (url: string): string | null => {
+    const ms = firstSeen.get(url);
+    return ms === undefined ? null : new Date(ms).toISOString();
+  };
+  const areaMedianDays = new Map<string, number | null>();
+  for (const { query } of queries) {
+    const cohort = byQuery.get(query.key) ?? [];
+    if (cohort.length === 0) continue;
+    const key = `${query.kind}|${query.area}`;
+    if (areaMedianDays.has(key)) continue;
+    areaMedianDays.set(key, medianAgeDays(cohort.map((l) => listingAge(l, firstSeenIso(l.canonicalUrl), runNow))));
+  }
+
   // The same listing goes to at most DAILY_LISTING_CAP members a day, across
   // every pass: seed the counter from today's rows (any status).
   const assigned = new Map<string, number>();
@@ -349,43 +470,138 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Pre-checked 'ok' listings rank ahead of 'unknown' ones (a leasehold flat
   // whose page has not been read yet) so the page reads go to listings that
   // are likely to pass.
-  type Ranked = SourcedPick & { precheck: "ok" | "unknown" };
+  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean };
   const ranked = new Map<string, Ranked[]>();
+  const relaxationFor = new Map<string, Relaxation | null>();
+
+  /**
+   * The closest listing to a filter that matched nothing, with the advice to go
+   * with it. The money tests still apply — "closest" never means a deal that
+   * does not work — and the pick is marked so the email can be honest about it.
+   */
+  const nearestUsable = (misses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[], m: Member): { pick: Ranked; relaxation: Relaxation | null } | null => {
+    if (misses.length === 0) return null;
+    const viable = new Set(rankPicks(misses.map((x) => x.candidate), misses.length, "off").map((p) => p.listing.canonicalUrl));
+    const usable = misses.filter((x) => viable.has(x.listing.canonicalUrl));
+    if (usable.length === 0) return null;
+    const best = closestMatch(usable, (l) => usable.find((x) => x.listing.canonicalUrl === l.canonicalUrl)?.candidate.motivation?.score ?? 0);
+    if (!best) return null;
+    const chosen = usable.find((x) => x.listing.canonicalUrl === best.listing.canonicalUrl)!;
+    const q = m.queries.find((x) => x.kind === chosen.listing.kind) ?? m.queries[0];
+    const motivation = m.goals!.motivation;
+    const relaxation = analyseRelaxation(usable, {
+      kind: chosen.listing.kind,
+      thresholdUnits: chosen.listing.kind === "rent" ? motivation.minWeeksOnMarket : motivation.minMonthsOnMarket,
+      maxPrice: q?.maxPrice ?? null,
+      minBedrooms: q?.minBedrooms ?? null,
+    });
+    const fit = blendFit(chosen.candidate.deal, chosen.candidate.areaFit) ?? 0;
+    return { pick: { ...chosen.candidate, fit, nearMiss: true }, relaxation };
+  };
   const perUser: { user: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
   const candidateCount = new Map<string, number>();
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
+    // House picks have no filter, so no motivation read: there is no member
+    // threshold to judge them against.
+    const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
     const seen = new Set<string>();
     const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
-    for (const q of m.queries) {
-      for (const l of byQuery.get(q.key) ?? []) {
-        if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) continue;
-        if ((firstSeen.get(l.canonicalUrl) ?? Date.now()) < cutoff) continue;
-        if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) continue;
-        if (!withinQueryPrice(l, q)) continue;
-        seen.add(l.canonicalUrl);
-        const precheck = suitabilityFromListing(l);
-        if (precheck !== "ok" && precheck !== "unknown") {
-          reject(precheck);
-          continue;
-        }
-        const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
-        const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
-        const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
-        candidates.push({ listing: l, deal: dealForSourced(l, figures, m.goals?.finance ?? null), areaFit, areaName: card?.name ?? q.areaName, precheck });
+    // Listings that failed the filter rather than the property tests. Kept only
+    // for a member whose filter can empty the pool, because they are the whole
+    // basis of "nothing matched, and here is what to change".
+    const nearMisses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[] = [];
+    const consider = (l: SourcedListing, q: SourcingQuery, fromBackCatalogue: boolean) => {
+      if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) return;
+      // Every ordinary pick has to be new. The back-catalogue pool is the one
+      // exception, because a listing that has been sitting for months is exactly
+      // what its member asked for.
+      if (!fromBackCatalogue && (firstSeen.get(l.canonicalUrl) ?? Date.now()) < cutoff) return;
+      seen.add(l.canonicalUrl);
+      const precheck = suitabilityFromListing(l);
+      if (precheck !== "ok" && precheck !== "unknown") {
+        // Not a near miss: a room or a shared-ownership sale can never be sent,
+        // so there is no filter to relax that would help.
+        reject(precheck);
+        return;
       }
+      // Soft failures are recorded rather than dropped: a listing that misses on
+      // exactly one of these is what tells us which constraint is costing the
+      // member the most.
+      const fails: Dimension[] = [];
+      if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) fails.push("bedrooms");
+      if (!withinQueryPrice(l, q)) fails.push("price");
+      const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
+      const motivation = motiv
+        ? motivationFromListing(l, {
+            thresholdDays: thresholdDaysFor(motiv, l.kind),
+            areaMedianDays: median,
+            firstSeenAt: firstSeenIso(l.canonicalUrl),
+            cohort: lookupCohorts(cohortIndex, { uprn: l.uprn, postcode: l.postcode, address: l.address }),
+            now: runNow,
+          })
+        : null;
+      const qualifies = motiv && motivation
+        ? meetsMotivationBar(motivation, { mode: motiv.mode, areaRelative: motiv.areaRelative, areaMedianKnown: median !== null })
+        : undefined;
+      // Reaching back is only justified for a listing that genuinely qualifies.
+      // Under "prefer" nothing is otherwise excluded, and without this the
+      // filter would quietly start posting stale stock with nothing to say for
+      // itself — the opposite of what the member asked for.
+      if (fromBackCatalogue && !meetsMotivationBar(motivation ?? NO_MOTIVATION, { mode: "only", areaRelative: motiv?.areaRelative ?? false, areaMedianKnown: median !== null })) return;
+      if (motiv?.mode === "only" && qualifies !== true) fails.push("motivation");
+      const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
+      const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
+      const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
+      const candidate = {
+        listing: l,
+        deal: dealForSourced(l, figures, m.goals?.finance ?? null),
+        areaFit,
+        areaName: card?.name ?? q.areaName,
+        precheck,
+        motivation,
+        motivationQualifies: qualifies,
+      };
+      if (fails.length === 0) {
+        candidates.push(candidate);
+        return;
+      }
+      if (!motiv) return;
+      const age = listingAge(l, firstSeenIso(l.canonicalUrl), runNow);
+      nearMisses.push({
+        candidate,
+        listing: l,
+        fails,
+        ageDays: age?.days ?? null,
+        amount: l.price ? (l.kind === "rent" ? rentPcm(l.price) : l.price.period === "total" ? l.price.amount : null) : null,
+        bedrooms: l.bedrooms,
+      });
+    };
+    for (const q of m.queries) {
+      for (const l of byQuery.get(q.key) ?? []) consider(l, q, false);
+      if (motiv) for (const l of olderCandidates.get(`${q.kind}|${q.area}`) ?? []) consider(l, q, true);
     }
     candidateCount.set(m.id, candidates.length);
     const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
     const precheckOf = new Map(kept.map((c) => [c.listing.canonicalUrl, c.precheck]));
-    const list = rankPicks(kept, SPREAD_DEPTH).map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
+    const list = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off").map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
     const ok = list.filter((p) => p.precheck === "ok");
     // "Could not be run as a short let": only send this member listings that
     // already clear the check on the search card, never ones that need the
     // page to rescue them.
     const unknown = m.rules.strictSuitability ? [] : list.filter((p) => p.precheck !== "ok");
     if (ok.length + unknown.length === 0) {
-      perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
+      // Nothing matched. A strict filter reads as a broken product when it just
+      // goes quiet, so send the nearest thing and say which setting stopped the
+      // rest — but only when there is a nearest thing whose deal actually works.
+      const fallback = motiv ? nearestUsable(nearMisses, m) : null;
+      if (!fallback) {
+        perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
+        continue;
+      }
+      candidateCount.set(m.id, candidates.length + nearMisses.length);
+      relaxationFor.set(m.id, fallback.relaxation);
+      ranked.set(m.id, [fallback.pick]);
       continue;
     }
     ranked.set(m.id, [...ok, ...unknown]);
@@ -416,18 +632,18 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // ownership flag and the description's line on short lets. The merged
   // listing (photo, confirmed price, evidence) is what gets sent and stored,
   // so tomorrow's pre-check answers without a fetch.
-  const verdicts = new Map<string, { verdict: Verdict; listing: SourcedListing }>();
-  const verify = async (l: SourcedListing): Promise<{ verdict: Verdict; listing: SourcedListing }> => {
+  const verdicts = new Map<string, { verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null }>();
+  const verify = async (l: SourcedListing): Promise<{ verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null }> => {
     const memo = verdicts.get(l.canonicalUrl);
     if (memo) return memo;
-    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l };
+    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l, snapshot: null };
     try {
       let res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl));
       // A snapshot cached before the parsers learned about tenure evidence is re-read once.
       if (res.ok && res.snapshot.shortLetsPermitted === undefined && elapsed() <= VERIFY_UNTIL_MS) {
         res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl, { refresh: true }));
       }
-      if (!res.ok) return { verdict: "unverified", listing: l };
+      if (!res.ok) return { verdict: "unverified", listing: l, snapshot: null };
       const s = res.snapshot;
       const merged: SourcedListing = {
         ...l,
@@ -444,9 +660,15 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
         sharedOwnership: s.sharedOwnership ?? false,
         shortLetsPermitted: s.shortLetsPermitted ?? null,
+        // The portal's own listing date beats anything the search card had, and
+        // is written back so tomorrow's run starts from the better answer.
+        listedDate: s.listedDate ?? l.listedDate ?? null,
+        agentHash: s.agentHash ?? l.agentHash ?? null,
       };
-      const verdict = suitabilityFromSnapshot(s, l.kind);
-      const out = { verdict, listing: merged };
+      // Liveness before suitability: a sold or let-agreed listing is not a pick
+      // however well it scores. The search card cannot know this — only the page can.
+      const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
+      const out = { verdict, listing: merged, snapshot: s };
       verdicts.set(l.canonicalUrl, out);
       summary.verified += 1;
       void admin.from("sourced_listings").update({ snapshot: merged }).eq("canonical_url", l.canonicalUrl).then(({ error }) => {
@@ -455,15 +677,16 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       return out;
     } catch (err) {
       console.warn("[sourcing] verification failed:", (err as Error)?.message ?? err);
-      return { verdict: "unverified", listing: l };
+      return { verdict: "unverified", listing: l, snapshot: null };
     }
   };
 
   // ── One pick per member: the best candidate that passes, under the daily cap ──
-  const picks: { member: Member; pick: SourcedPick; candidates: number }[] = [];
+  const picks: { member: Member; pick: SourcedPick; alternates: SourcedPick[]; candidates: number; nearMiss: boolean }[] = [];
   for (const m of affordable) {
     const list = ranked.get(m.id) ?? [];
     const candidates = candidateCount.get(m.id) ?? 0;
+    const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
     // A member's own filter is not capped (their pool is their own); house
     // members share one pool, so capped listings are skipped unless nothing
     // else is left.
@@ -472,9 +695,26 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     let chosen: SourcedPick | null = null;
     let outOfTime = false;
     for (const p of order) {
-      const { verdict, listing } = await verify(p.listing);
-      if (verdict === "ok" || (verdict === "unverified" && p.precheck === "ok")) {
-        chosen = { ...p, listing };
+      const { verdict, listing, snapshot } = await verify(p.listing);
+      // A listing from the back catalogue has usually dropped out of the feed
+      // long ago, so "we could not read the page" is not good enough: it may
+      // have sold months back. Only a page we actually read can clear it.
+      const fromBackCatalogue = (firstSeen.get(p.listing.canonicalUrl) ?? Date.now()) < cutoff;
+      const cardAloneWillDo = p.precheck === "ok" && !fromBackCatalogue;
+      if (verdict === "ok" || (verdict === "unverified" && cardAloneWillDo)) {
+        // The card could not see the description, the listing history or the let
+        // terms. Now that the page has been read, score it again so the reasons
+        // in the email are the best ones we have rather than the cheapest.
+        const motivation = motiv && snapshot
+          ? motivationFromSnapshot(snapshot, listing.kind, {
+              thresholdDays: thresholdDaysFor(motiv, listing.kind),
+              areaMedianDays: areaMedianDays.get(`${listing.kind}|${listing.postcodeArea ?? ""}`) ?? null,
+              firstSeenAt: firstSeenIso(listing.canonicalUrl),
+              cohort: lookupCohorts(cohortIndex, { uprn: listing.uprn, postcode: listing.postcode, address: listing.address }),
+              now: runNow,
+            })
+          : p.motivation ?? null;
+        chosen = { ...p, listing, motivation };
         break;
       }
       if (verdict === "unverified") {
@@ -485,6 +725,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         }
         continue;
       }
+      if (verdict === "gone") {
+        summary.gone += 1;
+        continue;
+      }
       reject(verdict);
     }
     if (!chosen) {
@@ -493,33 +737,79 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       continue;
     }
     assigned.set(chosen.listing.canonicalUrl, (assigned.get(chosen.listing.canonicalUrl) ?? 0) + 1);
-    picks.push({ member: m, pick: chosen, candidates });
+    // Stand-ins for a send that collides with a row this member already has.
+    // Only listings already verified in this run qualify, so they cost no fetch.
+    const alternates: SourcedPick[] = [];
+    for (const p of order) {
+      if (alternates.length >= MAX_ALTERNATES) break;
+      if (p.listing.canonicalUrl === chosen.listing.canonicalUrl) continue;
+      const v = verdicts.get(p.listing.canonicalUrl);
+      if (v?.verdict === "ok") alternates.push({ ...p, listing: v.listing });
+    }
+    picks.push({ member: m, pick: chosen, alternates, candidates, nearMiss: Boolean((list[0] as Ranked | undefined)?.nearMiss) });
   }
 
   // ── Send: pending row first, then the email, then the charge ──
   const base = siteUrl();
-  for (const { member: m, pick, candidates } of picks) {
+  for (const { member: m, pick, alternates, candidates, nearMiss } of picks) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
       continue;
     }
-    const l = pick.listing;
-    const token = newPickToken();
     const charge = m.admin ? 0 : pickBasePence;
-    const { data: row, error: insErr } = await admin
-      .from("sourcing_sent")
-      .insert({ user_id: m.id, canonical_url: l.canonicalUrl, sent_at: nowIso, status: "pending", token, kind: l.kind, postcode_area: l.postcodeArea, basis: m.basis, deal: pick.deal, fit: pick.fit, charged_base_pence: charge })
-      .select("id")
-      .single();
-    if (insErr || !row) {
-      // 23505: this listing, or today's pick, already exists for the member (an overlapping run).
+    const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
+    // Persisted so the "change it" link has something to apply that the member
+    // cannot alter in the request. It belongs to the pick the analysis was
+    // about, so a stand-in reached after a collision carries nothing.
+    const relaxationRow = nearMiss ? toStoredRelaxation(relaxation, pick.listing.kind) : null;
+    // (user_id, canonical_url) is unique, so a listing this member already has
+    // comes back 23505. That is not a reason to leave them with nothing: try the
+    // stand-ins before giving up. Any other error is real and stops the attempt.
+    let sending: SourcedPick | null = null;
+    let rowId: string | null = null;
+    let token = "";
+    let insErr: { code?: string; message: string } | null = null;
+    for (const cand of [pick, ...alternates]) {
+      const attempt = newPickToken();
+      const cl = cand.listing;
+      const { data: row, error } = await admin
+        .from("sourcing_sent")
+        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null, motivation: cand.motivation ?? null })
+        .select("id")
+        .single();
+      if (!error && row) {
+        sending = cand;
+        rowId = String(row.id);
+        token = attempt;
+        insErr = null;
+        break;
+      }
+      insErr = error ?? { message: "no row returned" };
+      if (error?.code !== "23505") break;
+    }
+    if (!sending || !rowId) {
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: insErr?.code === "23505" ? "already_sent" : "insert_failed" });
       if (insErr && insErr.code !== "23505") console.error("[sourcing] sourcing_sent insert failed:", insErr.message);
       continue;
     }
-    const id = String(row.id);
-    const mail = pickEmail({ pick, siteUrl: base, id, token, basis: m.basis, goalsChips: m.goals ? describeGoals(m.goals) : [], firstEver: m.firstEver, chargedBasePence: charge });
+    if (sending !== pick) assigned.set(sending.listing.canonicalUrl, (assigned.get(sending.listing.canonicalUrl) ?? 0) + 1);
+    const id = rowId;
+    const mail = pickEmail({
+      pick: sending,
+      siteUrl: base,
+      id,
+      token,
+      basis: m.basis,
+      goalsChips: m.goals ? describeGoals(m.goals) : [],
+      firstEver: m.firstEver,
+      chargedBasePence: charge,
+      // A stand-in was only reached because the first choice collided, and it
+      // is an ordinary candidate — the near-miss wording belongs to the pick
+      // the analysis was actually about.
+      nearMiss: nearMiss && sending === pick,
+      relaxation: describeRelaxation(relaxation),
+    });
     const res = await sendEmail({ to: m.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers });
     if (!res.sent) {
       summary.emailFailures += 1;
@@ -539,7 +829,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         // allowNegative only covers the race between the balance check above and this debit.
         await debit(m.id, charge, {
           allowNegative: true,
-          meta: { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${l.address ?? l.title}` },
+          meta: { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}` },
         });
         summary.chargedBasePence += charge;
         void afterDebit(m.id).catch(() => {});

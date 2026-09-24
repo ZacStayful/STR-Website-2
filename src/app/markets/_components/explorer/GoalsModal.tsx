@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { saveMarketGoalsAction, clearMarketGoalsAction, type GoalsState } from "../../actions";
-import { DEFAULT_GOALS, PRIORITY_LABELS, SOURCING_KIND_LABELS, type MarketGoals, type Priority, type SourcingKind } from "@/lib/market/goals";
+import { DEFAULT_GOALS, MOTIVATION_MODE_LABELS, PRIORITY_LABELS, SOURCING_KIND_LABELS, MIN_MONTHS_RANGE, MIN_WEEKS_RANGE, type MarketGoals, type MotivationMode, type Priority, type SourcingKind } from "@/lib/market/goals";
 import { BUDGET_LABELS } from "@/lib/market/filters";
 
 const initial: GoalsState = { error: null, warning: null, saved: false };
@@ -34,6 +34,7 @@ export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = true, o
   const [state, action, pending] = useActionState(saveMarketGoalsAction, initial);
   const [clearing, startClear] = useTransition();
   const [kind, setKind] = useState<SourcingKind>(g.sourcingKind);
+  const [motivation, setMotivation] = useState<MotivationMode>(g.motivation.mode);
   const router = useRouter();
 
   useEffect(() => {
@@ -152,6 +153,51 @@ export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = true, o
                 <input name="maxRentPcm" type="number" inputMode="numeric" min={200} max={10000} step={50} defaultValue={g.maxRentPcm ?? ""} placeholder="e.g. 1200" className="mx-input" />
                 <small>Leave blank for no ceiling. Rent picks above this are never sent.</small>
               </label>
+            )}
+            <label>
+              <span>Seller or landlord</span>
+              <select name="m_mode" value={motivation} onChange={(e) => setMotivation(e.target.value as MotivationMode)} className="mx-select mx-select--block">
+                {(Object.keys(MOTIVATION_MODE_LABELS) as MotivationMode[]).map((m) => (
+                  <option key={m} value={m}>{MOTIVATION_MODE_LABELS[m]}</option>
+                ))}
+              </select>
+              <small>
+                {kind === "rent"
+                  ? "A landlord carrying an empty property negotiates. We look for long voids, dropped rents, short minimum terms and company lets."
+                  : "A seller who has been stuck for months negotiates. We look for time on the market, price cuts, chain-free, probate and auction sales."}
+                {motivation === "only" && " “Only” needs hard evidence — a date or a recorded price cut — never just the wording of the advert."}
+              </small>
+            </label>
+            {motivation !== "off" && (
+              <>
+                {/*
+                  Only the threshold for the kind they are searching is shown, but
+                  both are always posted: an input that is not rendered posts
+                  nothing, and the parse would then quietly reset it to the default.
+                  Someone switching from buying to renting should not lose the month
+                  figure they set.
+                */}
+                {kind !== "rent" ? (
+                  <label>
+                    <span>Counts as stuck after (months on the market)</span>
+                    <input name="m_minMonths" type="number" inputMode="numeric" min={MIN_MONTHS_RANGE.min} max={MIN_MONTHS_RANGE.max} step={1} defaultValue={g.motivation.minMonthsOnMarket} className="mx-input" />
+                  </label>
+                ) : (
+                  <input type="hidden" name="m_minMonths" value={g.motivation.minMonthsOnMarket} />
+                )}
+                {kind !== "sale" ? (
+                  <label>
+                    <span>Counts as a long void after (weeks on the market)</span>
+                    <input name="m_minWeeks" type="number" inputMode="numeric" min={MIN_WEEKS_RANGE.min} max={MIN_WEEKS_RANGE.max} step={1} defaultValue={g.motivation.minWeeksOnMarket} className="mx-input" />
+                  </label>
+                ) : (
+                  <input type="hidden" name="m_minWeeks" value={g.motivation.minWeeksOnMarket} />
+                )}
+                <label className="mx-check">
+                  <input type="checkbox" name="m_areaRelative" value="1" defaultChecked={g.motivation.areaRelative} />
+                  <span>Only count it as slow if it is also slower than the rest of that area. Five months is ordinary in a quiet market and a warning sign in a fast one.</span>
+                </label>
+              </>
             )}
             <label className="mx-check">
               <input type="checkbox" name="sourcingAlerts" value="1" defaultChecked={sourcingAlerts} />

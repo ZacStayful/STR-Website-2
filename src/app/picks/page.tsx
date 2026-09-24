@@ -8,6 +8,7 @@ import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
+import { motivationLabel } from "@/lib/listing/motivation";
 import { savePickAction, reactToPickAction, togglePicksAction } from "./actions";
 
 export const metadata: Metadata = {
@@ -155,6 +156,19 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
             {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
           </p>
           {p.deal && <p className="mt-1 text-xs font-medium text-primary">{describeDeal(p.deal)}</p>}
+          {p.motivation && p.motivation.fired.length > 0 && (
+            <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Why this one">
+              {p.motivation.fired.slice(0, 4).map((k) => (
+                <li key={k} className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{motivationLabel(k)}</li>
+              ))}
+            </ul>
+          )}
+          {p.relaxation && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Not an exact match — your {p.relaxation.label.toLowerCase()} is {p.relaxation.current}.{" "}
+              <Link href="/markets?goals=1" className="underline">Change it</Link>
+            </p>
+          )}
           <p className="mt-1 text-xs text-muted-foreground">
             {p.fit !== null ? `Fit ${p.fit}/100 · ` : ""}{p.basis === "house" ? "Stayful house pick" : "Picked for your filter"}
             {p.reaction === "yes" && <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Liked</span>}

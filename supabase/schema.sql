@@ -1413,3 +1413,39 @@ begin
   return v_deleted;
 end;
 $$;
+
+-- =========================
+-- Motivated sellers and landlords
+-- =========================
+-- The motivated-seller filter is the one pick that is allowed to be old: a
+-- listing that has been sitting for months is the whole point of it. Its pool
+-- reads sourced_listings by area and kind, bounded below by an age floor and
+-- ordered by last sighting, so this index carries the filtering columns and
+-- leaves only a small set to sort.
+--
+-- Nothing else is needed. The member's filter rides inside the existing
+-- profiles.market_goals jsonb, and the listing-level fields (listedDate, uprn,
+-- addedOrReduced, agentHash) ride inside sourced_listings.snapshot — so no
+-- column is added to profiles, and ACCESS_COLUMNS in src/lib/access.ts is
+-- untouched.
+create index if not exists sourced_listings_area_kind_idx
+  on public.sourced_listings (postcode_area, kind, first_seen_at desc);
+
+-- The advice sent with a near-miss pick: which filter was the binding one and
+-- what to change it to. Stored rather than recomputed because the one-click
+-- "change it" link on /p/[token] must apply only a value WE proposed — the
+-- token travels in an email, so anyone holding that email can invoke the
+-- action, and accepting a value from the request would let them rewrite
+-- someone else's filter to anything at all.
+--
+-- APPLY THIS BEFORE DEPLOYING THE CODE THAT READS IT. PICK_COLUMNS in
+-- src/lib/listing/picks-server.ts is a fixed select, so a missing column fails
+-- the whole query and takes /picks and /p/[token] down with it.
+alter table public.sourcing_sent add column if not exists relaxation jsonb;
+
+-- The motivation signals that fired for this pick, as they were claimed in the
+-- email. Stored rather than recomputed so the picks page can never disagree
+-- with what the member was actually told: a recomputation would be missing the
+-- area median from the run that produced it, and would quietly drop a reason.
+-- Same deployment rule as above — column first, then the code.
+alter table public.sourcing_sent add column if not exists motivation jsonb;

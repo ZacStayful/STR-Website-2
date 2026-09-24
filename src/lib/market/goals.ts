@@ -27,6 +27,62 @@ export const DEFAULT_FINANCE_GOALS: FinanceGoals = { depositPct: 25, mortgageRat
 /** What the daily deal-sourcing digest should look for. */
 export type SourcingKind = 'sale' | 'rent' | 'both';
 
+/**
+ * How hard the motivated-seller filter bites.
+ *   off     — ignore motivation entirely (what everyone gets until they ask)
+ *   prefer  — motivated listings rank higher, nothing is ever excluded
+ *   only    — a listing must clear the bar, with real evidence behind it
+ */
+export type MotivationMode = 'off' | 'prefer' | 'only';
+
+export const MOTIVATION_MODE_LABELS: Record<MotivationMode, string> = {
+  off: 'Any seller',
+  prefer: 'Prefer motivated sellers',
+  only: 'Motivated sellers only',
+};
+
+/**
+ * "Find me someone who wants to deal." Months for a sale, weeks for a let:
+ * rental markets clear several times faster, so a rental sitting five months is
+ * not a sharper version of the same signal, it is a different order of trouble.
+ */
+export interface MotivationGoals {
+  mode: MotivationMode;
+  /** Months a SALE listing must have been up before it counts as stale. */
+  minMonthsOnMarket: number;
+  /** Weeks a RENT listing must have been up before it counts as a long void. */
+  minWeeksOnMarket: number;
+  /** Also require it to be slower than its own area, not just slow in the abstract. */
+  areaRelative: boolean;
+}
+
+export const DEFAULT_MOTIVATION: MotivationGoals = { mode: 'off', minMonthsOnMarket: 5, minWeeksOnMarket: 8, areaRelative: true };
+export const MIN_MONTHS_RANGE = { min: 1, max: 24 } as const;
+export const MIN_WEEKS_RANGE = { min: 1, max: 52 } as const;
+
+export function isMotivationMode(v: unknown): v is MotivationMode {
+  return v === 'off' || v === 'prefer' || v === 'only';
+}
+
+/** Tolerant parse: anything missing or silly falls back to the default. */
+export function parseMotivationGoals(raw: unknown): MotivationGoals {
+  const m = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const d = DEFAULT_MOTIVATION;
+  return {
+    mode: isMotivationMode(m.mode) ? m.mode : d.mode,
+    minMonthsOnMarket: Math.round(financeField(m.minMonthsOnMarket, d.minMonthsOnMarket, MIN_MONTHS_RANGE.min, MIN_MONTHS_RANGE.max)),
+    minWeeksOnMarket: Math.round(financeField(m.minWeeksOnMarket, d.minWeeksOnMarket, MIN_WEEKS_RANGE.min, MIN_WEEKS_RANGE.max)),
+    // Absent means the default (on), not off: a stored profile written before
+    // this existed should get the safer, more accurate behaviour.
+    areaRelative: m.areaRelative === undefined ? d.areaRelative : m.areaRelative !== false,
+  };
+}
+
+/** The member's "too long" line for one kind, in days. */
+export function thresholdDaysFor(g: MotivationGoals, kind: 'sale' | 'rent'): number {
+  return kind === 'rent' ? g.minWeeksOnMarket * 7 : Math.round(g.minMonthsOnMarket * 30.44);
+}
+
 export interface MarketGoals {
   version: 1;
   home: { postcode: string; lat: number | null; lng: number | null } | null;
@@ -41,6 +97,8 @@ export interface MarketGoals {
   sourcingKind: SourcingKind;
   /** Rent-to-rent ceiling (£ pcm) for the daily pick's rent searches; null = no bound. */
   maxRentPcm: number | null;
+  /** Whether to favour, or insist on, sellers and landlords who look ready to deal. */
+  motivation: MotivationGoals;
 }
 
 export const DEFAULT_GOALS: MarketGoals = {
@@ -55,6 +113,7 @@ export const DEFAULT_GOALS: MarketGoals = {
   finance: DEFAULT_FINANCE_GOALS,
   sourcingKind: 'sale',
   maxRentPcm: null,
+  motivation: DEFAULT_MOTIVATION,
 };
 
 export const SOURCING_KIND_LABELS: Record<SourcingKind, string> = { sale: 'Properties to buy', rent: 'Properties to rent (rent-to-rent)', both: 'Both' };
@@ -142,7 +201,7 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
   const sourcingKind: SourcingKind = isSourcingKind(o.sourcingKind) ? o.sourcingKind : 'sale';
   const maxRentPcm = parseMaxRentPcm(o.maxRentPcm);
 
-  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance), sourcingKind, maxRentPcm };
+  return { version: 1, home, maxDistanceMiles, budget, bedrooms, priorities, management, riskAppetite, finance: parseFinanceGoals(o.finance), sourcingKind, maxRentPcm, motivation: parseMotivationGoals(o.motivation) };
 }
 
 /** Build goals from the questionnaire form (FormData-like getter). */
@@ -174,6 +233,14 @@ export function goalsFromForm(get: (key: string) => string | null): MarketGoals 
     },
     sourcingKind: get('sourcingKind'),
     maxRentPcm: get('maxRentPcm'),
+    motivation: {
+      mode: get('m_mode'),
+      minMonthsOnMarket: get('m_minMonths'),
+      minWeeksOnMarket: get('m_minWeeks'),
+      // An unchecked box posts nothing, so absent means off here — unlike a
+      // stored profile, where absent means the field predates the feature.
+      areaRelative: get('m_areaRelative') === '1',
+    },
   })!;
 }
 
@@ -184,6 +251,11 @@ export function describeGoals(g: MarketGoals): string[] {
   if (g.budget) out.push({ u200: 'Under £200k', '200-350': '£200k–£350k', '350-500': '£350k–£500k', '500+': '£500k+' }[g.budget]);
   if (g.bedrooms) out.push(g.bedrooms === 4 ? '4+ bed' : `${g.bedrooms}-bed`);
   if (g.sourcingKind !== 'sale' && g.maxRentPcm) out.push(`≤ £${g.maxRentPcm.toLocaleString('en-GB')} pcm`);
+  if (g.motivation.mode !== 'off') {
+    const how = g.motivation.mode === 'only' ? 'Motivated only' : 'Prefer motivated';
+    const how_long = g.sourcingKind === 'rent' ? `${g.motivation.minWeeksOnMarket}+ wk listed` : `${g.motivation.minMonthsOnMarket}+ mo listed`;
+    out.push(`${how} · ${how_long}`);
+  }
   const top = (Object.entries(g.priorities) as [keyof MarketGoals['priorities'], Priority][]).filter(([, v]) => v === 3);
   const names: Record<keyof MarketGoals['priorities'], string> = { yield: 'Max yield', revenue: 'Max revenue', lowCompetition: 'Low competition', directBookings: 'Direct bookings' };
   for (const [k] of top) out.push(names[k]);
