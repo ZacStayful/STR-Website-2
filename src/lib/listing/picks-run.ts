@@ -631,8 +631,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // Band decides what may be sent; fit still decides the order within a band.
     // The two are not comparable across kinds (an uplift % against a profit in
     // pounds), whereas blendFit already normalises both onto one scale.
-    const list = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off")
-      .map((p) => p as Ranked)
+    const list: Ranked[] = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off")
       .sort((a, b) => bandRank(a.screening?.band ?? "qualified") - bandRank(b.screening?.band ?? "qualified") || b.fit - a.fit);
     // "Could not be run as a short let": only send this member listings that
     // already clear the check on the search card, never ones that need the
