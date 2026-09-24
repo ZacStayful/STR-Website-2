@@ -25,6 +25,10 @@ const row = (over: Partial<ResponseRow> = {}): ResponseRow => ({
   amount: 230_000,
   fit: 70,
   dealScore: 11.2,
+  // A pick sent before the screening existed: both absent, which is the state
+  // the admin report has to render for the whole transition window.
+  screeningBand: null,
+  screeningScore: null,
   savedAt: null,
   ...over,
 });

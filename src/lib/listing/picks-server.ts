@@ -7,7 +7,7 @@ import type { SourcedListing } from './sourcing';
 import type { Deal } from './deal';
 import { parseStoredRelaxation, type StoredRelaxation } from './relax';
 import { parseMotivation, type Motivation } from './motivation';
-import { parseScreening, type Screening } from './screen';
+import { parseScreening, screeningScore, type Screening } from './screen';
 import { parseMarketGoals } from '../market/goals';
 import type { ResponseRow } from './picks-patterns';
 
@@ -191,6 +191,8 @@ export async function loadResponses(opts: { since: string | null; limit?: number
       amount,
       fit: v.fit,
       dealScore: dealScoreOf(v.deal),
+      screeningBand: v.screening?.band ?? null,
+      screeningScore: screeningScore(v.screening),
       savedAt: v.savedAt,
     });
   }

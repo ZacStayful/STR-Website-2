@@ -5,6 +5,7 @@
  * member and week). Pure; the rows are loaded by picks-server.ts.
  */
 import type { PickBasis, PickReaction, PickReason, ReactionSource } from './picks.ts';
+import type { Band } from './screen.ts';
 import { reasonLabel } from './picks.ts';
 import type { SourcingKind } from './sourcing.ts';
 import { propertyKind } from './suitability.ts';
@@ -34,6 +35,15 @@ export interface ResponseRow {
   fit: number | null;
   /** Gross yield % (purchase) or monthly margin £ (rent-to-rent). */
   dealScore: number | null;
+  /**
+   * The income screening as it stood when the pick was sent. Carried alongside
+   * dealScore rather than instead of it, because they answer different questions
+   * and "return too low" keys on THIS one — reading the yield to interpret that
+   * answer would be reading the wrong number.
+   */
+  screeningBand: Band | null;
+  /** Uplift % for a purchase, annual profit £ for rent-to-rent. */
+  screeningScore: number | null;
   savedAt: string | null;
 }
 
@@ -240,9 +250,9 @@ function csvCell(v: string | number | null): string {
 
 /** The store as a spreadsheet: one row per response, newest first as given. */
 export function responsesCsv(rows: ResponseRow[]): string {
-  const head = ['responded_at', 'sent_at', 'email', 'reaction', 'source', 'reasons', 'comment', 'kind', 'basis', 'area', 'address', 'title', 'bedrooms', 'type', 'tenure', 'amount', 'fit', 'deal_score', 'saved', 'url'];
+  const head = ['responded_at', 'sent_at', 'email', 'reaction', 'source', 'reasons', 'comment', 'kind', 'basis', 'area', 'address', 'title', 'bedrooms', 'type', 'tenure', 'amount', 'fit', 'deal_score', 'screening_band', 'screening_score', 'saved', 'url'];
   const lines = rows.map((r) =>
-    [r.respondedAt, r.sentAt, r.email, r.reaction, r.reactionSource, r.reasons.map(reasonLabel).join('; '), r.comment, r.kind, r.basis, r.postcodeArea, r.address, r.title, r.bedrooms, r.rawType, r.tenure, r.amount, r.fit, r.dealScore, r.savedAt ? 'yes' : 'no', r.url]
+    [r.respondedAt, r.sentAt, r.email, r.reaction, r.reactionSource, r.reasons.map(reasonLabel).join('; '), r.comment, r.kind, r.basis, r.postcodeArea, r.address, r.title, r.bedrooms, r.rawType, r.tenure, r.amount, r.fit, r.dealScore, r.screeningBand, r.screeningScore, r.savedAt ? 'yes' : 'no', r.url]
       .map(csvCell)
       .join(','),
   );
