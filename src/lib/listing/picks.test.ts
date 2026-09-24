@@ -348,3 +348,31 @@ test('the email only says why when there is a why to give', () => {
   assert.ok(loud.html.includes('Why this one:'));
   assert.ok(loud.html.includes('On the market a long time'));
 });
+
+// ── When nothing matched ──
+
+test('a near miss says so before it says anything else', () => {
+  const l = listing({});
+  const pick: SourcedPick = { listing: l, deal: null, areaFit: 70, areaName: 'Nottingham', fit: 60 };
+  const send = (over: Partial<Parameters<typeof pickEmail>[0]>) =>
+    pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10, ...over });
+
+  const plain = send({});
+  assert.ok(!plain.text.includes('Nothing matched'));
+
+  const near = send({ nearMiss: true, relaxation: 'Your tightest filter is how long it must have been on the market — currently 5 months. Change it to 3 months and 4 more would have qualified.' });
+  assert.ok(near.text.includes('Nothing matched your filter exactly today'));
+  assert.ok(near.html.includes('Nothing matched your filter exactly today'));
+  // The honest line comes before the property, not buried under it.
+  assert.ok(near.text.indexOf('Nothing matched') < near.text.indexOf('Fit '));
+  assert.ok(near.text.includes('Change it to 3 months'));
+  assert.ok(near.html.includes('4 more would have qualified'));
+});
+
+test('the advice is never shown on a pick that did match', () => {
+  const l = listing({});
+  const pick: SourcedPick = { listing: l, deal: null, areaFit: 70, areaName: 'Nottingham', fit: 60 };
+  const mail = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10, nearMiss: false, relaxation: 'Change your budget.' });
+  assert.ok(!mail.text.includes('Change your budget'));
+  assert.ok(!mail.html.includes('Change your budget'));
+});

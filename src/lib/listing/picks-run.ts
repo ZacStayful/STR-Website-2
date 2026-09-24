@@ -13,8 +13,10 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
+import { analyseRelaxation, closestMatch, describeRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
+import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import type { Deal } from "./deal";
@@ -431,8 +433,34 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Pre-checked 'ok' listings rank ahead of 'unknown' ones (a leasehold flat
   // whose page has not been read yet) so the page reads go to listings that
   // are likely to pass.
-  type Ranked = SourcedPick & { precheck: "ok" | "unknown" };
+  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean };
   const ranked = new Map<string, Ranked[]>();
+  const relaxationFor = new Map<string, Relaxation | null>();
+
+  /**
+   * The closest listing to a filter that matched nothing, with the advice to go
+   * with it. The money tests still apply — "closest" never means a deal that
+   * does not work — and the pick is marked so the email can be honest about it.
+   */
+  const nearestUsable = (misses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[], m: Member): { pick: Ranked; relaxation: Relaxation | null } | null => {
+    if (misses.length === 0) return null;
+    const viable = new Set(rankPicks(misses.map((x) => x.candidate), misses.length, "off").map((p) => p.listing.canonicalUrl));
+    const usable = misses.filter((x) => viable.has(x.listing.canonicalUrl));
+    if (usable.length === 0) return null;
+    const best = closestMatch(usable, (l) => usable.find((x) => x.listing.canonicalUrl === l.canonicalUrl)?.candidate.motivation?.score ?? 0);
+    if (!best) return null;
+    const chosen = usable.find((x) => x.listing.canonicalUrl === best.listing.canonicalUrl)!;
+    const q = m.queries.find((x) => x.kind === chosen.listing.kind) ?? m.queries[0];
+    const motivation = m.goals!.motivation;
+    const relaxation = analyseRelaxation(usable, {
+      kind: chosen.listing.kind,
+      thresholdUnits: chosen.listing.kind === "rent" ? motivation.minWeeksOnMarket : motivation.minMonthsOnMarket,
+      maxPrice: q?.maxPrice ?? null,
+      minBedrooms: q?.minBedrooms ?? null,
+    });
+    const fit = blendFit(chosen.candidate.deal, chosen.candidate.areaFit) ?? 0;
+    return { pick: { ...chosen.candidate, fit, nearMiss: true }, relaxation };
+  };
   const perUser: { user: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
   const candidateCount = new Map<string, number>();
   for (const m of members) {
@@ -442,20 +470,30 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
     const seen = new Set<string>();
     const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
+    // Listings that failed the filter rather than the property tests. Kept only
+    // for a member whose filter can empty the pool, because they are the whole
+    // basis of "nothing matched, and here is what to change".
+    const nearMisses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[] = [];
     const consider = (l: SourcedListing, q: SourcingQuery, fromBackCatalogue: boolean) => {
       if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) return;
       // Every ordinary pick has to be new. The back-catalogue pool is the one
       // exception, because a listing that has been sitting for months is exactly
       // what its member asked for.
       if (!fromBackCatalogue && (firstSeen.get(l.canonicalUrl) ?? Date.now()) < cutoff) return;
-      if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) return;
-      if (!withinQueryPrice(l, q)) return;
       seen.add(l.canonicalUrl);
       const precheck = suitabilityFromListing(l);
       if (precheck !== "ok" && precheck !== "unknown") {
+        // Not a near miss: a room or a shared-ownership sale can never be sent,
+        // so there is no filter to relax that would help.
         reject(precheck);
         return;
       }
+      // Soft failures are recorded rather than dropped: a listing that misses on
+      // exactly one of these is what tells us which constraint is costing the
+      // member the most.
+      const fails: Dimension[] = [];
+      if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) fails.push("bedrooms");
+      if (!withinQueryPrice(l, q)) fails.push("price");
       const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
       const motivation = motiv
         ? motivationFromListing(l, {
@@ -473,10 +511,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // filter would quietly start posting stale stock with nothing to say for
       // itself — the opposite of what the member asked for.
       if (fromBackCatalogue && !meetsMotivationBar(motivation ?? NO_MOTIVATION, { mode: "only", areaRelative: motiv?.areaRelative ?? false, areaMedianKnown: median !== null })) return;
+      if (motiv?.mode === "only" && qualifies !== true) fails.push("motivation");
       const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
       const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
       const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
-      candidates.push({
+      const candidate = {
         listing: l,
         deal: dealForSourced(l, figures, m.goals?.finance ?? null),
         areaFit,
@@ -484,6 +523,20 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         precheck,
         motivation,
         motivationQualifies: qualifies,
+      };
+      if (fails.length === 0) {
+        candidates.push(candidate);
+        return;
+      }
+      if (!motiv) return;
+      const age = listingAge(l, firstSeenIso(l.canonicalUrl), runNow);
+      nearMisses.push({
+        candidate,
+        listing: l,
+        fails,
+        ageDays: age?.days ?? null,
+        amount: l.price ? (l.kind === "rent" ? rentPcm(l.price) : l.price.period === "total" ? l.price.amount : null) : null,
+        bedrooms: l.bedrooms,
       });
     };
     for (const q of m.queries) {
@@ -500,7 +553,17 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // page to rescue them.
     const unknown = m.rules.strictSuitability ? [] : list.filter((p) => p.precheck !== "ok");
     if (ok.length + unknown.length === 0) {
-      perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
+      // Nothing matched. A strict filter reads as a broken product when it just
+      // goes quiet, so send the nearest thing and say which setting stopped the
+      // rest — but only when there is a nearest thing whose deal actually works.
+      const fallback = motiv ? nearestUsable(nearMisses, m) : null;
+      if (!fallback) {
+        perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
+        continue;
+      }
+      candidateCount.set(m.id, candidates.length + nearMisses.length);
+      relaxationFor.set(m.id, fallback.relaxation);
+      ranked.set(m.id, [fallback.pick]);
       continue;
     }
     ranked.set(m.id, [...ok, ...unknown]);
@@ -581,7 +644,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   };
 
   // ── One pick per member: the best candidate that passes, under the daily cap ──
-  const picks: { member: Member; pick: SourcedPick; alternates: SourcedPick[]; candidates: number }[] = [];
+  const picks: { member: Member; pick: SourcedPick; alternates: SourcedPick[]; candidates: number; nearMiss: boolean }[] = [];
   for (const m of affordable) {
     const list = ranked.get(m.id) ?? [];
     const candidates = candidateCount.get(m.id) ?? 0;
@@ -644,12 +707,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const v = verdicts.get(p.listing.canonicalUrl);
       if (v?.verdict === "ok") alternates.push({ ...p, listing: v.listing });
     }
-    picks.push({ member: m, pick: chosen, alternates, candidates });
+    picks.push({ member: m, pick: chosen, alternates, candidates, nearMiss: Boolean((list[0] as Ranked | undefined)?.nearMiss) });
   }
 
   // ── Send: pending row first, then the email, then the charge ──
   const base = siteUrl();
-  for (const { member: m, pick, alternates, candidates } of picks) {
+  for (const { member: m, pick, alternates, candidates, nearMiss } of picks) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
@@ -688,7 +751,22 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
     if (sending !== pick) assigned.set(sending.listing.canonicalUrl, (assigned.get(sending.listing.canonicalUrl) ?? 0) + 1);
     const id = rowId;
-    const mail = pickEmail({ pick: sending, siteUrl: base, id, token, basis: m.basis, goalsChips: m.goals ? describeGoals(m.goals) : [], firstEver: m.firstEver, chargedBasePence: charge });
+    const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
+    const mail = pickEmail({
+      pick: sending,
+      siteUrl: base,
+      id,
+      token,
+      basis: m.basis,
+      goalsChips: m.goals ? describeGoals(m.goals) : [],
+      firstEver: m.firstEver,
+      chargedBasePence: charge,
+      // A stand-in was only reached because the first choice collided, and it
+      // is an ordinary candidate — the near-miss wording belongs to the pick
+      // the analysis was actually about.
+      nearMiss: nearMiss && sending === pick,
+      relaxation: describeRelaxation(relaxation),
+    });
     const res = await sendEmail({ to: m.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers });
     if (!res.sent) {
       summary.emailFailures += 1;
