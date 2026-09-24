@@ -206,3 +206,38 @@ export function consentText(b: FunnelBrand): string {
   const who = b.companyName ?? 'the company running this form';
   return `I agree that ${who} may store my details and contact me about this property.`;
 }
+
+export type NewFunnelBrandResult =
+  | { ok: true; brand: FunnelBrand }
+  | { ok: false; error: string };
+
+/**
+ * The branding a funnel must carry before it is allowed to exist.
+ *
+ * Creation used to ask for a funnel name and nothing else, so the product
+ * minted a public link and handed it over before it held any of what that link
+ * needs to work — and the customer found out later, after copying a link that
+ * could not function. The requirement was always there; it was just discovered
+ * in the wrong order.
+ *
+ * Same two fields as `activationBlockers`, checked with the same parses
+ * `saveBrandAction` uses, so creating a funnel and editing one cannot disagree
+ * about what a valid privacy link is. By construction
+ * `activationBlockers(result.brand)` is empty, which is the invariant worth
+ * holding: creation can no longer produce a funnel that is unable to go live.
+ */
+export function newFunnelBrand(input: { companyName: unknown; privacyUrl: unknown }): NewFunnelBrandResult {
+  const companyName = text(input.companyName, 80);
+  if (!companyName) {
+    return { ok: false, error: 'Add your company name. It is what your prospects see on the form and the report.' };
+  }
+  const privacyUrl = parseHttpsUrl(input.privacyUrl);
+  if (!privacyUrl) {
+    return {
+      ok: false,
+      error:
+        'Add a link to your privacy policy, as a full https:// address. Whoever fills in your form is handing their details to you, not to us, so they need somewhere to read how you will use them.',
+    };
+  }
+  return { ok: true, brand: { ...EMPTY_BRAND, companyName, privacyUrl } };
+}

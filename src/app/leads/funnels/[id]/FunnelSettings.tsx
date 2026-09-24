@@ -85,7 +85,18 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
 
       {/* ── The link ── */}
       <section className="rounded-xl border border-border bg-card p-4">
-        <h2 className="text-sm font-semibold text-foreground">Your funnel link</h2>
+        <h2 className="text-sm font-semibold text-foreground">
+          Your funnel link
+          {!funnel.active ? <span className="ml-2 text-xs font-normal text-muted-foreground">(paused)</span> : null}
+        </h2>
+        {!funnel.active ? (
+          <p className="mt-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
+            Anyone opening this link right now gets a &ldquo;not taking enquiries&rdquo; page, not your form, until you
+            press <strong>Go live</strong> above.
+            {blockers.length > 0 ? ` First add ${blockers.join(" and ")} under Branding.` : ""} Your own previews below
+            work while it is paused — nobody else can open them.
+          </p>
+        ) : null}
         <p className={hint}>
           Point your enquiry form here. You can pass details you already have as{" "}
           <code className="rounded bg-muted px-1">?name=&amp;email=&amp;phone=</code> and the form will arrive prefilled.
@@ -105,17 +116,26 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
-        <p className="mt-3">
+        <p className="mt-3 flex flex-wrap items-center gap-2">
           <a
             href={`${url}?preview=1`}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
           >
-            Preview your funnel
+            Preview the form
           </a>
-          <span className={`ml-2 ${hint}`}>
-            Opens the branded page with a sample report. Nothing is charged and no lead is recorded.
+          <a
+            href={`${url}?preview=report`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
+          >
+            Preview the report
+          </a>
+          <span className={hint}>
+            The form is what your prospect fills in; the report is what they get back, against sample data. Nothing is
+            charged and no lead is recorded.
           </span>
         </p>
         <form action={rotateAction} className="mt-3">

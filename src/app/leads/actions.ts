@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createFunnel, getFunnel, updateFunnel, rotateFunnelToken } from '@/lib/funnels';
-import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, parseHttpsUrl, logoRejectionReason, activationBlockers } from '@/lib/funnels/brand';
+import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, parseHttpsUrl, logoRejectionReason, activationBlockers, newFunnelBrand } from '@/lib/funnels/brand';
 import { parseLeadRules } from '@/lib/leads/rules';
 import { uploadLogo, deleteLogoIfOurs } from '@/lib/funnels/storage';
 import { LOGO_MAX_BYTES } from '@/lib/funnels/brand';
@@ -37,11 +37,27 @@ export interface FunnelState {
   token?: string;
 }
 
+/**
+ * Refuses to create a funnel that could not work.
+ *
+ * The company name and privacy policy are checked BEFORE the row is inserted,
+ * so a public link is never minted for a funnel that cannot go live. Handing
+ * over a link and mentioning the requirement afterwards is how a customer ends
+ * up with a token they have already pasted into their own website, wondering
+ * why it returns nothing.
+ */
 export async function createFunnelAction(_prev: FunnelState, formData: FormData): Promise<FunnelState> {
   const who = await member();
   if (!who) return { error: 'Please sign in again.' };
   const name = String(formData.get('name') ?? '').trim();
-  const funnel = await createFunnel(who.id, name);
+
+  const brand = newFunnelBrand({
+    companyName: formData.get('companyName'),
+    privacyUrl: formData.get('privacyUrl'),
+  });
+  if (!brand.ok) return { error: brand.error };
+
+  const funnel = await createFunnel(who.id, name, brand.brand);
   if (!funnel) return { error: 'We could not create that funnel just now. Please try again.' };
   revalidatePath('/leads/funnels');
   revalidatePath('/leads');

@@ -6,6 +6,7 @@ import { InsufficientCreditError, getBalance } from '@/lib/credit/ledger';
 import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
 import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { getFunnel } from '@/lib/funnels';
+import { raiseFunnelAlert } from '@/lib/funnels/alerts';
 import { reserveSpend, settleSpend } from '@/lib/funnels/caps';
 import { completeLead } from '@/lib/leads/store';
 import { defaultGuests } from '@/lib/listing/normalise';
@@ -95,6 +96,11 @@ export async function GET(request: Request) {
     // Still short: leave it queued and try again next run.
     const balance = await getBalance(funnel.userId).catch(() => null);
     if (!balance || balance.spendableBasePence < estimate.maxBasePence) {
+      // Says it once a day rather than once every thirty minutes. A lead can
+      // sit here for a fortnight, and the owner may well not have been on the
+      // submission that first queued it — a report they are still waiting for
+      // is worth a reminder the next morning.
+      if (!dry) await raiseFunnelAlert('out_of_credit', funnel);
       outcomes.push({ leadId: lead.id, outcome: 'still_short' });
       continue;
     }

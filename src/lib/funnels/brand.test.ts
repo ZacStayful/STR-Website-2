@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  parseBrand, parseHexColour, parseLogoUrl, parseEmail, logoRejectionReason, brandCssVars, brandIsEmpty, brandName, readableOn, EMPTY_BRAND, activationBlockers, canActivate, parseHttpsUrl, consentText,
+  parseBrand, parseHexColour, parseLogoUrl, parseEmail, logoRejectionReason, brandCssVars, brandIsEmpty, brandName, readableOn, EMPTY_BRAND, activationBlockers, canActivate, parseHttpsUrl, consentText, newFunnelBrand,
 } from './brand.ts';
 
 test('an unusable stored value falls back to no branding, not a broken page', () => {
@@ -144,4 +144,45 @@ test('the consent line names the customer, not Stayful', () => {
   assert.doesNotMatch(t, /Stayful/);
   // With no company name it still reads as a sentence rather than "undefined".
   assert.match(consentText(EMPTY_BRAND), /the company running this form/);
+});
+
+test('a funnel cannot be created without the two things it needs to work', () => {
+  // Creation used to ask for a name alone, so a public link was minted and
+  // handed over before it held any of what that link needs.
+  for (const bad of [
+    { companyName: '', privacyUrl: 'https://example.com/privacy' },
+    { companyName: '   ', privacyUrl: 'https://example.com/privacy' },
+    { companyName: null, privacyUrl: 'https://example.com/privacy' },
+    { companyName: 'Harrison', privacyUrl: '' },
+    { companyName: 'Harrison', privacyUrl: null },
+    { companyName: 'Harrison', privacyUrl: 'not a url' },
+    { companyName: 'Harrison', privacyUrl: 'example.com/privacy' },
+    // http:// is refused for the same reason parseHttpsUrl refuses it.
+    { companyName: 'Harrison', privacyUrl: 'http://example.com/privacy' },
+  ]) {
+    const result = newFunnelBrand(bad);
+    assert.equal(result.ok, false, `expected refusal for ${JSON.stringify(bad)}`);
+    if (!result.ok) assert.ok(result.error.length > 0, 'a refusal has to say why');
+  }
+});
+
+test('a valid pair yields a brand that can go live immediately', () => {
+  // The invariant: creation can no longer produce a funnel that is unable to
+  // go live, so "Go live" never sends anyone back to Branding first.
+  const result = newFunnelBrand({ companyName: '  Harrison  ', privacyUrl: 'https://example.com/privacy' });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.brand.companyName, 'Harrison');
+  assert.deepEqual(activationBlockers(result.brand), []);
+  assert.equal(canActivate(result.brand), true);
+});
+
+test('creation sets only the two required fields, leaving the rest to Branding', () => {
+  const result = newFunnelBrand({ companyName: 'Harrison', privacyUrl: 'https://example.com/privacy' });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.brand.logoUrl, null);
+  assert.equal(result.brand.primary, null);
+  assert.equal(result.brand.background, null);
+  assert.equal(result.brand.replyToEmail, null);
 });
