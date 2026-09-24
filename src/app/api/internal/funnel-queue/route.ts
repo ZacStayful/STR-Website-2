@@ -127,13 +127,17 @@ export async function GET(request: Request) {
         requireCredit: true,
       });
       actual = spend.basePence;
-      await completeLead({
+      // Reported apart from 'ran'. This used to say 'ran' whatever happened,
+      // so a lead whose report could not be saved looked identical in the
+      // cron's own output to one that worked — while being the case that
+      // costs the customer a second charge.
+      const attached = await completeLead({
         leadId: lead.id,
         result,
         rules: funnel.leadRules,
         unqualifiedPolicy: funnel.unqualifiedPolicy,
       });
-      outcomes.push({ leadId: lead.id, outcome: 'ran' });
+      outcomes.push({ leadId: lead.id, outcome: attached ? 'ran' : 'ran_unsaved' });
     } catch (err) {
       // Stays queued either way — a failure here must not lose the lead.
       const reason = err instanceof InsufficientCreditError ? 'insufficient_credit' : 'failed';
