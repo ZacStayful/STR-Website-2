@@ -1361,3 +1361,75 @@ begin
   return v_deleted;
 end;
 $$;
+
+-- =========================
+-- subscription_events
+-- =========================
+-- Append-only history of what a subscription did and why, so churn can be
+-- measured. Everything else subscription-shaped is a MUTABLE column on
+-- profiles, which cannot answer the two questions the churn report asks:
+--
+--   "why did the ones who left at 6 months leave?"   profiles.cancel_reason is
+--   overwritten by the next cancellation and, until the fix in
+--   src/lib/stripe/webhook.ts, was nulled the moment the subscription actually
+--   ended — so the reason was destroyed at the exact moment it became the
+--   answer.
+--
+--   "how long did they stay?"   a member who leaves and comes back has one
+--   subscription_started_at, so the two spells look like one long one.
+--
+-- cycle_started_at is what separates them: it is the Stripe subscription's own
+-- start_date, so a win-back is a SECOND cohort rather than a longer first one.
+-- Tenure is always derived (at − cycle_started_at) and never stored, for the
+-- same reason the pause window is a time comparison rather than a flag —
+-- nothing to drift, nothing to keep in step with a cron.
+--
+-- Deliberately NOT columns on profiles: ACCESS_COLUMNS in src/lib/access.ts
+-- selects a fixed list, and a PostgREST select naming a column that does not
+-- exist fails the whole query and bounces every member to the paywall. A
+-- separate table cannot take the site down by being added a merge late.
+create table if not exists public.subscription_events (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  at timestamptz not null default now(),
+  -- 'started' | 'cancel_scheduled' | 'cancel_reverted' | 'ended'
+  -- | 'paused' | 'resumed' | 'past_due' | 'recovered' | 'plan_changed'
+  kind text not null,
+  -- The subscription's own start_date. Null only for a manually granted plan
+  -- that Stripe has never seen.
+  cycle_started_at timestamptz,
+  plan_code text,
+  -- Monthly-equivalent price AS AT this event, so a later price change can
+  -- never rewrite history. Annual plans are divided down (see churn.ts).
+  mrr_pence integer,
+  -- The cancel-reason slug. A superset of CANCEL_REASONS in
+  -- src/app/account/plan-view.ts: reporting also uses 'payment_failed', which
+  -- is never offered to a member because nobody chooses a dead card.
+  reason text,
+  reason_comment text,
+  -- 'self_serve' | 'portal' | 'stripe' | 'manual' | 'backfill'. Tells an
+  -- answer the member typed apart from one Stripe inferred.
+  source text not null default 'stripe',
+  stripe_subscription_id text,
+  stripe_event_id text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists subscription_events_user_at_idx
+  on public.subscription_events (user_id, at);
+create index if not exists subscription_events_kind_at_idx
+  on public.subscription_events (kind, at);
+
+-- One Stripe delivery can legitimately produce two rows — a plan change and a
+-- scheduled cancel arrive on the same event — so the guard is per (event, kind)
+-- rather than per event. A replayed delivery, a second webhook endpoint and a
+-- re-run of the backfill all land on the same row and are ignored.
+create unique index if not exists subscription_events_stripe_event_kind_uidx
+  on public.subscription_events (stripe_event_id, kind)
+  where stripe_event_id is not null;
+
+alter table public.subscription_events enable row level security;  -- no policies: service role only
+-- Supabase grants the API roles privileges on new public tables by default.
+-- RLS with no policies already returns nothing, but revoking says so outright.
+revoke all on public.subscription_events from anon, authenticated;
