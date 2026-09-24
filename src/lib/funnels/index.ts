@@ -66,6 +66,20 @@ function toFunnel(r: Record<string, unknown>): Funnel {
   };
 }
 
+/**
+ * The three token-addressed reads below all hand back the same narrow shape,
+ * so they map it the same way. Narrow on purpose: a page that is public at
+ * its URL must never carry the owner's id, rules or caps in its payload.
+ */
+function toPublicFunnel(r: Record<string, unknown>): PublicFunnel {
+  return {
+    id: String(r.id),
+    name: typeof r.name === 'string' ? r.name : 'Property income analysis',
+    brand: parseBrand(r.brand),
+    reportDepth: r.report_depth === 'enhanced' ? 'enhanced' : 'standard',
+  };
+}
+
 export async function listFunnels(userId: string): Promise<Funnel[]> {
   if (!hasServiceRole()) return [];
   const { data, error } = await createAdminClient()
@@ -187,13 +201,70 @@ export async function funnelByToken(token: string): Promise<PublicFunnel | null>
     return null;
   }
   if (!data || data.active === false) return null;
+  return toPublicFunnel(data as Record<string, unknown>);
+}
+
+/**
+ * The public page's read, which unlike `funnelByToken` has to tell a link
+ * that never existed apart from one that is merely paused.
+ *
+ * `funnelByToken` collapses both onto null and must keep doing so: it is the
+ * whole authorisation for /api/generate-pdf?f=, so widening it there would
+ * hand a paused funnel's branded PDF to anyone holding the token. The page
+ * wants the distinction — a stranger gets a "not taking enquiries" page
+ * rather than a dead end — so it asks for it here instead.
+ */
+export type FunnelLookup =
+  | { state: 'missing' }
+  | { state: 'paused'; funnel: PublicFunnel }
+  | { state: 'live'; funnel: PublicFunnel };
+
+export async function funnelPageByToken(token: string): Promise<FunnelLookup> {
+  if (!isFunnelToken(token) || !hasServiceRole()) return { state: 'missing' };
+  const { data, error } = await createAdminClient()
+    .from('funnels')
+    .select('id, name, brand, report_depth, active')
+    .eq('public_token', token)
+    .maybeSingle();
+  if (error) {
+    console.error('[funnels] page token lookup failed:', error.message);
+    return { state: 'missing' };
+  }
+  if (!data) return { state: 'missing' };
   const r = data as Record<string, unknown>;
-  return {
-    id: String(r.id),
-    name: typeof r.name === 'string' ? r.name : 'Property income analysis',
-    brand: parseBrand(r.brand),
-    reportDepth: r.report_depth === 'enhanced' ? 'enhanced' : 'standard',
-  };
+  return { state: r.active === false ? 'paused' : 'live', funnel: toPublicFunnel(r) };
+}
+
+/**
+ * The owner's own view of a funnel addressed BY TOKEN, paused or live.
+ *
+ * `funnelByToken`'s shape minus its `active` gate, plus a `user_id` gate —
+ * and that pair is the entire security property. The preview exists so a
+ * customer can check their branding BEFORE going live, and going live is
+ * gated on that branding (see activationBlockers), so without this the two
+ * gates deadlock and every new funnel's preview is dead on arrival.
+ *
+ * The `active` check is absent deliberately. Do not add it back: the
+ * `user_id` filter is what keeps a paused funnel invisible, so a token
+ * belonging to someone else reads nothing here and appending ?preview=1 to a
+ * stranger's link tells you nothing about whether it is real.
+ *
+ * `userId` must come from a server-resolved session, never from the request.
+ */
+export async function ownPublicFunnelByToken(userId: string, token: string): Promise<PublicFunnel | null> {
+  if (!isFunnelToken(token) || !hasServiceRole()) return null;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) return null;
+  const { data, error } = await createAdminClient()
+    .from('funnels')
+    .select('id, name, brand, report_depth')
+    .eq('public_token', token)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    console.error('[funnels] owner preview lookup failed:', error.message);
+    return null;
+  }
+  return data ? toPublicFunnel(data as Record<string, unknown>) : null;
 }
 
 /**
