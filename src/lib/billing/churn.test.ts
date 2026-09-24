@@ -3,12 +3,15 @@ import { test } from 'node:test';
 import {
   addMonths,
   bandFor,
+  cyclesEndedSince,
+  cyclesOnPlan,
   cyclesFromEvents,
   firstCycleMonth,
   monthlyPence,
   monthlyTrend,
   reasonsByBand,
   retentionByHorizon,
+  planCodesIn,
   retentionByPlan,
   revenueByTenureBand,
   type SubEvent,
@@ -434,4 +437,71 @@ test('the churn rate is over those active when the month began', () => {
 test('the trend is empty when there are no cycles', () => {
   assert.deepEqual(monthlyTrend([], new Date('2026-01-01T00:00:00.000Z'), NOW), []);
   assert.equal(firstCycleMonth([]), null);
+});
+
+// ---------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------
+
+const MIXED: SubEvent[] = [
+  ev({ userId: 'a', at: '2026-01-01T00:00:00.000Z', kind: 'started', cycleStartedAt: '2026-01-01T00:00:00.000Z', planCode: 'pro' }),
+  ev({ userId: 'a', at: '2026-02-01T00:00:00.000Z', kind: 'ended', cycleStartedAt: '2026-01-01T00:00:00.000Z', planCode: 'pro', reason: 'too_expensive' }),
+  ev({ userId: 'b', at: '2026-06-01T00:00:00.000Z', kind: 'started', cycleStartedAt: '2026-06-01T00:00:00.000Z', planCode: 'starter' }),
+  ev({ userId: 'b', at: '2027-01-05T00:00:00.000Z', kind: 'ended', cycleStartedAt: '2026-06-01T00:00:00.000Z', planCode: 'starter', reason: 'not_using' }),
+  ev({ userId: 'c', at: '2026-03-01T00:00:00.000Z', kind: 'started', cycleStartedAt: '2026-03-01T00:00:00.000Z', planCode: 'pro' }),
+  ev({ userId: 'd', at: '2026-04-01T00:00:00.000Z', kind: 'started', cycleStartedAt: '2026-04-01T00:00:00.000Z', planCode: null }),
+];
+
+test('planCodesIn lists the plans present, busiest first, manual grants as "none"', () => {
+  assert.deepEqual(planCodesIn(cyclesFromEvents(MIXED, NOW)), ['pro', 'none', 'starter']);
+});
+
+test('cyclesOnPlan narrows to one plan, and a falsy code means all', () => {
+  const cycles = cyclesFromEvents(MIXED, NOW);
+  assert.equal(cyclesOnPlan(cycles, 'pro').length, 2);
+  assert.equal(cyclesOnPlan(cycles, 'starter').length, 1);
+  assert.equal(cyclesOnPlan(cycles, 'none').length, 1, 'a hand-granted plan is reachable as "none"');
+  assert.equal(cyclesOnPlan(cycles, null).length, 4, 'no filter means everything');
+  assert.equal(cyclesOnPlan(cycles, 'nonsense').length, 0);
+});
+
+test('cyclesEndedSince keeps only endings, and only inside the window', () => {
+  const cycles = cyclesFromEvents(MIXED, NOW);
+  assert.equal(cyclesEndedSince(cycles, null).length, 2, 'no window still means endings only');
+  // A 30-day window from 2027-01-15 reaches back to 2026-12-16.
+  const since = new Date(NOW.getTime() - 30 * 86_400_000).toISOString();
+  const recent = cyclesEndedSince(cycles, since);
+  assert.equal(recent.length, 1);
+  assert.equal(recent[0].userId, 'b');
+});
+
+test('the window narrows the reasons cross-tab without touching retention', () => {
+  const cycles = cyclesFromEvents(MIXED, NOW);
+  const since = new Date(NOW.getTime() - 30 * 86_400_000).toISOString();
+
+  // The cross-tab follows the window.
+  assert.equal(reasonsByBand(cyclesEndedSince(cycles, since)).churned, 1);
+  assert.equal(reasonsByBand(cycles).churned, 2);
+
+  // Retention must NOT: filtering it to a recent window would drop the older
+  // cohorts that are the only ones old enough to answer the long horizons, and
+  // push the figure towards 100%.
+  //
+  // At twelve months only the two ENDED cycles are answerable — 'a' left after
+  // a month and 'b' after seven, so we know neither reached a year. 'c' and 'd'
+  // are still live and younger than a year, so they are maturing, not retained.
+  const allTime = retentionByHorizon(cycles, NOW).find((r) => r.months === 12)!;
+  assert.equal(allTime.answerable, 2);
+  assert.equal(allTime.churned, 2);
+  assert.equal(allTime.maturing, 2);
+  assert.equal(allTime.retentionPct, 0);
+});
+
+test('a plan filter applies to retention as well, since it is not a time lens', () => {
+  const cycles = cyclesOnPlan(cyclesFromEvents(MIXED, NOW), 'pro');
+  assert.equal(cycles.length, 2, "'a' who left and 'c' who is still here");
+  const twelve = retentionByHorizon(cycles, NOW).find((r) => r.months === 12)!;
+  assert.equal(twelve.churned, 1, "only 'a', who left after a month");
+  assert.equal(twelve.maturing, 1, "'c' is still live and under a year old");
+  assert.equal(twelve.answerable, 1, 'a maturing cycle is not an answer');
 });

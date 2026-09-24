@@ -9,16 +9,21 @@ import {
   CHURN_REASON_LABELS,
   TENURE_BANDS,
   churnReasonLabel,
+  cyclesEndedSince,
   cyclesFromEvents,
+  cyclesOnPlan,
   firstCycleMonth,
   monthlyTrend,
+  planCodesIn,
   reasonsByBand,
   retentionByHorizon,
   retentionByPlan,
   revenueByTenureBand,
+  type Cycle,
   type HorizonRetention,
 } from "@/lib/billing/churn";
 import { CONVERSION_WINDOW_DAYS, conversionFunnel } from "@/lib/billing/conversion";
+import { WINDOWS, oneOf, windowFor } from "../picks/responses/windows";
 import { ChurnTrend, ConversionHistogram, StabilityTrend } from "./ChurnCharts";
 
 export const metadata: Metadata = {
@@ -46,6 +51,35 @@ function Section({ title, help, children }: { title: string; help?: string; chil
       <div className="mt-4">{children}</div>
     </section>
   );
+}
+
+// Next hands a repeated query param (?plan=a&plan=b) as an array, so nothing
+// here may assume a string. `oneOf` and `windowFor` are shared with
+// /admin/picks/responses rather than re-implemented — windowFor also guards the
+// inherited-key case (`toString` passing a bare `in` check and multiplying into
+// NaN), which is not worth writing twice.
+type Param = string | string[] | undefined;
+type Search = { days?: Param; plan?: Param };
+
+const chipClass = (active: boolean) =>
+  "rounded-full border px-3 py-1 text-xs font-medium " +
+  (active
+    ? "border-primary bg-primary/10 text-primary"
+    : "border-border text-muted-foreground hover:bg-muted");
+
+function planLabel(code: string): string {
+  return code === "none" ? "Granted by hand" : code;
+}
+
+/**
+ * A note on the sections a filter deliberately does not reach.
+ *
+ * Half-filtering a page silently is worse than not filtering it at all: the
+ * numbers would look like they answered the question on screen when they did
+ * not. So every section the window skips says so.
+ */
+function Ignores({ what }: { what: string }) {
+  return <span className="ml-2 text-xs font-normal text-muted-foreground">({what})</span>;
 }
 
 function gbp(pence: number): string {
@@ -105,7 +139,7 @@ function HorizonCard({ row }: { row: HorizonRetention }) {
   );
 }
 
-export default async function ChurnPage() {
+export default async function ChurnPage({ searchParams }: { searchParams: Promise<Search> }) {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -116,24 +150,49 @@ export default async function ChurnPage() {
   if (!isAdminEmail(user.email)) notFound();
 
   const now = new Date();
+  const sp = await searchParams;
+  const timeWindow = windowFor(oneOf(sp.days));
+  const planParam = oneOf(sp.plan);
+  const since = timeWindow.days === null ? null : new Date(now.getTime() - timeWindow.days * 86_400_000).toISOString();
+
   const [events, prices, conversionInputs] = await Promise.all([
     loadSubscriptionEvents().catch(() => []),
     loadPriceMap().catch(() => ({})),
     loadConversionInputs().catch(() => ({ signups: [], payments: [] })),
   ]);
 
-  const cycles = cyclesFromEvents(events, now);
+  const allCycles = cyclesFromEvents(events, now);
+  const plans = planCodesIn(allCycles);
+  // An unknown ?plan= would otherwise silently empty the page, so it falls back
+  // to showing everything rather than to showing nothing.
+  const plan = planParam && plans.includes(planParam) ? planParam : null;
+
+  // The PLAN filter is a lens on who, so it reaches everything.
+  const cycles = cyclesOnPlan(allCycles, plan);
+
+  // The TIME filter is a lens on when people LEFT, so it reaches only the
+  // sections about leaving. Retention deliberately ignores it: a recent window
+  // would drop the older cohorts that are the only ones able to answer the long
+  // horizons at all, and push the figure towards a flattering 100%. Income
+  // stability ignores it too — it is a snapshot of what is being paid now.
+  const endedInWindow = cyclesEndedSince(cycles, since);
+
   const horizons = retentionByHorizon(cycles, now);
   const stability = revenueByTenureBand(cycles, now, prices);
-  const crossTab = reasonsByBand(cycles);
+  const crossTab = reasonsByBand(endedInWindow);
   const byPlan = retentionByPlan(cycles, now);
-  const trendFrom = firstCycleMonth(cycles) ?? now;
+  const windowStart = since ? new Date(since) : null;
+  const firstCycle = firstCycleMonth(cycles) ?? now;
+  const trendFrom = windowStart && windowStart > firstCycle ? windowStart : firstCycle;
   const trend = monthlyTrend(cycles, trendFrom, now, prices);
   const funnel = conversionFunnel(conversionInputs.signups, conversionInputs.payments, now);
 
   const atRiskCycles = cycles.filter((c) => c.state === "at_risk");
-  const endedCycles = cycles.filter((c) => c.endedAt !== null).sort((a, b) => (b.endedAt ?? "").localeCompare(a.endedAt ?? ""));
-  const comments = cycles
+  const endedCycles = [...endedInWindow].sort((a, b) => (b.endedAt ?? "").localeCompare(a.endedAt ?? ""));
+  // At-risk members are a present-tense state, so they show whatever the window
+  // is; the ones who left follow it.
+  const commentCycles: Cycle[] = [...endedInWindow, ...atRiskCycles];
+  const comments = commentCycles
     .filter((c) => c.reasonComment || c.intentComment)
     .map((c) => ({
       comment: (c.reasonComment ?? c.intentComment) as string,
@@ -141,6 +200,18 @@ export default async function ChurnPage() {
       at: c.endedAt,
       left: c.endedAt !== null,
     }));
+
+  /** Current filters with `over` applied, on `base`. Shared with the CSV link
+   *  so the download can never drift from what is on screen. */
+  const qs = (over: { days?: string; plan?: string | null } = {}, base = "/admin/churn") => {
+    const next = new URLSearchParams();
+    const days = over.days ?? timeWindow.key;
+    const p = over.plan === undefined ? plan : over.plan;
+    if (days !== "all") next.set("days", days);
+    if (p) next.set("plan", p);
+    const q = next.toString();
+    return q ? `${base}?${q}` : base;
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
@@ -155,10 +226,34 @@ export default async function ChurnPage() {
           <Link href="/admin" className="text-sm font-medium text-primary hover:underline">
             ← Dashboard
           </Link>
-          <Link href="/admin/churn/export" className="text-sm font-medium text-primary hover:underline">
+          <Link href={qs({}, "/admin/churn/export")} className="text-sm font-medium text-primary hover:underline">
             Download CSV
           </Link>
         </span>
+      </div>
+
+      <div className="mb-6 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-16 shrink-0 text-xs text-muted-foreground">Left in</span>
+          {WINDOWS.map((w) => (
+            <Link key={w.key} href={qs({ days: w.key })} className={chipClass(w.key === timeWindow.key)}>
+              {w.label}
+            </Link>
+          ))}
+        </div>
+        {plans.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="w-16 shrink-0 text-xs text-muted-foreground">Plan</span>
+            <Link href={qs({ plan: null })} className={chipClass(plan === null)}>
+              All plans
+            </Link>
+            {plans.map((code) => (
+              <Link key={code} href={qs({ plan: code })} className={chipClass(code === plan)}>
+                {planLabel(code)}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
 
       {!hasServiceRole() && (
@@ -183,7 +278,10 @@ export default async function ChurnPage() {
       </div>
 
       {/* ── Free credit → first payment ─────────────────────────────────── */}
-      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">Free credit → first payment</h2>
+      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">
+        Free credit → first payment
+        <Ignores what={`its own ${CONVERSION_WINDOW_DAYS}-day rule, and no plan yet`} />
+      </h2>
       <p className="mb-3 text-sm text-muted-foreground">
         How long members take to top up. A member who has gone {CONVERSION_WINDOW_DAYS} days without paying
         is discarded rather than left pending; one who pays after that is counted as an anomaly and kept out
@@ -231,11 +329,16 @@ export default async function ChurnPage() {
       </div>
 
       {/* ── Retention ───────────────────────────────────────────────────── */}
-      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">Retention by horizon</h2>
+      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">
+        Retention by horizon
+        <Ignores what="all time — the window does not apply" />
+      </h2>
       <p className="mb-3 text-sm text-muted-foreground">
         Of the customers whose answer we know, how many were still paying at each point. Somebody who left
         after six weeks answers the three, six and twelve-month questions straight away — we know they
-        reached none of them.
+        reached none of them. This is measured across all of history on purpose: narrowing it to a recent
+        window would drop the older cohorts that are the only ones old enough to answer the long horizons,
+        and flatter the figure.
       </p>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {horizons.map((row) => (
@@ -243,9 +346,11 @@ export default async function ChurnPage() {
         ))}
       </div>
 
-      {byPlan.length > 0 && (
+      {/* Only worth showing when nothing is selected: with a plan chosen the
+          cards above already ARE that plan, and this would just restate them. */}
+      {plan === null && byPlan.length > 1 && (
         <div className="mt-4">
-          <Section title="By plan" help="The same four horizons, split by what they were paying for.">
+          <Section title="By plan" help="The same four horizons, split by what they were paying for. Pick a plan above to filter the whole page to it.">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-muted-foreground">
@@ -283,7 +388,10 @@ export default async function ChurnPage() {
       )}
 
       {/* ── Income stability ────────────────────────────────────────────── */}
-      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">Income stability</h2>
+      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">
+        Income stability
+        <Ignores what="as things stand today" />
+      </h2>
       <p className="mb-3 text-sm text-muted-foreground">
         The longer somebody has been paying, the more reliable that money is. Six to twelve months counts as
         settled income and a year or more as the firmest; the first month is the trial phase and the least
@@ -346,7 +454,10 @@ export default async function ChurnPage() {
       </Section>
 
       {/* ── Why ─────────────────────────────────────────────────────────── */}
-      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">Why they left, and how far in</h2>
+      <h2 className="mt-10 mb-1 text-lg font-semibold text-foreground">
+        Why they left, and how far in
+        <Ignores what={timeWindow.days === null ? "all time" : `left in the last ${timeWindow.days} days`} />
+      </h2>
       <p className="mb-3 text-sm text-muted-foreground">
         Reasons against the point they dropped off, so a complaint that costs you customers in month two can
         be told apart from one that costs you customers in month eight.
@@ -464,7 +575,10 @@ export default async function ChurnPage() {
 
       {endedCycles.length > 0 && (
         <div className="mt-4">
-          <Section title="Recent cancellations">
+          <Section
+            title="Recent cancellations"
+            help={timeWindow.days === null ? "Everyone who has left." : `Everyone who left in the last ${timeWindow.days} days.`}
+          >
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="text-left text-xs text-muted-foreground">

@@ -706,3 +706,42 @@ export function cyclesCsv(cycles: Cycle[]): string {
   ]);
   return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
 }
+
+// ---------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------
+
+/**
+ * The plan codes actually present, newest cohort first, for building the
+ * filter chips. Derived from the data rather than from billing_plans, so a
+ * retired plan somebody is still on does not vanish from the page.
+ */
+export function planCodesIn(cycles: Cycle[]): string[] {
+  const counts = new Map<string, number>();
+  for (const c of cycles) {
+    const key = c.planCode ?? 'none';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([code]) => code);
+}
+
+/** Narrow to one plan. A null or unknown code means "all", never "none". */
+export function cyclesOnPlan(cycles: Cycle[], planCode: string | null): Cycle[] {
+  if (!planCode) return cycles;
+  return cycles.filter((c) => (c.planCode ?? 'none') === planCode);
+}
+
+/**
+ * Cycles that ENDED within the window.
+ *
+ * Deliberately only about endings. A time window is the right lens on "why did
+ * people leave recently" and the wrong one on retention, which asks how long
+ * cohorts lasted and is answered across all of history — filtering that by a
+ * recent window would quietly drop the older cohorts that are the only ones old
+ * enough to answer the long horizons, and push retention towards 100%.
+ */
+export function cyclesEndedSince(cycles: Cycle[], sinceIso: string | null): Cycle[] {
+  const ended = cycles.filter((c) => c.endedAt !== null);
+  if (!sinceIso) return ended;
+  return ended.filter((c) => (c.endedAt as string) >= sinceIso);
+}
