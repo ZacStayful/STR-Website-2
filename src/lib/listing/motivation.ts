@@ -30,6 +30,7 @@ import { ageFromDates, listingAge, type SourcedListing, type SourcingKind, type 
 import type { ListingSnapshot } from './types.ts';
 import { stripHtml } from './suitability.ts';
 import type { CohortKey, CohortMember } from './cohorts.ts';
+import { agentHashDiffers } from '../crypto/agent.ts';
 
 export type Confidence = 'firm' | 'soft';
 
@@ -277,9 +278,10 @@ function baseFacts(ctx: MotivationContext, kind: SourcingKind, agentHash: string
     areaMedianDays: ctx.areaMedianDays ?? null,
     reductions: ctx.reductions ?? 0,
     backOnMarket: ctx.backOnMarket ?? false,
-    // Only a change between two known agents counts. A digest appearing where
-    // there was none before is us learning the agent, not the seller changing it.
-    agentChanged: Boolean(ctx.previousAgentHash && agentHash && ctx.previousAgentHash !== agentHash),
+    // Only a change between two known agents made under the same key counts —
+    // see agentHashDiffers. A digest appearing where there was none before is
+    // us learning the agent, not the seller changing it.
+    agentChanged: agentHashDiffers(ctx.previousAgentHash, agentHash),
     cohorts: ctx.cohort?.cohorts ?? [],
     reducedByPct: ctx.cohort?.reducedByPct ?? null,
     now: ctx.now ?? new Date(),
