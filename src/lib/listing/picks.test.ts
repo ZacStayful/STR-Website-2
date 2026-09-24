@@ -4,6 +4,7 @@ import { houseQueries, applyQueryFeedback, applyCandidateFeedback, confirmedNega
 import { queriesForGoals, rentPcm, withinQueryPrice, type SourcedListing, type SourcedPick, type AreaRef, type SourcingQuery } from './sourcing.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import { purchaseDeal } from './deal.ts';
+import { screenPurchase } from './screen.ts';
 import { seedTable } from '../credit/costs.ts';
 
 const cards: HouseAreaCard[] = [
@@ -112,12 +113,52 @@ test('the v2 reasons each steer the candidate pool', () => {
   assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['too_cheap'], amount: 150_000 })])), ['house3', 'house4']);
   assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_location'], outcode: 'ng2' })])), ['flat2', 'house4']);
   assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['needs_work'] })])), ['flat2', 'house3']);
-  // Return too low on a 12% yield pick: only better yields survive.
-  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], dealScore: 12.5 })])), ['flat2', 'house4']);
   assert.equal(dealScoreOf(cands[0].deal), 16);
   assert.equal(reasonLabel('wrong_size'), 'Wrong size');
   assert.ok(reasonEffect('too_expensive'));
   assert.deepEqual(cleanReasons(['too_small', 'wrong_size', 'bogus']), ['too_small', 'wrong_size']);
+});
+
+test('"return too low" raises the floor on the screening, in the screening\'s own units', () => {
+  // Uplift % against a long-term let, which is what the member was shown.
+  const screened = (id: string, upliftPct: number) => ({
+    listing: listing({ id, bedrooms: 2, price: { amount: 150_000, period: 'total' as const } }),
+    deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }),
+    screening: screenPurchase({ bedrooms: 2, grossRevenue: { value: 24_000, source: 'estimated', confidence: 'medium' }, marketRent: { value: 700, source: 'estimated', confidence: 'medium' } }),
+    upliftPct,
+  });
+  const cands = [
+    { ...screened('weak', 0), screening: { ...screened('weak', 0).screening, upliftPct: 5 } },
+    { ...screened('mid', 0), screening: { ...screened('mid', 0).screening, upliftPct: 30 } },
+    { ...screened('strong', 0), screening: { ...screened('strong', 0).screening, upliftPct: 60 } },
+  ];
+  const ids = (out: typeof cands) => out.map((c) => c.listing.id);
+
+  // Said no to a 30% uplift: only better than that survives. The floor is
+  // strictly greater, so the rejected figure itself is excluded.
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], screeningScore: 30 })])), ['strong']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], screeningScore: 4 })])), ['weak', 'mid', 'strong']);
+});
+
+test('a return floor never comes from, or applies to, something with no screening', () => {
+  const withScreening = {
+    listing: listing({ id: 'screened', bedrooms: 2, price: { amount: 150_000, period: 'total' as const } }),
+    deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }),
+    screening: screenPurchase({ bedrooms: 2, grossRevenue: { value: 24_000, source: 'estimated', confidence: 'medium' }, marketRent: { value: 2_000, source: 'estimated', confidence: 'medium' } }),
+  };
+  const unscreened = { listing: listing({ id: 'bare', bedrooms: 2, price: { amount: 150_000, period: 'total' as const } }), deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }) };
+
+  // Feedback from before the screening existed sets no floor at all: its stored
+  // figure was a gross yield, and comparing that against an uplift would
+  // mis-filter silently. Such rows age out of the 60-day window instead.
+  const legacy = feedbackRules([feedback({ reasons: ['poor_return'] })]);
+  assert.deepEqual(legacy.minReturn, {}, 'no screening on the row, so no floor');
+  assert.ok(legacy.inert.includes('poor_return'), 'and the member is told it changed nothing');
+
+  // A candidate we could not screen is not dropped by a floor either — there is
+  // nothing to compare it against, and going silent costs the member their pick.
+  const kept = applyCandidateFeedback([withScreening, unscreened], [feedback({ reasons: ['poor_return'], screeningScore: 500 })]);
+  assert.ok(kept.some((c) => c.listing.id === 'bare'), 'an unscreened candidate survives any floor');
 });
 
 test('reasons are cleaned to the known set and tokens are guarded', () => {

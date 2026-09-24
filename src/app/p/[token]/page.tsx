@@ -6,7 +6,7 @@ import { pickByToken, recordReaction } from "@/lib/listing/picks-server";
 import { isPickToken, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type PickFeedback } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
-import { BAND_LABELS, screeningWorking } from "@/lib/listing/screen";
+import { BAND_LABELS, screeningScore, screeningWorking } from "@/lib/listing/screen";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
@@ -55,7 +55,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
     amount: l.price ? (pick.kind === "rent" ? (l.price.period === "pw" ? Math.round((l.price.amount * 52) / 12) : l.price.amount) : l.price.period === "total" ? l.price.amount : null) : null,
     rawType: l.rawType,
     outcode: l.outcode,
-    dealScore: pick.deal ? (pick.deal.kind === "purchase" ? pick.deal.grossYieldPct : pick.deal.monthlyMargin) : null,
+    screeningScore: screeningScore(pick.screening),
   };
   const rules = feedbackRules([answer]);
   const changed = pick.reasons.filter((r) => ruleApplied(rules, r) && reasonEffect(r));

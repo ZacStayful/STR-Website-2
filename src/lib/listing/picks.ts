@@ -16,7 +16,7 @@ import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
 import type { Deal } from './deal.ts';
 import { propertyKind } from './suitability.ts';
-import { BAND_LABELS, screeningWorking, type Screening } from './screen.ts';
+import { BAND_LABELS, screeningScore, screeningWorking, type Screening } from './screen.ts';
 import { motivationLabel, type Motivation } from './motivation.ts';
 
 export type PickBasis = 'goals' | 'house';
@@ -117,7 +117,7 @@ export const PICK_REASONS = [
   { key: 'no_houses', label: 'No houses', group: 'type', effect: 'flats only from now on' },
   { key: 'needs_work', label: 'Needs too much work', group: 'type', effect: 'we skip renovation projects and auctions' },
   { key: 'not_str_suitable', label: 'Could not be run as a short let', group: 'type', effect: 'we tighten the short-let checks' },
-  { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send better returns than this one' },
+  { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send properties that beat this one against a long-term let' },
   { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we switch you to rentals' },
   { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we switch you to sales' },
   { key: 'seen_it', label: 'Already seen it', group: 'other', effect: null },
@@ -166,11 +166,21 @@ export interface PickFeedback {
   rawType: string | null;
   /** Postcode district of the pick (a "bad spot" is skipped by district). */
   outcode?: string | null;
-  /** Gross yield % (purchase) or monthly margin £ (rent-to-rent) of the pick's deal. */
-  dealScore?: number | null;
+  /**
+   * The income screening's headline figure for the pick: uplift % for a
+   * purchase, annual profit £ for rent-to-rent. What "return too low" now
+   * compares against.
+   *
+   * Absent on picks sent before the screening existed, and that is deliberate:
+   * those rows carry a gross yield or a monthly margin, which are different
+   * quantities in different units. Letting them set a floor here would compare
+   * a 12.5% yield against a 12.5% uplift and silently mis-filter. They simply
+   * contribute nothing and age out of the 60-day feedback window.
+   */
+  screeningScore?: number | null;
 }
 
-/** Yield for a purchase, monthly margin for rent-to-rent: the number a "return too low" compares against. */
+/** Yield for a purchase, monthly margin for rent-to-rent. Kept for the admin report's own column. */
 export function dealScoreOf(deal: Deal | null | undefined): number | null {
   if (!deal) return null;
   return deal.kind === 'purchase' ? deal.grossYieldPct : deal.monthlyMargin;
@@ -247,7 +257,7 @@ export function feedbackRules(feedback: PickFeedback[]): AppliedRules {
     if (has('too_big') && f.bedrooms !== null && f.bedrooms > 1) r.maxBeds = Math.min(r.maxBeds ?? Infinity, f.bedrooms - 1);
     if (has('wrong_size') && f.bedrooms !== null) r.badSizes.add(f.bedrooms);
     if (has('wrong_type') && f.rawType) r.badTypes.add(f.rawType.toLowerCase());
-    if (has('poor_return') && f.kind && typeof f.dealScore === 'number') r.minReturn[f.kind] = Math.max(r.minReturn[f.kind] ?? -Infinity, f.dealScore);
+    if (has('poor_return') && f.kind && typeof f.screeningScore === 'number') r.minReturn[f.kind] = Math.max(r.minReturn[f.kind] ?? -Infinity, f.screeningScore);
     if (has('no_flats')) r.noFlats = true;
     if (has('no_houses')) r.noHouses = true;
     if (has('needs_work')) r.noWork = true;
@@ -346,7 +356,7 @@ export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedb
  * the member already said no to. Each rule is per kind where the rejected
  * pick's kind is known (a purchase budget is not a rent ceiling).
  */
-export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
+export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null; screening?: Screening | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
   return candidates.filter((c) => {
     const l = c.listing;
     const amount = l.price ? (l.kind === 'rent' ? (l.price.period === 'pw' ? (l.price.amount * 52) / 12 : l.price.amount) : l.price.amount) : null;
@@ -371,7 +381,10 @@ export function applyCandidateFeedback<C extends { listing: SourcedListing; deal
     if (rules.noWork && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
     const need = rules.minReturn[l.kind];
     if (need !== undefined) {
-      const score = dealScoreOf(c.deal);
+      // Same metric on both sides: the floor came from a screening, so it is
+      // compared against one. A candidate we could not screen is not dropped —
+      // there is nothing to compare, and silence costs the member their pick.
+      const score = screeningScore(c.screening);
       if (score !== null && score <= need) return false;
     }
     return true;

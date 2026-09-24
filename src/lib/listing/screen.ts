@@ -418,7 +418,8 @@ export function parseScreening(raw: unknown): Screening | null {
 }
 
 /** The headline figure for this kind, for a subject line or a sort. */
-export function screeningScore(s: Screening): number | null {
+export function screeningScore(s: Screening | null | undefined): number | null {
+  if (!s || s.band === 'insufficient-data') return null;
   return s.kind === 'purchase' ? s.upliftPct : s.annualProfit;
 }
 

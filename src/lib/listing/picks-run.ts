@@ -20,10 +20,9 @@ import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
-import { screen, bandRank, marketRentFor, grossRevenueFor, isSendable, type Band, type Screening } from "./screen";
+import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { screen, bandRank, marketRentFor, grossRevenueFor, isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
 import { storedAreaRentTable, areaRentKey } from "../broker/providers/internal";
-import type { Deal } from "./deal";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
 import type { ListingSnapshot } from "./types";
@@ -238,6 +237,27 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (fbRes.error) console.warn("[sourcing] feedback select failed (schema behind?):", fbRes.error.message);
     feedbackRows.push(...((fbRes.data ?? []) as FeedbackRow[]));
   }
+  // The screening behind each piece of feedback, read SEPARATELY on purpose. The
+  // select above only console.warns on failure, so putting a new column in it
+  // would mean one missing column silently switching off every feedback rule —
+  // price caps, area bans, kind switches — for every member. On its own it can
+  // only cost the return floor, which then simply does not apply.
+  const feedbackScreening = new Map<string, Screening | null>();
+  for (const some of chunk(ids, ID_CHUNK)) {
+    const { data, error } = await admin
+      .from("sourcing_sent")
+      .select("user_id, canonical_url, screening")
+      .in("user_id", some)
+      .not("reaction", "is", null)
+      .gte("responded_at", feedbackSince);
+    if (error) {
+      console.warn("[sourcing] screening feedback select failed (schema behind?):", error.message);
+      break;
+    }
+    for (const r of (data ?? []) as { user_id: string; canonical_url: string; screening: unknown }[]) {
+      feedbackScreening.set(`${r.user_id}|${r.canonical_url}`, parseScreening(r.screening));
+    }
+  }
   // The listing behind each piece of feedback (size, type, price) comes from the shared snapshot.
   const feedbackListing = new Map<string, SourcedListing>();
   for (const urls of chunk([...new Set(feedbackRows.map((r) => r.canonical_url))], URL_CHUNK)) {
@@ -260,7 +280,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         rawType: l?.rawType ?? null,
         // Older stored snapshots carry no outcode; the postcode still has one.
         outcode: l?.outcode ?? findOutcode(l?.postcode ?? l?.address ?? null),
-        dealScore: dealScoreOf((r.deal as Deal | null) ?? null),
+        screeningScore: screeningScore(feedbackScreening.get(`${r.user_id}|${r.canonical_url}`) ?? null),
       },
     ]);
   }
