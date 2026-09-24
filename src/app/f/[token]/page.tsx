@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { cache } from "react";
+import { after } from "next/server";
 import { notFound } from "next/navigation";
 import EstimatePage from "@/app/estimate/page";
 import { funnelPageByToken, ownPublicFunnelByToken, type PublicFunnel } from "@/lib/funnels";
+import { raiseFunnelAlertById } from "@/lib/funnels/alerts";
+import { firstPausedHit } from "@/lib/funnels/caps";
 import { brandCssVars, brandName } from "@/lib/funnels/brand";
 import { parseFunnelPrefill, previewMode, type FunnelMode, type PreviewMode } from "@/lib/funnels/mode";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -135,6 +138,20 @@ export default async function FunnelPage({
   const style = brandCssVars(resolved.funnel.brand) as React.CSSProperties;
 
   if (resolved.view === "paused") {
+    // Somebody just tried to use this funnel and got nothing. If its link is on
+    // the customer's website or in a sequence they are sending, those enquiries
+    // are not reaching them and they have no other way to find out.
+    //
+    // `after` so a prospect is not kept waiting on our bookkeeping, and behind
+    // `firstPausedHit` because this runs on an unauthenticated public GET —
+    // otherwise hammering a paused link would make us do an upsert, a profile
+    // read and an email attempt per request. The owner's own preview never
+    // reaches here, so checking their own funnel does not alert them.
+    after(async () => {
+      if (await firstPausedHit(resolved.funnel.id)) {
+        await raiseFunnelAlertById("paused_hit", resolved.funnel.id);
+      }
+    });
     return (
       <div style={style}>
         <ClosedNotice funnel={resolved.funnel} />

@@ -6,6 +6,7 @@ import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
 import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { ownedFunnelByToken } from '@/lib/funnels';
 import { countAttempt, reserveSpend, settleSpend, capMessage } from '@/lib/funnels/caps';
+import { raiseFunnelAlert } from '@/lib/funnels/alerts';
 import { captureLead, completeLead } from '@/lib/leads/store';
 import { isDisposableEmail } from '@/lib/credit/abuse';
 import { verifyTurnstile } from '@/lib/turnstile/verify';
@@ -100,6 +101,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   //      submissions all pass; see src/lib/funnels/caps.ts. ──
   const verdict = await countAttempt(funnel.id, ip, funnel.dailyCap);
   if (verdict !== 'ok') {
+    // Only the genuine daily cap is worth telling the owner about: an IP
+    // throttle is one visitor being impatient, and 'unavailable' is our end
+    // failing rather than a limit of theirs.
+    if (verdict === 'daily_cap') await raiseFunnelAlert('daily_cap', funnel);
     return sseOnce({ stage: 'error', progress: 0, message: capMessage(verdict) });
   }
 
@@ -153,12 +158,17 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   // ── 5. Solvency, explicitly. Deliberately NOT isEnforcing(). ──
   const balance = await getBalance(funnel.userId).catch(() => null);
   if (!balance || balance.spendableBasePence < estimate.maxBasePence) {
+    // The enquiry is already captured, so nothing is lost — but the prospect
+    // has just been promised a report that will not arrive until the owner
+    // tops up, and until now nothing told them that was happening.
+    await raiseFunnelAlert('out_of_credit', funnel);
     return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });
   }
 
   // ── 6. Claim today's spend headroom at the worst case. ──
   const claimed = await reserveSpend(funnel.id, estimate.maxBasePence, funnel.dailySpendCapPence);
   if (!claimed) {
+    await raiseFunnelAlert('spend_cap', funnel);
     return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });
   }
 

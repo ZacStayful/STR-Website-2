@@ -1246,6 +1246,58 @@ create table if not exists public.funnel_hits (
 create index if not exists funnel_hits_window_idx on public.funnel_hits (window_start);
 alter table public.funnel_hits enable row level security;
 
+-- ── Funnel alerts: one row per funnel, kind and UTC day ──
+--
+-- The dedup store behind "tell the owner when their funnel stops working".
+-- Every wall a funnel can hit used to be silent: a customer whose credit ran
+-- dry kept collecting leads that were captured, queued and never reported on,
+-- and nothing told them. A prospect landing on a paused link was invisible too.
+--
+-- The INSERT is the decision. Whoever creates the row sends the email and
+-- everybody else conflicts and stays quiet, so a funnel that hits its ceiling
+-- eighty times in a day sends one email rather than eighty — and it is decided
+-- atomically, not by reading and then writing.
+create table if not exists public.funnel_alerts (
+  funnel_id uuid not null references public.funnels(id) on delete cascade,
+  -- 'out_of_credit' | 'paused_hit' | 'daily_cap' | 'spend_cap'
+  kind text not null,
+  day timestamptz not null,
+  created_at timestamptz not null default now(),
+  primary key (funnel_id, kind, day)
+);
+-- Lets a sweep drop days that have rolled over.
+create index if not exists funnel_alerts_day_idx on public.funnel_alerts (day);
+
+alter table public.funnel_alerts enable row level security;
+
+/**
+ * Claims the right to tell this funnel's owner about this wall today.
+ * Returns true to exactly one caller per (funnel, kind, UTC day).
+ *
+ * In SQL for the same reason funnel_hit and funnel_spend_reserve are: the
+ * decision has to be the write. Reading whether we have already sent and then
+ * writing that we have would let concurrent submissions all decide they were
+ * first and send their own copy — and the whole point is one email, not one
+ * per prospect. It is a function rather than an upsert from the client so the
+ * contract is ours and does not depend on how a driver reports a conflict.
+ */
+create or replace function public.funnel_alert_claim(
+  p_funnel uuid,
+  p_kind text,
+  p_day timestamptz
+)
+returns boolean
+language plpgsql
+as $$
+begin
+  insert into public.funnel_alerts (funnel_id, kind, day)
+  values (p_funnel, p_kind, p_day)
+  on conflict (funnel_id, kind, day) do nothing;
+  -- 0 when somebody else already claimed it today.
+  return found;
+end;
+$$;
+
 -- ── Funnel caps: atomic, because a public endpoint spends real money ──
 --
 -- The members-only daily cap (resolvesToday in src/lib/listing/server.ts)
