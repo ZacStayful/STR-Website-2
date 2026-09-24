@@ -168,6 +168,14 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Inter is registered once, in src/lib/fonts.ts, as --font-inter. The root
+       layout used to register it a second time purely to publish it under this
+       name. Everything that reads --font-sans expects Inter — the analyser, the
+       /presentation page, the AppSwitcher fallback on routes that do not define
+       --font-dmsans — so alias it here instead of loading the family twice.
+       Scoped to body, exactly where the root layout's class used to set it, so
+       the @theme token above still answers anything outside it. */
+    --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   html {
     @apply font-sans;
