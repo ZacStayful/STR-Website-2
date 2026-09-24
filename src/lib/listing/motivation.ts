@@ -29,6 +29,7 @@
 import { ageFromDates, listingAge, type SourcedListing, type SourcingKind, type ListingAge } from './sourcing.ts';
 import type { ListingSnapshot } from './types.ts';
 import { stripHtml } from './suitability.ts';
+import type { CohortKey, CohortMember } from './cohorts.ts';
 
 export type Confidence = 'firm' | 'soft';
 
@@ -63,6 +64,11 @@ export const MOTIVATION_SIGNALS = {
   offers_invited: { label: 'Offers invited', weight: 10, kinds: SALE, confidence: 'soft' },
   portfolio_exit: { label: 'Landlord selling up', weight: 15, kinds: SALE, confidence: 'soft' },
   tenanted: { label: 'Sold with tenants in situ', weight: 10, kinds: SALE, confidence: 'soft' },
+  // From the cohort feed only. A provider stating a property was repossessed or
+  // that its seller needs a quick sale is a fact about the sale, not a phrase in
+  // the advert, so both are firm and weighted accordingly.
+  repossessed: { label: 'Repossessed — lender selling', weight: 35, kinds: SALE, confidence: 'firm' },
+  needs_quick_sale: { label: 'Seller needs a quick sale', weight: 30, kinds: SALE, confidence: 'firm' },
   short_lease: { label: 'Short lease', weight: 20, kinds: SALE, confidence: 'firm' },
 
   // ── Rent: a motivated landlord ──
@@ -144,6 +150,10 @@ export interface MotivationFacts {
   minimumTermInMonths: number | null;
   /** Rent: false when the listing names no agent. Null when we cannot tell. */
   hasAgent: boolean | null;
+  /** Cohorts a data provider puts this property in. Facts, so they weigh as firm. */
+  cohorts: CohortKey[];
+  /** The provider's own reduction figure, as a percentage off the first asking price. */
+  reducedByPct: number | null;
   now: Date;
 }
 
@@ -179,7 +189,7 @@ export function judgeMotivation(f: MotivationFacts): Motivation {
   // An age we derived from our own first sighting is a floor, never the age, so
   // it can raise the score but must never count as firm evidence.
   if (f.age) {
-    const ageConfidence: Confidence = f.age.source === 'portal' ? 'firm' : 'soft';
+    const ageConfidence: Confidence = f.age.source === 'sighting' ? 'soft' : 'firm';
     if (f.age.days >= f.thresholdDays) fire('long_on_market', ageConfidence);
     if (f.areaMedianDays !== null && f.age.days >= f.areaMedianDays * SLOWER_THAN_AREA_RATIO) {
       fire('slower_than_area', ageConfidence);
@@ -187,6 +197,19 @@ export function judgeMotivation(f: MotivationFacts): Motivation {
   }
 
   // ── Price movement ──
+  // The feed's own verdict first: it measured this rather than inferring it.
+  const inCohort = (c: CohortKey) => f.cohorts.includes(c);
+  if (inCohort('repossessed')) fire('repossessed');
+  if (inCohort('quick_sale')) fire('needs_quick_sale');
+  if (inCohort('back_on_market')) fire('back_on_market');
+  if (inCohort('price_reduced')) fire('price_reduced');
+  // Their price-reduced list is a 15%+ cut since first listing; past double that
+  // the seller has plainly been chasing the market down more than once.
+  if (f.reducedByPct !== null && f.reducedByPct >= 30) fire('reduced_repeatedly');
+  if (inCohort('auction')) fire('auction', 'firm');
+  if (inCohort('tenanted')) fire('tenanted', 'firm');
+  if (inCohort('chain_free')) fire('chain_free', 'firm');
+
   if (f.listingUpdate?.reason === 'reduced') fire('price_reduced');
   if (/^reduced/i.test(f.addedOrReduced ?? '')) fire('price_reduced');
   if (f.reductions >= 1) fire('price_reduced');
@@ -242,6 +265,8 @@ export interface MotivationContext {
   backOnMarket?: boolean;
   /** The agent digest we last saw for this property, if any. */
   previousAgentHash?: string | null;
+  /** What the cohort feed says about this property, when it knows it at all. */
+  cohort?: CohortMember | null;
   now?: Date;
 }
 
@@ -255,8 +280,19 @@ function baseFacts(ctx: MotivationContext, kind: SourcingKind, agentHash: string
     // Only a change between two known agents counts. A digest appearing where
     // there was none before is us learning the agent, not the seller changing it.
     agentChanged: Boolean(ctx.previousAgentHash && agentHash && ctx.previousAgentHash !== agentHash),
+    cohorts: ctx.cohort?.cohorts ?? [],
+    reducedByPct: ctx.cohort?.reducedByPct ?? null,
     now: ctx.now ?? new Date(),
   };
+}
+
+/**
+ * How long the feed says it has been up, when it says. A provider measuring
+ * continuous marketing beats anything we can infer, so it is firm.
+ */
+function cohortAge(ctx: MotivationContext): ListingAge | null {
+  const months = ctx.cohort?.monthsOnMarket ?? null;
+  return months !== null && months > 0 ? { days: Math.round(months * 30.44), source: 'feed' } : null;
 }
 
 /** Judge a search-result listing: cheap, and blind to anything only the page says. */
@@ -265,7 +301,7 @@ export function motivationFromListing(l: SourcedListing, ctx: MotivationContext)
   return judgeMotivation({
     ...baseFacts(ctx, l.kind, l.agentHash),
     text: [l.title, l.rawType, l.priceQualifier ?? null, l.tenure ?? null, ...(l.features ?? [])].filter(Boolean).join(' | '),
-    age: ctx.age ?? listingAge(l, ctx.firstSeenAt ?? null, now),
+    age: ctx.age ?? cohortAge(ctx) ?? listingAge(l, ctx.firstSeenAt ?? null, now),
     addedOrReduced: l.addedOrReduced ?? null,
     listingUpdate: null,
     yearsRemainingOnLease: null,
@@ -279,7 +315,7 @@ export function motivationFromListing(l: SourcedListing, ctx: MotivationContext)
 /** Judge the fetched page: the description, the listing history and the let terms. */
 export function motivationFromSnapshot(s: ListingSnapshot, kind: SourcingKind, ctx: MotivationContext): Motivation {
   const now = ctx.now ?? new Date();
-  const age = ctx.age ?? ageFromDates(s.listedDate, ctx.firstSeenAt ?? null, now);
+  const age = ctx.age ?? cohortAge(ctx) ?? ageFromDates(s.listedDate, ctx.firstSeenAt ?? null, now);
   return judgeMotivation({
     ...baseFacts(ctx, kind, s.agentHash),
     text: [s.title, s.rawType ?? null, s.price?.qualifier ?? null, s.tenure ?? null, ...s.features].filter(Boolean).join(' | '),

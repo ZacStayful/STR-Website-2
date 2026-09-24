@@ -49,6 +49,7 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'propertydata', unit: 'floor_areas', label: 'PropertyData /floor-areas', unitCostPence: 2.5, notes: 'estimate — reconcile against the PropertyData invoice' },
   { provider: 'propertydata', unit: 'valuation_rent', label: 'PropertyData /valuation-rent (per attempt)', unitCostPence: 2.5, notes: 'up to 3 attempts per report' },
   { provider: 'propertydata', unit: 'valuation_sale', label: 'PropertyData /valuation-sale (per attempt)', unitCostPence: 2.5, notes: 'up to 2 attempts per report' },
+  { provider: 'propertydata', unit: 'sourced_properties', label: 'PropertyData /sourced-properties (one motivated-seller cohort)', unitCostPence: 1, notes: 'house spend, one credit per cohort per area; ~0.3-1.4p depending on plan tier' },
   // ── Google Maps Platform ──
   { provider: 'google', unit: 'geocode', label: 'Google Geocoding', unitCostPence: 0.005 * USD, notes: '$5 per 1,000' },
   { provider: 'google', unit: 'reverse_geocode', label: 'Google reverse geocoding', unitCostPence: 0.005 * USD, notes: '$5 per 1,000' },

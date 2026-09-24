@@ -154,13 +154,14 @@ export function rentPcm(price: SourcedListing['price']): number | null {
 // ── How long it has been sitting ──
 
 /**
- * `portal` is the listing's real age, from the site's own listing date.
- * `sighting` is only a floor: it counts from when Stayful first saw the
+ * `portal` is the listing's real age, from the site's own listing date, and
+ * `feed` is a data provider's measured months on market — both are the real
+ * thing. `sighting` is only a floor: it counts from when Stayful first saw the
  * listing, which may be long after it went up. Anything shown to a member has
  * to respect the difference — "on the market 5 months" and "we have been
  * watching it 5 months" are not the same claim.
  */
-export type AgeSource = 'portal' | 'sighting';
+export type AgeSource = 'portal' | 'sighting' | 'feed';
 
 export interface ListingAge {
   days: number;

@@ -30,6 +30,8 @@ const facts = (over: Partial<MotivationFacts> = {}): MotivationFacts => ({
   letAvailableDate: null,
   minimumTermInMonths: null,
   hasAgent: null,
+  cohorts: [],
+  reducedByPct: null,
   now: NOW,
   ...over,
 });
@@ -341,4 +343,48 @@ test('signals we no longer recognise are dropped, not rendered raw', () => {
   // A score out of range cannot leak into the UI either.
   assert.equal(parseMotivation({ score: 9999, firmScore: -5, fired: ['chain_free'] })!.score, 100);
   assert.equal(parseMotivation({ score: 9999, firmScore: -5, fired: ['chain_free'] })!.firmScore, 0);
+});
+
+// ── What the cohort feed adds ──
+
+test('a measured cohort is firm evidence, unlike the same claim in wording', () => {
+  // "Repossessed" in an advert is the agent talking; in the feed it is a
+  // provider stating a fact, so it can carry a hard filter on its own.
+  const fromFeed = judgeMotivation(facts({ cohorts: ['repossessed'] }));
+  assert.ok(fromFeed.fired.includes('repossessed'));
+  assert.ok(fromFeed.firmScore > 0);
+
+  const fromWording = judgeMotivation(facts({ text: 'Repossessed property, priced to sell' }));
+  assert.equal(fromWording.firmScore, 0);
+});
+
+test('the feed answers the things we could otherwise only infer', () => {
+  const m = judgeMotivation(facts({ cohorts: ['price_reduced', 'back_on_market', 'quick_sale'] }));
+  assert.ok(m.fired.includes('price_reduced'));
+  assert.ok(m.fired.includes('back_on_market'));
+  assert.ok(m.fired.includes('needs_quick_sale'));
+});
+
+test('a deep cut is read as more than one reduction', () => {
+  // Their price-reduced list starts at 15% off the first asking price, so past
+  // double that the seller has plainly chased the market down more than once.
+  assert.ok(!judgeMotivation(facts({ cohorts: ['price_reduced'], reducedByPct: 18 })).fired.includes('reduced_repeatedly'));
+  assert.ok(judgeMotivation(facts({ cohorts: ['price_reduced'], reducedByPct: 34 })).fired.includes('reduced_repeatedly'));
+});
+
+test('a cohort claim still respects which kind it applies to', () => {
+  const rent = judgeMotivation(facts({ kind: 'rent', cohorts: ['repossessed', 'chain_free', 'tenanted'] }));
+  assert.deepEqual(rent.fired, []);
+});
+
+test('a measured months-on-market beats anything we inferred', () => {
+  const member = {
+    uprn: '1', postcode: 'OX3 9DW', address: '12 High St', url: null, price: null, bedrooms: null,
+    propertyType: null, cohorts: ['slow_to_sell' as const], monthsOnMarket: 14, reducedByPct: null, yearsRemaining: null,
+  };
+  // We first saw it three days ago; the feed says fourteen months. Ours is a
+  // floor and theirs is a measurement, so theirs wins and counts as firm.
+  const m = motivationFromListing(listing({}), { thresholdDays: 150, firstSeenAt: '2026-09-21T00:00:00Z', cohort: member, now: NOW });
+  assert.ok(m.fired.includes('long_on_market'));
+  assert.ok(m.firmScore > 0);
 });

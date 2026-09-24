@@ -16,6 +16,8 @@ import { findOutcode } from "./html";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
+import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
+import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
@@ -84,6 +86,14 @@ const MAX_ALTERNATES = 3;
  * over the same rows, and floored so it never trawls years of dead stock.
  */
 const MOTIVATED_POOL_LIMIT = 600;
+/**
+ * The cohort feed costs one credit per cohort per area, so it is bounded twice:
+ * by how many areas one run will ask about, and by a time budget, because it
+ * runs before the queries that the picks themselves depend on.
+ */
+const COHORT_AREAS_PER_RUN = 12;
+const COHORT_RADIUS_MILES = 10;
+const COHORT_UNTIL_MS = 12_000;
 const MOTIVATED_POOL_FLOOR_MS = 18 * 30 * 24 * 60 * 60 * 1000;
 const PAGE = 1000;
 const ID_CHUNK = 100;
@@ -356,6 +366,33 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   }
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
+  // ── What a data provider already knows about these areas ──
+  // Everything else in the motivation read is inferred. This is PropertyData
+  // naming the properties it has measured as continuously marketed for over a
+  // year, cut by more than fifteen percent, or repossessed — facts rather than
+  // adjectives, and the only way to know a listing's real history on the day we
+  // first see it. One credit per cohort per area, as house spend.
+  const cohortIndex = new Map<string, CohortMember>();
+  if (sourcedPropertiesConfigured()) {
+    const motivatedAreas = new Set<string>();
+    for (const m of members) {
+      if (!m.goals || m.goals.motivation.mode === "off") continue;
+      for (const q of m.queries) motivatedAreas.add(q.area);
+    }
+    for (const area of [...motivatedAreas].slice(0, COHORT_AREAS_PER_RUN)) {
+      if (elapsed() > COHORT_UNTIL_MS) break;
+      const c = areaCentroid(area);
+      if (!c) continue;
+      try {
+        const rows = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => fetchCohorts({ lat: c.lat, lng: c.lng }, COHORT_RADIUS_MILES));
+        for (const [k, v] of indexCohorts(rows)) if (!cohortIndex.has(k)) cohortIndex.set(k, v);
+      } catch (err) {
+        // A cohort feed that is down must never cost anyone their daily pick.
+        console.warn("[sourcing] cohort feed failed for", area, (err as Error)?.message ?? err);
+      }
+    }
+  }
+
   // ── The back catalogue, for members who asked for motivated sellers ──
   // Every other pick has to be new; this filter is the one case where old is the
   // point. These rows are read from what we have already stored, so they cost a
@@ -500,6 +537,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             thresholdDays: thresholdDaysFor(motiv, l.kind),
             areaMedianDays: median,
             firstSeenAt: firstSeenIso(l.canonicalUrl),
+            cohort: lookupCohorts(cohortIndex, { uprn: l.uprn, postcode: l.postcode, address: l.address }),
             now: runNow,
           })
         : null;
@@ -672,6 +710,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               thresholdDays: thresholdDaysFor(motiv, listing.kind),
               areaMedianDays: areaMedianDays.get(`${listing.kind}|${listing.postcodeArea ?? ""}`) ?? null,
               firstSeenAt: firstSeenIso(listing.canonicalUrl),
+              cohort: lookupCohorts(cohortIndex, { uprn: listing.uprn, postcode: listing.postcode, address: listing.address }),
               now: runNow,
             })
           : p.motivation ?? null;
