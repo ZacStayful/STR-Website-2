@@ -12,6 +12,7 @@ import { escapeHtml as esc } from '../email/escape.ts';
 import { scriptJsonById, parsePrice, findPostcode, findOutcode } from './html.ts';
 import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
+import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
 import type { MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
@@ -45,6 +46,19 @@ export interface SourcedListing {
   sharedOwnership?: boolean | null;
   /** From the fetched page's description: permission (`true`), prohibition (`false`), silent / not read (`null`). */
   shortLetsPermitted?: boolean | null;
+  /**
+   * Motivation evidence. All optional: rows stored before these existed read
+   * with `?? null`, and the score treats a missing value as no signal rather
+   * than as a negative one.
+   */
+  /** The portal's own listing date (ISO). Their clock, not our first sighting. */
+  listedDate?: string | null;
+  /** Property identity across listings, so a relist can be matched (PMI `uprn`). */
+  uprn?: string | null;
+  /** OnTheMarket's bucket, verbatim: "Added > 14 days", "Reduced < 14 days". */
+  addedOrReduced?: string | null;
+  /** Keyed digest of the marketing agent. Never the name — see crypto/agent.ts. */
+  agentHash?: string | null;
 }
 
 export interface SourcingQuery {
@@ -135,6 +149,56 @@ export function rentPcm(price: SourcedListing['price']): number | null {
   return null;
 }
 
+// ── How long it has been sitting ──
+
+/**
+ * `portal` is the listing's real age, from the site's own listing date.
+ * `sighting` is only a floor: it counts from when Stayful first saw the
+ * listing, which may be long after it went up. Anything shown to a member has
+ * to respect the difference — "on the market 5 months" and "we have been
+ * watching it 5 months" are not the same claim.
+ */
+export type AgeSource = 'portal' | 'sighting';
+
+export interface ListingAge {
+  days: number;
+  source: AgeSource;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Older than this and the date is wrong, not the listing. */
+const MAX_PLAUSIBLE_DAYS = 10 * 365;
+
+function daysSince(value: string | null | undefined, now: number): number | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return null;
+  const days = Math.floor((now - t) / DAY_MS);
+  // A future date is a bad date; so is one from before the portals existed.
+  return days >= 0 && days <= MAX_PLAUSIBLE_DAYS ? days : null;
+}
+
+/**
+ * How long the listing has been up, preferring the portal's own date and
+ * falling back to our first sighting. Null when neither is usable — which the
+ * caller must read as "unknown", never as "new".
+ */
+export function listingAge(listing: SourcedListing, firstSeenAt?: string | null, now: Date = new Date()): ListingAge | null {
+  const at = now.getTime();
+  const portal = daysSince(listing.listedDate ?? null, at);
+  if (portal !== null) return { days: portal, source: 'portal' };
+  const seen = daysSince(firstSeenAt ?? null, at);
+  return seen === null ? null : { days: seen, source: 'sighting' };
+}
+
+/** The median age of a cohort, for "slower than others round here". Null below `minSample`. */
+export function medianAgeDays(ages: (ListingAge | null)[], minSample = 12): number | null {
+  const days = ages.filter((a): a is ListingAge => a !== null).map((a) => a.days).sort((a, b) => a - b);
+  if (days.length < minSample) return null;
+  const mid = Math.floor(days.length / 2);
+  return days.length % 2 === 0 ? Math.round((days[mid - 1] + days[mid]) / 2) : days[mid];
+}
+
 /** Whether a listing sits inside its query's price bounds (rent compared per calendar month). */
 export function withinQueryPrice(listing: SourcedListing, q: SourcingQuery): boolean {
   if (!listing.price) return true;
@@ -160,6 +224,8 @@ export function onTheMarketSearchUrl(q: SourcingQuery): string | null {
 
 interface OtmCard {
   id?: unknown;
+  'days-since-added-reduced'?: unknown;
+  agent?: { name?: unknown };
   address?: unknown;
   'property-title'?: unknown;
   'humanised-property-type'?: unknown;
@@ -217,6 +283,10 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
       priceQualifier: str(raw['price-qualifier']),
       sharedOwnership: null,
       shortLetsPermitted: null,
+      listedDate: null,
+      uprn: null,
+      addedOrReduced: str(raw['days-since-added-reduced']),
+      agentHash: agentHash(str(raw.agent?.name)),
     });
   }
   return out;
@@ -260,6 +330,10 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       priceQualifier: null,
       sharedOwnership: null,
       shortLetsPermitted: null,
+      listedDate: typeof l.listed_date === 'string' && l.listed_date.trim() ? l.listed_date.trim() : null,
+      uprn: typeof l.uprn === 'string' && l.uprn.trim() ? l.uprn.trim() : null,
+      addedOrReduced: null,
+      agentHash: null,
     });
   }
   return out;
