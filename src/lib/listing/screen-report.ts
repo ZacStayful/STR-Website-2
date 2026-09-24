@@ -5,10 +5,16 @@ import 'server-only';
  * run through the screening tests in ./screen.ts, ranked and summarised.
  *
  * This is a MEASUREMENT tool, not part of the send path. It reads
- * `sourced_listings` and the market snapshot and writes nothing, sends nothing
- * and charges nothing — and it makes NO provider calls, so it is free and can be
- * re-run as often as the thresholds need tuning. Nothing here touches
- * picks-run.ts.
+ * `sourced_listings` and the market snapshot, and writes nothing, sends nothing
+ * and charges nobody. Nothing here touches picks-run.ts.
+ *
+ * It makes no provider calls OF ITS OWN, but it is not unconditionally free:
+ * `getAreaCards()` reads the shared market snapshot, and on a COLD cache that
+ * read builds it, which is dozens of PropertyData calls (see the note on
+ * `getAreaCardsWithin` in ../market/cached.ts). In practice the snapshot is warm
+ * — the market-warm cron builds it daily and it is cached for an hour — so
+ * repeated runs while tuning cost nothing. The first run after an hour of
+ * inactivity may pay for the snapshot that every other page then shares.
  *
  * Why the whole stored pool rather than a live run: screening only what today's
  * members' filters return is a small, filter-biased sample and costs PMI credit
@@ -57,7 +63,7 @@ import 'server-only';
  */
 
 import { createAdminClient } from '../supabase/admin';
-import { getAreaCards } from '../market/cached';
+import { getAreaCards, getAreaCardsWithin } from '../market/cached';
 import { storedAreaRentTable, areaRentKey } from '../broker/providers/internal';
 import { nationalRentFor } from '../market/rent-ladder';
 import { csvRow } from '../api/csv';
@@ -116,13 +122,16 @@ export interface ScreenReportSummary {
 
 export interface ScreenReport {
   generatedAt: string;
-  paidCallsMade: 0;
+  /** True when the market snapshot was already cached, so this run triggered no provider calls at all. */
+  snapshotWasWarm: boolean;
   note: string;
   summary: ScreenReportSummary;
   rows: ScreenReportRow[];
 }
 
 const PAGE = 1000;
+/** A cached snapshot returns well inside this; a cold one cannot. */
+const SNAPSHOT_WARM_PROBE_MS = 2_000;
 
 function emptyBands(): BandCounts {
   return { qualified: 0, medium: 0, unqualified: 0, 'insufficient-data': 0 };
@@ -160,7 +169,12 @@ function rate(qualified: number, screened: number): number {
  */
 export async function buildScreenReport(options: { limit?: number } = {}): Promise<ScreenReport> {
   const admin = createAdminClient();
-  const [cards, rentTable] = await Promise.all([getAreaCards(), storedAreaRentTable()]);
+  // A cached snapshot answers effectively instantly; a cold one has to be built.
+  // Asking with a short deadline first tells the caller which happened, so the
+  // report can say honestly whether it triggered any provider calls.
+  const warm = await getAreaCardsWithin(SNAPSHOT_WARM_PROBE_MS);
+  const snapshotWasWarm = warm !== null && warm.length > 0;
+  const [cards, rentTable] = await Promise.all([snapshotWasWarm ? warm : getAreaCards(), storedAreaRentTable()]);
   const cardByCode = new Map(cards.map((c) => [c.code, c]));
 
   const rows: ScreenReportRow[] = [];
@@ -309,8 +323,10 @@ export async function buildScreenReport(options: { limit?: number } = {}): Promi
 
   return {
     generatedAt: new Date().toISOString(),
-    paidCallsMade: 0,
-    note: 'Measurement only: no provider calls, no writes, no sends, no charges. Screens every stored sourced_listings row against the market snapshot.',
+    snapshotWasWarm,
+    note: snapshotWasWarm
+      ? 'Measurement only: no provider calls, no writes, no sends, no charges. Screened every stored listing against the cached market snapshot.'
+      : 'Measurement only: no writes, no sends, no charges — but the market snapshot was cold, so reading it rebuilt it (dozens of PropertyData calls). It is cached for an hour now, so a re-run is free.',
     summary,
     rows: options.limit ? rows.slice(0, options.limit) : rows,
   };

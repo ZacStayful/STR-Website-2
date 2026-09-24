@@ -4,9 +4,12 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 // ─── Income screening report ───────────────────────────────────────────
 // Measurement only. Screens every stored sourced_listings row against the
 // screening tests in src/lib/listing/screen.ts and returns the ranked table
-// plus the band distribution. Writes nothing, sends nothing, charges nothing,
-// and makes NO provider calls — so it is free and safe to re-run while tuning
-// the thresholds. Not on a cron: run it by hand.
+// plus the band distribution. Writes nothing, sends nothing, charges nobody, and
+// makes no provider calls of its own. It does read the shared market snapshot,
+// which is normally warm (the market-warm cron builds it daily, cached an hour);
+// a COLD snapshot is rebuilt by that read, which costs dozens of PropertyData
+// calls. `snapshotWasWarm` in the response says which happened. Not on a cron:
+// run it by hand.
 //
 //   ?format=csv     the rows as a spreadsheet (sort and pivot by hand)
 //   ?limit=<n>      cap the rows returned; the summary always covers everything

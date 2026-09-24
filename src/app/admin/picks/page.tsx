@@ -9,6 +9,8 @@ import { cookies } from "next/headers";
 import { summarisePicks, cleanReasons, reasonLabel, type PickRow } from "@/lib/listing/picks";
 import { sendingEnabled } from "@/lib/listing/picks-run";
 import { sendTestPickAction, dryRunPicksAction } from "./actions";
+import { buildScreenReport, type ScreenReport } from "@/lib/listing/screen-report";
+import { BAND_LABELS, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { SUITABILITY_REASONS, isUnsuitableReason, type UnsuitableReason } from "@/lib/listing/suitability";
 
 const RUN_COOKIE = "sf_picks_run";
@@ -76,7 +78,20 @@ function Stat({ label, value, sub }: { label: string; value: string | number; su
  * said no, and where the yeses are. The reasons histogram is the signal to
  * tune the house areas, the price and size rules, and the copy.
  */
-export default async function PicksAdminPage() {
+export default async function PicksAdminPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  // Rendered inline rather than stashed through finish()'s run cookie: that
+  // base64s the body then slices it to 3800 chars, and a sliced base64 string
+  // fails JSON.parse, so a summary this size would silently render as nothing.
+  const screenRequested = (await searchParams).screen === "1";
+  let screening: ScreenReport | null = null;
+  let screeningError: string | null = null;
+  if (screenRequested) {
+    try {
+      screening = await buildScreenReport({ limit: 1 });
+    } catch (err) {
+      screeningError = (err as Error)?.message ?? "Screening failed";
+    }
+  }
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -139,8 +154,14 @@ export default async function PicksAdminPage() {
           <form action={dryRunPicksAction}>
             <button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run (everyone)</button>
           </form>
+          <Link href="/admin/picks?screen=1" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Income screening</Link>
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          <strong>Income screening</strong> runs the 40% uplift test (buy) and the £{R2R_QUALIFIED_PROFIT.toLocaleString("en-GB")} profit test (rent-to-rent) over every listing the finder has stored, and reports how many clear them. It sends nothing, writes nothing and changes nobody&#8217;s picks. It makes no provider calls of its own, though reading a cold market snapshot rebuilds it.
+        </p>
         {lastRun && <RunResult run={lastRun} />}
+        {screeningError && <div className="mt-4 rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">Screening failed: {screeningError}</div>}
+        {screening && <ScreeningSummary report={screening} />}
       </section>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -255,6 +276,143 @@ function RunResult({ run }: { run: LastRun }) {
       )}
       {skipped.length > 0 && <p className="mt-2 text-muted-foreground">Skipped: {skipped.map((s) => s.reason).join(", ")}</p>}
       {typeof b.ranOutOfTime === "boolean" && b.ranOutOfTime && <p className="mt-1 text-muted-foreground">Ran out of time; the 07:20 pass finishes what this one did not.</p>}
+    </div>
+  );
+}
+
+function Cell({ children, right = false }: { children: React.ReactNode; right?: boolean }) {
+  return <td className={`py-1.5 ${right ? "text-right tabular-nums" : ""}`}>{children}</td>;
+}
+
+function gbp(n: number | null): string {
+  return n === null ? "—" : `£${Math.round(n).toLocaleString("en-GB")}`;
+}
+
+/**
+ * The income screening distribution: how many stored listings clear the 40%
+ * uplift test (buy) and the £8,000 profit test (rent-to-rent), and what is
+ * stopping the rest. Read the missing-input counts alongside the pass rates —
+ * the funnel is already thin before either test applies.
+ */
+function ScreeningSummary({ report }: { report: ScreenReport }) {
+  const s = report.summary;
+  const kinds = [
+    { key: "sale" as const, label: "To buy", metric: "uplift", dist: s.buyUpliftPct, unit: "%" },
+    { key: "rent" as const, label: "Rent-to-rent", metric: "annual profit", dist: s.r2rProfit, unit: "£" },
+  ];
+  return (
+    <div className="mt-4 rounded-lg border border-border bg-background p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">Income screening · {s.listings.toLocaleString("en-GB")} stored listings</h3>
+        <span className="text-xs text-muted-foreground">{new Date(report.generatedAt).toLocaleString("en-GB")}</span>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">{report.note}</p>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        {kinds.map(({ key, label, metric, dist, unit }) => {
+          const k = s.byKind[key];
+          const banded = k.total - k.bands["insufficient-data"];
+          const fmt = (v: number | null) => (v === null ? "—" : unit === "£" ? gbp(v) : `${v}%`);
+          return (
+            <div key={key} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm font-semibold text-foreground">{label}</span>
+                <span className="text-2xl font-semibold text-foreground tabular-nums">{k.passRatePct === null ? "—" : `${k.passRatePct}%`}</span>
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">{k.bands.qualified.toLocaleString("en-GB")} of {banded.toLocaleString("en-GB")} screened clear the bar</div>
+              <table className="mt-3 w-full text-xs text-muted-foreground">
+                <tbody>
+                  <tr><Cell>{BAND_LABELS.qualified}</Cell><Cell right>{k.bands.qualified}</Cell></tr>
+                  <tr><Cell>{BAND_LABELS.medium}</Cell><Cell right>{k.bands.medium}</Cell></tr>
+                  <tr><Cell>{BAND_LABELS.unqualified}</Cell><Cell right>{k.bands.unqualified}</Cell></tr>
+                  <tr className="border-t border-border"><Cell>Not banded</Cell><Cell right>{k.bands["insufficient-data"]}</Cell></tr>
+                </tbody>
+              </table>
+              <div className="mt-3 border-t border-border pt-2 text-xs text-muted-foreground">
+                <div className="font-medium text-foreground">{metric} spread ({dist.n} banded)</div>
+                <div className="mt-1 flex justify-between"><span>p25 / median / p75 / p90</span><span className="tabular-nums">{fmt(dist.p25)} · {fmt(dist.median)} · {fmt(dist.p75)} · {fmt(dist.p90)}</span></div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="text-sm font-semibold text-foreground">Why a listing could not be banded</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">The funnel is thin before either test applies.</p>
+          <table className="mt-2 w-full text-xs text-muted-foreground">
+            <tbody>
+              <tr><Cell>Bedrooms not stated</Cell><Cell right>{s.missing.noBedrooms}</Cell></tr>
+              <tr><Cell>No market data for the area</Cell><Cell right>{s.missing.noAreaCard}</Cell></tr>
+              <tr><Cell>No revenue for that size</Cell><Cell right>{s.missing.noAreaRevenue}</Cell></tr>
+              <tr><Cell>No rent figure</Cell><Cell right>{s.missing.noRent}</Cell></tr>
+            </tbody>
+          </table>
+        </div>
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="text-sm font-semibold text-foreground">Where the rent came from</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">Advertised is confirmed; the rest are estimates.</p>
+          <table className="mt-2 w-full text-xs text-muted-foreground">
+            <tbody>
+              <tr><Cell>Advertised on the listing</Cell><Cell right>{s.rentTiers.advertised}</Cell></tr>
+              <tr><Cell>Our own past reports</Cell><Cell right>{s.rentTiers["stored-reports"]}</Cell></tr>
+              <tr><Cell>National ladder (low confidence)</Cell><Cell right>{s.rentTiers["national-ladder"]}</Cell></tr>
+              <tr className="border-t border-border"><Cell>Qualified on the £20k cash route</Cell><Cell right>{s.qualifiedByAbsolute}</Cell></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {s.byArea.length > 0 && (
+        <div className="mt-4 rounded-lg border border-border bg-card p-4">
+          <div className="text-sm font-semibold text-foreground">Pass rate by area</div>
+          <p className="mt-0.5 text-xs text-muted-foreground">Busiest areas first. A bar that passes everything, or nothing, is the one to look at.</p>
+          <div className="mt-2 overflow-x-auto">
+            <table className="w-full text-xs text-muted-foreground">
+              <thead className="text-left text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th className="py-1.5 font-medium">Area</th>
+                  <th className="py-1.5 font-medium">Kind</th>
+                  <th className="py-1.5 text-right font-medium">Screened</th>
+                  <th className="py-1.5 text-right font-medium">Clear</th>
+                  <th className="py-1.5 text-right font-medium">Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {s.byArea.slice(0, 20).map((a) => (
+                  <tr key={`${a.area}-${a.kind}`} className="border-b border-border/50">
+                    <Cell>{a.areaName ? `${a.area} · ${a.areaName}` : a.area}</Cell>
+                    <Cell>{a.kind === "rent" ? "Rent-to-rent" : "To buy"}</Cell>
+                    <Cell right>{a.screened}</Cell>
+                    <Cell right>{a.qualified}</Cell>
+                    <Cell right>{a.passRatePct}%</Cell>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {s.byArea.length > 20 && <p className="mt-2 text-xs text-muted-foreground">{s.byArea.length - 20} more area/kind rows in the CSV.</p>}
+        </div>
+      )}
+
+      {s.byBedrooms.length > 0 && (
+        <div className="mt-4 rounded-lg border border-border bg-card p-4">
+          <div className="text-sm font-semibold text-foreground">Pass rate by size</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {s.byBedrooms.map((b) => (
+              <span key={`${b.bedrooms}-${b.kind}`} className="rounded-full bg-muted px-2.5 py-0.5 text-xs text-foreground">
+                {b.bedrooms === 0 ? "Studio" : `${b.bedrooms}-bed`} {b.kind === "rent" ? "R2R" : "buy"} · {b.passRatePct}% of {b.screened}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="mt-4 text-xs text-muted-foreground">
+        Every property with its own working is in the CSV:{" "}
+        <code className="rounded bg-muted px-1 py-0.5">/api/internal/screen-report?format=csv</code> with the <code className="rounded bg-muted px-1 py-0.5">x-internal-secret</code> header.
+      </p>
     </div>
   );
 }
