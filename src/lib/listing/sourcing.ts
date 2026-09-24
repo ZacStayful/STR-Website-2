@@ -17,6 +17,8 @@ import { blendFit } from './pipeline.ts';
 import type { MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
+import type { Motivation } from './motivation.ts';
+import type { MotivationMode } from '../market/goals.ts';
 
 export type SourcingKind = 'sale' | 'rent';
 
@@ -375,18 +377,42 @@ export interface SourcedPick {
   areaFit: number | null;
   areaName: string;
   fit: number;
+  /** What the motivation read said, so the email can give the reasons. */
+  motivation?: Motivation | null;
+}
+
+/**
+ * How far motivation may move a listing up the ranking under `prefer`. Kept
+ * small on purpose: a seller who wants to deal is worth finding, but the deal
+ * still has to work, and a listing that loses money is dropped before this is
+ * ever applied.
+ */
+export const MOTIVATION_LIFT = 20;
+
+export interface RankCandidate {
+  listing: SourcedListing;
+  deal: Deal | null;
+  areaFit: number | null;
+  areaName: string;
+  motivation?: Motivation | null;
+  /** Whether it clears the member's bar — decided by meetsMotivationBar. */
+  motivationQualifies?: boolean;
 }
 
 /** Ranks candidates for one member, dropping anything without a deal and anything losing money. */
-export function rankPicks(candidates: { listing: SourcedListing; deal: Deal | null; areaFit: number | null; areaName: string }[], limit = 5): SourcedPick[] {
+export function rankPicks(candidates: RankCandidate[], limit = 5, mode: MotivationMode = 'off'): SourcedPick[] {
   const out: SourcedPick[] = [];
   for (const c of candidates) {
     if (!c.deal) continue;
+    // The money test comes first and is never relaxed: motivation is a reason to
+    // look harder at a deal that works, never a story told about one that does not.
     if (c.deal.kind === 'rent-to-rent' && c.deal.monthlyMargin <= 0) continue;
     if (c.deal.kind === 'purchase' && c.deal.grossYieldPct <= 0) continue;
+    if (mode === 'only' && c.motivationQualifies !== true) continue;
     const fit = blendFit(c.deal, c.areaFit);
     if (fit === null) continue;
-    out.push({ ...c, fit });
+    const lift = mode === 'off' ? 0 : Math.round((MOTIVATION_LIFT * (c.motivation?.score ?? 0)) / 100);
+    out.push({ ...c, fit: Math.min(100, fit + lift) });
   }
   return out.sort((a, b) => b.fit - a.fit || dealScore(b.deal) - dealScore(a.deal)).slice(0, limit);
 }

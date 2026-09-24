@@ -293,3 +293,33 @@ export function motivationFromSnapshot(s: ListingSnapshot, kind: SourcingKind, c
     now,
   });
 }
+
+// ── The bar a listing has to clear ──
+
+/**
+ * `only` is a promise to the member, so it is deliberately hard to satisfy:
+ * one genuinely strong piece of firm evidence, not an accumulation of adjectives.
+ * 25 is the weight of a single price reduction, and below the 30 of a listing
+ * that has passed the member's own time threshold.
+ */
+export const MOTIVATION_MIN_FIRM = 25;
+
+export interface MotivationBar {
+  mode: 'off' | 'prefer' | 'only';
+  /** The member asked for slow-for-its-area, not just slow. */
+  areaRelative: boolean;
+  /**
+   * Whether the area actually had enough listings to have a median. When it did
+   * not, the area test is skipped rather than failed — a thin area would
+   * otherwise return nothing at all, which reads as a broken feature.
+   */
+  areaMedianKnown: boolean;
+}
+
+/** Whether a listing may be sent to a member whose filter is set to `only`. */
+export function meetsMotivationBar(m: Motivation, bar: MotivationBar): boolean {
+  if (bar.mode !== 'only') return true;
+  if (m.firmScore < MOTIVATION_MIN_FIRM) return false;
+  if (bar.areaRelative && bar.areaMedianKnown && !m.fired.includes('slower_than_area')) return false;
+  return true;
+}

@@ -277,3 +277,45 @@ test('an unknown kind fires nothing rather than everything', () => {
   const m = judgeMotivation(facts({ kind: 'str' as unknown as SourcingKind, text: 'Chain-free quick sale', age: { days: 900, source: 'portal' } }));
   assert.deepEqual(m.fired, []);
 });
+
+// ── The bar for "only" ──
+
+import { meetsMotivationBar, MOTIVATION_MIN_FIRM } from './motivation.ts';
+
+const bar = (over: Partial<Parameters<typeof meetsMotivationBar>[1]> = {}) =>
+  ({ mode: 'only' as const, areaRelative: false, areaMedianKnown: false, ...over });
+
+test('off and prefer never exclude anything', () => {
+  const nothing = judgeMotivation(facts());
+  assert.ok(meetsMotivationBar(nothing, bar({ mode: 'off' })));
+  assert.ok(meetsMotivationBar(nothing, bar({ mode: 'prefer' })));
+});
+
+test('only needs firm evidence, never wording alone', () => {
+  const wordingOnly = judgeMotivation(facts({ text: 'Chain-free, motivated seller, offers invited, probate sale' }));
+  assert.ok(wordingOnly.score >= MOTIVATION_MIN_FIRM);
+  assert.equal(wordingOnly.firmScore, 0);
+  assert.ok(!meetsMotivationBar(wordingOnly, bar()));
+
+  const dated = judgeMotivation(facts({ age: { days: 200, source: 'portal' } }));
+  assert.ok(meetsMotivationBar(dated, bar()));
+});
+
+test('an age we inferred ourselves is not firm evidence for only', () => {
+  // We may have started watching late, so this must not satisfy a hard filter.
+  const sighting = judgeMotivation(facts({ age: { days: 200, source: 'sighting' } }));
+  assert.ok(!meetsMotivationBar(sighting, bar()));
+});
+
+test('slow for the area is required only when the area is knowable', () => {
+  const slow = judgeMotivation(facts({ age: { days: 200, source: 'portal' }, areaMedianDays: 180 }));
+  assert.ok(!slow.fired.includes('slower_than_area'));
+  // Asked for area-relative and we have an area to compare: it has to clear it.
+  assert.ok(!meetsMotivationBar(slow, bar({ areaRelative: true, areaMedianKnown: true })));
+  // Same listing, but the area was too thin to have a median. Skipping the test
+  // beats returning nothing and looking broken.
+  assert.ok(meetsMotivationBar(slow, bar({ areaRelative: true, areaMedianKnown: false })));
+
+  const reallySlow = judgeMotivation(facts({ age: { days: 200, source: 'portal' }, areaMedianDays: 60 }));
+  assert.ok(meetsMotivationBar(reallySlow, bar({ areaRelative: true, areaMedianKnown: true })));
+});

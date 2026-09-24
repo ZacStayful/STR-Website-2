@@ -11,6 +11,7 @@ import {
   fromPmiListings,
   dealForSourced,
   rankPicks,
+  MOTIVATION_LIFT,
   listingAge,
   medianAgeDays,
   sourcingEmail,
@@ -202,4 +203,68 @@ test('the area median needs a real sample before it means anything', () => {
   assert.equal(medianAgeDays(ages([10, 20, 30, 40]), 4), 25);
   // Listings with no usable date do not count towards the sample.
   assert.equal(medianAgeDays([...ages([10, 20, 30]), null, null], 4), null);
+});
+
+// ── Motivation in the ranking ──
+
+const rankable = (over: Partial<SourcedListing>, price: number) => ({
+  listing: aged({ ...over, price: { amount: price, period: 'total' as const } }),
+  deal: dealForSourced(aged({ ...over, price: { amount: price, period: 'total' as const } }), { byBedrooms: [{ bedrooms: 2, grossRevenue: 30_000, adr: 140 }], headline: { grossRevenue: 30_000, adr: 140 } }, null),
+  areaFit: 60,
+  areaName: 'Nottingham',
+});
+
+test('off leaves the ranking exactly as it was', () => {
+  const cheap = { ...rankable({ id: 'a', canonicalUrl: 'https://x/a' }, 150_000), motivation: { score: 0, firmScore: 0, fired: [] } };
+  const dear = { ...rankable({ id: 'b', canonicalUrl: 'https://x/b' }, 300_000), motivation: { score: 100, firmScore: 100, fired: [] } };
+  const withOff = rankPicks([cheap, dear], 5, 'off');
+  const withoutArg = rankPicks([cheap, dear], 5);
+  assert.deepEqual(withOff.map((p) => p.listing.id), withoutArg.map((p) => p.listing.id));
+  // The better yield still wins: a perfect motivation score changed nothing.
+  assert.equal(withOff[0].listing.id, 'a');
+});
+
+test('prefer lifts a motivated listing but cannot rescue a worse deal outright', () => {
+  const plain = { ...rankable({ id: 'a', canonicalUrl: 'https://x/a' }, 200_000), motivation: { score: 0, firmScore: 0, fired: [] } };
+  const motivated = { ...rankable({ id: 'b', canonicalUrl: 'https://x/b' }, 215_000), motivation: { score: 100, firmScore: 60, fired: [] } };
+  const ranked = rankPicks([plain, motivated], 5, 'prefer');
+  assert.equal(ranked[0].listing.id, 'b');
+  // The lift is bounded, so a hopeless deal cannot climb over a good one.
+  const hopeless = { ...rankable({ id: 'c', canonicalUrl: 'https://x/c' }, 900_000), motivation: { score: 100, firmScore: 100, fired: [] } };
+  assert.equal(rankPicks([plain, hopeless], 5, 'prefer')[0].listing.id, 'a');
+});
+
+test('only drops everything that has not cleared the bar', () => {
+  const yes = { ...rankable({ id: 'a', canonicalUrl: 'https://x/a' }, 200_000), motivation: { score: 40, firmScore: 30, fired: [] }, motivationQualifies: true };
+  const no = { ...rankable({ id: 'b', canonicalUrl: 'https://x/b' }, 150_000), motivation: { score: 10, firmScore: 0, fired: [] }, motivationQualifies: false };
+  assert.deepEqual(rankPicks([no, yes], 5, 'only').map((p) => p.listing.id), ['a']);
+  // Unknown is not a pass: a candidate nobody judged must not slip through.
+  const unjudged = { ...rankable({ id: 'c', canonicalUrl: 'https://x/c' }, 150_000) };
+  assert.deepEqual(rankPicks([unjudged], 5, 'only'), []);
+});
+
+test('a rent-to-rent that loses money is never rescued by motivation', () => {
+  // The rent is far above what the property can earn, so the margin is negative.
+  const figures = { byBedrooms: [{ bedrooms: 2, grossRevenue: 12_000, adr: 60 }], headline: { grossRevenue: 12_000, adr: 60 } };
+  const l = aged({ id: 'a', canonicalUrl: 'https://x/a', kind: 'rent', price: { amount: 3_000, period: 'pcm' } });
+  const losing = {
+    listing: l,
+    deal: dealForSourced(l, figures, null),
+    areaFit: 60,
+    areaName: 'Nottingham',
+    motivation: { score: 100, firmScore: 100, fired: [] },
+    motivationQualifies: true,
+  };
+  assert.ok(losing.deal && losing.deal.kind === 'rent-to-rent' && losing.deal.monthlyMargin <= 0);
+  for (const mode of ['off', 'prefer', 'only'] as const) {
+    assert.deepEqual(rankPicks([losing], 5, mode), [], mode);
+  }
+});
+
+test('the lift is capped so a fit can never exceed 100', () => {
+  const strong = { ...rankable({ id: 'a', canonicalUrl: 'https://x/a' }, 60_000), areaFit: 100, motivation: { score: 100, firmScore: 100, fired: [] } };
+  const ranked = rankPicks([strong], 5, 'prefer');
+  assert.equal(ranked.length, 1);
+  assert.ok(ranked[0].fit <= 100);
+  assert.ok(MOTIVATION_LIFT > 0);
 });
