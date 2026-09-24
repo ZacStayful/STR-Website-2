@@ -18,8 +18,19 @@ import { dayWindow, minuteWindow, ipBucket, IP_ATTEMPTS_PER_WINDOW, type CapVerd
 export { dayWindow, minuteWindow, ipBucket, capMessage, IP_WINDOW_MINUTES, IP_ATTEMPTS_PER_WINDOW } from './windows';
 export type { CapVerdict } from './windows';
 
-async function hit(funnelId: string, bucket: string, window: string, limit: number): Promise<number> {
-  if (!hasServiceRole()) return -1;
+/**
+ * The new count, -1 when the attempt is over the limit, or null when the
+ * counter could not be reached at all.
+ *
+ * Those last two were the same value until now, which made an unreachable
+ * counter indistinguishable from a cap that had genuinely been hit: the
+ * prospect was told the form had reached its limit for the day when Postgres
+ * had merely hiccuped, and anything reporting on caps would report one that
+ * never happened. Both still refuse — a counter we cannot reach is not
+ * permission to spend — but they are no longer the same answer.
+ */
+async function hit(funnelId: string, bucket: string, window: string, limit: number): Promise<number | null> {
+  if (!hasServiceRole()) return null;
   const { data, error } = await createAdminClient().rpc('funnel_hit', {
     p_funnel: funnelId,
     p_bucket: bucket,
@@ -29,9 +40,9 @@ async function hit(funnelId: string, bucket: string, window: string, limit: numb
   if (error) {
     // Fail closed: a counter we cannot reach is not permission to spend.
     console.error('[funnels] funnel_hit failed:', error.message);
-    return -1;
+    return null;
   }
-  return typeof data === 'number' ? data : -1;
+  return typeof data === 'number' ? data : null;
 }
 
 /**
@@ -42,8 +53,10 @@ async function hit(funnelId: string, bucket: string, window: string, limit: numb
 export async function countAttempt(funnelId: string, ip: string, dailyCap: number): Promise<CapVerdict> {
   if (!hasServiceRole()) return 'unavailable';
   const perIp = await hit(funnelId, ipBucket(ip), minuteWindow(), IP_ATTEMPTS_PER_WINDOW);
+  if (perIp === null) return 'unavailable';
   if (perIp < 0) return 'ip_throttle';
   const daily = await hit(funnelId, 'funnel', dayWindow(), dailyCap);
+  if (daily === null) return 'unavailable';
   if (daily < 0) return 'daily_cap';
   return 'ok';
 }
@@ -78,4 +91,49 @@ export async function settleSpend(funnelId: string, reservedPence: number, actua
     p_actual: actualPence,
   });
   if (error) console.error('[funnels] funnel_spend_settle failed:', error.message);
+}
+
+/**
+ * Address lookups one IP may make against one funnel inside a window.
+ *
+ * Deliberately generous. The field debounces at 300ms with a three-character
+ * minimum, so entering one address costs a handful of requests — but a shared
+ * office or campus NAT puts many prospects behind one address, and refusing a
+ * real one to slow an attacker down would be the wrong trade. The hard money
+ * guard is the funnel's daily spend ceiling, which bounds the day's loss
+ * whatever the rate; this only stops one IP burning through it in seconds.
+ */
+export const AUTOCOMPLETE_PER_IP_PER_WINDOW = 300;
+
+/**
+ * Counts one address lookup on a funnel, per IP.
+ *
+ * A DIFFERENT bucket from `countAttempt`'s, deliberately. Autocomplete fires
+ * per keystroke, so counting it against the prospect's five-submissions-per-ten-
+ * minutes or the funnel's daily LEAD cap would have somebody typing their own
+ * address lock themselves out of the form before they could ever submit it.
+ *
+ * Fails closed, for the same reason `hit` does: the lookup spends the funnel
+ * owner's money, and a counter we cannot reach is not permission to spend it.
+ */
+export async function countAutocomplete(funnelId: string, ip: string): Promise<boolean> {
+  if (!hasServiceRole()) return false;
+  const n = await hit(funnelId, `ac:${ipBucket(ip)}`, minuteWindow(), AUTOCOMPLETE_PER_IP_PER_WINDOW);
+  return n !== null && n >= 0;
+}
+
+/**
+ * Whether this is the first time in the current window that somebody has
+ * landed on this funnel's paused page.
+ *
+ * The gate in front of the paused-page alert, and it has to exist: that alert
+ * fires from an unauthenticated public GET, so without it anyone could make us
+ * do an alert upsert, a profile read and an email attempt per request simply by
+ * hammering a paused link. One row per funnel per window either way, and the
+ * alert's own per-day key bounds the email.
+ */
+export async function firstPausedHit(funnelId: string): Promise<boolean> {
+  if (!hasServiceRole()) return false;
+  const n = await hit(funnelId, 'paused', minuteWindow(), 1);
+  return n !== null && n >= 0;
 }

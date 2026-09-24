@@ -8,7 +8,7 @@ import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
-import { submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
+import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -32,13 +32,15 @@ export default async function PickResponsePage({ params, searchParams }: { param
   const pick = await pickByToken(token);
   if (!pick || pick.status !== "sent") notFound();
 
-  const action = a === "yes" || a === "no" || a === "unsubscribe" ? a : null;
+  const action = a === "yes" || a === "no" || a === "unsubscribe" || a === "relaxed" ? a : null;
   if ((action === "yes" || action === "no") && !thanks) {
     // A link click only ever sets the reaction; reasons come from the form below.
     after(() => recordReaction({ token }, { reaction: action, source: "link" }).catch(() => {}));
   }
   const reaction = thanks ? (action === "yes" ? "yes" : "no") : action === "yes" || action === "no" ? action : pick.reaction;
   const l = pick.listing;
+  // Only shown when this pick actually carried an offer: a near miss.
+  const offer = pick.relaxation;
   // Only promise what the rules actually do with this answer: a contradictory
   // pair cancels, and a rule with nothing to key on (no outcode on the stored
   // listing, a 1-bed rejected as too big) never arms.
@@ -91,6 +93,37 @@ export default async function PickResponsePage({ params, searchParams }: { param
               {[l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, pick.areaName].filter(Boolean).join(" · ")} ·{" "}
               <a href={l.canonicalUrl} target="_blank" rel="noopener noreferrer" className="underline">View on {SOURCE_LABELS[l.source]}</a>
             </p>
+            {offer && (
+              <section className="mt-4 rounded-2xl border border-[#e4e7dc] bg-[#f7f5ee] p-4">
+                {action === "relaxed" ? (
+                  <p className="text-sm text-[#2e3d2b]">
+                    {done === "1"
+                      ? `Done — ${offer.label.toLowerCase()} is now ${offer.suggested}. Tomorrow's pick uses the new setting.`
+                      : "That offer is no longer available. You can change it yourself from your filter."}{" "}
+                    <Link href="/markets?goals=1" className="underline">Open my filter</Link>
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold text-[#2e3d2b]">Nothing matched your filter exactly</p>
+                    <p className="mt-1 text-sm text-[#5b6657]">
+                      Your tightest setting is {offer.label.toLowerCase()} — currently {offer.current}.
+                      {offer.wouldAdd > 0 && ` Changing it to ${offer.suggested} would have brought in ${offer.wouldAdd} more.`}
+                    </p>
+                    {offer.applyField ? (
+                      <form action={applyRelaxationAction} className="mt-3 flex flex-wrap gap-2">
+                        <input type="hidden" name="token" value={token} />
+                        <button type="submit" className="rounded-md bg-[#2e3d2b] px-4 py-2 text-sm font-semibold text-white">Change it to {offer.suggested}</button>
+                        <Link href="/markets?goals=1" className="rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium">Edit the whole filter</Link>
+                      </form>
+                    ) : (
+                      <p className="mt-3">
+                        <Link href="/markets?goals=1" className="rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium inline-block">Edit my filter</Link>
+                      </p>
+                    )}
+                  </>
+                )}
+              </section>
+            )}
             {l.photo && <img src={l.photo} alt="" className="mt-4 w-full rounded-2xl border border-[#e4e7dc] object-cover" style={{ maxHeight: 320 }} />}
             {pick.deal && <p className="mt-4 text-sm font-medium text-[#5d8156]">{describeDeal(pick.deal)}</p>}
             {pick.fit !== null && <p className="mt-1 text-xs text-[#7a8274]">Fit {pick.fit}/100 · {pick.basis === "house" ? "Stayful house pick" : "picked for your filter"}</p>}

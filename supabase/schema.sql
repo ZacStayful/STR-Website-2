@@ -1246,6 +1246,58 @@ create table if not exists public.funnel_hits (
 create index if not exists funnel_hits_window_idx on public.funnel_hits (window_start);
 alter table public.funnel_hits enable row level security;
 
+-- ── Funnel alerts: one row per funnel, kind and UTC day ──
+--
+-- The dedup store behind "tell the owner when their funnel stops working".
+-- Every wall a funnel can hit used to be silent: a customer whose credit ran
+-- dry kept collecting leads that were captured, queued and never reported on,
+-- and nothing told them. A prospect landing on a paused link was invisible too.
+--
+-- The INSERT is the decision. Whoever creates the row sends the email and
+-- everybody else conflicts and stays quiet, so a funnel that hits its ceiling
+-- eighty times in a day sends one email rather than eighty — and it is decided
+-- atomically, not by reading and then writing.
+create table if not exists public.funnel_alerts (
+  funnel_id uuid not null references public.funnels(id) on delete cascade,
+  -- 'out_of_credit' | 'paused_hit' | 'daily_cap' | 'spend_cap'
+  kind text not null,
+  day timestamptz not null,
+  created_at timestamptz not null default now(),
+  primary key (funnel_id, kind, day)
+);
+-- Lets a sweep drop days that have rolled over.
+create index if not exists funnel_alerts_day_idx on public.funnel_alerts (day);
+
+alter table public.funnel_alerts enable row level security;
+
+/**
+ * Claims the right to tell this funnel's owner about this wall today.
+ * Returns true to exactly one caller per (funnel, kind, UTC day).
+ *
+ * In SQL for the same reason funnel_hit and funnel_spend_reserve are: the
+ * decision has to be the write. Reading whether we have already sent and then
+ * writing that we have would let concurrent submissions all decide they were
+ * first and send their own copy — and the whole point is one email, not one
+ * per prospect. It is a function rather than an upsert from the client so the
+ * contract is ours and does not depend on how a driver reports a conflict.
+ */
+create or replace function public.funnel_alert_claim(
+  p_funnel uuid,
+  p_kind text,
+  p_day timestamptz
+)
+returns boolean
+language plpgsql
+as $$
+begin
+  insert into public.funnel_alerts (funnel_id, kind, day)
+  values (p_funnel, p_kind, p_day)
+  on conflict (funnel_id, kind, day) do nothing;
+  -- 0 when somebody else already claimed it today.
+  return found;
+end;
+$$;
+
 -- ── Funnel caps: atomic, because a public endpoint spends real money ──
 --
 -- The members-only daily cap (resolvesToday in src/lib/listing/server.ts)
@@ -1361,6 +1413,42 @@ begin
   return v_deleted;
 end;
 $$;
+
+-- =========================
+-- Motivated sellers and landlords
+-- =========================
+-- The motivated-seller filter is the one pick that is allowed to be old: a
+-- listing that has been sitting for months is the whole point of it. Its pool
+-- reads sourced_listings by area and kind, bounded below by an age floor and
+-- ordered by last sighting, so this index carries the filtering columns and
+-- leaves only a small set to sort.
+--
+-- Nothing else is needed. The member's filter rides inside the existing
+-- profiles.market_goals jsonb, and the listing-level fields (listedDate, uprn,
+-- addedOrReduced, agentHash) ride inside sourced_listings.snapshot — so no
+-- column is added to profiles, and ACCESS_COLUMNS in src/lib/access.ts is
+-- untouched.
+create index if not exists sourced_listings_area_kind_idx
+  on public.sourced_listings (postcode_area, kind, first_seen_at desc);
+
+-- The advice sent with a near-miss pick: which filter was the binding one and
+-- what to change it to. Stored rather than recomputed because the one-click
+-- "change it" link on /p/[token] must apply only a value WE proposed — the
+-- token travels in an email, so anyone holding that email can invoke the
+-- action, and accepting a value from the request would let them rewrite
+-- someone else's filter to anything at all.
+--
+-- APPLY THIS BEFORE DEPLOYING THE CODE THAT READS IT. PICK_COLUMNS in
+-- src/lib/listing/picks-server.ts is a fixed select, so a missing column fails
+-- the whole query and takes /picks and /p/[token] down with it.
+alter table public.sourcing_sent add column if not exists relaxation jsonb;
+
+-- The motivation signals that fired for this pick, as they were claimed in the
+-- email. Stored rather than recomputed so the picks page can never disagree
+-- with what the member was actually told: a recomputation would be missing the
+-- area median from the run that produced it, and would quietly drop a reason.
+-- Same deployment rule as above — column first, then the code.
+alter table public.sourcing_sent add column if not exists motivation jsonb;
 
 -- =========================
 -- subscription_events

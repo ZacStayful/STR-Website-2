@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { listFunnels } from "@/lib/funnels";
+import { funnelWalls } from "@/lib/funnels/alerts";
+import { WallBanner, type WallNotice } from "./WallBanner";
 import { saturationBand } from "@/lib/market/competition";
 import { PushLeadButton } from "./PushLeadButton";
 
@@ -68,6 +70,18 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const leads = (data ?? []) as unknown as LeadRow[];
   const shown = leads.filter((l) => inTab(l, tab));
 
+  // Only live funnels: a paused one is not turning anybody away or running out
+  // of anything, and the app already shows it as paused.
+  const notices: WallNotice[] = (
+    await Promise.all(
+      funnels
+        .filter((f) => f.active)
+        .map(async (f) =>
+          (await funnelWalls(f)).map((w) => ({ ...w, funnelId: f.id, funnelName: f.name })),
+        ),
+    )
+  ).flat();
+
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 pb-10 sm:px-6">
@@ -86,6 +100,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             {funnels.length === 0 ? "Create a funnel" : "Manage funnels"}
           </Link>
         </div>
+
+        <WallBanner notices={notices} showFunnelName={funnels.length > 1} />
 
         {funnels.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border p-10 text-center">
