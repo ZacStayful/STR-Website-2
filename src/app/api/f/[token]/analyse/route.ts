@@ -203,12 +203,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
         });
         actualBasePence = spend.basePence;
 
-        await completeLead({
+        // Null means the report could not be attached to the lead. The run
+        // itself succeeded and has been paid for, so the prospect below still
+        // gets it — but the customer's copy is gone, and completeLead has
+        // already done what it can to stop the drain running it again. Said
+        // here so the loss is visible in this request's logs and not only in
+        // the library's.
+        const attached = await completeLead({
           leadId,
           result,
           rules: funnel.leadRules,
           unqualifiedPolicy: funnel.unqualifiedPolicy,
         });
+        if (!attached) {
+          console.error(`[funnel] lead ${leadId} ran and was charged but its report could not be saved`);
+        }
 
         // The prospect is never shown the qualification verdict or anything
         // about the customer's credit — that is the customer's business.

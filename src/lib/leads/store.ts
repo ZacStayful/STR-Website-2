@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { postcodeAreaOf } from '../listing/normalise';
 import { evaluateLead, type LeadRules, type LeadVerdict } from './rules';
+import { completedLeadStatus, type LeadStatus } from './status';
 import { enqueueDelivery } from '../crm/deliver';
 import { sendLeadReportEmail } from '../email/lead-report';
 import { getFunnel } from '../funnels';
@@ -21,7 +22,7 @@ import type { AnalysisResult } from '../types';
  * customer's own reports within weeks.
  */
 
-export type LeadStatus = 'queued' | 'new' | 'pushed' | 'held' | 'exported';
+export { completedLeadStatus, type LeadStatus } from './status';
 
 export interface LeadContact {
   name: string | null;
@@ -98,20 +99,64 @@ export async function completeLead(input: {
 }): Promise<LeadVerdict | null> {
   if (!hasServiceRole()) return null;
   const verdict = evaluateLead(input.result, input.rules);
-  const status: LeadStatus = verdict.qualified ? 'new' : input.unqualifiedPolicy === 'hold' ? 'held' : 'new';
+  const status = completedLeadStatus(verdict.qualified, input.unqualifiedPolicy);
 
-  const { error } = await createAdminClient()
-    .from('leads')
-    .update({
-      result: input.result,
-      qualified: verdict.qualified,
-      qualification: verdict,
-      status,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', input.leadId);
-  if (error) {
-    console.error('[leads] complete failed:', error.message);
+  const admin = createAdminClient();
+
+  /**
+   * This write is retried, and its failure has a fallback, because by the time
+   * we reach it the analysis has ALREADY RUN and the customer has already been
+   * charged for it. It used to fail silently: the prospect was sent their
+   * finished report, the row stayed `queued`, and `queued` is exactly what the
+   * drain cron treats as "never ran" — so it ran the whole analysis again and
+   * charged a second time, with a duplicate CRM item and a duplicate email
+   * behind it.
+   *
+   * Idempotent, so retrying is free: a fixed-value update by primary key.
+   */
+  let failure: string | null = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const { error } = await admin
+      .from('leads')
+      .update({
+        result: input.result,
+        qualified: verdict.qualified,
+        qualification: verdict,
+        status,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', input.leadId);
+    if (!error) {
+      failure = null;
+      break;
+    }
+    failure = error.message;
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+  }
+
+  if (failure) {
+    console.error('[leads] complete failed after 3 attempts:', failure);
+    // Write the STATE on its own. It is a far smaller update than the one that
+    // just failed — no report body — so a payload the database would not take
+    // is not also the thing that costs the customer a second charge. Getting
+    // this row out of `queued` is the whole point: the report is lost either
+    // way, but the money and the prospect's inbox are not.
+    const { error: stateError } = await admin
+      .from('leads')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('id', input.leadId);
+    if (stateError) {
+      // Nothing else to try. Said loudly because the drain WILL pick this up
+      // again and charge for it a second time, and that is worth an alert in
+      // the logs rather than a shrug.
+      console.error(
+        `[leads] lead ${input.leadId} ran and was charged but could not be recorded at all; the drain will re-run and re-charge it:`,
+        stateError.message,
+      );
+    }
+    // Deliberately no CRM delivery and no prospect email below: without the
+    // report in the row, /r/<token> has nothing to render, so the email would
+    // send somebody a link to a not-found page.
     return null;
   }
 
