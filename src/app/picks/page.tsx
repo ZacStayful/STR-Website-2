@@ -6,6 +6,7 @@ import { loadPicks, picksEnabled, type PickView } from "@/lib/listing/picks-serv
 import { reasonLabel } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
+import { BAND_LABELS, screeningWorking } from "@/lib/listing/screen";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
@@ -156,6 +157,14 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
             {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
           </p>
           {p.deal && <p className="mt-1 text-xs font-medium text-primary">{describeDeal(p.deal)}</p>}
+          {p.screening && p.screening.band !== "insufficient-data" && (
+            <div className="mt-1.5">
+              <p className="text-xs font-semibold text-foreground">{BAND_LABELS[p.screening.band]}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {screeningWorking(p.screening).map((w) => `${w.label} ${w.value}`).join(" · ")}
+              </p>
+            </div>
+          )}
           {p.motivation && p.motivation.fired.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Why this one">
               {p.motivation.fired.slice(0, 4).map((k) => (

@@ -6,6 +6,7 @@ import { pickByToken, recordReaction } from "@/lib/listing/picks-server";
 import { isPickToken, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type PickFeedback } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
 import { describeDeal } from "@/lib/listing/sourcing";
+import { BAND_LABELS, screeningScore, screeningWorking } from "@/lib/listing/screen";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
@@ -54,7 +55,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
     amount: l.price ? (pick.kind === "rent" ? (l.price.period === "pw" ? Math.round((l.price.amount * 52) / 12) : l.price.amount) : l.price.period === "total" ? l.price.amount : null) : null,
     rawType: l.rawType,
     outcode: l.outcode,
-    dealScore: pick.deal ? (pick.deal.kind === "purchase" ? pick.deal.grossYieldPct : pick.deal.monthlyMargin) : null,
+    screeningScore: screeningScore(pick.screening),
   };
   const rules = feedbackRules([answer]);
   const changed = pick.reasons.filter((r) => ruleApplied(rules, r) && reasonEffect(r));
@@ -126,6 +127,20 @@ export default async function PickResponsePage({ params, searchParams }: { param
             )}
             {l.photo && <img src={l.photo} alt="" className="mt-4 w-full rounded-2xl border border-[#e4e7dc] object-cover" style={{ maxHeight: 320 }} />}
             {pick.deal && <p className="mt-4 text-sm font-medium text-[#5d8156]">{describeDeal(pick.deal)}</p>}
+            {pick.screening && pick.screening.band !== "insufficient-data" && (
+              <div className="mt-3 rounded-lg bg-[#f5f2e8] p-3">
+                <p className="text-sm font-semibold text-[#2e3d2b]">{BAND_LABELS[pick.screening.band]}</p>
+                <p className="mt-0.5 text-xs text-[#5b6657]">{pick.screening.reason}</p>
+                <dl className="mt-2 space-y-0.5">
+                  {screeningWorking(pick.screening).map((w) => (
+                    <div key={w.label} className="flex justify-between gap-4 text-xs">
+                      <dt className="text-[#5b6657]">{w.label}</dt>
+                      <dd className="font-semibold text-[#2e3d2b]">{w.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
             {pick.fit !== null && <p className="mt-1 text-xs text-[#7a8274]">Fit {pick.fit}/100 · {pick.basis === "house" ? "Stayful house pick" : "picked for your filter"}</p>}
 
             <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5">

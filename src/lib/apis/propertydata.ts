@@ -18,6 +18,7 @@
 
 import type { LongLetData, PropertyDataValuation } from '../types';
 import { meter } from '../credit/meter.ts';
+import { NATIONAL_MONTHLY_RENT } from '../market/rent-ladder.ts';
 
 // ─── Bedroom-scaled defaults ────────────────────────────────────
 // More realistic than a single static default for all property sizes.
@@ -25,11 +26,10 @@ const AREA_BY_BEDROOMS: Record<number, number> = {
   1: 500, 2: 700, 3: 900, 4: 1100, 5: 1350,
 };
 
-// UK national median monthly rents (2024, ONS/Zoopla blend).
-// Used as last-resort fallback when PropertyData API has no data for the area.
-const UK_FALLBACK_MONTHLY_RENT: Record<number, number> = {
-  0: 950, 1: 1100, 2: 1400, 3: 1650, 4: 2050, 5: 2500,
-};
+// UK national median monthly rents by bedroom count now live in
+// ../market/rent-ladder.ts, which is pure and therefore unit-testable. Kept as
+// an alias so the last-resort fallback below reads the same as it always did.
+const UK_FALLBACK_MONTHLY_RENT = NATIONAL_MONTHLY_RENT;
 
 // ─── Floor Area + Build Year from /floor-areas ─────────────────
 export interface FloorAreaResult {
@@ -231,12 +231,58 @@ export async function getLongLetData(
   };
 }
 
+/** Default budget for a single rent lookup. A cron pass has ~60s in total. */
+export const LONG_LET_ONCE_TIMEOUT_MS = 3_500;
+
+/**
+ * ONE valuation-rent attempt, bounded, that returns `null` when it cannot
+ * answer — and NEVER the national median.
+ *
+ * `getLongLetData` above exists for the analyser and always returns a figure:
+ * with no API key, or after every attempt fails, it hands back
+ * UK_FALLBACK_MONTHLY_RENT dressed as an estimate. That is the right call for a
+ * report that must render something, but it makes a national median
+ * indistinguishable from a real local estimate — so it must never be the source
+ * of a figure labelled "confirmed".
+ *
+ * Use this instead wherever the DIFFERENCE matters. A null means "unconfirmed",
+ * and the caller can fall back to something it will label honestly. One attempt
+ * rather than up to six, because the six sequential unbounded requests
+ * `getLongLetData` can make will not fit inside a cron pass.
+ */
+export async function getLongLetOnce(
+  postcode: string,
+  bedrooms: number,
+  options?: { propertyType?: string; timeoutMs?: number },
+): Promise<{ monthlyRent: number } | null> {
+  const apiKey = process.env.PROPERTYDATA_API_KEY;
+  if (!apiKey) return null;
+  const clampedBedrooms = Math.max(1, Math.min(bedrooms, 5));
+  const result = await tryPropertyDataCall(
+    apiKey,
+    {
+      postcode,
+      property_type: options?.propertyType ?? 'flat',
+      construction_date: '1914_2000',
+      internal_area: String(AREA_BY_BEDROOMS[clampedBedrooms] ?? 650),
+      bedrooms: String(bedrooms),
+      bathrooms: String(BATHROOMS_BY_BEDROOMS[clampedBedrooms] ?? 1),
+      finish_quality: 'average',
+      outdoor_space: 'none',
+      off_street_parking: '0',
+    },
+    options?.timeoutMs ?? LONG_LET_ONCE_TIMEOUT_MS,
+  );
+  return result && result.monthlyRent > 0 ? { monthlyRent: result.monthlyRent } : null;
+}
+
 /**
  * Makes a single PropertyData valuation-rent call. Returns null on failure.
  */
 async function tryPropertyDataCall(
   apiKey: string,
   params: Record<string, string>,
+  timeoutMs?: number,
 ): Promise<LongLetData | null> {
   try {
     // PropertyData requires the postcode WITH spaces — do NOT strip them
@@ -246,7 +292,7 @@ async function tryPropertyDataCall(
       url.searchParams.set(key, value);
     }
 
-    const response = await meter({ provider: 'propertydata', unit: 'valuation_rent', key: params.postcode ?? null, failed: (r) => !r.ok }, () => fetch(url.toString()));
+    const response = await meter({ provider: 'propertydata', unit: 'valuation_rent', key: params.postcode ?? null, failed: (r) => !r.ok }, () => fetch(url.toString(), timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : undefined));
 
     if (!response.ok) {
       console.log(`PropertyData: HTTP ${response.status} for params:`, params);

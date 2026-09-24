@@ -53,6 +53,69 @@ export async function storedCompForListing(listingId: string, maxAgeDays = 30): 
   };
 }
 
+export interface AreaRentFigures {
+  /** Mean long-let monthly rent across the matching reports. */
+  monthlyRent: number;
+  samples: number;
+}
+
+/** Key for the rent table: postcode area and bedroom count. */
+export function areaRentKey(postcodeArea: string, bedrooms: number): string {
+  return `${postcodeArea.trim().toUpperCase()}|${Math.round(bedrooms)}`;
+}
+
+/**
+ * Mean long-let monthly rent per postcode area and bedroom count, from long-let
+ * estimates we have ALREADY paid PropertyData for.
+ *
+ * Every analyser report fetches a real rent for a real postcode and stores the
+ * whole AnalysisResult in `raw_response`, so these rents are already on disk —
+ * this reads them back, free, exactly as `storedPostcodeFigures` does for
+ * short-let revenue. Coverage grows with every report run.
+ *
+ * Returned as one table rather than a lookup per property: screening the whole
+ * stored listing pool touches a few hundred area/bedroom cohorts, and a query
+ * each would be a few hundred round trips for data that fits in one read.
+ *
+ * Grouped by postcode AREA rather than outcode on purpose: the short-let revenue
+ * these rents are compared against is itself an area-and-bedroom average, so a
+ * tighter rent would be false precision on one side of the comparison.
+ */
+export async function storedAreaRentTable(maxAgeDays = 365): Promise<Map<string, AreaRentFigures>> {
+  const out = new Map<string, AreaRentFigures>();
+  if (!hasServiceRole()) return out;
+  const admin = createAdminClient();
+  const since = new Date(Date.now() - maxAgeDays * 24 * 3600 * 1000).toISOString();
+  const PAGE = 1000;
+  const totals = new Map<string, { sum: number; n: number }>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin
+      .from('analyser_reports')
+      .select('postcode_area, bedrooms, rent:raw_response->longLet->>monthlyRent')
+      .not('postcode_area', 'is', null)
+      .not('bedrooms', 'is', null)
+      .gte('created_at', since)
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.warn('[internal] stored rent read failed:', error.message);
+      break;
+    }
+    const rows = (data ?? []) as { postcode_area: string; bedrooms: number; rent: unknown }[];
+    for (const r of rows) {
+      const rent = Number(r.rent);
+      if (!Number.isFinite(rent) || rent <= 0) continue;
+      const key = areaRentKey(r.postcode_area, r.bedrooms);
+      const acc = totals.get(key) ?? { sum: 0, n: 0 };
+      acc.sum += rent;
+      acc.n += 1;
+      totals.set(key, acc);
+    }
+    if (rows.length < PAGE) break;
+  }
+  for (const [key, { sum, n }] of totals) out.set(key, { monthlyRent: Math.round(sum / n), samples: n });
+  return out;
+}
+
 export interface PostcodeFigures {
   samples: number;
   grossRevenue: number | null;

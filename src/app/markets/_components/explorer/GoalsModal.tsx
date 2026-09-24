@@ -6,6 +6,7 @@ import { X } from "lucide-react";
 import { saveMarketGoalsAction, clearMarketGoalsAction, type GoalsState } from "../../actions";
 import { DEFAULT_GOALS, MOTIVATION_MODE_LABELS, PRIORITY_LABELS, SOURCING_KIND_LABELS, MIN_MONTHS_RANGE, MIN_WEEKS_RANGE, type MarketGoals, type MotivationMode, type Priority, type SourcingKind } from "@/lib/market/goals";
 import { BUDGET_LABELS } from "@/lib/market/filters";
+import { BUY_QUALIFIED_UPLIFT_PCT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 
 const initial: GoalsState = { error: null, warning: null, saved: false };
 
@@ -145,7 +146,12 @@ export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = true, o
                   <option key={k} value={k}>{SOURCING_KIND_LABELS[k]}</option>
                 ))}
               </select>
-              <small>Rent-to-rent picks are priced on the advertised rent; purchases on the asking price and your finance defaults above.</small>
+              <small>
+                Rent-to-rent picks are priced on the advertised rent; purchases on the asking price and your finance defaults above.
+                Whichever you pick, every property is screened against what it would earn on a long-term let, and only the ones that
+                clearly beat it are sent: {BUY_QUALIFIED_UPLIFT_PCT}% more to buy, £{R2R_QUALIFIED_PROFIT.toLocaleString("en-GB")} a
+                year of profit for rent-to-rent. Rent-to-rent has the higher bar because you are paying the rent yourself.
+              </small>
             </label>
             {kind !== "sale" && (
               <label>

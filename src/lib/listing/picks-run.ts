@@ -13,15 +13,16 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
-import type { Deal } from "./deal";
+import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { screen, bandRank, marketRentFor, grossRevenueFor, isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
+import { storedAreaRentTable, areaRentKey } from "../broker/providers/internal";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
 import type { ListingSnapshot } from "./types";
@@ -133,7 +134,7 @@ interface Member {
   rules: AppliedRules;
 }
 
-type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string; motivation?: Motivation | null; motivationQualifies?: boolean };
+type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string; motivation?: Motivation | null; motivationQualifies?: boolean; screening?: Screening | null };
 type Verdict = Exclude<Suitability, "unknown"> | "unverified" | "gone";
 
 export interface RunOptions {
@@ -187,6 +188,14 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   if (cards.length === 0) return done({ status: 503, body: { error: "Market data unavailable; nothing sent" } });
   const cardByCode = new Map(cards.map((c) => [c.code, c]));
   const price = pickPrice(await getUnitCostTable());
+  // Long-let rents we have already paid for, read back from past reports: the
+  // free tier of the income screening's rent ladder. One read for the whole run.
+  const rentTable = await storedAreaRentTable().catch((err) => {
+    // A rent we cannot look up degrades the screening to the national ladder; it
+    // must never cost the whole run.
+    console.warn("[sourcing] stored rent table failed:", (err as Error)?.message ?? err);
+    return new Map<string, { monthlyRent: number; samples: number }>();
+  });
   const pickBasePence = price.basePence;
 
   // ── Audience: picks on, signed in at least once; starved members first ──
@@ -228,6 +237,27 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (fbRes.error) console.warn("[sourcing] feedback select failed (schema behind?):", fbRes.error.message);
     feedbackRows.push(...((fbRes.data ?? []) as FeedbackRow[]));
   }
+  // The screening behind each piece of feedback, read SEPARATELY on purpose. The
+  // select above only console.warns on failure, so putting a new column in it
+  // would mean one missing column silently switching off every feedback rule —
+  // price caps, area bans, kind switches — for every member. On its own it can
+  // only cost the return floor, which then simply does not apply.
+  const feedbackScreening = new Map<string, Screening | null>();
+  for (const some of chunk(ids, ID_CHUNK)) {
+    const { data, error } = await admin
+      .from("sourcing_sent")
+      .select("user_id, canonical_url, screening")
+      .in("user_id", some)
+      .not("reaction", "is", null)
+      .gte("responded_at", feedbackSince);
+    if (error) {
+      console.warn("[sourcing] screening feedback select failed (schema behind?):", error.message);
+      break;
+    }
+    for (const r of (data ?? []) as { user_id: string; canonical_url: string; screening: unknown }[]) {
+      feedbackScreening.set(`${r.user_id}|${r.canonical_url}`, parseScreening(r.screening));
+    }
+  }
   // The listing behind each piece of feedback (size, type, price) comes from the shared snapshot.
   const feedbackListing = new Map<string, SourcedListing>();
   for (const urls of chunk([...new Set(feedbackRows.map((r) => r.canonical_url))], URL_CHUNK)) {
@@ -250,7 +280,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         rawType: l?.rawType ?? null,
         // Older stored snapshots carry no outcode; the postcode still has one.
         outcode: l?.outcode ?? findOutcode(l?.postcode ?? l?.address ?? null),
-        dealScore: dealScoreOf((r.deal as Deal | null) ?? null),
+        screeningScore: screeningScore(feedbackScreening.get(`${r.user_id}|${r.canonical_url}`) ?? null),
       },
     ]);
   }
@@ -310,7 +340,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const queries = [...demand.values()].sort((a, b) => Number(b.own) - Number(a.own) || b.members - a.members).slice(0, maxQueries());
 
   const unsuitable: Partial<Record<UnsuitableReason, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
+  // How the income screening landed across every candidate considered this run.
+  // Counted because the gate failing silently is the one outcome that looks like
+  // a broken product: the log line has to show whether members got nothing
+  // because the market was thin or because the bar rejected it all.
+  const screened: Partial<Record<Band, number>> = {};
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
     return done({
       status: 200,
@@ -470,7 +505,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Pre-checked 'ok' listings rank ahead of 'unknown' ones (a leasehold flat
   // whose page has not been read yet) so the page reads go to listings that
   // are likely to pass.
-  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean };
+  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean; screening?: Screening | null };
   const ranked = new Map<string, Ranked[]>();
   const relaxationFor = new Map<string, Relaxation | null>();
 
@@ -482,7 +517,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const nearestUsable = (misses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[], m: Member): { pick: Ranked; relaxation: Relaxation | null } | null => {
     if (misses.length === 0) return null;
     const viable = new Set(rankPicks(misses.map((x) => x.candidate), misses.length, "off").map((p) => p.listing.canonicalUrl));
-    const usable = misses.filter((x) => viable.has(x.listing.canonicalUrl));
+    // The income bar applies here too: "closest to your filter" must not become
+    // a way to send the very thing the screening rejected.
+    const usable = misses.filter((x) => viable.has(x.listing.canonicalUrl) && (!x.candidate.screening || isSendable(x.candidate.screening)));
     if (usable.length === 0) return null;
     const best = closestMatch(usable, (l) => usable.find((x) => x.listing.canonicalUrl === l.canonicalUrl)?.candidate.motivation?.score ?? 0);
     if (!best) return null;
@@ -553,6 +590,23 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
       const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
       const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
+      // Income screening: does this earn enough as a short let to be worth
+      // recommending, against what the same property would make on a long let?
+      // The rent and revenue come from the same helpers the screening report
+      // uses, so the gate and the report can never disagree.
+      const rev = figures ? areaRevenueFor(figures, l.bedrooms) : null;
+      const exactBeds = l.bedrooms !== null && (card?.byBedrooms.some((b) => b.bedrooms === l.bedrooms && b.grossRevenue) ?? false);
+      const rent = marketRentFor({
+        kind: l.kind,
+        bedrooms: l.bedrooms,
+        advertisedRentPcm: l.kind === "rent" ? rentPcm(l.price) : null,
+        storedRent: l.postcodeArea && l.bedrooms !== null ? rentTable.get(areaRentKey(l.postcodeArea, l.bedrooms)) ?? null : null,
+      });
+      const screening = screen(l.kind, {
+        bedrooms: l.bedrooms,
+        grossRevenue: grossRevenueFor(rev?.grossRevenue ?? null, exactBeds),
+        marketRent: rent?.figure ?? null,
+      });
       const candidate = {
         listing: l,
         deal: dealForSourced(l, figures, m.goals?.finance ?? null),
@@ -561,6 +615,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         precheck,
         motivation,
         motivationQualifies: qualifies,
+        screening,
       };
       if (fails.length === 0) {
         candidates.push(candidate);
@@ -582,13 +637,27 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (motiv) for (const l of olderCandidates.get(`${q.kind}|${q.area}`) ?? []) consider(l, q, true);
     }
     candidateCount.set(m.id, candidates.length);
-    const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
-    const precheckOf = new Map(kept.map((c) => [c.listing.canonicalUrl, c.precheck]));
-    const list = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off").map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
-    const ok = list.filter((p) => p.precheck === "ok");
+    const afterFeedback = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
+    // ── The income gate ──
+    // Applied BEFORE ranking, because rankPicks keeps only the top SPREAD_DEPTH:
+    // screening afterwards would discard a qualifying property that happened to
+    // rank 41st. Counted per band so the admin report can tell a thin market
+    // apart from a bar that is too high.
+    const kept = afterFeedback.filter((c) => {
+      if (!c.screening) return true;
+      screened[c.screening.band] = (screened[c.screening.band] ?? 0) + 1;
+      return isSendable(c.screening);
+    });
+    // Band decides what may be sent; fit still decides the order within a band.
+    // The two are not comparable across kinds (an uplift % against a profit in
+    // pounds), whereas blendFit already normalises both onto one scale.
+    const list: Ranked[] = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off")
+      .sort((a, b) => bandRank(a.screening?.band ?? "qualified") - bandRank(b.screening?.band ?? "qualified") || b.fit - a.fit);
     // "Could not be run as a short let": only send this member listings that
     // already clear the check on the search card, never ones that need the
-    // page to rescue them.
+    // page to rescue them. Band sorting happens INSIDE each of these buckets,
+    // or the page reads would be aimed at listings that cannot clear the check.
+    const ok = list.filter((p) => p.precheck === "ok");
     const unknown = m.rules.strictSuitability ? [] : list.filter((p) => p.precheck !== "ok");
     if (ok.length + unknown.length === 0) {
       // Nothing matched. A strict filter reads as a broken product when it just
@@ -596,7 +665,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // rest — but only when there is a nearest thing whose deal actually works.
       const fallback = motiv ? nearestUsable(nearMisses, m) : null;
       if (!fallback) {
-        perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: "nothing_new" });
+        // Saying which of the two happened matters: one is a thin market, the
+        // other is the income bar, and only the second is ours to reconsider.
+        const gated = afterFeedback.length > 0 && kept.length === 0;
+        perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: gated ? "nothing_qualified" : "nothing_new" });
         continue;
       }
       candidateCount.set(m.id, candidates.length + nearMisses.length);
@@ -696,7 +768,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   };
 
   // ── One pick per member: the best candidate that passes, under the daily cap ──
-  const picks: { member: Member; pick: SourcedPick; alternates: SourcedPick[]; candidates: number; nearMiss: boolean }[] = [];
+  const picks: { member: Member; pick: Ranked; alternates: Ranked[]; candidates: number; nearMiss: boolean }[] = [];
   for (const m of affordable) {
     const list = ranked.get(m.id) ?? [];
     const candidates = candidateCount.get(m.id) ?? 0;
@@ -706,7 +778,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // else is left.
     const underCap = m.basis === "goals" ? list : list.filter((p) => (assigned.get(p.listing.canonicalUrl) ?? 0) < DAILY_LISTING_CAP);
     const order = underCap.length > 0 ? underCap : list;
-    let chosen: SourcedPick | null = null;
+    let chosen: Ranked | null = null;
     let outOfTime = false;
     for (const p of order) {
       const { verdict, listing, snapshot, previousAgentHash } = await verify(p.listing);
@@ -756,7 +828,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     assigned.set(chosen.listing.canonicalUrl, (assigned.get(chosen.listing.canonicalUrl) ?? 0) + 1);
     // Stand-ins for a send that collides with a row this member already has.
     // Only listings already verified in this run qualify, so they cost no fetch.
-    const alternates: SourcedPick[] = [];
+    const alternates: Ranked[] = [];
     for (const p of order) {
       if (alternates.length >= MAX_ALTERNATES) break;
       if (p.listing.canonicalUrl === chosen.listing.canonicalUrl) continue;
@@ -783,7 +855,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // (user_id, canonical_url) is unique, so a listing this member already has
     // comes back 23505. That is not a reason to leave them with nothing: try the
     // stand-ins before giving up. Any other error is real and stops the attempt.
-    let sending: SourcedPick | null = null;
+    let sending: Ranked | null = null;
     let rowId: string | null = null;
     let token = "";
     let insErr: { code?: string; message: string } | null = null;
@@ -792,7 +864,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const cl = cand.listing;
       const { data: row, error } = await admin
         .from("sourcing_sent")
-        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null, motivation: cand.motivation ?? null })
+        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null, motivation: cand.motivation ?? null, screening: cand.screening ?? null })
         .select("id")
         .single();
       if (!error && row) {
@@ -826,6 +898,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // the analysis was actually about.
       nearMiss: nearMiss && sending === pick,
       relaxation: describeRelaxation(relaxation),
+      // Whichever listing is actually going out carries its own screening, so a
+      // stand-in never inherits the first choice's figures.
+      screening: sending.screening ?? null,
     });
     const res = await sendEmail({ to: m.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers });
     if (!res.sent) {
