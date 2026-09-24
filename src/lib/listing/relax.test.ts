@@ -130,3 +130,58 @@ test('the line reads as advice, not as an error', () => {
   assert.match(line, /3 months/);
   assert.match(line, /3 more would have qualified/);
 });
+
+// ── What is stored, and what may be applied in one click ──
+
+import { toStoredRelaxation, parseStoredRelaxation } from './relax.ts';
+
+const motivationOffer = () =>
+  analyseRelaxation([
+    miss('a', ['motivation'], { ageDays: 120 }),
+    miss('b', ['motivation'], { ageDays: 110 }),
+    miss('c', ['motivation'], { ageDays: 100 }),
+  ], sale)!;
+
+test('the time threshold is the only thing offered as one click', () => {
+  const sold = toStoredRelaxation(motivationOffer(), 'sale')!;
+  assert.equal(sold.applyField, 'minMonthsOnMarket');
+  assert.equal(sold.value, 3);
+  const let_ = toStoredRelaxation(motivationOffer(), 'rent')!;
+  assert.equal(let_.applyField, 'minWeeksOnMarket');
+
+  // Budget is a band and bedrooms is a small enum: both change the shape of the
+  // search rather than loosening one dial, so they link to the filter instead.
+  const byPrice = analyseRelaxation([miss('a', ['price'], { amount: 300_000 })], sale)!;
+  const storedPrice = toStoredRelaxation(byPrice, 'sale')!;
+  assert.equal(storedPrice.applyField, null);
+  assert.equal(storedPrice.value, null);
+});
+
+test('a malformed offer is no offer at all, never a partial one', () => {
+  for (const bad of [null, undefined, 'x', 42, {}, { key: 'nonsense' }, { key: 'motivation' }]) {
+    assert.equal(parseStoredRelaxation(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('a field with no value can never be applied', () => {
+  // Writing a null threshold would reset the member's filter to the default
+  // under the guise of applying their choice.
+  const tampered = parseStoredRelaxation({
+    key: 'motivation', label: 'x', current: '5 months', suggested: '3 months',
+    wouldAdd: 3, applyField: 'minMonthsOnMarket', value: null,
+  })!;
+  assert.equal(tampered.applyField, null);
+  assert.equal(tampered.value, null);
+
+  const negative = parseStoredRelaxation({
+    key: 'motivation', label: 'x', current: '5 months', suggested: '-1 months',
+    wouldAdd: 3, applyField: 'minMonthsOnMarket', value: -1,
+  })!;
+  assert.equal(negative.applyField, null);
+});
+
+test('a stored offer survives the round trip intact', () => {
+  const stored = toStoredRelaxation(motivationOffer(), 'sale')!;
+  assert.deepEqual(parseStoredRelaxation(JSON.parse(JSON.stringify(stored))), stored);
+  assert.equal(toStoredRelaxation(null, 'sale'), null);
+});

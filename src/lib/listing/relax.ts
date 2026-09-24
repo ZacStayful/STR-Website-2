@@ -180,3 +180,71 @@ export function describeRelaxation(r: Relaxation | null): string | null {
   const other = r.all[1];
   return `${lead} ${other.label} is costing you almost as much (${other.wouldAdd}), so either would help.`;
 }
+
+// ── What gets stored, and what may be applied in one click ──
+
+/**
+ * The advice as persisted on the pick row. This is the ONLY thing the
+ * "change it" link acts on: the token travels in an email, so anyone holding
+ * that email can invoke the action, and a value taken from the request would
+ * let them rewrite someone else's filter to anything they liked. Storing the
+ * proposal means the worst a leaked token can do is apply the change we
+ * already offered in writing.
+ *
+ * Only the time-on-market threshold is applied automatically. Budget is a band
+ * rather than a number and bedrooms is a small enum, so both change the shape
+ * of the search rather than loosening one dial — those link to the filter
+ * instead, where the member can see what they are doing.
+ */
+export interface StoredRelaxation {
+  key: Dimension;
+  label: string;
+  current: string;
+  suggested: string;
+  wouldAdd: number;
+  /** Which field on MotivationGoals to write, or null when this is not one-click. */
+  applyField: 'minMonthsOnMarket' | 'minWeeksOnMarket' | null;
+  /** The value to write. Null whenever applyField is null. */
+  value: number | null;
+}
+
+export function toStoredRelaxation(r: Relaxation | null, kind: 'sale' | 'rent'): StoredRelaxation | null {
+  if (!r) return null;
+  const b = r.binding;
+  const oneClick = b.key === 'motivation';
+  const value = oneClick ? Number(b.suggested.split(' ')[0]) : null;
+  return {
+    key: b.key,
+    label: b.label,
+    current: b.current,
+    suggested: b.suggested,
+    wouldAdd: b.wouldAdd,
+    applyField: oneClick ? (kind === 'rent' ? 'minWeeksOnMarket' : 'minMonthsOnMarket') : null,
+    value: Number.isFinite(value) && (value as number) > 0 ? value : null,
+  };
+}
+
+/** Strict read back. Anything malformed is no offer at all, never a partial one. */
+export function parseStoredRelaxation(raw: unknown): StoredRelaxation | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const key = o.key;
+  if (key !== 'motivation' && key !== 'price' && key !== 'bedrooms') return null;
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const label = str(o.label);
+  const current = str(o.current);
+  const suggested = str(o.suggested);
+  if (!label || !current || !suggested) return null;
+  const applyField = o.applyField === 'minMonthsOnMarket' || o.applyField === 'minWeeksOnMarket' ? o.applyField : null;
+  const value = typeof o.value === 'number' && Number.isInteger(o.value) && o.value > 0 ? o.value : null;
+  return {
+    key,
+    label,
+    current,
+    suggested,
+    wouldAdd: typeof o.wouldAdd === 'number' && o.wouldAdd >= 0 ? o.wouldAdd : 0,
+    // Both or neither: a field with no value could write a null threshold.
+    applyField: applyField && value !== null ? applyField : null,
+    value: applyField && value !== null ? value : null,
+  };
+}

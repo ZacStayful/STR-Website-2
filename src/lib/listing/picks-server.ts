@@ -5,6 +5,8 @@ import { areaMetaForCode } from '../market/areas';
 import { isPickToken, cleanReasons, dealScoreOf, PICK_REASONS, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
 import type { SourcedListing } from './sourcing';
 import type { Deal } from './deal';
+import { parseStoredRelaxation, type StoredRelaxation } from './relax';
+import { parseMarketGoals } from '../market/goals';
 import type { ResponseRow } from './picks-patterns';
 
 /**
@@ -35,9 +37,11 @@ export interface PickView {
   checkedListingId: string | null;
   savedAt: string | null;
   sentAt: string;
+  /** Set when this pick was a near miss: the one filter change we offered. */
+  relaxation: StoredRelaxation | null;
 }
 
-const PICK_COLUMNS = 'id, user_id, canonical_url, token, status, kind, basis, postcode_area, deal, fit, charged_base_pence, reaction, reaction_source, reasons, comment, responded_at, checked_listing_id, saved_at, sent_at';
+const PICK_COLUMNS = 'id, user_id, canonical_url, token, status, kind, basis, postcode_area, deal, fit, charged_base_pence, reaction, reaction_source, reasons, comment, responded_at, checked_listing_id, saved_at, sent_at, relaxation';
 
 function toView(raw: Record<string, unknown>, listing: SourcedListing | null): PickView | null {
   const id = typeof raw.id === 'string' ? raw.id : null;
@@ -69,6 +73,7 @@ function toView(raw: Record<string, unknown>, listing: SourcedListing | null): P
     checkedListingId: typeof raw.checked_listing_id === 'string' ? raw.checked_listing_id : null,
     savedAt: typeof raw.saved_at === 'string' ? raw.saved_at : null,
     sentAt: typeof raw.sent_at === 'string' ? raw.sent_at : new Date(0).toISOString(),
+    relaxation: parseStoredRelaxation(raw.relaxation),
   };
 }
 
@@ -234,6 +239,49 @@ export async function setPicksEnabled(userId: string, on: boolean): Promise<bool
   const { error } = await createAdminClient().from('profiles').update({ sourcing_alerts: on, sourcing_opted_out_at: on ? null : new Date().toISOString() }).eq('id', userId);
   if (error) console.error('[picks] profile update failed:', error.message);
   return !error;
+}
+
+/**
+ * Applies the filter change offered with a near-miss pick.
+ *
+ * Deliberately takes no value from the caller. The pick token lives in an
+ * email, so anyone holding that email can reach this — and a caller-supplied
+ * value would let them set someone else's filter to anything. Instead the
+ * proposal is read back off the row it was stored on and only that field, with
+ * only that value, is written. The worst a leaked token can do is accept the
+ * change we already put in writing to the member.
+ *
+ * Returns what was applied so the page can confirm it, or null when there was
+ * nothing on offer.
+ */
+export async function applyPickRelaxation(token: string): Promise<{ field: string; value: number } | null> {
+  if (!hasServiceRole() || !isPickToken(token)) return null;
+  const pick = await pickByToken(token);
+  const offer = pick?.relaxation ?? null;
+  if (!pick || !offer?.applyField || offer.value === null) return null;
+
+  const admin = createAdminClient();
+  const { data } = await admin.from('profiles').select('market_goals').eq('id', pick.userId).single();
+  const goals = parseMarketGoals(data?.market_goals);
+  if (!goals) return null;
+
+  // Re-parsed after the change, so an out-of-band value can never be stored
+  // even if the offer on the row was somehow tampered with.
+  const next = parseMarketGoals({ ...goals, motivation: { ...goals.motivation, [offer.applyField]: offer.value } });
+  if (!next) return null;
+  // A change that did not survive the parse was not a legal value; say nothing
+  // was applied rather than report success on a silent fallback to the default.
+  if (next.motivation[offer.applyField] !== offer.value) return null;
+
+  const { error } = await admin
+    .from('profiles')
+    .update({ market_goals: next, market_goals_updated_at: new Date().toISOString() })
+    .eq('id', pick.userId);
+  if (error) {
+    console.error('[picks] relaxation apply failed:', error.message);
+    return null;
+  }
+  return { field: offer.applyField, value: offer.value };
 }
 
 /** Links a pick to the pipeline row the member saved it as. */

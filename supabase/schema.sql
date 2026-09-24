@@ -1378,3 +1378,15 @@ $$;
 -- untouched.
 create index if not exists sourced_listings_area_kind_idx
   on public.sourced_listings (postcode_area, kind, first_seen_at desc);
+
+-- The advice sent with a near-miss pick: which filter was the binding one and
+-- what to change it to. Stored rather than recomputed because the one-click
+-- "change it" link on /p/[token] must apply only a value WE proposed — the
+-- token travels in an email, so anyone holding that email can invoke the
+-- action, and accepting a value from the request would let them rewrite
+-- someone else's filter to anything at all.
+--
+-- APPLY THIS BEFORE DEPLOYING THE CODE THAT READS IT. PICK_COLUMNS in
+-- src/lib/listing/picks-server.ts is a fixed select, so a missing column fails
+-- the whole query and takes /picks and /p/[token] down with it.
+alter table public.sourcing_sent add column if not exists relaxation jsonb;

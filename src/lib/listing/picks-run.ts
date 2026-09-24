@@ -15,7 +15,7 @@ import { isPaused } from "../access";
 import { findOutcode } from "./html";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
-import { analyseRelaxation, closestMatch, describeRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
+import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
@@ -719,6 +719,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       continue;
     }
     const charge = m.admin ? 0 : pickBasePence;
+    const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
+    // Persisted so the "change it" link has something to apply that the member
+    // cannot alter in the request. It belongs to the pick the analysis was
+    // about, so a stand-in reached after a collision carries nothing.
+    const relaxationRow = nearMiss ? toStoredRelaxation(relaxation, pick.listing.kind) : null;
     // (user_id, canonical_url) is unique, so a listing this member already has
     // comes back 23505. That is not a reason to leave them with nothing: try the
     // stand-ins before giving up. Any other error is real and stops the attempt.
@@ -731,7 +736,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const cl = cand.listing;
       const { data: row, error } = await admin
         .from("sourcing_sent")
-        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge })
+        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null })
         .select("id")
         .single();
       if (!error && row) {
@@ -751,7 +756,6 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
     if (sending !== pick) assigned.set(sending.listing.canonicalUrl, (assigned.get(sending.listing.canonicalUrl) ?? 0) + 1);
     const id = rowId;
-    const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
     const mail = pickEmail({
       pick: sending,
       siteUrl: base,
