@@ -111,16 +111,31 @@ export async function getFunnel(userId: string, id: string): Promise<Funnel | nu
 }
 
 /**
- * A new funnel starts PAUSED, overriding the column default. Going live is
- * gated on the customer supplying a privacy policy (see activationBlockers),
- * and a funnel that was live from the moment it was created would collect a
- * prospect's details before that gate had ever been applied.
+ * A new funnel starts PAUSED, overriding the column default — but the reason
+ * is no longer the one it used to be, so don't reinstate the old one.
+ *
+ * It was that going live is gated on a privacy policy, and a funnel live from
+ * the moment it was created would collect a prospect's details before that gate
+ * had ever been applied. Creation now REQUIRES that policy and a company name
+ * (see newFunnelBrand), so the gate is satisfied before the row exists and that
+ * reason is gone.
+ *
+ * What remains: going live opens a public endpoint that spends the owner's
+ * credit, and at this point they have not seen their branding rendered or looked
+ * at the daily lead and spend caps. So a new funnel is paused but immediately
+ * able to go live — one click, with nothing left to fill in first.
  */
-export async function createFunnel(userId: string, name: string): Promise<Funnel | null> {
+export async function createFunnel(userId: string, name: string, brand?: FunnelBrand): Promise<Funnel | null> {
   if (!hasServiceRole()) return null;
   const { data, error } = await createAdminClient()
     .from('funnels')
-    .insert({ user_id: userId, public_token: mintFunnelToken(), name: name.slice(0, 80) || 'My funnel', active: false })
+    .insert({
+      user_id: userId,
+      public_token: mintFunnelToken(),
+      name: name.slice(0, 80) || 'My funnel',
+      active: false,
+      ...(brand ? { brand } : {}),
+    })
     .select(COLUMNS)
     .single();
   if (error || !data) {
