@@ -658,3 +658,51 @@ export function firstCycleMonth(cycles: Cycle[]): Date | null {
   }
   return earliest === null ? null : new Date(earliest);
 }
+
+// ---------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------
+
+function csvCell(value: string | number | null): string {
+  if (value === null) return '';
+  const s = String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Every cycle as a spreadsheet — one row per paid spell, so a member who left
+ * and came back is two rows and neither hides the other.
+ */
+export function cyclesCsv(cycles: Cycle[]): string {
+  const header = [
+    'user_id',
+    'started_at',
+    'ended_at',
+    'state',
+    'risk',
+    'plan_code',
+    'mrr_pence',
+    'tenure_days',
+    'drop_off_band',
+    'reason',
+    'reason_label',
+    'comment',
+    'source',
+  ];
+  const rows = cycles.map((c) => [
+    c.userId,
+    c.startedAt,
+    c.endedAt,
+    c.state,
+    c.riskKind,
+    c.planCode,
+    c.mrrPence,
+    c.tenureDays,
+    c.endedAt ? bandFor(c.startedAt, new Date(c.endedAt)).key : '',
+    c.reason ?? c.intentReason,
+    churnReasonLabel(c.reason ?? c.intentReason),
+    c.reasonComment ?? c.intentComment,
+    c.source,
+  ]);
+  return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
+}
