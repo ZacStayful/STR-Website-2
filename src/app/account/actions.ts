@@ -17,10 +17,32 @@ import { isPauseScheduled, isPaused } from '@/lib/access'
 import { cancelScheduledEmail, pauseBookedEmail } from '@/lib/email/billing-emails'
 import { isEmailConfigured, sendEmail } from '@/lib/email/send'
 import { BRAND } from '@/lib/brand'
+import { recordSubscriptionEvent, type SubscriptionEventInput } from '@/lib/billing/subscription-events'
 import { CANCEL_REASONS, type BillingState, type CancelReason } from './plan-view'
 import type Stripe from 'stripe'
 
 const REASON_SLUGS: Set<string> = new Set(CANCEL_REASONS.map((r) => r.slug))
+
+/**
+ * Our reason slug in Stripe's own vocabulary, for the copy we leave on the
+ * subscription. Stripe's enum is fixed, so anything without a counterpart
+ * becomes 'other' and the detail rides along in the comment.
+ */
+function stripeFeedbackFor(slug: CancelReason | null): Stripe.SubscriptionUpdateParams.CancellationDetails.Feedback {
+  switch (slug) {
+    case 'too_expensive':
+      return 'too_expensive'
+    case 'missing_feature':
+      return 'missing_features'
+    case 'another_tool':
+      return 'switched_service'
+    case 'not_using':
+    case 'stopped_looking':
+      return 'unused'
+    default:
+      return 'other'
+  }
+}
 
 const SIGN_IN_AGAIN = 'Your session has expired. Please sign in again.'
 const UNAVAILABLE = "We couldn't reach our payment provider. Please try again in a moment."
@@ -115,6 +137,29 @@ async function writeProfile(userId: string, values: Record<string, unknown>): Pr
   return true
 }
 
+/**
+ * Append to the churn log.
+ *
+ * Written here as well as in the webhook because this is the only place the
+ * member's own words exist: Stripe tells us THAT a subscription was cancelled,
+ * never why. Never throws — a missing log row must not fail the cancellation
+ * the member just asked for.
+ */
+async function logSubscriptionEvent(
+  ctx: Context,
+  sub: Stripe.Subscription | null,
+  input: Omit<SubscriptionEventInput, 'userId' | 'source'> & { source?: SubscriptionEventInput['source'] },
+): Promise<void> {
+  await recordSubscriptionEvent(createAdminClient(), {
+    source: 'self_serve',
+    stripeSubscriptionId: ctx.subscriptionId,
+    cycleStartedAt: sub?.start_date ? new Date(sub.start_date * 1000).toISOString() : null,
+    planCode: (ctx.profile.plan_code as string | null) ?? null,
+    ...input,
+    userId: ctx.userId,
+  })
+}
+
 function failed(where: string, err: unknown): BillingState {
   // Stripe messages carry ids and internal detail, so they are logged, never
   // shown.
@@ -130,6 +175,12 @@ export async function pauseSubscriptionAction(
   _prev: BillingState,
   formData: FormData,
 ): Promise<BillingState> {
+  // The pause form carries these through from the cancel dialog's first step
+  // (see ManagePlan.tsx). They used to be read off the request and dropped,
+  // which threw away the best retention signal there is: a member who came to
+  // cancel, said why, and paused instead.
+  const reason = String(formData.get('reason') ?? '')
+  const comment = String(formData.get('comment') ?? '').trim().slice(0, 500)
   const months = formData.get('months')
   if (!isPauseMonths(months)) {
     return { error: 'Choose 1, 2 or 3 months.', success: null }
@@ -176,6 +227,13 @@ export async function pauseSubscriptionAction(
     })
     if (!ok) return { error: UNAVAILABLE, success: null }
 
+    await logSubscriptionEvent(ctx, updated, {
+      kind: 'paused',
+      reason: REASON_SLUGS.has(reason) ? reason : null,
+      reasonComment: comment || null,
+      metadata: { months: Number(months) },
+    })
+
     const from = formatPlanDate(window.from.toISOString())
     const until = formatPlanDate(window.until.toISOString())
     queueEmail(ctx.email, () => pauseBookedEmail({ from, until }))
@@ -219,6 +277,8 @@ export async function resumeSubscriptionAction(): Promise<BillingState> {
     })
     if (!ok) return { error: UNAVAILABLE, success: null }
 
+    await logSubscriptionEvent(ctx, updated, { kind: 'resumed' })
+
     revalidatePath('/account')
     revalidatePath('/upgrade')
     return { error: null, success: 'Your plan is active again.' }
@@ -252,8 +312,15 @@ export async function cancelSubscriptionAction(
     const metadata = { ...(sub.metadata ?? {}) }
     if (paused) metadata[PAUSED_FROM_KEY] = ''
 
+    const slug = REASON_SLUGS.has(reason) ? (reason as CancelReason) : null
     const updated = await ctx.stripe.subscriptions.update(ctx.subscriptionId, {
       cancel_at_period_end: true,
+      // Give Stripe the reason too. It costs nothing, and it means a member
+      // who later cancels through the Stripe portal instead — where we never
+      // see them — still leaves a trail we can read back.
+      ...(slug || comment
+        ? { cancellation_details: { feedback: stripeFeedbackFor(slug), comment: comment || undefined } }
+        : {}),
       // Cancelling while paused lifts the pause, so cancel_at lands on a real
       // period end and the member gets the paid time they are owed.
       ...(paused ? { pause_collection: '' as const, metadata } : {}),
@@ -266,11 +333,17 @@ export async function cancelSubscriptionAction(
       subscription_paused_from: state.pausedFrom,
       subscription_paused_until: state.pausedUntil,
       stripe_subscription_status: state.status,
-      cancel_reason: REASON_SLUGS.has(reason) ? (reason as CancelReason) : null,
+      cancel_reason: slug,
       cancel_reason_comment: comment || null,
       cancel_reason_at: new Date().toISOString(),
     })
     if (!ok) return { error: UNAVAILABLE, success: null }
+
+    await logSubscriptionEvent(ctx, updated, {
+      kind: 'cancel_scheduled',
+      reason: slug,
+      reasonComment: comment || null,
+    })
 
     const endsOn = formatPlanDate(state.cancelAt ?? state.currentPeriodEnd)
     queueEmail(ctx.email, () => cancelScheduledEmail({ endsOn }))
@@ -311,6 +384,8 @@ export async function keepSubscriptionAction(): Promise<BillingState> {
       cancel_reason_at: null,
     })
     if (!ok) return { error: UNAVAILABLE, success: null }
+
+    await logSubscriptionEvent(ctx, updated, { kind: 'cancel_reverted' })
 
     revalidatePath('/account')
     return { error: null, success: 'Your plan will carry on as normal.' }

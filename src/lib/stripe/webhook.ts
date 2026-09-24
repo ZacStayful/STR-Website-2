@@ -11,6 +11,7 @@
 import type Stripe from 'stripe';
 import { planForPriceId, topupPenceForPriceId, type Env } from './prices.ts';
 import { subscriptionStateFromStripe } from '../subscription.ts';
+import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 
 export interface WebhookUser {
   id: string;
@@ -18,6 +19,16 @@ export interface WebhookUser {
   plan_code: string | null;
   /** 'manual' marks a plan granted by hand that a stray Stripe event must not revoke. */
   plan_source?: string | null;
+  // The rest is what the churn log needs and the profile write alone did not.
+  // `cancel_reason` is read on the way OUT: the reason was captured when the
+  // cancellation was scheduled, and this is the last moment it can be attached
+  // to the event that records the member actually leaving.
+  cancel_reason?: string | null;
+  cancel_reason_comment?: string | null;
+  /** Previous state, to tell a NEW pause or cancel from one merely re-reported. */
+  subscription_cancel_at?: string | null;
+  subscription_paused_until?: string | null;
+  stripe_subscription_status?: string | null;
 }
 
 export interface WebhookDeps {
@@ -39,6 +50,12 @@ export interface WebhookDeps {
   refundTopup?(userId: string, sourceRef: string, amountPence: number, reason: string): Promise<void>;
   onSubscriptionStarted(email: string): Promise<void>;
   onSubscriptionCancelled(email: string): Promise<void>;
+  /**
+   * Append to the churn log. Implementations must swallow their own errors —
+   * see recordSubscriptionEvent in ../billing/subscription-events.ts for why a
+   * failed log write must never fail the delivery.
+   */
+  recordSubscriptionEvent?(input: SubscriptionEventInput): Promise<unknown>;
   paymentFailedEmail(email: string, planName: string | null): Promise<unknown>;
   cardNeedsUpdateEmail(email: string): Promise<unknown>;
   log?: (msg: string) => void;
@@ -77,7 +94,7 @@ function isoFromUnix(seconds: number | null | undefined): string | null {
  * (which arrives as `pause_collection: null`) clears the window by itself.
  * Shared with the /account server actions via subscriptionStateFromStripe.
  */
-function subscriptionColumns(sub: Stripe.Subscription): Record<string, unknown> {
+function subscriptionColumns(sub: Stripe.Subscription, ended = false): Record<string, unknown> {
   const state = subscriptionStateFromStripe(sub);
   const patch: Record<string, unknown> = {
     subscription_paused_from: state.pausedFrom,
@@ -85,14 +102,68 @@ function subscriptionColumns(sub: Stripe.Subscription): Record<string, unknown> 
     subscription_cancel_at: state.cancelAt,
     subscription_current_period_end: state.currentPeriodEnd,
   };
-  if (!state.cancelAt) {
-    // The cancellation was undone, or the subscription is gone. Either way the
-    // captured reason no longer describes anything.
+  if (!state.cancelAt && !ended) {
+    // A cleared cancel_at means one of two opposite things, and this used to
+    // treat them alike: the member changed their mind, OR the subscription
+    // finally ended (Stripe drops cancel_at once it does). Clearing the reason
+    // in the second case destroyed it at the exact moment it became the answer
+    // to "why did they leave?", which is the whole point of capturing it.
+    //
+    // So: only while the subscription is still LIVE does a cleared cancel_at
+    // mean the reason no longer describes anything.
     patch.cancel_reason = null;
     patch.cancel_reason_comment = null;
     patch.cancel_reason_at = null;
   }
   return patch;
+}
+
+/**
+ * Stripe's own cancellation feedback, mapped onto our reason slugs.
+ *
+ * This is how a cancel done in the Stripe Customer Portal gets a reason at all:
+ * the portal never touches cancelSubscriptionAction, so without this every
+ * customer who leaves that way churns silently.
+ */
+const STRIPE_FEEDBACK_TO_REASON: Record<string, string> = {
+  too_expensive: 'too_expensive',
+  missing_features: 'missing_feature',
+  switched_service: 'another_tool',
+  unused: 'not_using',
+  customer_service: 'other',
+  too_complex: 'other',
+  low_quality: 'other',
+  other: 'other',
+};
+
+export function reasonFromStripeFeedback(feedback: string | null | undefined): string | null {
+  if (!feedback) return null;
+  return STRIPE_FEEDBACK_TO_REASON[feedback] ?? 'other';
+}
+
+/** What Stripe recorded when the subscription was cancelled, if anything. */
+function cancellationFromStripe(sub: Stripe.Subscription): { reason: string | null; comment: string | null } {
+  const details = sub.cancellation_details ?? null;
+  return {
+    reason: reasonFromStripeFeedback(details?.feedback ?? null),
+    comment: details?.comment ?? null,
+  };
+}
+
+/**
+ * Fire-and-forget append to the churn log.
+ *
+ * The dep is optional so every existing test that builds a WebhookDeps by hand
+ * keeps compiling, and the await is guarded so a missing implementation is a
+ * no-op rather than a crash.
+ */
+async function logEvent(deps: WebhookDeps, input: SubscriptionEventInput): Promise<void> {
+  if (!deps.recordSubscriptionEvent) return;
+  try {
+    await deps.recordSubscriptionEvent(input);
+  } catch (err) {
+    (deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`)))(`churn log failed: ${String(err)}`);
+  }
 }
 
 export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult> {
@@ -137,6 +208,15 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         }
         await deps.updateProfile(user.id, patch);
         if (user.email ?? email) await deps.onSubscriptionStarted((user.email ?? email)!);
+        await logEvent(deps, {
+          userId: user.id,
+          kind: 'started',
+          cycleStartedAt: (patch.subscription_started_at as string | undefined) ?? null,
+          planCode: (patch.plan_code as string | undefined) ?? null,
+          stripeSubscriptionId: subId,
+          stripeEventId: event.id,
+          source: 'stripe',
+        });
         return { handled: true, note: 'subscription checkout recorded; credit follows invoice.paid' };
       }
 
@@ -202,6 +282,19 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         Object.assign(patch, subscriptionColumns(sub));
       }
       await deps.updateProfile(user.id, patch);
+      if (user.stripe_subscription_status === 'past_due') {
+        // The card went through after all, so the subscription leaves the
+        // at-risk band. Without this it would sit there for ever.
+        await logEvent(deps, {
+          userId: user.id,
+          kind: 'recovered',
+          cycleStartedAt: (patch.subscription_started_at as string | undefined) ?? null,
+          planCode,
+          stripeSubscriptionId: subId,
+          stripeEventId: event.id,
+          source: 'stripe',
+        });
+      }
 
       const reason = invoice.billing_reason;
       if (reason === 'subscription_create' || reason === 'subscription_cycle' || reason === 'manual' || reason === null) {
@@ -255,9 +348,18 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         stripe_subscription_status: sub.status,
         cancel_at_period_end: Boolean(sub.cancel_at_period_end),
         current_period_end: periodEndOf(sub)?.toISOString() ?? null,
-        ...subscriptionColumns(sub),
+        ...subscriptionColumns(sub, ended),
       };
       if (customerId) patch.stripe_customer_id = customerId;
+      const cycleStartedAt = isoFromUnix(sub.start_date);
+      const logBase = {
+        userId: user.id,
+        cycleStartedAt,
+        planCode: planCode ?? user.plan_code ?? null,
+        stripeSubscriptionId: sub.id,
+        stripeEventId: event.id,
+      } as const;
+
       if (ended) {
         // A plan granted by hand is a deliberate decision that outranks Stripe;
         // record what Stripe said but keep the override.
@@ -266,13 +368,67 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         await deps.updateProfile(user.id, patch);
         await deps.expirePlanGrants(user.id, 'subscription_ended');
         if (user.email) await deps.onSubscriptionCancelled(user.email);
+
+        // Why they left, best source first: what they told us when they
+        // scheduled the cancellation, then whatever Stripe captured (a portal
+        // cancel only ever has this), and failing both — if the subscription
+        // was already past due — the card, because an involuntary churn is
+        // still a churn and needs to show up in the breakdown as one.
+        const fromStripe = cancellationFromStripe(sub);
+        const involuntary = user.stripe_subscription_status === 'past_due' || sub.status === 'unpaid' || sub.status === 'past_due';
+        const reason = user.cancel_reason ?? fromStripe.reason ?? (involuntary ? 'payment_failed' : null);
+        const source = user.cancel_reason ? 'self_serve' : fromStripe.reason ? 'portal' : 'stripe';
+        await logEvent(deps, {
+          ...logBase,
+          kind: 'ended',
+          reason,
+          reasonComment: user.cancel_reason_comment ?? fromStripe.comment ?? null,
+          source,
+        });
         return { handled: true, note: 'subscription ended; plan credit expired' };
       }
+
       patch.subscription_ended_at = null;
-      patch.subscription_started_at = isoFromUnix(sub.start_date);
+      patch.subscription_started_at = cycleStartedAt;
       if (!manual) patch.plan_source = 'stripe';
       if (planCode) Object.assign(patch, { plan_code: planCode, stripe_price_id: priceId, plan: 'pro' });
       await deps.updateProfile(user.id, patch);
+
+      // Everything below is a state CHANGE, compared against the row we just
+      // read. Logging on the change rather than on the event keeps a
+      // re-reported state (Stripe sends the whole object every time) from
+      // filling the log with duplicates the unique index cannot catch, because
+      // each delivery carries its own event id.
+      const state = subscriptionStateFromStripe(sub);
+      if (event.type === 'customer.subscription.created') {
+        await logEvent(deps, { ...logBase, kind: 'started', source: manual ? 'manual' : 'stripe' });
+      }
+      const wasPaused = Boolean(user.subscription_paused_until);
+      const isPausedNow = Boolean(state.pausedUntil);
+      if (isPausedNow && !wasPaused) await logEvent(deps, { ...logBase, kind: 'paused' });
+      if (!isPausedNow && wasPaused) await logEvent(deps, { ...logBase, kind: 'resumed' });
+
+      const wasCancelling = Boolean(user.subscription_cancel_at);
+      const isCancellingNow = Boolean(state.cancelAt);
+      if (isCancellingNow && !wasCancelling) {
+        const fromStripe = cancellationFromStripe(sub);
+        await logEvent(deps, {
+          ...logBase,
+          kind: 'cancel_scheduled',
+          reason: user.cancel_reason ?? fromStripe.reason ?? null,
+          reasonComment: user.cancel_reason_comment ?? fromStripe.comment ?? null,
+          source: user.cancel_reason ? 'self_serve' : fromStripe.reason ? 'portal' : 'stripe',
+        });
+      }
+      if (!isCancellingNow && wasCancelling) await logEvent(deps, { ...logBase, kind: 'cancel_reverted' });
+
+      if (planCode && user.plan_code && planCode !== user.plan_code) {
+        await logEvent(deps, { ...logBase, kind: 'plan_changed' });
+      }
+      if (user.stripe_subscription_status === 'past_due' && sub.status === 'active') {
+        await logEvent(deps, { ...logBase, kind: 'recovered' });
+      }
+
       return { handled: true, note: sub.pause_collection ? 'subscription state mirrored (paused)' : 'subscription state mirrored' };
     }
 
@@ -284,6 +440,18 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       if (!user) return { handled: false, note: 'no user for failed invoice' };
       await deps.updateProfile(user.id, { stripe_subscription_status: 'past_due' });
       if (user.email) await deps.paymentFailedEmail(user.email, user.plan_code);
+      // Only on the way IN to past_due: a second failed invoice on an already
+      // past-due subscription is the same episode, not a new one.
+      if (user.stripe_subscription_status !== 'past_due') {
+        await logEvent(deps, {
+          userId: user.id,
+          kind: 'past_due',
+          planCode: user.plan_code ?? null,
+          stripeSubscriptionId: subId,
+          stripeEventId: event.id,
+          source: 'stripe',
+        });
+      }
       return { handled: true, note: 'marked past_due' };
     }
 
