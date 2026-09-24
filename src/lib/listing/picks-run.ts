@@ -13,11 +13,14 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, type Motivation } from "./motivation";
+import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, dealScoreOf, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import type { Deal } from "./deal";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
+import type { ListingSnapshot } from "./types";
 import type { AppliedRules } from "./picks";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
@@ -109,7 +112,7 @@ interface Member {
   rules: AppliedRules;
 }
 
-type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string };
+type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string; motivation?: Motivation | null; motivationQualifies?: boolean };
 type Verdict = Exclude<Suitability, "unknown"> | "unverified" | "gone";
 
 export interface RunOptions {
@@ -342,6 +345,24 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   }
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
+  // What "slow" means round here. Computed from the listings each query already
+  // returned, so it costs nothing: no provider call, no extra read. Areas with
+  // too thin a sample answer null, and the area test is then skipped rather than
+  // failed — see meetsMotivationBar.
+  const runNow = new Date();
+  const firstSeenIso = (url: string): string | null => {
+    const ms = firstSeen.get(url);
+    return ms === undefined ? null : new Date(ms).toISOString();
+  };
+  const areaMedianDays = new Map<string, number | null>();
+  for (const { query } of queries) {
+    const cohort = byQuery.get(query.key) ?? [];
+    if (cohort.length === 0) continue;
+    const key = `${query.kind}|${query.area}`;
+    if (areaMedianDays.has(key)) continue;
+    areaMedianDays.set(key, medianAgeDays(cohort.map((l) => listingAge(l, firstSeenIso(l.canonicalUrl), runNow))));
+  }
+
   // The same listing goes to at most DAILY_LISTING_CAP members a day, across
   // every pass: seed the counter from today's rows (any status).
   const assigned = new Map<string, number>();
@@ -363,6 +384,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const candidateCount = new Map<string, number>();
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
+    // House picks have no filter, so no motivation read: there is no member
+    // threshold to judge them against.
+    const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
     const seen = new Set<string>();
     const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
     for (const q of m.queries) {
@@ -377,16 +401,35 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           reject(precheck);
           continue;
         }
+        const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
+        const motivation = motiv
+          ? motivationFromListing(l, {
+              thresholdDays: thresholdDaysFor(motiv, l.kind),
+              areaMedianDays: median,
+              firstSeenAt: firstSeenIso(l.canonicalUrl),
+              now: runNow,
+            })
+          : null;
         const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
         const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
         const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
-        candidates.push({ listing: l, deal: dealForSourced(l, figures, m.goals?.finance ?? null), areaFit, areaName: card?.name ?? q.areaName, precheck });
+        candidates.push({
+          listing: l,
+          deal: dealForSourced(l, figures, m.goals?.finance ?? null),
+          areaFit,
+          areaName: card?.name ?? q.areaName,
+          precheck,
+          motivation,
+          motivationQualifies: motiv && motivation
+            ? meetsMotivationBar(motivation, { mode: motiv.mode, areaRelative: motiv.areaRelative, areaMedianKnown: median !== null })
+            : undefined,
+        });
       }
     }
     candidateCount.set(m.id, candidates.length);
     const kept = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
     const precheckOf = new Map(kept.map((c) => [c.listing.canonicalUrl, c.precheck]));
-    const list = rankPicks(kept, SPREAD_DEPTH).map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
+    const list = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off").map((p) => ({ ...p, precheck: precheckOf.get(p.listing.canonicalUrl) ?? "unknown" }) as Ranked);
     const ok = list.filter((p) => p.precheck === "ok");
     // "Could not be run as a short let": only send this member listings that
     // already clear the check on the search card, never ones that need the
@@ -424,18 +467,18 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // ownership flag and the description's line on short lets. The merged
   // listing (photo, confirmed price, evidence) is what gets sent and stored,
   // so tomorrow's pre-check answers without a fetch.
-  const verdicts = new Map<string, { verdict: Verdict; listing: SourcedListing }>();
-  const verify = async (l: SourcedListing): Promise<{ verdict: Verdict; listing: SourcedListing }> => {
+  const verdicts = new Map<string, { verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null }>();
+  const verify = async (l: SourcedListing): Promise<{ verdict: Verdict; listing: SourcedListing; snapshot: ListingSnapshot | null }> => {
     const memo = verdicts.get(l.canonicalUrl);
     if (memo) return memo;
-    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l };
+    if (elapsed() > VERIFY_UNTIL_MS) return { verdict: "unverified", listing: l, snapshot: null };
     try {
       let res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl));
       // A snapshot cached before the parsers learned about tenure evidence is re-read once.
       if (res.ok && res.snapshot.shortLetsPermitted === undefined && elapsed() <= VERIFY_UNTIL_MS) {
         res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => resolveListing(l.canonicalUrl, { refresh: true }));
       }
-      if (!res.ok) return { verdict: "unverified", listing: l };
+      if (!res.ok) return { verdict: "unverified", listing: l, snapshot: null };
       const s = res.snapshot;
       const merged: SourcedListing = {
         ...l,
@@ -452,11 +495,15 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
         sharedOwnership: s.sharedOwnership ?? false,
         shortLetsPermitted: s.shortLetsPermitted ?? null,
+        // The portal's own listing date beats anything the search card had, and
+        // is written back so tomorrow's run starts from the better answer.
+        listedDate: s.listedDate ?? l.listedDate ?? null,
+        agentHash: s.agentHash ?? l.agentHash ?? null,
       };
       // Liveness before suitability: a sold or let-agreed listing is not a pick
       // however well it scores. The search card cannot know this — only the page can.
       const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
-      const out = { verdict, listing: merged };
+      const out = { verdict, listing: merged, snapshot: s };
       verdicts.set(l.canonicalUrl, out);
       summary.verified += 1;
       void admin.from("sourced_listings").update({ snapshot: merged }).eq("canonical_url", l.canonicalUrl).then(({ error }) => {
@@ -465,7 +512,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       return out;
     } catch (err) {
       console.warn("[sourcing] verification failed:", (err as Error)?.message ?? err);
-      return { verdict: "unverified", listing: l };
+      return { verdict: "unverified", listing: l, snapshot: null };
     }
   };
 
@@ -474,6 +521,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   for (const m of affordable) {
     const list = ranked.get(m.id) ?? [];
     const candidates = candidateCount.get(m.id) ?? 0;
+    const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
     // A member's own filter is not capped (their pool is their own); house
     // members share one pool, so capped listings are skipped unless nothing
     // else is left.
@@ -482,9 +530,20 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     let chosen: SourcedPick | null = null;
     let outOfTime = false;
     for (const p of order) {
-      const { verdict, listing } = await verify(p.listing);
+      const { verdict, listing, snapshot } = await verify(p.listing);
       if (verdict === "ok" || (verdict === "unverified" && p.precheck === "ok")) {
-        chosen = { ...p, listing };
+        // The card could not see the description, the listing history or the let
+        // terms. Now that the page has been read, score it again so the reasons
+        // in the email are the best ones we have rather than the cheapest.
+        const motivation = motiv && snapshot
+          ? motivationFromSnapshot(snapshot, listing.kind, {
+              thresholdDays: thresholdDaysFor(motiv, listing.kind),
+              areaMedianDays: areaMedianDays.get(`${listing.kind}|${listing.postcodeArea ?? ""}`) ?? null,
+              firstSeenAt: firstSeenIso(listing.canonicalUrl),
+              now: runNow,
+            })
+          : p.motivation ?? null;
+        chosen = { ...p, listing, motivation };
         break;
       }
       if (verdict === "unverified") {
