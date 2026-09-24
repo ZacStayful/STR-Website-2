@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
-import { handleStripeEvent, type WebhookDeps } from './webhook.ts';
+import { handleStripeEvent, reasonFromStripeFeedback, type WebhookDeps } from './webhook.ts';
+import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 
 const env = { STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_PRO_ANNUAL: 'price_annual' };
 
@@ -10,11 +11,28 @@ function fakeDeps() {
   const rec = (name: string) => (...args: unknown[]) => {
     (calls[name] ??= []).push(args);
   };
-  const user = { id: 'u1', email: 'a@example.com', plan_code: 'starter' as string | null };
+  const user = {
+    id: 'u1',
+    email: 'a@example.com',
+    plan_code: 'starter' as string | null,
+    cancel_reason: null as string | null,
+    cancel_reason_comment: null as string | null,
+    subscription_cancel_at: null as string | null,
+    subscription_paused_until: null as string | null,
+    stripe_subscription_status: null as string | null,
+  };
   const sub = (priceId: string, status = 'active', cancel = false): Stripe.Subscription =>
     ({ id: 'sub_1', status, cancel_at_period_end: cancel, customer: 'cus_1', items: { data: [{ price: { id: priceId }, current_period_end: 1_800_000_000 }] } }) as unknown as Stripe.Subscription;
   let subscription: Stripe.Subscription | null = sub('price_starter');
-  const deps: WebhookDeps & { calls: typeof calls; setSub: (s: Stripe.Subscription | null) => void } = {
+  const events: SubscriptionEventInput[] = [];
+  const deps: WebhookDeps & {
+    calls: typeof calls;
+    setSub: (s: Stripe.Subscription | null) => void;
+    events: SubscriptionEventInput[];
+    user: typeof user;
+  } = {
+    events,
+    user,
     env,
     calls,
     setSub: (s) => {
@@ -43,6 +61,9 @@ function fakeDeps() {
     onSubscriptionCancelled: async (...a) => rec('onSubscriptionCancelled')(...a),
     paymentFailedEmail: async (...a) => rec('paymentFailedEmail')(...a),
     cardNeedsUpdateEmail: async (...a) => rec('cardNeedsUpdateEmail')(...a),
+    recordSubscriptionEvent: async (input) => {
+      events.push(input);
+    },
     log: () => {},
   };
   return deps;
@@ -255,4 +276,150 @@ test('a manual plan grant is not revoked by a stray dead-subscription event', as
   assert.equal(patch.stripe_subscription_status, 'canceled');
   assert.equal('plan_code' in patch, false);
   assert.equal('plan' in patch, false);
+});
+
+// ---------------------------------------------------------------
+// Churn capture
+// ---------------------------------------------------------------
+
+const deadSub = (over: Partial<Record<string, unknown>> = {}): Stripe.Subscription =>
+  ({
+    id: 'sub_1',
+    status: 'canceled',
+    cancel_at_period_end: false,
+    cancel_at: null,
+    customer: 'cus_1',
+    start_date: 1_700_000_000,
+    items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] },
+    ...over,
+  }) as unknown as Stripe.Subscription;
+
+test('REGRESSION: the cancel reason survives the subscription actually ending', async () => {
+  // It used to be wiped here. Stripe clears cancel_at when a subscription
+  // ends, and the old code read that as "they changed their mind" — deleting
+  // the reason at the exact moment it became the answer to why they left.
+  const deps = fakeDeps();
+  deps.user.cancel_reason = 'too_expensive';
+  deps.user.cancel_reason_comment = 'costs more than I get out of it';
+
+  const r = await handleStripeEvent(ev('customer.subscription.deleted', deadSub()), deps);
+  assert.equal(r.handled, true);
+
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.ok(!('cancel_reason' in patch) || patch.cancel_reason !== null, 'must not null the reason on the way out');
+  assert.equal(patch.subscription_ended_at !== undefined, true);
+});
+
+test('a live subscription that un-cancels still clears the reason', async () => {
+  // The other half of the same branch: still live and no longer cancelling
+  // really does mean the reason describes nothing.
+  const deps = fakeDeps();
+  const live = { id: 'sub_1', status: 'active', cancel_at_period_end: false, cancel_at: null, customer: 'cus_1', start_date: 1_700_000_000, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } } as unknown as Stripe.Subscription;
+  await handleStripeEvent(ev('customer.subscription.updated', live), deps);
+  const patch = deps.calls.updateProfile![0][1] as Record<string, unknown>;
+  assert.equal(patch.cancel_reason, null);
+});
+
+test('the ended event logs the reason the member gave us', async () => {
+  const deps = fakeDeps();
+  deps.user.cancel_reason = 'not_using';
+  deps.user.cancel_reason_comment = 'too busy';
+  await handleStripeEvent(ev('customer.subscription.deleted', deadSub()), deps);
+
+  const ended = deps.events.find((e) => e.kind === 'ended')!;
+  assert.equal(ended.reason, 'not_using');
+  assert.equal(ended.reasonComment, 'too busy');
+  assert.equal(ended.source, 'self_serve');
+  assert.equal(ended.cycleStartedAt, new Date(1_700_000_000 * 1000).toISOString());
+});
+
+test('a portal cancel is rescued from Stripe cancellation_details', async () => {
+  // Nobody cancelling in the Stripe portal ever reaches our own flow, so this
+  // is the only place their reason can come from.
+  const deps = fakeDeps();
+  const sub = deadSub({ cancellation_details: { feedback: 'missing_features', comment: 'no API' } });
+  await handleStripeEvent(ev('customer.subscription.deleted', sub), deps);
+
+  const ended = deps.events.find((e) => e.kind === 'ended')!;
+  assert.equal(ended.reason, 'missing_feature');
+  assert.equal(ended.reasonComment, 'no API');
+  assert.equal(ended.source, 'portal');
+});
+
+test('a subscription that dies past due is logged as payment_failed', async () => {
+  const deps = fakeDeps();
+  deps.user.stripe_subscription_status = 'past_due';
+  await handleStripeEvent(ev('customer.subscription.deleted', deadSub({ status: 'unpaid' })), deps);
+
+  const ended = deps.events.find((e) => e.kind === 'ended')!;
+  assert.equal(ended.reason, 'payment_failed', 'an involuntary churn is still a churn');
+  assert.equal(ended.source, 'stripe');
+});
+
+test('a churn with nothing attached logs no invented reason', async () => {
+  const deps = fakeDeps();
+  await handleStripeEvent(ev('customer.subscription.deleted', deadSub()), deps);
+  assert.equal(deps.events.find((e) => e.kind === 'ended')!.reason, null);
+});
+
+test('a scheduled cancellation is logged once, on the way in', async () => {
+  const deps = fakeDeps();
+  const cancelling = { id: 'sub_1', status: 'active', cancel_at_period_end: true, cancel_at: 1_800_000_000, customer: 'cus_1', start_date: 1_700_000_000, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } } as unknown as Stripe.Subscription;
+
+  await handleStripeEvent(ev('customer.subscription.updated', cancelling), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'cancel_scheduled').length, 1);
+
+  // Stripe re-sends the whole object on every update. Now that the profile
+  // carries the state, a repeat must not log a second time.
+  deps.user.subscription_cancel_at = new Date(1_800_000_000 * 1000).toISOString();
+  await handleStripeEvent(ev('customer.subscription.updated', cancelling), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'cancel_scheduled').length, 1);
+});
+
+test('undoing a cancellation logs cancel_reverted', async () => {
+  const deps = fakeDeps();
+  deps.user.subscription_cancel_at = '2027-01-01T00:00:00.000Z';
+  const live = { id: 'sub_1', status: 'active', cancel_at_period_end: false, cancel_at: null, customer: 'cus_1', start_date: 1_700_000_000, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } } as unknown as Stripe.Subscription;
+  await handleStripeEvent(ev('customer.subscription.updated', live), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'cancel_reverted').length, 1);
+});
+
+test('a failed invoice logs past_due once per episode', async () => {
+  const deps = fakeDeps();
+  const invoice = { id: 'in_2', customer: 'cus_1', parent: { subscription_details: { subscription: 'sub_1' } } };
+  await handleStripeEvent(ev('invoice.payment_failed', invoice), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'past_due').length, 1);
+
+  deps.user.stripe_subscription_status = 'past_due';
+  await handleStripeEvent(ev('invoice.payment_failed', invoice), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'past_due').length, 1, 'same episode, not a new one');
+});
+
+test('a card that goes through after failing logs recovered', async () => {
+  const deps = fakeDeps();
+  deps.user.stripe_subscription_status = 'past_due';
+  const invoice = { id: 'in_3', customer: 'cus_1', billing_reason: 'subscription_cycle', parent: { subscription_details: { subscription: 'sub_1' } }, lines: { data: [{ period: { end: 1_800_000_000 }, pricing: { price_details: { price: 'price_starter' } } }] } };
+  await handleStripeEvent(ev('invoice.paid', invoice), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'recovered').length, 1);
+});
+
+test('a churn log that throws does not fail the delivery', async () => {
+  // The route records the event id BEFORE handling, so a throw here would have
+  // Stripe retry the whole handler and re-run the grant expiry.
+  const deps = fakeDeps();
+  deps.recordSubscriptionEvent = async () => {
+    throw new Error('database on fire');
+  };
+  const r = await handleStripeEvent(ev('customer.subscription.deleted', deadSub()), deps);
+  assert.equal(r.handled, true);
+  assert.equal(deps.calls.expirePlanGrants!.length, 1);
+});
+
+test('reasonFromStripeFeedback maps every Stripe value to something we report', () => {
+  assert.equal(reasonFromStripeFeedback('too_expensive'), 'too_expensive');
+  assert.equal(reasonFromStripeFeedback('switched_service'), 'another_tool');
+  assert.equal(reasonFromStripeFeedback('unused'), 'not_using');
+  assert.equal(reasonFromStripeFeedback('low_quality'), 'other');
+  assert.equal(reasonFromStripeFeedback('something_new_stripe_added'), 'other');
+  assert.equal(reasonFromStripeFeedback(null), null);
 });

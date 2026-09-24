@@ -15,7 +15,10 @@ import { meter } from '@/lib/credit/meter';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { INSUFFICIENT_CREDIT_CODE } from '@/lib/credit/http';
 import { ownedFunnelByToken } from '@/lib/funnels';
-import { getBillingSettings } from '@/lib/credit/unit-costs';
+import { countAutocomplete, reserveSpend, settleSpend } from '@/lib/funnels/caps';
+import { actionSpend } from '@/lib/credit/action';
+import { estimateAction } from '@/lib/credit/estimate';
+import { getBillingSettings, getUnitCostTable } from '@/lib/credit/unit-costs';
 
 // ─── Rate Limiter (in-memory, per IP) ────────────────────────────
 // More generous than /api/analyse because autocomplete fires per keystroke:
@@ -110,15 +113,44 @@ export async function GET(request: Request) {
   let admin = false;
   let markupOverride: number | undefined;
   let funnelId: string | null = null;
+  // What the funnel branch has claimed of the day's spend ceiling, so the
+  // `finally` below can hand back whatever the lookup did not actually cost.
+  let spendGuard: { funnelId: string; reservedPence: number } | null = null;
   const funnelToken = searchParams.get('f');
   if (funnelToken) {
     const funnel = await ownedFunnelByToken(funnelToken);
     // An unknown or paused token bills nobody rather than falling back to
     // the house: a dead token must not be a way to spend our money.
     if (!funnel) return Response.json({ suggestions: [] });
+
+    // This is the second endpoint in the codebase where a stranger's request
+    // spends a customer's money, and the only limit used to be the in-memory
+    // counter above — which resets on every cold start and multiplies by
+    // however many instances are warm. Anyone holding a funnel link could
+    // therefore drain the owner's balance a few pence at a time, past the
+    // daily ceiling they had set, because nothing here looked at it.
+    //
+    // Both guards below fail closed and both degrade to an empty list rather
+    // than an error: the address field falls back to manual entry, so a
+    // refused lookup costs the prospect a little typing and not their enquiry.
+    if (!(await countAutocomplete(funnel.id, ip))) return Response.json({ suggestions: [] });
+
+    markupOverride = (await getBillingSettings()).funnelMarkup;
+    // Claimed against the SAME daily ceiling an analysis is claimed against,
+    // so a customer's £50 means £50 across everything their funnel spends,
+    // and settled to the real figure afterwards — a session that dedupes to
+    // £0 must not leave a hold on the day. A non-positive cap reads as "no
+    // limit" in SQL, which is the wrong direction for a money guard, so fall
+    // back to the column default rather than letting a zero switch it off.
+    const capPence = funnel.dailySpendCapPence > 0 ? funnel.dailySpendCapPence : 5000;
+    const estimate = estimateAction(await getUnitCostTable(), 'autocomplete', { markupOverride });
+    if (!(await reserveSpend(funnel.id, estimate.maxBasePence, capPence))) {
+      return Response.json({ suggestions: [] });
+    }
+    spendGuard = { funnelId: funnel.id, reservedPence: estimate.maxBasePence };
+
     userId = funnel.userId;
     funnelId = funnel.id;
-    markupOverride = (await getBillingSettings()).funnelMarkup;
   } else {
     try {
       const supabase = await createSupabaseServerClient();
@@ -131,10 +163,27 @@ export async function GET(request: Request) {
   }
   const sessionId = /^[0-9a-f-]{36}$/i.test(sessionToken) ? sessionToken : undefined;
 
+  /**
+   * Hands back what this lookup claimed of the day's spend ceiling, minus what
+   * it actually cost. Every exit below has to go through here: nothing expires
+   * a funnel's spend row, so a claim left behind sits on the customer's ceiling
+   * until UTC midnight. The 402 below is the likeliest exit of all — the funnel
+   * branch sets `requireCredit`, so an owner who has run out of credit reaches
+   * it on every keystroke.
+   */
+  const releaseSpendGuard = async (actualBasePence: number) => {
+    if (!spendGuard) return;
+    const claimed = spendGuard;
+    spendGuard = null;
+    await settleSpend(claimed.funnelId, claimed.reservedPence, actualBasePence).catch(() => {});
+  };
+
   let action;
   try {
     action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId, markupOverride, requireCredit: Boolean(funnelToken), funnelId });
   } catch (err) {
+    // Nothing ran, so nothing was spent.
+    await releaseSpendGuard(0);
     if (err instanceof InsufficientCreditError) return Response.json({ suggestions: [], code: INSUFFICIENT_CREDIT_CODE }, { status: 402 });
     throw err;
   }
@@ -165,6 +214,12 @@ export async function GET(request: Request) {
     return Response.json({ suggestions: [] });
   } finally {
     await action.finish().catch(() => {});
+    if (spendGuard) {
+      // Read after `finish`, so the debit this lookup made (if any — a repeat
+      // keystroke in the same session logs £0) is already recorded.
+      const spent = await actionSpend(action.ctx.actionId).catch(() => ({ basePence: 0 }));
+      await releaseSpendGuard(spent.basePence);
+    }
   }
 
   if (!upstream.ok) {

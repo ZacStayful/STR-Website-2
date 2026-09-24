@@ -34,9 +34,14 @@ test('rightmove sale page', () => {
   assert.equal(s.status, 'available');
   assert.equal(s.locationConfidence, 'exact');
   assert.equal(s.fetchedAt, NOW);
-  assert.equal(s.parserVersion, 1);
+  assert.equal(s.parserVersion, 2);
   // Agent details never make it into the snapshot.
   assert.ok(!JSON.stringify(s).includes('REDACTED'));
+  // When the seller started, from Rightmove's own clock rather than our first sighting.
+  assert.equal(s.listedDate, '2026-08-11');
+  assert.deepEqual(s.listingUpdate, { reason: 'added', on: '2026-08-11' });
+  // A leasehold with no years stated must not read as a lease about to run out.
+  assert.equal(s.yearsRemainingOnLease, undefined);
 });
 
 test('rightmove rental page', () => {
@@ -48,6 +53,12 @@ test('rightmove rental page', () => {
   assert.equal(s.councilTaxBand, 'C');
   assert.equal(s.tenure, undefined);
   assert.ok(s.features.includes('Furnished'));
+  // "Added yesterday" resolves against the fetch date, not today's clock.
+  assert.equal(s.listedDate, '2026-09-05');
+  assert.deepEqual(s.listingUpdate, { reason: 'added', on: '2026-09-05' });
+  // The landlord side: when it is free, and the shortest term they will take.
+  assert.equal(s.letAvailableDate, '2026-09-30');
+  assert.equal(s.minimumTermInMonths, 1);
 });
 
 test('rightmove page model decodes the flattened data string', () => {

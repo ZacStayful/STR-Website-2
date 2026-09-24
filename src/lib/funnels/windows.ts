@@ -43,6 +43,10 @@ export function capMessage(verdict: Exclude<CapVerdict, 'ok'>): string {
   switch (verdict) {
     case 'ip_throttle':
       return 'You have sent a few requests in a row. Please wait a few minutes and try again.';
+    case 'unavailable':
+      // Our end failed, not a limit of theirs. Telling someone the form is
+      // full for the day when it is not sends them away for good.
+      return 'We could not accept that just now. Please try again in a moment.';
     default:
       return 'This form has reached its limit for today. Please try again tomorrow.';
   }

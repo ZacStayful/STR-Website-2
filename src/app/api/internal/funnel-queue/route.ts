@@ -6,6 +6,7 @@ import { InsufficientCreditError, getBalance } from '@/lib/credit/ledger';
 import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
 import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { getFunnel } from '@/lib/funnels';
+import { raiseFunnelAlert } from '@/lib/funnels/alerts';
 import { reserveSpend, settleSpend } from '@/lib/funnels/caps';
 import { completeLead } from '@/lib/leads/store';
 import { defaultGuests } from '@/lib/listing/normalise';
@@ -95,6 +96,11 @@ export async function GET(request: Request) {
     // Still short: leave it queued and try again next run.
     const balance = await getBalance(funnel.userId).catch(() => null);
     if (!balance || balance.spendableBasePence < estimate.maxBasePence) {
+      // Says it once a day rather than once every thirty minutes. A lead can
+      // sit here for a fortnight, and the owner may well not have been on the
+      // submission that first queued it — a report they are still waiting for
+      // is worth a reminder the next morning.
+      if (!dry) await raiseFunnelAlert('out_of_credit', funnel);
       outcomes.push({ leadId: lead.id, outcome: 'still_short' });
       continue;
     }
@@ -121,13 +127,17 @@ export async function GET(request: Request) {
         requireCredit: true,
       });
       actual = spend.basePence;
-      await completeLead({
+      // Reported apart from 'ran'. This used to say 'ran' whatever happened,
+      // so a lead whose report could not be saved looked identical in the
+      // cron's own output to one that worked — while being the case that
+      // costs the customer a second charge.
+      const attached = await completeLead({
         leadId: lead.id,
         result,
         rules: funnel.leadRules,
         unqualifiedPolicy: funnel.unqualifiedPolicy,
       });
-      outcomes.push({ leadId: lead.id, outcome: 'ran' });
+      outcomes.push({ leadId: lead.id, outcome: attached ? 'ran' : 'ran_unsaved' });
     } catch (err) {
       // Stays queued either way — a failure here must not lose the lead.
       const reason = err instanceof InsufficientCreditError ? 'insufficient_credit' : 'failed';

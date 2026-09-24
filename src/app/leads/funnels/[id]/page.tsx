@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getFunnel } from "@/lib/funnels";
+import { funnelWalls } from "@/lib/funnels/alerts";
+import { WallBanner } from "../../WallBanner";
 import { siteUrl } from "@/lib/url";
 import { SATURATION_GUIDE } from "@/lib/market/competition";
 import { FunnelSettings } from "./FunnelSettings";
@@ -27,7 +29,13 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
   // Priced on the server with the SAME table, markup and spend rates the
   // analyse route charges a real lead with, so the quote and the charge
   // cannot disagree. The browser only multiplies by the lead count.
-  const [table, settings] = await Promise.all([getUnitCostTable(), getBillingSettings()]);
+  const [table, settings, walls] = await Promise.all([
+    getUnitCostTable(),
+    getBillingSettings(),
+    // A paused funnel is not hitting a limit or running dry; the page already
+    // says it is paused, and the link section says what that means.
+    funnel.active ? funnelWalls(funnel) : Promise.resolve([]),
+  ]);
   const priceFor = (enhanced: boolean) =>
     funnelCost({
       leadsPerMonth: 0,
@@ -52,6 +60,8 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
             ← Funnels
           </Link>
         </div>
+
+        <WallBanner notices={walls.map((w) => ({ ...w, funnelId: funnel.id, funnelName: funnel.name }))} />
 
         <FunnelSettings
           funnel={{

@@ -16,6 +16,7 @@ import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
 import type { Deal } from './deal.ts';
 import { propertyKind } from './suitability.ts';
+import { motivationLabel, type Motivation } from './motivation.ts';
 
 export type PickBasis = 'goals' | 'house';
 export type PickStatus = 'pending' | 'sent' | 'failed';
@@ -411,6 +412,10 @@ export interface PickEmailInput {
   firstEver: boolean;
   /** What the pick cost them, in base pence (0 for admins). */
   chargedBasePence: number;
+  /** Nothing matched the filter exactly and this is the nearest thing we found. */
+  nearMiss?: boolean;
+  /** The one setting to change, from analyseRelaxation. Shown only on a near miss. */
+  relaxation?: string | null;
 }
 
 export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string) {
@@ -442,6 +447,19 @@ export function pickLabel(l: SourcedListing): string {
   return `${l.address ?? l.title} — ${bits.join(' · ')}`;
 }
 
+/**
+ * The reasons the seller or landlord looks ready to deal, in plain words.
+ *
+ * Built only from signals that actually fired, so the line can never claim more
+ * than the listing supports — and capped at three, because a wall of reasons
+ * reads as a sales pitch rather than evidence.
+ */
+export function describeMotivation(m: Motivation | null | undefined, limit = 3): string | null {
+  if (!m || m.fired.length === 0) return null;
+  const reasons = m.fired.slice(0, limit).map(motivationLabel);
+  return `Why this one: ${reasons.join(' · ')}.`;
+}
+
 export function pickEmail(input: PickEmailInput): { subject: string; text: string; html: string; headers: Record<string, string> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
@@ -450,6 +468,13 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
   const subject = `Today's pick ${kindWord}: ${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}${pick.deal ? ` · ${pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`}` : ''}`;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
   const dealLine = pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
+  const motivationLine = describeMotivation(pick.motivation ?? null);
+  // Said first and said plainly. A near miss presented as a match is a small
+  // lie that costs more trust than the empty day it was avoiding.
+  const nearMissLine = input.nearMiss
+    ? `Nothing matched your filter exactly today — this is the closest we found.`
+    : null;
+  const relaxLine = input.nearMiss ? input.relaxation ?? null : null;
   const intro = firstEver
     ? `Stayful Intelligence now finds you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. Each pick uses ${penceLabel(input.chargedBasePence || 10)} of your credit. Turn it off any time with the link at the bottom.`
     : null;
@@ -460,8 +485,12 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
     '',
     intro,
     intro ? '' : null,
+    nearMissLine,
+    nearMissLine ? '' : null,
     pickLabel(l),
     dealLine,
+    motivationLine,
+    relaxLine,
     `Fit ${pick.fit}/100 · ${pick.areaName}`,
     why,
     '',
@@ -493,10 +522,13 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
       ${photo}
       <h1 style="font-size:22px;margin:0 0 6px">${esc(l.address ?? l.title)}</h1>
       <p style="margin:0 0 4px;font-weight:600">${esc(pickLabel(l).replace(/^.*? — /, ''))}</p>
+      ${nearMissLine ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:#f5f2e8;color:#2e3d2b;font-size:14px">${esc(nearMissLine)}</p>` : ''}
       <p style="margin:0 0 4px;color:#5d8156">${esc(dealLine)}</p>
+      ${motivationLine ? `<p style="margin:0 0 4px;color:#2e3d2b;font-size:14px"><strong>Why this one:</strong> ${esc(motivationLine.replace(/^Why this one: /, ''))}</p>` : ''}
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Fit ${pick.fit}/100 · ${esc(pick.areaName)} · ${esc(why)}</p>
       <p style="margin:0 0 6px;font-weight:600">Is this the kind of property you are looking for?</p>
       <p style="margin:0 0 4px">${btn(links.yes, 'Yes, more like this', true)}${btn(links.no, 'Not for me')}</p>
+      ${relaxLine ? `<p style="margin:0 0 14px;color:#2e3d2b;font-size:13px">${esc(relaxLine)} <a href="${esc(links.filter)}" style="color:#2e3d2b;font-weight:600">Change it</a></p>` : ''}
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Not for you? Tell us why in a couple of clicks and tomorrow&#8217;s pick changes.</p>
       <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', true)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
       <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a>.</p>
