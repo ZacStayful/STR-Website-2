@@ -183,12 +183,16 @@ function daysSince(value: string | null | undefined, now: number): number | null
  * falling back to our first sighting. Null when neither is usable — which the
  * caller must read as "unknown", never as "new".
  */
-export function listingAge(listing: SourcedListing, firstSeenAt?: string | null, now: Date = new Date()): ListingAge | null {
+export function ageFromDates(listedDate: string | null | undefined, firstSeenAt: string | null | undefined, now: Date = new Date()): ListingAge | null {
   const at = now.getTime();
-  const portal = daysSince(listing.listedDate ?? null, at);
+  const portal = daysSince(listedDate ?? null, at);
   if (portal !== null) return { days: portal, source: 'portal' };
   const seen = daysSince(firstSeenAt ?? null, at);
   return seen === null ? null : { days: seen, source: 'sighting' };
+}
+
+export function listingAge(listing: SourcedListing, firstSeenAt?: string | null, now: Date = new Date()): ListingAge | null {
+  return ageFromDates(listing.listedDate, firstSeenAt, now);
 }
 
 /** The median age of a cohort, for "slower than others round here". Null below `minSample`. */
