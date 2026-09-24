@@ -16,7 +16,7 @@ npm run dev
 | `npm run dev` | Dev server on http://localhost:3000 |
 | `npm test` | Unit tests (`node --test`, no bundler) |
 | `npm run lint` | ESLint. Should report 0 errors |
-| `npm run build` | Production build |
+| `npm run build` | Production build (webpack, not Turbopack — see below) |
 | `npm run build:extension` | Builds the Chrome extension into `extension/dist` |
 | `npm run package:extension` | Builds and zips the extension for the Chrome Web Store |
 
@@ -25,6 +25,37 @@ file must use **relative imports with explicit `.ts` extensions** — no `@/`
 aliases — and must not reach any module that imports `server-only`. This is why
 the billing logic lives in `src/lib/**` with the Stripe and Supabase clients
 injected, rather than inside the route handlers.
+
+## Why the build uses webpack
+
+`npm run build` passes `--webpack`, so it does not use Turbopack. That is
+deliberate and it costs about thirty seconds a build.
+
+Turbopack serialises `next/font/google` options into a query string on a
+generated module. When the CSS it fetches from Google Fonts yields a URL
+containing `&`, that query splits into several pairs and the resolver bails:
+
+```
+Module not found: Can't resolve '@vercel/turbopack-next/internal/font/google/font'
+Error while looking up import map: next/font/google queries have exactly one entry
+```
+
+It depends on exactly what Google returns, so it is intermittent — it failed
+roughly one build in three, on three different font families, and it never
+reproduces locally. It also presents as a module-resolution error that names
+neither fonts nor the network, which makes it look like a fault in whatever
+branch happened to be building.
+
+Reducing eight font registrations to six did not help. Upgrading is not among
+the documented workarounds. Building with webpack avoids the code path
+entirely.
+
+The durable fix is to self-host the families with `next/font/local`, which
+removes both the fetch and the pipeline and would make builds faster than
+either option here. If you do that, drop `--webpack` at the same time — and
+note that `src/lib/pdf/fonts/` must keep its five TTFs, because react-pdf
+needs real files at render time and `src/lib/pdf/design/font-files.test.ts`
+pins them.
 
 ## Deploying
 
