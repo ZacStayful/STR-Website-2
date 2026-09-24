@@ -11,6 +11,7 @@
     "package:extension": "node extension/package.mjs",
     "test": "node --test 'src/**/*.test.ts'",
     "pdf:sample": "node scripts/render-sample-pdf.mjs",
+    "fonts:fetch": "node scripts/fetch-webfonts.mjs",
     "probe:sourced": "node --experimental-strip-types scripts/probe-sourced-properties.mjs"
   },
   "dependencies": {

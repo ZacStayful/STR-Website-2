@@ -1,65 +1,79 @@
-import { Cormorant_Garamond, Inter, JetBrains_Mono, Caveat, Playfair_Display, DM_Sans } from "next/font/google";
+import localFont from "next/font/local";
 
 /**
- * Every web font the site loads, registered exactly once.
+ * Every web font the site loads, registered exactly once, from files we ship.
  *
- * Each `next/font` call is a separate registration that Turbopack resolves at
- * build time, and we were making eight of them for six families: Inter twice
- * (root layout and the marketing set, under different variable names and with
- * different weights) and DM Sans twice (`--font-dmsans` for /markets,
- * `--font-dm-sans` for /str-report, differing only by a hyphen). Duplicate
- * registrations of the same family are pure waste, and the near-identical
- * variable names were an accident waiting to happen.
+ * These used to come from `next/font/google`, which downloads them at build
+ * time. Google intermittently answers with an extensionless `/l/font?kit=…`
+ * URL instead of a `.woff2` one, and Next mishandles that in both bundlers
+ * (vercel/next.js#99114): webpack crashes taking an extension off a URL that
+ * has none, Turbopack breaks on the `&` in the query string. At about twenty
+ * faces a build that reddened roughly one build in four, always a different
+ * family, never reproducibly. Self-hosting removes the fetch, so the failure
+ * cannot happen.
  *
- * Layouts import only the variables they need, so a route still mounts just its
- * own fonts — the browser never downloads a face that nothing uses.
+ * The files in `webfonts/` are Google's own latin-subset variable fonts,
+ * fetched by `scripts/fetch-webfonts.mjs` — run it again to refresh or add a
+ * family. One variable file spans a whole weight range, so each `weight` below
+ * is the range the site used to request as separate static faces.
+ *
+ * Layouts import only the variables they need, so a page only ever *uses* its
+ * own families.
  */
 
-const cormorant = Cormorant_Garamond({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  style: ["normal", "italic"],
+const cormorant = localFont({
+  src: [
+    { path: "./webfonts/CormorantGaramond.woff2", weight: "400 600", style: "normal" },
+    { path: "./webfonts/CormorantGaramond-Italic.woff2", weight: "400 600", style: "italic" },
+  ],
   variable: "--font-cormorant",
   display: "swap",
+  adjustFontFallback: "Times New Roman",
 });
 
 /**
  * Serves both the analyser (which is designed in Inter) and the marketing set.
  * 600 is the heaviest weight the site loads — see STAYFUL_DESIGN_BRIEF.md, and
- * the PDF renderer ships the same three faces.
+ * the PDF renderer ships the same three faces as TTFs in src/lib/pdf/fonts.
  */
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+const inter = localFont({
+  src: "./webfonts/Inter.woff2",
+  weight: "400 600",
+  style: "normal",
   variable: "--font-inter",
   display: "swap",
 });
 
-const jetbrains = JetBrains_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500"],
+const jetbrains = localFont({
+  src: "./webfonts/JetBrainsMono.woff2",
+  weight: "400 500",
+  style: "normal",
   variable: "--font-jetbrains",
   display: "swap",
 });
 
-const caveat = Caveat({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
+const caveat = localFont({
+  src: "./webfonts/Caveat.woff2",
+  weight: "500 700",
+  style: "normal",
   variable: "--font-caveat",
   display: "swap",
 });
 
-const playfair = Playfair_Display({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+const playfair = localFont({
+  src: "./webfonts/PlayfairDisplay.woff2",
+  weight: "400 700",
+  style: "normal",
   variable: "--font-playfair",
   display: "swap",
+  adjustFontFallback: "Times New Roman",
 });
 
 /** 400–700 is the superset of what /markets and /str-report each asked for. */
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+const dmSans = localFont({
+  src: "./webfonts/DMSans.woff2",
+  weight: "400 700",
+  style: "normal",
   variable: "--font-dmsans",
   display: "swap",
 });
