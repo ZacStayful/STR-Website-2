@@ -7,6 +7,7 @@ import type { SourcedListing } from './sourcing';
 import type { Deal } from './deal';
 import { parseStoredRelaxation, type StoredRelaxation } from './relax';
 import { parseMotivation, type Motivation } from './motivation';
+import { parseScreening, type Screening } from './screen';
 import { parseMarketGoals } from '../market/goals';
 import type { ResponseRow } from './picks-patterns';
 
@@ -42,9 +43,11 @@ export interface PickView {
   relaxation: StoredRelaxation | null;
   /** The reasons the seller looked ready to deal, exactly as the email claimed them. */
   motivation: Motivation | null;
+  /** The income screening the pick was sent on, as it stood at send time. */
+  screening: Screening | null;
 }
 
-const PICK_COLUMNS = 'id, user_id, canonical_url, token, status, kind, basis, postcode_area, deal, fit, charged_base_pence, reaction, reaction_source, reasons, comment, responded_at, checked_listing_id, saved_at, sent_at, relaxation, motivation';
+const PICK_COLUMNS = 'id, user_id, canonical_url, token, status, kind, basis, postcode_area, deal, fit, charged_base_pence, reaction, reaction_source, reasons, comment, responded_at, checked_listing_id, saved_at, sent_at, relaxation, motivation, screening';
 
 function toView(raw: Record<string, unknown>, listing: SourcedListing | null): PickView | null {
   const id = typeof raw.id === 'string' ? raw.id : null;
@@ -78,6 +81,7 @@ function toView(raw: Record<string, unknown>, listing: SourcedListing | null): P
     sentAt: typeof raw.sent_at === 'string' ? raw.sent_at : new Date(0).toISOString(),
     relaxation: parseStoredRelaxation(raw.relaxation),
     motivation: parseMotivation(raw.motivation),
+    screening: parseScreening(raw.screening),
   };
 }
 

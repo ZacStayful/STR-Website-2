@@ -65,13 +65,9 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { getAreaCards, getAreaCardsWithin } from '../market/cached';
 import { storedAreaRentTable, areaRentKey } from '../broker/providers/internal';
-import { nationalRentFor } from '../market/rent-ladder';
 import { csvRow } from '../api/csv';
 import { areaRevenueFor, rentPcm, type AreaFigures, type SourcedListing, type SourcingKind } from './sourcing';
-import { screen, bandRank, type Confidence, type Figure, type Screening } from './screen';
-
-/** Where the market rent came from. */
-export type RentTier = 'advertised' | 'stored-reports' | 'national-ladder';
+import { screen, bandRank, marketRentFor, grossRevenueFor, type Figure, type RentTier, type Screening } from './screen';
 
 export interface ScreenReportRow {
   canonicalUrl: string;
@@ -211,32 +207,20 @@ export async function buildScreenReport(options: { limit?: number } = {}): Promi
           headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr },
         };
         const rev = areaRevenueFor(figures, bedrooms);
-        if (rev) {
-          // An exact bedroom match is worth more than the blended headline.
-          const exact = bedrooms !== null && card.byBedrooms.some((b) => b.bedrooms === bedrooms && b.grossRevenue);
-          const confidence: Confidence = exact ? 'medium' : 'low';
-          grossRevenue = { value: rev.grossRevenue, source: 'estimated', confidence };
-        } else {
-          missing.noAreaRevenue += 1;
-        }
+        const exact = bedrooms !== null && card.byBedrooms.some((b) => b.bedrooms === bedrooms && b.grossRevenue);
+        grossRevenue = grossRevenueFor(rev?.grossRevenue ?? null, exact);
+        if (!grossRevenue) missing.noAreaRevenue += 1;
       }
 
-      // Market rent, best provenance first.
-      let marketRent: Figure | null = null;
-      let rentTier: RentTier | null = null;
-      if (advertised && advertised > 0) {
-        marketRent = { value: advertised, source: 'confirmed', confidence: 'high' };
-        rentTier = 'advertised';
-      } else if (area && bedrooms !== null) {
-        const stored = rentTable.get(areaRentKey(area, bedrooms));
-        if (stored) {
-          marketRent = { value: stored.monthlyRent, source: 'estimated', confidence: stored.samples >= 3 ? 'medium' : 'low' };
-          rentTier = 'stored-reports';
-        } else {
-          marketRent = { value: nationalRentFor(bedrooms), source: 'estimated', confidence: 'low' };
-          rentTier = 'national-ladder';
-        }
-      }
+      // Market rent, resolved by the same helper the daily-picks gate uses.
+      const rent = marketRentFor({
+        kind,
+        bedrooms,
+        advertisedRentPcm: advertised,
+        storedRent: area && bedrooms !== null ? rentTable.get(areaRentKey(area, bedrooms)) ?? null : null,
+      });
+      const marketRent = rent?.figure ?? null;
+      const rentTier: RentTier | null = rent?.tier ?? null;
       if (!marketRent) missing.noRent += 1;
       if (rentTier) rentTiers[rentTier] += 1;
 

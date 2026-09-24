@@ -35,6 +35,7 @@
  * Pure: no network, no database, no `server-only`, so it runs under `node --test`.
  */
 import type { SourcingKind } from './sourcing.ts';
+import { nationalRentFor } from '../market/rent-ladder.ts';
 
 // ── The constants ──
 
@@ -116,6 +117,21 @@ export const BAND_LABELS: Record<Band, string> = {
 };
 
 const BAND_ORDER: Band[] = ['qualified', 'medium', 'unqualified', 'insufficient-data'];
+
+/**
+ * The bands a member may actually be sent. QUALIFIED is the point of the
+ * exercise; MEDIUM is the fallback that keeps the daily habit alive on a thin
+ * day rather than going silent on someone who is charged per pick. UNQUALIFIED
+ * and INSUFFICIENT DATA are never sent — the first fails the bar, and the second
+ * cannot be judged, so presenting either as a recommendation would be a lie.
+ */
+export const SENDABLE_BANDS: readonly Band[] = ['qualified', 'medium'];
+
+/** Whether a screening result clears the bar to be emailed at all. */
+export function isSendable(s: Screening): boolean {
+  return SENDABLE_BANDS.includes(s.band);
+}
+
 
 /** Sort key: best band first. */
 export function bandRank(band: Band): number {
@@ -332,14 +348,108 @@ export function screenRentToRent(input: ScreenInput): RentToRentScreening {
   };
 }
 
+
+// ── Resolving the inputs ──
+// Shared by the daily-picks gate and the screening report so the two can never
+// disagree about what a property's rent or revenue is. Pure: the caller supplies
+// the stored rent it looked up and the area figures it already has.
+
+/** Where a market rent came from, best provenance first. */
+export type RentTier = 'advertised' | 'stored-reports' | 'national-ladder';
+
+export interface MarketRentInput {
+  kind: SourcingKind;
+  bedrooms: number | null;
+  /** The listing's own asking rent, for a rental. */
+  advertisedRentPcm: number | null;
+  /** Mean rent from our own past reports for this area and size, when we have one. */
+  storedRent: { monthlyRent: number; samples: number } | null;
+}
+
+/**
+ * The market rent to judge a property against, and how much to trust it.
+ *
+ * For a RENTAL the advertised rent is the market rent — it is what the operator
+ * would actually pay — so it is `confirmed` and nothing else is consulted. For a
+ * SALE there is no rent on the listing, so it falls to our own report history and
+ * then to the national ladder.
+ */
+export function marketRentFor(input: MarketRentInput): { figure: Figure; tier: RentTier } | null {
+  if (input.kind === 'rent' && input.advertisedRentPcm && input.advertisedRentPcm > 0) {
+    return { figure: { value: input.advertisedRentPcm, source: 'confirmed', confidence: 'high' }, tier: 'advertised' };
+  }
+  if (input.bedrooms === null) return null;
+  if (input.storedRent && input.storedRent.monthlyRent > 0) {
+    // One report is a data point, not an average.
+    const confidence: Confidence = input.storedRent.samples >= 3 ? 'medium' : 'low';
+    return { figure: { value: input.storedRent.monthlyRent, source: 'estimated', confidence }, tier: 'stored-reports' };
+  }
+  const national = nationalRentFor(input.bedrooms);
+  if (!national || national <= 0) return null;
+  return { figure: { value: national, source: 'estimated', confidence: 'low' }, tier: 'national-ladder' };
+}
+
+/**
+ * Short-let revenue as a screening input. Always an estimate — the finder never
+ * has a property-specific figure — so the only question is whether it is for this
+ * property's size or a blend across the area.
+ */
+export function grossRevenueFor(grossRevenue: number | null, exactBedroomMatch: boolean): Figure | null {
+  if (!grossRevenue || grossRevenue <= 0) return null;
+  return { value: grossRevenue, source: 'estimated', confidence: exactBedroomMatch ? 'medium' : 'low' };
+}
+
 /** Screens a listing by its kind: a sale is a purchase, a rental is rent-to-rent. */
 export function screen(kind: SourcingKind, input: ScreenInput): Screening {
   return kind === 'rent' ? screenRentToRent(input) : screenPurchase(input);
 }
 
+/**
+ * A stored `sourcing_sent.screening` value back into a Screening, defensively.
+ * Rows written before this column existed are null, and a row from an older
+ * shape must degrade to "no screening" rather than throw on a page render.
+ */
+export function parseScreening(raw: unknown): Screening | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (!isBand(o.band)) return null;
+  if (o.kind !== 'purchase' && o.kind !== 'rent-to-rent') return null;
+  return raw as Screening;
+}
+
 /** The headline figure for this kind, for a subject line or a sort. */
 export function screeningScore(s: Screening): number | null {
   return s.kind === 'purchase' ? s.upliftPct : s.annualProfit;
+}
+
+/**
+ * The working, as label/value pairs: what the figures were and where they came
+ * from. One implementation so the email, the picks page and the response page can
+ * never quote different numbers for the same pick. Estimates are marked, because
+ * none of these is a confirmed figure unless it says so.
+ */
+export function screeningWorking(s: Screening): { label: string; value: string }[] {
+  if (s.band === 'insufficient-data') return [];
+  const mark = (f: Figure | null) => (f && f.source === 'estimated' ? ' (est.)' : '');
+  const out: { label: string; value: string }[] = [
+    { label: 'Short-let revenue', value: `${gbp(s.grossRevenue!.value)}/yr${mark(s.grossRevenue)}` },
+    { label: 'Short-let net', value: `${gbp(s.strNet!)}/yr` },
+    { label: 'Running costs', value: `${gbp(s.fixedCosts)}/yr` },
+  ];
+  if (s.kind === 'purchase') {
+    out.push({ label: 'Long-let net', value: `${gbp(s.ltlNet!)}/yr${mark(s.marketRent)}` });
+    out.push({ label: 'Uplift', value: `${s.upliftPct}%` });
+  } else {
+    out.push({ label: 'Rent', value: `${gbp(s.annualRent!)}/yr${mark(s.marketRent)}` });
+    out.push({ label: 'Profit', value: `${gbp(s.annualProfit!)}/yr` });
+    out.push({ label: 'Revenue multiple', value: `${s.revenueMultiple}× the rent` });
+  }
+  const gap = s.gap ?? 0;
+  out.push({
+    label: 'To qualify',
+    value: `${gbp(s.requiredGross!)}/yr gross — ${gap >= 0 ? `${gbp(gap)} above` : `${gbp(Math.abs(gap))} short`}`,
+  });
+  return out;
 }
 
 /** One line for an email or a report row. */

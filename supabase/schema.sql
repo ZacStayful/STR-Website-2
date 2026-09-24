@@ -1450,6 +1450,14 @@ alter table public.sourcing_sent add column if not exists relaxation jsonb;
 -- Same deployment rule as above — column first, then the code.
 alter table public.sourcing_sent add column if not exists motivation jsonb;
 
+-- The income screening that decided this pick was worth sending: band, the
+-- figures behind it, and whether each input was confirmed or estimated. Stored
+-- rather than recomputed for the same reason as motivation above — the area
+-- revenue and the rent ladder move, so a recomputation would quietly disagree
+-- with the numbers the member was actually shown.
+-- Same deployment rule as above — column first, then the code.
+alter table public.sourcing_sent add column if not exists screening jsonb;
+
 -- =========================
 -- subscription_events
 -- =========================

@@ -401,8 +401,11 @@ export interface RankCandidate {
 }
 
 /** Ranks candidates for one member, dropping anything without a deal and anything losing money. */
-export function rankPicks(candidates: RankCandidate[], limit = 5, mode: MotivationMode = 'off'): SourcedPick[] {
-  const out: SourcedPick[] = [];
+// Generic so a caller's own fields (the suitability pre-check, the income
+// screening) survive ranking instead of being erased by the return type and
+// having to be re-attached from a side map.
+export function rankPicks<C extends RankCandidate>(candidates: C[], limit = 5, mode: MotivationMode = 'off'): (C & { fit: number })[] {
+  const out: (C & { fit: number })[] = [];
   for (const c of candidates) {
     if (!c.deal) continue;
     // The money test comes first and is never relaxed: motivation is a reason to
