@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import EstimatePage from "@/app/estimate/page";
 import { funnelPageByToken, ownPublicFunnelByToken, type PublicFunnel } from "@/lib/funnels";
 import { brandCssVars, brandName } from "@/lib/funnels/brand";
-import { previewMode, type FunnelMode, type PreviewMode } from "@/lib/funnels/mode";
+import { parseFunnelPrefill, previewMode, type FunnelMode, type PreviewMode } from "@/lib/funnels/mode";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { DEMO_MAP } from "@/lib/demo-data";
 
@@ -151,6 +151,11 @@ export default async function FunnelPage({
     preview: isPreview,
   };
 
+  // Details the customer already held, handed over in their own link. Parsed
+  // here rather than in the browser so nothing unvalidated reaches the form,
+  // and never including consent.
+  const prefill = parseFunnelPrefill(query);
+
   return (
     <div style={style}>
       {isPreview ? (
@@ -174,7 +179,11 @@ export default async function FunnelPage({
           ) : null}
         </div>
       ) : null}
-      <EstimatePage funnel={funnelMode} initialResult={previewReport ? DEMO_MAP.manchester : undefined} />
+      <EstimatePage
+        funnel={funnelMode}
+        prefill={prefill}
+        initialResult={previewReport ? DEMO_MAP.manchester : undefined}
+      />
     </div>
   );
 }

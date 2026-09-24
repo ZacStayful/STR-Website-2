@@ -79,3 +79,31 @@ export async function settleSpend(funnelId: string, reservedPence: number, actua
   });
   if (error) console.error('[funnels] funnel_spend_settle failed:', error.message);
 }
+
+/**
+ * Address lookups one IP may make against one funnel inside a window.
+ *
+ * Deliberately generous. The field debounces at 300ms with a three-character
+ * minimum, so entering one address costs a handful of requests — but a shared
+ * office or campus NAT puts many prospects behind one address, and refusing a
+ * real one to slow an attacker down would be the wrong trade. The hard money
+ * guard is the funnel's daily spend ceiling, which bounds the day's loss
+ * whatever the rate; this only stops one IP burning through it in seconds.
+ */
+export const AUTOCOMPLETE_PER_IP_PER_WINDOW = 300;
+
+/**
+ * Counts one address lookup on a funnel, per IP.
+ *
+ * A DIFFERENT bucket from `countAttempt`'s, deliberately. Autocomplete fires
+ * per keystroke, so counting it against the prospect's five-submissions-per-ten-
+ * minutes or the funnel's daily LEAD cap would have somebody typing their own
+ * address lock themselves out of the form before they could ever submit it.
+ *
+ * Fails closed, for the same reason `hit` does: the lookup spends the funnel
+ * owner's money, and a counter we cannot reach is not permission to spend it.
+ */
+export async function countAutocomplete(funnelId: string, ip: string): Promise<boolean> {
+  if (!hasServiceRole()) return false;
+  return (await hit(funnelId, `ac:${ipBucket(ip)}`, minuteWindow(), AUTOCOMPLETE_PER_IP_PER_WINDOW)) >= 0;
+}

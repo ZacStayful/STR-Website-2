@@ -7,7 +7,7 @@
  * that boundary has to survive serialisation — no functions, no classes.
  */
 
-import type { FunnelBrand } from './brand.ts';
+import { parseEmail, type FunnelBrand } from './brand.ts';
 
 export interface FunnelMode {
   /** The public token, used to address the funnel's own analyse route. */
@@ -50,4 +50,55 @@ export function previewMode(raw: string | string[] | undefined): PreviewMode {
   if (v === 'report') return 'report';
   if (v === '1') return 'form';
   return 'none';
+}
+
+/**
+ * Details a customer already holds, passed into their own funnel link so the
+ * prospect does not re-type them: `?name=&email=&phone=`.
+ *
+ * The settings page has documented this since the feature shipped and nothing
+ * ever read it, so anyone who wired their website's enquiry form to pass these
+ * got a blank form and a prospect keying in what they had just given.
+ *
+ * Everything is treated as hostile, because anyone can craft the URL: values
+ * are trimmed, length-capped, and the email has to survive the same parse the
+ * branding fields use. An unusable value is simply dropped — the prospect
+ * types that one field themselves, which is better than a form carrying
+ * something they did not write.
+ *
+ * Consent is absent on purpose and must stay absent. It is the prospect's to
+ * give, the customer is the data controller, and a URL parameter must never be
+ * able to assert that a box was ticked.
+ */
+export interface FunnelPrefill {
+  name?: string;
+  email?: string;
+  phone?: string;
+}
+
+const PREFILL_MAX = 120;
+
+function prefillText(raw: string | string[] | undefined): string | undefined {
+  const v = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof v !== 'string') return undefined;
+  // Newlines would let one parameter pose as several lines of a form.
+  const t = v.replace(/[\r\n\t]/g, ' ').trim().slice(0, PREFILL_MAX);
+  return t.length > 0 ? t : undefined;
+}
+
+export function parseFunnelPrefill(query: {
+  name?: string | string[];
+  email?: string | string[];
+  phone?: string | string[];
+}): FunnelPrefill {
+  const prefill: FunnelPrefill = {};
+  const name = prefillText(query.name);
+  if (name) prefill.name = name;
+  const email = parseEmail(prefillText(query.email));
+  if (email) prefill.email = email;
+  const phone = prefillText(query.phone);
+  // Digits and the handful of separators a written phone number uses. Anything
+  // else is not a phone number, and a free-text field is not worth the risk.
+  if (phone && /^[+()\d][\d\s()+.-]*$/.test(phone)) prefill.phone = phone;
+  return prefill;
 }

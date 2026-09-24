@@ -87,7 +87,7 @@ import { ListingLinkBox } from "./_components/ListingLinkBox";
 import { ReportOptions } from "@/components/credit/ReportOptions";
 import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
-import { type FunnelMode, funnelAnalyseUrl, funnelLabel } from "@/lib/funnels/mode";
+import { type FunnelMode, type FunnelPrefill, funnelAnalyseUrl, funnelLabel } from "@/lib/funnels/mode";
 import { consentText } from "@/lib/funnels/brand";
 import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
@@ -328,10 +328,15 @@ const TAB_SECTIONS = [
 // funnel's OWNER rather than to the person filling it in. Every branch below
 // is guarded `funnel ? … : …` with the members-only path as the default, so
 // /estimate behaves exactly as it did.
+// `prefill` carries details the customer already had, passed into their funnel
+// link as ?name=&email=&phone= so the prospect does not key in what they have
+// already given. Parsed and filtered server-side (see parseFunnelPrefill) —
+// consent is deliberately not among them and never can be.
 type HomePageProps = {
   initialResult?: AnalysisResult;
   initialExpensesExpanded?: boolean;
   funnel?: FunnelMode;
+  prefill?: FunnelPrefill;
 };
 
 /**
@@ -370,10 +375,10 @@ function BrandMark({
   return <span className={`font-semibold tracking-tight ${className ?? ""}`}>{label}</span>;
 }
 
-export default function HomePage({ initialResult, initialExpensesExpanded, funnel }: HomePageProps = {}) {
+export default function HomePage({ initialResult, initialExpensesExpanded, funnel, prefill }: HomePageProps = {}) {
   const [address, setAddress] = useState("");
   const [postcode, setPostcode] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(prefill?.email ?? "");
   const [bedrooms, setBedrooms] = useState("2");
   const [guests, setGuests] = useState("6"); // Auto-calculated: (bedrooms × 2) + 2
   const [bathrooms, setBathrooms] = useState("1");
@@ -387,8 +392,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   // Funnel-only: a lead needs a name to be worth anything, a phone number is
   // optional (it is the field most likely to lose a form fill), and consent
   // is required because the customer is the data controller.
-  const [leadName, setLeadName] = useState("");
-  const [leadPhone, setLeadPhone] = useState("");
+  const [leadName, setLeadName] = useState(prefill?.name ?? "");
+  const [leadPhone, setLeadPhone] = useState(prefill?.phone ?? "");
+  // Never prefilled. The prospect ticks this themselves or no lead is captured.
   const [consent, setConsent] = useState(false);
   // Turnstile's solved token. Null until the challenge passes, and null
   // again once it expires — the widget clears it both ways.
@@ -3262,6 +3268,14 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                       Find your property
                     </Label>
                     <AddressAutocomplete
+                      // Bills the lookup to the funnel's owner instead of the
+                      // house. Without this the branch in the autocomplete
+                      // route that exists to do exactly that was unreachable,
+                      // so every lead typing an address put a few pence on our
+                      // bill on a page the customer is monetising — while
+                      // funnels/cost.ts prices that session INTO their per-lead
+                      // figure. A preview is not a lead and stays house spend.
+                      funnelToken={funnel && !funnel.preview ? funnel.token : undefined}
                       onSelect={(r) => {
                         setAddress(r.address);
                         setPostcode(r.postcode);
