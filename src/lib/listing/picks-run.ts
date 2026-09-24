@@ -63,6 +63,14 @@ const FEEDBACK_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 const SPREAD_DEPTH = 40;
 /** How many members may receive the same listing in one day (across passes). */
 const DAILY_LISTING_CAP = 3;
+/**
+ * A listing in one of these states cannot be acted on, so it is never sent.
+ * `under_offer` is deliberately absent: chains collapse, and a sale that fell
+ * through is a reason to look harder, not to hide the listing.
+ */
+const GONE_STATUSES: ReadonlySet<string> = new Set(["sold", "let_agreed", "removed"]);
+/** How many already-verified stand-ins to keep per member in case the send collides. */
+const MAX_ALTERNATES = 3;
 const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
@@ -102,7 +110,7 @@ interface Member {
 }
 
 type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string };
-type Verdict = Exclude<Suitability, "unknown"> | "unverified";
+type Verdict = Exclude<Suitability, "unknown"> | "unverified" | "gone";
 
 export interface RunOptions {
   /** Report who would get what; write and send nothing. */
@@ -278,7 +286,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const queries = [...demand.values()].sort((a, b) => Number(b.own) - Number(a.own) || b.members - a.members).slice(0, maxQueries());
 
   const unsuitable: Partial<Record<UnsuitableReason, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, unsuitable, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
     return done({
       status: 200,
@@ -445,7 +453,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         sharedOwnership: s.sharedOwnership ?? false,
         shortLetsPermitted: s.shortLetsPermitted ?? null,
       };
-      const verdict = suitabilityFromSnapshot(s, l.kind);
+      // Liveness before suitability: a sold or let-agreed listing is not a pick
+      // however well it scores. The search card cannot know this — only the page can.
+      const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
       const out = { verdict, listing: merged };
       verdicts.set(l.canonicalUrl, out);
       summary.verified += 1;
@@ -460,7 +470,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   };
 
   // ── One pick per member: the best candidate that passes, under the daily cap ──
-  const picks: { member: Member; pick: SourcedPick; candidates: number }[] = [];
+  const picks: { member: Member; pick: SourcedPick; alternates: SourcedPick[]; candidates: number }[] = [];
   for (const m of affordable) {
     const list = ranked.get(m.id) ?? [];
     const candidates = candidateCount.get(m.id) ?? 0;
@@ -485,6 +495,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         }
         continue;
       }
+      if (verdict === "gone") {
+        summary.gone += 1;
+        continue;
+      }
       reject(verdict);
     }
     if (!chosen) {
@@ -493,33 +507,60 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       continue;
     }
     assigned.set(chosen.listing.canonicalUrl, (assigned.get(chosen.listing.canonicalUrl) ?? 0) + 1);
-    picks.push({ member: m, pick: chosen, candidates });
+    // Stand-ins for a send that collides with a row this member already has.
+    // Only listings already verified in this run qualify, so they cost no fetch.
+    const alternates: SourcedPick[] = [];
+    for (const p of order) {
+      if (alternates.length >= MAX_ALTERNATES) break;
+      if (p.listing.canonicalUrl === chosen.listing.canonicalUrl) continue;
+      const v = verdicts.get(p.listing.canonicalUrl);
+      if (v?.verdict === "ok") alternates.push({ ...p, listing: v.listing });
+    }
+    picks.push({ member: m, pick: chosen, alternates, candidates });
   }
 
   // ── Send: pending row first, then the email, then the charge ──
   const base = siteUrl();
-  for (const { member: m, pick, candidates } of picks) {
+  for (const { member: m, pick, alternates, candidates } of picks) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
       continue;
     }
-    const l = pick.listing;
-    const token = newPickToken();
     const charge = m.admin ? 0 : pickBasePence;
-    const { data: row, error: insErr } = await admin
-      .from("sourcing_sent")
-      .insert({ user_id: m.id, canonical_url: l.canonicalUrl, sent_at: nowIso, status: "pending", token, kind: l.kind, postcode_area: l.postcodeArea, basis: m.basis, deal: pick.deal, fit: pick.fit, charged_base_pence: charge })
-      .select("id")
-      .single();
-    if (insErr || !row) {
-      // 23505: this listing, or today's pick, already exists for the member (an overlapping run).
+    // (user_id, canonical_url) is unique, so a listing this member already has
+    // comes back 23505. That is not a reason to leave them with nothing: try the
+    // stand-ins before giving up. Any other error is real and stops the attempt.
+    let sending: SourcedPick | null = null;
+    let rowId: string | null = null;
+    let token = "";
+    let insErr: { code?: string; message: string } | null = null;
+    for (const cand of [pick, ...alternates]) {
+      const attempt = newPickToken();
+      const cl = cand.listing;
+      const { data: row, error } = await admin
+        .from("sourcing_sent")
+        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge })
+        .select("id")
+        .single();
+      if (!error && row) {
+        sending = cand;
+        rowId = String(row.id);
+        token = attempt;
+        insErr = null;
+        break;
+      }
+      insErr = error ?? { message: "no row returned" };
+      if (error?.code !== "23505") break;
+    }
+    if (!sending || !rowId) {
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: insErr?.code === "23505" ? "already_sent" : "insert_failed" });
       if (insErr && insErr.code !== "23505") console.error("[sourcing] sourcing_sent insert failed:", insErr.message);
       continue;
     }
-    const id = String(row.id);
-    const mail = pickEmail({ pick, siteUrl: base, id, token, basis: m.basis, goalsChips: m.goals ? describeGoals(m.goals) : [], firstEver: m.firstEver, chargedBasePence: charge });
+    if (sending !== pick) assigned.set(sending.listing.canonicalUrl, (assigned.get(sending.listing.canonicalUrl) ?? 0) + 1);
+    const id = rowId;
+    const mail = pickEmail({ pick: sending, siteUrl: base, id, token, basis: m.basis, goalsChips: m.goals ? describeGoals(m.goals) : [], firstEver: m.firstEver, chargedBasePence: charge });
     const res = await sendEmail({ to: m.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers });
     if (!res.sent) {
       summary.emailFailures += 1;
@@ -539,7 +580,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         // allowNegative only covers the race between the balance check above and this debit.
         await debit(m.id, charge, {
           allowNegative: true,
-          meta: { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${l.address ?? l.title}` },
+          meta: { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}` },
         });
         summary.chargedBasePence += charge;
         void afterDebit(m.id).catch(() => {});
