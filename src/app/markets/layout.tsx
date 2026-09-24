@@ -1,25 +1,11 @@
 import type { Metadata } from "next";
-import { Playfair_Display, DM_Sans } from "next/font/google";
 import { Nav } from "@/components/marketing-v3/Nav";
 import { Footer } from "@/components/marketing-v3/Footer";
 import { AppShell } from "@/components/AppShell";
 import { getMarketAccess } from "@/lib/market/gate";
-import { marketingFontClasses } from "@/lib/marketing-fonts";
+import { marketingFontClasses, playfairVariable, dmSansVariable } from "@/lib/fonts";
 import { siteUrl } from "@/lib/url";
 import "./markets.css";
-
-const playfair = Playfair_Display({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-playfair",
-  display: "swap",
-});
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-dmsans",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl("/")),
@@ -46,7 +32,7 @@ export const dynamic = "force-dynamic";
  * unless the state is 'ok' — see src/lib/market/gate.ts for why.
  */
 export default async function MarketsLayout({ children }: { children: React.ReactNode }) {
-  const fontVars = `${playfair.variable} ${dmSans.variable} ${marketingFontClasses}`;
+  const fontVars = `${playfairVariable} ${dmSansVariable} ${marketingFontClasses}`;
 
   const { state } = await getMarketAccess();
 

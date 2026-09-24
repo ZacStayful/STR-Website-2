@@ -7,7 +7,7 @@ export { FONT_FILES, FONT_DIR, fontPath } from "./font-files";
  * Registers the report's two typefaces.
  *
  * These are the website's own typefaces — Inter and JetBrains Mono, at the
- * weights src/lib/marketing-fonts.ts loads — so the report and the site set
+ * weights src/lib/fonts.ts loads — so the report and the site set
  * type identically.
  *
  * react-pdf cannot use `next/font` — it needs real font files at render time —

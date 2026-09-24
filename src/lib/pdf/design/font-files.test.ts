@@ -34,7 +34,7 @@ test('the files are real TrueType, not an error page or a web format', () => {
 });
 
 test('the report ships the same faces and weights as the website', () => {
-  // src/lib/marketing-fonts.ts loads Inter 400/500/600 and JetBrains Mono
+  // src/lib/fonts.ts loads Inter 400/500/600 and JetBrains Mono
   // 400/500. react-pdf throws "Font family not registered" for a weight that
   // was never registered, so this set has to stay complete and in step.
   assert.equal(FONT_FILES.length, 5);
