@@ -4,6 +4,7 @@ import { after } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin'
 import { ensureEnquiry } from '@/lib/apis/monday'
+import { isTeamBound } from '@/lib/team'
 
 // Runs once a member has a session, from whichever route signed them in:
 // /auth/callback (OAuth and PKCE email links) and /auth/confirm (token-hash
@@ -53,7 +54,9 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
       })
     }
 
-    if (!profile.monday_item_id) {
+    // Team members (and people on their way to becoming one) are paid for by
+    // their team: not trial signups for the sales board.
+    if (!profile.monday_item_id && !(await isTeamBound(user.id, profile.email ?? user.email ?? null))) {
       const mondayId = await ensureEnquiry({
         name: profile.full_name ?? '',
         email: profile.email ?? user.email ?? '',

@@ -73,7 +73,7 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
         // debit of one action shares a context, so they all carry the same
         // value — but a provider call that failed and was logged at zero
         // never reaches the debit path, so later rows can be absent.
-        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
+        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: r.action === 'team_seat' && r.description ? r.description : actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
         byAction.set(r.action_id, item);
         items.push(item);
       }

@@ -46,6 +46,10 @@
 			"schedule": "15 2 * * *"
 		},
 		{
+			"path": "/api/internal/team-seats",
+			"schedule": "25 * * * *"
+		},
+		{
 			"path": "/api/internal/marketplace-sweep",
 			"schedule": "*/10 5-6 * * *"
 		},

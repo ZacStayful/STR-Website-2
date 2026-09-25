@@ -1,6 +1,7 @@
 'use server'
 
 import { redirect } from 'next/navigation'
+import { hasOpenInvite } from '@/lib/team'
 import { after } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
@@ -81,7 +82,10 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   // dedupes by email, so the /auth/callback and /estimate hooks later adopt
   // this same row instead of creating a duplicate. Runs via after() so it
   // never delays the redirect to the check-email page.
-  after(async () => {
+  // A login made to accept a team invite is not a trial signup: the team
+  // pays for it, and the sales board should not chase it.
+  const joiningTeam = next.startsWith('/team/join') && (await hasOpenInvite(email))
+  if (!joiningTeam) after(async () => {
     try {
       await ensureEnquiry({
         name: fullName,

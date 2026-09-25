@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import EstimatePage from "@/app/estimate/page";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
-import { leadScope } from "@/lib/leads/scope";
+import { leadScopeOrPaused } from "@/lib/leads/scope";
 import { parseStage } from "@/lib/leads/stage";
 import { archiveDueAt, retentionDate } from "@/lib/leads/retention";
 import { parseBrand, brandCssVars } from "@/lib/funnels/brand";
@@ -73,7 +73,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || !hasServiceRole()) notFound();
-  const scope = await leadScope(user);
+  const scope = await leadScopeOrPaused(user);
+  if (scope === "paused") notFound();
 
   const { data } = await createAdminClient()
     .from("leads")

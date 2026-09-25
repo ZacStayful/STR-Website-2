@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ownerIdOrNull } from "@/lib/leads/scope";
 import { getFunnel } from "@/lib/funnels";
 import { funnelWalls } from "@/lib/funnels/alerts";
 import { WallBanner } from "../../WallBanner";
@@ -22,6 +23,8 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
+  // The account owner's to manage; a team member works the leads.
+  if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const funnel = await getFunnel(user.id, id);
   if (!funnel) notFound();

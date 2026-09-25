@@ -1,7 +1,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { listLeads } from '@/lib/api/leads-query';
 import { leadsCsv } from '@/lib/api/csv';
-import { leadScope } from '@/lib/leads/scope';
+import { leadScopeOrPaused } from '@/lib/leads/scope';
 import { parseLeadFilters, queryFor } from '@/lib/leads/filters';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +22,8 @@ export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return new Response('Not authorised', { status: 401 });
-  const scope = await leadScope(user);
+  const scope = await leadScopeOrPaused(user);
+  if (scope === 'paused') return new Response('Your team access is paused', { status: 403 });
 
   const params = Object.fromEntries(new URL(request.url).searchParams);
   const filters = parseLeadFilters(params);

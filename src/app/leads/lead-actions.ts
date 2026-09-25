@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
-import { leadScope, type LeadScope } from '@/lib/leads/scope';
+import { leadScopeOrPaused, type LeadScope } from '@/lib/leads/scope';
 import { touchLeads } from '@/lib/leads/activity';
 import { parseStage, STAGE_LABELS } from '@/lib/leads/stage';
 import { purgeAfter, retentionDate } from '@/lib/leads/retention';
@@ -24,7 +24,10 @@ const MAX_BATCH = 200;
 async function scope(): Promise<LeadScope | null> {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  return user ? leadScope(user) : null;
+  if (!user) return null;
+  // A paused seat can do nothing to the team's leads until it is paid.
+  const s = await leadScopeOrPaused(user);
+  return s === 'paused' ? null : s;
 }
 
 function ids(formData: FormData): string[] {

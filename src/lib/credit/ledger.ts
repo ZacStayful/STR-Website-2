@@ -56,8 +56,14 @@ function toInsufficient(err: RpcError): InsufficientCreditError | null {
   let available = 0;
   try {
     const d = JSON.parse(err.details ?? '{}') as Record<string, unknown>;
-    required = Number(d.required_base ?? 0) || 0;
-    available = Number(d.spendable_base ?? (Number(d.required_base ?? 0) - Number(d.shortfall_base ?? 0))) || 0;
+    if (d.required_face !== undefined) {
+      // credit_debit_face reports displayed pence, not base.
+      required = Number(d.required_face) || 0;
+      available = Number(d.available_face ?? (Number(d.required_face) - Number(d.shortfall_face ?? 0))) || 0;
+    } else {
+      required = Number(d.required_base ?? 0) || 0;
+      available = Number(d.spendable_base ?? (Number(d.required_base ?? 0) - Number(d.shortfall_base ?? 0))) || 0;
+    }
   } catch {
     /* no detail */
   }
@@ -125,6 +131,23 @@ export async function debit(userId: string, basePence: number, opts: { reservati
     p_meta: opts.meta ?? {},
   });
   if (error) throwRpc(error, 'credit_debit');
+  return (data as number | null) ?? null;
+}
+
+/**
+ * Debits exactly `facePence` of DISPLAYED balance, whichever grants pay it —
+ * for flat prices like a £10 team seat. `debit` takes base pence and applies
+ * each grant's spend rate, so the same "£10" would cost £15 of top-up credit.
+ * Never overdrafts; throws InsufficientCreditError when the balance is short.
+ */
+export async function debitFace(userId: string, facePence: number, meta: DebitMeta = {}): Promise<number | null> {
+  if (!hasServiceRole() || facePence <= 0) return null;
+  const { data, error } = await (await adminClient()).rpc('credit_debit_face', {
+    p_user: userId,
+    p_face_pence: round4(facePence),
+    p_meta: meta,
+  });
+  if (error) throwRpc(error, 'credit_debit_face');
   return (data as number | null) ?? null;
 }
 

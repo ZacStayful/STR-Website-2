@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ownerIdOrNull } from "@/lib/leads/scope";
+import { redirect } from "next/navigation";
 import { listConnections, connectionBlockers } from "@/lib/crm/connections";
 import { MondayPanel } from "./MondayPanel";
 import { WebhookPanel } from "./WebhookPanel";
@@ -21,6 +23,8 @@ export default async function IntegrationsPage() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
+  // The account owner's to manage; a team member works the leads.
+  if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const connections = await listConnections(user.id);
   const monday = connections.find((c) => c.provider === "monday") ?? null;
