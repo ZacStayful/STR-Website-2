@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "build:extension": "node extension/build.mjs",
     "package:extension": "node extension/package.mjs",
     "test": "node --test 'src/**/*.test.ts'",
