@@ -5,6 +5,7 @@ import { cookies } from 'next/headers';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { runDailyPicks } from '@/lib/listing/picks-run';
+import { runPausedEmails } from '@/lib/listing/picks-paused-run';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_picks_run';
@@ -18,7 +19,7 @@ async function requireAdmin() {
 }
 
 /** Stashes the run summary for the page to render once, then goes back to it. */
-async function finish(kind: 'test' | 'dry', body: Record<string, unknown>): Promise<never> {
+async function finish(kind: 'test' | 'dry' | 'paused-dry', body: Record<string, unknown>): Promise<never> {
   const jar = await cookies();
   const value = Buffer.from(JSON.stringify({ kind, at: new Date().toISOString(), body })).toString('base64url').slice(0, 3800);
   jar.set(RUN_COOKIE, value, { maxAge: 300, path: '/admin/picks', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
@@ -41,4 +42,11 @@ export async function dryRunPicksAction(): Promise<void> {
   await requireAdmin();
   const result = await runDailyPicks({ dry: true });
   await finish('dry', result.body);
+}
+
+/** Who would get the "your picks have paused" letter right now; writes and sends nothing. */
+export async function dryRunPausedAction(): Promise<void> {
+  await requireAdmin();
+  const result = await runPausedEmails({ dry: true });
+  await finish('paused-dry', result.body);
 }

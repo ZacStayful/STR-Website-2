@@ -26,6 +26,10 @@
 			"schedule": "40 7 * * *"
 		},
 		{
+			"path": "/api/internal/picks-paused",
+			"schedule": "0 8 * * *"
+		},
+		{
 			"path": "/api/internal/credit-sweep",
 			"schedule": "0 3 * * *"
 		},

@@ -8,7 +8,7 @@ import { areaMetaForCode } from "@/lib/market/areas";
 import { cookies } from "next/headers";
 import { summarisePicks, cleanReasons, reasonLabel, type PickRow } from "@/lib/listing/picks";
 import { sendingEnabled } from "@/lib/listing/picks-run";
-import { sendTestPickAction, dryRunPicksAction } from "./actions";
+import { sendTestPickAction, dryRunPicksAction, dryRunPausedAction } from "./actions";
 import { buildScreenReport, type ScreenReport } from "@/lib/listing/screen-report";
 import { BAND_LABELS, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { SUITABILITY_REASONS, isUnsuitableReason, type UnsuitableReason } from "@/lib/listing/suitability";
@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 interface LastRun {
-  kind: "test" | "dry";
+  kind: "test" | "dry" | "paused-dry";
   at: string;
   body: Record<string, unknown>;
 }
@@ -31,7 +31,7 @@ async function readLastRun(): Promise<LastRun | null> {
     const raw = (await cookies()).get(RUN_COOKIE)?.value;
     if (!raw) return null;
     const parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8")) as LastRun;
-    return parsed && (parsed.kind === "test" || parsed.kind === "dry") ? parsed : null;
+    return parsed && (parsed.kind === "test" || parsed.kind === "dry" || parsed.kind === "paused-dry") ? parsed : null;
   } catch {
     return null;
   }
@@ -154,9 +154,13 @@ export default async function PicksAdminPage({ searchParams }: { searchParams: P
           <form action={dryRunPicksAction}>
             <button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run (everyone)</button>
           </form>
+          <form action={dryRunPausedAction}>
+            <button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Paused letter dry run</button>
+          </form>
           <Link href="/admin/picks?screen=1" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Income screening</Link>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
+          <strong>Paused letter dry run</strong> lists who would get the &#8220;your picks have paused&#8221; email right now (members whose credit ran out, with the picks they missed) and sends nothing; the real send is the 08:00 cron at /api/internal/picks-paused.{" "}
           <strong>Income screening</strong> runs the 40% uplift test (buy) and the £{R2R_QUALIFIED_PROFIT.toLocaleString("en-GB")} profit test (rent-to-rent) over every listing the finder has stored, and reports how many clear them. It sends nothing, writes nothing and changes nobody&#8217;s picks. It makes no provider calls of its own, though reading a cold market snapshot rebuilds it.
         </p>
         {lastRun && <RunResult run={lastRun} />}
@@ -243,7 +247,31 @@ export default async function PicksAdminPage({ searchParams }: { searchParams: P
 }
 
 
+function PausedRunResult({ run }: { run: LastRun }) {
+  const b = run.body;
+  const would = Array.isArray(b.wouldEmail) ? (b.wouldEmail as { email: string; picks: number; lines: string[] }[]) : [];
+  const members = Array.isArray(b.members) ? (b.members as { email: string | null; picks: number; sent: boolean; reason?: string }[]) : [];
+  const skipped = members.filter((m) => m.reason && m.reason !== "would_send");
+  const n = (k: string) => (typeof b[k] === "number" ? (b[k] as number) : 0);
+  return (
+    <div className="mt-4 rounded-lg bg-muted/60 p-3 text-xs">
+      <p className="text-sm font-medium text-foreground">
+        Paused letter dry run · {new Date(run.at).toLocaleTimeString("en-GB")} · {typeof b.error === "string" ? `Failed: ${b.error}` : `${would.length} of ${n("considered")} members with missed picks would get the letter.`}
+      </p>
+      {would.length > 0 && (
+        <ul className="mt-2 max-h-48 overflow-auto">
+          {would.slice(0, 60).map((w, i) => (
+            <li key={i} className="text-muted-foreground">{w.email} · {w.picks} pick{w.picks === 1 ? "" : "s"} · {w.lines.join(" / ")}</li>
+          ))}
+        </ul>
+      )}
+      {skipped.length > 0 && <p className="mt-2 text-muted-foreground">Not sent: {skipped.map((m) => `${m.email ?? "member"} (${m.reason})`).join(", ")}</p>}
+    </div>
+  );
+}
+
 function RunResult({ run }: { run: LastRun }) {
+  if (run.kind === "paused-dry") return <PausedRunResult run={run} />;
   const b = run.body;
   const members = Array.isArray(b.members) ? (b.members as { user: string; basis: string; candidates: number; sent: boolean; reason?: string }[]) : [];
   const skipped = Array.isArray(b.skipped) ? (b.skipped as { user: string; reason: string }[]) : [];

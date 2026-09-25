@@ -23,6 +23,7 @@ import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { missedRowFor } from "./picks-paused";
 import { isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
 import { storedAreaRentTable } from "../broker/providers/internal";
 import { screenSourced, mergeSnapshotIntoListing } from "../marketplace/record";
@@ -240,18 +241,23 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
 
   const savedByUser = new Map<string, string[]>();
   const sentToday = new Set<string>();
+  // Members already recorded as missing a pick today: one miss a day across the passes.
+  const missedToday = new Set<string>();
   const feedbackByUser = new Map<string, PickFeedback[]>();
   const feedbackSince = new Date(Date.now() - FEEDBACK_WINDOW_MS).toISOString();
   type FeedbackRow = { user_id: string; canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown; deal: unknown };
   const feedbackRows: FeedbackRow[] = [];
   for (const some of chunk(ids, ID_CHUNK)) {
-    const [savedRes, todayRes, fbRes] = await Promise.all([
+    const [savedRes, todayRes, fbRes, missedRes] = await Promise.all([
       admin.from("saved_areas").select("user_id, postcode_area").in("user_id", some),
       admin.from("sourcing_sent").select("user_id").in("user_id", some).gte("sent_at", todayIso),
       admin.from("sourcing_sent").select("user_id, canonical_url, reaction, reaction_source, reasons, kind, postcode_area, deal").in("user_id", some).not("reaction", "is", null).gte("responded_at", feedbackSince),
+      admin.from("sourcing_missed").select("user_id").in("user_id", some).gte("missed_at", todayIso),
     ]);
     for (const s of (savedRes.data ?? []) as { user_id: string; postcode_area: string }[]) savedByUser.set(s.user_id, [...(savedByUser.get(s.user_id) ?? []), s.postcode_area.toUpperCase()]);
     for (const r of (todayRes.data ?? []) as { user_id: string }[]) sentToday.add(r.user_id);
+    if (missedRes.error) console.warn("[sourcing] sourcing_missed select failed (schema behind?):", missedRes.error.message);
+    for (const r of (missedRes.data ?? []) as { user_id: string }[]) missedToday.add(r.user_id);
     if (fbRes.error) console.warn("[sourcing] feedback select failed (schema behind?):", fbRes.error.message);
     feedbackRows.push(...((fbRes.data ?? []) as FeedbackRow[]));
   }
@@ -384,7 +390,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // a broken product: the log line has to show whether members got nothing
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
     return done({
       status: 200,
@@ -769,17 +775,32 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // A team member's picks are paid from their team owner's credit (`payers`,
   // resolved above); a suspended seat has none to spend.
   const affordable: Member[] = [];
+  const missedRows: Record<string, unknown>[] = [];
   for (const some of chunk(withCandidates, 10)) {
     const balances = await Promise.all(some.map((m) => (m.admin || priceOf(m, ranked.get(m.id)?.[0]) <= 0 ? Promise.resolve(null) : payerIn(payers, m.id).suspended ? Promise.resolve(null) : getBalance(payerIn(payers, m.id).payerId).catch(() => null))));
     some.forEach((m, i) => {
       const bal = balances[i];
-      const need = priceOf(m, ranked.get(m.id)?.[0]);
+      const top = ranked.get(m.id)?.[0];
+      const need = priceOf(m, top);
       if (!m.admin && need > 0 && (!bal || bal.spendableBasePence < need)) {
         perUser.push({ user: m.id, basis: m.basis, candidates: candidateCount.get(m.id) ?? 0, sent: false, reason: "no_credit" });
+        // Remembered for the "your picks have paused" letter (picks-paused-run):
+        // the best candidate, figures only. Not for a seat the owner has let
+        // lapse (nothing for them to top up), not when the balance could not
+        // be read (that is not "out of credit"), and once a day across passes.
+        if (top && bal && !payerIn(payers, m.id).suspended && !missedToday.has(m.id)) {
+          missedToday.add(m.id);
+          missedRows.push({ user_id: m.id, missed_at: nowIso, need_pence: need, ...missedRowFor(top.listing, top.screening ?? null) });
+        }
         return;
       }
       affordable.push(m);
     });
+  }
+  if (missedRows.length > 0) {
+    const { error: missErr } = await admin.from("sourcing_missed").upsert(missedRows, { onConflict: "user_id,canonical_url", ignoreDuplicates: true });
+    if (missErr) console.error("[sourcing] sourcing_missed insert failed (schema behind?):", missErr.message);
+    else summary.missed = missedRows.length;
   }
 
   // ── Verify each candidate against its listing page (one read per distinct listing, house-metered) ──

@@ -1939,3 +1939,35 @@ insert into public.billing_settings (key, value) values ('free_deal_delay_hours'
 -- src/lib/notifications/server.ts); the goals modal no longer writes them.
 -- Billing and receipt emails have no switch.
 alter table public.profiles add column if not exists alert_credit boolean not null default true;
+
+-- =========================
+-- "Your picks have paused" (src/lib/listing/picks-paused.ts)
+-- =========================
+-- When the daily-picks run finds a member a property but their credit will
+-- not cover it, the pick is recorded here — figures only, never the address,
+-- postcode or URL — and the 08:00 cron (/api/internal/picks-paused) sends
+-- one letter per member: on the first day, then at most every seven days
+-- while they stay out of credit, listing everything missed since the last
+-- letter, and never once they have credit again. Service role only.
+create table if not exists public.sourcing_missed (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  canonical_url text not null,
+  missed_at timestamptz not null default now(),
+  kind text not null,                        -- sale | rent
+  postcode_area text,
+  bedrooms int,
+  price_amount numeric,                      -- sale: asking price; rent: pcm
+  price_period text,                         -- total | pcm
+  annual_profit numeric,                     -- screening.surplus, £/yr
+  need_pence numeric not null default 0,     -- what the pick would have cost
+  emailed_at timestamptz,                    -- the letter that listed it
+  superseded_at timestamptz,                 -- a pick went out after it, so it never resurfaces
+  unique (user_id, canonical_url)
+);
+create index if not exists sourcing_missed_user_idx on public.sourcing_missed (user_id, missed_at desc);
+create index if not exists sourcing_missed_pending_idx on public.sourcing_missed (missed_at) where emailed_at is null and superseded_at is null;
+alter table public.sourcing_missed enable row level security;  -- no policies: service role only
+revoke all on public.sourcing_missed from anon, authenticated;
+-- When the last paused letter went out (null: never).
+alter table public.profiles add column if not exists picks_paused_email_at timestamptz;
