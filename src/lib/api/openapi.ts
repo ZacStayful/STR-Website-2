@@ -70,6 +70,9 @@ export const ROUTES: RouteSpec[] = [
       { name: 'status', in: 'query', type: 'string', description: 'queued, new, pushed, held or exported.' },
       { name: 'since', in: 'query', type: 'string', description: 'ISO 8601 date; leads created at or after it.' },
       { name: 'until', in: 'query', type: 'string', description: 'ISO 8601 date; leads created at or before it.' },
+      { name: 'search', in: 'query', type: 'string', description: 'Part of the email, name, address or postcode.' },
+      { name: 'stage', in: 'query', type: 'string', description: 'Your own sales stage: new, contacted, meeting_booked, signed or lost.' },
+      { name: 'archived', in: 'query', type: 'boolean', description: '"true" for archived leads only. Archived leads are deleted 7 days after archiving unless restored; they are left out by default.' },
       { name: 'limit', in: 'query', type: 'integer', description: '1–200. Defaults to 50.' },
       { name: 'offset', in: 'query', type: 'integer', description: 'Zero or more.' },
     ],
@@ -95,6 +98,13 @@ export const ROUTES: RouteSpec[] = [
     summary: 'Send a held lead to your CRM',
     description: 'Promotes a lead that missed your filter. Answers 202 when the delivery is queued but has not landed yet.',
     params: [{ name: 'id', in: 'path', type: 'string', required: true, description: 'Lead id.' }],
+  },
+  {
+    method: 'put', path: '/leads/{id}/stage', scope: 'leads:write',
+    summary: 'Set a lead’s sales stage',
+    description: 'Your own pipeline stage for the lead, for tracking it without a CRM. Changing it sends nothing to your CRM.',
+    params: [{ name: 'id', in: 'path', type: 'string', required: true, description: 'Lead id.' }],
+    body: { description: 'The new stage.', example: { stage: 'contacted' } },
   },
   {
     method: 'delete', path: '/leads/{id}', scope: 'leads:write',

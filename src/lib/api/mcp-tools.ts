@@ -6,6 +6,7 @@ import { hasScope, SCOPE_LABELS, type Scope } from './scopes.ts';
 import { listLeads, leadStats, getLead, parseLeadQuery } from './leads-query';
 import { listReports, getReport } from './reports-query';
 import { deleteLead } from './leads-write';
+import { touchLeads } from '../leads/activity';
 import { saveApiReport } from './reports-write';
 import { listFunnels, getFunnel, updateFunnel } from '../funnels';
 import { parseLeadRules, rulesAreEmpty } from '../leads/rules';
@@ -53,6 +54,11 @@ const LEAD_FILTERS = {
     .describe('queued: the report has not run yet. held: missed the rules and is waiting for a decision. pushed: already in the CRM.'),
   since: z.string().optional().describe('ISO 8601 date. Leads created at or after it.'),
   until: z.string().optional().describe('ISO 8601 date. Leads created at or before it.'),
+  search: z.string().optional().describe('Part of the email, name, address or postcode.'),
+  stage: z.enum(['new', 'contacted', 'meeting_booked', 'signed', 'lost']).optional()
+    .describe("The account owner's own sales stage for the lead."),
+  archived: z.boolean().optional()
+    .describe('true for archived leads only (deleted 7 days after archiving unless restored). Omit for live leads.'),
 };
 
 /** Turns tool arguments back into the same query the REST route parses. */
@@ -159,7 +165,10 @@ export function registerTools(server: McpServer, access: ApiAccess): string[] {
       },
       async ({ leadId }) => {
         const lead = await getLead(userId, leadId);
-        return lead ? text(lead) : failure('No lead with that id.');
+        if (!lead) return failure('No lead with that id.');
+        // Reading one lead is using it; listing is not (leads/activity.ts).
+        await touchLeads(userId, [leadId]);
+        return text(lead);
       },
     );
     registered.push('get_lead');
@@ -183,6 +192,8 @@ export function registerTools(server: McpServer, access: ApiAccess): string[] {
         const lead = await getLead(userId, leadId);
         if (!lead) return failure('No lead with that id.');
         if (!lead.lead.report.url) return failure('That lead has no report yet, so there is nothing to send.');
+        if (lead.archivedAt) return failure('That lead is archived. The customer must restore it before it can be sent on.');
+        await touchLeads(userId, [leadId]);
 
         const outcome = await enqueueDelivery({ leadId, immediate: true });
         if (!outcome.queued) return failure('No CRM is connected to this account. Connect one under Leads → Integrations first.');

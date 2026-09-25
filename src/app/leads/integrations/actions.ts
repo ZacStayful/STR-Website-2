@@ -9,6 +9,7 @@ import { parseMondayConfig, type MondayFieldId } from '@/lib/crm/monday-map';
 import { listMondayBoards, listMondayGroups, mondayProvider } from '@/lib/crm/providers/monday';
 import { checkWebhookUrl } from '@/lib/crm/providers/webhook';
 import { enqueueDelivery } from '@/lib/crm/deliver';
+import { touchLeads } from '@/lib/leads/activity';
 import type { CrmField } from '@/lib/crm/types';
 
 /**
@@ -233,8 +234,11 @@ export async function pushLeadAction(_prev: CrmState, formData: FormData): Promi
   // Ownership is checked against the member's own RLS view rather than the
   // service role, so a lead id from elsewhere reads as missing.
   const supabase = await createSupabaseServerClient();
-  const { data } = await supabase.from('leads').select('id').eq('id', leadId).maybeSingle();
+  const { data } = await supabase.from('leads').select('id, archived_at').eq('id', leadId).maybeSingle();
   if (!data) return { error: 'That lead no longer exists.' };
+  if ((data as { archived_at: string | null }).archived_at) return { error: 'Restore this lead before sending it.' };
+
+  await touchLeads(who.id, [leadId]);
 
   const outcome = await enqueueDelivery({ leadId, immediate: true });
   revalidatePath('/leads');

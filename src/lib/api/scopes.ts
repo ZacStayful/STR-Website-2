@@ -31,7 +31,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   analyse: 'Run property analyses (spends your credit)',
   'reports:read': 'Read your own report history',
   'leads:read': 'Read leads, counts and exports',
-  'leads:write': 'Send leads to your CRM and delete them',
+  'leads:write': 'Send leads to your CRM, set their stage and delete them',
   'funnels:read': 'Read funnel settings and qualification rules',
   'funnels:write': 'Change qualification rules',
   'markets:read': 'Read market snapshots',

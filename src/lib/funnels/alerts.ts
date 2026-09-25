@@ -137,7 +137,8 @@ export async function funnelWalls(funnel: {
         .from('leads')
         .select('id', { count: 'exact', head: true })
         .eq('funnel_id', funnel.id)
-        .eq('status', 'queued'),
+        .eq('status', 'queued')
+        .is('archived_at', null),
       getBalance(funnel.userId).catch(() => null),
     ]);
 

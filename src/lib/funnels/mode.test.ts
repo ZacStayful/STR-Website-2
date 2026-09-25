@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { previewMode, parseFunnelPrefill, funnelAnalyseUrl, funnelLabel } from './mode.ts';
+import { previewMode, parseFunnelPrefill, funnelAnalyseUrl, funnelLabel, reportPdfUrl } from './mode.ts';
 import { EMPTY_BRAND } from './brand.ts';
 
 test('?preview=1 is the form and ?preview=report is the report', () => {
@@ -75,4 +75,13 @@ test('consent is never prefillable', () => {
 
 test('a repeated prefill parameter takes the first value rather than an array', () => {
   assert.deepEqual(parseFunnelPrefill({ name: ['Jo', 'Sam'] }), { name: 'Jo' });
+});
+
+test('a finished report downloads through its own lead token, not the funnel', () => {
+  // The funnel token only authorises a LIVE funnel, so a report whose funnel
+  // was paused afterwards would otherwise fail to download.
+  const brand = { companyName: null, logoUrl: null, primary: null, background: null, replyToEmail: null, privacyUrl: null };
+  assert.equal(reportPdfUrl(undefined), '/api/generate-pdf');
+  assert.equal(reportPdfUrl({ token: 'ftok', brand, reportDepth: 'standard' }), '/api/generate-pdf?f=ftok');
+  assert.equal(reportPdfUrl({ token: 'ftok', brand, reportDepth: 'standard', reportToken: 'rtok' }), '/api/generate-pdf?r=rtok');
 });
