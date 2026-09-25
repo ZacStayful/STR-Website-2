@@ -20,6 +20,7 @@
 import { meter } from '../credit/meter.ts';
 import {
   calendarMonthMeans,
+  calendarMonthValues,
   latestCompleteMonth,
   seasonalMultipliers,
   SEASONAL_WINDOW_MONTHS,
@@ -1670,15 +1671,22 @@ async function getShortLetDataFromMarkets(
   let monthlyRevenue: number[];
   let avgOccupancy: number;
 
-  if (revenue.length > 0) {
-    monthlyRevenue = extractLast12Months(revenue, 'p50');
-    const monthlyOccupancy = extractLast12Months(occupancy, 'p50');
+  // Placed by each item's own month label: the metrics come oldest first, and
+  // every consumer reads monthlyRevenue as January-first. Without usable
+  // labels the order is unknown, so fall through to the seasonal split.
+  const calendarRevenue = revenue.length > 0 ? calendarMonthValues(revenue, 'p50') : null;
+  if (calendarRevenue) {
+    monthlyRevenue = calendarRevenue;
+    const monthlyOccupancy = extractLast12Months(occupancy, 'p50'); // only averaged, so order is irrelevant
     avgOccupancy = monthlyOccupancy.length > 0
       ? monthlyOccupancy.reduce((a, b) => a + b, 0) / monthlyOccupancy.length / 100
       : summaryOccupancy || 0.65;
   } else {
     // Use summary annual revenue distributed with seasonal weighting
-    const base = (summaryRevenue || generateMarketEstimate(bedrooms).annualRevenue) / 12;
+    // (Also reached when monthly metrics came back without usable month
+    // labels: their annual total is still good, only the order is not.)
+    const unlabelledTotal = revenue.length > 0 ? extractLast12Months(revenue, 'p50').reduce((a, b) => a + b, 0) : 0;
+    const base = (summaryRevenue || unlabelledTotal || generateMarketEstimate(bedrooms).annualRevenue) / 12;
     const seasonalMultipliers = [0.82, 0.85, 0.95, 1.00, 1.08, 1.18, 1.25, 1.22, 1.10, 0.98, 0.88, 0.80];
     monthlyRevenue = seasonalMultipliers.map(m => Math.round(base * m));
     avgOccupancy = summaryOccupancy || 0.65;

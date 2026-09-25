@@ -176,3 +176,27 @@ export function occupancyScale(dict: MonthlyDict | null | undefined): number {
   const values = [...series(dict).values()];
   return values.length > 0 && values.every((v) => v <= 1) ? 1 : 100;
 }
+
+/**
+ * Airbtics market-metric items ({ month: "YYYY-MM", p50: …, … }) placed by
+ * their own month label into calendar order, Jan..Dec. The API returns them
+ * oldest first, so taking the last twelve by position rotates the year
+ * unless the latest month happens to be December. With more than a year of
+ * items the latest year's value wins. Null when no item carries a usable
+ * label, so the caller falls back rather than guessing the order.
+ */
+export function calendarMonthValues(items: ReadonlyArray<Record<string, unknown>>, field: string): number[] | null {
+  const latest = new Map<number, { index: number; value: number }>();
+  for (const item of items) {
+    const raw = item.month ?? item.date ?? item.period;
+    const i = typeof raw === 'string' ? monthIndex(raw) : null;
+    if (i === null) continue;
+    const value = Number(item[field]);
+    if (!Number.isFinite(value)) continue;
+    const m = calendarMonth(i);
+    const prev = latest.get(m);
+    if (!prev || i > prev.index) latest.set(m, { index: i, value });
+  }
+  if (latest.size === 0) return null;
+  return Array.from({ length: 12 }, (_, m) => latest.get(m)?.value ?? 0);
+}

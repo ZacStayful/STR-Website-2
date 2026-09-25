@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calendarMonthMeans,
+  calendarMonthValues,
   daysInMonth,
   inWindow,
   latestCompleteMonth,
@@ -95,4 +96,25 @@ test('windowing drops the 2021 lockdown and lifts the spring months', () => {
 test('too little data falls back to the UK default curve', () => {
   assert.deepEqual(seasonalMultipliers([{ '2026-01': 50, '2026-02': 50 }]), [...UK_DEFAULT_SEASONAL_MULTIPLIERS]);
   assert.equal(calendarMonthMeans({ '2026-01': 5, '2026-02': 5 }), null);
+});
+
+test('market-metric months land in calendar order whatever month the series ends on', () => {
+  const series = (endKey: string, count: number) => {
+    const end = monthIndex(endKey)!;
+    return Array.from({ length: count }, (_, k) => {
+      const i = end - (count - 1 - k);
+      return { month: monthKey(i), p50: (i % 12) + 1 + (Math.floor(i / 12) === Math.floor(end / 12) ? 100 : 0) };
+    });
+  };
+  // Ends in August: January must be the 2026 January, not last September.
+  const aug = calendarMonthValues(series('2026-08', 12), 'p50')!;
+  assert.equal(aug[0], 101); // Jan 2026
+  assert.equal(aug[8], 9); // Sep 2025
+  // Ends in December: unchanged order.
+  const dec = calendarMonthValues(series('2025-12', 12), 'p50')!;
+  assert.deepEqual(dec, [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112]);
+  // More than a year: the latest year's value wins.
+  assert.equal(calendarMonthValues(series('2026-08', 36), 'p50')![0], 101);
+  // No usable labels: no guess.
+  assert.equal(calendarMonthValues([{ p50: 5 }, { month: 'x', p50: 6 }], 'p50'), null);
 });
