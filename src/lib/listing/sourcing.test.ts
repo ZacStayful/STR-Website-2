@@ -50,6 +50,31 @@ test('areasForGoals = saved ∪ within-radius, best fit first, capped', () => {
   assert.deepEqual(areasForGoals({ ...goals, home: null }, [], areas), []);
 });
 
+test('"Anywhere in the UK" lifts the radius rather than emptying the search', () => {
+  // The form posts no distance for "Anywhere", which used to read as falsy and
+  // skip the home branch entirely: a member with a postcode, a budget and no
+  // saved areas got zero queries and fell through to national house picks.
+  const anywhere: MarketGoals = { ...goals, maxDistanceMiles: null };
+  const picked = areasForGoals(anywhere, [], areas);
+  assert.deepEqual(
+    picked.map((a) => a.code),
+    ['AB', 'M', 'NG', 'DE'],
+    'every area with a centroid, best fit first',
+  );
+  // Aberdeen is ~350 miles from Nottingham: reachable only because the radius lifted.
+  assert.ok(picked.some((a) => a.code === 'AB'));
+  // ZZ has no centroid, so distance cannot be judged — saved areas remain the
+  // only way in for one of those.
+  assert.ok(!picked.some((a) => a.code === 'ZZ'));
+  assert.ok(areasForGoals(anywhere, ['zz'], areas).some((a) => a.code === 'ZZ'));
+  // Still capped, so "anywhere" cannot fan out into dozens of searches.
+  assert.equal(areasForGoals(anywhere, [], areas, 2).length, 2);
+  // And it must actually reach the pick engine as queries.
+  assert.ok(queriesForGoals(anywhere, [], areas).length > 0);
+  // A set radius still excludes what is beyond it.
+  assert.ok(!areasForGoals(goals, [], areas).some((a) => a.code === 'AB'));
+});
+
 test('queriesForGoals carries budget on sale queries only and both kinds when asked', () => {
   const qs = queriesForGoals({ ...goals, sourcingKind: 'both' }, [], areas);
   const ng = qs.filter((q) => q.area === 'NG');
