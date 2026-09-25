@@ -5,7 +5,7 @@ import { resendConfirmationAction, type FormState } from '../../actions'
 
 const initial: FormState = { error: null, success: null }
 
-export function ResendButton({ email, next = '/estimate' }: { email: string; next?: string }) {
+export function ResendButton({ email, next = '' }: { email: string; next?: string }) {
   const [state, action, pending] = useActionState(resendConfirmationAction, initial)
 
   return (

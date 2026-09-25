@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSupabaseSession } from '@/lib/supabase/proxy'
+import { postAuthPath } from '@/lib/auth/landing'
 
-const PROTECTED_PREFIXES = ['/estimate', '/reports', '/picks', '/deals', '/leads', '/dashboard', '/account', '/upgrade', '/admin', '/extension/connect']
+const PROTECTED_PREFIXES = ['/welcome', '/estimate', '/reports', '/picks', '/deals', '/leads', '/dashboard', '/account', '/upgrade', '/admin', '/extension/connect']
 const AUTH_ROUTES = ['/login', '/signup']
 
 function isProtected(pathname: string): boolean {
@@ -36,7 +37,11 @@ export async function proxy(request: NextRequest) {
   }
 
   if (isAuthRoute(pathname) && user) {
-    return NextResponse.redirect(new URL('/estimate', request.url))
+    // Already signed in: keep the destination the page was carrying
+    // (/login?redirect=…, /signup?next=…) and apply the landing rule to it,
+    // so an invitee who is already logged in still reaches the join page.
+    const wanted = request.nextUrl.searchParams.get('redirect') ?? request.nextUrl.searchParams.get('next')
+    return NextResponse.redirect(new URL(postAuthPath(wanted), request.url))
   }
 
   // /signup?ref=CODE → remembered for 30 days so the referral is credited

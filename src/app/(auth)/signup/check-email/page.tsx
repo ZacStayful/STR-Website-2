@@ -8,7 +8,7 @@ type SearchParams = Promise<{ email?: string; next?: string }>
 
 export default async function CheckEmailPage({ searchParams }: { searchParams: SearchParams }) {
   const { email, next } = await searchParams
-  const nextPath = safeInternalPath(next, '/estimate')
+  const nextPath = safeInternalPath(next, '')
 
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm text-center">

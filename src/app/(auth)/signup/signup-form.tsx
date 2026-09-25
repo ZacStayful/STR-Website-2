@@ -6,7 +6,7 @@ import { PasswordField } from '../PasswordField'
 
 const initialState: AuthState = { error: null }
 
-export function SignupForm({ next = '/estimate' }: { next?: string }) {
+export function SignupForm({ next = '' }: { next?: string }) {
   const [state, action, pending] = useActionState(signupAction, initialState)
 
   return (

@@ -9,7 +9,7 @@ type SearchParams = Promise<{ next?: string }>
 
 export default async function SignupPage({ searchParams }: { searchParams: SearchParams }) {
   const { next } = await searchParams
-  const nextPath = safeInternalPath(next, '/estimate')
+  const nextPath = safeInternalPath(next, '')
   // Arriving from a team invite: this login is for joining someone's team,
   // which pays for it — no free-credit pitch.
   const joiningTeam = nextPath.startsWith('/team/join')
@@ -46,7 +46,7 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
       <p className="mt-6 text-sm text-muted-foreground">
         Already have an account?{' '}
         <Link
-          href={nextPath === '/estimate' ? '/login' : `/login?redirect=${encodeURIComponent(nextPath)}`}
+          href={nextPath ? `/login?redirect=${encodeURIComponent(nextPath)}` : '/login'}
           className="text-primary font-medium hover:underline"
         >
           Sign in

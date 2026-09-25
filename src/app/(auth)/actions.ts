@@ -6,6 +6,7 @@ import { after } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
 import { safeInternalPath } from '@/lib/safe-path'
+import { postAuthPath } from '@/lib/auth/landing'
 
 export type AuthState = { error: string | null }
 // For flows that show a success message in place (resend, reset request) as
@@ -16,10 +17,16 @@ function getSiteUrl(): string {
   return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
 }
 
+// Where an email link lands. The callback applies the landing rule
+// (src/lib/auth/landing.ts), so only an explicit destination is carried.
+function callbackUrl(next: string): string {
+  return `${getSiteUrl()}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`
+}
+
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const email = String(formData.get('email') ?? '').trim()
   const password = String(formData.get('password') ?? '')
-  const redirectTo = safeInternalPath(String(formData.get('redirect') ?? ''), '/estimate')
+  const redirectTo = safeInternalPath(String(formData.get('redirect') ?? ''), '')
 
   if (!email || !password) {
     return { error: 'Email and password are required.' }
@@ -30,7 +37,7 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
 
   if (error) return { error: error.message }
 
-  redirect(redirectTo)
+  redirect(postAuthPath(redirectTo))
 }
 
 export async function signupAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -38,9 +45,10 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   const email = String(formData.get('email') ?? '').trim()
   const mobile = String(formData.get('mobile') ?? '').trim()
   const password = String(formData.get('password') ?? '')
-  // Where to land after email confirmation — the analyser unless the signup
-  // started from another members-only surface (e.g. the Market Explorer).
-  const next = safeInternalPath(String(formData.get('next') ?? ''), '/estimate')
+  // Where to land after email confirmation: the welcome questions, unless the
+  // signup started from somewhere specific (a team invite, the Market
+  // Explorer), which the callback's landing rule then honours.
+  const next = safeInternalPath(String(formData.get('next') ?? ''), '')
 
   if (!fullName || !email || !mobile || !password) {
     return { error: 'Full name, email, mobile number, and password are all required.' }
@@ -62,7 +70,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     email,
     password,
     options: {
-      emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(next)}`,
+      emailRedirectTo: callbackUrl(next),
       data: {
         full_name: fullName,
         mobile: normalisedMobile,
@@ -78,7 +86,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
 
   // Push the trial to Monday immediately — this is the most reliable point
   // to do it, because we have the name/email/mobile in hand and don't depend
-  // on email confirmation firing or the user reaching /estimate. ensureEnquiry
+  // on email confirmation firing or the user reaching the app. ensureEnquiry
   // dedupes by email, so the /auth/callback and /estimate hooks later adopt
   // this same row instead of creating a duplicate. Runs via after() so it
   // never delays the redirect to the check-email page.
@@ -100,7 +108,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
 
   // Pass the email to the check-email page so it can offer a "resend" button.
   redirect(
-    `/signup/check-email?email=${encodeURIComponent(email)}${next === '/estimate' ? '' : `&next=${encodeURIComponent(next)}`}`,
+    `/signup/check-email?email=${encodeURIComponent(email)}${next ? `&next=${encodeURIComponent(next)}` : ''}`,
   )
 }
 
@@ -117,13 +125,13 @@ export async function resendConfirmationAction(
 ): Promise<FormState> {
   const email = String(formData.get('email') ?? '').trim()
   if (!email) return { error: 'Enter your email address.', success: null }
-  const next = safeInternalPath(String(formData.get('next') ?? ''), '/estimate')
+  const next = safeInternalPath(String(formData.get('next') ?? ''), '')
 
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email,
-    options: { emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(next)}` },
+    options: { emailRedirectTo: callbackUrl(next) },
   })
 
   if (error) return { error: error.message, success: null }
@@ -140,12 +148,12 @@ export async function requestMagicLinkAction(
 ): Promise<FormState> {
   const email = String(formData.get('email') ?? '').trim()
   if (!email) return { error: 'Enter your email address.', success: null }
-  const next = safeInternalPath(String(formData.get('redirect') ?? ''), '/deals')
+  const next = safeInternalPath(String(formData.get('redirect') ?? ''), '')
 
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { shouldCreateUser: false, emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(next)}` },
+    options: { shouldCreateUser: false, emailRedirectTo: callbackUrl(next) },
   })
 
   // Don't reveal whether an account exists — always show the same message.
@@ -203,5 +211,5 @@ export async function updatePasswordAction(
   const { error } = await supabase.auth.updateUser({ password })
   if (error) return { error: error.message }
 
-  redirect('/estimate')
+  redirect(postAuthPath(null))
 }
