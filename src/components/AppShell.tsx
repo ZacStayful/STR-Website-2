@@ -2,18 +2,22 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
+import { teamOf } from "@/lib/team";
 import { teamCreditSnapshot } from "@/lib/team/credit";
+import { ownsAnyFunnel } from "@/lib/funnels/ownership";
+import type { Section } from "@/lib/nav";
 import { ensureWelcomeGrant } from "@/lib/credit/welcome";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { CreditBanner } from "@/components/credit/CreditBanner";
 
 /**
- * Server shell for every members-only surface: resolves the member and their
- * credit once, then renders the app nav (with the balance badge), the
- * low-balance banner and the provider that owns the out-of-credit modal.
+ * Server shell for every members-only surface: resolves the member, their
+ * credit and whether they keep a Leads door once, then renders the app nav
+ * (with the balance badge), the low-balance banner and the provider that
+ * owns the out-of-credit modal.
  */
-export async function AppShell({ active, redirectTo, children }: { active: "estimate" | "markets" | "deals" | "picks" | "reports" | "leads" | "account"; redirectTo: string; children: React.ReactNode }) {
+export async function AppShell({ active, redirectTo, children }: { active: Section; redirectTo: string; children: React.ReactNode }) {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -45,10 +49,18 @@ export async function AppShell({ active, redirectTo, children }: { active: "esti
   } catch (err) {
     console.error("[AppShell] credit summary failed:", err);
   }
+  // Leads stays in the nav only while the member's team owns a funnel, so
+  // existing funnel customers (and the people they invited) are not cut off.
+  let leads = false;
+  try {
+    leads = await ownsAnyFunnel((await teamOf(user.id)).ownerId);
+  } catch (err) {
+    console.error("[AppShell] funnel check failed:", err);
+  }
 
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} teamMember={Boolean(credit?.member)} />
+      <AppSwitcher active={active} admin={admin} teamMember={Boolean(credit?.member)} leads={leads} />
       <CreditBanner />
       {children}
     </CreditProvider>
