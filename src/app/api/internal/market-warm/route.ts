@@ -1,4 +1,5 @@
 import { getAreaCards } from "@/lib/market/cached";
+import { ask, pdMortgageRates } from "@/lib/broker";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Market snapshot warm-up ────────────────────────────────────────
@@ -16,11 +17,14 @@ export async function GET(request: Request) {
   if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
   if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const started = Date.now();
+  // The national mortgage averages are house spend: bought here once a day
+  // (one PropertyData credit) so a member's report only ever reads them.
+  const rates = await ask(pdMortgageRates, {}, { mode: "cron" });
   const cards = await getAreaCards().catch((err) => {
     console.error("[market-warm] snapshot build failed:", (err as Error)?.message ?? err);
     return [];
   });
-  const body = { cards: cards.length, ms: Date.now() - started };
+  const body = { cards: cards.length, mortgageRates: rates.value ? (rates.cached ? "cached" : "bought") : "unavailable", ms: Date.now() - started };
   console.log("[market-warm]", JSON.stringify(body));
   return Response.json(body, { status: cards.length > 0 ? 200 : 503 });
 }

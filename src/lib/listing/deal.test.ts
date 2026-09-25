@@ -66,3 +66,55 @@ test('monthly cashflow flags underwater months', () => {
   assert.equal(rows[1].underwater, true);
   assert.equal(defaultSetupCost(3), 16_500);
 });
+
+test('stamp duty: the calculator figure is used verbatim, otherwise the nation\'s own bands', () => {
+  const base = { grossRevenue: 30_000, adr: 150, bedrooms: 2, setupCost: 10_000 };
+  const live = purchaseDeal(220_000, { ...base, stampDuty: { amount: 12_345, name: 'SDLT', effectiveRatePct: 5.6, country: 'england', source: 'propertydata' } });
+  assert.equal(live.stampDuty, 12_345);
+  assert.equal(live.stampDutySource, 'propertydata');
+  assert.equal(live.stampDutyName, 'SDLT');
+  assert.equal(live.cashRequired, 55_000 + 12_345 + 10_000);
+  const wales = purchaseDeal(220_000, { ...base, country: 'wales' });
+  assert.equal(wales.stampDutyName, 'LTT');
+  assert.equal(wales.stampDutySource, 'local');
+  assert.equal(wales.stampDuty, 9_000 + 3_400);
+  const scotland = purchaseDeal(250_000, { ...base, country: 'scotland' });
+  assert.equal(scotland.stampDuty, 22_100);
+  assert.equal(scotland.taxCountry, 'scotland');
+  // A deal with no nation is England, as before.
+  const plain = purchaseDeal(220_000, base);
+  assert.equal(plain.stampDuty, stampDutyAdditional(220_000));
+  assert.equal(plain.taxCountry, 'england');
+});
+
+test('bills: the council tax split feeds the running costs, and an explicit bills field still wins', () => {
+  const base = { grossRevenue: 30_000, adr: 150, bedrooms: 2, setupCost: 10_000 };
+  const ct = { band: 'E' as const, annual: 1857.18, council: 'Test', year: '2026/27', matched: 'address' as const };
+  const bills = { billsPcm: 275, councilTaxPcm: 155, utilitiesPcm: 120, councilTax: ct };
+  const d = purchaseDeal(220_000, { ...base, bills });
+  // net operating = 30000 − 30000·0.48 − 275·12 = 12,300
+  assert.equal(d.netOperating, 12_300);
+  assert.equal(d.billsPcm, 275);
+  assert.equal(d.councilTax?.band, 'E');
+  const edited = purchaseDeal(220_000, { ...base, bills, costs: { billsPcm: 300 } });
+  assert.equal(edited.netOperating, 12_000);
+  assert.equal(edited.billsPcm, 300);
+  const r2r = rentToRentDeal(1_200, { ...base, grossRevenue: 36_000, adr: 120, setupCost: 8_000, bills });
+  // operating = 3000·0.48 + 275 = 1715
+  assert.equal(r2r.monthlyOperating, 1_715);
+  assert.equal(r2r.billsPcm, 275);
+  assert.equal(r2r.councilTax?.band, 'E');
+  const rows = monthlyCashflow([4000], 1200, { billsPcm: 275 });
+  assert.equal(rows[0].operating, Math.round(4000 * 0.48 + 275));
+});
+
+test('the mortgage rate records where it came from', () => {
+  const base = { grossRevenue: 30_000, adr: 150, bedrooms: 2 };
+  const live = purchaseDeal(220_000, { ...base, finance: { mortgageRatePct: 5.29 }, mortgageRate: { source: 'live', live: { ratePct: 5.29, product: '3-year fixed', date: 'Jun 2023' } } });
+  assert.equal(live.mortgageRatePct, 5.29);
+  assert.equal(live.mortgageRateSource, 'live');
+  assert.equal(live.mortgageRateLive?.product, '3-year fixed');
+  const plain = purchaseDeal(220_000, base);
+  assert.equal(plain.mortgageRateSource, undefined);
+  assert.equal(plain.mortgageRateLive, null);
+});

@@ -3,6 +3,7 @@ import { directBookingScore as computeDirectBookingScore, overallRiskScore100, r
 import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./amenities.ts";
 import { splitAddress, formatIssued } from "./format.ts";
 import { safe } from "./design/charts/geometry.ts";
+import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
 import type { PdfBrand } from "./theme";
 
 const MONTH_NAMES = [
@@ -619,7 +620,15 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
     d.basis === "asking-price" ? `Based on the asking price of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`
     : d.basis === "advertised-rent" ? `Based on the advertised rent of ${gbp(d.kind === "rent-to-rent" ? d.advertisedRentPcm : 0)} pcm`
     : `Based on the estimated property value of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`;
+  const bills = d.billsPcm ?? 250;
   if (d.kind === "purchase") {
+    const taxName = d.stampDutyName ?? "SDLT";
+    const taxWhere = taxName === "LBTT" ? "Scotland's" : taxName === "LTT" ? "Wales's" : "the England and Northern Ireland";
+    const mortgage =
+      d.mortgageRateSource === "live" && d.mortgageRateLive
+        ? `mortgage assumes the deposit and term in your Stayful goal profile at the market ${liveMortgageRateLabel(d.mortgageRateLive)}`
+        : "mortgage assumes the deposit, rate and term in your Stayful goal profile";
+    const councilTax = d.councilTax ? `, of which £${Math.round(d.councilTax.annual / 12)} is band ${d.councilTax.band} council tax` : "";
     return {
       kind: "purchase",
       basisLabel,
@@ -629,13 +638,13 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
         { label: "Net yield", value: `${d.netYieldPct}%`, sub: "after running costs" },
         { label: "Monthly cashflow", value: `${d.cashflowMonthly < 0 ? "-" : ""}${gbp(Math.abs(d.cashflowMonthly))}`, sub: `after ${gbp(d.mortgageMonthly)} mortgage` },
         { label: "Cash on cash", value: `${d.cashOnCashPct}%`, sub: `on ${gbp(d.cashRequired)} in` },
-        { label: "Stamp duty", value: gbp(d.stampDuty), sub: "additional-property rate" },
+        { label: "Stamp duty", value: gbp(d.stampDuty), sub: `${taxName}, additional-property rate${d.stampDutySource === "propertydata" ? " (live)" : ""}` },
         { label: "Setup budget", value: gbp(d.setupCost) },
         { label: `Max price for ${d.targetYieldPct}% yield`, value: gbp(d.maxPriceForTargetYield) },
         { label: "Net operating / yr", value: gbp(d.netOperating), sub: "before mortgage" },
       ],
       cashflow,
-      note: "Yield and cashflow use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £250 a month bills; mortgage assumes the deposit, rate and term in your Stayful goal profile. Stamp duty is the England and Northern Ireland additional-property rate. Not financial advice.",
+      note: `Yield and cashflow use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £${bills} a month bills${councilTax}; ${mortgage}. Stamp duty is ${taxName} at ${taxWhere} additional-property rate${d.stampDutySource === "propertydata" ? ", from PropertyData's calculator on the report date" : ""}. Not financial advice.`,
     };
   }
   return {
@@ -653,6 +662,6 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
       { label: `Max rent for ${gbp(d.targetMarginPcm)} margin`, value: gbp(d.maxRentForTargetMargin) },
     ],
     cashflow,
-    note: "Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £250 a month bills. Not financial advice.",
+    note: `Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £${bills} a month bills${d.councilTax ? ` (band ${d.councilTax.band} council tax included)` : ""}. Not financial advice.`,
   };
 }

@@ -219,6 +219,7 @@ export interface CrossValidation {
 
 // ─── Listing links (Rightmove / OnTheMarket / Airbnb …) ──────────
 import type { Deal, CashflowMonth } from './listing/deal';
+import type { CouncilTaxFigure } from './listing/bills';
 import type { CompetitorSummary, TrackedListing } from './listing/competitors';
 import type { SecondOpinion } from './listing/quick-types';
 
@@ -262,6 +263,8 @@ export interface AnalysisResult {
   crossValidation?: CrossValidation;
   // PropertyData estimated sale value. null if the call failed or key is missing.
   propertyValuation?: PropertyDataValuation | null;
+  /** The property's council tax band and charge (PropertyData); null when the band could not be priced. */
+  councilTax?: CouncilTaxFigure | null;
   // ── Listing-link additions (all optional; older reports simply lack them) ──
   sourceListing?: SourceListingRef | null;
   deal?: DealResult | null;

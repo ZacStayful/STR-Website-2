@@ -14,6 +14,10 @@
  * 18% cleaning ⇒ 52% net of gross) unless overridden by the expenses panel.
  */
 
+import { stampDutyLocal, type StampDutyFigure, type TaxCountry, type TaxName } from './stamp-duty.ts';
+import type { BillsSplit, CouncilTaxFigure } from './bills.ts';
+import type { MortgageRateInfo, MortgageRateSource, LiveMortgageRate } from './mortgage-rate.ts';
+
 export interface FinanceDefaults {
   depositPct: number; // 25
   mortgageRatePct: number; // 5.5
@@ -53,6 +57,19 @@ export interface PurchaseDeal {
   depositPct: number;
   mortgageRatePct: number;
   termYears: number;
+  // ── Added with the PropertyData deal accuracy work; absent on deals saved before it ──
+  /** Which nation's transaction tax `stampDuty` is. */
+  taxCountry?: TaxCountry;
+  stampDutyName?: TaxName;
+  stampDutyEffectiveRatePct?: number;
+  /** 'propertydata' when the calculator priced it on the report date; 'local' from the published bands. */
+  stampDutySource?: 'propertydata' | 'local';
+  /** Where `mortgageRatePct` came from, and the market average when one was known. */
+  mortgageRateSource?: MortgageRateSource;
+  mortgageRateLive?: LiveMortgageRate | null;
+  /** The bills line the figures used (council tax plus the fixed allowance). */
+  billsPcm?: number;
+  councilTax?: CouncilTaxFigure | null;
 }
 
 export interface RentToRentDeal {
@@ -69,6 +86,9 @@ export interface RentToRentDeal {
   paybackMonths: number | null;
   maxRentForTargetMargin: number;
   targetMarginPcm: number;
+  /** The bills line the figures used; absent on deals saved before it was itemised. */
+  billsPcm?: number;
+  councilTax?: CouncilTaxFigure | null;
 }
 
 export type Deal = PurchaseDeal | RentToRentDeal;
@@ -80,6 +100,13 @@ export interface DealInputs {
   costs?: Partial<CostRates>;
   finance?: Partial<FinanceDefaults>;
   setupCost?: number;
+  /** Nation for the local tax bands when no calculator figure is supplied. */
+  country?: TaxCountry;
+  /** PropertyData's figure for this price, used verbatim when given. */
+  stampDuty?: StampDutyFigure;
+  mortgageRate?: MortgageRateInfo;
+  /** Bills from the council tax band. An explicit `costs.billsPcm` (the live panel's field) still wins. */
+  bills?: BillsSplit & { councilTax: CouncilTaxFigure | null };
 }
 
 /** Rough furnishing/setup budget by size; the setup calculator refines it. */
@@ -87,24 +114,13 @@ export function defaultSetupCost(bedrooms: number): number {
   return 6000 + Math.max(0, bedrooms) * 3500;
 }
 
-/** England & NI residential SDLT (additional-property rates, from 1 Apr 2025). */
+/** England & NI residential SDLT at the additional-property rates. Kept for callers that only know a price. */
 export function stampDutyAdditional(price: number): number {
-  const bands: [number, number][] = [
-    [125_000, 0.05],
-    [250_000, 0.07],
-    [925_000, 0.10],
-    [1_500_000, 0.15],
-    [Infinity, 0.17],
-  ];
-  let duty = 0;
-  let lower = 0;
-  for (const [upper, rate] of bands) {
-    if (price <= lower) break;
-    const slice = Math.min(price, upper) - lower;
-    duty += slice * rate;
-    lower = upper;
-  }
-  return Math.round(duty);
+  return stampDutyLocal(price, 'england').amount;
+}
+
+function billsFor(input: DealInputs): CostRates {
+  return { ...DEFAULT_COSTS, ...(input.bills ? { billsPcm: input.bills.billsPcm } : {}), ...input.costs };
 }
 
 /** Standard repayment mortgage payment. */
@@ -121,11 +137,12 @@ function operatingCosts(grossRevenue: number, c: CostRates): number {
 }
 
 export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDeal {
-  const costs = { ...DEFAULT_COSTS, ...input.costs };
+  const costs = billsFor(input);
   const fin = { ...DEFAULT_FINANCE, ...input.finance };
   const gross = Math.max(0, input.grossRevenue);
   const netOperating = gross - operatingCosts(gross, costs);
-  const stampDuty = stampDutyAdditional(askingPrice);
+  const sd = input.stampDuty ?? stampDutyLocal(askingPrice, input.country ?? 'england');
+  const stampDuty = sd.amount;
   const setupCost = input.setupCost ?? defaultSetupCost(input.bedrooms);
   const deposit = askingPrice * (fin.depositPct / 100);
   const loan = askingPrice - deposit;
@@ -150,6 +167,14 @@ export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDe
     depositPct: fin.depositPct,
     mortgageRatePct: fin.mortgageRatePct,
     termYears: fin.termYears,
+    taxCountry: sd.country,
+    stampDutyName: sd.name,
+    stampDutyEffectiveRatePct: sd.effectiveRatePct,
+    stampDutySource: sd.source,
+    mortgageRateSource: input.mortgageRate?.source,
+    mortgageRateLive: input.mortgageRate?.live ?? null,
+    billsPcm: costs.billsPcm,
+    councilTax: input.bills?.councilTax ?? null,
   };
 }
 
@@ -160,7 +185,7 @@ export function maxPriceForYield(grossRevenue: number, targetYieldPct: number): 
 }
 
 export function rentToRentDeal(advertisedRentPcm: number, input: DealInputs): RentToRentDeal {
-  const costs = { ...DEFAULT_COSTS, ...input.costs };
+  const costs = billsFor(input);
   const fin = { ...DEFAULT_FINANCE, ...input.finance };
   const gross = Math.max(0, input.grossRevenue);
   const monthlyGross = gross / 12;
@@ -186,6 +211,8 @@ export function rentToRentDeal(advertisedRentPcm: number, input: DealInputs): Re
     paybackMonths: monthlyMargin > 0 ? Math.ceil(setupCost / monthlyMargin) : null,
     maxRentForTargetMargin: maxRentForMargin(monthlyNetBeforeRent, fin.targetMarginPcm),
     targetMarginPcm: fin.targetMarginPcm,
+    billsPcm: costs.billsPcm,
+    councilTax: input.bills?.councilTax ?? null,
   };
 }
 

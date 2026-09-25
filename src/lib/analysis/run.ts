@@ -15,9 +15,12 @@ import { startAction, actionSpend } from '../credit/action';
 import { runMetered, type MeterContext } from '../credit/context';
 import { estimateAction, reportAction, type CreditAction } from '../credit/estimate';
 import { getUnitCostTable } from '../credit/unit-costs';
-import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '../broker';
+import { ask, nearbyListings, listingPerformance, strSecondOpinion, pdCouncilTax, pdMortgageRates, pdStampDuty } from '../broker';
 import { matchTracked, rankCompetitors, summariseCompetitors } from '../listing/competitors';
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '../listing/deal';
+import { billsFromCouncilTax, pickCouncilTaxBand } from '../listing/bills';
+import { countryForPostcode, stampDutyFromApi, type StampDutyFigure } from '../listing/stamp-duty';
+import { liveMortgageRate, type MortgageRateInfo } from '../listing/mortgage-rate';
 import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
 import { noticeForFailure, noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
@@ -145,7 +148,6 @@ export async function runAnalysis(
 ): Promise<AnalysisRun> {
   const { property } = input;
   const userId = opts.billedUserId;
-  const finance = opts.finance ?? DEFAULT_FINANCE_GOALS;
   const progress = (stage: string, pct: number, message: string) => opts.onProgress?.({ stage, progress: pct, message });
 
   const wantEnhanced = enhancedEnabled(input.enhancedRequested);
@@ -165,6 +167,16 @@ export async function runAnalysis(
       const geocodePromise = geocodePostcode(property.postcode);
       // Floor area comes from /floor-areas before the valuations.
       const floorAreaPromise = floorAreaFor(property.postcode, property.address, property.bedrooms, brokerCtx);
+      // The council tax band and the national mortgage averages are only
+      // needed by the deal maths at the end; they start now so they add no
+      // time. The averages are bought once a day by the market-warm cron
+      // and a report only ever reads them.
+      const councilTaxPromise = ask(pdCouncilTax, { postcode: property.postcode }, brokerCtx);
+      const mortgageRatesPromise = ask(pdMortgageRates, {}, { ...brokerCtx, cacheOnly: true });
+      const taxCountry = countryForPostcode(property.postcode);
+      // Stamp duty on a known asking price can start now; on an estimated
+      // value it waits for the valuation.
+      const stampDutyPromise = !input.rentPcm && input.askingPrice ? ask(pdStampDuty, { value: input.askingPrice, country: taxCountry, mode: 'investment' }, brokerCtx) : null;
 
       // Geocoding first — short-let needs coordinates for nearby listings.
       let coordinates: { lat: number; lng: number; locality?: string };
@@ -389,15 +401,36 @@ export async function runAnalysis(
       const now = new Date().toISOString();
 
       // ── Deal maths on the asking price / advertised rent (or the estimate) ──
-      const [competitors, secondOpinionOutcome] = await Promise.all([competitorsPromise, secondOpinionPromise]);
+      const [competitors, secondOpinionOutcome, councilTaxRes, mortgageRatesRes] = await Promise.all([competitorsPromise, secondOpinionPromise, councilTaxPromise, mortgageRatesPromise]);
       const secondOpinion = secondOpinionOutcome.value;
-      const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance };
+
+      // A member's saved goal profile wins; otherwise the higher of the
+      // national 2- and 3-year fixed averages, and only then the old 5.5%.
+      const live = liveMortgageRate(mortgageRatesRes.value);
+      const finance: FinanceGoals = opts.finance ?? { ...DEFAULT_FINANCE_GOALS, ...(live ? { mortgageRatePct: live.ratePct } : {}) };
+      const mortgageRate: MortgageRateInfo = { source: opts.finance ? 'profile' : live ? 'live' : 'default', live };
+
+      // Council tax from the property's own band replaces the council-tax
+      // share of the old flat £250 bills line.
+      const councilTax = pickCouncilTaxBand(councilTaxRes.value, property.address);
+      const bills = { ...billsFromCouncilTax(councilTax), councilTax };
+
+      // Stamp duty from PropertyData's calculator for the price the deal is
+      // on; the local bands are the fallback inside purchaseDeal.
+      const purchasePrice = input.rentPcm ? null : (input.askingPrice ?? propertyValuation?.estimatedValue ?? null);
+      let stampDuty: StampDutyFigure | undefined;
+      if (purchasePrice) {
+        const sd = await (stampDutyPromise ?? ask(pdStampDuty, { value: purchasePrice, country: taxCountry, mode: 'investment' }, brokerCtx));
+        stampDuty = sd.value ? stampDutyFromApi(sd.value, taxCountry) : undefined;
+      }
+
+      const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance, country: taxCountry, stampDuty, mortgageRate, bills };
       let deal: DealResult | null = null;
       if (input.rentPcm) deal = { ...rentToRentDeal(input.rentPcm, dealBase), basis: 'advertised-rent' };
       else if (input.askingPrice) deal = { ...purchaseDeal(input.askingPrice, dealBase), basis: 'asking-price' };
       else if (propertyValuation?.estimatedValue) deal = { ...purchaseDeal(propertyValuation.estimatedValue, dealBase), basis: 'estimated-value' };
       const fixedPcm = deal?.kind === 'rent-to-rent' ? deal.advertisedRentPcm : deal?.kind === 'purchase' ? deal.mortgageMonthly : 0;
-      const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm) : null;
+      const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm, { billsPcm: bills.billsPcm }) : null;
 
       const result: AnalysisResult = {
         // The geocoder knows the town; the form only ever had a postcode.
@@ -417,6 +450,7 @@ export async function runAnalysis(
         updatedAt: now,
         crossValidation,
         propertyValuation,
+        councilTax,
         sourceListing: source,
         deal,
         cashflow,
