@@ -11,6 +11,7 @@ import {
   fromPmiListings,
   dealForSourced,
   rankPicks,
+  rankPicksByBand,
   MOTIVATION_LIFT,
   listingAge,
   medianAgeDays,
@@ -267,4 +268,22 @@ test('the lift is capped so a fit can never exceed 100', () => {
   assert.equal(ranked.length, 1);
   assert.ok(ranked[0].fit <= 100);
   assert.ok(MOTIVATION_LIFT > 0);
+});
+
+// ── Band-aware ranking ──
+
+test('rankPicksByBand never lets the depth cut drop a qualified listing behind medium ones', () => {
+  const band = (b: 'qualified' | 'medium') => ({ kind: 'purchase', band: b } as unknown as import('./screen.ts').Screening);
+  // 41 medium listings that all fit better than the one qualified listing.
+  const medium = Array.from({ length: 41 }, (_, i) => ({ ...rankable({ id: `m${i}`, canonicalUrl: `https://x/m${i}` }, 150_000), areaFit: 90, screening: band('medium') }));
+  const qualified = { ...rankable({ id: 'q', canonicalUrl: 'https://x/q' }, 300_000), areaFit: 10, screening: band('qualified') };
+  const flat = rankPicks([...medium, qualified], 40, 'off');
+  assert.ok(!flat.some((p) => p.listing.id === 'q'), 'the plain ranking cuts the qualified listing at depth 40');
+  const banded = rankPicksByBand([...medium, qualified], 40, 'off');
+  assert.equal(banded.length, 40);
+  assert.equal(banded[0].listing.id, 'q');
+  assert.ok(banded.slice(1).every((p) => p.screening?.band === 'medium'));
+  // Within a band, fit still decides the order; unscreened rows count as qualified.
+  const unscreened = { ...rankable({ id: 'u', canonicalUrl: 'https://x/u' }, 200_000), areaFit: 50 };
+  assert.deepEqual(rankPicksByBand([medium[0], unscreened, qualified], 5, 'off').map((p) => p.listing.id), ['u', 'q', 'm0']);
 });

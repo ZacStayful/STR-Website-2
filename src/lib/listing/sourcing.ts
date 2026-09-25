@@ -18,6 +18,7 @@ import type { MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
 import type { Motivation } from './motivation.ts';
+import { bandRank, type Screening } from './screen.ts';
 import type { MotivationMode } from '../market/goals.ts';
 
 export type SourcingKind = 'sale' | 'rent';
@@ -419,6 +420,31 @@ export function rankPicks<C extends RankCandidate>(candidates: C[], limit = 5, m
     out.push({ ...c, fit: Math.min(100, fit + lift) });
   }
   return out.sort((a, b) => b.fit - a.fit || dealScore(b.deal) - dealScore(a.deal)).slice(0, limit);
+}
+
+/**
+ * rankPicks, run band by band. rankPicks keeps only the top `limit` by fit, so
+ * ranking the whole pool and sorting by band afterwards can drop a qualified
+ * listing that happened to rank 41st on fit while a medium one ranked 40th
+ * survives. Ranking each band separately, best band first, makes the cut
+ * inside a band: a qualified listing is only ever displaced by another
+ * qualified one. Candidates without a screening are treated as qualified,
+ * matching what the send loop assumes for unscreened rows.
+ */
+export function rankPicksByBand<C extends RankCandidate & { screening?: Screening | null }>(candidates: C[], limit = 5, mode: MotivationMode = 'off'): (C & { fit: number })[] {
+  const byBand = new Map<number, C[]>();
+  for (const c of candidates) {
+    const rank = bandRank(c.screening?.band ?? 'qualified');
+    const list = byBand.get(rank) ?? [];
+    list.push(c);
+    byBand.set(rank, list);
+  }
+  const out: (C & { fit: number })[] = [];
+  for (const rank of [...byBand.keys()].sort((a, b) => a - b)) {
+    if (out.length >= limit) break;
+    out.push(...rankPicks(byBand.get(rank)!, limit - out.length, mode));
+  }
+  return out;
 }
 
 function dealScore(d: Deal | null): number {

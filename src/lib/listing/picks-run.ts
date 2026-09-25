@@ -13,7 +13,7 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, rankPicksByBand, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
@@ -650,9 +650,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     });
     // Band decides what may be sent; fit still decides the order within a band.
     // The two are not comparable across kinds (an uplift % against a profit in
-    // pounds), whereas blendFit already normalises both onto one scale.
-    const list: Ranked[] = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off")
-      .sort((a, b) => bandRank(a.screening?.band ?? "qualified") - bandRank(b.screening?.band ?? "qualified") || b.fit - a.fit);
+    // pounds), whereas blendFit already normalises both onto one scale. Ranked
+    // band by band so the SPREAD_DEPTH cut can never drop a qualified listing
+    // in favour of a medium one that happened to fit better.
+    const list: Ranked[] = rankPicksByBand(kept, SPREAD_DEPTH, motiv?.mode ?? "off");
     // "Could not be run as a short let": only send this member listings that
     // already clear the check on the search card, never ones that need the
     // page to rescue them. Band sorting happens INSIDE each of these buckets,
