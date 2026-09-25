@@ -115,6 +115,17 @@ const VARIANTS: Array<{ name: string; sheets: number; build: Build }> = [
     },
   },
   {
+    // A report saved before the comparable-history fields existed: the range
+    // is derived from its comps; trend, stays and nearby count are absent.
+    name: "legacy",
+    sheets: 6,
+    build: () => {
+      const d = deriveReportData(sampleAnalysis({ legacy: true }));
+      d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
+      return d;
+    },
+  },
+  {
     // Everything that can be missing, missing at once.
     name: "degraded",
     sheets: 5,
@@ -125,6 +136,7 @@ const VARIANTS: Array<{ name: string; sheets: number; build: Build }> = [
           noDemandDrivers: true,
           noAmenityData: true,
           noBookings: true,
+          legacy: true,
           locality: null,
           address: "Rose Cottage",
           comparables: [sampleAnalysis().shortLet.comparables[0]],
