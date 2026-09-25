@@ -16,7 +16,6 @@ import { areaConfidence, MIN_DISTRICT_SAMPLES, type Confidence } from './confide
 import { competitionBand, type CompetitionBand } from './competition.ts';
 import { areaSeasonality, type Seasonality } from './seasonality.ts';
 import { areaDirectBooking, type DirectBooking } from './direct-booking.ts';
-import { getAreaLongLetRent } from './area-longlet.ts';
 import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
 import { districtLocalities } from './district-localities.ts';
@@ -197,9 +196,9 @@ export function regionCard(r: MarketRegion): RegionCardData {
   return { ...levelFigures(r), slug: r.slug, name: meta?.name ?? r.name, areaCodes: r.areas };
 }
 
-async function buildAreaCard(area: MarketArea): Promise<AreaCardData> {
+async function buildAreaCard(area: MarketArea, opts: BuildOptions): Promise<AreaCardData> {
   const meta = areaMetaForCode(area.postcode_area);
-  const longLetRent = await getAreaLongLetRent(area);
+  const longLetRent = opts.areaLongLetRent ? await opts.areaLongLetRent(area).catch(() => null) : null;
   const figures = levelFigures(area);
   const licensing = getLicensing(area.postcode_area);
   return {
@@ -224,6 +223,12 @@ async function buildAreaCard(area: MarketArea): Promise<AreaCardData> {
 export interface BuildOptions {
   /** Postcode areas where Stayful manages properties. */
   managedAreas?: ReadonlySet<string>;
+  /**
+   * Area-average long-let rent (GBP/month) for the verdict, or null when
+   * unknown. Injected by `cached.ts` (PropertyData through the broker) so
+   * this module stays free of server-only imports.
+   */
+  areaLongLetRent?: (area: MarketArea) => Promise<number | null>;
 }
 
 export interface ExplorerData {
@@ -241,7 +246,7 @@ export interface ExplorerData {
  * Uncached: pages go through `cached.ts`, which wraps this in an hourly cache.
  */
 export async function buildExplorerData(snapshot: MarketSnapshot, opts: BuildOptions = {}): Promise<ExplorerData> {
-  const built = await Promise.all(snapshot.areas.map((a) => buildAreaCard(a).catch(() => null)));
+  const built = await Promise.all(snapshot.areas.map((a) => buildAreaCard(a, opts).catch(() => null)));
   const cards = built
     .filter((c): c is AreaCardData => c !== null)
     .map((c) => ({ ...c, managedByStayful: opts.managedAreas?.has(c.code) ?? false }))

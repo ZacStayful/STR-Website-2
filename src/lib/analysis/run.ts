@@ -6,7 +6,7 @@ import type {
 } from '../types';
 import { geocodePostcode } from '../apis/geocode';
 import { getShortLetData } from '../apis/airbtics';
-import { getLongLetData, getFloorArea, fetchPropertyValuation } from '../apis/propertydata';
+import { floorAreaFor, longLetFor, saleValuationFor } from './propertydata-steps';
 import { getNearbyAmenities } from '../apis/google-places';
 import { getNearbyEvents } from '../apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '../apis/pricelabs';
@@ -157,9 +157,14 @@ export async function runAnalysis(
       // ── Group 1 (parallel): Geocoding + (Short-let + Long-let) ──
       progress('geocoding', 10, 'Locating property...');
 
+      // Every PropertyData, Airbtics and PMI question below goes through the
+      // broker under this context: cached answers are reused, paid calls are
+      // metered to the member and capped by the daily budgets.
+      const brokerCtx = { mode: 'full' as const, userId };
+
       const geocodePromise = geocodePostcode(property.postcode);
-      // Floor area + build year come from /floor-areas before valuation.
-      const floorAreaPromise = getFloorArea(property.postcode, property.address, property.bedrooms);
+      // Floor area comes from /floor-areas before the valuations.
+      const floorAreaPromise = floorAreaFor(property.postcode, property.address, property.bedrooms, brokerCtx);
 
       // Geocoding first — short-let needs coordinates for nearby listings.
       let coordinates: { lat: number; lng: number; locality?: string };
@@ -174,15 +179,20 @@ export async function runAnalysis(
 
       const floorArea = await floorAreaPromise;
 
-      const longLetPromise = getLongLetData(property.postcode, property.bedrooms, {
-        propertyType: input.propertyType,
-        constructionDate: floorArea.constructionDate,
-        internalArea: floorArea.squareFeet,
-        ...(input.bathrooms && { bathrooms: input.bathrooms }),
-        finishQuality: FINISH_QUALITY,
-        outdoorSpace: input.outdoorSpace,
-        offStreetParking: input.parkingSpaces,
-      });
+      const longLetPromise = longLetFor(
+        property.postcode,
+        property.bedrooms,
+        {
+          propertyType: input.propertyType,
+          constructionDate: floorArea.constructionDate,
+          internalArea: floorArea.squareFeet,
+          ...(input.bathrooms && { bathrooms: input.bathrooms }),
+          finishQuality: FINISH_QUALITY,
+          outdoorSpace: input.outdoorSpace,
+          offStreetParking: input.parkingSpaces,
+        },
+        brokerCtx,
+      );
 
       const shortLetPromise = getShortLetData(
         property.postcode,
@@ -217,7 +227,7 @@ export async function runAnalysis(
       }
 
       // Sale valuation runs in parallel — never blocks or throws.
-      const saleValuationPromise = fetchPropertyValuation(property.postcode, property.bedrooms, input.propertyType);
+      const saleValuationPromise = saleValuationFor(property.postcode, property.bedrooms, input.propertyType, brokerCtx);
 
       // ── Listing-link extras, in parallel with the main calls ──
       // Tracked competitors within 1 km (one 5p bounds call per cell per
@@ -225,7 +235,6 @@ export async function runAnalysis(
       // The PMI second opinion is 50 credits, so it only runs in a full
       // report and only within its daily budget.
       const source = input.sourceListing;
-      const brokerCtx = { mode: 'full' as const, userId };
       const competitorsPromise = (async (): Promise<CompetitorsResult | null> => {
         const near = await ask(nearbyListings, { lat: coordinates.lat, lng: coordinates.lng }, brokerCtx);
         const list = near.value;

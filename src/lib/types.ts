@@ -190,9 +190,12 @@ export interface DataQuality {
 
 // ─── PropertyData Sale Valuation ─────────────────────────────────
 export interface PropertyDataValuation {
-  estimatedValue: number;       // point estimate (median)
-  valuationRangeLow: number;    // lower bound (approx. 25th percentile)
-  valuationRangeHigh: number;   // upper bound (approx. 75th percentile)
+  estimatedValue: number;       // point estimate
+  valuationRangeLow: number;    // estimate − margin (±15% when no margin was returned)
+  valuationRangeHigh: number;   // estimate + margin
+  /** PropertyData's own ± figure, GBP; absent on reports saved before it was read. */
+  margin?: number | null;
+  confidence?: 'high' | 'medium' | 'low' | null;
   source: 'propertydata';
 }
 

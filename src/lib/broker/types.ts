@@ -14,6 +14,12 @@ export interface BrokerContext {
   userId?: string | null;
   /** Force a refresh even if a fresh cached answer exists (admin spike only). */
   bypassCache?: boolean;
+  /**
+   * Answer from the cache only, fresh or stale, and never climb a rung. For
+   * shared answers a cron buys (region key stats, mortgage rates) that a
+   * member's request must read but never pay for.
+   */
+  cacheOnly?: boolean;
   /** Runs work after the response is sent (Next `after`). Optional. */
   background?: (fn: () => Promise<void>) => void;
 }

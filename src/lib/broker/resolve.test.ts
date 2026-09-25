@@ -108,3 +108,24 @@ test('concurrent identical requests share one call', async () => {
   assert.equal(runs, 1);
   assert.deepEqual(a.value, b.value);
 });
+
+test('cacheOnly never climbs a rung: unavailable on an empty cache, the stale answer once one exists', async () => {
+  let runs = 0;
+  const question = q([{ provider: 'propertydata', level: 3, costPence: 75, ttlMs: HOUR, run: async () => { runs++; return { v: 42 }; } }]);
+  const store = memoryStore();
+  const ledger = memoryLedger();
+  const empty = await resolveQuestion({ store, ledger, enabled }, question, { id: 'r' }, { mode: 'full', cacheOnly: true });
+  assert.equal(empty.unavailable, true);
+  assert.equal(runs, 0);
+  // A cron run buys it…
+  await resolveQuestion({ store, ledger, enabled }, question, { id: 'r' }, { mode: 'cron' });
+  assert.equal(runs, 1);
+  // …and a cacheOnly read long after the TTL still gets it, flagged stale, without spending.
+  const later = () => new Date(Date.now() + 48 * HOUR);
+  const r = await resolveQuestion({ store, ledger, enabled, now: later }, question, { id: 'r' }, { mode: 'full', userId: 'u1', cacheOnly: true });
+  assert.deepEqual(r.value, { v: 42 });
+  assert.equal(r.cached, true);
+  assert.equal(r.stale, true);
+  assert.equal(r.costPence, 0);
+  assert.equal(runs, 1);
+});

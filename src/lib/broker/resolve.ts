@@ -4,6 +4,8 @@ import { MAX_LEVEL, budgetFor, providerEnabled } from './config.ts';
 /**
  * Walks a question's ladder. Order of business for each call:
  *   1. cache hit that is still fresh → return it (no provider touched);
+ *      (a `cacheOnly` context stops here: a stale hit is returned as stale,
+ *      nothing else is `unavailable`);
  *   2. otherwise climb rungs in order, skipping disabled providers, rungs
  *      above the mode's max level, and paid rungs that would breach today's
  *      budget; the first non-null, sufficient answer is cached and returned;
@@ -23,7 +25,7 @@ const inFlight = new Map<string, Promise<ResolveResult<unknown>>>();
 
 export async function resolveQuestion<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, ctx: BrokerContext): Promise<ResolveResult<T>> {
   const key = question.key(params);
-  const flightKey = `${question.name}|${key}|${ctx.mode}`;
+  const flightKey = `${question.name}|${key}|${ctx.mode}|${ctx.cacheOnly ? 'ro' : 'rw'}`;
   const existing = inFlight.get(flightKey);
   if (existing && !ctx.bypassCache) return existing as Promise<ResolveResult<T>>;
   const p = run(deps, question, params, ctx, key).finally(() => inFlight.delete(flightKey));
@@ -38,6 +40,11 @@ async function run<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, 
   if (cached && new Date(cached.expiresAt).getTime() > now.getTime()) {
     void deps.ledger.record({ provider: cached.provider, question: question.name, key, costPence: 0, cacheHit: true, userId: ctx.userId ?? null, ok: true, ms: 0 }).catch(() => {});
     return { value: cached.value, provider: cached.provider, level: cached.level, cached: true, stale: false, unavailable: false, updatedAt: cached.fetchedAt, costPence: 0 };
+  }
+
+  if (ctx.cacheOnly) {
+    if (cached) return { value: cached.value, provider: cached.provider, level: cached.level, cached: true, stale: true, unavailable: false, updatedAt: cached.fetchedAt, costPence: 0 };
+    return { value: null, provider: null, level: null, cached: false, stale: false, unavailable: true, updatedAt: null, costPence: 0 };
   }
 
   const maxLevel = MAX_LEVEL[ctx.mode];

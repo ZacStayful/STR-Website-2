@@ -1565,14 +1565,15 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
 
                   {/* ── Centered property value range block under both columns ── */}
                   {r.propertyValuation && (() => {
-                    const lower = r.propertyValuation.estimatedValue;
-                    const upper = Math.round(lower * 1.25);
+                    const point = r.propertyValuation.estimatedValue;
+                    const lower = r.propertyValuation.valuationRangeLow || point;
+                    const upper = r.propertyValuation.valuationRangeHigh || point;
                     return (
                       <div className="mt-6 border-t border-primary-foreground/15 pt-6 text-center">
                         <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Est. Property Value Range</p>
                         <div className="mt-3 flex items-center justify-center gap-3">
                           <div className="text-center">
-                            <p className="text-[10px] text-primary-foreground/50 uppercase tracking-wider mb-0.5">Conservative</p>
+                            <p className="text-[10px] text-primary-foreground/50 uppercase tracking-wider mb-0.5">Lower estimate</p>
                             <p className="text-xl font-semibold" style={{ color: "rgba(255,255,255,0.65)" }}>{gbp(lower)}</p>
                           </div>
                           <div className="flex-1" style={{ maxWidth: 120, height: 3, borderRadius: 2, background: "linear-gradient(to right, rgba(255,255,255,0.25), rgba(255,255,255,0.65))" }} />
@@ -1581,7 +1582,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                             <p className="text-2xl font-bold text-primary-foreground">{gbp(upper)}</p>
                           </div>
                         </div>
-                        <p className="mt-2 text-primary-foreground/30" style={{ fontSize: 10 }}>Range reflects current market uplift potential in this postcode</p>
+                        <p className="mt-2 text-primary-foreground/30" style={{ fontSize: 10 }}>
+                          Point estimate {gbp(point)}
+                          {r.propertyValuation.confidence ? ` · ${r.propertyValuation.confidence} confidence` : ""}
+                          {" · the range is PropertyData's own margin for this postcode"}
+                        </p>
                         <p className="mt-1 text-[11px] text-primary-foreground/60">Source: PropertyData</p>
                       </div>
                     );

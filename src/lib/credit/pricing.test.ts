@@ -56,16 +56,18 @@ test('enhanced report estimate includes every unit and separates worst case', ()
     assert.ok(units.has(k), `missing ${k}`);
   }
   assert.ok(e.maxBasePence > e.typicalBasePence);
-  // Owner-approved ballpark: ≈ £7.30 typical, ≈ £9 worst case with PMI on.
-  assert.ok(e.typicalBasePence > 650 && e.typicalBasePence < 800, `typical ${e.typicalBasePence}`);
-  assert.ok(e.maxBasePence > 900 && e.maxBasePence < 1100, `max ${e.maxBasePence}`);
+  // Owner-approved ballpark: ≈ £8.60 typical, ≈ £11.50 worst case with PMI on,
+  // after the PropertyData due diligence calls (eleven credits a report) were
+  // added to every full report.
+  assert.ok(e.typicalBasePence > 800 && e.typicalBasePence < 950, `typical ${e.typicalBasePence}`);
+  assert.ok(e.maxBasePence > 1050 && e.maxBasePence < 1300, `max ${e.maxBasePence}`);
 });
 
 test('standard report has no PMI; enhanced adds it; PriceLabs on request', () => {
   const standard = estimateAction(table, 'report');
   const enhanced = estimateAction(table, 'report_enhanced');
   const withPl = estimateAction(table, 'report', { priceLabs: true });
-  assert.ok(standard.typicalBasePence < 400, `standard ${standard.typicalBasePence}`);
+  assert.ok(standard.typicalBasePence < 550, `standard ${standard.typicalBasePence}`);
   assert.ok(enhanced.typicalBasePence - standard.typicalBasePence > 300);
   assert.ok(withPl.typicalBasePence > standard.typicalBasePence);
 });
@@ -116,18 +118,20 @@ test('a funnel lead at x2 costs what the pricing was set from', () => {
   // The figures the funnel pricing was agreed from, in pounds. These are
   // the REPORT alone. A funnel lead also spends one Google autocomplete
   // session on the address, which is a separate action (~3p more at x2,
-  // ~4p off a top-up) — that is where the quoted £2.12 / £4.37 per lead
-  // come from, and why those are a few pence above these.
+  // ~4p off a top-up) — that is why the per-lead totals below are a few
+  // pence above these. The PropertyData due diligence calls (eleven
+  // credits a report) were added to every report, funnel leads included,
+  // with the owner's agreement: £2.08 → £2.91 a standard lead.
   const topup = DEFAULT_SPEND_RATES.topup;
-  assert.equal((std2.typicalBasePence / 100).toFixed(2), '1.39', 'standard report base at x2');
-  assert.equal((enh2.typicalBasePence / 100).toFixed(2), '2.89', 'enhanced report base at x2');
-  assert.equal(((std2.typicalBasePence * topup) / 100).toFixed(2), '2.08', 'standard off a top-up');
-  assert.equal(((enh2.typicalBasePence * topup) / 100).toFixed(2), '4.33', 'enhanced off a top-up');
+  assert.equal((std2.typicalBasePence / 100).toFixed(2), '1.94', 'standard report base at x2');
+  assert.equal((enh2.typicalBasePence / 100).toFixed(2), '3.44', 'enhanced report base at x2');
+  assert.equal(((std2.typicalBasePence * topup) / 100).toFixed(2), '2.91', 'standard off a top-up');
+  assert.equal(((enh2.typicalBasePence * topup) / 100).toFixed(2), '5.16', 'enhanced off a top-up');
 
   // And the per-lead totals actually quoted, report + one address lookup.
   const ac2 = estimateAction(t, 'autocomplete', { markupOverride: 2 });
-  assert.equal((((std2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '2.12');
-  assert.equal((((enh2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '4.37');
+  assert.equal((((std2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '2.95');
+  assert.equal((((enh2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '5.20');
 
   // The worst case is what gets reserved, so it must stay above the typical.
   assert.ok(std2.maxBasePence > std2.typicalBasePence);

@@ -12,6 +12,7 @@ import { areaCentroid } from '../market/area-centroids';
 import type { SecondOpinion } from '../listing/quick-types';
 
 export type { SecondOpinion } from '../listing/quick-types';
+export * from './questions-propertydata';
 
 /**
  * The questions the product asks, each with its ladder. Levels: 1 our data,

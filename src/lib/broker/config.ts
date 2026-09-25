@@ -18,6 +18,15 @@ export const TTL = {
   // Shorter than the daily sourcing cron so cron jitter can never land on a
   // still-fresh answer from yesterday's run.
   sourcing: 20 * 60 * 60 * 1000,
+  // PropertyData: designations, EPC and council tax bands barely move;
+  // valuations and stamp duty monthly; demand weekly; the national mortgage
+  // averages and the region key stats are bought by the market-warm cron.
+  pdPostcode: 90 * DAY,
+  pdValuation: 30 * DAY,
+  pdStampDuty: 30 * DAY,
+  pdMortgageRates: DAY,
+  pdDemand: 7 * DAY,
+  pdKeyStats: 30 * DAY,
 } as const;
 
 /** Pence per call. Real figures from the spike replace these estimates. */
@@ -30,6 +39,10 @@ export const COST_PENCE = {
   pmiMarket: 5,
   pmiListings: 2,
   onthemarketFetch: 0,
+  // PropertyData bills credits: one per call on almost every endpoint, thirty
+  // for a region's key stats. ~2.5p a credit is the seed the meter uses too.
+  propertydataCall: 2.5,
+  propertydataKeyStats: 75,
 } as const;
 
 /** Highest ladder level each mode may climb. */

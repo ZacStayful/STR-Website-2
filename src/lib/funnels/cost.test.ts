@@ -19,17 +19,20 @@ function cost(over: Partial<Parameters<typeof funnelCost>[0]> = {}) {
 }
 
 test('a standard lead quotes the price the plan committed to', () => {
-  // £2.08 for the report itself at the x2 funnel markup, spent at the 1.5x
-  // top-up rate. The plan's £2.12 headline includes an address-autocomplete
-  // session, which is charged as its own action and is not part of a report.
+  // £2.91 for the report itself at the x2 funnel markup, spent at the 1.5x
+  // top-up rate (£2.08 before the PropertyData due diligence calls were added
+  // to every report). The quoted per-lead headline also includes an
+  // address-autocomplete session, which is charged as its own action and is
+  // not part of a report.
   const c = cost();
-  assert.equal(c.perLeadPence, 208);
+  assert.equal(c.perLeadPence, 291);
 });
 
-test('an enhanced lead costs about twice as much', () => {
+test('an enhanced lead adds the PMI second opinion on top', () => {
   const c = cost({ enhanced: true });
-  assert.equal(c.perLeadPence, 433);
-  assert.ok(c.perLeadPence > cost().perLeadPence * 1.9, 'the PMI second opinion is the bulk of the difference');
+  assert.equal(c.perLeadPence, 516);
+  // 75p raw × 2 markup × 1.5 top-up rate = £2.25 for the second opinion.
+  assert.equal(c.perLeadPence - cost().perLeadPence, 225);
 });
 
 test('the worst case is above the typical, because that is what solvency is checked against', () => {
@@ -40,7 +43,7 @@ test('the worst case is above the typical, because that is what solvency is chec
 test('a month is the per-lead price times the leads', () => {
   const c = cost({ leadsPerMonth: 100 });
   assert.equal(c.monthlyPence, c.perLeadPence * 100);
-  assert.equal(c.monthlyPence, 20_800);
+  assert.equal(c.monthlyPence, 29_100);
 });
 
 test('the markup is applied — this is where a half-applied one shows up', () => {
