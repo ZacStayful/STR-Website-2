@@ -1,5 +1,6 @@
 import { adminClient, hasServiceRole } from './db.ts';
 import { currentMeter, type MeterContext } from './context.ts';
+import { currentBrokerQuestion } from '../broker/tag.ts';
 import { priceFor, round4 } from './pricing.ts';
 import { getUnitCostTable } from './unit-costs.ts';
 import { actionAlreadyCharged, debit, getBalance, InsufficientCreditError } from './ledger.ts';
@@ -93,7 +94,7 @@ async function logCall(c: CallLog): Promise<number | null> {
 export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ctx: MeterContext | undefined = currentMeter()): Promise<T> {
   const table = await getUnitCostTable();
   const known = charge.quantityFrom ? null : (charge.quantity ?? 1);
-  const question = charge.question ?? `${charge.provider}.${charge.unit}`;
+  const question = charge.question ?? currentBrokerQuestion() ?? `${charge.provider}.${charge.unit}`;
   const key = charge.key ?? null;
 
   if (!table.has(`${charge.provider}:${charge.unit}`) && !warnedMissing.has(`${charge.provider}:${charge.unit}`)) {

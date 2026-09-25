@@ -4,7 +4,7 @@ import { C, PAGE, SIZE } from "../design/tokens";
 import { T } from "../design/typography";
 import { CoverMasthead, type ReportChrome } from "../design/Chrome";
 import { Card, Chip, Display, Eyebrow, Columns, StatCard } from "../design/Primitives";
-import { RangeAxis, Meter, SegmentedBar } from "../design/charts/Charts";
+import { EarningsBand, RangeAxis, Meter, SegmentedBar } from "../design/charts/Charts";
 import { paybackMonths } from "../design/charts/geometry";
 import { formatGbp, formatGbpSigned, formatPercent } from "../format";
 import { pad2, type Nav, type Section } from "../sections";
@@ -144,6 +144,33 @@ export function Page1Verdict({
           />
         )}
       </Columns>
+
+      {/* ── What similar listings earn ── */}
+      {data.earnings || data.localTrend ? (
+        <Card style={{ marginTop: 14 }}>
+          {data.earnings ? (
+            <>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text style={T.label}>WHAT SIMILAR LISTINGS EARN · GROSS A YEAR</Text>
+                <Text style={T.metaMuted}>
+                  {data.earnings.position
+                    ? `OUR ESTIMATE ${formatGbp(data.earnings.estimate)} · ${data.earnings.position.phrase.toUpperCase()}`
+                    : `OUR ESTIMATE ${formatGbp(data.earnings.estimate)}`}
+                </Text>
+              </View>
+              <View style={{ marginTop: 8 }}>
+                <EarningsBand positions={data.earnings.positions} width={PAGE.CONTENT - 20} />
+              </View>
+              <Text style={[T.metaMuted, { marginTop: 4 }]}>
+                {`BOTTOM QUARTER ${formatGbp(data.earnings.range.p25)} · MIDDLE ${formatGbp(data.earnings.range.p50)} · TOP QUARTER ${formatGbp(data.earnings.range.p75)}${data.earnings.range.p90 !== null ? ` · TOP 10% ${formatGbp(data.earnings.range.p90)}` : ""} · ${data.earnings.range.n} COMPARABLES`}
+              </Text>
+            </>
+          ) : null}
+          {data.localTrend ? (
+            <Text style={[T.body, { marginTop: data.earnings ? 6 : 0 }]}>{`${data.localTrend}.`}</Text>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* ── Property value ── */}
       {overview.valueConservative !== null && overview.valueUpper !== null ? (

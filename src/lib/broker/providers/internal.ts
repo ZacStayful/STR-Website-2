@@ -3,6 +3,7 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../../supabase/admin';
 import type { TrackedListing } from '../../listing/competitors';
 import type { ShortLetComparable } from '../../types';
+import { LEAD_DB_SOURCE, usableForPostcodeFigure } from '../../market/quality';
 
 /**
  * Rung-1 sources: answers we already hold in our own database. Free.
@@ -124,7 +125,29 @@ export interface PostcodeFigures {
   latestAt: string | null;
 }
 
-/** Average of recent analyser reports for the same postcode + bedrooms. */
+interface PostcodeReportRow {
+  gross_revenue: unknown;
+  adr: unknown;
+  occupancy: unknown;
+  created_at: string;
+  postcode: string | null;
+  source: string | null;
+  comparables_found: unknown;
+  quality_level: unknown;
+}
+
+/**
+ * Average of recent analyser reports for the same postcode + bedrooms.
+ *
+ * A full postcode is a handful of addresses and this figure can rest on one
+ * report, so two kinds of row are never used here (quality.ts):
+ *   • 'lead_db' — a property a lead-database customer analysed from their own
+ *     lead list; it counts in the area, district and bedroom figures, never
+ *     against a single postcode;
+ *   • a synthetic or `low` estimate, which is not market data anywhere.
+ * `samples` is the number of reports actually averaged, so the quick view's
+ * "Average of N recent Stayful reports" line stays true.
+ */
 export async function storedPostcodeFigures(postcode: string, bedrooms: number, maxAgeDays = 90): Promise<PostcodeFigures | null> {
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
@@ -132,15 +155,27 @@ export async function storedPostcodeFigures(postcode: string, bedrooms: number, 
   const pc = postcode.replace(/\s+/g, '').toUpperCase();
   const { data, error } = await admin
     .from('analyser_reports')
-    .select('gross_revenue, adr, occupancy, created_at, postcode')
+    .select(
+      'gross_revenue, adr, occupancy, created_at, postcode, source, ' +
+        'comparables_found:raw_response->dataQuality->comparablesFound, quality_level:raw_response->dataQuality->>level',
+    )
     .eq('bedrooms', bedrooms)
+    .neq('source', LEAD_DB_SOURCE)
     .gte('created_at', since)
     .or(`postcode.eq.${pc},postcode.eq.${pc.slice(0, -3)} ${pc.slice(-3)}`)
     .order('created_at', { ascending: false })
     .limit(20);
-  if (error || !data || data.length === 0) return null;
-  const nums = (k: 'gross_revenue' | 'adr' | 'occupancy') => data.map((r) => Number(r[k])).filter((v) => Number.isFinite(v) && v > 0);
+  if (error || !data) return null;
+  const rows = (data as unknown as PostcodeReportRow[]).filter((r) =>
+    usableForPostcodeFigure({
+      source: r.source,
+      comparables_found: typeof r.comparables_found === 'number' ? r.comparables_found : null,
+      quality_level: typeof r.quality_level === 'string' ? r.quality_level.toLowerCase() : null,
+    }),
+  );
+  if (rows.length === 0) return null;
+  const nums = (k: 'gross_revenue' | 'adr' | 'occupancy') => rows.map((r) => Number(r[k])).filter((v) => Number.isFinite(v) && v > 0);
   const avg = (xs: number[]) => (xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10) / 10 : null);
   const occ = nums('occupancy').map((v) => (v <= 1 ? v * 100 : v));
-  return { samples: data.length, grossRevenue: avg(nums('gross_revenue')), adr: avg(nums('adr')), occupancy: avg(occ), latestAt: data[0].created_at as string };
+  return { samples: rows.length, grossRevenue: avg(nums('gross_revenue')), adr: avg(nums('adr')), occupancy: avg(occ), latestAt: rows[0].created_at };
 }

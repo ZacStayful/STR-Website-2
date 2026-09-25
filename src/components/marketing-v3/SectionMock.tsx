@@ -67,7 +67,7 @@ function MockOverview() {
         muted
         playsInline
         preload="metadata"
-        aria-label="Stayful decision overview: top market potential vs filtered estimate, net revenue after fees, ADR and occupancy"
+        aria-label="Stayful decision overview: expected revenue vs filtered estimate, net revenue after fees, ADR and occupancy"
       />
     </div>
   );

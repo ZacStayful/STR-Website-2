@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin'
 import { ensureEnquiry } from '@/lib/apis/monday'
 import { isTeamBound } from '@/lib/team'
+import { outboundInternalSecret } from '@/lib/internal-auth'
 
 // Runs once a member has a session, from whichever route signed them in:
 // /auth/callback (OAuth and PKCE email links) and /auth/confirm (token-hash
@@ -43,9 +44,10 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
           if (!stamped || stamped.length === 0) return // already stamped by a concurrent request
           const hook = process.env.LEAD_ACTIVATION_WEBHOOK_URL
           if (!hook) return
+          const secret = outboundInternalSecret()
           await fetch(hook, {
             method: 'POST',
-            headers: { 'content-type': 'application/json', ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}) },
+            headers: { 'content-type': 'application/json', ...(secret ? { 'x-internal-secret': secret } : {}) },
             body: JSON.stringify({ event: 'lead_activated', userId, email, source: source.source ?? null, leadId: source.leadId ?? null, activatedAt }),
           })
         } catch (err) {

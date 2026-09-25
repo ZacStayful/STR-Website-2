@@ -41,13 +41,13 @@ function buildFacts(r: AnalysisResult): string {
   lines.push(`SHORT-LET: gross ${gbp(f.shortLetGrossAnnual)}/yr, net ${gbp(f.shortLetNetAnnual)}/yr.`);
   lines.push(`LONG-LET: gross ${gbp(f.longLetGrossAnnual)}/yr, net ${gbp(f.longLetNetAnnual)}/yr.`);
   lines.push(`DIFFERENCE (short minus long, net): ${gbp(f.annualDifference)}/yr (${gbp(f.monthlyDifference)}/mo).`);
-  lines.push(`BREAK-EVEN OCCUPANCY: ${Math.round(f.breakEvenOccupancy)}% (vs the analysis's projected occupancy).`);
+  lines.push(`BREAK-EVEN OCCUPANCY: ${Math.round(f.breakEvenOccupancy * 100)}% (vs the analysis's projected occupancy).`); // stored 0–1
 
   const v = r.verdict;
   lines.push(`VERDICT FIT: ${v.fit}. RISK LEVEL: ${v.riskLevel}. OWNER INVOLVEMENT: ${v.ownerInvolvement}.`);
   if (v.recommendation) lines.push(`MODEL RECOMMENDATION TEXT: ${v.recommendation}`);
 
-  lines.push(`RISK SCORE: ${r.risk.overallScore}/100. Seasonality: ${r.risk.seasonality}, income volatility: ${r.risk.incomeVolatility}, location demand: ${r.risk.locationDemand}, competition: ${r.risk.competition}, setup cost: ${r.risk.setupCost}.`);
+  lines.push(`RISK SCORE: ${r.risk.overallScore}/10. Seasonality: ${r.risk.seasonality}, income volatility: ${r.risk.incomeVolatility}, location demand: ${r.risk.locationDemand}, competition: ${r.risk.competition}, setup cost: ${r.risk.setupCost}.`);
 
   const d = r.demandDrivers;
   if (d) {

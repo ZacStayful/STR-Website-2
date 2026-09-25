@@ -47,11 +47,11 @@ export const SECTIONS: AnalyserSection[] = [
     id: "overview",
     number: "03",
     title: "Decision overview",
-    subtitle: "Top potential vs. your filtered estimate",
+    subtitle: "Expected revenue vs. your filtered estimate",
     description:
-      "Two figures, side by side: what a top performer in this postcode actually earns, and the average of the comps you've kept. Net revenue is shown after platform fees, cleaning and management — the number that lands in your account.",
+      "Two figures, side by side: what a well-run listing like yours can expect to earn here, with the range similar listings earn, and the average of the comps you've kept. Net revenue is shown after platform fees, cleaning and management — the number that lands in your account.",
     bullets: [
-      "Top market vs filtered estimate",
+      "Expected revenue vs filtered estimate",
       "Net of all fees",
       "ADR, occupancy, value range",
     ],
