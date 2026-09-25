@@ -19,6 +19,58 @@
 import type { LongLetData, PropertyDataValuation } from '../types';
 import { meter } from '../credit/meter.ts';
 import { NATIONAL_MONTHLY_RENT } from '../market/rent-ladder.ts';
+import { isPlanLimitError, nextUtcDay } from './propertydata-guard.ts';
+
+// ─── Plan-limit breaker ─────────────────────────────────────────
+// Once PropertyData says the monthly plan is spent (403, code X04), every
+// further call fails and only burns time, so all calls stop until the next
+// UTC day. The pause is shared across instances through broker_cache and
+// mirrored in memory so the hot path needs no database read.
+let pausedUntilMs = 0;
+let breakerCheckedAt = 0;
+const BREAKER_RECHECK_MS = 5 * 60 * 1000;
+
+/** True while PropertyData's plan is known to be spent. Never throws. */
+export async function propertyDataPaused(): Promise<boolean> {
+  const now = Date.now();
+  if (pausedUntilMs > now) return true;
+  if (now - breakerCheckedAt < BREAKER_RECHECK_MS) return false;
+  breakerCheckedAt = now;
+  try {
+    const { brokerStore } = await import('../broker/store.ts');
+    const hit = await brokerStore().get<{ pausedUntil: string }>('propertyDataBreaker', 'plan');
+    const until = hit?.value?.pausedUntil ? new Date(hit.value.pausedUntil).getTime() : 0;
+    if (until > now) {
+      pausedUntilMs = until;
+      return true;
+    }
+  } catch {
+    // No store (local dev, tests): the in-memory pause still applies.
+  }
+  return false;
+}
+
+/** Called with any non-OK reply; trips the breaker when it is the plan-limit error. */
+async function notePropertyDataFailure(status: number, body: string): Promise<void> {
+  if (!isPlanLimitError(status, body)) return;
+  const now = new Date();
+  const until = nextUtcDay(now);
+  if (pausedUntilMs >= until.getTime()) return;
+  pausedUntilMs = until.getTime();
+  console.warn(`[PropertyData] monthly plan limit reached — pausing all PropertyData calls until ${until.toISOString()}`);
+  try {
+    const { brokerStore } = await import('../broker/store.ts');
+    await brokerStore().set('propertyDataBreaker', 'plan', {
+      value: { pausedUntil: until.toISOString() },
+      provider: 'propertydata',
+      level: 1,
+      fetchedAt: now.toISOString(),
+      expiresAt: until.toISOString(),
+    });
+  } catch {
+    // In-memory pause still holds for this instance.
+  }
+}
 
 // ─── Bedroom-scaled defaults ────────────────────────────────────
 // More realistic than a single static default for all property sizes.
@@ -58,6 +110,7 @@ export async function getFloorArea(
     console.log('PROPERTYDATA_API_KEY not set, using bedroom fallback for floor area');
     return fallbackResult;
   }
+  if (await propertyDataPaused()) return fallbackResult;
 
   try {
     const url = new URL('https://api.propertydata.co.uk/floor-areas');
@@ -67,6 +120,7 @@ export async function getFloorArea(
     const response = await meter({ provider: 'propertydata', unit: 'floor_areas', key: postcode, failed: (r) => !r.ok }, () => fetch(url.toString()));
     if (!response.ok) {
       console.log(`PropertyData /floor-areas: HTTP ${response.status}`);
+      await notePropertyDataFailure(response.status, await response.text().catch(() => ''));
       return fallbackResult;
     }
 
@@ -151,6 +205,17 @@ export async function getLongLetData(
   if (!apiKey) {
     console.log('[PropertyData] PROPERTYDATA_API_KEY not set — using national median fallback for long-let');
     const fallbackRent = UK_FALLBACK_MONTHLY_RENT[clampedBedrooms] ?? 1400;
+    return {
+      monthlyRent: fallbackRent,
+      estimateHigh: Math.round(fallbackRent * 1.15),
+      estimateLow: Math.round(fallbackRent * 0.85),
+      comparables: [],
+    };
+  }
+
+  if (await propertyDataPaused()) {
+    const fallbackRent = UK_FALLBACK_MONTHLY_RENT[clampedBedrooms] ?? 1400;
+    console.log(`[PropertyData] plan limit reached — skipping calls, using national median fallback £${fallbackRent}/mo`);
     return {
       monthlyRent: fallbackRent,
       estimateHigh: Math.round(fallbackRent * 1.15),
@@ -257,6 +322,7 @@ export async function getLongLetOnce(
 ): Promise<{ monthlyRent: number } | null> {
   const apiKey = process.env.PROPERTYDATA_API_KEY;
   if (!apiKey) return null;
+  if (await propertyDataPaused()) return null;
   const clampedBedrooms = Math.max(1, Math.min(bedrooms, 5));
   const result = await tryPropertyDataCall(
     apiKey,
@@ -284,6 +350,9 @@ async function tryPropertyDataCall(
   params: Record<string, string>,
   timeoutMs?: number,
 ): Promise<LongLetData | null> {
+  // The retry ladders call this several times in a row; stop at once if an
+  // earlier attempt found the plan spent.
+  if (pausedUntilMs > Date.now()) return null;
   try {
     // PropertyData requires the postcode WITH spaces — do NOT strip them
     const url = new URL('https://api.propertydata.co.uk/valuation-rent');
@@ -296,6 +365,7 @@ async function tryPropertyDataCall(
 
     if (!response.ok) {
       console.log(`PropertyData: HTTP ${response.status} for params:`, params);
+      await notePropertyDataFailure(response.status, await response.text().catch(() => ''));
       return null;
     }
 
@@ -351,6 +421,10 @@ export async function fetchPropertyValuation(
     console.log('[PropertyData] PROPERTYDATA_API_KEY not set — skipping sale valuation');
     return null;
   }
+  if (await propertyDataPaused()) {
+    console.log('[PropertyData] plan limit reached — skipping sale valuation');
+    return null;
+  }
 
   // Normalise property type to PropertyData expected values
   const PT_MAP: Record<string, string> = {
@@ -370,6 +444,7 @@ export async function fetchPropertyValuation(
   const clampedBedrooms = Math.max(1, Math.min(bedrooms, 5));
 
   async function attemptSale(params: Record<string, string>): Promise<PropertyDataValuation | null> {
+    if (pausedUntilMs > Date.now()) return null;
     try {
       const url = new URL('https://api.propertydata.co.uk/valuation-sale');
       url.searchParams.set('key', apiKey!);
@@ -382,6 +457,7 @@ export async function fetchPropertyValuation(
       if (!response.ok) {
         const body = await response.text().catch(() => '');
         console.log(`[PropertyData] /valuation-sale HTTP ${response.status}: ${body.slice(0, 300)}`);
+        await notePropertyDataFailure(response.status, body);
         return null;
       }
 
