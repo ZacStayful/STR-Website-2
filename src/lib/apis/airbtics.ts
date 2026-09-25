@@ -1901,6 +1901,38 @@ function extractComparables(
 
 const BOUNDS_TIMEOUT_MS = 15_000;
 
+interface AirbticsReply {
+  ok: boolean;
+  status: number;
+  /** Parsed JSON body, or null when it was not JSON. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
+  /** Raw body text, for error logging. */
+  text: string;
+}
+
+/**
+ * One metered Airbtics call. The body is read inside the metered call so an
+ * `insufficient_credits` reply — which Airbtics sends with HTTP 200 — counts
+ * as failed and is never billed to the member.
+ */
+function airbticsCall(unit: string, key: string, url: string, init: RequestInit): Promise<AirbticsReply> {
+  return meter(
+    { provider: 'airbtics', unit, key, failed: (r) => !r.ok || r.data?.message === 'insufficient_credits' },
+    async () => {
+      const res = await fetch(url, init);
+      const text = await res.text().catch(() => '');
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      return { ok: res.ok, status: res.status, data, text };
+    },
+  );
+}
+
 /**
  * Fetches nearby listings within a bounding box using the bounds endpoint.
  * Cost: $0.05/call. Gives up after BOUNDS_TIMEOUT_MS (the callers all treat
@@ -1933,21 +1965,17 @@ async function fetchNearbyListings(
   console.log(`[DEBUG] listings/search/bounds radius: ${radiusKm}km (${radiusMetres}m)`);
   console.log('[DEBUG] listings/search/bounds body:', JSON.stringify(body));
 
-  const response = await meter(
-    { provider: 'airbtics', unit: 'bounds', key: `${lat.toFixed(3)},${lng.toFixed(3)}|${radiusKm}`, failed: (r) => !r.ok },
-    () =>
-      fetch(`${BASE_URL}/listings/search/bounds`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-        },
-        body: JSON.stringify(body),
-        cache: 'no-store',
-        // A hung bounds call must not take the whole request down with it.
-        signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
-      }),
-  );
+  const response = await airbticsCall('bounds', `${lat.toFixed(3)},${lng.toFixed(3)}|${radiusKm}`, `${BASE_URL}/listings/search/bounds`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+    // A hung bounds call must not take the whole request down with it.
+    signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
+  });
 
   console.log(`[DEBUG] listings/search/bounds HTTP status: ${response.status}`);
 
@@ -1956,14 +1984,14 @@ async function fetchNearbyListings(
     // reason (Forbidden, Limit Exceeded, Missing Authentication Token, etc.)
     // instead of just the HTTP status. Helps diagnose per-endpoint auth
     // when the same key works from other origins (e.g. local curl).
-    const errBody = await response.text().catch(() => '<unreadable body>');
     console.error(
-      `[DEBUG] Airbtics bounds search failed HTTP ${response.status} body: ${errBody.slice(0, 500)}`,
+      `[DEBUG] Airbtics bounds search failed HTTP ${response.status} body: ${response.text.slice(0, 500)}`,
     );
     return null;
   }
 
-  const data = await response.json();
+  const data = response.data;
+  if (!data) return null;
   console.log('[DEBUG] Airbtics raw response:', JSON.stringify(data).slice(0, 2000));
 
   if (data.message === 'insufficient_credits') {
@@ -2026,17 +2054,15 @@ async function fetchMarketSummary(
 
   console.log(`[DEBUG] markets/summary URL: ${url.toString()}`);
 
-  const response = await meter({ provider: 'airbtics', unit: 'market_summary', key: `${marketId}|${bedrooms}`, failed: (r) => !r.ok }, () =>
-    fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      cache: 'no-store',
-    }),
-  );
+  const response = await airbticsCall('market_summary', `${marketId}|${bedrooms}`, url.toString(), {
+    headers: { 'x-api-key': apiKey },
+    cache: 'no-store',
+  });
 
   console.log(`[DEBUG] markets/summary HTTP status: ${response.status}`);
-  if (!response.ok) return null;
+  if (!response.ok || !response.data) return null;
 
-  const data = await response.json();
+  const data = response.data;
   console.log('[DEBUG] Market summary raw:', JSON.stringify(data).slice(0, 1000));
 
   if (data.message === 'insufficient_credits' || typeof data.message !== 'object') {
@@ -2114,19 +2140,17 @@ async function findMarketId(postcode: string, apiKey: string): Promise<number | 
   url.searchParams.set('query', searchQuery);
   url.searchParams.set('country_code', 'GB');
 
-  const response = await meter({ provider: 'airbtics', unit: 'market_search', key: cacheKey, failed: (r) => !r.ok }, () =>
-    fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      cache: 'no-store',
-    }),
-  );
+  const response = await airbticsCall('market_search', cacheKey, url.toString(), {
+    headers: { 'x-api-key': apiKey },
+    cache: 'no-store',
+  });
 
-  if (!response.ok) {
+  if (!response.ok || !response.data) {
     marketIdCache.set(cacheKey, { id: null, expiresAt: Date.now() + CACHE_TTL_MS });
     return null;
   }
 
-  const data = await response.json();
+  const data = response.data;
   const markets = data.message;
 
   if (!Array.isArray(markets) || markets.length === 0 || data.message === 'insufficient_credits') {
@@ -2161,24 +2185,21 @@ async function fetchMetric(
 
   console.log(`[DEBUG] markets/metrics/${metric} URL: ${url.toString()}`);
 
-  const response = await meter({ provider: 'airbtics', unit: `metric_${metric}`, key: `${marketId}|${bedrooms}`, failed: (r) => !r.ok }, () =>
-    fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      cache: 'no-store',
-    }),
-  );
+  const response = await airbticsCall(`metric_${metric}`, `${marketId}|${bedrooms}`, url.toString(), {
+    headers: { 'x-api-key': apiKey },
+    cache: 'no-store',
+  });
 
   console.log(`[DEBUG] markets/metrics/${metric} HTTP status: ${response.status}`);
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '<unreadable body>');
+  if (!response.ok || !response.data) {
     console.error(
-      `[DEBUG] markets/metrics/${metric} failed HTTP ${response.status} body: ${errBody.slice(0, 500)}`,
+      `[DEBUG] markets/metrics/${metric} failed HTTP ${response.status} body: ${response.text.slice(0, 500)}`,
     );
     return [];
   }
 
-  const data = await response.json();
+  const data = response.data;
   console.log(`[DEBUG] Market monthly (${metric}) raw:`, JSON.stringify(data).slice(0, 1000));
 
   if (data.message === 'insufficient_credits') {
