@@ -36,6 +36,36 @@ export interface CompetitorSummary {
   medianReviews: number | null;
   /** Listings with the same bedroom count, when known. */
   sameSize: number;
+  /**
+   * Airbtics' total count for the whole box, of which `count` is the first
+   * page. Display only; absent on summaries built before it was kept.
+   */
+  totalNearby?: number | null;
+}
+
+/**
+ * The nearby-listings answer: the first page plus the box's total count.
+ * The broker cache also still holds the older bare arrays (and serves stale
+ * rows indefinitely), so read it through `nearbyPageOf`.
+ */
+export interface NearbyListingsPage {
+  listings: TrackedListing[];
+  totalCount: number | null;
+  radiusKm?: number;
+}
+export type NearbyListingsValue = TrackedListing[] | NearbyListingsPage;
+
+export function nearbyPageOf(v: unknown): NearbyListingsPage | null {
+  if (Array.isArray(v)) return { listings: v as TrackedListing[], totalCount: null };
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>;
+  if (!Array.isArray(r.listings)) return null;
+  const total = typeof r.totalCount === 'number' && Number.isFinite(r.totalCount) && r.totalCount > 0 ? r.totalCount : null;
+  return {
+    listings: r.listings as TrackedListing[],
+    totalCount: total,
+    ...(typeof r.radiusKm === 'number' ? { radiusKm: r.radiusKm } : {}),
+  };
 }
 
 function median(values: number[]): number | null {
@@ -54,7 +84,7 @@ function quantile(values: number[], q: number): number | null {
   return s[lo] + (s[hi] - s[lo]) * (pos - lo);
 }
 
-export function summariseCompetitors(listings: TrackedListing[], bedrooms?: number): CompetitorSummary {
+export function summariseCompetitors(listings: TrackedListing[], bedrooms?: number, totalNearby?: number | null): CompetitorSummary {
   const earning = listings.filter((l) => l.annualRevenue > 0);
   const rev = earning.map((l) => l.annualRevenue);
   return {
@@ -66,6 +96,7 @@ export function summariseCompetitors(listings: TrackedListing[], bedrooms?: numb
     medianOccupancy: median(earning.map((l) => l.occupancy).filter((v) => v > 0)),
     medianReviews: round(median(listings.map((l) => l.reviewCount))),
     sameSize: bedrooms === undefined ? 0 : listings.filter((l) => l.bedrooms === bedrooms).length,
+    ...(typeof totalNearby === 'number' && totalNearby > listings.length ? { totalNearby } : {}),
   };
 }
 

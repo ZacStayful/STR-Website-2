@@ -1,5 +1,6 @@
 import type { BrokerContext, BrokerLedger, BrokerStore, CachedAnswer, ProviderName, Question, ResolveResult } from './types.ts';
 import { MAX_LEVEL, budgetFor, providerEnabled } from './config.ts';
+import { withBrokerQuestion } from './tag.ts';
 
 /**
  * Walks a question's ladder. Order of business for each call:
@@ -130,7 +131,7 @@ async function run<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, 
     let value: T | null = null;
     let ok = true;
     try {
-      value = await rung.run(params);
+      value = await withBrokerQuestion(question.name, () => rung.run(params));
     } catch (err) {
       ok = false;
       console.error(`[broker] ${question.name} rung ${rung.provider} threw:`, err);

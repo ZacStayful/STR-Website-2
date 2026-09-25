@@ -2,11 +2,14 @@ import type { AnalysisResult, ShortLetComparable } from "@/lib/types";
 import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "../scores.ts";
 import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./amenities.ts";
 import { splitAddress, formatIssued } from "./format.ts";
-import { safe } from "./design/charts/geometry.ts";
 import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
 import { diligenceNotes } from "../analysis/due-diligence.ts";
 import { futureValueSentence } from "../listing/growth.ts";
 import type { PdfBrand } from "./theme";
+import { bandPositions, beatTargets, earningsRangeOf, estimatePosition, MIN_TOP_BADGE_LISTINGS, topQuarterThreshold, type AnnualEarningsRange, type EstimatePosition } from "../comps/earnings.ts";
+import { readLocalTrend, trendShort } from "../comps/local-trend.ts";
+import { comparablesSourceLine, readListingsNearby } from "../comps/nearby.ts";
+import { readMonthlyOccupancy, readStayProfile, reportAvgStayNights, turnoversByMonth } from "../comps/stays.ts";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -240,6 +243,23 @@ export interface PdfReportData {
     /** Measured from the comparables' booking counts. Null when unavailable. */
     avgStayNights: number | null;
   };
+  /** "12 comparables from about 115 Airbnb listings within about 200 m". */
+  compsLead: string;
+  /** What similar listings earn, and where our estimate sits. Null below six comps. */
+  earnings: {
+    range: AnnualEarningsRange;
+    estimate: number;
+    position: EstimatePosition | null;
+    positions: { p25: number; p50: number; p75: number; p90: number | null; estimate: number };
+  } | null;
+  /** Latest 12 months vs the 12 before, PDF-length. Null on older reports. */
+  localTrend: string | null;
+  /** Nights per stay and changeovers, Jan..Dec. Null on older reports. */
+  stays: {
+    months: { month: string; nights: number | null; changeovers: number | null }[];
+    annualNights: number | null;
+    annualChangeovers: number | null;
+  } | null;
   setup?: PdfSetupSnapshot;
 }
 
@@ -311,16 +331,10 @@ function mean(values: number[]): number {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0;
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))));
-  return sorted[idx];
-}
-
+/** The comp revenue at which the top 25% start (shared with the web page). */
 function topRevenueThreshold(comps: ShortLetComparable[]): number {
-  if (comps.length === 0) return Infinity;
-  const sorted = [...comps].map((c) => c.annualRevenue).sort((a, b) => a - b);
-  return percentile(sorted, 0.75);
+  if (comps.length < MIN_TOP_BADGE_LISTINGS) return Infinity;
+  return topQuarterThreshold(comps.map((c) => c.annualRevenue)) ?? Infinity;
 }
 
 function formatDistance(km: number | undefined): string {
@@ -366,9 +380,13 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
   );
   const peakThreshold = [...monthlyNet].sort((a, b) => b - a)[2] ?? 0; // top-3 cut-off
 
+  // Occupancy per month: the forecast's own (stored since it was kept), else
+  // the base scenario's (a 0–100 percentage), else the annual rate.
+  const storedOcc = readMonthlyOccupancy(shortLet.monthlyOccupancy);
   const monthly: PdfMonth[] = shortLet.monthlyRevenue.map((_, i) => {
     const net = monthlyNet[i];
-    const occ = scenarioBase?.[i]?.occupancy ?? shortLet.occupancyRate;
+    const scenarioOcc = scenarioBase?.[i]?.occupancy;
+    const occ = storedOcc?.[i] ?? (typeof scenarioOcc === "number" ? scenarioOcc / 100 : shortLet.occupancyRate);
     return {
       month: MONTH_NAMES[i],
       net,
@@ -408,14 +426,29 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
   };
 
   // ── Match vs Beat market targets ──
-  // Match = benchmark mean. Beat = 75th percentile of each signal.
-  const sortedNightly = [...nightlyValues].sort((a, b) => a - b);
-  const sortedOcc = [...occValues].sort((a, b) => a - b);
-  const sortedAnnual = [...annualValues].sort((a, b) => a - b);
+  // Match = benchmark mean. Beat = where the top 25% start (interpolated 75th
+  // percentile of each signal) — the same definition as the web page.
+  const beat = beatTargets(shortLet.comparables);
+  const beatNightly = beat?.nightly || compsBenchmark.avgNightly;
+  const beatOccupancy = beat?.occupancy || compsBenchmark.avgOccupancy;
+  const beatRevenue = beat?.revenue || compsBenchmark.avgAnnual;
 
-  const beatNightly = Math.round(percentile(sortedNightly, 0.75)) || compsBenchmark.avgNightly;
-  const beatOccupancy = percentile(sortedOcc, 0.75) || compsBenchmark.avgOccupancy;
-  const beatRevenue = Math.round(percentile(sortedAnnual, 0.75)) || compsBenchmark.avgAnnual;
+  // ── What similar listings earn (stored range, or derived from the comps) ──
+  const range = earningsRangeOf(shortLet).annual;
+  const earnings = range
+    ? {
+        range,
+        estimate: grossAnnual,
+        position: estimatePosition(annualValues, grossAnnual),
+        positions: bandPositions(range, grossAnnual),
+      }
+    : null;
+  const trend = readLocalTrend(shortLet.localTrend);
+  const compsLead = comparablesSourceLine({
+    comparables: shortLet.comparables.length,
+    radiusKm: dataQuality?.searchRadiusKm ?? 0,
+    nearby: readListingsNearby(shortLet.listingsNearby),
+  });
 
   // ── Demand drivers ──
   //
@@ -530,15 +563,19 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
   // Average stay length from the comparables' real booking counts: booked
   // nights divided by bookings. Without it there is no honest way to turn
   // occupancy into a number of guests.
-  const stayLengths = shortLet.comparables
-    .map((c) => {
-      const bookings = safe(c.bookings);
-      const nights = safe(c.daysAvailable) * safe(c.occupancyRate);
-      return bookings > 0 && nights > 0 ? nights / bookings : null;
-    })
-    .filter((n): n is number => n !== null && n >= 1 && n <= 30);
-  const avgStayNights = stayLengths.length > 0
-    ? stayLengths.reduce((a, b) => a + b, 0) / stayLengths.length
+  // Newer reports carry a month-by-month profile pooled across the comps'
+  // histories; older ones fall back to each comp's annual figures.
+  const avgStayNights = reportAvgStayNights(shortLet);
+  const stayProfile = readStayProfile(shortLet.stayProfile);
+  const turnovers = stayProfile
+    ? turnoversByMonth({ monthlyOccupancy: storedOcc, occupancyRate: shortLet.occupancyRate, profile: stayProfile })
+    : null;
+  const stays = stayProfile && turnovers
+    ? {
+        months: turnovers.months.map((m, i) => ({ month: MONTH_NAMES[i], nights: stayProfile.months[i], changeovers: m.turnovers })),
+        annualNights: stayProfile.annual,
+        annualChangeovers: turnovers.annual,
+      }
     : null;
 
   // Repeat guests over three years. Every input is measured except the repeat
@@ -632,6 +669,10 @@ export function deriveReportData(result: AnalysisResult, expenses?: PdfExpenses)
     },
     amenities,
     growth,
+    compsLead,
+    earnings,
+    localTrend: trend ? trendShort(trend) : null,
+    stays,
   };
 }
 

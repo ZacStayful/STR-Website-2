@@ -1,4 +1,5 @@
-import type { AnalysisResult, ShortLetComparable, RiskLevel } from "../../types.ts";
+import type { AnalysisResult, ShortLetComparable, ShortLetData, RiskLevel } from "../../types.ts";
+import { annualEarningsRange } from "../../comps/earnings.ts";
 import { PD_FIXTURES } from "../../apis/__fixtures__/propertydata.ts";
 import { parseCouncilTax, parseDemand, parseEnergyEfficiency, parseListedBuildings } from "../../apis/propertydata-parse.ts";
 import { assembleDueDiligence } from "../../analysis/due-diligence.ts";
@@ -90,6 +91,11 @@ export interface SampleOverrides {
    * documented example responses.
    */
   withDiligence?: boolean;
+  /**
+   * A report saved before the comparable-history fields existed: no stored
+   * earnings range, local trend, stay profile, monthly occupancy or nearby count.
+   */
+  legacy?: boolean;
 }
 
 /** The register data for the sample flat, from PropertyData's documented examples. */
@@ -138,6 +144,30 @@ export function sampleAnalysis(o: SampleOverrides = {}): AnalysisResult {
   ];
 
   const grossAnnual = monthlyRevenue.reduce((a, b) => a + b, 0);
+
+  // Fields from the comparables' histories (newer reports only).
+  const annualRange = annualEarningsRange(comparables.map((c) => c.annualRevenue));
+  const band = monthlyRevenue.map((m) => [Math.round(m * 0.8), Math.round(m * 1.02), Math.round(m * 1.3)]);
+  const history: Partial<ShortLetData> = o.legacy || comparables.length === 0 ? {} : {
+    listingsNearby: { count: 115, radiusKm: 0.2, area: "box" },
+    earningsRange: {
+      basis: "comparables",
+      annual: annualRange,
+      monthly: { to: "2026-08", p25: band.map((b) => b[0]), p50: band.map((b) => b[1]), p75: band.map((b) => b[2]), n: new Array(12).fill(12) },
+    },
+    localTrend: {
+      to: "2026-08", listings: 11, revenueChange: 0.08, adrChange: 0.05, occupancyPointsChange: 0.02,
+      direction: "up", rising: 8, recentRevenue: 310000, priorRevenue: 287000,
+    },
+    monthlyOccupancy: [0.45, 0.48, 0.5, 0.52, 0.56, 0.62, 0.7, 0.72, 0.6, 0.55, 0.5, 0.58],
+    ...(o.noBookings ? {} : {
+      stayProfile: {
+        from: "2023-09", to: "2026-08",
+        months: [3.4, 3.1, 2.9, 2.7, 2.6, 2.5, 2.4, 2.3, 2.6, 2.7, 3.0, 3.3],
+        annual: 2.7, listings: 11, basis: "established" as const,
+      },
+    }),
+  };
   const netAnnual = Math.round(grossAnnual * 0.52);
   const ltlGross = 9516;
   const ltlNet = Math.round(ltlGross * 0.9);
@@ -162,6 +192,7 @@ export function sampleAnalysis(o: SampleOverrides = {}): AnalysisResult {
       averageDailyRate: 164,
       activeListings: 12,
       comparables,
+      ...history,
     },
     longLet: {
       monthlyRent: 793,

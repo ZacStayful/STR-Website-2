@@ -97,6 +97,11 @@ import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
 import { DueDiligencePanel } from "./_components/DueDiligencePanel";
 import { SecondOpinionCard } from "./_components/SecondOpinionCard";
+import { EarningsRangeStrip } from "./_components/EarningsRangeStrip";
+import { beatTargets, earningsRangeOf, MIN_TOP_BADGE_LISTINGS, topQuarterThreshold } from "@/lib/comps/earnings";
+import { readLocalTrend } from "@/lib/comps/local-trend";
+import { comparablesSourceLine, readListingsNearby } from "@/lib/comps/nearby";
+import { readMonthlyOccupancy, readStayProfile, staySentence, turnoversByMonth } from "@/lib/comps/stays";
 import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "./_components/listing-client-types";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
@@ -112,7 +117,7 @@ import {
   ReferenceLine,
   AreaChart,
   Area,
-  LineChart as RechartsLineChart,
+  ComposedChart,
   Line,
 } from "recharts";
 
@@ -451,7 +456,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   // User-adjustable expense formula. null means "use default".
   //   Platform default: 15 %
   //   Management default: 15 %
-  //   Cleaning default: 18 % of gross, per month → seeded from Top Market gross
+  //   Cleaning default: 18 % of gross, per month → seeded from the Expected revenue gross
   // These inputs feed BOTH hero net-revenue columns and downstream sections
   // (Revenue Breakdown, Profit Calculator). Reset on every fresh analysis.
   const [expensesExpanded, setExpensesExpanded] = useState(initialExpensesExpanded ?? false);
@@ -502,9 +507,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
 
   // User-curated comp exclusions — keyed by comp index in r.shortLet.comparables.
   // Excluded comps are dimmed in the grid and removed from all aggregate stats
-  // (avg ADR/Occ/Revenue, Top 5, Decision Engine, Filtered Estimate). The V4
-  // PMI "Top Market Potential" headline is unaffected — it shows what a top-
-  // performer in the full market pool can earn.
+  // (avg ADR/Occ/Revenue, Top badges, Decision Engine, Filtered Estimate). The
+  // V4 "Expected revenue" headline is unaffected — it is built from the full
+  // comparable pool.
   const [excludedComps, setExcludedComps] = useState<Set<number>>(new Set());
 
   // FAQ accordion state — only one item open at a time; null = all collapsed.
@@ -905,18 +910,31 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     const v = r.verdict;
     const risk = r.risk;
 
-    // Monthly chart data
+    // From the comparables' own histories (absent on older reports).
+    const earningsRange = earningsRangeOf(r.shortLet);
+    const localTrend = readLocalTrend(r.shortLet.localTrend);
+    const listingsNearby = readListingsNearby(r.shortLet.listingsNearby);
+    const storedMonthlyOcc = readMonthlyOccupancy(r.shortLet.monthlyOccupancy);
+    const stayProfile = readStayProfile(r.shortLet.stayProfile);
+    const stayLine = stayProfile
+      ? staySentence(stayProfile, turnoversByMonth({ monthlyOccupancy: storedMonthlyOcc, occupancyRate: r.shortLet.occupancyRate, profile: stayProfile }))
+      : null;
+
+    // Monthly chart data. `band` is the middle half of similar listings that
+    // month (P25–P75), when the report carries the monthly range.
+    const band = earningsRange.monthly;
     const chartData = MONTHS.map((month, i) => ({
       month,
       "Short Let": r.shortLet.monthlyRevenue[i],
       "Long Let": Math.round(r.longLet.monthlyRent),
+      band: band && band.p25[i] !== null && band.p75[i] !== null ? [band.p25[i] as number, band.p75[i] as number] : null,
     }));
 
     // Revenue cost breakdown — user-adjustable via the "Customise expenses"
     // panel in the hero. Each override is null until the user edits that row,
     // at which point the typed value sticks. Defaults:
     //   platform 15 % · management 15 % · cleaning 18 % of gross (per month)
-    // The cleaning default is seeded off the V4 PMI Top Market gross so it
+    // The cleaning default is seeded off the V4 PMI Expected revenue gross so it
     // doesn't jump when the user excludes comps (Filtered gross moves).
     const grossAnnual = f.shortLetGrossAnnual;
     const DEFAULT_PLATFORM_PCT = 15;
@@ -990,7 +1008,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // Monthly occupancy with seasonal weighting
     const avgOcc = r.shortLet.occupancyRate;
     const totalWeight = SEASONAL_WEIGHTS.reduce((s, w) => s + w, 0);
-    const monthlyOccupancy = SEASONAL_WEIGHTS.map((w) =>
+    const monthlyOccupancy = storedMonthlyOcc ?? SEASONAL_WEIGHTS.map((w) =>
       Math.min(1, (avgOcc * 12 * w) / totalWeight)
     );
 
@@ -1202,12 +1220,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     const hasIncluded = includedComps.length > 0;
     const comps = includedComps;
 
-    // Sort comparables by annual revenue descending (highest first)
-    const compsSortedByRevenue = [...comps].sort((a, b) => b.annualRevenue - a.annualRevenue);
-    // Top 5 performers for projection averages
-    const top5Comps = compsSortedByRevenue.slice(0, 5);
-    const top5Set = new Set(top5Comps);
-    const hasTop5 = top5Comps.length >= 5;
+    // "Top" badge: the comps the user kept whose revenue is in their top 25%
+    // (the same interpolated P75 the Beat box and the PDF use).
+    const topCut = comps.length >= MIN_TOP_BADGE_LISTINGS ? topQuarterThreshold(comps.map((c) => c.annualRevenue)) : null;
 
     // Shared with the lead-qualification rules so the saturation figure a
     // customer sets a threshold against is the figure shown here.
@@ -1221,14 +1236,14 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     const poolAvgOccupancy = hasIncluded ? comps.reduce((s, c) => s + c.occupancyRate, 0) / comps.length : r.shortLet.occupancyRate;
     const poolAvgRevenue = hasIncluded ? Math.round(comps.reduce((s, c) => s + c.annualRevenue, 0) / comps.length) : r.shortLet.annualRevenue;
 
-    // Top 25% comps for Decision Engine "Beat" box
-    const top25PctCount = hasIncluded ? Math.max(1, Math.ceil(comps.length * 0.25)) : 0;
-    const top25Comps = compsSortedByRevenue.slice(0, top25PctCount);
-    const beatAvgAdr = top25Comps.length > 0 ? Math.round(top25Comps.reduce((s, c) => s + c.averageDailyRate, 0) / top25Comps.length) : 0;
-    const beatAvgOccupancy = top25Comps.length > 0 ? top25Comps.reduce((s, c) => s + c.occupancyRate, 0) / top25Comps.length : 0;
-    const beatAvgRevenue = top25Comps.length > 0 ? Math.round(top25Comps.reduce((s, c) => s + c.annualRevenue, 0) / top25Comps.length) : 0;
+    // Decision Engine "Beat" box: where the top 25% of the kept comps start,
+    // per metric (P75) — one definition across the page and the PDF.
+    const beat = beatTargets(comps);
+    const beatAvgAdr = beat?.nightly ?? 0;
+    const beatAvgOccupancy = beat?.occupancy ?? 0;
+    const beatAvgRevenue = beat?.revenue ?? 0;
 
-    // "Your Filtered Estimate" — mirrors the V4 PMI "Top Market Potential"
+    // "Your Filtered Estimate" — mirrors the V4 PMI "Expected revenue" headline
     // when no comps are excluded (snap behaviour, so the first impression
     // shows identical numbers in both columns). As soon as the user removes
     // any comp it switches to the arithmetic MEAN of the kept comps across
@@ -1254,7 +1269,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
       filteredAdr = 0;
       filteredOcc = 0;
     } else if (!hasFilters) {
-      // No user filter yet — snap to V4 PMI Top Market Potential values so
+      // No user filter yet — snap to V4 PMI Expected revenue values so
       // both columns read identically on first load.
       filteredGross = topGross;
       filteredAdr = topAdr;
@@ -1494,11 +1509,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                       Mobile: natural vertical stack (Top, then Filtered, then EPV).
                       Desktop: grid with a vertical divider between the two columns. */}
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-0 lg:divide-x lg:divide-primary-foreground/15">
-                    {/* ── Top Market Potential (V4 PMI headline — unaffected by exclusions) ── */}
+                    {/* ── Expected revenue (V4 headline — unaffected by exclusions) ── */}
                     <div className="lg:pr-8">
-                      <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Top Market Potential</p>
+                      <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Expected revenue</p>
                       <p className="text-sm text-primary-foreground/80 mb-3">
-                        What a top-performer in this area can earn
+                        What a well-run listing like this can expect to earn here
                       </p>
                       <p className="text-3xl font-bold leading-tight">
                         {gbp(topGross)}{" "}
@@ -1566,6 +1581,13 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                       </div>
                     </div>
                   </div>
+
+                  <EarningsRangeStrip
+                    annual={earningsRange.annual}
+                    estimate={topGross}
+                    revenues={allComps.map((c) => c.annualRevenue)}
+                    trend={localTrend}
+                  />
 
                   {/* ── Centered property value range block under both columns ── */}
                   {r.propertyValuation && (() => {
@@ -1798,7 +1820,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                         <p className="mb-3 text-center text-xs font-medium text-primary-foreground/80">Your true profit (after all overheads)</p>
                         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                           <div className="rounded-lg bg-primary-foreground/10 p-4 text-center">
-                            <p className="text-[11px] font-medium text-primary-foreground/70 mb-1">Top Market Profit</p>
+                            <p className="text-[11px] font-medium text-primary-foreground/70 mb-1">Expected profit</p>
                             <p className="text-2xl font-bold text-primary-foreground">
                               {gbp(computeProfit(topGross))}
                               <span className="text-sm font-normal text-primary-foreground/60">/yr</span>
@@ -1928,7 +1950,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
             <SectionHeading
               icon={MapPin}
               title={r.dataQuality?.comparablesFound ? `${r.dataQuality.comparablesFound} Comparable Properties Analysed` : (hasComparables ? `${r.shortLet.comparables.length} Comparable Properties Analysed` : "Market Analysis")}
-              subtitle={`Similar ${r.property.bedrooms}-bedroom properties accommodating ${r.property.guests} guests within your area.${r.dataQuality?.searchBroadened ? ` Search broadened to ${r.dataQuality.searchRadiusKm}km.` : ""}${hasTop5 ? " Revenue projections based on top-performing comparable properties." : ""}`}
+              subtitle={`Similar ${r.property.bedrooms}-bedroom properties accommodating ${r.property.guests} guests within your area.${r.dataQuality?.searchBroadened ? ` Search broadened to ${r.dataQuality.searchRadiusKm}km.` : ""}${hasComparables ? " Our estimate is built from these listings' nightly rates and occupancy." : ""}`}
             />
 
             {r.dataQuality?.disclaimer && (
@@ -2011,13 +2033,19 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
             {r.shortLet.comparables.length > 0 && (
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-muted-foreground">
-                  Based on{" "}
-                  <span className="font-semibold text-foreground">{r.dataQuality?.comparablesFound ?? r.shortLet.comparables.length}</span>
-                  {r.shortLet.activeListings > 0 && (
-                    <> of <span className="font-semibold text-foreground">{r.shortLet.activeListings}</span></>
+                  {listingsNearby ? (
+                    <>Based on {comparablesSourceLine({ comparables: r.dataQuality?.comparablesFound ?? r.shortLet.comparables.length, radiusKm: r.dataQuality?.searchRadiusKm ?? 0, nearby: listingsNearby })}</>
+                  ) : (
+                    <>
+                      Based on{" "}
+                      <span className="font-semibold text-foreground">{r.dataQuality?.comparablesFound ?? r.shortLet.comparables.length}</span>
+                      {r.shortLet.activeListings > (r.dataQuality?.comparablesFound ?? r.shortLet.comparables.length) && (
+                        <> of <span className="font-semibold text-foreground">{r.shortLet.activeListings}</span></>
+                      )}
+                      {" "}active Airbnb listings
+                      {r.dataQuality?.searchRadiusKm ? <> within <span className="font-semibold text-foreground">{r.dataQuality.searchRadiusKm} km</span></> : null}
+                    </>
                   )}
-                  {" "}active Airbnb listings
-                  {r.dataQuality?.searchRadiusKm ? <> within <span className="font-semibold text-foreground">{r.dataQuality.searchRadiusKm} km</span></> : null}
                   {" "}· Median-aggregated · Updated {formatRelativeTime(r.updatedAt)}
                   {r.dataQuality?.searchBroadened && (
                     <span className="text-muted-foreground/80"> (search radius broadened)</span>
@@ -2072,7 +2100,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     })
                     .map(([i, comp]) => {
                     const isExcluded = excludedComps.has(i);
-                    const isTopPerformer = !isExcluded && hasTop5 && top5Set.has(comp);
+                    const isTopPerformer = !isExcluded && topCut !== null && comp.annualRevenue >= topCut;
                     const ratingDisplay = comp.rating > 0 ? roundReviewRating(comp.rating) : null;
                     const ratingAboveAvg = !isExcluded && avgRating > 0 && comp.rating > 0 && comp.rating > avgRating + 0.05;
                     const ratingBelowAvg = !isExcluded && avgRating > 0 && comp.rating > 0 && comp.rating < avgRating - 0.05;
@@ -2110,7 +2138,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                                 Excluded
                               </span>
                             ) : isTopPerformer ? (
-                              <span className="inline-flex shrink-0 items-center rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success whitespace-nowrap">
+                              <span title="In the top 25% of these comparables by revenue" className="inline-flex shrink-0 items-center rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success whitespace-nowrap">
                                 Top
                               </span>
                             ) : null}
@@ -2288,7 +2316,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     <div className="mb-3">
                       <p className="text-sm font-semibold text-foreground">To Beat the Market</p>
                       <p className="text-xs text-muted-foreground">
-                        Based on top {top25PctCount} propert{top25PctCount === 1 ? "y" : "ies"} (top 25%)
+                        Where the top 25% of the {comps.length} comparable{comps.length === 1 ? "" : "s"}{excludedComps.size > 0 ? " you kept" : ""} start
                       </p>
                     </div>
                     <div className="space-y-2">
@@ -2666,7 +2694,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               <CardContent className="pt-4">
                 <div className="h-72 w-full">
                   <ResponsiveContainer width="100%" height="100%">
-                    <RechartsLineChart data={chartData}>
+                    <ComposedChart data={chartData}>
                       <XAxis
                         dataKey="month"
                         tick={{ fontSize: 12, fill: "#6e9164" }}
@@ -2681,7 +2709,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                         width={50}
                       />
                       <Tooltip
-                        formatter={(value) => [gbp(Number(value ?? 0)), ""]}
+                        formatter={(value, name) =>
+                          Array.isArray(value)
+                            ? [`${gbp(Number(value[0] ?? 0))} – ${gbp(Number(value[1] ?? 0))}`, String(name)]
+                            : [gbp(Number(value ?? 0)), ""]
+                        }
                         contentStyle={{
                           backgroundColor: "#e6ebd7",
                           border: "1px solid #aab99b",
@@ -2693,6 +2725,18 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                         wrapperStyle={{ fontSize: "12px", paddingTop: "8px" }}
                       />
                       <ReferenceLine y={0} stroke="#aab99b" />
+                      {band && (
+                        <Area
+                          type="monotone"
+                          dataKey="band"
+                          name="Similar listings (middle half)"
+                          stroke="none"
+                          fill="#5d8156"
+                          fillOpacity={0.12}
+                          connectNulls={false}
+                          isAnimationActive={false}
+                        />
+                      )}
                       <Line
                         type="monotone"
                         dataKey="Short Let"
@@ -2709,9 +2753,15 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                         strokeDasharray="6 4"
                         dot={{ r: 3, fill: "#c3cdaf", stroke: "#c3cdaf" }}
                       />
-                    </RechartsLineChart>
+                    </ComposedChart>
                   </ResponsiveContainer>
                 </div>
+                {(band || stayLine) && (
+                  <div className="mt-2 space-y-1 text-[11px] leading-relaxed text-muted-foreground">
+                    {band && <p>Shaded: the middle half of similar listings each month (gross revenue).</p>}
+                    {stayLine && <p>{stayLine}</p>}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

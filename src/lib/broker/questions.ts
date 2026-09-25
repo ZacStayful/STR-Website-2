@@ -2,8 +2,8 @@ import 'server-only';
 
 import type { Question } from './types';
 import { COST_PENCE, TTL } from './config';
-import { findNearbyListings } from '../apis/airbtics';
-import { gridCell, matchTracked, type TrackedListing } from '../listing/competitors';
+import { findNearbyListings, findNearbyListingsPage } from '../apis/airbtics';
+import { gridCell, matchTracked, type NearbyListingsValue, type TrackedListing } from '../listing/competitors';
 import { storedCompForListing, storedPostcodeFigures, type PostcodeFigures } from './providers/internal';
 import { pmiStrEstimate, pmiStrMarket, pmiListings, num, type PmiStrEstimate, type PmiStrMarket } from './providers/pmi';
 import { fetchOnTheMarketSearch } from './providers/onthemarket';
@@ -24,7 +24,9 @@ export interface NearbyParams {
   lat: number;
   lng: number;
 }
-export const nearbyListings: Question<NearbyParams, TrackedListing[]> = {
+// The value is a NearbyListingsPage; older cache rows are bare arrays, so
+// callers read it through nearbyPageOf.
+export const nearbyListings: Question<NearbyParams, NearbyListingsValue> = {
   name: 'nearbyListings',
   key: (p) => gridCell(p.lat, p.lng),
   rungs: [
@@ -33,7 +35,7 @@ export const nearbyListings: Question<NearbyParams, TrackedListing[]> = {
       level: 3,
       costPence: COST_PENCE.airbticsBounds,
       ttlMs: TTL.airbticsBounds,
-      run: (p) => findNearbyListings(p.lat, p.lng, 1),
+      run: (p) => findNearbyListingsPage(p.lat, p.lng, 1),
     },
   ],
 };

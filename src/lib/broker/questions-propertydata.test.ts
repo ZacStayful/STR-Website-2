@@ -78,6 +78,33 @@ test('the rent valuation walks the attempts in order and never caches a failure'
   assert.equal(store.map.size, 0);
 });
 
+test('the explorer\'s single bounded attempt: one call, the timeout passed through, a miss left uncached, a report\'s rent reused', async () => {
+  const seen: { params: Record<string, string>; opts?: { timeoutMs?: number } }[] = [];
+  const client = fakeClient({
+    valuationRent: async (params, opts) => {
+      seen.push({ params, opts });
+      return null;
+    },
+  });
+  const q = pdQuestions(client);
+  const store = memoryStore();
+  const deps = { store, ledger: memoryLedger(), enabled };
+  const miss = await resolveQuestion(deps, q.pdLongLetRent, { postcode: 'BN1 1AA', bedrooms: 2, maxAttempts: 1, timeoutMs: 3500 }, { mode: 'cron' });
+  assert.equal(miss.unavailable, true);
+  assert.equal(seen.length, 1, 'one attempt, not the six-rung ladder');
+  assert.equal(seen[0].opts?.timeoutMs, 3500);
+  assert.equal(store.map.size, 0, 'a miss is never cached as an answer');
+
+  // A member's report walked the full ladder later; the once-ask reads its
+  // rent from the cache without a call, because neither knob is in the key.
+  const answering = fakeClient({ valuationRent: async () => ({ weeklyRent: 300, monthlyRent: 1300 }) });
+  await resolveQuestion(deps, pdQuestions(answering).pdLongLetRent, { postcode: 'BN1 1AA', bedrooms: 2 }, { mode: 'full' });
+  const hit = await resolveQuestion(deps, q.pdLongLetRent, { postcode: 'bn11aa', bedrooms: 2, maxAttempts: 1, timeoutMs: 3500 }, { mode: 'cron' });
+  assert.equal(hit.cached, true);
+  assert.equal(hit.value?.monthlyRent, 1300);
+  assert.equal(seen.length, 1);
+});
+
 test('the sale valuation stops at the first attempt that answers', async () => {
   let n = 0;
   const client = fakeClient({

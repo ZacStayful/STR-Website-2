@@ -47,7 +47,7 @@ export interface StampDutyQuery {
 
 export interface PdClient {
   floorAreas(postcode: string): Promise<FloorAreaEntry[] | null>;
-  valuationRent(params: Record<string, string>): Promise<RentValuation | null>;
+  valuationRent(params: Record<string, string>, opts?: PdCallOptions): Promise<RentValuation | null>;
   valuationSale(params: Record<string, string>): Promise<SaleValuation | null>;
   stampDuty(query: StampDutyQuery): Promise<StampDutyResult | null>;
   mortgageRates(): Promise<MortgageRates | null>;
@@ -58,6 +58,12 @@ export interface PdClient {
   listedBuildings(postcode: string): Promise<ListedBuilding[] | null>;
   demand(outcode: string, kind: DemandKind): Promise<DemandSnapshot | null>;
   keyStats(region: string): Promise<KeyStatsRow[] | null>;
+}
+
+/** Per-call knobs a question may pass to the client; never part of a cache key. */
+export interface PdCallOptions {
+  /** Overrides the client's default request timeout. */
+  timeoutMs?: number;
 }
 
 export interface PostcodeParams {
@@ -72,6 +78,15 @@ export interface LongLetRentParams {
   postcode: string;
   bedrooms: number;
   options?: RentValuationOptions;
+  /**
+   * How far down the attempt ladder to go (default: all six). The explorer's
+   * hourly build asks for one, so an area PropertyData cannot value costs one
+   * credit a day, not six an hour. Not part of the key: a rent is the same
+   * answer however many attempts it took.
+   */
+  maxAttempts?: number;
+  /** Per-attempt timeout for callers with a time budget (the cron); not part of the key. */
+  timeoutMs?: number;
 }
 
 /** The rent plus which attempt answered (1 = the member's own details). */
@@ -143,9 +158,10 @@ export function pdQuestions(client: PdClient): PdQuestions {
           costPence: COST_PENCE.propertydataCall,
           ttlMs: TTL.pdValuation,
           run: async (p) => {
-            const attempts = longLetAttemptParams(p.postcode, p.bedrooms, p.options);
+            const attempts = longLetAttemptParams(p.postcode, p.bedrooms, p.options).slice(0, Math.max(1, p.maxAttempts ?? Number.MAX_SAFE_INTEGER));
+            const opts = p.timeoutMs ? { timeoutMs: p.timeoutMs } : undefined;
             for (let i = 0; i < attempts.length; i++) {
-              const v = await client.valuationRent(attempts[i]);
+              const v = await client.valuationRent(attempts[i], opts);
               if (v) return { ...v, attempt: i + 1 };
             }
             // Null on purpose: the national-median fallback is the caller's,

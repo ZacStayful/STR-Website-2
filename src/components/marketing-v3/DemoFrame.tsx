@@ -191,9 +191,9 @@ function DemoResult({ postcode }: { postcode: string }) {
       </div>
       <div className="demo-result-grid">
         <div className="demo-stat-block">
-          <div className="demo-stat-label">Top market potential</div>
+          <div className="demo-stat-label">Expected revenue</div>
           <div className="demo-stat-sub">
-            What a top-performer in this area earns
+            What a well-run listing here can expect to earn
           </div>
           <div className="demo-stat-num">
             £59,508 <span>£4,959/mo</span>
