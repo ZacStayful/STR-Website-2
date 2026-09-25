@@ -94,8 +94,9 @@ test('the sale valuation stops at the first attempt that answers', async () => {
 
 test('keys: stamp duty by nation, mode and price; demand by outcode; key stats by region at thirty credits', () => {
   const q = pdQuestions(fakeClient());
-  assert.equal(q.pdStampDuty.key({ value: 250000.4, country: 'scotland', mode: 'investment' }), 'scotland|investment|res|250000');
-  assert.equal(q.pdStampDuty.key({ value: 250000, country: 'scotland', mode: 'investment', ukResident: false }), 'scotland|investment|nonres|250000');
+  const month = new Date().toISOString().slice(0, 7);
+  assert.equal(q.pdStampDuty.key({ value: 250000.4, country: 'scotland', mode: 'investment' }), `scotland|investment|res|250000|${month}`);
+  assert.equal(q.pdStampDuty.key({ value: 250000, country: 'scotland', mode: 'investment', ukResident: false }), `scotland|investment|nonres|250000|${month}`);
   assert.equal(q.pdMortgageRates.key({}), 'uk');
   assert.equal(q.pdDemandRent.key({ outcode: 'ng1' }), 'NG1');
   assert.equal(q.pdCouncilTax.key({ postcode: 'ng1 5dt' }), 'NG15DT');

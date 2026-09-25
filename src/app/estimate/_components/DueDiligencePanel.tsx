@@ -4,6 +4,7 @@ import { Droplets, FileCheck, Landmark, Receipt, ShieldCheck, TrendingUp } from 
 import { Card, CardContent } from '@/components/ui/card';
 import type { AnalysisResult, DueDiligence } from '@/lib/types';
 import { diligenceNotes } from '@/lib/analysis/due-diligence';
+import { futureValueSentence } from '@/lib/listing/growth';
 import { gbp } from './format';
 
 /**
@@ -195,12 +196,7 @@ export function DueDiligencePanel({ result }: { result: AnalysisResult }) {
                     </div>
                   ))}
                 </div>
-                {fv && (
-                  <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                    Value in {fv.horizonYears} years: <span className="font-semibold text-foreground">{gbp(fv.low)} to {gbp(fv.high)}</span> from{' '}
-                    {fv.basis === 'asking-price' ? 'the asking price' : 'the estimated value'} of {gbp(fv.baseValue)}. The top end repeats the outcode&apos;s 5-year rate ({fv.annualisedPct}% a year); the low end takes {fv.haircutAnnualPct}% a year. An assumption from historic growth, not a forecast.
-                  </p>
-                )}
+                {fv && <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{futureValueSentence(fv)}</p>}
               </CardContent>
             </Card>
           )}

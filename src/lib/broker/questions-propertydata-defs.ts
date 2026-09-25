@@ -178,7 +178,9 @@ export function pdQuestions(client: PdClient): PdQuestions {
 
     pdStampDuty: {
       name: 'pdStampDuty',
-      key: (p) => `${p.country}|${p.mode}|${p.ukResident === false ? 'nonres' : 'res'}|${Math.round(p.value)}`,
+      // The month is part of the key: the calculator prices for today, and a
+      // figure cached before a budget's rate change must not outlive it.
+      key: (p) => `${p.country}|${p.mode}|${p.ukResident === false ? 'nonres' : 'res'}|${Math.round(p.value)}|${new Date().toISOString().slice(0, 7)}`,
       rungs: [{ provider: 'propertydata', level: 3, costPence: COST_PENCE.propertydataCall, ttlMs: TTL.pdStampDuty, run: (p) => client.stampDuty(p) }],
     },
 

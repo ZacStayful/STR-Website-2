@@ -168,8 +168,6 @@ export async function runAnalysis(
       const brokerCtx = { mode: 'full' as const, userId };
 
       const geocodePromise = geocodePostcode(property.postcode);
-      // Floor area comes from /floor-areas before the valuations.
-      const floorAreaPromise = floorAreaFor(property.postcode, property.address, property.bedrooms, brokerCtx);
 
       // Geocoding first — short-let needs coordinates for nearby listings.
       let coordinates: { lat: number; lng: number; locality?: string };
@@ -183,11 +181,13 @@ export async function runAnalysis(
       progress('geocoding', 20, 'Property located');
 
       // Only once the postcode has geocoded, so a report that fails here
-      // has not charged the payer for a dozen PropertyData calls. The
-      // council tax band and the national mortgage averages are only needed
-      // by the deal maths at the end; they start now so they add no time.
-      // The averages are bought once a day by the market-warm cron and a
-      // report only ever reads them.
+      // has not charged the payer for a dozen PropertyData calls. Floor
+      // area comes from /floor-areas before the valuations. The council
+      // tax band and the national mortgage averages are only needed by the
+      // deal maths at the end; they start now so they add no time. The
+      // averages are bought once a day by the market-warm cron and a report
+      // only ever reads them.
+      const floorAreaPromise = floorAreaFor(property.postcode, property.address, property.bedrooms, brokerCtx);
       const councilTaxPromise = ask(pdCouncilTax, { postcode: property.postcode }, brokerCtx);
       const mortgageRatesPromise = ask(pdMortgageRates, {}, { ...brokerCtx, cacheOnly: true });
       const taxCountry = countryForPostcode(property.postcode);

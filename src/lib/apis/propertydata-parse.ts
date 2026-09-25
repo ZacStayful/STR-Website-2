@@ -76,6 +76,21 @@ function rec(v: unknown): Record<string, unknown> | null {
   return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
+/**
+ * The UK calendar date of a PropertyData timestamp. The register's dates
+ * come back as UTC midnight of the UK day ("2022-10-03T23:00:00Z" is 4 Oct
+ * during British Summer Time), so they are read in Europe/London rather
+ * than sliced. A plain YYYY-MM-DD is kept as it is.
+ */
+export function ukCalendarDate(v: unknown): string | null {
+  const s = str(v);
+  if (!s) return null;
+  if (!/T\d/.test(s)) return s.slice(0, 10);
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return s.slice(0, 10);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' });
+}
+
 /** "ng1 5dt" → "NG15DT": the cache key form. */
 export function normalisePostcode(postcode: string): string {
   return postcode.replace(/\s+/g, '').toUpperCase();
@@ -192,7 +207,7 @@ export function parseFloorAreas(json: unknown): FloorAreaEntry[] | null {
     if (!r) continue;
     const address = str(r.address);
     if (!address) continue;
-    out.push({ address, squareFeet: num(r.square_feet), habitableRooms: num(r.habitable_rooms), inspectionDate: str(r.inspection_date) });
+    out.push({ address, squareFeet: num(r.square_feet), habitableRooms: num(r.habitable_rooms), inspectionDate: ukCalendarDate(r.inspection_date) });
   }
   return out;
 }
@@ -365,8 +380,7 @@ export function parseEnergyEfficiency(json: unknown): EpcEntry[] | null {
     const address = str(r?.address);
     const rating = str(r?.rating)?.toUpperCase();
     if (!address || !rating || !/^[A-G]$/.test(rating)) continue;
-    const date = str(r?.inspection_date);
-    out.push({ address, rating, score: num(r?.score), inspectionDate: date ? date.slice(0, 10) : null });
+    out.push({ address, rating, score: num(r?.score), inspectionDate: ukCalendarDate(r?.inspection_date) });
   }
   return out;
 }

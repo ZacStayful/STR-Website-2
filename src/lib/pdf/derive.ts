@@ -105,15 +105,8 @@ export interface PdfGrowth {
   g3y: number | null;
   g5y: number | null;
   g7y: number | null;
-  range: {
-    low: number;
-    high: number;
-    base: number;
-    basisLabel: string;
-    horizonYears: number;
-    annualisedPct: number;
-    haircutPct: number;
-  } | null;
+  /** The future-value sentence (`futureValueSentence`), or null without a price. */
+  rangeLine: string | null;
 }
 
 /** The due diligence page: registers, council tax, stamp duty, liquidity and growth. */
@@ -711,17 +704,7 @@ export function buildPdfDiligence(result: AnalysisResult): PdfDiligence | undefi
           g3y: growth.growth3y,
           g5y: growth.growth5y,
           g7y: growth.growth7y,
-          range: result.futureValue
-            ? {
-                low: result.futureValue.low,
-                high: result.futureValue.high,
-                base: result.futureValue.baseValue,
-                basisLabel: result.futureValue.basis === "asking-price" ? "the asking price" : "the estimated value",
-                horizonYears: result.futureValue.horizonYears,
-                annualisedPct: result.futureValue.annualisedPct,
-                haircutPct: result.futureValue.haircutAnnualPct,
-              }
-            : null,
+          rangeLine: result.futureValue ? futureValueSentence(result.futureValue) : null,
         }
       : null,
     notes,
@@ -752,7 +735,9 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
     const mortgage =
       d.mortgageRateSource === "live" && d.mortgageRateLive
         ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at the market ${liveMortgageRateLabel(d.mortgageRateLive)}`
-        : "mortgage assumes the deposit, rate and term in your Stayful goal profile";
+        : d.mortgageRateSource === "default"
+          ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at ${d.mortgageRatePct}%, Stayful's standing assumption (no market average was available)`
+          : "mortgage assumes the deposit, rate and term in your Stayful goal profile";
     const councilTax = d.councilTax ? `, of which £${Math.round(d.councilTax.annual / 12)} is band ${d.councilTax.band} council tax` : "";
     return {
       kind: "purchase",

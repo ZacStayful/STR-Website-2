@@ -30,6 +30,7 @@ import {
   postcodeAreaOf,
   propertyTypeSlug,
   saleAttemptParams,
+  ukCalendarDate,
 } from './propertydata-parse.ts';
 
 const ERROR = { status: 'error', message: 'Invalid postcode' };
@@ -164,6 +165,12 @@ test('EPC entries, flood risk and the designations', () => {
   assert.ok(epc);
   assert.equal(epc.length, 3);
   assert.deepEqual(epc[0], { address: 'Flat 3 , 26 , Charleville Road', rating: 'D', score: 66, inspectionDate: '2023-01-27' });
+  // The register stores UK midnight in UTC: an October inspection is the next calendar day.
+  assert.equal(epc[1].inspectionDate, '2022-10-04');
+  assert.equal(ukCalendarDate('2022-10-03T23:00:00.000000Z'), '2022-10-04');
+  assert.equal(ukCalendarDate('2023-01-27T00:00:00.000000Z'), '2023-01-27');
+  assert.equal(ukCalendarDate('2016-08-31'), '2016-08-31');
+  assert.equal(ukCalendarDate(null), null);
   assert.equal(matchAddressEntry(epc, 'Flat 3, 26 Charleville Road')?.entry.rating, 'D');
   assert.equal(matchAddressEntry(epc, '3 Charleville Road'), null, 'a stranger\'s flat is not the member\'s house');
   assert.equal(parseEnergyEfficiency(ERROR), null);

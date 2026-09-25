@@ -1186,7 +1186,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     const visibleTabs = TAB_SECTIONS
       .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion || result?.enhancedNotice)
       // The registers only exist on reports run since PropertyData supplied them.
-      .filter((tab) => tab.id !== "due-diligence" || result?.dueDiligence || result?.epc || result?.councilTax)
+      .filter((tab) => tab.id !== "due-diligence" || result?.dueDiligence || result?.epc || result?.councilTax || result?.growth)
       .filter((tab) => tab.id !== "faq" || !funnel);
     const activeTabIndex = visibleTabs.findIndex((t) => t.id === activeTab);
     const activeTabInfo = activeTabIndex >= 0 ? { ...visibleTabs[activeTabIndex], num: activeTabIndex + 1 } : undefined;
@@ -1904,6 +1904,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     monthlyRevenue={r.shortLet.monthlyRevenue}
                     fixedPcm={r.deal.kind === "rent-to-rent" ? r.deal.advertisedRentPcm : r.deal.mortgageMonthly}
                     fixedLabel={r.deal.kind === "rent-to-rent" ? "rent" : "mortgage"}
+                    billsPcm={r.deal.billsPcm}
                   />
                 )}
                 {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} />}
@@ -2839,7 +2840,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
           {/* ══════════════════════════════════════════════════════════
               Section 7b: Due diligence (PropertyData registers)
               ══════════════════════════════════════════════════════════ */}
-          {(r.dueDiligence || r.epc || r.councilTax) && (
+          {(r.dueDiligence || r.epc || r.councilTax || r.growth) && (
             <section id="due-diligence" ref={setSectionRef("due-diligence")} className="mb-12">
               <SectionHeading
                 icon={ShieldCheck}

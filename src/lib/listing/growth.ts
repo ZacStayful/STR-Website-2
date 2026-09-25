@@ -42,8 +42,18 @@ export function futureValueRange(
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
 
-/** The one-line explanation printed under the deal figures. */
+/**
+ * The one-line explanation printed wherever the range appears (deal page,
+ * deal panel, due diligence page and panel), so the wording cannot drift.
+ * When history is negative the repeat is the LOW end and the 0% floor the
+ * top, and the sentence says so.
+ */
 export function futureValueSentence(fv: FutureValueRange): string {
   const basis = fv.basis === 'asking-price' ? 'the asking price' : 'the estimated value';
-  return `Value in ${fv.horizonYears} years: ${gbp(fv.low)} to ${gbp(fv.high)} from ${basis} of ${gbp(fv.baseValue)}, repeating ${fv.outcode}'s 5-year growth of ${fv.historicGrowthPct}% (${fv.annualisedPct}% a year) at the top end and ${fv.haircutAnnualPct}% a year at the low end. An assumption from historic growth, not a forecast.`;
+  const repeat = `repeats ${fv.outcode}'s 5-year growth of ${fv.historicGrowthPct}% (${fv.annualisedPct}% a year)`;
+  const ends =
+    fv.annualisedPct >= fv.haircutAnnualPct
+      ? `The top end ${repeat}; the low end takes ${fv.haircutAnnualPct}% a year.`
+      : `The low end ${repeat}; the top end holds the value flat at ${fv.haircutAnnualPct}% a year.`;
+  return `Value in ${fv.horizonYears} years: ${gbp(fv.low)} to ${gbp(fv.high)} from ${basis} of ${gbp(fv.baseValue)}. ${ends} An assumption from historic growth, not a forecast.`;
 }

@@ -43,11 +43,17 @@ test('no price or no growth figure means no range', () => {
   assert.equal(futureValueRange(250_000, 'asking-price', -100, 'X1', null), null);
 });
 
-test('the sentence names the basis, the outcode and both rates', () => {
+test('the sentence names the basis, the outcode and both rates, the right way round', () => {
   const fv = futureValueRange(300_000, 'asking-price', 17.8, 'BN1', null)!;
   const s = futureValueSentence(fv);
   assert.ok(s.startsWith('Value in 5 years: £'));
   assert.ok(s.includes('from the asking price of £300,000'));
-  assert.ok(s.includes("BN1's 5-year growth of 17.8%"));
+  assert.ok(s.includes("The top end repeats BN1's 5-year growth of 17.8%"));
+  assert.ok(s.includes('the low end takes 1.7% a year'));
   assert.ok(s.includes('not a forecast'));
+  // A falling area: the repeat is the low end and the flat floor the top.
+  const down = futureValueSentence(futureValueRange(200_000, 'estimated-value', -10, 'X1', null)!);
+  assert.ok(down.includes('£180,000 to £200,000'));
+  assert.ok(down.includes("The low end repeats X1's 5-year growth of -10%"));
+  assert.ok(down.includes('the top end holds the value flat at 0% a year'));
 });

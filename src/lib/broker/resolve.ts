@@ -25,34 +25,62 @@ const inFlight = new Map<string, Promise<ResolveResult<unknown>>>();
 
 /**
  * Today's spend per provider and payer, remembered for a few seconds per
- * ledger and bumped as rungs succeed, so a report that asks a dozen
- * questions at once reads the ledger once rather than a dozen times, and
- * the parallel asks see each other's spend instead of all passing the same
- * pre-spend figure. Keyed by ledger so tests, which build their own, stay
- * independent.
+ * ledger, so a report that asks a dozen questions at once reads the ledger
+ * once rather than a dozen times. The budget check and the reservation of
+ * a rung's cost happen in one step against that shared figure, so a burst
+ * of parallel asks cannot all pass on the same pre-spend number. Keyed by
+ * ledger so tests, which build their own, stay independent.
  */
 const SPENT_MEMO_MS = 5_000;
-const spentMemo = new WeakMap<BrokerLedger, Map<string, { at: number; pence: number }>>();
 
-async function spentToday(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, now: number): Promise<number> {
+interface SpentEntry {
+  at: number;
+  /** The ledger read, shared by every ask that arrives while it is pending. */
+  read: Promise<number>;
+  /** Pence reserved by rungs that passed their budget check since the read, added on top of it. */
+  bumped: number;
+}
+
+const spentMemo = new WeakMap<BrokerLedger, Map<string, SpentEntry>>();
+
+function spentEntry(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, now: number): SpentEntry {
   let memo = spentMemo.get(ledger);
   if (!memo) {
     memo = new Map();
     spentMemo.set(ledger, memo);
   }
   const key = `${provider}|${userId ?? ''}`;
-  const hit = memo.get(key);
-  if (hit && now - hit.at < SPENT_MEMO_MS) return hit.pence;
-  const pence = await ledger.spentToday(provider, userId ?? undefined);
-  memo.set(key, { at: now, pence });
-  return pence;
+  let entry = memo.get(key);
+  if (!entry || now - entry.at >= SPENT_MEMO_MS) {
+    const read = ledger.spentToday(provider, userId ?? undefined);
+    const fresh: SpentEntry = { at: now, read, bumped: 0 };
+    memo.set(key, fresh);
+    // A failed read must not stand in for the figure for five seconds.
+    read.catch(() => {
+      if (memo?.get(key) === fresh) memo.delete(key);
+    });
+    entry = fresh;
+  }
+  return entry;
 }
 
-function addSpent(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, pence: number): void {
-  const memo = spentMemo.get(ledger);
-  const key = `${provider}|${userId ?? ''}`;
-  const hit = memo?.get(key);
-  if (hit) hit.pence += pence;
+/**
+ * True, and the cost reserved, when today's spend plus every earlier
+ * reservation leaves room under `cap`. The check and the bump share one
+ * continuation after the read, which is what makes parallel asks see each
+ * other.
+ */
+async function reserveSpend(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, cost: number, cap: number, now: number): Promise<boolean> {
+  const entry = spentEntry(ledger, provider, userId, now);
+  const base = await entry.read;
+  if (base + entry.bumped + cost > cap) return false;
+  entry.bumped += cost;
+  return true;
+}
+
+function releaseSpend(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, cost: number): void {
+  const entry = spentMemo.get(ledger)?.get(`${provider}|${userId ?? ''}`);
+  if (entry) entry.bumped -= cost;
 }
 
 export async function resolveQuestion<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, ctx: BrokerContext): Promise<ResolveResult<T>> {
@@ -84,14 +112,19 @@ async function run<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, 
     if (rung.level > maxLevel) continue;
     if (!enabled(rung.provider)) continue;
     if (rung.enabled && !rung.enabled()) continue;
+    // A paid rung reserves its cost against the shared spend figure the
+    // moment it passes each check, so a burst of parallel asks cannot all
+    // pass on the same pre-spend number; the reservation is released only
+    // if the rung throws (a provider that answered has been paid).
+    let reserved = false;
     if (rung.costPence > 0) {
       const budget = budgetFor(rung.provider);
-      const global = await spentToday(deps.ledger, rung.provider, null, Date.now());
-      if (global + rung.costPence > budget.globalPence) continue;
-      if (ctx.userId) {
-        const mine = await spentToday(deps.ledger, rung.provider, ctx.userId, Date.now());
-        if (mine + rung.costPence > budget.memberPence) continue;
+      if (!(await reserveSpend(deps.ledger, rung.provider, null, rung.costPence, budget.globalPence, Date.now()))) continue;
+      if (ctx.userId && !(await reserveSpend(deps.ledger, rung.provider, ctx.userId, rung.costPence, budget.memberPence, Date.now()))) {
+        releaseSpend(deps.ledger, rung.provider, null, rung.costPence);
+        continue;
       }
+      reserved = true;
     }
     const started = Date.now();
     let value: T | null = null;
@@ -105,9 +138,9 @@ async function run<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, 
     const ms = Date.now() - started;
     if (rung.costPence > 0 || !ok) {
       void deps.ledger.record({ provider: rung.provider, question: question.name, key, costPence: ok ? rung.costPence : 0, cacheHit: false, userId: ctx.userId ?? null, ok, ms }).catch(() => {});
-      if (ok) {
-        addSpent(deps.ledger, rung.provider, null, rung.costPence);
-        if (ctx.userId) addSpent(deps.ledger, rung.provider, ctx.userId, rung.costPence);
+      if (reserved && !ok) {
+        releaseSpend(deps.ledger, rung.provider, null, rung.costPence);
+        if (ctx.userId) releaseSpend(deps.ledger, rung.provider, ctx.userId, rung.costPence);
       }
     }
     if (value === null || value === undefined) continue;

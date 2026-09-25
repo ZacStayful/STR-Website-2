@@ -2,7 +2,7 @@ import 'server-only';
 
 import { ask, pdRegionKeyStats } from '../broker';
 import type { KeyStatsRow } from '../apis/propertydata-parse';
-import { PD_REGIONS, warmRegionKeyStats, type KeyStatsRead, type PdRegion, type WarmResult } from './key-stats';
+import { PD_REGIONS, warmRegionKeyStats, type KeyStatsReader, type PdRegion, type WarmResult } from './key-stats';
 
 /**
  * The region key stats as the explorer and the report read them: from the
@@ -35,7 +35,6 @@ const reader: KeyStatsReader = async (region, mode) => {
   const r = await ask(pdRegionKeyStats, { region }, mode === 'cache' ? { mode: 'cron', cacheOnly: true } : { mode: 'cron' });
   return { value: r.value, cached: r.cached, stale: r.stale, unavailable: r.unavailable, updatedAt: r.updatedAt };
 };
-type KeyStatsReader = (region: PdRegion, mode: 'cache' | 'buy') => Promise<KeyStatsRead>;
 
 /** The daily warm-up: house spend, a few regions a run. */
 export function warmAllRegionKeyStats(max?: number): Promise<WarmResult> {

@@ -165,11 +165,7 @@ export function PageDiligence({
                   </View>
                 ))}
               </View>
-              {growth.range ? (
-                <Text style={[T.body, { marginTop: 7, lineHeight: 1.4 }]}>
-                  {`Value in ${growth.range.horizonYears} years: ${formatGbp(growth.range.low)} to ${formatGbp(growth.range.high)}, from ${growth.range.basisLabel} of ${formatGbp(growth.range.base)}. Top end repeats the outcode's 5-year rate (${growth.range.annualisedPct}% a year); low end ${growth.range.haircutPct}% a year. An assumption from historic growth, not a forecast.`}
-                </Text>
-              ) : null}
+              {growth.rangeLine ? <Text style={[T.body, { marginTop: 7, lineHeight: 1.4 }]}>{growth.rangeLine}</Text> : null}
             </View>
           ) : null}
         </View>

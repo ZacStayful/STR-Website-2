@@ -129,3 +129,30 @@ test('cacheOnly never climbs a rung: unavailable on an empty cache, the stale an
   assert.equal(r.costPence, 0);
   assert.equal(runs, 1);
 });
+
+test('a burst of asks reads today\'s spend once per payer and sees each other\'s spend', async () => {
+  process.env.BROKER_BUDGET_PROPERTYDATA = '12';
+  try {
+    let reads = 0;
+    const ledger = memoryLedger();
+    const counting = {
+      ...ledger,
+      async spentToday(provider: import('./types.ts').ProviderName, userId?: string | null) {
+        reads++;
+        await new Promise((r) => setTimeout(r, 5));
+        return ledger.spentToday(provider, userId);
+      },
+    };
+    let runs = 0;
+    const question = q([{ provider: 'propertydata', level: 3, costPence: 2.5, ttlMs: HOUR, run: async () => { runs++; return { v: runs }; } }]);
+    const deps = { store: memoryStore(), ledger: counting, enabled };
+    const results = await Promise.all(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => resolveQuestion(deps, question, { id }, { mode: 'full', userId: 'u1' })));
+    // One global read and one member read for the whole burst…
+    assert.equal(reads, 2);
+    // …and the 12p budget lets four 2.5p calls through, not seven.
+    assert.equal(results.filter((r) => r.value).length, 4);
+    assert.equal(results.filter((r) => r.unavailable).length, 3);
+  } finally {
+    delete process.env.BROKER_BUDGET_PROPERTYDATA;
+  }
+});
