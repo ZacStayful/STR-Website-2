@@ -26,7 +26,7 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
         <>
           <h1 className="text-2xl font-semibold text-foreground">Start with £20 of free credit</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Full access to the analyser and Market Explorer. No card required.
+            Profitable purchase and rent-to-rent deals, matched to you.
           </p>
         </>
       )}

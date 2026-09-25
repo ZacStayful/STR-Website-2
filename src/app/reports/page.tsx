@@ -71,9 +71,14 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
               {showAuthors ? "Every analysis anyone on your team has run, ready to reopen." : "Every analysis you have run, ready to reopen."} Reopening never uses a run.
             </p>
           </div>
-          <Link href="/estimate" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
-            New analysis
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/picks" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
+              Daily picks
+            </Link>
+            <Link href="/estimate" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
+              New analysis
+            </Link>
+          </div>
         </div>
 
         <form className="mb-4 flex gap-2" action="/reports" method="get">

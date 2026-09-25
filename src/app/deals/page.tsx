@@ -8,7 +8,9 @@ import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { parseDealFilters } from "@/lib/marketplace/grid";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor } from "@/lib/marketplace/queries";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
+import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { DealCard } from "./_components/DealCard";
+import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
 import { DealsMap } from "./_components/DealsMap";
 import { Pagination } from "./_components/Pagination";
@@ -66,6 +68,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
         {message && <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>}
 
+        <GoalsStrip total={page.total} fromWelcome={cameFromWelcome(raw.from)} />
         <DealsFilterBar filters={filters} counts={counts} total={page.total} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
