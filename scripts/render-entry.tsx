@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { renderToFile } from "@react-pdf/renderer";
 import React from "react";
 import { StayfulReport } from "../src/lib/pdf/StayfulReport";
-import { deriveReportData, buildSetupSnapshot } from "../src/lib/pdf/derive";
+import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildSetupSnapshot } from "../src/lib/pdf/derive";
 import { pdfBrand } from "../src/lib/pdf/theme";
 import { sampleAnalysis, sampleSetup } from "../src/lib/pdf/__fixtures__/sample";
 import type { PdfReportData } from "../src/lib/pdf/derive";
@@ -111,6 +111,31 @@ const VARIANTS: Array<{ name: string; sheets: number; build: Build }> = [
       );
       d.preparedFor = "a-rather-long-email-address@somelongdomainname.co.uk";
       d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
+      return d;
+    },
+  },
+  {
+    // The registers came back: setup plus the due diligence page.
+    name: "with-diligence",
+    sheets: 7,
+    build: () => {
+      const r = sampleAnalysis({ withDiligence: true });
+      const d = deriveReportData(r);
+      d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
+      d.diligence = buildPdfDiligence(r);
+      return d;
+    },
+  },
+  {
+    // Every optional section at once: setup, the deal and due diligence.
+    name: "everything",
+    sheets: 8,
+    build: () => {
+      const r = sampleAnalysis({ withDiligence: true });
+      const d = deriveReportData(r);
+      d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
+      d.deal = buildPdfDeal(r);
+      d.diligence = buildPdfDiligence(r);
       return d;
     },
   },

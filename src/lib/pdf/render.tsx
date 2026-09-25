@@ -1,6 +1,6 @@
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
-import { deriveReportData, buildPdfDeal, buildSetupSnapshot, sanitiseAddressForFilename } from "./derive";
+import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildSetupSnapshot, sanitiseAddressForFilename } from "./derive";
 import type { PdfExpenses } from "./derive";
 import { StayfulReport } from "./StayfulReport";
 import { pdfBrand, type PdfBrand } from "./theme";
@@ -36,6 +36,7 @@ export async function renderReportPdf(result: AnalysisResult, opts: RenderOption
   // Left off the page entirely when unknown, never as a placeholder.
   if (opts.preparedFor) data.preparedFor = opts.preparedFor;
   data.deal = buildPdfDeal(result);
+  data.diligence = buildPdfDiligence(result);
   if (opts.setup) {
     const snap = buildSetupSnapshot(opts.setup);
     if (snap) data.setup = snap;

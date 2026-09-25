@@ -4,6 +4,7 @@ import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./ameni
 import { splitAddress, formatIssued } from "./format.ts";
 import { safe } from "./design/charts/geometry.ts";
 import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
+import { diligenceNotes } from "../analysis/due-diligence.ts";
 import type { PdfBrand } from "./theme";
 
 const MONTH_NAMES = [
@@ -87,6 +88,44 @@ export interface PdfDeal {
   note: string;
 }
 
+export interface PdfLiquidity {
+  rating: string | null;
+  daysOnMarket: number | null;
+  total: number | null;
+  perMonth: number | null;
+  monthsOfInventory: number | null;
+}
+
+export interface PdfGrowth {
+  outcode: string;
+  g1y: number | null;
+  g3y: number | null;
+  g5y: number | null;
+  g7y: number | null;
+  range: {
+    low: number;
+    high: number;
+    base: number;
+    basisLabel: string;
+    horizonYears: number;
+    annualisedPct: number;
+    haircutPct: number;
+  } | null;
+}
+
+/** The due diligence page: registers, council tax, stamp duty, liquidity and growth. */
+export interface PdfDiligence {
+  epc: { rating: string; score: number | null; inspected: string | null } | null;
+  floodRisk: { level: string; high: boolean } | null;
+  councilTax: { band: string; annual: number; council: string | null } | null;
+  stampDuty: { name: string; amount: number; ratePct: number | null; live: boolean } | null;
+  designations: { label: string; status: "inside" | "outside" | "unknown"; detail: string | null }[];
+  listed: { possiblyListed: boolean; nearest: { name: string; grade: string | null; distance: string }[] } | null;
+  liquidity: { sale: PdfLiquidity | null; rent: PdfLiquidity | null } | null;
+  growth: PdfGrowth | null;
+  notes: string[];
+}
+
 export interface PdfReportData {
   property: {
     address: string;
@@ -113,6 +152,8 @@ export interface PdfReportData {
   brand?: PdfBrand;
   /** Deal economics when the report came from a listing (or an estimated value). */
   deal?: PdfDeal;
+  /** Present only when the analysis carried any register data. */
+  diligence?: PdfDiligence;
   overview: {
     grossRevenue: number;
     netRevenue: number;
@@ -603,6 +644,82 @@ export function sanitiseAddressForFilename(address: string): string {
     .replace(/[^a-zA-Z0-9 ,\-]/g, "")
     .replace(/\s+/g, "_")
     .slice(0, 80) || "Property";
+}
+
+/** "27 Jan 2023" from an ISO date, or null. */
+function shortDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
+/**
+ * The due diligence page, from the register data the analysis stored.
+ * Undefined when there is none, so older reports keep their page count.
+ */
+export function buildPdfDiligence(result: AnalysisResult): PdfDiligence | undefined {
+  const dd = result.dueDiligence ?? null;
+  const epc = result.epc ?? null;
+  const ct = result.councilTax ?? null;
+  const growth = result.growth ?? null;
+  if (!dd && !epc && !ct && !growth) return undefined;
+  const deal = result.deal && result.deal.kind === "purchase" ? result.deal : null;
+
+  const designation = (label: string, d: { inside: boolean; name: string | null } | null | undefined) => ({
+    label,
+    status: d ? (d.inside ? ("inside" as const) : ("outside" as const)) : ("unknown" as const),
+    detail: d?.name ?? null,
+  });
+  const liquidity = (d: { rating: string | null; daysOnMarket: number | null; total: number | null; perMonth: number | null; monthsOfInventory: number | null } | null | undefined): PdfLiquidity | null =>
+    d ? { rating: d.rating, daysOnMarket: d.daysOnMarket, total: d.total, perMonth: d.perMonth, monthsOfInventory: d.monthsOfInventory } : null;
+
+  const notes = diligenceNotes(result);
+
+  return {
+    epc: epc ? { rating: epc.rating, score: epc.score, inspected: shortDate(epc.inspectionDate) } : null,
+    floodRisk: dd?.floodRisk ?? null,
+    councilTax: ct ? { band: ct.band, annual: Math.round(ct.annual), council: ct.council } : null,
+    stampDuty: deal
+      ? { name: deal.stampDutyName ?? "SDLT", amount: deal.stampDuty, ratePct: deal.stampDutyEffectiveRatePct ?? null, live: deal.stampDutySource === "propertydata" }
+      : null,
+    designations: dd
+      ? [
+          designation("Conservation area", dd.conservationArea),
+          designation("Green belt", dd.greenBelt),
+          designation("Area of Outstanding Natural Beauty", dd.aonb),
+          designation("National park", dd.nationalPark),
+        ]
+      : [],
+    listed: dd?.listedBuildings
+      ? {
+          possiblyListed: dd.listedBuildings.possiblyListed,
+          nearest: dd.listedBuildings.nearest.map((b) => ({ name: b.name, grade: b.grade, distance: b.distanceMiles !== null ? `${b.distanceMiles.toFixed(2)} mi` : "—" })),
+        }
+      : null,
+    liquidity: dd ? { sale: liquidity(dd.exitLiquidity.sale), rent: liquidity(dd.exitLiquidity.rent) } : null,
+    growth: growth
+      ? {
+          outcode: growth.outcode,
+          g1y: growth.growth1y,
+          g3y: growth.growth3y,
+          g5y: growth.growth5y,
+          g7y: growth.growth7y,
+          range: result.futureValue
+            ? {
+                low: result.futureValue.low,
+                high: result.futureValue.high,
+                base: result.futureValue.baseValue,
+                basisLabel: result.futureValue.basis === "asking-price" ? "the asking price" : "the estimated value",
+                horizonYears: result.futureValue.horizonYears,
+                annualisedPct: result.futureValue.annualisedPct,
+                haircutPct: result.futureValue.haircutAnnualPct,
+              }
+            : null,
+        }
+      : null,
+    notes,
+  };
 }
 
 /** Builds the deal page data from the listing-link additions on a result. */

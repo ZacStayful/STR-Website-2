@@ -199,6 +199,67 @@ export interface PropertyDataValuation {
   source: 'propertydata';
 }
 
+// ─── PropertyData due diligence (EPC, flood, designations, exit liquidity) ──
+export interface EpcResult {
+  /** A to G. */
+  rating: string;
+  score: number | null;
+  inspectionDate: string | null;
+  /** The register's own wording of the address that matched. */
+  address: string;
+  matched: 'address' | 'house-number';
+}
+
+export interface DueDiligence {
+  postcode: string;
+  outcode: string | null;
+  floodRisk: { level: string; high: boolean } | null;
+  conservationArea: Designation | null;
+  greenBelt: Designation | null;
+  aonb: Designation | null;
+  nationalPark: Designation | null;
+  /** The nearest listed buildings; `possiblyListed` when one is within ~80 m. */
+  listedBuildings: { nearest: ListedBuilding[]; possiblyListed: boolean } | null;
+  /** How the outcode's sales and rental markets are moving: the exit if short-letting stops. */
+  exitLiquidity: { sale: DemandSnapshot | null; rent: DemandSnapshot | null };
+  fetchedAt: string;
+}
+
+// ─── Historic price growth for the outcode (PropertyData region key stats) ──
+export interface OutcodeGrowth {
+  outcode: string;
+  /** PropertyData region the figures were read from. */
+  region: string;
+  avgPrice: number | null;
+  avgYieldPct: number | null;
+  /** Year-on-year price growth, percent, over the period. */
+  growth1y: number | null;
+  growth3y: number | null;
+  growth5y: number | null;
+  growth7y: number | null;
+  salesPerMonth: number | null;
+  turnoverPct: number | null;
+  /** When the region's stats were bought. */
+  asOf: string | null;
+}
+
+/** A value range projected from historic growth: an assumption, never a forecast. */
+export interface FutureValueRange {
+  baseValue: number;
+  basis: 'asking-price' | 'estimated-value';
+  horizonYears: number;
+  /** The outcode's historic growth over the same number of years, percent. */
+  historicGrowthPct: number;
+  /** That growth annualised, percent: the top end repeats it. */
+  annualisedPct: number;
+  /** Half the annualised rate, capped at 3% and floored at 0%: the low end. */
+  haircutAnnualPct: number;
+  high: number;
+  low: number;
+  outcode: string;
+  asOf: string | null;
+}
+
 // ─── Cross-validation against secondary STR data source ───────────
 export type CrossValidationConfidence = 'high' | 'medium' | 'low' | 'unverified';
 
@@ -220,6 +281,7 @@ export interface CrossValidation {
 // ─── Listing links (Rightmove / OnTheMarket / Airbnb …) ──────────
 import type { Deal, CashflowMonth } from './listing/deal';
 import type { CouncilTaxFigure } from './listing/bills';
+import type { DemandSnapshot, Designation, ListedBuilding } from './apis/propertydata-parse';
 import type { CompetitorSummary, TrackedListing } from './listing/competitors';
 import type { SecondOpinion } from './listing/quick-types';
 
@@ -265,6 +327,14 @@ export interface AnalysisResult {
   propertyValuation?: PropertyDataValuation | null;
   /** The property's council tax band and charge (PropertyData); null when the band could not be priced. */
   councilTax?: CouncilTaxFigure | null;
+  /** The address's EPC from the register (via PropertyData); null when no certificate matched. */
+  epc?: EpcResult | null;
+  /** Flood risk, planning designations, listed buildings and exit liquidity; null when none came back. */
+  dueDiligence?: DueDiligence | null;
+  /** Historic price growth for the outcode; null when the region's stats were not in the cache. */
+  growth?: OutcodeGrowth | null;
+  /** Value in five years from that growth; null without a growth figure or a price. */
+  futureValue?: FutureValueRange | null;
   // ── Listing-link additions (all optional; older reports simply lack them) ──
   sourceListing?: SourceListingRef | null;
   deal?: DealResult | null;

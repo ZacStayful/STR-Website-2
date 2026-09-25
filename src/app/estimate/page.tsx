@@ -95,6 +95,7 @@ import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
 import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
+import { DueDiligencePanel } from "./_components/DueDiligencePanel";
 import { SecondOpinionCard } from "./_components/SecondOpinionCard";
 import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "./_components/listing-client-types";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
@@ -309,6 +310,7 @@ const TAB_SECTIONS = [
   { id: "revenue", label: "Revenue", icon: PoundSterling, num: 4 },
   { id: "forecast", label: "Forecast", icon: LineChart, num: 5 },
   { id: "local-area", label: "Local Area", icon: MapPin, num: 6 },
+  { id: "due-diligence", label: "Due diligence", icon: ShieldCheck, num: 0 },
   { id: "bookings", label: "Bookings", icon: Target, num: 7 },
   { id: "risk", label: "Risk", icon: AlertTriangle, num: 8 },
   { id: "faq", label: "FAQ", icon: HelpCircle, num: 10 },
@@ -1183,6 +1185,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // customer's own funnel — see the section itself below.
     const visibleTabs = TAB_SECTIONS
       .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion || result?.enhancedNotice)
+      // The registers only exist on reports run since PropertyData supplied them.
+      .filter((tab) => tab.id !== "due-diligence" || result?.dueDiligence || result?.epc || result?.councilTax)
       .filter((tab) => tab.id !== "faq" || !funnel);
     const activeTabIndex = visibleTabs.findIndex((t) => t.id === activeTab);
     const activeTabInfo = activeTabIndex >= 0 ? { ...visibleTabs[activeTabIndex], num: activeTabIndex + 1 } : undefined;
@@ -2829,6 +2833,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               })}
             </div>
           </section>
+
+          {/* ══════════════════════════════════════════════════════════
+              Section 7b: Due diligence (PropertyData registers)
+              ══════════════════════════════════════════════════════════ */}
+          {(r.dueDiligence || r.epc || r.councilTax) && (
+            <section id="due-diligence" ref={setSectionRef("due-diligence")} className="mb-12">
+              <SectionHeading
+                icon={ShieldCheck}
+                title="Before You Commit"
+                subtitle="What the public registers say about this property, what it costs to hold, and how easily it would sell or let on."
+              />
+              <DueDiligencePanel result={r} />
+            </section>
+          )}
 
           {/* ══════════════════════════════════════════════════════════
               Section 8: Long-Term Direct Booking Potential

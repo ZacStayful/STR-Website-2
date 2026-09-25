@@ -12,6 +12,7 @@ import type {
   PropertyVerdict,
   VerdictFit,
 } from './types';
+import { isHighFloodRisk } from './apis/propertydata-parse.ts';
 
 // ─── Default cost assumptions ────────────────────────────────────
 // Short-let: 15% platform + 15% management + 18% cleaning = 48% total
@@ -79,11 +80,17 @@ function scoreToLevel(score: number): RiskLevel {
   return 'high';
 }
 
+export interface RiskSignals {
+  /** PropertyData's flood risk band; only "High" changes the score. */
+  floodRisk?: string | null;
+}
+
 export function assessRisk(
   shortLet: ShortLetData,
   longLet: LongLetData,
   amenities: DemandDrivers,
   events: { totalEvents: number },
+  signals: RiskSignals = {},
 ): RiskProfile {
   const scores: Record<string, number> = {};
 
@@ -106,6 +113,10 @@ export function assessRisk(
   if (shortLet.averageDailyRate > 200) scores.guestDamage = 1; // premium properties attract careful guests
   else if (shortLet.averageDailyRate > 100) scores.guestDamage = 2;
   else scores.guestDamage = 3;
+  // A high flood risk is damage to the property itself, the one thing on
+  // this list insurance and deposits do not make good. It is the only
+  // due diligence signal in the score; the rest are shown, not scored.
+  if (isHighFloodRisk(signals.floodRisk)) scores.guestDamage = 3;
 
   // ── Seasonality ──
   // Analyse monthly revenue variance

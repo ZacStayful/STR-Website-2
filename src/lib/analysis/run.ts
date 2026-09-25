@@ -6,7 +6,7 @@ import type {
 } from '../types';
 import { geocodePostcode } from '../apis/geocode';
 import { getShortLetData } from '../apis/airbtics';
-import { floorAreaFor, longLetFor, saleValuationFor } from './propertydata-steps';
+import { dueDiligenceFor, floorAreaFor, longLetFor, saleValuationFor } from './propertydata-steps';
 import { getNearbyAmenities } from '../apis/google-places';
 import { getNearbyEvents } from '../apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '../apis/pricelabs';
@@ -177,6 +177,9 @@ export async function runAnalysis(
       // Stamp duty on a known asking price can start now; on an estimated
       // value it waits for the valuation.
       const stampDutyPromise = !input.rentPcm && input.askingPrice ? ask(pdStampDuty, { value: input.askingPrice, country: taxCountry, mode: 'investment' }, brokerCtx) : null;
+      // EPC, flood, designations, listed buildings and exit liquidity: nine
+      // cached one-credit questions, needed before the risk score.
+      const dueDiligencePromise = dueDiligenceFor(property.postcode, property.address, brokerCtx);
 
       // Geocoding first — short-let needs coordinates for nearby listings.
       let coordinates: { lat: number; lng: number; locality?: string };
@@ -393,9 +396,12 @@ export async function runAnalysis(
       }
       console.log(`[PriceLabs RE] crossValidation: source=${crossValidation.source}, confidence=${crossValidation.confidence}, divergence=${crossValidation.divergencePct?.toFixed(1) ?? 'n/a'}%`);
 
+      progress('diligence', 85, 'Checking flood risk, EPC and planning designations...');
+      const { epc, dueDiligence } = await dueDiligencePromise;
+
       // Financials run on the (possibly overridden) shortLet values.
       const financials = calculateFinancials(shortLet, longLet);
-      const risk = assessRisk(shortLet, longLet, demandDrivers, nearbyEvents);
+      const risk = assessRisk(shortLet, longLet, demandDrivers, nearbyEvents, { floodRisk: dueDiligence?.floodRisk?.level ?? null });
       const verdict = generateVerdict(financials, risk);
 
       const now = new Date().toISOString();
@@ -451,6 +457,8 @@ export async function runAnalysis(
         crossValidation,
         propertyValuation,
         councilTax,
+        epc,
+        dueDiligence,
         sourceListing: source,
         deal,
         cashflow,
