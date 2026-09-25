@@ -1,93 +1,26 @@
-import { NextResponse, type NextRequest, after } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin'
-import { ensureEnquiry } from '@/lib/apis/monday'
 import { safeInternalPath } from '@/lib/safe-path'
+import { runSignInHooks } from '@/lib/auth/sign-in-hooks'
 
-// Handles both OAuth (Google) callback and email-confirmation links.
+// Handles both OAuth (Google) callback and PKCE email links (confirmation,
+// password reset, "email me a sign-in link"). Token-hash links, which need no
+// PKCE verifier cookie, land on /auth/confirm instead.
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl
   const code = searchParams.get('code')
   // Guarded here — the sink — so every producer of ?next= is covered.
   const next = safeInternalPath(searchParams.get('next'), '/estimate')
   const error = searchParams.get('error_description') || searchParams.get('error')
+  const loginUrl = (reason: string) => `${origin}/login?error=${encodeURIComponent(reason)}&redirect=${encodeURIComponent(next)}`
 
-  if (error) {
-    return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(error)}`
-    )
-  }
-
-  if (!code) {
-    return NextResponse.redirect(`${origin}/login?error=missing_code`)
-  }
+  if (error) return NextResponse.redirect(loginUrl(error))
+  if (!code) return NextResponse.redirect(loginUrl('missing_code'))
 
   const supabase = await createSupabaseServerClient()
   const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+  if (exchangeError) return NextResponse.redirect(loginUrl(exchangeError.message))
 
-  if (exchangeError) {
-    return NextResponse.redirect(
-      `${origin}/login?error=${encodeURIComponent(exchangeError.message)}`
-    )
-  }
-
-  // First-confirmation hook: push a new row to the Monday "Trial signups"
-  // board the first time a verified user lands here. Idempotent — only
-  // runs when profiles.monday_item_id is null. Errors are swallowed
-  // inside the helper so a Monday outage can't block the redirect.
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('email, full_name, mobile, trial_ends_at, monday_item_id, lead_source, lead_activated_at')
-        .eq('id', user.id)
-        .single()
-      // A member provisioned from a lead form has just signed in for the first
-      // time: stamp it and tell the ad platform (via n8n) that the lead became
-      // a member, so its optimisation learns which leads are worth buying.
-      if (profile && profile.lead_source && !profile.lead_activated_at && hasServiceRole()) {
-        const activatedAt = new Date().toISOString()
-        const source = profile.lead_source as Record<string, unknown>
-        const userId = user.id
-        const email = profile.email ?? user.email ?? ''
-        after(async () => {
-          try {
-            const admin = createAdminClient()
-            const { data: stamped } = await admin.from('profiles').update({ lead_activated_at: activatedAt }).eq('id', userId).is('lead_activated_at', null).select('id')
-            if (!stamped || stamped.length === 0) return // already stamped by a concurrent request
-            const hook = process.env.LEAD_ACTIVATION_WEBHOOK_URL
-            if (!hook) return
-            await fetch(hook, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json', ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}) },
-              body: JSON.stringify({ event: 'lead_activated', userId, email, source: source.source ?? null, leadId: source.leadId ?? null, activatedAt }),
-            })
-          } catch (err) {
-            console.warn('[auth] lead activation hook failed:', (err as Error)?.message ?? err)
-          }
-        })
-      }
-      if (profile && !profile.monday_item_id) {
-        const mondayId = await ensureEnquiry({
-          name: profile.full_name ?? '',
-          email: profile.email ?? user.email ?? '',
-          mobile: profile.mobile ?? '',
-          trialStartedAt: new Date().toISOString(),
-        })
-        if (mondayId) {
-          await supabase
-            .from('profiles')
-            .update({ monday_item_id: mondayId })
-            .eq('id', user.id)
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[auth/callback] Monday trial signup hook failed:', err)
-  }
-
+  await runSignInHooks(supabase)
   return NextResponse.redirect(`${origin}${next}`)
 }

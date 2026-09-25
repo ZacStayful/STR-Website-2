@@ -6,6 +6,7 @@ import { normaliseMobile } from "@/lib/credit/abuse";
 import { sendEmail } from "@/lib/email/send";
 import { escapeHtml } from "@/lib/email/escape";
 import { siteUrl } from "@/lib/url";
+import { confirmLink } from "@/lib/auth/magic-link";
 
 // ─── Lead-form provisioning ───────────────────────────────────────────
 // Turns a Meta lead-form submission (relayed by n8n) into a member: the
@@ -17,7 +18,14 @@ import { siteUrl } from "@/lib/url";
 // returns the existing member and grants nothing twice.
 //
 //   POST { email, phone?, name?, area?, postcode?, budget?, bedrooms?, kind?, maxRentPcm?, source?, leadId? }
-//   → { userId, created, welcomeGranted, magicLinkSent }
+//   → { userId, created, welcomeGranted, magicLinkSent, magicLink, areaCode, goals }
+//
+// `magicLink` is the same single-use sign-in link the email carries, returned
+// so n8n can put it in the WhatsApp welcome too. It is a token-hash link to
+// /auth/confirm (built from generateLink's hashed_token), so it works on any
+// device and needs no PKCE cookie. A second click after the first has signed
+// the member in still lands them in the app. It expires after the Supabase
+// project's email OTP expiry; the sign-in page offers a fresh one.
 //
 //   curl -X POST -H "x-internal-secret: $INTERNAL_API_SECRET" -H "content-type: application/json" \
 //     -d '{"email":"lead@example.com","area":"York","budget":"250000","bedrooms":3,"kind":"buy","source":"meta_lead_form","leadId":"123"}' \
@@ -129,21 +137,26 @@ export async function POST(request: Request) {
   }
 
   // ── The magic link ──
+  // generateLink's action_link is Supabase's own verify URL, which finishes with
+  // the session in the URL fragment (no `code`), so /auth/callback cannot
+  // complete it. Build a token-hash link to /auth/confirm instead, which
+  // verifies the hash server-side.
   let magicLinkSent = false;
-  const redirectTo = siteUrl(`/auth/callback?next=${encodeURIComponent("/deals")}`);
-  const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: "magiclink", email, options: { redirectTo } });
-  if (linkErr || !link?.properties?.action_link) {
+  let magicLink: string | null = null;
+  const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: "magiclink", email });
+  if (linkErr || !link?.properties?.hashed_token) {
     console.error("[leads] magic link failed:", linkErr?.message);
   } else {
+    magicLink = confirmLink(link.properties.hashed_token, "/deals");
     let areaName: string | null = null;
     if (areaCode) {
       const { areaMetaForCode } = await import("@/lib/market/areas");
       areaName = areaMetaForCode(areaCode).name;
     }
-    const mail = welcomeEmail({ name, link: link.properties.action_link, areaName });
+    const mail = welcomeEmail({ name, link: magicLink, areaName });
     const res = await sendEmail({ to: email, subject: mail.subject, html: mail.html, text: mail.text });
     magicLinkSent = res.sent;
   }
 
-  return Response.json({ userId, created, welcomeGranted, magicLinkSent, areaCode, goals: { kind: goals.sourcingKind, budget: goals.budget, bedrooms: goals.bedrooms } });
+  return Response.json({ userId, created, welcomeGranted, magicLinkSent, magicLink, areaCode, goals: { kind: goals.sourcingKind, budget: goals.budget, bedrooms: goals.bedrooms } });
 }
