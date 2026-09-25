@@ -1971,3 +1971,8 @@ alter table public.sourcing_missed enable row level security;  -- no policies: s
 revoke all on public.sourcing_missed from anon, authenticated;
 -- When the last paused letter went out (null: never).
 alter table public.profiles add column if not exists picks_paused_email_at timestamptz;
+
+-- One-off "picks are now daily" notice (src/lib/listing/daily-notice-run.ts):
+-- when it was sent to this member, so a second press of the admin button
+-- never sends twice. Null: not yet.
+alter table public.profiles add column if not exists daily_notice_sent_at timestamptz;
