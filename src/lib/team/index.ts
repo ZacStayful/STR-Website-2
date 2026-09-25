@@ -96,3 +96,53 @@ export async function hasOpenInvite(email: string | null): Promise<boolean> {
     .limit(1);
   return (inv ?? []).length > 0;
 }
+
+/**
+ * Who pays for a person's usage: their team's owner if they are a member,
+ * otherwise themselves. `memberId` is set only for a member, so debits can
+ * say who on the team spent it. A suspended member pays nothing because
+ * they may do nothing paid — callers refuse them.
+ */
+export interface Payer {
+  payerId: string;
+  memberId: string | null;
+  suspended: boolean;
+}
+
+export async function payerFor(userId: string): Promise<Payer> {
+  const team = await teamOf(userId);
+  return team.role === 'member'
+    ? { payerId: team.ownerId, memberId: userId, suspended: team.suspended }
+    : { payerId: userId, memberId: null, suspended: false };
+}
+
+/** The same for many people at once (crons): only members appear in the map. */
+export async function payersFor(userIds: string[]): Promise<Map<string, Payer>> {
+  const out = new Map<string, Payer>();
+  if (userIds.length === 0 || !hasServiceRole()) return out;
+  const { data, error } = await createAdminClient()
+    .from('team_members')
+    .select('member_id, owner_id, suspended_at')
+    .in('member_id', userIds);
+  if (error) {
+    console.error('[team] payer lookup failed:', error.message);
+    return out;
+  }
+  for (const r of (data ?? []) as Array<{ member_id: string; owner_id: string; suspended_at: string | null }>) {
+    out.set(r.member_id, { payerId: r.owner_id, memberId: r.member_id, suspended: Boolean(r.suspended_at) });
+  }
+  return out;
+}
+
+/** Look up in a `payersFor` map, defaulting to "pays for themselves". */
+export function payerIn(map: Map<string, Payer>, userId: string): Payer {
+  return map.get(userId) ?? { payerId: userId, memberId: null, suspended: false };
+}
+
+/** The member ids on an owner's team (active or paused). */
+export async function teamMembersOf(ownerId: string): Promise<string[]> {
+  if (!hasServiceRole()) return [];
+  const { data, error } = await createAdminClient().from('team_members').select('member_id').eq('owner_id', ownerId);
+  if (error) return [];
+  return ((data ?? []) as Array<{ member_id: string }>).map((r) => r.member_id);
+}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { payerFor } from "@/lib/team";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { listOpened } from "@/lib/marketplace/open";
 import { formatOpenPrice } from "@/lib/marketplace/ladder";
@@ -29,7 +30,7 @@ export default async function OpenedDealsPage() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
-  const rows = await listOpened(user.id);
+  const rows = await listOpened((await payerFor(user.id)).payerId);
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">

@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { payerFor } from "@/lib/team";
 import { resolveListing } from "@/lib/listing/server";
 import { quickEstimate } from "@/lib/listing/quick";
 import { serverFetchEnabled } from "@/lib/listing/fetch";
@@ -148,14 +149,20 @@ export async function GET(request: Request) {
   for (const r of airbnb) {
     if (Date.now() - started > AIRBNB_BUDGET_MS) break;
     const snap = r.snapshot;
+    // A team member's tracked listings re-check on their owner's credit.
+    const payer = await payerFor(r.user_id);
+    if (payer.suspended) {
+      summary.skipped += 1;
+      continue;
+    }
     if (isEnforcing()) {
-      const bal = await getBalance(r.user_id).catch(() => null);
+      const bal = await getBalance(payer.payerId).catch(() => null);
       if (bal && bal.spendableBasePence <= 0) {
         summary.skipped += 1;
         continue;
       }
     }
-    const quick = await runMetered({ userId: r.user_id, admin: false, action: "cron:recheck", actionId: newActionId() }, () =>
+    const quick = await runMetered({ userId: payer.payerId, memberId: payer.memberId, admin: false, action: "cron:recheck", actionId: newActionId() }, () =>
       quickEstimate(
         { kind: "str", postcode: snap.postcode ?? r.postcode, outcode: snap.outcode, bedrooms: snap.bedrooms ?? 2, bathrooms: snap.bathrooms, lat: snap.lat ?? r.lat, lng: snap.lng ?? r.lng, airbnbId: snap.id },
         { mode: "cron", userId: r.user_id },
@@ -180,8 +187,10 @@ export async function GET(request: Request) {
     if (!first) await sleep(1000);
     first = false;
     // One page fetch however many members watch it; the nominal cost goes to the first.
-    const payer = members[0]?.user_id ?? null;
-    const res = await runMetered({ userId: payer, admin: false, action: "cron:recheck", actionId: newActionId() }, () => resolveListing(url, { refresh: true }));
+    const watcher = members[0]?.user_id ?? null;
+    // A team member's share is billed to their owner, like everything else they do.
+    const pagePayer = watcher ? await payerFor(watcher) : null;
+    const res = await runMetered({ userId: pagePayer && !pagePayer.suspended ? pagePayer.payerId : null, memberId: pagePayer?.memberId ?? null, admin: false, action: "cron:recheck", actionId: newActionId() }, () => resolveListing(url, { refresh: true }));
     summary.fetched += 1;
     if (!res.ok && res.code === "paused") {
       summary.paused = true;

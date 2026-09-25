@@ -1823,3 +1823,28 @@ begin
 end;
 $$;
 revoke execute on function public.credit_debit_face(uuid, numeric, jsonb) from public, anon, authenticated;
+
+-- ── Shared team reports ──
+-- A report belongs to the ACCOUNT that paid for it (owner_id) and was run by
+-- user_id. For someone on their own they are the same; a team member's
+-- reports are the team's, paid from the owner's credit, and every active
+-- member sees them. Backfilled so every existing report is its author's.
+alter table public.saved_searches add column if not exists owner_id uuid references public.profiles(id) on delete cascade;
+update public.saved_searches set owner_id = user_id where owner_id is null;
+create index if not exists saved_searches_owner_idx on public.saved_searches (owner_id, created_at desc);
+-- team_members is service-role only, so a policy cannot read it directly
+-- (the lookup would itself be filtered to nothing). This definer function
+-- answers the one question the policy needs and nothing else.
+create or replace function public.is_active_member_of(p_owner uuid)
+returns boolean language sql security definer set search_path = public stable as $$
+  select exists (
+    select 1 from team_members
+    where member_id = auth.uid() and owner_id = p_owner and suspended_at is null
+  );
+$$;
+revoke execute on function public.is_active_member_of(uuid) from public, anon;
+grant execute on function public.is_active_member_of(uuid) to authenticated;
+drop policy if exists "Team can read team searches" on public.saved_searches;
+create policy "Team can read team searches"
+  on public.saved_searches for select
+  using (owner_id = auth.uid() or public.is_active_member_of(owner_id));

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { getCreditSummary } from "@/lib/credit/summary";
@@ -49,10 +50,13 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   } = await supabase.auth.getUser();
   if (!user) return null;
   const adminUser = isAdminEmail(user.email);
-  const sheet = await dealSheet(id, user.id, adminUser);
+  // Deals opened by anyone on the team are open for everyone on it, and the
+  // balance shown is the team's (the owner's), which is what pays.
+  const { payerId } = await payerFor(user.id);
+  const sheet = await dealSheet(id, payerId, adminUser);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
-  const [settings, credit, cards, profileRes] = await Promise.all([getBillingSettings(), getCreditSummary(user.id).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single()]);
+  const [settings, credit, cards, profileRes] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single()]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;

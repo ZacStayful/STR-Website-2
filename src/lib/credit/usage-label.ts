@@ -79,6 +79,17 @@ export function usageDescription(input: {
 }
 
 /** Reads the funnel id a debit was tagged with, or null. */
+/** The team member who spent the owner's credit, when a member did. */
+export function memberIdFromMeta(meta: Record<string, unknown> | null | undefined): string | null {
+  const v = meta?.member_id;
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+/** "Property report — by Sam". The name is typed by a person; React escapes it. */
+export function withMemberName(description: string, memberName: string | null): string {
+  return memberName ? `${description} — by ${memberName}` : description;
+}
+
 export function funnelIdFromMeta(meta: Record<string, unknown> | null | undefined): string | null {
   const v = meta?.funnel_id;
   return typeof v === 'string' && v.length > 0 ? v : null;

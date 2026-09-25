@@ -12,8 +12,27 @@ export function CreditBanner() {
   const ctx = useCreditOptional();
   const c = ctx?.credit;
   if (!c || c.admin) return null;
+  if (c.member?.paused) {
+    return (
+      <div className="sticky top-0 z-40 w-full border-b border-black/10 shadow-sm" style={{ backgroundColor: "#991b1b" }}>
+        <p className="mx-auto max-w-5xl px-4 py-2.5 text-center text-sm font-medium text-white">
+          Your seat on {c.member.teamName} is paused until the account owner tops up.
+        </p>
+      </div>
+    );
+  }
   if (c.state === "ok") return null;
   const out = c.state === "out";
+  if (c.member) {
+    // A member cannot top up or change plan; the owner can.
+    return (
+      <div className="sticky top-0 z-40 w-full border-b border-black/10 shadow-sm" style={{ backgroundColor: out ? "#991b1b" : "#b45309" }}>
+        <p className="mx-auto max-w-5xl px-4 py-2.5 text-center text-sm font-medium text-white">
+          {out ? `${c.member.teamName} is out of credit.` : `${c.member.teamName} is running low on credit (${formatGbp(c.totalPence)} left).`} Ask the account owner to top up.
+        </p>
+      </div>
+    );
+  }
   const cycle = c.cycle;
   const pct = cycle && cycle.allowancePence > 0 ? Math.min(100, Math.round((cycle.usedPence / cycle.allowancePence) * 100)) : null;
   const message = out

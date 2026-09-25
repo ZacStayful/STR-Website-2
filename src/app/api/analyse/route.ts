@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { payerFor } from '@/lib/team';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isAdminEmail } from '@/lib/admin';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
@@ -152,10 +153,14 @@ export async function POST(request: Request) {
         if (userId) {
           try {
             const supabase = await createSupabaseServerClient();
+            // A team member's report is the team's: it lands in the shared
+            // list under the owner who paid for it, credited to its author.
+            const { payerId: ownerId } = await payerFor(userId);
             const { data: saved, error: saveError } = await supabase
               .from('saved_searches')
               .insert({
                 user_id: userId,
+                owner_id: ownerId,
                 name: result.property.address,
                 address: result.property.address,
                 postcode: result.property.postcode,

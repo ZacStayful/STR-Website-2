@@ -51,7 +51,13 @@ async function flipToOpen(admin: Admin, row: DealOpenRow, transactionId: number 
   return !error;
 }
 
-export async function openDeal(input: { userId: string; adminUser: boolean; dealId: string }): Promise<OpenOutcome> {
+/**
+ * `userId` is the ACCOUNT that opens and pays — a team member's owner — so
+ * one unlock opens the deal for the whole team and survives a member being
+ * removed. `memberId` is the team member who pressed the button, recorded on
+ * the debit for the owner's usage history.
+ */
+export async function openDeal(input: { userId: string; adminUser: boolean; dealId: string; memberId?: string | null }): Promise<OpenOutcome> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
   const admin = createAdminClient();
   const now = new Date();
@@ -165,7 +171,7 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
     try {
       transactionId = await debit(input.userId, pence, {
         allowNegative: true,
-        meta: { action: 'deal_open', action_id: row.id, provider: 'marketplace', unit: 'deal_open', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Deal sheet: ${[verifiedDeal.town, verifiedDeal.postcode_area].filter(Boolean).join(', ')} (${verifiedDeal.kind === 'rent' ? 'rent-to-rent' : 'to buy'})` },
+        meta: { action: 'deal_open', action_id: row.id, provider: 'marketplace', unit: 'deal_open', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Deal sheet: ${[verifiedDeal.town, verifiedDeal.postcode_area].filter(Boolean).join(', ')} (${verifiedDeal.kind === 'rent' ? 'rent-to-rent' : 'to buy'})`, ...(input.memberId ? { member_id: input.memberId } : {}) },
       });
     } catch (err) {
       if (err instanceof InsufficientCreditError) {
@@ -240,9 +246,14 @@ export async function dealSheet(dealId: string, userId: string, adminUser: boole
  * charge and outside the daily resolve cap: the snapshot is the live page's
  * when there is one, else a minimal one built from the listing.
  */
-export async function saveOpenedDealToPipeline(userId: string, dealId: string, adminUser: boolean): Promise<{ ok: true; checkedListingId: string } | { ok: false; code: 'missing' | 'not_open' | 'failed' }> {
+/**
+ * Saves an opened deal into the person's OWN pipeline (checked_listings is
+ * personal). `accountId` is whose opens to look in — the team owner's for a
+ * member, since unlocks are the team's.
+ */
+export async function saveOpenedDealToPipeline(userId: string, dealId: string, adminUser: boolean, accountId: string = userId): Promise<{ ok: true; checkedListingId: string } | { ok: false; code: 'missing' | 'not_open' | 'failed' }> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
-  const sheet = await dealSheet(dealId, userId, adminUser);
+  const sheet = await dealSheet(dealId, accountId, adminUser);
   if (!sheet) return { ok: false, code: 'missing' };
   if (!sheet.priv) return { ok: false, code: 'not_open' };
   const admin = createAdminClient();

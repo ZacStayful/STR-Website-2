@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { usageDescription, actionLabel, tidyFunnelName, funnelIdFromMeta } from './usage-label.ts';
+import { usageDescription, actionLabel, tidyFunnelName, funnelIdFromMeta, memberIdFromMeta, withMemberName } from './usage-label.ts';
 
 test('a member charge keeps the wording it always had', () => {
   // The regression that matters: every existing charge flows through here.
@@ -77,4 +77,16 @@ test('a funnel id is read off the metadata defensively', () => {
   assert.equal(funnelIdFromMeta({}), null);
   assert.equal(funnelIdFromMeta(null), null);
   assert.equal(funnelIdFromMeta(undefined), null);
+});
+
+test('a team member’s spend is named on the owner’s usage history', () => {
+  assert.equal(memberIdFromMeta({ member_id: 'abc' }), 'abc');
+  assert.equal(memberIdFromMeta({ member_id: '' }), null);
+  assert.equal(memberIdFromMeta(null), null);
+  assert.equal(withMemberName('Property report', 'Sam'), 'Property report — by Sam');
+  assert.equal(withMemberName('Property report', null), 'Property report');
+});
+
+test('a team seat has a label', () => {
+  assert.equal(actionLabel('team_seat'), 'Team seat');
 });
