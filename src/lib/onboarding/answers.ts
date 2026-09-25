@@ -121,3 +121,10 @@ export function parseWelcomeAnswers(get: Getter): ParsedAnswers {
 
   return { ok: true, answers: { kind, budget, maxRentPcm, where, postcode, maxDistanceMiles, areas } };
 }
+
+/** One row of the area picker: ranked areas carry a score, the rest do not. */
+export interface WelcomeArea {
+  code: string;
+  name: string;
+  score: number | null;
+}
