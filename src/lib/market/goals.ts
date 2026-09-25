@@ -262,3 +262,30 @@ export function describeGoals(g: MarketGoals): string[] {
   out.push(g.management === 'self' ? 'Self-managed' : 'Managed');
   return out;
 }
+
+/** What the welcome questions (/welcome) ask; everything else keeps its default. */
+export interface WelcomeGoalInput {
+  kind: SourcingKind;
+  budget: Exclude<Budget, 'any'> | null;
+  maxRentPcm: number | null;
+  /** Normalised home postcode, or null when the member chose areas or anywhere. */
+  postcode: string | null;
+  maxDistanceMiles: MaxDistance | null;
+}
+
+/**
+ * Goals from the welcome answers. Fields the screen does not ask about keep
+ * `base` (the defaults for a new member). A budget is only kept when the
+ * member buys, a rent ceiling only when they rent, and a radius only with a
+ * home — so the stored profile never carries a bound nothing reads.
+ */
+export function goalsFromWelcome(a: WelcomeGoalInput, base: MarketGoals = DEFAULT_GOALS): MarketGoals {
+  return parseMarketGoals({
+    ...base,
+    sourcingKind: a.kind,
+    budget: a.kind === 'rent' ? null : a.budget,
+    maxRentPcm: a.kind === 'sale' ? null : a.maxRentPcm,
+    home: a.postcode ? { postcode: a.postcode, lat: null, lng: null } : null,
+    maxDistanceMiles: a.postcode ? a.maxDistanceMiles : null,
+  })!;
+}
