@@ -23,6 +23,38 @@ export interface BrokerDeps {
 
 const inFlight = new Map<string, Promise<ResolveResult<unknown>>>();
 
+/**
+ * Today's spend per provider and payer, remembered for a few seconds per
+ * ledger and bumped as rungs succeed, so a report that asks a dozen
+ * questions at once reads the ledger once rather than a dozen times, and
+ * the parallel asks see each other's spend instead of all passing the same
+ * pre-spend figure. Keyed by ledger so tests, which build their own, stay
+ * independent.
+ */
+const SPENT_MEMO_MS = 5_000;
+const spentMemo = new WeakMap<BrokerLedger, Map<string, { at: number; pence: number }>>();
+
+async function spentToday(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, now: number): Promise<number> {
+  let memo = spentMemo.get(ledger);
+  if (!memo) {
+    memo = new Map();
+    spentMemo.set(ledger, memo);
+  }
+  const key = `${provider}|${userId ?? ''}`;
+  const hit = memo.get(key);
+  if (hit && now - hit.at < SPENT_MEMO_MS) return hit.pence;
+  const pence = await ledger.spentToday(provider, userId ?? undefined);
+  memo.set(key, { at: now, pence });
+  return pence;
+}
+
+function addSpent(ledger: BrokerLedger, provider: ProviderName, userId: string | null | undefined, pence: number): void {
+  const memo = spentMemo.get(ledger);
+  const key = `${provider}|${userId ?? ''}`;
+  const hit = memo?.get(key);
+  if (hit) hit.pence += pence;
+}
+
 export async function resolveQuestion<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, ctx: BrokerContext): Promise<ResolveResult<T>> {
   const key = question.key(params);
   const flightKey = `${question.name}|${key}|${ctx.mode}|${ctx.cacheOnly ? 'ro' : 'rw'}`;
@@ -48,21 +80,16 @@ async function run<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, 
   }
 
   const maxLevel = MAX_LEVEL[ctx.mode];
-  const spent = new Map<string, number>();
   for (const rung of question.rungs) {
     if (rung.level > maxLevel) continue;
     if (!enabled(rung.provider)) continue;
     if (rung.enabled && !rung.enabled()) continue;
     if (rung.costPence > 0) {
       const budget = budgetFor(rung.provider);
-      const globalKey = `${rung.provider}|*`;
-      const memberKey = `${rung.provider}|${ctx.userId ?? ''}`;
-      const global = spent.get(globalKey) ?? (await deps.ledger.spentToday(rung.provider));
-      spent.set(globalKey, global);
+      const global = await spentToday(deps.ledger, rung.provider, null, Date.now());
       if (global + rung.costPence > budget.globalPence) continue;
       if (ctx.userId) {
-        const mine = spent.get(memberKey) ?? (await deps.ledger.spentToday(rung.provider, ctx.userId));
-        spent.set(memberKey, mine);
+        const mine = await spentToday(deps.ledger, rung.provider, ctx.userId, Date.now());
         if (mine + rung.costPence > budget.memberPence) continue;
       }
     }
@@ -79,8 +106,8 @@ async function run<P, T>(deps: BrokerDeps, question: Question<P, T>, params: P, 
     if (rung.costPence > 0 || !ok) {
       void deps.ledger.record({ provider: rung.provider, question: question.name, key, costPence: ok ? rung.costPence : 0, cacheHit: false, userId: ctx.userId ?? null, ok, ms }).catch(() => {});
       if (ok) {
-        spent.set(`${rung.provider}|*`, (spent.get(`${rung.provider}|*`) ?? 0) + rung.costPence);
-        if (ctx.userId) spent.set(`${rung.provider}|${ctx.userId}`, (spent.get(`${rung.provider}|${ctx.userId}`) ?? 0) + rung.costPence);
+        addSpent(deps.ledger, rung.provider, null, rung.costPence);
+        if (ctx.userId) addSpent(deps.ledger, rung.provider, ctx.userId, rung.costPence);
       }
     }
     if (value === null || value === undefined) continue;

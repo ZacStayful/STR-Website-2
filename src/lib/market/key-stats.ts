@@ -192,7 +192,9 @@ export async function warmRegionKeyStats(read: KeyStatsReader, max = WARM_REGION
     }
     const bought = await read(region, 'buy');
     if (bought.value && !bought.cached) out.warmed.push(region);
-    else if (bought.value) out.fresh.push(region);
+    else if (bought.value && !bought.stale) out.fresh.push(region);
+    // The broker handed back the stale rows because it could not buy
+    // (budget spent, provider down): that is a failed refresh, not a fresh one.
     else out.failed.push(region);
   }
   return out;

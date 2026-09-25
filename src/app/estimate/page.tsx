@@ -1589,7 +1589,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                         <p className="mt-2 text-primary-foreground/30" style={{ fontSize: 10 }}>
                           Point estimate {gbp(point)}
                           {r.propertyValuation.confidence ? ` · ${r.propertyValuation.confidence} confidence` : ""}
-                          {" · the range is PropertyData's own margin for this postcode"}
+                          {typeof r.propertyValuation.margin === "number"
+                            ? " · the range is PropertyData's own margin for this postcode"
+                            : " · the range is ±15% around the estimate"}
                         </p>
                         <p className="mt-1 text-[11px] text-primary-foreground/60">Source: PropertyData</p>
                       </div>

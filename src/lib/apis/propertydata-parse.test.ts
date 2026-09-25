@@ -81,20 +81,27 @@ test('floor areas: documented key, legacy key, and address matching', () => {
   assert.equal(parseFloorAreas(ERROR), null);
   assert.equal(parseFloorAreas({ status: 'success' }), null);
 
-  const both = matchAddressEntries(list, '32 Charleville Road, London, W14 9JH');
-  assert.equal(both?.matched, 'address');
-  assert.deepEqual(both?.entries.map((e) => e.address), ['Third Floor Flat, 32 Charleville Road', 'Flat B8, 32 Charleville Road']);
+  // Number 32 has a whole-floor flat and a lettered flat: the bare number is
+  // the former only; the lettered one needs its label, in either order.
+  const thirtyTwo = matchAddressEntries(list, '32 Charleville Road, London, W14 9JH');
+  assert.equal(thirtyTwo?.matched, 'address');
+  assert.deepEqual(thirtyTwo?.entries.map((e) => e.address), ['Third Floor Flat, 32 Charleville Road']);
   assert.equal(matchAddressEntry(list, 'Flat B8, 32 Charleville Road')?.entry.address, 'Flat B8, 32 Charleville Road');
+  assert.equal(matchAddressEntry(list, '32 Charleville Road, Flat B8')?.entry.address, 'Flat B8, 32 Charleville Road');
   assert.equal(matchAddressEntry(list, '18b Charleville Road')?.entry.address, '18b Charleville Road');
-  // "2 Charleville Road" must not match number 32, and a different street must not match on the number.
+  // A trailing outcode is stripped; a trailing unit label is not.
+  assert.equal(matchAddressEntry(list, '18b Charleville Road, W14')?.entry.address, '18b Charleville Road');
+  // Neither "2" nor "18" may borrow a flat that merely contains that number, and a different street never matches.
   assert.equal(matchAddressEntries(list, '2 Charleville Road'), null);
+  assert.equal(matchAddressEntries(list, '1 Charleville Road'), null, 'Flat 1 at number 48 is not number 1');
   assert.equal(matchAddressEntries(list, '46 Sinclair Road'), null);
   assert.equal(matchAddressEntries(list, '99 Nowhere Street'), null);
   assert.equal(matchAddressEntries(list, 'Charleville Road'), null);
   // A bare number can only be matched on the number.
-  const bare = matchAddressEntries(list, '48');
+  const bare = matchAddressEntries(list, '32');
   assert.equal(bare?.matched, 'house-number');
-  assert.equal(bare?.entries[0].address, 'Flat 1, 48 Charleville Road');
+  assert.equal(bare?.entries[0].address, 'Third Floor Flat, 32 Charleville Road');
+  assert.equal(matchAddressEntries(list, '48'), null, 'the only 48 is a numbered flat');
 
   assert.deepEqual(floorAreaFromEntry(list[1], 2), { squareFeet: 258, constructionDate: '1914_2000', matched: true });
   assert.deepEqual(floorAreaFromEntry(null, 3), { squareFeet: 900, constructionDate: '1914_2000', matched: false });
@@ -146,7 +153,9 @@ test('council tax bands and the properties in the postcode', () => {
   assert.equal(ct.properties.length, 12);
   assert.deepEqual(ct.properties[0], { address: 'MAIS 1ST 2ND & 3RD FLRS AT 3, CHARLEVILLE ROAD, LONDON, W14 9JH', band: 'E' });
   const eighteen = matchAddressEntries(ct.properties, '18 Charleville Road, London, W14 9JH');
-  assert.equal(eighteen?.entries.length, 6);
+  assert.equal(eighteen?.entries.length, 6, 'floor labels are not identifiers');
+  assert.equal(matchAddressEntries(ct.properties, '3 Charleville Road')?.entries.length, 1, 'the maisonette at 3, not Flat 3 elsewhere');
+  assert.equal(matchAddressEntries(ct.properties, '2 Charleville Road'), null, 'Flat 2 at 20 is not number 2');
   assert.equal(parseCouncilTax(ERROR), null);
 });
 
@@ -156,6 +165,7 @@ test('EPC entries, flood risk and the designations', () => {
   assert.equal(epc.length, 3);
   assert.deepEqual(epc[0], { address: 'Flat 3 , 26 , Charleville Road', rating: 'D', score: 66, inspectionDate: '2023-01-27' });
   assert.equal(matchAddressEntry(epc, 'Flat 3, 26 Charleville Road')?.entry.rating, 'D');
+  assert.equal(matchAddressEntry(epc, '3 Charleville Road'), null, 'a stranger\'s flat is not the member\'s house');
   assert.equal(parseEnergyEfficiency(ERROR), null);
 
   assert.deepEqual(parseFloodRisk(PD_FIXTURES.floodRisk), { level: 'High' });

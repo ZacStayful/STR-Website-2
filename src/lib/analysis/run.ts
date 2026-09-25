@@ -170,10 +170,24 @@ export async function runAnalysis(
       const geocodePromise = geocodePostcode(property.postcode);
       // Floor area comes from /floor-areas before the valuations.
       const floorAreaPromise = floorAreaFor(property.postcode, property.address, property.bedrooms, brokerCtx);
-      // The council tax band and the national mortgage averages are only
-      // needed by the deal maths at the end; they start now so they add no
-      // time. The averages are bought once a day by the market-warm cron
-      // and a report only ever reads them.
+
+      // Geocoding first — short-let needs coordinates for nearby listings.
+      let coordinates: { lat: number; lng: number; locality?: string };
+      try {
+        coordinates = await geocodePromise;
+      } catch (err) {
+        console.error('Geocoding failed:', err);
+        throw new GeocodeError();
+      }
+
+      progress('geocoding', 20, 'Property located');
+
+      // Only once the postcode has geocoded, so a report that fails here
+      // has not charged the payer for a dozen PropertyData calls. The
+      // council tax band and the national mortgage averages are only needed
+      // by the deal maths at the end; they start now so they add no time.
+      // The averages are bought once a day by the market-warm cron and a
+      // report only ever reads them.
       const councilTaxPromise = ask(pdCouncilTax, { postcode: property.postcode }, brokerCtx);
       const mortgageRatesPromise = ask(pdMortgageRates, {}, { ...brokerCtx, cacheOnly: true });
       const taxCountry = countryForPostcode(property.postcode);
@@ -193,17 +207,6 @@ export async function runAnalysis(
         const row = r.value ? keyStatsForOutcode(r.value, outcode) : null;
         return row ? outcodeGrowth(row, region, r.updatedAt) : null;
       })();
-
-      // Geocoding first — short-let needs coordinates for nearby listings.
-      let coordinates: { lat: number; lng: number; locality?: string };
-      try {
-        coordinates = await geocodePromise;
-      } catch (err) {
-        console.error('Geocoding failed:', err);
-        throw new GeocodeError();
-      }
-
-      progress('geocoding', 20, 'Property located');
 
       const floorArea = await floorAreaPromise;
 
@@ -381,6 +384,9 @@ export async function runAnalysis(
       progress('amenities', 75, 'Nearby amenities found');
       progress('events', 80, 'Local events discovered');
 
+      progress('diligence', 85, 'Checking flood risk, EPC and planning designations...');
+      const { epc, dueDiligence } = await dueDiligencePromise;
+
       // ── Final: run the analysis ──
       progress('analysis', 90, 'Running financial analysis...');
 
@@ -408,9 +414,6 @@ export async function runAnalysis(
         console.log(`[PriceLabs RE] overrode headline: was £${crossValidation.airbticsRevenue}, now £${priceLabsData.annualRevenue} (range £${priceLabsData.rangeLow}-£${priceLabsData.rangeHigh})`);
       }
       console.log(`[PriceLabs RE] crossValidation: source=${crossValidation.source}, confidence=${crossValidation.confidence}, divergence=${crossValidation.divergencePct?.toFixed(1) ?? 'n/a'}%`);
-
-      progress('diligence', 85, 'Checking flood risk, EPC and planning designations...');
-      const { epc, dueDiligence } = await dueDiligencePromise;
 
       // Financials run on the (possibly overridden) shortLet values.
       const financials = calculateFinancials(shortLet, longLet);
@@ -440,7 +443,7 @@ export async function runAnalysis(
       let stampDuty: StampDutyFigure | undefined;
       if (purchasePrice) {
         const sd = await (stampDutyPromise ?? ask(pdStampDuty, { value: purchasePrice, country: taxCountry, mode: 'investment' }, brokerCtx));
-        stampDuty = sd.value ? stampDutyFromApi(sd.value, taxCountry) : undefined;
+        stampDuty = sd.value ? stampDutyFromApi(sd.value, taxCountry, purchasePrice) : undefined;
       }
 
       // Where the value might go: the outcode's past five years projected

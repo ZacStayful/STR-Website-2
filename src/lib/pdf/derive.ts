@@ -649,12 +649,15 @@ export function sanitiseAddressForFilename(address: string): string {
     .slice(0, 80) || "Property";
 }
 
-/** "27 Jan 2023" from an ISO date, or null. */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "27 Jan 2023" from a YYYY-MM-DD date, read as a calendar date (no time zone), or null. */
 function shortDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${Number(m[3])} ${month} ${m[1]}` : iso;
 }
 
 /**
@@ -748,7 +751,7 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
     const taxWhere = taxName === "LBTT" ? "Scotland's" : taxName === "LTT" ? "Wales's" : "the England and Northern Ireland";
     const mortgage =
       d.mortgageRateSource === "live" && d.mortgageRateLive
-        ? `mortgage assumes the deposit and term in your Stayful goal profile at the market ${liveMortgageRateLabel(d.mortgageRateLive)}`
+        ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at the market ${liveMortgageRateLabel(d.mortgageRateLive)}`
         : "mortgage assumes the deposit, rate and term in your Stayful goal profile";
     const councilTax = d.councilTax ? `, of which £${Math.round(d.councilTax.annual / 12)} is band ${d.councilTax.band} council tax` : "";
     return {

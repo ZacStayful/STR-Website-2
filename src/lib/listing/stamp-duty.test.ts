@@ -13,6 +13,14 @@ test('the nation comes from the postcode area', () => {
   assert.equal(countryForPostcode('SW1A 1AA'), 'england');
   assert.equal(countryForPostcode('JE2 3AB'), 'england');
   assert.equal(countryForPostcode(''), 'england');
+  // Border areas are decided by outcode.
+  assert.equal(countryForPostcode('TD15 1AA'), 'england', 'Berwick-upon-Tweed');
+  assert.equal(countryForPostcode('TD1 1AA'), 'scotland', 'Galashiels');
+  assert.equal(countryForPostcode('CH7 1AA'), 'wales', 'Mold');
+  assert.equal(countryForPostcode('CH1 1AA'), 'england', 'Chester');
+  assert.equal(countryForPostcode('SY21 7AA'), 'wales', 'Welshpool');
+  assert.equal(countryForPostcode('SY1 1AA'), 'england', 'Shrewsbury');
+  assert.equal(countryForPostcode('SY23'), 'wales', 'an outcode on its own');
   assert.equal(taxNameFor('scotland'), 'LBTT');
   assert.equal(taxNameFor('wales'), 'LTT');
   assert.equal(taxNameFor('northern_ireland'), 'SDLT');
@@ -52,9 +60,12 @@ test('Scotland: LBTT bands plus the 8% supplement, matching PropertyData\'s own 
 });
 
 test('the API figure is used verbatim and keeps the nation the API named', () => {
-  const f = stampDutyFromApi({ name: 'LBTT', payable: 22_100, effectiveRatePct: 8.8, countryUsed: 'scotland', modeUsed: 'investment', transactionDate: '2025-02-12' }, 'scotland');
+  const f = stampDutyFromApi({ name: 'LBTT', payable: 22_100, effectiveRatePct: 8.8, countryUsed: 'scotland', modeUsed: 'investment', transactionDate: '2025-02-12' }, 'scotland', 250_000);
   assert.deepEqual(f, { amount: 22_100, name: 'LBTT', effectiveRatePct: 8.8, country: 'scotland', source: 'propertydata' });
-  const g = stampDutyFromApi({ name: 'SDLT', payable: 15_000, effectiveRatePct: null, countryUsed: null, modeUsed: null, transactionDate: null }, 'northern_ireland');
+  // Without a rate from the API it is worked out from the price, never from the payable alone.
+  const g = stampDutyFromApi({ name: 'SDLT', payable: 15_000, effectiveRatePct: null, countryUsed: null, modeUsed: null, transactionDate: null }, 'northern_ireland', 250_000);
   assert.equal(g.country, 'northern_ireland');
   assert.equal(g.source, 'propertydata');
+  assert.equal(g.effectiveRatePct, 6);
+  assert.equal(stampDutyFromApi({ name: 'SDLT', payable: 15_000, effectiveRatePct: null, countryUsed: null, modeUsed: null, transactionDate: null }, 'england', 0).effectiveRatePct, 0);
 });

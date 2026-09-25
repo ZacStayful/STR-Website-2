@@ -87,11 +87,8 @@ export function outcodeOf(postcode: string | null | undefined): string | null {
   return m ? m[1] : null;
 }
 
-/** "NG1 5DT" / "NG1" → "NG". */
-export function postcodeAreaOf(postcode: string | null | undefined): string | null {
-  const m = (postcode ?? '').trim().toUpperCase().match(/^[A-Z]{1,2}/);
-  return m ? m[0] : null;
-}
+/** "NG1 5DT" / "NG1" → "NG"; the same helper the listing normaliser uses. */
+export { postcodeAreaOf } from '../listing/normalise.ts';
 
 // ─── Address matching ───────────────────────────────────────────────
 //
@@ -99,11 +96,14 @@ export function postcodeAreaOf(postcode: string | null | undefined): string | nu
 // property in the postcode; we need the row for the address the member
 // typed. Addresses arrive in every style ("Flat 3, 26 Charleville Road",
 // "FLAT BST AT 18, CHARLEVILLE ROAD, LONDON, W14 9JH", "18b Charleville Rd")
-// so matching is token-based: an entry must carry every identifier the
-// member's address has (house numbers and unit labels: "18", "18b", "b8",
-// "3") and share a street word that is not a generic suffix. A bare number
-// with no street is matched on the number alone. Postcodes are stripped
-// first so "W14" is never mistaken for a unit.
+// so matching is token-based. An entry matches when its identifiers (house
+// numbers and unit labels: "18", "18b", "b8", "3") are exactly the member's,
+// in either order, and a street word that is not a generic suffix agrees.
+// Both directions matter: "3 Charleville Road" must not take "Flat 3, 26
+// Charleville Road", and "32 Charleville Road" must not take "Flat B8, 32".
+// Ordinals ("1st", "2nd") are floor labels, not identifiers. Postcodes are
+// stripped first so "W14" is never mistaken for a unit, and a trailing
+// outcode is only stripped when it does not follow "flat" or "unit".
 
 const GENERIC_STREET_WORDS = new Set([
   'road', 'rd', 'street', 'st', 'lane', 'ln', 'avenue', 'ave', 'close', 'cl', 'drive', 'dr', 'way', 'court', 'ct',
@@ -113,15 +113,27 @@ const GENERIC_STREET_WORDS = new Set([
   'basement', 'bst', 'maisonette', 'mais', 'the', 'and', 'at', 'unit', 'room', 'house', 'lhs', 'rhs',
 ]);
 
+const UNIT_WORDS = new Set(['flat', 'apartment', 'apt', 'unit', 'suite', 'room', 'no']);
 const FULL_POSTCODE_ANYWHERE = /\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/gi;
-const TRAILING_OUTCODE = /[,\s]+[a-z]{1,2}\d[a-z\d]?\s*$/i;
+const OUTCODE_TOKEN = /^[a-z]{1,2}\d[a-z\d]?$/;
+const ORDINAL = /^\d+(st|nd|rd|th)$/;
+const HAS_DIGIT = /\d/;
 
 function addressTokens(s: string): string[] {
-  const stripped = s.replace(FULL_POSTCODE_ANYWHERE, ' ').replace(TRAILING_OUTCODE, ' ');
-  return stripped.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+  const hadPostcode = FULL_POSTCODE_ANYWHERE.test(s);
+  FULL_POSTCODE_ANYWHERE.lastIndex = 0;
+  const stripped = s.replace(FULL_POSTCODE_ANYWHERE, ' ');
+  const tokens = stripped.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
+  // "18 Charleville Road, W14": the trailing outcode is not a unit label,
+  // unless it follows "flat" or "unit" ("32 Charleville Road, Flat B8").
+  const last = tokens[tokens.length - 1];
+  const before = tokens[tokens.length - 2];
+  if (!hadPostcode && tokens.length >= 2 && OUTCODE_TOKEN.test(last) && !UNIT_WORDS.has(before)) tokens.pop();
+  return tokens;
 }
 
-const HAS_DIGIT = /\d/;
+const identifiers = (tokens: readonly string[]) => tokens.filter((t) => HAS_DIGIT.test(t) && !ORDINAL.test(t));
+const sameSet = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((x) => b.includes(x));
 
 export type AddressMatchKind = 'address' | 'house-number';
 
@@ -131,22 +143,23 @@ export interface AddressMatch<T> {
 }
 
 /**
- * Every entry that is plausibly the member's address, in the order the API
- * listed them. `matched` says how confident the match is: 'address' when a
- * street word agreed too, 'house-number' when only the identifiers could
- * be compared. Null when nothing fits.
+ * Every entry that is the member's address, in the order the API listed
+ * them (several rows share an address when a building's flats are listed
+ * under it). `matched` is 'address' when a street word agreed too and
+ * 'house-number' when only the identifiers could be compared. Null when
+ * nothing fits.
  */
 export function matchAddressEntries<T extends { address?: string | null }>(entries: readonly T[], address: string): AddressMatch<T> | null {
   const mine = addressTokens(address);
-  const identifiers = mine.filter((t) => HAS_DIGIT.test(t));
+  const myIds = [...new Set(identifiers(mine))];
   const streetWords = mine.filter((t) => /^[a-z]{3,}$/.test(t) && !GENERIC_STREET_WORDS.has(t));
-  if (identifiers.length === 0) return null;
+  if (myIds.length === 0) return null;
   const hits: T[] = [];
   for (const e of entries) {
-    const theirs = new Set(addressTokens(e.address ?? ''));
-    if (theirs.size === 0) continue;
-    if (!identifiers.every((id) => theirs.has(id))) continue;
-    if (streetWords.length > 0 && !streetWords.some((w) => theirs.has(w))) continue;
+    const theirs = addressTokens(e.address ?? '');
+    if (theirs.length === 0) continue;
+    if (!sameSet(myIds, [...new Set(identifiers(theirs))])) continue;
+    if (streetWords.length > 0 && !streetWords.some((w) => theirs.includes(w))) continue;
     hits.push(e);
   }
   if (hits.length === 0) return null;

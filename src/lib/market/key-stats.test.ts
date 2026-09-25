@@ -78,20 +78,24 @@ test('the warm-up buys only what is missing or stale, a few regions a run, in a 
     }
     bought.push(region);
     if (region === 'scotland') return { value: null, cached: false, stale: false, unavailable: true, updatedAt: null };
+    // The broker could not buy the north west and returned its stale rows instead.
+    if (region === 'north_west' && s === 'stale') return { value: rows, cached: true, stale: true, unavailable: false, updatedAt: null };
     return { value: rows, cached: false, stale: false, unavailable: false, updatedAt: null };
   };
   const r = await warmRegionKeyStats(read, 3);
-  assert.deepEqual(r.warmed, ['north_west', 'east_midlands', 'east_of_england']);
-  assert.deepEqual(r.deferred, ['greater_london', 'scotland']);
+  // A stale region the broker would not refresh counts as failed, not fresh, and does not use up the allowance.
+  assert.deepEqual(r.warmed, ['east_midlands', 'east_of_england', 'greater_london']);
+  assert.deepEqual(r.failed, ['north_west']);
+  assert.deepEqual(r.deferred, ['scotland']);
   assert.deepEqual(r.fresh, ['north_east', 'west_midlands', 'south_east', 'south_west', 'wales', 'northern_ireland']);
-  assert.deepEqual(r.failed, []);
-  assert.deepEqual(bought, ['north_west', 'east_midlands', 'east_of_england']);
+  assert.deepEqual(bought, ['north_west', 'east_midlands', 'east_of_england', 'greater_london']);
 
-  // Next run: the deferred two, with Scotland failing.
+  // Next run: the north west refreshes, Scotland fails outright.
   for (const w of r.warmed) state.set(w, 'fresh');
+  state.set('north_west', 'missing');
   bought.length = 0;
   const r2 = await warmRegionKeyStats(read, 3);
-  assert.deepEqual(r2.warmed, ['greater_london']);
+  assert.deepEqual(r2.warmed, ['north_west']);
   assert.deepEqual(r2.failed, ['scotland']);
   assert.deepEqual(r2.deferred, []);
 });

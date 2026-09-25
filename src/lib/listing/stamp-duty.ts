@@ -1,5 +1,5 @@
 import { AREA_REGION } from '../market/regions.ts';
-import { postcodeAreaOf, type StampDutyResult } from '../apis/propertydata-parse.ts';
+import { outcodeOf, postcodeAreaOf, type StampDutyResult } from '../apis/propertydata-parse.ts';
 
 /**
  * Transaction tax on an additional residential property, by nation.
@@ -26,8 +26,35 @@ export interface StampDutyFigure {
   source: 'propertydata' | 'local';
 }
 
-/** Which nation's tax applies, from the postcode area. Crown dependencies and unknown areas default to England. */
+/**
+ * Postcode areas that straddle a border, by outcode. TD is Scottish except
+ * Berwick-upon-Tweed; CH is English except Deeside, Flint, Mold and
+ * Holywell; SY is English except mid-Wales from Montgomery to Tregaron.
+ * (HR3 and HR5 are mixed street by street and stay England.)
+ */
+const OUTCODE_COUNTRY: Record<string, TaxCountry> = {
+  TD15: 'england',
+  CH5: 'wales',
+  CH6: 'wales',
+  CH7: 'wales',
+  CH8: 'wales',
+  SY15: 'wales',
+  SY16: 'wales',
+  SY17: 'wales',
+  SY18: 'wales',
+  SY19: 'wales',
+  SY20: 'wales',
+  SY21: 'wales',
+  SY22: 'wales',
+  SY23: 'wales',
+  SY24: 'wales',
+  SY25: 'wales',
+};
+
+/** Which nation's tax applies, from the outcode where an area straddles a border, else the postcode area. Crown dependencies and unknown areas default to England. */
 export function countryForPostcode(postcode: string | null | undefined): TaxCountry {
+  const outcode = outcodeOf(postcode) ?? (postcode ?? '').trim().toUpperCase().replace(/\s+/g, '');
+  if (outcode && OUTCODE_COUNTRY[outcode]) return OUTCODE_COUNTRY[outcode];
   const area = postcodeAreaOf(postcode);
   const slug = area ? AREA_REGION[area] : undefined;
   if (slug === 'scotland') return 'scotland';
@@ -109,13 +136,14 @@ export function stampDutyLocal(price: number, country: TaxCountry = 'england'): 
   return { amount: rounded, name: taxNameFor(country), effectiveRatePct: p > 0 ? Math.round((rounded / p) * 1000) / 10 : 0, country, source: 'local' };
 }
 
-/** PropertyData's calculator answer as a figure the deal maths can use. */
-export function stampDutyFromApi(result: StampDutyResult, country: TaxCountry): StampDutyFigure {
+/** PropertyData's calculator answer as a figure the deal maths can use; `price` fills in the rate when the API leaves it out. */
+export function stampDutyFromApi(result: StampDutyResult, country: TaxCountry, price: number): StampDutyFigure {
   const resolved = taxCountryFor(result.name, country);
+  const amount = Math.round(result.payable);
   return {
-    amount: Math.round(result.payable),
+    amount,
     name: taxNameFor(resolved),
-    effectiveRatePct: result.effectiveRatePct ?? (result.payable > 0 ? Math.round((result.payable / Math.max(1, result.payable)) * 1000) / 10 : 0),
+    effectiveRatePct: result.effectiveRatePct ?? (price > 0 ? Math.round((amount / price) * 1000) / 10 : 0),
     country: resolved,
     source: 'propertydata',
   };
