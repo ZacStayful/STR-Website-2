@@ -51,8 +51,11 @@ export function isTrustworthyReport(q: ReportQuality): boolean {
  * A full postcode is a handful of addresses, and that figure can rest on ONE
  * report, so it would show one property's analysis on its own. A property a
  * lead-database customer analysed from their own lead list must never be shown
- * that way: those rows count in the area, district and bedroom figures, which
- * pool many reports, and never at postcode level.
+ * that way: those rows count in the area, district and bedroom figures and
+ * never at postcode level. Those figures are not guaranteed to pool several
+ * reports: an area, or one bedroom size inside an area or a ready district,
+ * can rest on one (only a district's own figures wait for
+ * MIN_DISTRICT_SAMPLES). The line drawn is the full postcode.
  */
 export function usableForPostcodeFigure(r: ReportQuality & { source?: string | null }): boolean {
   return r.source !== LEAD_DB_SOURCE && isTrustworthyReport(r);

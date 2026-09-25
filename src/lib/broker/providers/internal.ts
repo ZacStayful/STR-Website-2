@@ -142,7 +142,8 @@ interface PostcodeReportRow {
  * A full postcode is a handful of addresses and this figure can rest on one
  * report, so two kinds of row are never used here (quality.ts):
  *   • 'lead_db' — a property a lead-database customer analysed from their own
- *     lead list; it counts in the pooled area and bedroom figures, never alone;
+ *     lead list; it counts in the area, district and bedroom figures, never
+ *     against a single postcode;
  *   • a synthetic or `low` estimate, which is not market data anywhere.
  * `samples` is the number of reports actually averaged, so the quick view's
  * "Average of N recent Stayful reports" line stays true.

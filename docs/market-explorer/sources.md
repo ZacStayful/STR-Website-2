@@ -28,7 +28,15 @@ writer, and it tags every row with a `source`.
 - **Kept out of the single-postcode figure** (`usableForPostcodeFigure` in
   `src/lib/market/quality.ts`). A full postcode covers a handful of addresses,
   and that figure can rest on one report, so it would show one customer's
-  property on its own. Those rows only count where they are pooled with others.
+  property on its own. Those rows count at area and district level instead.
+  ⚠️ That is not a promise they are always pooled with other reports. A
+  district's figures stay hidden until it has 3 reports (`MIN_DISTRICT_SAMPLES`
+  in `confidence.ts`), but an area is shown from its first report
+  (`min_samples = 1`), and so is each bedroom size inside an area, or inside a
+  district that is showing figures. So one `lead_db` report can be all there is
+  behind a thin area's figures (shown at the `early` tier), or behind one
+  bedroom size. The line drawn is the full postcode, a handful of addresses; a
+  district or an area covers thousands.
 - **No street address is stored for `lead_db` rows.** The estimate software
   writes them with `address` null and coordinates rounded to about 1 km.
   Nothing here reads the address for any source.
