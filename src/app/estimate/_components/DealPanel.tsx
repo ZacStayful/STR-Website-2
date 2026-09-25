@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type FinanceDefaults, type PurchaseDeal, type RentToRentDeal } from '@/lib/listing/deal';
 import type { StampDutyFigure } from '@/lib/listing/stamp-duty';
 import { liveMortgageRateLabel } from '@/lib/listing/mortgage-rate';
+import { futureValueSentence } from '@/lib/listing/growth';
+import type { FutureValueRange } from '@/lib/types';
 import type { DealResult } from '@/lib/types';
 import { gbp, gbpSigned } from './format';
 
@@ -40,7 +42,7 @@ function Field({ id, label, value, onChange, suffix, step, min, max, hint }: { i
  * still works. All maths is the same pure module the server used, so the
  * live figures and the saved report agree.
  */
-export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { deal: DealResult; grossRevenue: number; adr: number; bedrooms: number; setupCost?: number }) {
+export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, futureValue }: { deal: DealResult; grossRevenue: number; adr: number; bedrooms: number; setupCost?: number; futureValue?: FutureValueRange | null }) {
   // Start from the inputs the server used, so the first render matches the saved report and PDF.
   const initialFinance: FinanceDefaults =
     deal.kind === 'purchase'
@@ -125,6 +127,9 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { de
               <Field id="deal-target" label="Target yield" value={finance.targetYieldPct} onChange={(v) => setFinance({ ...finance, targetYieldPct: v })} suffix="%" step={0.5} min={1} max={50} />
               <Field id="deal-bills" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} hint={billsHint} />
             </div>
+            {futureValue && (
+              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{futureValueSentence(futureValue)}</p>
+            )}
           </>
         ) : (
           <>

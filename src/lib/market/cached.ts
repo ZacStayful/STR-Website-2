@@ -6,6 +6,7 @@ import { buildSnapshot } from './aggregate';
 import { loadPlanningSignals, loadReportRows } from './source';
 import { getManagedAreas } from './managed-areas';
 import { getAreaLongLetRent } from './area-longlet';
+import { readAllRegionKeyStats } from './key-stats-cache';
 import { withTimeout } from '../timeout';
 import { keepAlive } from '../keep-alive';
 import type { MonthBucket } from './types';
@@ -28,14 +29,15 @@ const TAG = 'market-area-cards';
 // The data cache persists across deployments, so bump this key whenever the
 // aggregation or card logic changes; otherwise the previous build's snapshot
 // is served until it expires.
-const CACHE_KEY = 'market-snapshot-v8';
+const CACHE_KEY = 'market-snapshot-v9';
 
 const EMPTY: ExplorerData = { cards: [], regions: [], national: [], generatedAt: '', totalReports: 0 };
 
 async function buildExplorerWithManaged(): Promise<ExplorerData> {
-  const [rows, planning, managed] = await Promise.all([loadReportRows(), loadPlanningSignals(), getManagedAreas()]);
+  const [rows, planning, managed, keyStats] = await Promise.all([loadReportRows(), loadPlanningSignals(), getManagedAreas(), readAllRegionKeyStats()]);
   if (rows.length === 0) return EMPTY;
-  return buildExplorerData(buildSnapshot(rows, { planning }), { managedAreas: managed, areaLongLetRent: getAreaLongLetRent });
+  const keyStatsRows = new Map([...keyStats].map(([region, s]) => [region, s.rows] as const));
+  return buildExplorerData(buildSnapshot(rows, { planning }), { managedAreas: managed, areaLongLetRent: getAreaLongLetRent, keyStats: keyStatsRows });
 }
 
 const cachedSnapshot = unstable_cache(buildExplorerWithManaged, [CACHE_KEY], { revalidate: CACHE_SECONDS, tags: [TAG] });

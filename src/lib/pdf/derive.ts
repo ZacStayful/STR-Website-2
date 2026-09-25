@@ -5,6 +5,7 @@ import { splitAddress, formatIssued } from "./format.ts";
 import { safe } from "./design/charts/geometry.ts";
 import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
 import { diligenceNotes } from "../analysis/due-diligence.ts";
+import { futureValueSentence } from "../listing/growth.ts";
 import type { PdfBrand } from "./theme";
 
 const MONTH_NAMES = [
@@ -86,6 +87,8 @@ export interface PdfDeal {
   metrics: { label: string; value: string; sub?: string }[];
   cashflow: { month: number; revenue: number; operating: number; fixed: number; net: number }[];
   note: string;
+  /** Where the value might go, from the outcode's historic growth; absent without a growth figure. */
+  growthLine?: string;
 }
 
 export interface PdfLiquidity {
@@ -727,7 +730,9 @@ export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
   const d = result.deal;
   if (!d) return undefined;
   const cashflow = (result.cashflow ?? []).map((m) => ({ month: m.month, revenue: m.revenue, operating: m.operating, fixed: m.fixed, net: m.net }));
-  return pdfDealFrom(d, result.sourceListing?.url ?? null, cashflow);
+  const deal = pdfDealFrom(d, result.sourceListing?.url ?? null, cashflow);
+  if (d.kind === "purchase" && result.futureValue) deal.growthLine = futureValueSentence(result.futureValue);
+  return deal;
 }
 
 /** Same page data from a bare deal (used by the shareable deal sheet, which has no monthly series). */

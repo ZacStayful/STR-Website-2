@@ -5,7 +5,7 @@ import { SORT_LABELS, isSortKey } from "@/lib/market/rank";
 import type { Level, MarketGoals, SortKey } from "../../types";
 
 const PRIMARY: SortKey[] = ["stayful", "personal", "revenue", "occupancy", "adr", "yield"];
-const MORE: SortKey[] = ["competition", "seasonality", "directBooking", "distance", "trend"];
+const MORE: SortKey[] = ["competition", "seasonality", "directBooking", "growth", "distance", "trend"];
 
 /** The Markets | Sub-markets | My deals switch, the count, the sort select and the grid itself. */
 export function CardGrid({

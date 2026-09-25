@@ -15,12 +15,15 @@ import { startAction, actionSpend } from '../credit/action';
 import { runMetered, type MeterContext } from '../credit/context';
 import { estimateAction, reportAction, type CreditAction } from '../credit/estimate';
 import { getUnitCostTable } from '../credit/unit-costs';
-import { ask, nearbyListings, listingPerformance, strSecondOpinion, pdCouncilTax, pdMortgageRates, pdStampDuty } from '../broker';
+import { ask, nearbyListings, listingPerformance, strSecondOpinion, pdCouncilTax, pdMortgageRates, pdRegionKeyStats, pdStampDuty } from '../broker';
 import { matchTracked, rankCompetitors, summariseCompetitors } from '../listing/competitors';
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '../listing/deal';
 import { billsFromCouncilTax, pickCouncilTaxBand } from '../listing/bills';
 import { countryForPostcode, stampDutyFromApi, type StampDutyFigure } from '../listing/stamp-duty';
 import { liveMortgageRate, type MortgageRateInfo } from '../listing/mortgage-rate';
+import { futureValueRange } from '../listing/growth';
+import { keyStatsForOutcode, outcodeGrowth, pdRegionForOutcode } from '../market/key-stats';
+import { outcodeOf } from '../apis/propertydata-parse';
 import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
 import { noticeForFailure, noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
@@ -180,6 +183,16 @@ export async function runAnalysis(
       // EPC, flood, designations, listed buildings and exit liquidity: nine
       // cached one-credit questions, needed before the risk score.
       const dueDiligencePromise = dueDiligenceFor(property.postcode, property.address, brokerCtx);
+      // The outcode's historic price growth, from the region key stats the
+      // market-warm cron buys monthly; a report only reads the cache.
+      const growthPromise = (async () => {
+        const outcode = outcodeOf(property.postcode);
+        const region = pdRegionForOutcode(outcode);
+        if (!outcode || !region) return null;
+        const r = await ask(pdRegionKeyStats, { region }, { ...brokerCtx, cacheOnly: true });
+        const row = r.value ? keyStatsForOutcode(r.value, outcode) : null;
+        return row ? outcodeGrowth(row, region, r.updatedAt) : null;
+      })();
 
       // Geocoding first — short-let needs coordinates for nearby listings.
       let coordinates: { lat: number; lng: number; locality?: string };
@@ -430,6 +443,12 @@ export async function runAnalysis(
         stampDuty = sd.value ? stampDutyFromApi(sd.value, taxCountry) : undefined;
       }
 
+      // Where the value might go: the outcode's past five years projected
+      // forward as a range. Informational only; nothing else reads it.
+      const growth = await growthPromise;
+      const valueBase = input.askingPrice ?? propertyValuation?.estimatedValue ?? null;
+      const futureValue = growth && valueBase ? futureValueRange(valueBase, input.askingPrice ? 'asking-price' : 'estimated-value', growth.growth5y, growth.outcode, growth.asOf) : null;
+
       const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance, country: taxCountry, stampDuty, mortgageRate, bills };
       let deal: DealResult | null = null;
       if (input.rentPcm) deal = { ...rentToRentDeal(input.rentPcm, dealBase), basis: 'advertised-rent' };
@@ -459,6 +478,8 @@ export async function runAnalysis(
         councilTax,
         epc,
         dueDiligence,
+        growth,
+        futureValue,
         sourceListing: source,
         deal,
         cashflow,

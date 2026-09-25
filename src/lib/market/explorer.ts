@@ -20,6 +20,8 @@ import { getLicensing, type LicensingEntry } from '../data/str-licensing.ts';
 import { areaMetaForCode } from './areas.ts';
 import { districtLocalities } from './district-localities.ts';
 import { regionForArea, regionForSlug, type RegionMeta } from './regions.ts';
+import { aggregateKeyStats, areaKeyStats, pdRegionForArea, type AreaKeyStats } from './key-stats.ts';
+import type { KeyStatsRow } from '../apis/propertydata-parse.ts';
 import type { MarketAggregate, MarketArea, MarketBedroomAgg, MarketDistrict, MarketRegion, MarketSnapshot, MonthBucket } from './types.ts';
 
 export { MIN_DISTRICT_SAMPLES };
@@ -155,12 +157,16 @@ export interface DistrictCardData extends LevelFigures {
   localities: string[];
   /** False until MIN_DISTRICT_SAMPLES reports: the figures are withheld. */
   ready: boolean;
+  /** PropertyData's sales-market figures for the outcode (price, rent, yield, growth), or null. */
+  keyStats: AreaKeyStats | null;
 }
 
 export interface RegionCardData extends LevelFigures {
   slug: string;
   name: string;
   areaCodes: string[];
+  /** Mean five-year price growth across the region's areas with figures, or null. */
+  growth5y: number | null;
 }
 
 export interface AreaCardData extends LevelFigures {
@@ -174,6 +180,10 @@ export interface AreaCardData extends LevelFigures {
   /** Stayful already manages properties in this postcode area. */
   managedByStayful: boolean;
   districts: DistrictCardData[];
+  /** PropertyData's sales-market figures aggregated over the area's outcodes, or null. */
+  keyStats: AreaKeyStats | null;
+  /** Where the verdict's long-let rent came from: the region key stats, a rent valuation, or nowhere. */
+  longLetSource: 'key-stats' | 'valuation' | null;
 }
 
 export function districtCard(d: MarketDistrict): DistrictCardData {
@@ -188,17 +198,28 @@ export function districtCard(d: MarketDistrict): DistrictCardData {
     figures.listingAge = null;
   }
   const localities = districtLocalities(d.district);
-  return { ...figures, code: d.district, areaCode: d.postcode_area, locality: localities[0] ?? null, localities, ready };
+  return { ...figures, code: d.district, areaCode: d.postcode_area, locality: localities[0] ?? null, localities, ready, keyStats: null };
 }
 
 export function regionCard(r: MarketRegion): RegionCardData {
   const meta = regionForSlug(r.slug);
-  return { ...levelFigures(r), slug: r.slug, name: meta?.name ?? r.name, areaCodes: r.areas };
+  return { ...levelFigures(r), slug: r.slug, name: meta?.name ?? r.name, areaCodes: r.areas, growth5y: null };
 }
 
 async function buildAreaCard(area: MarketArea, opts: BuildOptions): Promise<AreaCardData> {
   const meta = areaMetaForCode(area.postcode_area);
-  const longLetRent = opts.areaLongLetRent ? await opts.areaLongLetRent(area).catch(() => null) : null;
+  // The long-let comparator: the area's average asking rent from the region
+  // key stats (every outcode, every size, like the short-let headline it is
+  // compared with), else a rent valuation at the representative postcode.
+  const pdRegion = pdRegionForArea(meta.code);
+  const rows = pdRegion ? (opts.keyStats?.get(pdRegion) ?? null) : null;
+  const keyStats = rows ? areaKeyStats(rows, meta.code) : null;
+  let longLetRent: number | null = keyStats?.avgRentPcm ?? null;
+  let longLetSource: AreaCardData['longLetSource'] = longLetRent ? 'key-stats' : null;
+  if (longLetRent === null && opts.areaLongLetRent) {
+    longLetRent = await opts.areaLongLetRent(area).catch(() => null);
+    longLetSource = longLetRent ? 'valuation' : null;
+  }
   const figures = levelFigures(area);
   const licensing = getLicensing(area.postcode_area);
   return {
@@ -216,7 +237,9 @@ async function buildAreaCard(area: MarketArea, opts: BuildOptions): Promise<Area
       licensing: licensing.status,
     }),
     managedByStayful: false, // filled in by the caller from the managed-areas lookup
-    districts: (area.districts ?? []).map(districtCard),
+    districts: (area.districts ?? []).map((d) => ({ ...districtCard(d), keyStats: rows ? aggregateKeyStats(rows.filter((r) => r.outcode === d.district)) : null })),
+    keyStats,
+    longLetSource,
   };
 }
 
@@ -229,6 +252,12 @@ export interface BuildOptions {
    * this module stays free of server-only imports.
    */
   areaLongLetRent?: (area: MarketArea) => Promise<number | null>;
+  /**
+   * PropertyData's region key stats by region (see key-stats.ts), read from
+   * the broker cache by `cached.ts`. Supplies each area's long-let rent,
+   * yield and price growth. Absent regions simply have no figures.
+   */
+  keyStats?: ReadonlyMap<string, readonly KeyStatsRow[]>;
 }
 
 export interface ExplorerData {
@@ -256,9 +285,14 @@ export async function buildExplorerData(snapshot: MarketSnapshot, opts: BuildOpt
         (b.score?.score ?? -1) - (a.score?.score ?? -1) ||
         (b.yieldOnCost?.grossYieldPct ?? -1) - (a.yieldOnCost?.grossYieldPct ?? -1),
     );
+  const regions = snapshot.regions.map((r) => {
+    const card = regionCard(r);
+    const growth = cards.filter((c) => r.areas.includes(c.code)).map((c) => c.keyStats?.growth5y).filter((g): g is number => g !== null && g !== undefined);
+    return { ...card, growth5y: growth.length > 0 ? Math.round((growth.reduce((a, b) => a + b, 0) / growth.length) * 10) / 10 : null };
+  });
   return {
     cards,
-    regions: snapshot.regions.map(regionCard),
+    regions,
     national: snapshot.national,
     generatedAt: snapshot.generated_at,
     totalReports: snapshot.total_reports,

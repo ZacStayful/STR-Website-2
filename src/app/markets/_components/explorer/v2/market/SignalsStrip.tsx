@@ -3,7 +3,7 @@ import type { AreaTrend } from "@/lib/market/trend";
 import { trendLabel } from "@/lib/market/trend";
 import { gbp, gbpCompact, pct } from "@/lib/market/format";
 
-/** The five "Stayful signals" under the KPIs. */
+/** The six "Stayful signals" under the KPIs. */
 export function SignalsStrip({ area, scope, trend, targetYieldPct }: { area: AreaCardData; scope: LevelFigures; trend: AreaTrend | null; targetYieldPct: number | null }) {
   const lic = area.licensing;
   const v = area.verdict;
@@ -21,6 +21,9 @@ export function SignalsStrip({ area, scope, trend, targetYieldPct }: { area: Are
     dir && dir !== "insufficient"
       ? { label: "Enquiry trend", value: trendLabel(dir) ?? "—", sub: "last 3 full months vs the 3 before", tone: dir === "up" ? "works" : undefined }
       : { label: "Enquiry trend", value: "Building history", sub: "needs 3+ reports a month on both sides" },
+    area.keyStats && area.keyStats.growth5y !== null
+      ? { label: "Price growth, 5 yrs", value: `${area.keyStats.growth5y > 0 ? "+" : ""}${pct(area.keyStats.growth5y, 1)}`, sub: `PropertyData · ${area.keyStats.outcodes} outcode${area.keyStats.outcodes === 1 ? "" : "s"}`, tone: area.keyStats.growth5y > 0 ? "works" : undefined }
+      : { label: "Price growth, 5 yrs", value: "—", sub: "no region stats yet" },
   ];
   return (
     <div className="mx2-signals">

@@ -1895,7 +1895,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               />
               <div className="space-y-6">
                 {r.deal && (
-                  <DealPanel deal={r.deal} grossRevenue={r.shortLet.annualRevenue} adr={r.shortLet.averageDailyRate} bedrooms={r.property.bedrooms} />
+                  <DealPanel deal={r.deal} grossRevenue={r.shortLet.annualRevenue} adr={r.shortLet.averageDailyRate} bedrooms={r.property.bedrooms} futureValue={r.futureValue ?? null} />
                 )}
                 {r.deal && r.cashflow && r.cashflow.length === 12 && (
                   <CashflowChart

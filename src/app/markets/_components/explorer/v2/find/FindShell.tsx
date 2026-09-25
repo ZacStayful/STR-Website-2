@@ -42,6 +42,7 @@ function districtSortValue(d: DistrictCardData, key: SortKey): number | null {
     case "competition": return d.competition ? 100 - d.competition.intensity : null;
     case "seasonality": return d.seasonality?.score ?? null;
     case "directBooking": return d.directBooking?.score ?? null;
+    case "growth": return d.keyStats?.growth5y ?? null;
     default: return d.headline.grossRevenue;
   }
 }
