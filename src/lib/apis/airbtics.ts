@@ -18,6 +18,15 @@
  */
 
 import { meter } from '../credit/meter.ts';
+import {
+  calendarMonthMeans,
+  latestCompleteMonth,
+  seasonalMultipliers,
+  SEASONAL_WINDOW_MONTHS,
+  windowEndingAt,
+  windowLabel,
+  type MonthWindow,
+} from '../comps/months.ts';
 import type {
   ShortLetData,
   ShortLetComparable,
@@ -708,34 +717,11 @@ function getReviewWeight(reviewCount: number | null | undefined): number {
   return 1.0;
 }
 
-/** V3 — Convert our monthly-revenue dict ("YYYY-MM"→revenue) to a 12-element array by calendar month. */
-function revenueDictToArray(dict: Record<string, number> | undefined): number[] | null {
-  if (!dict) return null;
-  const out: number[] = new Array(12).fill(0);
-  const counts: number[] = new Array(12).fill(0);
-  for (const [key, value] of Object.entries(dict)) {
-    const monthPart = key.split('-')[1];
-    if (!monthPart) continue;
-    const mi = parseInt(monthPart, 10) - 1;
-    if (mi >= 0 && mi < 12 && typeof value === 'number' && value > 0) {
-      out[mi] += value;
-      counts[mi] += 1;
-    }
-  }
-  for (let i = 0; i < 12; i++) {
-    if (counts[i] > 0) out[i] /= counts[i];
-  }
-  // If >80% of months are zero, treat as missing
-  const nonZero = out.filter(v => v > 0).length;
-  if (nonZero < 3) return null;
-  return out;
-}
-
 /**
  * V3 — Build a blended 12-point seasonal index.
  * Priority: 50% mature comps monthly average + 50% market (from first comp's dict) + fallback to UK default.
  */
-function buildSeasonalIndex(comps: ReportComp[]): { index: number[]; source: string } {
+function buildSeasonalIndex(comps: ReportComp[], window: MonthWindow | null = null): { index: number[]; source: string } {
   const now = new Date();
   const matureComps = comps.filter(c => {
     const d = parseCompDate(c);
@@ -748,7 +734,7 @@ function buildSeasonalIndex(comps: ReportComp[]): { index: number[]; source: str
     const totals = new Array(12).fill(0);
     const counts = new Array(12).fill(0);
     for (const comp of matureComps) {
-      const arr = revenueDictToArray(comp.revenue_ltm_monthly);
+      const arr = calendarMonthMeans(comp.revenue_ltm_monthly, window);
       if (!arr) continue;
       for (let i = 0; i < 12; i++) {
         if (arr[i] > 0) {
@@ -769,7 +755,7 @@ function buildSeasonalIndex(comps: ReportComp[]): { index: number[]; source: str
   const totals2 = new Array(12).fill(0);
   const counts2 = new Array(12).fill(0);
   for (const comp of comps) {
-    const arr = revenueDictToArray(comp.occupancy_rate_ltm_monthly);
+    const arr = calendarMonthMeans(comp.occupancy_rate_ltm_monthly, window);
     if (!arr) continue;
     for (let i = 0; i < 12; i++) {
       if (arr[i] > 0) {
@@ -1167,7 +1153,13 @@ function buildDataFromReportComps(
   // Fixes the "6-months-live comp with £20k revenue being read as £20k/year" bug:
   // immature listings are revenue-corrected for seasonal coverage, then ramp-up
   // uplift is applied based on review count.
-  const { index: seasonalIndex, source: seasonalSource } = buildSeasonalIndex(top12);
+  // The comps' monthly histories run back to 2021; fold only the latest
+  // SEASONAL_WINDOW_MONTHS complete months into calendar months, so the 2021
+  // lockdown stops shaping the seasonal curve. The anchor comes from the data
+  // (Airbtics lags a month or two), not the calendar.
+  const anchor = latestCompleteMonth(guestFiltered.map((c) => c.revenue_ltm_monthly), new Date());
+  const seasonWindow = windowEndingAt(anchor, SEASONAL_WINDOW_MONTHS);
+  const { index: seasonalIndex, source: seasonalSource } = buildSeasonalIndex(top12, seasonWindow);
   const enrichment = annualiseComps(top12, seasonalIndex);
   const annualisedCount = Array.from(enrichment.values()).filter(e => e.annualised).length;
   console.log(`[V3] Step 3f: seasonalSource=${seasonalSource}, comps_annualised=${annualisedCount}/${top12.length}`);
@@ -1390,8 +1382,8 @@ function buildDataFromReportComps(
   console.log(`[V3] Step 6: quality multiplier = ${qualityMultiplier} (${finishQuality || 'average'})`);
 
   // ── Step 7: Separate ADR + occupancy seasonal curves from comp monthly data ──
-  const seasonalADRMultiplier = buildSeasonalMultipliers(enrichedComps, 'booked_daily_rate_ltm_monthly');
-  const seasonalOccMultiplier = buildSeasonalMultipliers(enrichedComps, 'occupancy_rate_ltm_monthly');
+  const seasonalADRMultiplier = seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly), seasonWindow);
+  const seasonalOccMultiplier = seasonalMultipliers(enrichedComps.map((c) => c.occupancy_rate_ltm_monthly), seasonWindow);
 
   // ── Step 8b (V3): Headline ADR multiplier — outdoor + parking only ──
   // V3 fix — headline mode strips location, property type and condition because
@@ -1423,6 +1415,18 @@ function buildDataFromReportComps(
 
   const headlineForecast = buildForecast(adjusted_ADR, base_occ);
   const headlineAnnualRevenue = headlineForecast.reduce((s, m) => s + m.revenue, 0);
+
+  // TEMPORARY (remove once a few weeks of reports have been compared): what
+  // the all-history curves (2021 onwards) would have produced.
+  if (seasonWindow) {
+    const allAdr = seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly));
+    const allOcc = seasonalMultipliers(enrichedComps.map((c) => c.occupancy_rate_ltm_monthly));
+    const allHistory = DAYS_IN_MONTH.reduce((sum, days, i) => sum + Math.round(adjusted_ADR * allAdr[i] * Math.min(base_occ * allOcc[i], 1.0) * days), 0);
+    const delta = allHistory > 0 ? ((headlineAnnualRevenue - allHistory) / allHistory) * 100 : 0;
+    console.log(`[V4] seasonal window ${windowLabel(seasonWindow)}: annual £${headlineAnnualRevenue} (all-history £${allHistory}, Δ${delta.toFixed(1)}%)`);
+  } else {
+    console.log('[V4] seasonal window: none (no dated history) — all-history curves used');
+  }
 
   // ── Step 9 (V3 FIX): Scenarios (worst/base/best) ──
   // V2 had a copy-paste bug where `bestForecast = worstForecast`. V3 properly
@@ -1570,46 +1574,6 @@ function extractMonthlyFromComps(comps: ReportComp[]): number[] {
   return monthTotals.map((total, i) =>
     monthCounts[i] > 0 ? Math.round(total / monthCounts[i]) : 0,
   );
-}
-
-/**
- * Builds seasonal multipliers from comp monthly data.
- * multiplier[month] = monthAverage / annualAverage
- * Falls back to typical UK seasonal pattern if no real data.
- */
-function buildSeasonalMultipliers(
-  comps: ReportComp[],
-  monthlyField: 'booked_daily_rate_ltm_monthly' | 'occupancy_rate_ltm_monthly',
-): number[] {
-  const monthTotals: number[] = new Array(12).fill(0);
-  const monthCounts: number[] = new Array(12).fill(0);
-
-  for (const comp of comps) {
-    const monthlyData = comp[monthlyField];
-    if (!monthlyData) continue;
-    for (const [key, value] of Object.entries(monthlyData)) {
-      const monthPart = key.split('-')[1];
-      if (!monthPart) continue;
-      const monthIndex = parseInt(monthPart, 10) - 1;
-      if (monthIndex >= 0 && monthIndex < 12 && typeof value === 'number' && value > 0) {
-        monthTotals[monthIndex] += value;
-        monthCounts[monthIndex]++;
-      }
-    }
-  }
-
-  const monthAverages = monthTotals.map((total, i) =>
-    monthCounts[i] > 0 ? total / monthCounts[i] : 0,
-  );
-
-  const validMonths = monthAverages.filter(v => v > 0);
-  if (validMonths.length < 6) {
-    // Not enough real data, use default UK seasonal pattern
-    return [0.82, 0.85, 0.95, 1.00, 1.08, 1.18, 1.25, 1.22, 1.10, 0.98, 0.88, 0.80];
-  }
-
-  const annualAverage = validMonths.reduce((s, v) => s + v, 0) / validMonths.length;
-  return monthAverages.map(v => v > 0 ? v / annualAverage : 1.0);
 }
 
 /**
