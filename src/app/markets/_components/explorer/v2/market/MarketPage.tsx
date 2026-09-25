@@ -12,6 +12,7 @@ import { buildTabModel, type TabKey } from "@/lib/market/tab-model";
 import { districtLabel, marketTitle, subMarketTitle } from "@/lib/market/labels";
 import type { AreaCardData } from "@/lib/market/explorer";
 import type { CheckedListingRow } from "@/lib/listing/pipeline";
+import type { AreaDealsSummary } from "@/lib/marketplace/grid";
 import type { ExplorerRow, MarketGoals, SortKey } from "../../types";
 import { GoalsModal } from "../../GoalsModal";
 import { ManagedEnquiry } from "../../ManagedEnquiry";
@@ -39,6 +40,7 @@ export function MarketPage({
   alertWeekly = true,
   sourcingAlerts = false,
   listings: initialListings,
+  marketDeals,
   initialTab,
   initialDistrict,
   initialSort,
@@ -54,6 +56,8 @@ export function MarketPage({
   alertWeekly?: boolean;
   sourcingAlerts?: boolean;
   listings: CheckedListingRow[];
+  /** Live marketplace deals in this area; null when the marketplace is not configured. */
+  marketDeals: AreaDealsSummary | null;
   initialTab: TabKey;
   initialDistrict: string | null;
   initialSort: SortKey;
@@ -169,9 +173,9 @@ export function MarketPage({
             </div>
           </div>
         ) : tab === "overview" ? (
-          <OverviewTab area={card} scope={scope} scopeName={scopeName} personal={row.personal} trend={trend} goals={goals} listings={listings} dataCodes={dataCodes} onTab={changeTab} onOpenDistrict={changeDistrict} onOpenListing={(id) => { setActiveListing(id); changeTab("deals"); }} onSetGoals={() => setGoalsOpen(true)} />
+          <OverviewTab area={card} scope={scope} scopeName={scopeName} personal={row.personal} trend={trend} goals={goals} listings={listings} marketDeals={marketDeals} dataCodes={dataCodes} onTab={changeTab} onOpenDistrict={changeDistrict} onOpenListing={(id) => { setActiveListing(id); changeTab("deals"); }} onSetGoals={() => setGoalsOpen(true)} />
         ) : tab === "deals" ? (
-          <DealsTab areaRow={row} goals={goals} listings={listings} onListings={setListings} activeListing={activeListing} onActiveListing={setActiveListing} onOpenArea={openArea} />
+          <DealsTab areaRow={row} goals={goals} listings={listings} marketDeals={marketDeals} onListings={setListings} activeListing={activeListing} onActiveListing={setActiveListing} onOpenArea={openArea} />
         ) : (
           <GenericTab model={buildTabModel(tab, ctx)} ctx={ctx} onOpenDistrict={changeDistrict} />
         )}

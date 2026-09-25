@@ -8,10 +8,12 @@ import { formatMonth } from "@/lib/market/trend";
 import { gbp, gbpCompact, pct } from "@/lib/market/format";
 import { districtLabel } from "@/lib/market/labels";
 import type { CheckedListingRow } from "@/lib/listing/pipeline";
+import type { AreaDealsSummary } from "@/lib/marketplace/grid";
 import type { MarketGoals } from "../../types";
 import { PerformanceCard } from "./PerformanceCard";
 import { SignalsStrip } from "./SignalsStrip";
 import { YourDealsHere } from "./YourDealsHere";
+import { MarketDealsHere } from "./MarketDealsHere";
 import { KpiCard } from "../shared/KpiCard";
 import { DataTable } from "../shared/DataTable";
 import { LineCard, MIN_REPORTS } from "../shared/LineCard";
@@ -27,6 +29,7 @@ export function OverviewTab({
   trend,
   goals,
   listings,
+  marketDeals,
   dataCodes,
   onTab,
   onOpenDistrict,
@@ -40,6 +43,7 @@ export function OverviewTab({
   trend: AreaTrend | null;
   goals: MarketGoals | null;
   listings: CheckedListingRow[];
+  marketDeals: AreaDealsSummary | null;
   dataCodes: ReadonlySet<string>;
   onTab: (t: "submarkets" | "listings" | "occupancy" | "revenue" | "rates" | "deals") => void;
   onOpenDistrict: (code: string) => void;
@@ -114,6 +118,8 @@ export function OverviewTab({
           <LineCard title="Occupancy" series={scope.series} metric="avg_occupancy" format={(v) => pct(v, 0)} legend="Occupancy" tag={<DeltaTag trend={trend?.occupancy} />} onClick={() => onTab("occupancy")} />
         </div>
       </section>
+
+      <MarketDealsHere summary={marketDeals} areaCode={area.code} areaName={area.name} />
 
       <YourDealsHere listings={listings.filter((l) => l.postcodeArea === area.code)} areaName={area.name} onOpen={onOpenListing} onViewAll={() => onTab("deals")} />
     </div>

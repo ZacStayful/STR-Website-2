@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, badgesFor, describeType, PAGE_SIZE } from './grid.ts';
+import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView } from './grid.ts';
 
 test('parseDealFilters whitelists every value and clamps numbers', () => {
   assert.deepEqual(parseDealFilters({}), DEFAULT_FILTERS);
@@ -52,4 +52,30 @@ test('describeType', () => {
   assert.equal(describeType({ bedrooms: 3, raw_type: 'Terraced', tenure: 'Freehold' }), '3 bed terraced · Freehold');
   assert.equal(describeType({ bedrooms: null, raw_type: null, tenure: 'Leasehold' }), 'Leasehold');
   assert.equal(describeType({ bedrooms: 2, raw_type: null, tenure: null }), '2 bed');
+});
+
+test('priceLine and headlineFigure', () => {
+  assert.equal(priceLine({ price_amount: 250000, price_period: 'total' }), '£250,000');
+  assert.equal(priceLine({ price_amount: 1200, price_period: 'pcm' }), '£1,200 pcm');
+  assert.equal(priceLine({ price_amount: null, price_period: null }), null);
+  assert.deepEqual(headlineFigure({ kind: 'sale', annual_profit: 24000, uplift_pct: 62.4 }), { big: '+62%', small: '£24,000/yr over a long let' });
+  assert.deepEqual(headlineFigure({ kind: 'sale', annual_profit: null, uplift_pct: null }), { big: '—', small: 'over a long let' });
+  assert.deepEqual(headlineFigure({ kind: 'rent', annual_profit: 9800, uplift_pct: null }), { big: '£9,800/yr', small: 'profit after rent' });
+});
+
+test('areaDealView carries nothing private and is fully formatted', () => {
+  const card = {
+    id: 'd1', source: 'rightmove', kind: 'sale', postcode_area: 'YO', outcode: 'YO24', town: 'Acomb', bedrooms: 3, price_amount: 250000, price_period: 'total',
+    raw_type: 'Terraced', tenure: 'Freehold', band: 'qualified', annual_profit: 24000, uplift_pct: 62, reduced_at: null, listed_date: null, status: 'live',
+    first_seen_at: ago(3), last_checked_live_at: ago(6), last_confirmed_at: ago(6), last_confirmed_via: 'live', has_photo: true,
+  } as const;
+  const v = areaDealView(card, '/api/deals/photo?id=d1', NOW);
+  assert.equal(v.where, 'Acomb · YO24');
+  assert.equal(v.type, '3 bed terraced · Freehold');
+  assert.equal(v.price, '£250,000');
+  assert.equal(v.figureBig, '+62%');
+  assert.deepEqual(v.tags, ['New today']);
+  assert.equal(v.freshnessKind, 'live');
+  assert.equal(v.photoUrl, '/api/deals/photo?id=d1');
+  for (const k of Object.keys(v)) assert.ok(!['canonical_url', 'address', 'postcode', 'photo', 'photos'].includes(k), `private key ${k} leaked`);
 });
