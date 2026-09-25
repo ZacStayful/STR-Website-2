@@ -42,6 +42,10 @@ export function toReportRow(raw: Record<string, unknown>): ReportRow {
     demand_transport: num(raw.demand_transport),
     demand_events: num(raw.demand_events),
     monthly: monthlyOf(raw.monthly),
+    // The analyser's own verdict on the estimate; absent on the Monday backfill.
+    // quality.ts decides from these whether the row is market data at all.
+    comparables_found: num(raw.comparables_found),
+    quality_level: typeof raw.quality_level === 'string' && raw.quality_level.trim() ? raw.quality_level.trim().toLowerCase() : null,
   };
 }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summariseCompetitors, matchTracked, rankCompetitors, gridCell, type TrackedListing } from './competitors.ts';
+import { summariseCompetitors, matchTracked, nearbyPageOf, rankCompetitors, gridCell, type TrackedListing } from './competitors.ts';
 
 function l(id: string, revenue: number, over: Partial<TrackedListing> = {}): TrackedListing {
   return { listingId: id, name: id, url: `https://www.airbnb.co.uk/rooms/${id}`, lat: 0, lng: 0, bedrooms: 2, bathrooms: 1, guests: 4, roomType: 'Entire home/apt', propertyType: 'House', annualRevenue: revenue, adr: 100, occupancy: 0.6, reviewCount: 10, rating: 4.8, activeDays: 300, ...over };
@@ -29,4 +29,16 @@ test('matchTracked and rankCompetitors', () => {
 test('gridCell buckets nearby points together', () => {
   assert.equal(gridCell(53.4539, -2.15971), gridCell(53.4541, -2.1600));
   assert.notEqual(gridCell(53.4539, -2.15971), gridCell(53.4639, -2.15971));
+});
+
+test('nearbyPageOf reads old bare arrays, the new page shape, and rejects garbage', () => {
+  const listing = l('1', 10000, { bedrooms: 2 });
+  assert.deepEqual(nearbyPageOf([listing]), { listings: [listing], totalCount: null });
+  assert.equal(nearbyPageOf({ listings: [listing], totalCount: 1050, radiusKm: 1 })!.totalCount, 1050);
+  assert.equal(nearbyPageOf({ listings: [listing], totalCount: 'x' })!.totalCount, null);
+  assert.equal(nearbyPageOf({ nope: true }), null);
+  assert.equal(nearbyPageOf(null), null);
+  assert.equal(summariseCompetitors([listing], 2, 1050).totalNearby, 1050);
+  assert.equal(summariseCompetitors([listing], 2, 1).totalNearby, undefined);
+  assert.equal(summariseCompetitors([listing], 2).totalNearby, undefined);
 });

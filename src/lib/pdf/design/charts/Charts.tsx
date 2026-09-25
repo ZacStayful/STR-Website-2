@@ -336,6 +336,34 @@ export function RangeAxis({ low, high, width }: { low: number; high: number; wid
   );
 }
 
+// ── What similar listings earn ────────────────────────────────────────────
+/**
+ * The comparables' middle half as a shaded band, ticks at the median and the
+ * top 10%, and a marker for our estimate. Positions are 0–1 from
+ * `bandPositions`, clamped here too so nothing NaN reaches a coordinate.
+ */
+export function EarningsBand({ positions, width }: {
+  positions: { p25: number; p50: number; p75: number; p90: number | null; estimate: number };
+  width: number;
+}) {
+  const at = (v: number) => clamp(safe(v), 0, 1) * width;
+  const left = at(positions.p25);
+  const right = at(positions.p75);
+  const est = at(positions.estimate);
+  return (
+    <View style={{ width, height: 18, position: "relative" }}>
+      <View style={{ position: "absolute", top: 10, left: 0, width, height: 0.7, backgroundColor: C.INK }} />
+      <View style={{ position: "absolute", top: 6, left, width: Math.max(1, right - left), height: 9, backgroundColor: RAMP[3] }} />
+      <View style={{ position: "absolute", top: 4, left: at(positions.p50) - 0.7, width: 1.4, height: 13, backgroundColor: C.INK }} />
+      {positions.p90 !== null ? (
+        <View style={{ position: "absolute", top: 6, left: at(positions.p90) - 0.35, width: 0.7, height: 9, backgroundColor: C.TEXT_MUTED }} />
+      ) : null}
+      <View style={{ position: "absolute", top: 0, left: est - 3, width: 6, height: 6, borderRadius: 3, backgroundColor: C.INK }} />
+      <View style={{ position: "absolute", top: 5, left: est - 0.5, width: 1, height: 12, backgroundColor: C.INK }} />
+    </View>
+  );
+}
+
 // ── QR code ──────────────────────────────────────────────────────────────
 export function Qr({ matrix, size, dark = C.INK, light = C.CREAM }: {
   matrix: { size: number; rows: boolean[][] };

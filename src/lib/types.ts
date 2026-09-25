@@ -1,4 +1,8 @@
 import type { EnhancedNotice } from './analysis/enhanced-notice.ts';
+import type { EarningsRange } from './comps/earnings.ts';
+import type { LocalTrend } from './comps/local-trend.ts';
+import type { ListingsNearby } from './comps/nearby.ts';
+import type { StayProfile } from './comps/stays.ts';
 
 // ─── Property Input ───────────────────────────────────────────────
 export interface PropertyInput {
@@ -94,6 +98,19 @@ export interface ShortLetData {
   locationClass?: LocationClass;
   adrMultipliers?: AdrMultipliers;
   annualisationMeta?: AnnualisationMeta;
+  // From the comparables' own histories (report/all path only). All optional:
+  // reports saved before these existed lack them, and every reader validates
+  // through the `read*` helpers in src/lib/comps before use.
+  /** Airbtics' total listing count for the ±r box of the report's bounds call. Display only. */
+  listingsNearby?: ListingsNearby;
+  /** Percentiles of the displayed comparables, plus a month-by-month band. */
+  earningsRange?: EarningsRange;
+  /** Latest 12 months vs the 12 before, on a matched sample of comps. */
+  localTrend?: LocalTrend;
+  /** Nights per booking by calendar month. */
+  stayProfile?: StayProfile;
+  /** The forecast's own occupancy per calendar month, 0–1, Jan..Dec. */
+  monthlyOccupancy?: number[];
 }
 
 // ─── Long-Term Let Data ──────────────────────────────────────────

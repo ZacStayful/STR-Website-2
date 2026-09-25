@@ -108,6 +108,14 @@ export const MAX_AREAS_PER_MEMBER = 5;
  * Which areas a member's goals cover: their saved areas plus any area whose
  * centroid is within their distance limit of home, best fit first, capped so
  * a member with a wide radius does not fan out into dozens of searches.
+ *
+ * A null `maxDistanceMiles` is the form's "Anywhere in the UK", so it lifts the
+ * radius rather than removing the home entirely. It used to be read as falsy
+ * and skip this whole branch, which left a member who set a postcode and left
+ * the distance alone with no areas at all: no goals queries, and a silent drop
+ * to house picks chosen on Stayful's national score rather than their own fit.
+ * The most permissive answer was the most restrictive in practice. The cap
+ * below is what keeps "anywhere" from fanning out.
  */
 export function areasForGoals(goals: MarketGoals, savedAreas: string[], areas: AreaRef[], limit = MAX_AREAS_PER_MEMBER): AreaRef[] {
   const byCode = new Map(areas.map((a) => [a.code.toUpperCase(), a]));
@@ -117,9 +125,10 @@ export function areasForGoals(goals: MarketGoals, savedAreas: string[], areas: A
     if (a) picked.set(a.code, a);
   }
   const home = goals.home && goals.home.lat !== null && goals.home.lng !== null ? { lat: goals.home.lat, lng: goals.home.lng } : null;
-  if (home && goals.maxDistanceMiles) {
+  if (home) {
+    const within = (a: AreaRef) => !goals.maxDistanceMiles || haversineMiles(home, a.centroid!) <= goals.maxDistanceMiles;
     const near = areas
-      .filter((a) => a.centroid && haversineMiles(home, a.centroid) <= goals.maxDistanceMiles!)
+      .filter((a) => a.centroid && within(a))
       .sort((a, b) => (b.fit ?? -1) - (a.fit ?? -1));
     for (const a of near) picked.set(a.code, a);
   }
