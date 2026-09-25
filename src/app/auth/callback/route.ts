@@ -1,5 +1,6 @@
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse, type NextRequest, after } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin'
 import { ensureEnquiry } from '@/lib/apis/monday'
 import { safeInternalPath } from '@/lib/safe-path'
 
@@ -41,9 +42,34 @@ export async function GET(request: NextRequest) {
     if (user) {
       const { data: profile } = await supabase
         .from('profiles')
-        .select('email, full_name, mobile, trial_ends_at, monday_item_id')
+        .select('email, full_name, mobile, trial_ends_at, monday_item_id, lead_source, lead_activated_at')
         .eq('id', user.id)
         .single()
+      // A member provisioned from a lead form has just signed in for the first
+      // time: stamp it and tell the ad platform (via n8n) that the lead became
+      // a member, so its optimisation learns which leads are worth buying.
+      if (profile && profile.lead_source && !profile.lead_activated_at && hasServiceRole()) {
+        const activatedAt = new Date().toISOString()
+        const source = profile.lead_source as Record<string, unknown>
+        const userId = user.id
+        const email = profile.email ?? user.email ?? ''
+        after(async () => {
+          try {
+            const admin = createAdminClient()
+            const { data: stamped } = await admin.from('profiles').update({ lead_activated_at: activatedAt }).eq('id', userId).is('lead_activated_at', null).select('id')
+            if (!stamped || stamped.length === 0) return // already stamped by a concurrent request
+            const hook = process.env.LEAD_ACTIVATION_WEBHOOK_URL
+            if (!hook) return
+            await fetch(hook, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', ...(process.env.INTERNAL_API_SECRET ? { 'x-internal-secret': process.env.INTERNAL_API_SECRET } : {}) },
+              body: JSON.stringify({ event: 'lead_activated', userId, email, source: source.source ?? null, leadId: source.leadId ?? null, activatedAt }),
+            })
+          } catch (err) {
+            console.warn('[auth] lead activation hook failed:', (err as Error)?.message ?? err)
+          }
+        })
+      }
       if (profile && !profile.monday_item_id) {
         const mondayId = await ensureEnquiry({
           name: profile.full_name ?? '',
