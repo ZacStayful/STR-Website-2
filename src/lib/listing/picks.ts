@@ -64,6 +64,18 @@ export interface HouseAreaCard {
 export const HOUSE_AREAS = 8;
 
 /**
+ * The best-scored areas Stayful has real data for, best first. Areas still at
+ * the `early` confidence tier are left out: their score is not yet a claim
+ * worth searching on. Shared by the house pick and the marketplace sweep.
+ */
+export function topScoredAreas<C extends HouseAreaCard>(cards: C[], limit: number): C[] {
+  return cards
+    .filter((c) => c.score !== null && c.confidence.tier !== 'early')
+    .sort((a, b) => b.score!.score - a.score!.score)
+    .slice(0, Math.max(0, limit));
+}
+
+/**
  * The best-scored areas Stayful has real data for, as searches. With goals
  * (a member whose filter names no areas) the member's own kind, budget and
  * bedrooms apply; without, both kinds and no bounds, so the reply to the
@@ -74,10 +86,7 @@ export function houseQueries(cards: HouseAreaCard[], goals: MarketGoals | null, 
   const kinds: SourcingKind[] = goals ? (g.sourcingKind === 'both' ? ['sale', 'rent'] : [g.sourcingKind]) : ['sale', 'rent'];
   const bounds = goals ? budgetBounds(g.budget) : { min: null, max: null };
   const minBedrooms = goals ? g.bedrooms ?? null : null;
-  const areas = cards
-    .filter((c) => c.score !== null && c.confidence.tier !== 'early')
-    .sort((a, b) => b.score!.score - a.score!.score)
-    .slice(0, limit);
+  const areas = topScoredAreas(cards, limit);
   const out: SourcingQuery[] = [];
   for (const a of areas) {
     for (const kind of kinds) {
@@ -432,11 +441,18 @@ export interface PickEmailInput {
   relaxation?: string | null;
   /** The income screening this pick was sent on, shown as the working. */
   screening?: Screening | null;
+  /** The marketplace deal this pick was drawn from, when it came from the pool: the email links to its sheet. */
+  dealId?: string | null;
 }
 
-export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string) {
+export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null } | null) {
   const base = siteUrl.replace(/\/$/, '');
+  const more = deal ? `${base}/deals?kind=${deal.kind}${deal.area ? `&areas=${encodeURIComponent(deal.area)}` : ''}${deal.bedrooms ? `&beds=${deal.bedrooms >= 4 ? '4%2B' : deal.bedrooms}` : ''}` : null;
   return {
+    /** The deal sheet on the marketplace, when the pick came from the pool. */
+    deal: deal ? `${base}/deals/${deal.dealId}` : null,
+    /** The marketplace filtered to this pick's kind, area and size. */
+    more,
     yes: `${base}/p/${token}?a=yes`,
     no: `${base}/p/${token}?a=no`,
     save: `${base}/picks?save=${encodeURIComponent(id)}`,
@@ -479,7 +495,7 @@ export function describeMotivation(m: Motivation | null | undefined, limit = 3):
 export function pickEmail(input: PickEmailInput): { subject: string; text: string; html: string; headers: Record<string, string> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
-  const links = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl);
+  const links = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
   const kindWord = l.kind === 'rent' ? 'rent-to-rent' : 'to buy';
   const sc = input.screening && input.screening.band !== 'insufficient-data' ? input.screening : null;
   // The subject leads on the screening where there is one: "42% above a long let"
@@ -524,6 +540,8 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
     `Not for me: ${links.no}`,
     `Not for you? Tell us why in a couple of clicks and tomorrow's pick changes.`,
     '',
+    links.deal ? `Open the deal sheet: ${links.deal}` : null,
+    links.more ? `More deals like this: ${links.more}` : null,
     `Save to my pipeline: ${links.save}`,
     `Full report: ${links.report}`,
     `View listing: ${links.listing}`,
@@ -557,7 +575,8 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
       <p style="margin:0 0 4px">${btn(links.yes, 'Yes, more like this', true)}${btn(links.no, 'Not for me')}</p>
       ${relaxLine ? `<p style="margin:0 0 14px;color:#2e3d2b;font-size:13px">${esc(relaxLine)} <a href="${esc(links.filter)}" style="color:#2e3d2b;font-weight:600">Change it</a></p>` : ''}
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Not for you? Tell us why in a couple of clicks and tomorrow&#8217;s pick changes.</p>
-      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', true)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
+      ${links.deal ? `<p style="margin:0 0 6px">${btn(links.deal, 'Open the deal sheet', true)}${links.more ? btn(links.more, 'More deals like this') : ''}</p>` : ''}
+      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', !links.deal)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
       <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a>.</p>
     </div>`.trim();
 

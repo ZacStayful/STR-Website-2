@@ -126,6 +126,32 @@ export async function resendConfirmationAction(
   return { error: null, success: `Confirmation email resent to ${email}.` }
 }
 
+// Email a one-tap sign-in link. Members provisioned from a lead form have no
+// password, and their welcome link is single-use, so this is how they get
+// back in. Goes through Supabase's own magic-link email (rate limited there)
+// and lands on /auth/callback like the password-reset link.
+export async function requestMagicLinkAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const email = String(formData.get('email') ?? '').trim()
+  if (!email) return { error: 'Enter your email address.', success: null }
+  const next = safeInternalPath(String(formData.get('redirect') ?? ''), '/deals')
+
+  const supabase = await createSupabaseServerClient()
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false, emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(next)}` },
+  })
+
+  // Don't reveal whether an account exists — always show the same message.
+  if (error) console.error('[auth] magic link request failed:', error.message)
+  return {
+    error: null,
+    success: `If an account exists for ${email}, a sign-in link is on its way. Open it on this device.`,
+  }
+}
+
 // Send a password-reset email. The link lands on /auth/callback (which
 // exchanges the recovery code for a session) and forwards to /reset-password.
 export async function requestPasswordResetAction(

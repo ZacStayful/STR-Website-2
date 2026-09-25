@@ -43,8 +43,18 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
     console.warn(`[credit] welcome credit withheld for ${userId}: ${withheld}`);
     return { granted: false, withheld };
   }
-  const settings = await getBillingSettings();
-  await grant(userId, 'welcome', settings.welcomeGrantPence, { sourceRef: `welcome:${userId}`, description: 'Welcome credit' });
+  try {
+    const settings = await getBillingSettings();
+    await grant(userId, 'welcome', settings.welcomeGrantPence, { sourceRef: `welcome:${userId}`, description: 'Welcome credit' });
+  } catch (err) {
+    // The check stamp went in before the grant so a concurrent call would not
+    // grant twice. If the grant itself failed, clear it again: otherwise the
+    // early return above leaves this member permanently without their credit.
+    // The grant is idempotent on source_ref, so a retry can never double-grant.
+    await admin.from('profiles').update({ welcome_checked_at: null }).eq('id', userId);
+    console.error(`[credit] welcome grant failed for ${userId}; will retry on next sign-in:`, (err as Error)?.message ?? err);
+    return { granted: false, withheld: null };
+  }
   await redeemPendingReferral(userId);
   return { granted: true, withheld: null };
 }

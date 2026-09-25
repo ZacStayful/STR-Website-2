@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation } from './picks.ts';
+import { houseQueries, topScoredAreas, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation } from './picks.ts';
 import { queriesForGoals, rentPcm, withinQueryPrice, type SourcedListing, type SourcedPick, type AreaRef, type SourcingQuery } from './sourcing.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import { purchaseDeal } from './deal.ts';
@@ -43,6 +43,12 @@ test('houseQueries takes the best-scored areas with real data, both kinds when t
   assert.deepEqual(qs.map((q) => `${q.kind}|${q.area}`), ['sale|M', 'rent|M', 'sale|NG', 'rent|NG']);
   assert.equal(qs[0].maxPrice, null);
   assert.equal(qs[0].minBedrooms, null);
+});
+
+test('topScoredAreas ranks by score, drops early-tier and unscored areas, and honours the limit', () => {
+  assert.deepEqual(topScoredAreas(cards, 10).map((c) => c.code), ['M', 'NG', 'LS']);
+  assert.deepEqual(topScoredAreas(cards, 1).map((c) => c.code), ['M']);
+  assert.deepEqual(topScoredAreas(cards, 0), []);
 });
 
 test('houseQueries honours a member\'s own kind, budget, bedrooms and rent ceiling', () => {
@@ -416,4 +422,20 @@ test('the advice is never shown on a pick that did match', () => {
   const mail = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10, nearMiss: false, relaxation: 'Change your budget.' });
   assert.ok(!mail.text.includes('Change your budget'));
   assert.ok(!mail.html.includes('Change your budget'));
+});
+
+test('a pick drawn from the marketplace pool links to its deal sheet and to more like it', () => {
+  const l = listing({ postcodeArea: 'NG', bedrooms: 4 });
+  const links = pickLinks('https://x.test', 'p1', 'tok', l.canonicalUrl, { dealId: 'deal-1', kind: 'sale', area: 'NG', bedrooms: 4 });
+  assert.equal(links.deal, 'https://x.test/deals/deal-1');
+  assert.equal(links.more, 'https://x.test/deals?kind=sale&areas=NG&beds=4%2B');
+  assert.equal(pickLinks('https://x.test', 'p1', 'tok', l.canonicalUrl).deal, null);
+  const pick = { listing: l, deal: null, areaFit: 60, areaName: 'Nottingham', fit: 70 };
+  const withDeal = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 40, dealId: 'deal-1' });
+  assert.ok(withDeal.html.includes('https://x.test/deals/deal-1'));
+  assert.ok(withDeal.text.includes('Open the deal sheet: https://x.test/deals/deal-1'));
+  assert.ok(withDeal.text.includes('More deals like this: https://x.test/deals?kind=sale&areas=NG&beds=4%2B'));
+  const without = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10 });
+  assert.ok(!without.html.includes('/deals/'));
+  assert.ok(!without.text.includes('Open the deal sheet'));
 });

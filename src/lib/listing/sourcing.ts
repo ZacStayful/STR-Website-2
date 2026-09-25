@@ -18,6 +18,7 @@ import type { MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
 import type { Motivation } from './motivation.ts';
+import { bandRank, type Screening } from './screen.ts';
 import type { MotivationMode } from '../market/goals.ts';
 
 export type SourcingKind = 'sale' | 'rent';
@@ -26,6 +27,8 @@ export interface SourcedListing {
   source: ListingSource;
   id: string;
   canonicalUrl: string;
+  /** The portal URL exactly as the feed gave it; the canonicaliser rewrites Zoopla rentals to a for-sale path, so this is the link to show. */
+  sourceUrl?: string | null;
   kind: SourcingKind;
   title: string;
   address: string | null;
@@ -306,12 +309,15 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
  * ourselves are usable, because every link in the digest (full report, add
  * to pipeline) goes through the server-side resolve.
  */
-export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind): SourcedListing[] {
+export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind, opts: { sources?: 'fetchable' | 'all' } = {}): SourcedListing[] {
   if (!resp || !Array.isArray(resp.listings)) return [];
   const out: SourcedListing[] = [];
   for (const l of resp.listings) {
     const detected = l.url ? detectListingUrl(l.url) : null;
-    if (!detected || !SERVER_FETCHABLE.has(detected.source)) continue;
+    if (!detected) continue;
+    // The digest needs a page it can read itself; the marketplace also takes
+    // Zoopla, which it confirms on the feed alone and links by the real URL.
+    if (opts.sources !== 'all' && !SERVER_FETCHABLE.has(detected.source)) continue;
     const pc = findPostcode(l.postcode ?? l.address ?? null);
     const outcode = pc?.outcode ?? findOutcode(l.postcode ?? l.address ?? null);
     const amount = typeof l.price === 'number' && l.price > 0 ? l.price : null;
@@ -319,6 +325,7 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       source: detected.source,
       id: detected.id,
       canonicalUrl: detected.canonicalUrl,
+      sourceUrl: l.url ?? null,
       kind,
       title: l.address ?? `${detected.source} listing ${detected.id}`,
       address: l.address ?? null,
@@ -419,6 +426,31 @@ export function rankPicks<C extends RankCandidate>(candidates: C[], limit = 5, m
     out.push({ ...c, fit: Math.min(100, fit + lift) });
   }
   return out.sort((a, b) => b.fit - a.fit || dealScore(b.deal) - dealScore(a.deal)).slice(0, limit);
+}
+
+/**
+ * rankPicks, run band by band. rankPicks keeps only the top `limit` by fit, so
+ * ranking the whole pool and sorting by band afterwards can drop a qualified
+ * listing that happened to rank 41st on fit while a medium one ranked 40th
+ * survives. Ranking each band separately, best band first, makes the cut
+ * inside a band: a qualified listing is only ever displaced by another
+ * qualified one. Candidates without a screening are treated as qualified,
+ * matching what the send loop assumes for unscreened rows.
+ */
+export function rankPicksByBand<C extends RankCandidate & { screening?: Screening | null }>(candidates: C[], limit = 5, mode: MotivationMode = 'off'): (C & { fit: number })[] {
+  const byBand = new Map<number, C[]>();
+  for (const c of candidates) {
+    const rank = bandRank(c.screening?.band ?? 'qualified');
+    const list = byBand.get(rank) ?? [];
+    list.push(c);
+    byBand.set(rank, list);
+  }
+  const out: (C & { fit: number })[] = [];
+  for (const rank of [...byBand.keys()].sort((a, b) => a - b)) {
+    if (out.length >= limit) break;
+    out.push(...rankPicks(byBand.get(rank)!, limit - out.length, mode));
+  }
+  return out;
 }
 
 function dealScore(d: Deal | null): number {
