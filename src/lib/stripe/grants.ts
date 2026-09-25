@@ -47,6 +47,15 @@ export async function grantTopup(userId: string, amountPence: number, sourceRef:
   await grant(userId, 'topup', amountPence, { sourceRef, description: 'Top-up' });
   const now = new Date().toISOString();
   await admin.from('profiles').update({ last_topup_at: now, hit_zero_at: null }).eq('id', userId);
+  // Team seats paused for want of credit come back now, not at the next
+  // hourly sweep. Imported lazily: the seats module pulls in the debit path,
+  // which leads back here through auto top-up.
+  try {
+    const { reinstateSeats } = await import('../team/seats');
+    await reinstateSeats({ ownerId: userId });
+  } catch (err) {
+    console.error('[stripe] seat reinstatement after top-up failed:', (err as Error)?.message ?? err);
+  }
   if (opts.email) {
     const bal = await getBalance(userId).catch(() => null);
     void topupReceiptEmail(opts.email, { amountPence, balancePence: bal?.totalPence ?? amountPence }).catch(() => {});

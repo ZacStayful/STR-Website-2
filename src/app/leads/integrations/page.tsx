@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ownerIdOrNull } from "@/lib/leads/scope";
+import { redirect } from "next/navigation";
 import { listConnections, connectionBlockers } from "@/lib/crm/connections";
 import { MondayPanel } from "./MondayPanel";
 import { WebhookPanel } from "./WebhookPanel";
@@ -21,6 +23,8 @@ export default async function IntegrationsPage() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
+  // The account owner's to manage; a team member works the leads.
+  if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const connections = await listConnections(user.id);
   const monday = connections.find((c) => c.provider === "monday") ?? null;
@@ -40,6 +44,12 @@ export default async function IntegrationsPage() {
             <Link href="/leads/funnels" className="underline underline-offset-2">funnel</Link>.
           </p>
         </div>
+
+        <p className="mb-5 rounded-xl border border-border bg-muted/40 p-4 text-xs text-muted-foreground">
+          Leads that go unused for 6 months are archived, then deleted 7 days later — we email you before either
+          happens. The report links sent to your CRM stop working once a lead is deleted, so download the PDF into
+          your CRM if you need a permanent copy. Monday receives the PDF itself, so its copy is unaffected.
+        </p>
 
         <div className="space-y-5">
           <MondayPanel connection={withBlockers(monday)} />

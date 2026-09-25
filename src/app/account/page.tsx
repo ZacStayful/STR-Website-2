@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { after } from 'next/server';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { teamOf } from '@/lib/team';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   ACCESS_COLUMNS,
@@ -51,6 +52,8 @@ export default async function AccountPage({
   } = await supabase.auth.getUser();
   // The layout already redirected; this is belt and braces.
   if (!user) redirect('/login?redirect=/account');
+  // A team member's plan and billing are the owner's to manage.
+  if ((await teamOf(user.id)).role === 'member') redirect('/account/team');
 
   const { data: row } = await supabase
     .from('profiles')
@@ -193,6 +196,7 @@ export default async function AccountPage({
           <ul className="mt-3 space-y-2 text-sm">
             <li><Link href="/reports" className="underline">My reports</Link></li>
             <li><Link href="/leads" className="underline">Leads</Link> · enquiries from your white-label funnels, kept apart from your own reports</li>
+            <li><Link href="/account/team" className="underline">Team</Link> · invite colleagues to work your leads (£10 a month each)</li>
             <li><Link href="/picks" className="underline">Daily picks</Link> · one property a day by email, turn on or off there</li>
             <li><Link href="/markets" className="underline">Market Explorer</Link></li>
             <li>

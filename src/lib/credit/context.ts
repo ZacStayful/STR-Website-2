@@ -45,6 +45,12 @@ export interface MeterContext {
    * still read "Property report".
    */
   funnelId?: string | null;
+  /**
+   * The team member who did this, when `userId` is their team's owner paying
+   * for it. Written onto each debit so the owner's usage history can say
+   * who spent what. Null or absent for someone paying for themselves.
+   */
+  memberId?: string | null;
 }
 
 const als = new AsyncLocalStorage<MeterContext>();

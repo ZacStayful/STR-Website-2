@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ownerIdOrNull } from "@/lib/leads/scope";
+import { redirect } from "next/navigation";
 import { listFunnels } from "@/lib/funnels";
 import { siteUrl } from "@/lib/url";
 import { CreateFunnelForm } from "./CreateFunnelForm";
@@ -14,12 +16,14 @@ export default async function FunnelsPage() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
+  // The account owner's to manage; a team member works the leads.
+  if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const funnels = await listFunnels(user.id);
 
   // One count query for all funnels, grouped in memory — a per-funnel query
   // would be one round trip each.
-  const { data: leadRows } = await supabase.from("leads").select("funnel_id").eq("user_id", user.id);
+  const { data: leadRows } = await supabase.from("leads").select("funnel_id").eq("user_id", user.id).is("archived_at", null);
   const counts = new Map<string, number>();
   for (const r of leadRows ?? []) {
     const id = (r as { funnel_id: string | null }).funnel_id;

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ownerIdOrNull } from "@/lib/leads/scope";
 import { getFunnel } from "@/lib/funnels";
 import { funnelWalls } from "@/lib/funnels/alerts";
 import { WallBanner } from "../../WallBanner";
@@ -22,6 +23,8 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
+  // The account owner's to manage; a team member works the leads.
+  if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const funnel = await getFunnel(user.id, id);
   if (!funnel) notFound();
@@ -56,9 +59,14 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
               {funnel.active ? "Live — this link is accepting enquiries." : "Paused — the link returns a not-found page."}
             </p>
           </div>
-          <Link href="/leads/funnels" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
-            ← Funnels
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/leads?funnel=${funnel.id}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+              This funnel&apos;s leads →
+            </Link>
+            <Link href="/leads/funnels" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+              ← Funnels
+            </Link>
+          </div>
         </div>
 
         <WallBanner notices={walls.map((w) => ({ ...w, funnelId: funnel.id, funnelName: funnel.name }))} />

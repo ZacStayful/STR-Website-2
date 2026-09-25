@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { ownerIdOrNull } from '@/lib/leads/scope';
 import { mintApiKey, revokeApiKey } from '@/lib/api/keys';
 import { parseScopes } from '@/lib/api/scopes';
 
@@ -15,10 +16,16 @@ import { parseScopes } from '@/lib/api/scopes';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
+/**
+ * The signed-in OWNER. A team member gets null: funnels, integrations and API
+ * keys belong to the account owner, and are refused to members here as well
+ * as hidden from them in the UI.
+ */
 async function member(): Promise<{ id: string } | null> {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  return user ? { id: user.id } : null;
+  const ownerId = await ownerIdOrNull(user);
+  return ownerId ? { id: ownerId } : null;
 }
 
 export interface KeyState {

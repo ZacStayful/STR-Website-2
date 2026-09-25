@@ -1,6 +1,7 @@
 import { requireScope, isResponse, apiJson, apiError } from '@/lib/api/auth';
 import { getLead } from '@/lib/api/leads-query';
 import { enqueueDelivery } from '@/lib/crm/deliver';
+import { touchLeads } from '@/lib/leads/activity';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return apiError('invalid_request', 'That lead has no report yet, so there is nothing to send.');
   }
 
+  if (lead.archivedAt) {
+    return apiError('invalid_request', 'That lead is archived. Restore it before sending it on.');
+  }
+
+  await touchLeads(auth.userId, [id]);
   const outcome = await enqueueDelivery({ leadId: id, immediate: true });
   if (!outcome.queued) {
     return apiError('invalid_request', 'No CRM is connected. Connect one under Integrations first.');

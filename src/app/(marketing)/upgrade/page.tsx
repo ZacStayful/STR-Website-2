@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { teamOf } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { safeInternalPath } from "@/lib/safe-path";
 import { getCreditSummary } from "@/lib/credit/summary";
@@ -40,6 +41,8 @@ export default async function UpgradePage({
   if (!user) {
     redirect(`/login?redirect=${encodeURIComponent(`/upgrade?redirect=${back}`)}`);
   }
+  // A team member's plan and billing are the owner's to manage.
+  if ((await teamOf(user.id)).role === "member") redirect("/account/team");
 
   const { data: profile } = await supabase.from("profiles").select(`${ACCESS_COLUMNS}, full_name, cancel_at_period_end, current_period_end, subscription_paused_until`).eq("id", user.id).single();
   // A paused member already has a subscription: choosing a plan below opens the

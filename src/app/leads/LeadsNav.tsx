@@ -12,22 +12,30 @@ import { usePathname } from "next/navigation";
  * keeps Leads visibly one section rather than three loosely related pages.
  */
 
+// Funnels, integrations and API keys are the account owner's to manage; a
+// team member works the leads they produce. The server refuses the rest too
+// — this only stops offering links that would be refused.
 const ITEMS = [
-  { href: "/leads", label: "Leads" },
-  { href: "/leads/funnels", label: "Funnels" },
-  { href: "/leads/integrations", label: "Integrations" },
-  { href: "/leads/api", label: "API & MCP" },
+  { href: "/leads", label: "Leads", memberCan: true },
+  { href: "/leads/funnels", label: "Funnels", memberCan: false },
+  { href: "/leads/integrations", label: "Integrations", memberCan: false },
+  { href: "/leads/api", label: "API & MCP", memberCan: false },
 ];
 
-export function LeadsNav() {
+export function LeadsNav({ role = "owner" }: { role?: "owner" | "member" }) {
   const pathname = usePathname() ?? "/leads";
+  const items = role === "owner" ? ITEMS : ITEMS.filter((i) => i.memberCan);
 
   return (
     <nav className="mb-6 flex gap-1 border-b border-border text-sm" aria-label="Leads sections">
-      {ITEMS.map((item) => {
+      {items.map((item) => {
         // "/leads" must not light up on "/leads/funnels", but "/leads/funnels"
         // does need to stay lit on "/leads/funnels/<id>".
-        const active = item.href === "/leads" ? pathname === "/leads" : pathname.startsWith(item.href);
+        // A single lead (/leads/<uuid>) belongs to the Leads tab too.
+        const active =
+          item.href === "/leads"
+            ? pathname === "/leads" || /^\/leads\/[0-9a-f-]{36}$/i.test(pathname)
+            : pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}

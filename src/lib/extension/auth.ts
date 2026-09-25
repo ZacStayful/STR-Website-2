@@ -5,6 +5,7 @@ import { marketAccessState, type MarketAccessState } from '../market/access';
 import { parseMarketGoals, type MarketGoals } from '../market/goals';
 import { verifyExtensionToken } from './tokens';
 import { getBalance } from '../credit/ledger';
+import { payerFor } from '../team';
 
 /**
  * Who is calling /api/ext/*: the member behind the Bearer token, with the
@@ -40,7 +41,9 @@ export async function extensionAccess(request: Request): Promise<ExtensionAccess
   const { data: profile } = await createAdminClient().from('profiles').select('id, email, plan_code, market_goals').eq('id', token.userId).single();
   if (!profile) return { ...NONE, user: { id: token.userId, email: null }, tokenId: token.id, state: 'blocked' };
   const p = profile as { id: string; email: string | null; plan_code: string | null; market_goals: unknown };
-  const balance = await getBalance(token.userId).catch(() => null);
+  // A team member spends the team's credit, so their state follows the team's balance.
+  const payer = await payerFor(token.userId);
+  const balance = await getBalance(payer.payerId).catch(() => null);
   return {
     state: marketAccessState({ email: p.email }, p),
     user: { id: token.userId, email: p.email },

@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { payerFor } from '../team';
 import { postcodeAreaOf } from '../listing/normalise';
 import type { AnalysisInput } from '../analysis/input';
 import type { AnalysisResult } from '../types';
@@ -23,10 +24,12 @@ export async function saveApiReport(
   result: AnalysisResult,
 ): Promise<string | null> {
   if (!hasServiceRole()) return null;
+  const { payerId: ownerId } = await payerFor(userId);
   const { data, error } = await createAdminClient()
     .from('saved_searches')
     .insert({
       user_id: userId,
+      owner_id: ownerId,
       name: result.property.address,
       address: result.property.address,
       postcode: result.property.postcode,

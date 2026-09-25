@@ -8,6 +8,7 @@ import { areaCentroid } from "../market/area-centroids";
 import { ask, sourcingListings } from "../broker";
 import { runMetered, newActionId } from "../credit/context";
 import { getBalance, debit } from "../credit/ledger";
+import { payersFor, payerIn } from "../team";
 import { getUnitCostTable } from "../credit/unit-costs";
 import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
@@ -729,9 +730,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   };
 
   // ── Credit: only members who have a candidate, in parallel chunks ──
+  // A team member's picks are paid from their team owner's credit; a
+  // suspended seat has none to spend.
+  const payers = await payersFor(withCandidates.map((m) => m.id));
   const affordable: Member[] = [];
   for (const some of chunk(withCandidates, 10)) {
-    const balances = await Promise.all(some.map((m) => (m.admin || priceOf(m, ranked.get(m.id)?.[0]) <= 0 ? Promise.resolve(null) : getBalance(m.id).catch(() => null))));
+    const balances = await Promise.all(some.map((m) => (m.admin || priceOf(m, ranked.get(m.id)?.[0]) <= 0 ? Promise.resolve(null) : payerIn(payers, m.id).suspended ? Promise.resolve(null) : getBalance(payerIn(payers, m.id).payerId).catch(() => null))));
     some.forEach((m, i) => {
       const bal = balances[i];
       const need = priceOf(m, ranked.get(m.id)?.[0]);
@@ -950,14 +954,16 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (charge > 0) {
       try {
         // allowNegative only covers the race between the balance check above and this debit.
-        transactionId = await debit(m.id, charge, {
+        const payer = payerIn(payers, m.id);
+        const memberMeta = payer.memberId ? { member_id: payer.memberId } : {};
+        transactionId = await debit(payer.payerId, charge, {
           allowNegative: true,
           meta: dealId
-            ? { action: "cron:sourcing", action_id: id, provider: "marketplace", unit: "deal_open", quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily pick (deal sheet): ${sending.listing.address ?? sending.listing.title}` }
-            : { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}` },
+            ? { action: "cron:sourcing", action_id: id, provider: "marketplace", unit: "deal_open", quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily pick (deal sheet): ${sending.listing.address ?? sending.listing.title}`, ...memberMeta }
+            : { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}`, ...memberMeta },
         });
         summary.chargedBasePence += charge;
-        void afterDebit(m.id).catch(() => {});
+        void afterDebit(payer.payerId).catch(() => {});
       } catch (err) {
         console.error("[sourcing] pick debit failed:", (err as Error)?.message ?? err);
       }
@@ -966,7 +972,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // The pick IS the open: the member has paid the deal's price and holds
       // the page-verified listing, so the sheet on /deals is theirs from now on.
       const { error: openErr } = await admin.from("deal_opens").upsert(
-        { user_id: m.id, canonical_url: sending.listing.canonicalUrl, deal_id: dealId, status: "open", charged_base_pence: charge, transaction_id: transactionId, verified_via: "pick", status_at_open: "available", band_at_open: sending.screening?.band ?? null, annual_profit_at_open: sending.screening?.surplus ?? null, fetched: false },
+        // The team's open, like one pressed on /deals: the owner paid for it.
+        { user_id: payerIn(payers, m.id).payerId, canonical_url: sending.listing.canonicalUrl, deal_id: dealId, status: "open", charged_base_pence: charge, transaction_id: transactionId, verified_via: "pick", status_at_open: "available", band_at_open: sending.screening?.band ?? null, annual_profit_at_open: sending.screening?.surplus ?? null, fetched: false },
         { onConflict: "user_id,canonical_url", ignoreDuplicates: true },
       );
       if (openErr) console.error("[sourcing] auto-open insert failed:", openErr.message);

@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { round4 } from './pricing';
-import { usageDescription, actionLabel, funnelIdFromMeta } from './usage-label.ts';
+import { usageDescription, actionLabel, funnelIdFromMeta, memberIdFromMeta, withMemberName } from './usage-label.ts';
 
 /** One row on the usage page: a debit group (an action), a grant, an expiry or a refund. */
 export interface UsageItem {
@@ -22,6 +22,8 @@ export interface UsageItem {
    * work, so the UI can mark it rather than parsing the description.
    */
   funnelId: string | null;
+  /** The team member who spent it, when the owner's credit paid for a member. */
+  memberId: string | null;
   /** Grant kind for grant/expire rows. */
   grantKind: string | null;
   expiresAt: string | null;
@@ -73,12 +75,13 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
         // debit of one action shares a context, so they all carry the same
         // value — but a provider call that failed and was logged at zero
         // never reaches the debit path, so later rows can be absent.
-        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
+        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: r.action === 'team_seat' && r.description ? r.description : actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), memberId: memberIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
         byAction.set(r.action_id, item);
         items.push(item);
       }
       // A later row carrying one when the first did not still counts.
       item.funnelId ??= funnelIdFromMeta(r.metadata);
+      item.memberId ??= memberIdFromMeta(r.metadata);
       item.amountPence = round4(item.amountPence + amount);
       item.basePence = round4((item.basePence ?? 0) + (base ?? 0));
       if (new Date(r.at) > new Date(item.at)) item.at = r.at;
@@ -97,6 +100,7 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
       basePence: base,
       lines: [],
       funnelId: null,
+      memberId: null,
       grantKind: typeof meta.grant_kind === 'string' ? meta.grant_kind : null,
       expiresAt: typeof meta.expires_at === 'string' ? meta.expires_at : null,
     });
@@ -104,6 +108,7 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
   }
   const sliced = items.slice(0, limit);
   await describeFunnelRows(userId, sliced);
+  await describeMemberRows(sliced);
   const last = sliced[sliced.length - 1];
   const more = rows.length >= limit * 6 || items.length > limit;
   return { items: sliced, nextCursor: more && last ? last.at : null };
@@ -146,6 +151,27 @@ async function describeFunnelRows(userId: string, items: UsageItem[]): Promise<v
       isFunnel: true,
       funnelName: names.get(item.funnelId) ?? null,
     });
+  }
+}
+
+/**
+ * Adds "— by <name>" to what a team member spent. One query per page. A
+ * member removed since keeps their line, just without a name. Seat charges
+ * already carry the member's name in their description.
+ */
+async function describeMemberRows(items: UsageItem[]): Promise<void> {
+  const ids = [...new Set(items.filter((i) => i.action !== 'team_seat').map((i) => i.memberId).filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return;
+  const { data, error } = await createAdminClient().from('profiles').select('id, full_name, email').in('id', ids);
+  if (error) console.error('[credit] member names for usage history failed:', error.message);
+  const names = new Map<string, string>();
+  for (const p of (data ?? []) as Array<{ id: string; full_name: string | null; email: string | null }>) {
+    const n = p.full_name?.trim() || p.email?.trim();
+    if (n) names.set(p.id, n);
+  }
+  for (const item of items) {
+    if (!item.memberId || item.action === 'team_seat') continue;
+    item.description = withMemberName(item.description, names.get(item.memberId) ?? 'a former team member');
   }
 }
 

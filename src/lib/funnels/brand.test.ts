@@ -146,6 +146,11 @@ test('the consent line names the customer, not Stayful', () => {
   assert.match(consentText(EMPTY_BRAND), /the company running this form/);
 });
 
+test('the consent line tells the prospect how long their details are kept', () => {
+  // Must match INACTIVE_DAYS in src/lib/leads/retention.ts (~6 months).
+  assert.match(consentText(EMPTY_BRAND), /kept for up to 6 months after they were last used, then deleted/);
+});
+
 test('a funnel cannot be created without the two things it needs to work', () => {
   // Creation used to ask for a name alone, so a public link was minted and
   // handed over before it held any of what that link needs.

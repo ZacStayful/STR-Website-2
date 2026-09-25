@@ -1,5 +1,5 @@
 import { currentMember } from '@/lib/credit/auth';
-import { getCreditSummary } from '@/lib/credit/summary';
+import { teamCreditSnapshot } from '@/lib/team/credit';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,8 +8,9 @@ export async function GET() {
   const member = await currentMember();
   if (!member) return Response.json({ error: 'Sign in first.' }, { status: 401 });
   try {
-    const summary = await getCreditSummary(member.id);
-    return Response.json({ ...summary, admin: member.admin }, { headers: { 'cache-control': 'no-store' } });
+    // A team member sees the team's balance, which is what they spend.
+    const snapshot = await teamCreditSnapshot({ id: member.id, admin: member.admin });
+    return Response.json(snapshot, { headers: { 'cache-control': 'no-store' } });
   } catch (err) {
     console.error('[credit/balance] failed:', err);
     return Response.json({ error: 'Could not load your balance.' }, { status: 500 });

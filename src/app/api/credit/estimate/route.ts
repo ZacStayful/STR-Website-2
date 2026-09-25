@@ -24,7 +24,7 @@ export async function GET(request: Request) {
   const table = await getUnitCostTable();
   const pmiAvailable = process.env.PMI_SECOND_OPINION !== 'false';
   const est = estimateAction(table, action, { pmiSecondOpinion: action === 'report_enhanced' && pmiAvailable, priceLabs: process.env.PRICELABS_AS_PRIMARY === 'true' });
-  const [balance, typical] = await Promise.all([getBalance(member.id), action === 'report' || action === 'report_enhanced' ? typicalActionSpend(action) : Promise.resolve(null)]);
+  const [balance, typical] = await Promise.all([getBalance(member.payerId), action === 'report' || action === 'report_enhanced' ? typicalActionSpend(action) : Promise.resolve(null)]);
   const typicalBasePence = typical ?? est.typicalBasePence;
   const from = member.admin ? 'plan' : paidFrom(balance.buckets, typicalBasePence, balance.rates);
   const sufficient = member.admin || !isEnforcing() || balance.spendableBasePence >= est.maxBasePence;

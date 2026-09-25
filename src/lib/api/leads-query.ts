@@ -5,6 +5,8 @@ import { buildLeadPayload } from '../crm/payload.ts';
 import { siteUrl } from '../url';
 import type { AnalysisResult } from '../types';
 import type { LeadVerdict } from '../leads/rules';
+import { parseStage, type LeadStage } from '../leads/stage.ts';
+import { searchTerm, searchFilter } from '../leads/search.ts';
 
 /**
  * Reading leads for the API.
@@ -26,6 +28,21 @@ export interface LeadQuery {
   status: string | null;
   since: string | null;
   until: string | null;
+  /** Free text across email, name, address and postcode (search.ts). */
+  search: string | null;
+  stage: LeadStage | null;
+  /**
+   * Archived leads are on their way to deletion, so they are left out unless
+   * asked for — an agent listing "my leads" should not act on one the
+   * customer has binned. 'only' is the dashboard's Archived tab.
+   */
+  archived: 'exclude' | 'only';
+  /**
+   * The dashboard's tabs. Not an API parameter: `qualified` and `status`
+   * already say this for an API caller, but the Qualified tab also has to
+   * include leads with no verdict yet, which an equality filter cannot.
+   */
+  view: 'qualified' | 'unqualified' | 'queued' | null;
   limit: number;
   offset: number;
 }
@@ -41,7 +58,8 @@ const MAX_LIMIT = 200;
  */
 export function parseLeadQuery(params: URLSearchParams): { value: LeadQuery; error?: string } {
   const base: LeadQuery = {
-    funnelId: null, qualified: null, status: null, since: null, until: null, limit: 50, offset: 0,
+    funnelId: null, qualified: null, status: null, since: null, until: null,
+    search: null, stage: null, archived: 'exclude', view: null, limit: 50, offset: 0,
   };
 
   const funnelId = params.get('funnelId');
@@ -74,6 +92,24 @@ export function parseLeadQuery(params: URLSearchParams): { value: LeadQuery; err
     base[key] = d.toISOString();
   }
 
+  const search = params.get('search');
+  if (search !== null) base.search = searchTerm(search);
+
+  const stage = params.get('stage');
+  if (stage !== null) {
+    const parsed = parseStage(stage);
+    if (!parsed) return { value: base, error: 'stage must be one of new, contacted, meeting_booked, signed, lost.' };
+    base.stage = parsed;
+  }
+
+  const archived = params.get('archived');
+  if (archived !== null) {
+    if (archived !== 'true' && archived !== 'false') {
+      return { value: base, error: 'archived must be "true" or "false".' };
+    }
+    base.archived = archived === 'true' ? 'only' : 'exclude';
+  }
+
   const limit = params.get('limit');
   if (limit !== null) {
     const n = Number(limit);
@@ -96,8 +132,17 @@ export function parseLeadQuery(params: URLSearchParams): { value: LeadQuery; err
 export interface LeadRecord {
   id: string;
   status: string;
+  /** The customer's own pipeline stage (stage.ts). Not part of the webhook payload. */
+  stage: LeadStage;
   crmItemId: string | null;
   crmPushedAt: string | null;
+  /** What the retention clock runs from (retention.ts). */
+  lastActivityAt: string | null;
+  /** Set while the lead is archived and awaiting deletion. */
+  archivedAt: string | null;
+  archiveReason: 'inactive' | 'manual' | null;
+  /** When an archived lead will be deleted. Null until the customer has been told. */
+  deletesAt: string | null;
   lead: ReturnType<typeof buildLeadPayload>;
 }
 
@@ -118,10 +163,16 @@ interface Row {
   crm_item_id: string | null;
   crm_pushed_at: string | null;
   created_at: string;
+  stage: string | null;
+  last_activity_at: string | null;
+  archived_at: string | null;
+  archive_reason: string | null;
+  purge_after: string | null;
 }
 
 const COLUMNS =
-  'id, funnel_id, name, email, phone, consent_at, address, postcode, bedrooms, result, qualification, report_token, status, crm_item_id, crm_pushed_at, created_at';
+  'id, funnel_id, name, email, phone, consent_at, address, postcode, bedrooms, result, qualification, report_token, status, crm_item_id, crm_pushed_at, created_at, ' +
+  'stage, last_activity_at, archived_at, archive_reason, purge_after';
 
 /**
  * The one place the ownership filter is applied, so no caller can forget it:
@@ -135,8 +186,12 @@ const COLUMNS =
  */
 interface Filterable {
   eq(column: string, value: unknown): Filterable;
+  neq(column: string, value: unknown): Filterable;
   gte(column: string, value: string): Filterable;
   lte(column: string, value: string): Filterable;
+  is(column: string, value: null | boolean): Filterable;
+  not(column: string, operator: string, value: unknown): Filterable;
+  or(filters: string): Filterable;
 }
 
 function applyFilters<T>(query: T, userId: string, q: LeadQuery): T {
@@ -146,6 +201,15 @@ function applyFilters<T>(query: T, userId: string, q: LeadQuery): T {
   if (q.status !== null) out = out.eq('status', q.status);
   if (q.since !== null) out = out.gte('created_at', q.since);
   if (q.until !== null) out = out.lte('created_at', q.until);
+  if (q.stage !== null) out = out.eq('stage', q.stage);
+  // The only .or() in the chain: a second one would need PostgREST to AND
+  // two `or` parameters, and the tab filters below are written without it.
+  const term = q.search === null ? null : searchTerm(q.search);
+  if (term !== null) out = out.or(searchFilter(term));
+  out = q.archived === 'only' ? out.not('archived_at', 'is', null) : out.is('archived_at', null);
+  if (q.view === 'queued') out = out.eq('status', 'queued');
+  if (q.view === 'qualified') out = out.neq('status', 'queued').not('qualified', 'is', false);
+  if (q.view === 'unqualified') out = out.neq('status', 'queued').eq('qualified', false);
   return out as T;
 }
 
@@ -153,8 +217,13 @@ function toRecord(row: Row, funnelNames: Map<string, string>): LeadRecord {
   return {
     id: row.id,
     status: row.status,
+    stage: parseStage(row.stage) ?? 'new',
     crmItemId: row.crm_item_id,
     crmPushedAt: row.crm_pushed_at,
+    lastActivityAt: row.last_activity_at,
+    archivedAt: row.archived_at,
+    archiveReason: row.archive_reason === 'inactive' || row.archive_reason === 'manual' ? row.archive_reason : null,
+    deletesAt: row.purge_after,
     lead: buildLeadPayload({
       leadId: row.id,
       createdAt: row.created_at,
@@ -199,8 +268,28 @@ export async function listLeads(userId: string, q: LeadQuery): Promise<{ leads: 
   };
 }
 
+/** How many leads match, without reading them. The dashboard's tab counts. */
+export async function countLeads(userId: string, q: LeadQuery): Promise<number> {
+  if (!hasServiceRole()) return 0;
+  const { count, error } = await applyFilters(
+    createAdminClient().from('leads').select('id', { count: 'exact', head: true }),
+    userId,
+    q,
+  );
+  if (error) {
+    console.error('[leads] count failed:', error.message);
+    return 0;
+  }
+  return count ?? 0;
+}
+
+/**
+ * One lead, archived or not: a caller holding its id is asking about that
+ * lead specifically, and an archived one can still be restored.
+ */
 export async function getLead(userId: string, leadId: string): Promise<LeadRecord | null> {
   if (!hasServiceRole()) return null;
+  if (!UUID.test(leadId)) return null;
   const { data } = await createAdminClient()
     .from('leads')
     .select(COLUMNS)

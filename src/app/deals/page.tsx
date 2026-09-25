@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { payerFor } from "@/lib/team";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { parseDealFilters } from "@/lib/marketplace/grid";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor } from "@/lib/marketplace/queries";
@@ -35,7 +36,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   if (!user) return null;
 
   const [page, counts, settings] = await Promise.all([listDeals(filters), liveCountsByArea(), getBillingSettings()]);
-  const opened = await openedDealIds(user.id, page.cards.map((c) => c.id));
+  const opened = await openedDealIds((await payerFor(user.id)).payerId, page.cards.map((c) => c.id));
   const now = new Date();
   const countMap: Record<string, number> = {};
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);

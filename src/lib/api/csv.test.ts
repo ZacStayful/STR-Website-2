@@ -73,8 +73,13 @@ function record(over: Partial<LeadRecord['lead']> = {}, status = 'new'): LeadRec
   return {
     id: 'lead-1',
     status,
+    stage: 'contacted',
     crmItemId: null,
     crmPushedAt: null,
+    lastActivityAt: null,
+    archivedAt: null,
+    archiveReason: null,
+    deletesAt: null,
     lead: {
       version: 1,
       event: 'lead.created',
@@ -116,4 +121,5 @@ test('a queued lead leaves Qualified blank rather than saying no', () => {
   const cells = parseRow(csv.trimEnd().split('\r\n')[1]);
   assert.equal(cells[LEAD_CSV_COLUMNS.indexOf('qualified')], '');
   assert.equal(cells[LEAD_CSV_COLUMNS.indexOf('status')], 'queued');
+  assert.equal(cells[LEAD_CSV_COLUMNS.indexOf('stage')], 'Contacted');
 });

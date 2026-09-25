@@ -4,6 +4,7 @@ import EstimatePage from "@/app/estimate/page";
 import { leadByReportToken } from "@/lib/leads/report";
 import { brandCssVars, brandName } from "@/lib/funnels/brand";
 import type { FunnelMode } from "@/lib/funnels/mode";
+import { MarkReportOpened } from "./MarkReportOpened";
 
 export const dynamic = "force-dynamic";
 
@@ -52,12 +53,16 @@ export default async function LeadReportPage({ params }: { params: Promise<{ tok
     // Not a preview: this is their real report. The flag exists so the page
     // knows not to offer to run another one.
     preview: false,
+    // Download through this lead, not the funnel: the funnel token only
+    // works while the funnel is live, and this report outlives that.
+    reportToken: token,
   };
 
   const style = brandCssVars(lead.brand) as React.CSSProperties;
 
   return (
     <div style={style}>
+      <MarkReportOpened token={token} />
       <EstimatePage funnel={mode} initialResult={lead.result} />
     </div>
   );

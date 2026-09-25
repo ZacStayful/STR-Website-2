@@ -87,7 +87,7 @@ import { ListingLinkBox } from "./_components/ListingLinkBox";
 import { ReportOptions } from "@/components/credit/ReportOptions";
 import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
-import { type FunnelMode, type FunnelPrefill, funnelAnalyseUrl, funnelLabel } from "@/lib/funnels/mode";
+import { type FunnelMode, type FunnelPrefill, funnelAnalyseUrl, funnelLabel, reportPdfUrl } from "@/lib/funnels/mode";
 import { consentText } from "@/lib/funnels/brand";
 import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
@@ -1437,7 +1437,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     trackCtaClick("download_pdf");
                     setPdfLoading(true);
                     try {
-                      const res = await fetch(funnel ? `/api/generate-pdf?f=${encodeURIComponent(funnel.token)}` : "/api/generate-pdf", {
+                      const res = await fetch(reportPdfUrl(funnel), {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({

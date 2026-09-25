@@ -1,4 +1,5 @@
 import type { LeadRecord } from './leads-query.ts';
+import { STAGE_LABELS } from '../leads/stage.ts';
 
 /**
  * Leads as CSV.
@@ -14,6 +15,8 @@ export const LEAD_CSV_COLUMNS = [
   'address', 'postcode', 'postcodeArea', 'bedrooms',
   'annualRevenue', 'occupancy', 'averageNightlyRate', 'averageReviewCount', 'saturation',
   'qualified', 'qualificationSummary', 'reportUrl', 'crmItemId',
+  // Appended, not inserted: a customer's spreadsheet may read by position.
+  'stage',
 ] as const;
 
 /**
@@ -66,6 +69,7 @@ export function leadsCsv(records: readonly LeadRecord[]): string {
       l.qualification.summary,
       l.report.url,
       r.crmItemId,
+      STAGE_LABELS[r.stage] ?? r.stage,
     ]));
   }
   // A trailing newline: some parsers drop the final row without one.

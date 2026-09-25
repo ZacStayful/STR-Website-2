@@ -3,25 +3,38 @@ import type { PdfExpenses } from "@/lib/pdf/derive";
 import { renderReportPdf, pdfBrandForFunnel, reportFilename } from "@/lib/pdf/render";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { funnelByToken } from "@/lib/funnels";
+import { leadByReportToken } from "@/lib/leads/report";
+import { touchLeadByReportToken } from "@/lib/leads/activity";
 import type { PdfBrand } from "@/lib/pdf/theme";
 
 export const runtime = "nodejs";
 
 /**
  * Rendering a PDF is unmetered compute, so this route is gated: a signed-in
- * member, or a live funnel token for a prospect downloading their own report.
+ * member, a live funnel token for a prospect downloading their own report,
+ * or a lead's report token (`?r=`) — the finished report on /r/<token> or
+ * the customer's lead page, which must keep downloading after its funnel is
+ * paused or deleted.
  * It previously accepted any POST from anyone, which let a stranger spend our
  * CPU rendering arbitrary payloads.
  */
 interface Caller {
   ok: boolean;
-  /** The signed-in member's address, for the report cover. Never a prospect's:
-   *  a funnel download is anonymous as far as this route is concerned. */
+  /** The address for the report cover: the signed-in member's, or for a
+   *  lead's report (`?r=`) the prospect it was prepared for — the same cover
+   *  /r/<token>/pdf prints. A plain funnel download (`?f=`) stays anonymous. */
   email?: string;
 }
 
 async function authorised(request: Request): Promise<Caller> {
-  const token = new URL(request.url).searchParams.get("f");
+  const params = new URL(request.url).searchParams;
+  const report = params.get("r");
+  if (report) {
+    // The cover names the prospect it was prepared for, as /r/<token>/pdf does.
+    const lead = await leadByReportToken(report);
+    return { ok: Boolean(lead), email: lead?.email ?? undefined };
+  }
+  const token = params.get("f");
   if (token) return { ok: Boolean(await funnelByToken(token)) };
   try {
     const supabase = await createSupabaseServerClient();
@@ -39,7 +52,13 @@ async function authorised(request: Request): Promise<Caller> {
  * step, after the page itself got it right.
  */
 async function brandFor(request: Request): Promise<PdfBrand | undefined> {
-  const token = new URL(request.url).searchParams.get("f");
+  const params = new URL(request.url).searchParams;
+  const report = params.get("r");
+  if (report) {
+    const lead = await leadByReportToken(report);
+    return lead ? pdfBrandForFunnel(lead.brand) : undefined;
+  }
+  const token = params.get("f");
   if (!token) return undefined;
   const funnel = await funnelByToken(token);
   if (!funnel) return undefined;
@@ -88,6 +107,10 @@ export async function POST(request: Request) {
     preparedFor: caller.email,
   });
   const filename = reportFilename(body, brand);
+
+  // Downloading a lead's report is using it (retention.ts).
+  const report = new URL(request.url).searchParams.get("r");
+  if (report) await touchLeadByReportToken(report);
 
   return new Response(new Uint8Array(buffer), {
     status: 200,

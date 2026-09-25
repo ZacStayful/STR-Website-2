@@ -2,6 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { ownerIdOrNull, leadScopeOrPaused } from '@/lib/leads/scope';
+import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import {
   saveConnection, deleteConnection, testConnection, getConnection, resolveConnection,
 } from '@/lib/crm/connections';
@@ -9,6 +11,7 @@ import { parseMondayConfig, type MondayFieldId } from '@/lib/crm/monday-map';
 import { listMondayBoards, listMondayGroups, mondayProvider } from '@/lib/crm/providers/monday';
 import { checkWebhookUrl } from '@/lib/crm/providers/webhook';
 import { enqueueDelivery } from '@/lib/crm/deliver';
+import { touchLeads } from '@/lib/leads/activity';
 import type { CrmField } from '@/lib/crm/types';
 
 /**
@@ -25,10 +28,16 @@ import type { CrmField } from '@/lib/crm/types';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
+/**
+ * The signed-in OWNER. A team member gets null: funnels, integrations and API
+ * keys belong to the account owner, and are refused to members here as well
+ * as hidden from them in the UI.
+ */
 async function member(): Promise<{ id: string } | null> {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  return user ? { id: user.id } : null;
+  const ownerId = await ownerIdOrNull(user);
+  return ownerId ? { id: ownerId } : null;
 }
 
 export interface CrmState {
@@ -225,16 +234,29 @@ export async function deleteConnectionAction(_prev: CrmState, formData: FormData
  * policy: a lead that missed the filter is still theirs to promote later.
  */
 export async function pushLeadAction(_prev: CrmState, formData: FormData): Promise<CrmState> {
-  const who = await member();
-  if (!who) return { error: 'Please sign in again.' };
+  // Team members may push too — working the leads is their job — so this
+  // one resolves the team's owner rather than requiring the owner.
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Please sign in again.' };
+  const scope = await leadScopeOrPaused(user);
+  if (scope === 'paused') return { error: 'Your team access is paused.' };
   const leadId = field(formData, 'leadId');
   if (!UUID.test(leadId)) return { error: 'That lead no longer exists.' };
 
-  // Ownership is checked against the member's own RLS view rather than the
-  // service role, so a lead id from elsewhere reads as missing.
-  const supabase = await createSupabaseServerClient();
-  const { data } = await supabase.from('leads').select('id').eq('id', leadId).maybeSingle();
+  // Ownership is checked against the team owner explicitly: a lead id from
+  // another account matches no row and reads as missing.
+  if (!hasServiceRole()) return { error: 'That is not available just now.' };
+  const { data } = await createAdminClient()
+    .from('leads')
+    .select('id, archived_at')
+    .eq('user_id', scope.ownerId)
+    .eq('id', leadId)
+    .maybeSingle();
   if (!data) return { error: 'That lead no longer exists.' };
+  if ((data as { archived_at: string | null }).archived_at) return { error: 'Restore this lead before sending it.' };
+
+  await touchLeads(scope.ownerId, [leadId]);
 
   const outcome = await enqueueDelivery({ leadId, immediate: true });
   revalidatePath('/leads');

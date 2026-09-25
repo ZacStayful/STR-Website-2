@@ -53,6 +53,8 @@ interface CallLog {
   ok: boolean;
   ms: number;
   billedUserId: string | null;
+  /** Who made the call, when it differs from who pays (a team member). */
+  actorUserId?: string | null;
   actionId: string | null;
   bypass: boolean;
 }
@@ -68,7 +70,7 @@ async function logCall(c: CallLog): Promise<number | null> {
         key: c.key,
         cost_pence: Math.round(c.rawPence),
         cache_hit: c.cacheHit,
-        user_id: c.billedUserId,
+        user_id: c.actorUserId ?? c.billedUserId,
         ok: c.ok,
         ms: c.ms,
         unit: c.unit,
@@ -118,17 +120,17 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
   try {
     result = await run();
   } catch (err) {
-    void logCall({ provider: charge.provider, unit: charge.unit, question, key, quantity: known ?? 0, rawPence: 0, basePence: 0, chargedPence: 0, cacheHit: false, ok: false, ms: Date.now() - started, billedUserId: userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin) });
+    void logCall({ provider: charge.provider, unit: charge.unit, question, key, quantity: known ?? 0, rawPence: 0, basePence: 0, chargedPence: 0, cacheHit: false, ok: false, ms: Date.now() - started, billedUserId: userId, actorUserId: ctx?.memberId ?? userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin) });
     throw err;
   }
   const ms = Date.now() - started;
 
   if (charge.failed?.(result)) {
-    void logCall({ provider: charge.provider, unit: charge.unit, question, key, quantity: known ?? 0, rawPence: 0, basePence: 0, chargedPence: 0, cacheHit: false, ok: false, ms, billedUserId: userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin) });
+    void logCall({ provider: charge.provider, unit: charge.unit, question, key, quantity: known ?? 0, rawPence: 0, basePence: 0, chargedPence: 0, cacheHit: false, ok: false, ms, billedUserId: userId, actorUserId: ctx?.memberId ?? userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin) });
     return result;
   }
   if (charge.cacheHit?.(result)) {
-    void logCall({ provider: charge.provider, unit: charge.unit, question, key, quantity: 0, rawPence: 0, basePence: 0, chargedPence: 0, cacheHit: true, ok: true, ms, billedUserId: userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin) });
+    void logCall({ provider: charge.provider, unit: charge.unit, question, key, quantity: 0, rawPence: 0, basePence: 0, chargedPence: 0, cacheHit: true, ok: true, ms, billedUserId: userId, actorUserId: ctx?.memberId ?? userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin) });
     return result;
   }
 
@@ -143,7 +145,7 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
     provider: charge.provider, unit: charge.unit, question, key, quantity,
     rawPence: price.rawPence, basePence: price.basePence,
     chargedPence: 0, cacheHit: false, ok: true, ms,
-    billedUserId: userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin),
+    billedUserId: userId, actorUserId: ctx?.memberId ?? userId, actionId: ctx?.actionId ?? null, bypass: Boolean(ctx?.admin),
   });
 
   if (billable && price.basePence > 0 && !alreadyCharged) {
@@ -168,6 +170,8 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
           // not recognise, so a null here would write `funnel_id: null` onto
           // every members-only debit to say nothing.
           ...(ctx?.funnelId ? { funnel_id: ctx.funnelId } : {}),
+          // Which team member spent the owner's credit (same reasoning).
+          ...(ctx?.memberId ? { member_id: ctx.memberId } : {}),
         },
       });
       // Threshold emails, Monday flag and auto top-up; never blocks the request.

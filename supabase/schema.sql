@@ -1147,6 +1147,44 @@ create index if not exists leads_funnel_created_idx on public.leads (funnel_id, 
 create index if not exists leads_user_qualified_idx on public.leads (user_id, qualified, created_at desc);
 -- The queue drained after a top-up lands; tiny, so keep it partial.
 create index if not exists leads_queued_idx on public.leads (created_at) where status = 'queued';
+-- ── Pipeline stage ──
+-- The customer's own sales stage, for customers without a CRM. Deliberately
+-- separate from `status`, which is OUR delivery state (queued, pushed…):
+-- the two answer different questions and one must not overwrite the other.
+-- Fixed list, mirrored by LEAD_STAGES in src/lib/leads/stage.ts.
+alter table public.leads add column if not exists stage text not null default 'new';
+alter table public.leads add column if not exists stage_changed_at timestamptz;
+alter table public.leads drop constraint if exists leads_stage_check;
+alter table public.leads add constraint leads_stage_check
+  check (stage in ('new', 'contacted', 'meeting_booked', 'signed', 'lost'));
+
+-- ── Retention ── (src/lib/leads/retention.ts, /api/internal/lead-retention)
+-- A lead nobody has used for 6 months is archived, kept 7 days so it can be
+-- restored, then deleted. The customer is emailed 2 days before and again
+-- when it happens.
+--
+-- `last_activity_at` is what "used" means: the customer opening it, a
+-- single-lead API/MCP read, the prospect reopening their report, or a push
+-- to the CRM. The default fills EXISTING rows with the moment this runs, so
+-- the clock starts at launch and old leads are not all archived on night one.
+alter table public.leads add column if not exists last_activity_at timestamptz not null default now();
+-- The "archiving in 2 days" email went out. Cleared by any activity.
+alter table public.leads add column if not exists archive_warned_at timestamptz;
+alter table public.leads add column if not exists archived_at timestamptz;
+alter table public.leads add column if not exists archive_reason text;
+alter table public.leads drop constraint if exists leads_archive_reason_check;
+alter table public.leads add constraint leads_archive_reason_check
+  check (archive_reason is null or archive_reason in ('inactive', 'manual'));
+-- The "archived" email went out (inactive archives only).
+alter table public.leads add column if not exists archive_notified_at timestamptz;
+-- When the row is deleted. Set only once the customer has been told — a
+-- manual archive tells them on screen, an inactive one by email — so a
+-- failed email can never lead to data vanishing unannounced.
+alter table public.leads add column if not exists purge_after timestamptz;
+create index if not exists leads_user_archived_idx on public.leads (user_id, archived_at, created_at desc);
+create index if not exists leads_activity_idx on public.leads (last_activity_at) where archived_at is null;
+create index if not exists leads_purge_idx on public.leads (purge_after) where purge_after is not null;
+
 alter table public.leads enable row level security;
 drop policy if exists "Users can read own leads" on public.leads;
 create policy "Users can read own leads"
@@ -1664,3 +1702,182 @@ alter table public.profiles add column if not exists lead_activated_at timestamp
 insert into public.billing_settings (key, value)
 values ('deal_open_ladder', '[{"upTo":15000,"pence":25},{"upTo":25000,"pence":40},{"upTo":40000,"pence":60},{"upTo":60000,"pence":80},{"upTo":null,"pence":100}]'::jsonb)
 on conflict (key) do nothing;
+
+-- =========================
+-- Teams (src/lib/team)
+-- =========================
+-- An account owner invites colleagues. One team per login: member_id is the
+-- primary key. The owner has no row; owning is simply not being a member.
+-- Each member's seat is a flat £10 of the OWNER's credit, charged on joining
+-- and every 30 days (team_seat_charges). All three tables are service-role
+-- only: RLS on, no policies — the app reads them server-side and decides.
+create table if not exists public.team_members (
+  member_id uuid primary key references public.profiles(id) on delete cascade,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  -- True when the login was created to accept the invite. Such a login is
+  -- deleted when the member is removed; a pre-existing account just leaves.
+  created_via_invite boolean not null default false,
+  joined_at timestamptz not null default now(),
+  -- The seat is paid up to here; the seats cron renews at or after it.
+  seat_paid_until timestamptz not null,
+  -- Set when a renewal could not be paid. Cleared when it is.
+  suspended_at timestamptz,
+  constraint team_members_not_self check (owner_id <> member_id)
+);
+create index if not exists team_members_owner_idx on public.team_members (owner_id);
+alter table public.team_members enable row level security;
+revoke all on public.team_members from anon, authenticated;
+
+create table if not exists public.team_invites (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  -- Stored lower-case; compared to the accepting user's email.
+  email text not null,
+  -- sha256 of the emailed token; the token itself is never stored.
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  accepted_at timestamptz,
+  revoked_at timestamptz
+);
+-- One open invite per owner per address: a resend replaces the token.
+create unique index if not exists team_invites_open_idx
+  on public.team_invites (owner_id, email) where accepted_at is null and revoked_at is null;
+create index if not exists team_invites_email_idx on public.team_invites (email) where accepted_at is null and revoked_at is null;
+alter table public.team_invites enable row level security;
+revoke all on public.team_invites from anon, authenticated;
+
+-- One row per paid seat period. The unique key is the double-charge guard:
+-- the row is inserted BEFORE the debit, so a retried accept or two cron runs
+-- racing on the same seat cannot both charge it.
+create table if not exists public.team_seat_charges (
+  id bigint generated always as identity primary key,
+  member_id uuid not null,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  period_start timestamptz not null,
+  transaction_id bigint,
+  created_at timestamptz not null default now(),
+  constraint team_seat_charges_period_key unique (member_id, period_start)
+);
+create index if not exists team_seat_charges_owner_idx on public.team_seat_charges (owner_id, created_at desc);
+alter table public.team_seat_charges enable row level security;
+revoke all on public.team_seat_charges from anon, authenticated;
+
+-- Debits a FACE amount: exactly p_face_pence of displayed balance, whatever
+-- mix of grants pays it. credit_debit takes BASE pence and multiplies by each
+-- grant's spend rate, so "£10" would cost £15 of top-up credit — wrong for a
+-- seat sold as a flat £10. Each allocation records base = face / rate, so
+-- credit_refund reverses it like any other debit. Never overdrafts. Ignores
+-- open reservations (they are minutes long and settle themselves).
+create or replace function public.credit_debit_face(p_user uuid, p_face_pence numeric, p_meta jsonb default '{}'::jsonb)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare
+  v_remaining numeric := round(p_face_pence, 4);
+  v_available numeric;
+  v_tx bigint;
+  v_total_base numeric := 0;
+  v_take_grant numeric;
+  v_take_base numeric;
+  g record;
+begin
+  if v_remaining <= 0 then return null; end if;
+  perform 1 from profiles where id = p_user for update;
+
+  select coalesce(sum(remaining_pence), 0) into v_available
+  from credit_grants
+  where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now());
+  if v_available < v_remaining then
+    raise exception 'insufficient_credit' using errcode = 'P0402',
+      detail = json_build_object('required_face', v_remaining, 'available_face', v_available)::text;
+  end if;
+
+  insert into credit_transactions (user_id, kind, amount_pence, base_pence, action_id, action, description, metadata)
+  values (
+    p_user, 'debit', -v_remaining, 0,
+    nullif(p_meta ->> 'action_id', '')::uuid, p_meta ->> 'action', p_meta ->> 'description',
+    p_meta - array['action_id', 'action', 'description']
+  ) returning id into v_tx;
+
+  for g in
+    select id, remaining_pence, spend_rate from credit_grants
+    where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now())
+    order by priority, expires_at nulls last, created_at
+    for update
+  loop
+    exit when v_remaining <= 0;
+    v_take_grant := least(v_remaining, g.remaining_pence);
+    v_take_base := round(v_take_grant / g.spend_rate, 4);
+    update credit_grants set remaining_pence = remaining_pence - v_take_grant where id = g.id;
+    insert into credit_allocations (transaction_id, grant_id, base_pence, grant_pence, spend_rate) values (v_tx, g.id, v_take_base, v_take_grant, g.spend_rate);
+    v_total_base := v_total_base + v_take_base;
+    v_remaining := v_remaining - v_take_grant;
+  end loop;
+
+  if v_remaining > 0.0001 then
+    raise exception 'insufficient_credit' using errcode = 'P0402',
+      detail = json_build_object('required_face', p_face_pence, 'shortfall_face', v_remaining)::text;
+  end if;
+
+  update credit_transactions set base_pence = v_total_base where id = v_tx;
+  return v_tx;
+end;
+$$;
+revoke execute on function public.credit_debit_face(uuid, numeric, jsonb) from public, anon, authenticated;
+
+-- ── Shared team reports ──
+-- A report belongs to the ACCOUNT that paid for it (owner_id) and was run by
+-- user_id. For someone on their own they are the same; a team member's
+-- reports are the team's, paid from the owner's credit, and every active
+-- member sees them. Backfilled so every existing report is its author's.
+alter table public.saved_searches add column if not exists owner_id uuid references public.profiles(id) on delete cascade;
+update public.saved_searches set owner_id = user_id where owner_id is null;
+create index if not exists saved_searches_owner_idx on public.saved_searches (owner_id, created_at desc);
+-- Helpers live in `private`, a schema the API does not expose: nobody can
+-- call them over /rest/v1/rpc, and they are still usable from policies and
+-- triggers.
+create schema if not exists private;
+grant usage on schema private to authenticated;
+
+-- The caller's team owner while their seat is active, else null.
+-- team_members is service-role only, so a policy cannot read it directly;
+-- this definer function answers the one question the policy needs.
+create or replace function private.active_team_owner()
+returns uuid language sql security definer set search_path = public stable as $$
+  select owner_id from public.team_members
+  where member_id = (select auth.uid()) and suspended_at is null;
+$$;
+revoke execute on function private.active_team_owner() from public;
+grant execute on function private.active_team_owner() to authenticated;
+
+-- Wrapped in (select ...) so each is evaluated once per query, not per row.
+-- `to authenticated`: anonymous requests never evaluate it.
+drop policy if exists "Team can read team searches" on public.saved_searches;
+create policy "Team can read team searches"
+  on public.saved_searches for select to authenticated
+  using (owner_id = (select auth.uid()) or owner_id = (select private.active_team_owner()));
+
+-- owner_id is decided by the database, never by the writer. Signed-in users
+-- can write their own rows with the public key, so a client-supplied
+-- owner_id would let anyone plant a report in another account's team list.
+-- On insert it is derived from team membership (the team owner, else the
+-- author); once set it never moves. This also covers inserts from code that
+-- predates the column.
+create or replace function private.saved_searches_set_owner()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' and old.owner_id is not null then
+    new.owner_id := old.owner_id;
+  else
+    new.owner_id := coalesce(
+      (select tm.owner_id from public.team_members tm where tm.member_id = new.user_id),
+      new.user_id
+    );
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function private.saved_searches_set_owner() from public;
+drop trigger if exists saved_searches_set_owner on public.saved_searches;
+create trigger saved_searches_set_owner
+  before insert or update on public.saved_searches
+  for each row execute function private.saved_searches_set_owner();
