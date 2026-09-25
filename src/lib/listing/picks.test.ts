@@ -423,3 +423,19 @@ test('the advice is never shown on a pick that did match', () => {
   assert.ok(!mail.text.includes('Change your budget'));
   assert.ok(!mail.html.includes('Change your budget'));
 });
+
+test('a pick drawn from the marketplace pool links to its deal sheet and to more like it', () => {
+  const l = listing({ postcodeArea: 'NG', bedrooms: 4 });
+  const links = pickLinks('https://x.test', 'p1', 'tok', l.canonicalUrl, { dealId: 'deal-1', kind: 'sale', area: 'NG', bedrooms: 4 });
+  assert.equal(links.deal, 'https://x.test/deals/deal-1');
+  assert.equal(links.more, 'https://x.test/deals?kind=sale&areas=NG&beds=4%2B');
+  assert.equal(pickLinks('https://x.test', 'p1', 'tok', l.canonicalUrl).deal, null);
+  const pick = { listing: l, deal: null, areaFit: 60, areaName: 'Nottingham', fit: 70 };
+  const withDeal = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 40, dealId: 'deal-1' });
+  assert.ok(withDeal.html.includes('https://x.test/deals/deal-1'));
+  assert.ok(withDeal.text.includes('Open the deal sheet: https://x.test/deals/deal-1'));
+  assert.ok(withDeal.text.includes('More deals like this: https://x.test/deals?kind=sale&areas=NG&beds=4%2B'));
+  const without = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10 });
+  assert.ok(!without.html.includes('/deals/'));
+  assert.ok(!without.text.includes('Open the deal sheet'));
+});

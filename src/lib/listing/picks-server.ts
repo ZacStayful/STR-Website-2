@@ -45,9 +45,11 @@ export interface PickView {
   motivation: Motivation | null;
   /** The income screening the pick was sent on, as it stood at send time. */
   screening: Screening | null;
+  /** The marketplace deal this pick was drawn from, when it came from the pool. */
+  dealId: string | null;
 }
 
-const PICK_COLUMNS = 'id, user_id, canonical_url, token, status, kind, basis, postcode_area, deal, fit, charged_base_pence, reaction, reaction_source, reasons, comment, responded_at, checked_listing_id, saved_at, sent_at, relaxation, motivation, screening';
+const PICK_COLUMNS = 'id, user_id, canonical_url, token, status, kind, basis, postcode_area, deal, fit, charged_base_pence, reaction, reaction_source, reasons, comment, responded_at, checked_listing_id, saved_at, sent_at, relaxation, motivation, screening, deal_id';
 
 function toView(raw: Record<string, unknown>, listing: SourcedListing | null): PickView | null {
   const id = typeof raw.id === 'string' ? raw.id : null;
@@ -82,6 +84,7 @@ function toView(raw: Record<string, unknown>, listing: SourcedListing | null): P
     relaxation: parseStoredRelaxation(raw.relaxation),
     motivation: parseMotivation(raw.motivation),
     screening: parseScreening(raw.screening),
+    dealId: typeof raw.deal_id === 'string' ? raw.deal_id : null,
   };
 }
 
