@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
-import { getCreditSummary } from "@/lib/credit/summary";
+import { teamCreditSnapshot } from "@/lib/team/credit";
 import { ensureWelcomeGrant } from "@/lib/credit/welcome";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
@@ -23,14 +23,15 @@ export async function AppShell({ active, redirectTo, children }: { active: "esti
   let credit: CreditSnapshot | null = null;
   try {
     await ensureWelcomeGrant(user.id, user.email ?? null);
-    credit = { ...(await getCreditSummary(user.id)), admin };
+    // For a team member this is the team's balance, which is what they spend.
+    credit = await teamCreditSnapshot({ id: user.id, admin });
   } catch (err) {
     console.error("[AppShell] credit summary failed:", err);
   }
 
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} />
+      <AppSwitcher active={active} admin={admin} teamMember={Boolean(credit?.member)} />
       <CreditBanner />
       {children}
     </CreditProvider>

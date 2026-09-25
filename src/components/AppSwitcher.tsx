@@ -10,7 +10,9 @@ import { CreditBadge } from "@/components/credit/CreditBadge";
 // their funnel. They are different products and never share a list.
 // Admins also get the admin dashboard link. The credit badge reads the
 // balance from the surrounding CreditProvider (see AppShell).
-export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "deals" | "picks" | "reports" | "leads" | "account"; admin?: boolean }) {
+// A team member's reports are the team's ("Team reports"), and billing is the
+// owner's, so members get Team in its place.
+export function AppSwitcher({ active, admin, teamMember }: { active: "estimate" | "markets" | "deals" | "picks" | "reports" | "leads" | "account"; admin?: boolean; teamMember?: boolean }) {
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
     fontWeight: 600,
@@ -49,7 +51,7 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
         Daily picks
       </Link>
       <Link href="/reports" style={linkStyle(active === "reports")} aria-current={active === "reports" ? "page" : undefined}>
-        My reports
+        {teamMember ? "Team reports" : "My reports"}
       </Link>
       <Link href="/leads" style={linkStyle(active === "leads")} aria-current={active === "leads" ? "page" : undefined}>
         Leads
@@ -57,9 +59,15 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
       <Link href="/account" style={linkStyle(active === "account")} aria-current={active === "account" ? "page" : undefined}>
         Account
       </Link>
-      <Link href="/account/billing" style={linkStyle(false)}>
-        Billing
-      </Link>
+      {teamMember ? (
+        <Link href="/account/team" style={linkStyle(false)}>
+          Team
+        </Link>
+      ) : (
+        <Link href="/account/billing" style={linkStyle(false)}>
+          Billing
+        </Link>
+      )}
       {admin && (
         <Link href="/admin" style={linkStyle(false)}>
           Dashboard

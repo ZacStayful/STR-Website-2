@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { teamOf } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getCreditSummary } from "@/lib/credit/summary";
 import { usageHistory } from "@/lib/credit/history";
@@ -24,6 +25,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) redirect("/login?redirect=/account/billing");
+  // A team member's plan and billing are the owner's to manage.
+  if ((await teamOf(user.id)).role === "member") redirect("/account/team");
 
   const { data: profile } = await supabase
     .from("profiles")

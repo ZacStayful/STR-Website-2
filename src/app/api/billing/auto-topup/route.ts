@@ -10,6 +10,8 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   const member = await currentMember();
   if (!member) return Response.json({ error: 'Sign in first.' }, { status: 401 });
+  // The team's owner pays and buys; a member cannot spend on their card.
+  if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   let body: { amountPence?: unknown; thresholdPence?: unknown };
   try {
     body = await request.json();

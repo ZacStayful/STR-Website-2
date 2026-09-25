@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { openDeal, saveOpenedDealToPipeline } from '@/lib/marketplace/open';
+import { payerFor } from '@/lib/team';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -23,9 +24,12 @@ export async function openDealAction(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '');
   if (!UUID.test(id)) redirect('/deals?msg=missing');
   const { user, adminUser } = await member();
+  // A team member opens deals for the team, on the owner's credit.
+  const payer = await payerFor(user.id);
+  if (payer.suspended) redirect(`/deals/${encodeURIComponent(id)}?msg=insufficient_credit`);
   let outcome;
   try {
-    outcome = await openDeal({ userId: user.id, adminUser, dealId: id });
+    outcome = await openDeal({ userId: payer.payerId, adminUser, dealId: id, memberId: payer.memberId });
   } catch (err) {
     console.error('[deals] open failed:', err);
     redirect(`/deals/${encodeURIComponent(id)}?msg=failed`);
@@ -42,7 +46,8 @@ export async function savePipelineAction(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '');
   if (!UUID.test(id)) redirect('/deals?msg=missing');
   const { user, adminUser } = await member();
-  const result = await saveOpenedDealToPipeline(user.id, id, adminUser);
+  const payer = await payerFor(user.id);
+  const result = await saveOpenedDealToPipeline(user.id, id, adminUser, payer.payerId);
   if (!result.ok) redirect(`/deals/${encodeURIComponent(id)}?msg=${result.code === 'missing' ? 'missing' : result.code === 'not_open' ? 'not_open' : 'save_failed'}`);
   redirect(`/markets?pane=listings&listing=${encodeURIComponent(result.checkedListingId)}`);
 }

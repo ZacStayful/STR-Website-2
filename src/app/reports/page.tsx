@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { payerFor, teamMembersOf, profileNames, personName } from "@/lib/team";
 import { deleteReportAction } from "./actions";
 
 export const metadata: Metadata = {
@@ -9,6 +10,7 @@ export const metadata: Metadata = {
 };
 
 interface Row {
+  user_id: string;
   id: string;
   address: string;
   postcode: string | null;
@@ -38,27 +40,36 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
+  // Which reports this person sees is decided by RLS on saved_searches:
+  // their own, plus — for an owner or an active team member — the team's.
+  // So a member also keeps the reports they ran before joining, and a
+  // paused member sees only their own until their seat is back.
+  const payer = await payerFor(user.id);
+  const team = await teamMembersOf(payer.payerId);
+  const showAuthors = team.length > 0;
 
   let query = supabase
     .from("saved_searches")
     .select(
-      "id, address, postcode, bedrooms, kind, created_at, revenue:result->shortLet->annualRevenue, fit:result->verdict->>fit, source:source_listing->>source, source_url:source_listing->>url, deal_kind:deal->>kind, deal_yield:deal->>grossYieldPct, deal_margin:deal->>monthlyMargin",
+      "id, user_id, address, postcode, bedrooms, kind, created_at, revenue:result->shortLet->annualRevenue, fit:result->verdict->>fit, source:source_listing->>source, source_url:source_listing->>url, deal_kind:deal->>kind, deal_yield:deal->>grossYieldPct, deal_margin:deal->>monthlyMargin",
     )
-    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(200);
   const term = q?.trim();
   if (term) query = query.or(`address.ilike.%${term.replace(/[%,()]/g, "")}%,postcode.ilike.%${term.replace(/[%,()]/g, "")}%`);
   const { data, error } = await query;
   const rows = (error ? [] : (data ?? [])) as unknown as Row[];
+  const authors = showAuthors ? await profileNames([...new Set(rows.map((r) => r.user_id))]) : new Map();
 
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">My reports</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Every analysis you have run, ready to reopen. Reopening never uses a run.</p>
+            <h1 className="text-2xl font-bold text-foreground">{showAuthors ? "Team reports" : "My reports"}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {showAuthors ? "Every analysis anyone on your team has run, ready to reopen." : "Every analysis you have run, ready to reopen."} Reopening never uses a run.
+            </p>
           </div>
           <Link href="/estimate" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
             New analysis
@@ -89,6 +100,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
                   </Link>
                   <p className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                     <span>{new Date(r.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>
+                    {showAuthors ? <span>· by {r.user_id === user.id ? "you" : personName(authors.get(r.user_id))}</span> : null}
                     {r.postcode && <span>· {r.postcode}</span>}
                     {r.bedrooms !== null && <span>· {r.bedrooms} bed</span>}
                     {r.source && (

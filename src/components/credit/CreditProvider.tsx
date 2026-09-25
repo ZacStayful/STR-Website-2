@@ -21,6 +21,11 @@ export interface CreditSnapshot {
   topupPresetsPence: number[];
   welcomeWithheldReason: string | null;
   admin?: boolean;
+  /**
+   * Set for a team member: the balance above is the team's, the owner pays,
+   * and top-up and plans are not theirs to buy.
+   */
+  member?: { teamName: string; paused: boolean } | null;
 }
 
 interface CreditContextValue {

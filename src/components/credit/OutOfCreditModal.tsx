@@ -38,7 +38,10 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
   const actionLabel = detail?.action ? ACTION_LABELS[detail.action] ?? detail.action : null;
   const topupMode = detail?.mode === "topup";
 
-  const title = topupMode ? "Top up your credit" : available <= 0 ? "You're out of credit" : "Not enough credit for this";
+  const member = snapshot?.member ?? null;
+  const title = member?.paused
+    ? "Your seat is paused"
+    : topupMode ? "Top up your credit" : available <= 0 ? "You're out of credit" : "Not enough credit for this";
   const body = topupMode
     ? `You have ${formatGbp(available)} of credit left.`
     : detail?.requiredPence
@@ -65,6 +68,14 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
             </Dialog.Close>
           </div>
 
+          {member ? (
+            // A team member spends the owner's credit and cannot buy more.
+            <p className="mt-5 rounded-xl border border-border p-4 text-sm text-muted-foreground">
+              {member.paused
+                ? `Your seat on ${member.teamName} couldn't be renewed. It comes back as soon as the account owner tops up.`
+                : `${member.teamName}'s credit is paid for by the account owner. Ask them to top up, then try again.`}
+            </p>
+          ) : (
           <div className="mt-5 space-y-4">
             <section className="rounded-xl border border-primary/30 bg-primary/5 p-4">
               <h3 className="text-sm font-semibold text-foreground">Upgrade your plan</h3>
@@ -92,6 +103,7 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
 
             <RateComparison estimate={reportEst} presets={presets} />
           </div>
+          )}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

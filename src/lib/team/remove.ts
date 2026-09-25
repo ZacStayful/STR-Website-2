@@ -41,9 +41,22 @@ export async function removeMember(input: { ownerId: string; memberId: string; b
 
   let loginDeleted = false;
   if (createdViaInvite) {
-    const { error: delErr } = await admin.auth.admin.deleteUser(input.memberId);
-    if (delErr) console.error('[team] login delete failed:', delErr.message);
-    else loginDeleted = true;
+    // Reports they ran for the team were paid for by the team: hand them to
+    // the owner first, or they would cascade away with the login.
+    const { error: moveErr } = await admin
+      .from('saved_searches')
+      .update({ user_id: input.ownerId })
+      .eq('user_id', input.memberId)
+      .eq('owner_id', input.ownerId);
+    if (moveErr) {
+      // Keep the login rather than lose the team's reports. They are off the
+      // team either way; the emails below say the login was kept.
+      console.error('[team] report hand-over failed; login kept:', moveErr.message);
+    } else {
+      const { error: delErr } = await admin.auth.admin.deleteUser(input.memberId);
+      if (delErr) console.error('[team] login delete failed:', delErr.message);
+      else loginDeleted = true;
+    }
   }
 
   for (const to of ['owner', 'member'] as const) {

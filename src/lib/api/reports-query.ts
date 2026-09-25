@@ -60,13 +60,17 @@ function summary(row: Row): ReportSummary {
   };
 }
 
+/**
+ * The account's reports — for an owner, the whole team's, since a member's
+ * reports are paid for by and belong to the owner (`owner_id`).
+ */
 export async function listReports(userId: string, limit: number, offset: number): Promise<{ reports: ReportSummary[]; total: number; limit: number; offset: number }> {
   if (!hasServiceRole()) return { reports: [], total: 0, limit, offset };
 
   const { data, count, error } = await createAdminClient()
     .from('saved_searches')
     .select('id, address, postcode, postcode_area, bedrooms, kind, created_at, result', { count: 'exact' })
-    .eq('user_id', userId)
+    .eq('owner_id', userId)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) {
@@ -88,7 +92,7 @@ export async function getReport(userId: string, id: string): Promise<ReportDetai
   const { data } = await createAdminClient()
     .from('saved_searches')
     .select('id, address, postcode, postcode_area, bedrooms, kind, created_at, result')
-    .eq('user_id', userId)
+    .eq('owner_id', userId)
     .eq('id', id)
     .maybeSingle();
   if (!data) return null;

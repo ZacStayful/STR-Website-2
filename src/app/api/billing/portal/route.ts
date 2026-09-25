@@ -9,6 +9,8 @@ export const dynamic = 'force-dynamic';
 export async function POST() {
   const member = await currentMember();
   if (!member) return Response.json({ error: 'Sign in first.' }, { status: 401 });
+  // The team's owner pays and buys; a member cannot spend on their card.
+  if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   if (!stripeConfigured()) return Response.json({ error: 'Payments are not configured yet.' }, { status: 503 });
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });
