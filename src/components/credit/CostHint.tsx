@@ -5,7 +5,7 @@ import Link from "next/link";
 import { fetchEstimate, formatGbp, type EstimateResponse } from "@/lib/credit/client";
 
 /**
- * "This report will use about £7.30 of your plan credit (up to £10.47)".
+ * "This report will use about £8.60 of your plan credit (up to £11.50)".
  * Worded by which bucket pays, so members on top-up credit see the 1.5× rate
  * and the nudge to upgrade.
  */

@@ -56,9 +56,9 @@ export const DATA_SOURCES: DataSource[] = [
     id: "propertydata",
     name: "PropertyData",
     kind: "partner",
-    produces: "Sold comparables and long-let values",
+    produces: "Valuations, rents, stamp duty and the property registers",
     detail:
-      "Sale prices and rental benchmarks, used for yield-on-cost and the long-let comparison. Lags the market by the length of a conveyance.",
+      "Sale and rent valuations, the council tax band, stamp duty on the day, and the registers behind the due diligence page: EPC, flood band, planning designations, listed buildings, market liquidity and regional price growth. Valuations lag the market by the length of a conveyance; register data is only as current as its last update.",
     confidence: 88,
   },
   {
@@ -83,18 +83,18 @@ export const DATA_SOURCES: DataSource[] = [
     id: "epc-register",
     name: "EPC Register",
     kind: "public",
-    produces: "Property size, age and efficiency",
+    produces: "Property size and energy rating",
     detail:
-      "Official floor area and energy rating, which feed running costs. Only as current as the last assessment.",
+      "The address's certificate, read through PropertyData: floor area for the valuations and the rating on the due diligence page. Only as current as the last assessment.",
     confidence: 92,
   },
   {
     id: "companies-house",
     name: "Companies House",
     kind: "public",
-    produces: "Operator and ownership signals",
+    produces: "Operator and ownership signals (planned)",
     detail:
-      "Who else is operating at scale in the area. Statutory filings, so accurate but slow.",
+      "Who else is operating at scale in the area. Statutory filings, so accurate but slow. Not read by the analyser yet; it is next on the list, through the Land Registry's corporate ownership records.",
     confidence: 94,
   },
 ];
@@ -122,7 +122,7 @@ export const PROVENANCE_PILLARS: ProvenancePillar[] = [
     id: "partner",
     eyebrow: "01 / Partner data",
     title: "The market, from outside.",
-    body: "Airbtics, PropertyData, Google Places, Ticketmaster, the EPC register and Companies House. Named on every figure they produce, so you can see which part of a report rests on someone else's data.",
+    body: "Airbtics, PropertyData, Google Places, Ticketmaster and the EPC register, with Companies House ownership records to come. Named on every figure they produce, so you can see which part of a report rests on someone else's data.",
   },
   {
     id: "operated",

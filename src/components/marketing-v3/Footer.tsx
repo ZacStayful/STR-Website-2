@@ -52,7 +52,7 @@ export function Footer() {
             © {new Date().getFullYear()} Stayful Ltd. Registered in England &amp; Wales.
           </span>
           <span className="muted">
-            Data: Airbtics · PropertyData · Google Places · Ticketmaster · EPC Register · Companies House
+            Data: Airbtics · PropertyData · Google Places · Ticketmaster · EPC Register
           </span>
         </div>
       </div>
