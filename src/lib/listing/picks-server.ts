@@ -9,6 +9,7 @@ import { parseStoredRelaxation, type StoredRelaxation } from './relax';
 import { parseMotivation, type Motivation } from './motivation';
 import { parseScreening, screeningScore, type Screening } from './screen';
 import { parseMarketGoals } from '../market/goals';
+import { setNotification } from '../notifications/server';
 import type { ResponseRow } from './picks-patterns';
 
 /**
@@ -246,12 +247,14 @@ export async function recordReaction(where: { token: string } | { id: string; us
   return !error;
 }
 
-/** Turns daily picks on or off for a member; off remembers when, so a schema backfill never re-enrols them. */
+/**
+ * Turns daily picks on or off for a member. The unsubscribe link in every
+ * pick email lands here; the switch itself lives in the Notifications panel
+ * and this is the same writer (src/lib/notifications), so off remembers when
+ * and a schema backfill never re-enrols them.
+ */
 export async function setPicksEnabled(userId: string, on: boolean): Promise<boolean> {
-  if (!hasServiceRole()) return false;
-  const { error } = await createAdminClient().from('profiles').update({ sourcing_alerts: on, sourcing_opted_out_at: on ? null : new Date().toISOString() }).eq('id', userId);
-  if (error) console.error('[picks] profile update failed:', error.message);
-  return !error;
+  return setNotification(userId, 'daily_picks', on);
 }
 
 /**

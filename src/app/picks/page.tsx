@@ -10,7 +10,7 @@ import { BAND_LABELS, screeningWorking } from "@/lib/listing/screen";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
-import { savePickAction, reactToPickAction, togglePicksAction } from "./actions";
+import { savePickAction, reactToPickAction } from "./actions";
 
 export const metadata: Metadata = {
   title: "Daily picks — Stayful Intelligence",
@@ -73,12 +73,9 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
               One property a day that Stayful Intelligence thinks fits you. Tell it yes or no and tomorrow’s pick gets closer.
             </p>
           </div>
-          <form action={togglePicksAction}>
-            <input type="hidden" name="on" value={enabled === false ? "1" : "0"} />
-            <button type="submit" className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
-              {enabled === false ? "Turn daily picks on" : "Turn daily picks off"}
-            </button>
-          </form>
+          <Link href="/account/notifications" className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
+            {enabled === false ? "Daily picks are off · turn on" : "Daily picks are on · manage"}
+          </Link>
         </div>
 
         <section className="mb-6 rounded-xl border border-border bg-card p-4">

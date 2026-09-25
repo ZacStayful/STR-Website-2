@@ -57,13 +57,11 @@ export async function saveMarketGoalsAction(_prev: GoalsState, formData: FormDat
     }
   }
 
-  const alertWeekly = formData.get('alertWeekly') === '1';
-  const sourcingAlerts = formData.get('sourcingAlerts') === '1';
-  // Turning daily picks off is remembered (sourcing_opted_out_at) so the
-  // schema's default-on backfill can never re-enrol the member.
+  // The email switches (daily picks, weekly alerts) are not on this form any
+  // more: the Notifications panel is the only writer of those columns.
   const { error } = await supabase
     .from('profiles')
-    .update({ market_goals: goals, market_goals_updated_at: new Date().toISOString(), alert_weekly: alertWeekly, sourcing_alerts: sourcingAlerts, sourcing_opted_out_at: sourcingAlerts ? null : new Date().toISOString() })
+    .update({ market_goals: goals, market_goals_updated_at: new Date().toISOString() })
     .eq('id', user.id);
   if (error) return { error: 'Could not save your goals. Please try again.', warning: null, saved: false };
 

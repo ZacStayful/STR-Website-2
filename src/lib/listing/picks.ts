@@ -18,6 +18,7 @@ import type { Deal } from './deal.ts';
 import { propertyKind } from './suitability.ts';
 import { BAND_LABELS, screeningScore, screeningWorking, type Screening } from './screen.ts';
 import { motivationLabel, type Motivation } from './motivation.ts';
+import { manageNotificationsUrl } from '../url.ts';
 
 export type PickBasis = 'goals' | 'house';
 export type PickStatus = 'pending' | 'sent' | 'failed';
@@ -461,6 +462,8 @@ export function pickLinks(siteUrl: string, id: string, token: string, listingUrl
     picks: `${base}/picks`,
     unsubscribe: `${base}/p/${token}?a=unsubscribe`,
     unsubscribePost: `${base}/api/picks/unsubscribe/${token}`,
+    /** The Notifications panel: every switch in one place. */
+    notifications: manageNotificationsUrl(base),
     listing: listingUrl,
   };
 }
@@ -551,6 +554,7 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
     costNote,
     `All your picks: ${links.picks}`,
     `Stop daily picks: ${links.unsubscribe}`,
+    `Manage notifications: ${links.notifications}`,
   ]
     .filter((line): line is string => line !== null)
     .join('\n');
@@ -577,7 +581,7 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Not for you? Tell us why in a couple of clicks and tomorrow&#8217;s pick changes.</p>
       ${links.deal ? `<p style="margin:0 0 6px">${btn(links.deal, 'Open the deal sheet', true)}${links.more ? btn(links.more, 'More deals like this') : ''}</p>` : ''}
       <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', !links.deal)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
-      <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a>.</p>
+      <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a> · <a href="${esc(links.notifications)}" style="color:#7a8274">Manage notifications</a>.</p>
     </div>`.trim();
 
   return { subject, text, html, headers: unsubscribeHeaders(links) };

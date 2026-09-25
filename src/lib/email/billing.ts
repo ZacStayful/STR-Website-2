@@ -2,7 +2,7 @@ import 'server-only';
 
 import { sendEmail, isEmailConfigured } from './send';
 import { escapeHtml } from './escape';
-import { siteUrl } from '../url';
+import { siteUrl, manageNotificationsUrl } from '../url';
 import { formatGbp } from '../credit/pricing';
 
 /**
@@ -17,9 +17,9 @@ function layout(title: string, paragraphs: string[], cta: { label: string; path:
 <h1 style="font-size:20px;margin:0 0 12px">${escapeHtml(title)}</h1>
 ${paragraphs.map((p) => `<p style="font-size:15px;line-height:1.5;margin:0 0 12px">${escapeHtml(p)}</p>`).join('')}
 <p style="margin:20px 0 0"><a href="${url}" style="display:inline-block;background:#2E3D2B;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">${escapeHtml(cta.label)}</a></p>
-<p style="font-size:12px;color:#6b7280;margin:24px 0 0">Stayful Intelligence · <a href="${siteUrl('/account/billing')}" style="color:#6b7280">Billing &amp; usage</a></p>
+<p style="font-size:12px;color:#6b7280;margin:24px 0 0">Stayful Intelligence · <a href="${siteUrl('/account/billing')}" style="color:#6b7280">Billing &amp; usage</a> · <a href="${manageNotificationsUrl()}" style="color:#6b7280">Manage notifications</a></p>
 </div></body></html>`;
-  const text = `${title}\n\n${paragraphs.join('\n\n')}\n\n${cta.label}: ${url}\n`;
+  const text = `${title}\n\n${paragraphs.join('\n\n')}\n\n${cta.label}: ${url}\n\nManage notifications: ${manageNotificationsUrl()}\n`;
   return { html, text };
 }
 

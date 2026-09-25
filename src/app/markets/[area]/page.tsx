@@ -66,8 +66,6 @@ export default async function AreaPage({
       goals={user.goals}
       savedAreas={user.savedAreas}
       userEmail={user.email}
-      alertWeekly={user.alertWeekly}
-      sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
       marketDeals={marketDeals}
       initialTab={isTabKey(tab) ? tab : "overview"}

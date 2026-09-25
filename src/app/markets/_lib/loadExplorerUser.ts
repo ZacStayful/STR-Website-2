@@ -8,9 +8,6 @@ export interface ExplorerUser {
   email: string | null;
   goals: MarketGoals | null;
   savedAreas: string[];
-  alertWeekly: boolean;
-  /** Daily picks on (default on; see sourcing_opted_out_at). */
-  sourcingAlerts: boolean;
   /** The member's checked listings (deal pipeline), newest first. */
   listings: CheckedListingRow[];
 }
@@ -21,10 +18,10 @@ export interface ExplorerUser {
  * auth round-trip, not two.
  */
 export async function loadExplorerUser(user: { id: string; email?: string | null } | null): Promise<ExplorerUser> {
-  if (!user) return { email: null, goals: null, savedAreas: [], alertWeekly: true, sourcingAlerts: true, listings: [] };
+  if (!user) return { email: null, goals: null, savedAreas: [], listings: [] };
   const supabase = await createSupabaseServerClient();
   const [profileRes, { data: saved }, listingsRes] = await Promise.all([
-    supabase.from('profiles').select('market_goals, alert_weekly, sourcing_alerts').eq('id', user.id).single(),
+    supabase.from('profiles').select('market_goals').eq('id', user.id).single(),
     supabase.from('saved_areas').select('postcode_area').eq('user_id', user.id),
     supabase
       .from('checked_listings')
@@ -35,20 +32,12 @@ export async function loadExplorerUser(user: { id: string; email?: string | null
   ]);
   if (listingsRes.error) console.warn('[markets] checked_listings select failed (schema behind?):', listingsRes.error.message);
   const listings = ((listingsRes.data ?? []) as Record<string, unknown>[]).map(toCheckedListingRow).filter((r): r is CheckedListingRow => r !== null);
-  // Tolerate a database that hasn't had the Phase 3 column added yet: fall
-  // back to the goals-only select rather than silently losing the goals.
-  let profile = profileRes.data as { market_goals: unknown; alert_weekly?: boolean; sourcing_alerts?: boolean } | null;
-  if (profileRes.error) {
-    console.warn('[markets] profile select failed (schema behind?):', profileRes.error.message);
-    const fallback = await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
-    profile = fallback.data ?? null;
-  }
+  if (profileRes.error) console.warn('[markets] profile select failed:', profileRes.error.message);
+  const profile = (profileRes.data ?? null) as { market_goals: unknown } | null;
   return {
     email: user.email ?? null,
     goals: parseMarketGoals(profile?.market_goals),
     savedAreas: (saved ?? []).map((s: { postcode_area: string }) => s.postcode_area.toUpperCase()),
-    alertWeekly: profile?.alert_weekly !== false,
-    sourcingAlerts: profile?.sourcing_alerts !== false,
     listings,
   };
 }

@@ -58,8 +58,6 @@ export function FindShell({
   national = [],
   goals,
   savedAreas,
-  alertWeekly = true,
-  sourcingAlerts = true,
   listings: initialListings = [],
   initialRegion = null,
   initialLevel = "markets",
@@ -74,8 +72,6 @@ export function FindShell({
   national?: MonthBucket[];
   goals: MarketGoals | null;
   savedAreas: string[];
-  alertWeekly?: boolean;
-  sourcingAlerts?: boolean;
   listings?: CheckedListingRow[];
   /** Region slug to open on; null for every area. */
   initialRegion?: string | null;
@@ -340,7 +336,7 @@ export function FindShell({
         compare.hydrated && <CompareDock rows={compareRows} bedroom={bedroom} onRemove={compare.remove} onClear={compare.clear} />
       )}
 
-      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} alertWeekly={alertWeekly} sourcingAlerts={sourcingAlerts} onClose={closeGoals} />}
+      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} onClose={closeGoals} />}
     </div>
   );
 }

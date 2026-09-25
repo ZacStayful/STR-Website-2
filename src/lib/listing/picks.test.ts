@@ -189,7 +189,8 @@ test('pickEmail carries every button, the unsubscribe headers and the first-ever
   const m = pickEmail({ pick, siteUrl: 'https://intelligence.stayful.co.uk/', id: 'pick-1', token, basis: 'house', goalsChips: [], firstEver: true, chargedBasePence: 10 });
   const links = pickLinks('https://intelligence.stayful.co.uk', 'pick-1', token, l.canonicalUrl);
   assert.match(m.subject, /^Today's pick to buy: 2-bed in Nottingham · 13\.3% yield$/);
-  for (const href of [links.yes, links.no, links.save, links.report, links.filter, links.listing, links.unsubscribe]) {
+  assert.equal(links.notifications, 'https://intelligence.stayful.co.uk/account/notifications');
+  for (const href of [links.yes, links.no, links.save, links.report, links.filter, links.listing, links.unsubscribe, links.notifications]) {
     assert.ok(m.html.includes(`href="${href}"`), `html has ${href}`);
     assert.ok(m.text.includes(href), `text has ${href}`);
   }

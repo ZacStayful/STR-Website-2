@@ -36,6 +36,9 @@ test('digest email lists every change and links the explorer', () => {
   assert.match(e.subject, /M has changed/);
   assert.match(e.text, /falling \(-25%\)/);
   assert.match(e.html, /href="https:\/\/intelligence.stayful.co.uk\/markets\/m"/);
+  // Every notification email links to the panel that switches it off.
+  assert.ok(e.text.includes('Manage notifications: https://intelligence.stayful.co.uk/account/notifications'));
+  assert.ok(e.html.includes('href="https://intelligence.stayful.co.uk/account/notifications"'));
 });
 
 test('digestEmail carries pipeline listing changes, alone or beside area changes', () => {

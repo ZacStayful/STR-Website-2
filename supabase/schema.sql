@@ -1926,3 +1926,16 @@ update public.marketplace_deals set live_since = coalesce(live_since, first_seen
 create index if not exists marketplace_deals_live_since_idx on public.marketplace_deals (live_since) where status = 'live';
 -- The window, in hours. 0 switches it off. Edit the row to change it; no deploy needed.
 insert into public.billing_settings (key, value) values ('free_deal_delay_hours', '48') on conflict (key) do nothing;
+
+-- =========================
+-- Notifications panel (src/lib/notifications)
+-- =========================
+-- One switch per notification type, each a boolean on profiles:
+--   sourcing_alerts  daily picks (with sourcing_opted_out_at, above)
+--   alert_weekly     weekly area alerts
+--   alert_credit     "picks paused / out of credit": the paused-picks letter
+--                    and the low-balance / out-of-credit emails
+-- The panel is the only place these change (service role, via
+-- src/lib/notifications/server.ts); the goals modal no longer writes them.
+-- Billing and receipt emails have no switch.
+alter table public.profiles add column if not exists alert_credit boolean not null default true;

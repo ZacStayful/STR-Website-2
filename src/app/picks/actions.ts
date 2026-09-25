@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { checkListingForMember } from '@/lib/listing/server';
-import { pickForMember, recordReaction, markPickSaved, setPicksEnabled } from '@/lib/listing/picks-server';
+import { pickForMember, recordReaction, markPickSaved } from '@/lib/listing/picks-server';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -54,10 +54,4 @@ export async function reactToPickAction(formData: FormData): Promise<void> {
   await recordReaction({ id, userId: user.id }, { reaction, source: 'form', reasons: formData.getAll('reasons').map(String), comment: formData.get('comment') });
   const tab = String(formData.get('tab') ?? '');
   redirect(tab ? `/picks?tab=${encodeURIComponent(tab)}` : '/picks');
-}
-
-export async function togglePicksAction(formData: FormData): Promise<void> {
-  const { user } = await member();
-  await setPicksEnabled(user.id, formData.get('on') === '1');
-  redirect('/picks');
 }

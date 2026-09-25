@@ -37,8 +37,6 @@ export function MarketPage({
   goals,
   savedAreas,
   userEmail,
-  alertWeekly = true,
-  sourcingAlerts = false,
   listings: initialListings,
   marketDeals,
   initialTab,
@@ -53,8 +51,6 @@ export function MarketPage({
   goals: MarketGoals | null;
   savedAreas: string[];
   userEmail: string | null;
-  alertWeekly?: boolean;
-  sourcingAlerts?: boolean;
   listings: CheckedListingRow[];
   /** Live marketplace deals in this area; null when the marketplace is not configured. */
   marketDeals: AreaDealsSummary | null;
@@ -115,7 +111,7 @@ export function MarketPage({
   if (card) backParams.set("region", card.region.slug);
   if (initialSort !== "stayful") backParams.set("sort", initialSort);
   const backHref = backParams.size ? `/markets?${backParams}` : "/markets";
-  const goalsModal = (goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} alertWeekly={alertWeekly} sourcingAlerts={sourcingAlerts} onClose={closeGoals} />;
+  const goalsModal = (goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} onClose={closeGoals} />;
 
   if (!card || !row) {
     return (

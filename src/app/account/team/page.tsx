@@ -52,6 +52,9 @@ export default async function TeamPage() {
             Your seat is paused because the team&apos;s balance is too low. It comes back automatically when the owner tops up.
           </p>
         ) : null}
+        <p className="mt-4 text-sm text-muted-foreground">
+          Your own emails — daily picks, weekly area alerts, credit warnings — are yours to switch in <Link href="/account/notifications" className="underline">Notifications</Link>.
+        </p>
         <section className="mt-8 rounded-xl border border-border bg-card p-5">
           <h2 className="text-sm font-semibold text-foreground">Leave the team</h2>
           <LeaveTeamForm />

@@ -69,8 +69,6 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
       national={national}
       goals={user.goals}
       savedAreas={user.savedAreas}
-      alertWeekly={user.alertWeekly}
-      sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
       initialRegion={initialRegion}
       initialLevel={initialLevel}
