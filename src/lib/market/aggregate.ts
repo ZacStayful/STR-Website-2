@@ -8,17 +8,23 @@
  * (server-only) and hands them in already normalised.
  *
  * Rules:
- *   • a row needs gross_revenue > 0 to count at all
+ *   • a row needs gross_revenue > 0 AND a trustworthy estimate to count at
+ *     all — no synthetic, no-comparables or `low` reports (quality.ts)
  *   • occupancy is 0–100 (source.ts normalises ≤1 → ×100)
  *   • the district is the postcode's outward code; rows without a full
  *     postcode (the Monday backfill) count for their area and region only
- *   • every source feeds the monthly series by default (the Monday backfill
- *     included, at the date it was loaded); `seriesSources` narrows it
+ *   • the monthly series counts DEFAULT_SERIES_SOURCES only: the live
+ *     analyser, and the Monday backfill at the date it was loaded. Rows the
+ *     Stayful lead database stores for a customer's own leads ('lead_db')
+ *     count in every figure but never in the series — a customer analyses
+ *     an imported list in one go, which would read as a one-day spike, and
+ *     those are not dated enquiries. `seriesSources` overrides the list
  *   • every average ignores nulls and non-positive values and is null when
  *     nothing qualifies (never 0 or NaN)
  */
 
 import { regionForArea } from './regions.ts';
+import { isTrustworthyReport } from './quality.ts';
 import { meanPlanning, planningByArea, type PlanningByArea, type PlanningSignal } from './planning.ts';
 import type { AreaCompetitionRaw, AreaDemandRaw, MarketAggregate, MarketArea, MarketBedroomAgg, MarketDistrict, MarketRegion, MarketSnapshot, MonthBucket, SeasonalityRaw } from './types.ts';
 
@@ -45,18 +51,26 @@ export interface ReportRow {
   demand_events: number | null;
   /** 12 monthly revenue figures, January first, or null. */
   monthly: number[] | null;
+  /** `raw_response.dataQuality.comparablesFound`; null when the row has no quality block (the Monday backfill). */
+  comparables_found: number | null;
+  /** `raw_response.dataQuality.level` ('high' | 'moderate' | 'low'); null when absent. */
+  quality_level: string | null;
 }
 
 export interface AggregateOptions {
   now?: Date;
   /** Months in the trend window, the running month included. */
   months?: number;
-  /** Row sources that feed the monthly series (default: every source). */
+  /** Row sources that feed the monthly series (default: DEFAULT_SERIES_SOURCES). */
   seriesSources?: readonly string[];
   /** Planning signals per postcode area (large applications nearby), from area_planning_signals. */
   planning?: PlanningSignal[];
 }
 
+/**
+ * The sources behind the trend charts. 'lead_db' is left out deliberately — see
+ * the header — so it must never be added here to make a total match the bars.
+ */
 export const DEFAULT_SERIES_SOURCES: readonly string[] = ['analyser', 'monday_backfill'];
 const DEFAULT_MONTHS = 12;
 
@@ -248,7 +262,7 @@ function groupBy(rows: ReportRow[], key: (r: ReportRow) => string | null): Map<s
 export function buildSnapshot(input: ReportRow[], opts: AggregateOptions = {}): MarketSnapshot {
   const now = opts.now ?? new Date();
   const months = monthKeys(now, opts.months ?? DEFAULT_MONTHS);
-  const rows = input.filter((r) => positive(r.gross_revenue));
+  const rows = input.filter((r) => positive(r.gross_revenue) && isTrustworthyReport(r));
   const planning = planningByArea(opts.planning ?? []);
 
   const byArea = groupBy(rows, (r) => (r.postcode_area ? r.postcode_area.trim().toUpperCase() : null));
