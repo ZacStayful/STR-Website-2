@@ -142,3 +142,46 @@ export async function openedDealIds(userId: string, ids: string[]): Promise<Set<
   for (const r of (data ?? []) as { deal_id: string }[]) out.add(r.deal_id);
   return out;
 }
+
+// ── Public teaser pages ──
+
+export interface AreaTeaser {
+  code: string;
+  sale: number;
+  rent: number;
+  total: number;
+  /** Median annual profit across live deals, £. */
+  medianProfit: number | null;
+  /** The three best live deals, public columns only. */
+  top: DealCard[];
+  area: { name: string; slug: string; score: number | null; occupancy: number | null; adr: number | null } | null;
+}
+
+async function teaserUncached(code: string): Promise<AreaTeaser | null> {
+  if (!hasServiceRole()) return null;
+  const admin = createAdminClient();
+  const { data, error } = await admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`).eq('status', 'live').eq('postcode_area', code).order('annual_profit', { ascending: false, nullsFirst: false }).limit(2000);
+  if (error) {
+    console.error('[marketplace] teaser failed:', error.message);
+    return null;
+  }
+  const rows = ((data ?? []) as unknown as (DealCard & { photo: string | null })[]).map(({ photo, ...card }) => ({ ...card, has_photo: Boolean(photo) }));
+  const profits = rows.map((r) => (r.annual_profit === null ? null : Number(r.annual_profit))).filter((n): n is number => n !== null).sort((a, b) => a - b);
+  const median = profits.length === 0 ? null : profits[Math.floor(profits.length / 2)];
+  const { getAreaCards } = await import('../market/cached');
+  const card = (await getAreaCards().catch(() => [])).find((c) => c.code === code) ?? null;
+  const { areaMetaForCode } = await import('../market/areas');
+  const meta = areaMetaForCode(code);
+  return {
+    code,
+    sale: rows.filter((r) => r.kind === 'sale').length,
+    rent: rows.filter((r) => r.kind === 'rent').length,
+    total: rows.length,
+    medianProfit: median,
+    top: rows.slice(0, 3),
+    area: { name: meta.name, slug: meta.slug, score: card?.score?.score ?? null, occupancy: card?.headline.occupancy ?? null, adr: card?.headline.adr ?? null },
+  };
+}
+
+/** One area's public teaser, cached for an hour and invalidated with the pool. */
+export const teaserForArea = unstable_cache(teaserUncached, ['marketplace-area-teaser'], { revalidate: 3600, tags: [DEALS_TAG] });
