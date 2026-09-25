@@ -195,6 +195,7 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
             <button type="submit" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Save to pipeline</button>
           </form>
         )}
+        {p.dealId && <Link href={`/deals/${p.dealId}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open deal sheet</Link>}
         <Link href={`/estimate?listing=${encodeURIComponent(l.canonicalUrl)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full report</Link>
         <a href={l.canonicalUrl} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">View on {SOURCE_LABELS[l.source]}</a>
         {p.reaction !== "yes" && (

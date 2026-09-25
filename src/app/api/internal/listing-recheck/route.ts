@@ -100,6 +100,8 @@ export async function GET(request: Request) {
     .from("checked_listings")
     .select("id, user_id, canonical_url, source, kind, postcode, lat, lng, snapshot, quick_estimate, deal, listing_status, price_history, rechecked_at, last_checked_at, created_at")
     .neq("status", "passed")
+    // A removed listing cannot change again, so it never re-enters the queue.
+    .or("listing_status.is.null,listing_status.neq.removed")
     .in("source", [...PORTAL_SOURCES, "airbnb"])
     .order("rechecked_at", { ascending: true, nullsFirst: true })
     .limit(cap * 2 + AIRBNB_MAX_PER_RUN);
@@ -111,12 +113,22 @@ export async function GET(request: Request) {
 
   // Portal listings: one fetch per URL, oldest first, skipping anything seen
   // today and anything already gone (a removed listing cannot change again).
+  // Every row that is skipped without a fetch still gets its rechecked_at
+  // stamped, or it sits at the front of the oldest-first queue forever and,
+  // once enough of them build up, nothing behind them is ever checked again.
+  const deferred: string[] = [];
   const byUrl = new Map<string, Row[]>();
   for (const r of rows) {
     if (!PORTAL_SOURCES.includes(r.source)) continue;
-    if (r.listing_status === "removed") continue;
+    if (r.listing_status === "removed") {
+      deferred.push(r.id);
+      continue;
+    }
     if (now.getTime() - lastSeen(r) < PORTAL_MIN_AGE_MS) continue;
-    if (!serverFetchEnabled(r.source)) continue;
+    if (!serverFetchEnabled(r.source)) {
+      deferred.push(r.id);
+      continue;
+    }
     const list = byUrl.get(r.canonical_url) ?? [];
     list.push(r);
     byUrl.set(r.canonical_url, list);
@@ -185,7 +197,10 @@ export async function GET(request: Request) {
       summary.removed += 1;
     } else {
       summary.skipped += 1;
-      continue; // blocked / unreadable: leave the row untouched so it is retried tomorrow
+      // Blocked / unreadable: nothing to record, but move the rows to the back
+      // of the queue so one bad page cannot pin it. They are retried tomorrow.
+      deferred.push(...members.map((r) => r.id));
+      continue;
     }
     for (const r of members) {
       const prev = { price: r.snapshot.price, status: r.listing_status ?? r.snapshot.status };
@@ -252,5 +267,9 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ ...summary, ms: Date.now() - started, members: perUser });
+  if (deferred.length > 0) {
+    const { error: defErr } = await admin.from("checked_listings").update({ rechecked_at: nowIso }).in("id", deferred);
+    if (defErr) console.error("[recheck] deferred stamp failed:", defErr.message);
+  }
+  return Response.json({ ...summary, deferred: deferred.length, ms: Date.now() - started, members: perUser });
 }

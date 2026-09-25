@@ -13,7 +13,7 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused } from "../access";
 import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, rankPicksByBand, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
@@ -21,8 +21,11 @@ import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
-import { screen, bandRank, marketRentFor, grossRevenueFor, isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
-import { storedAreaRentTable, areaRentKey } from "../broker/providers/internal";
+import { isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
+import { storedAreaRentTable } from "../broker/providers/internal";
+import { screenSourced, mergeSnapshotIntoListing } from "../marketplace/record";
+import { openPricePence } from "../marketplace/ladder";
+import { getBillingSettings } from "../credit/unit-costs";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
 import type { ListingSnapshot } from "./types";
@@ -74,7 +77,10 @@ const DAILY_LISTING_CAP = 3;
 /**
  * A listing in one of these states cannot be acted on, so it is never sent.
  * `under_offer` is deliberately absent: chains collapse, and a sale that fell
- * through is a reason to look harder, not to hide the listing.
+ * through is a reason to look harder, not to hide the listing. The
+ * marketplace pool takes the opposite view (see marketplace/status.ts) and
+ * retires an under-offer listing, so a pick drawn from the pool never sees
+ * one; only a broker-answered pick for an uncovered area still can.
  */
 const GONE_STATUSES: ReadonlySet<string> = new Set(["sold", "let_agreed", "removed"]);
 /** How many already-verified stand-ins to keep per member in case the send collides. */
@@ -197,6 +203,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     return new Map<string, { monthlyRent: number; samples: number }>();
   });
   const pickBasePence = price.basePence;
+  // A pick drawn from the marketplace pool is an auto-open: it unlocks the deal
+  // sheet and is charged the deal's ladder price, not the flat pick price.
+  const ladder = (await getBillingSettings()).dealOpenLadder;
+  const poolCutoffIso = new Date(Date.now() - NEW_WINDOW_MS).toISOString();
 
   // ── Audience: picks on, signed in at least once; starved members first ──
   const profiles: ProfileRow[] = [];
@@ -345,7 +355,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // a broken product: the log line has to show whether members got nothing
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, ranOutOfTime: false, pickBasePence };
   if (dry) {
     return done({
       status: 200,
@@ -358,13 +368,52 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     });
   }
 
-  // ── Answer each query through the broker as house spend; remember every listing seen ──
+  // ── Answer each query: the marketplace pool first, then the broker as house spend ──
+  // The sweep has already searched, screened and page-checked every top scored
+  // area, so a query for one of those areas is answered from the pool for free
+  // and the pick and the marketplace can never disagree. An area the sweep does
+  // not cover (a member's own saved area outside the top list) still goes to
+  // the broker exactly as before, so nobody is starved by the pool.
   const byQuery = new Map<string, SourcedListing[]>();
   const seenUrls = new Set<string>();
+  const urlToDealId = new Map<string, string>();
+  const poolFor = async (query: SourcingQuery): Promise<SourcedListing[] | null> => {
+    const { data, error } = await admin
+      .from("marketplace_deals")
+      .select("canonical_url, id")
+      .eq("status", "live")
+      .eq("kind", query.kind)
+      .eq("postcode_area", query.area)
+      .gte("first_seen_at", poolCutoffIso)
+      .order("annual_profit", { ascending: false, nullsFirst: false })
+      .limit(300);
+    if (error) {
+      console.error("[sourcing] pool read failed:", error.message);
+      return null;
+    }
+    const rows = (data ?? []) as { canonical_url: string; id: string }[];
+    if (rows.length === 0) return null;
+    const out: SourcedListing[] = [];
+    for (const urls of chunk(rows.map((r) => r.canonical_url), URL_CHUNK)) {
+      const { data: snaps } = await admin.from("sourced_listings").select("canonical_url, snapshot").in("canonical_url", urls);
+      for (const r of (snaps ?? []) as { canonical_url: string; snapshot: SourcedListing }[]) if (r.snapshot && typeof r.snapshot === "object") out.push(r.snapshot);
+    }
+    for (const r of rows) urlToDealId.set(r.canonical_url, r.id);
+    return out;
+  };
   for (const { query } of queries) {
     if (elapsed() > QUERY_BUDGET_MS) {
       summary.ranOutOfTime = true;
       break;
+    }
+    const pooled = await poolFor(query);
+    if (pooled && pooled.length > 0) {
+      summary.answered += 1;
+      summary.fromPool += 1;
+      byQuery.set(query.key, pooled);
+      summary.listings += pooled.length;
+      pooled.forEach((l) => seenUrls.add(l.canonicalUrl));
+      continue;
     }
     const res = await runMetered({ userId: null, admin: false, action: "cron:sourcing", actionId: newActionId() }, () => ask(sourcingListings, query, { mode: "cron" }));
     if (!res.value) {
@@ -588,25 +637,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (fromBackCatalogue && !meetsMotivationBar(motivation ?? NO_MOTIVATION, { mode: "only", areaRelative: motiv?.areaRelative ?? false, areaMedianKnown: median !== null })) return;
       if (motiv?.mode === "only" && qualifies !== true) fails.push("motivation");
       const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
-      const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
       const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
       // Income screening: does this earn enough as a short let to be worth
       // recommending, against what the same property would make on a long let?
-      // The rent and revenue come from the same helpers the screening report
-      // uses, so the gate and the report can never disagree.
-      const rev = figures ? areaRevenueFor(figures, l.bedrooms) : null;
-      const exactBeds = l.bedrooms !== null && (card?.byBedrooms.some((b) => b.bedrooms === l.bedrooms && b.grossRevenue) ?? false);
-      const rent = marketRentFor({
-        kind: l.kind,
-        bedrooms: l.bedrooms,
-        advertisedRentPcm: l.kind === "rent" ? rentPcm(l.price) : null,
-        storedRent: l.postcodeArea && l.bedrooms !== null ? rentTable.get(areaRentKey(l.postcodeArea, l.bedrooms)) ?? null : null,
-      });
-      const screening = screen(l.kind, {
-        bedrooms: l.bedrooms,
-        grossRevenue: grossRevenueFor(rev?.grossRevenue ?? null, exactBeds),
-        marketRent: rent?.figure ?? null,
-      });
+      // One helper shared with the marketplace and the screening report, so
+      // the gate, the pool and the report can never disagree.
+      const { screening, figures } = screenSourced(l, card ?? null, rentTable);
       const candidate = {
         listing: l,
         deal: dealForSourced(l, figures, m.goals?.finance ?? null),
@@ -650,9 +686,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     });
     // Band decides what may be sent; fit still decides the order within a band.
     // The two are not comparable across kinds (an uplift % against a profit in
-    // pounds), whereas blendFit already normalises both onto one scale.
-    const list: Ranked[] = rankPicks(kept, SPREAD_DEPTH, motiv?.mode ?? "off")
-      .sort((a, b) => bandRank(a.screening?.band ?? "qualified") - bandRank(b.screening?.band ?? "qualified") || b.fit - a.fit);
+    // pounds), whereas blendFit already normalises both onto one scale. Ranked
+    // band by band so the SPREAD_DEPTH cut can never drop a qualified listing
+    // in favour of a medium one that happened to fit better.
+    const list: Ranked[] = rankPicksByBand(kept, SPREAD_DEPTH, motiv?.mode ?? "off");
     // "Could not be run as a short let": only send this member listings that
     // already clear the check on the search card, never ones that need the
     // page to rescue them. Band sorting happens INSIDE each of these buckets,
@@ -685,13 +722,20 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     return done({ status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } });
   }
 
+  // What a candidate would cost this member: the ladder price for a pool deal, the flat pick price otherwise.
+  const priceOf = (m: Member, cand: Ranked | undefined): number => {
+    if (m.admin || !cand) return m.admin ? 0 : pickBasePence;
+    return urlToDealId.has(cand.listing.canonicalUrl) ? openPricePence(cand.screening?.surplus ?? null, ladder) : pickBasePence;
+  };
+
   // ── Credit: only members who have a candidate, in parallel chunks ──
   const affordable: Member[] = [];
   for (const some of chunk(withCandidates, 10)) {
-    const balances = await Promise.all(some.map((m) => (m.admin || pickBasePence <= 0 ? Promise.resolve(null) : getBalance(m.id).catch(() => null))));
+    const balances = await Promise.all(some.map((m) => (m.admin || priceOf(m, ranked.get(m.id)?.[0]) <= 0 ? Promise.resolve(null) : getBalance(m.id).catch(() => null))));
     some.forEach((m, i) => {
       const bal = balances[i];
-      if (!m.admin && pickBasePence > 0 && (!bal || bal.spendableBasePence < pickBasePence)) {
+      const need = priceOf(m, ranked.get(m.id)?.[0]);
+      if (!m.admin && need > 0 && (!bal || bal.spendableBasePence < need)) {
         perUser.push({ user: m.id, basis: m.basis, candidates: candidateCount.get(m.id) ?? 0, sent: false, reason: "no_credit" });
         return;
       }
@@ -731,26 +775,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const s = res.snapshot;
       // Read before the merge below folds it into `merged.agentHash`.
       const previousAgentHash = l.agentHash ?? null;
-      const merged: SourcedListing = {
-        ...l,
-        title: s.title || l.title,
-        address: s.displayAddress ?? l.address,
-        postcode: s.postcode ?? l.postcode,
-        bedrooms: s.bedrooms ?? l.bedrooms,
-        bathrooms: s.bathrooms ?? l.bathrooms,
-        price: s.price && s.price.period !== "night" ? { amount: s.price.amount, period: s.price.period } : l.price,
-        rawType: s.rawType ?? l.rawType,
-        photo: s.photos[0] ?? l.photo,
-        tenure: s.tenure ?? l.tenure ?? null,
-        features: s.features.length > 0 ? s.features : (l.features ?? []),
-        priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
-        sharedOwnership: s.sharedOwnership ?? false,
-        shortLetsPermitted: s.shortLetsPermitted ?? null,
-        // The portal's own listing date beats anything the search card had, and
-        // is written back so tomorrow's run starts from the better answer.
-        listedDate: s.listedDate ?? l.listedDate ?? null,
-        agentHash: s.agentHash ?? l.agentHash ?? null,
-      };
+      // The portal's own listing date beats anything the search card had, and
+      // is written back so tomorrow's run starts from the better answer.
+      const merged: SourcedListing = mergeSnapshotIntoListing(l, s);
       // Liveness before suitability: a sold or let-agreed listing is not a pick
       // however well it scores. The search card cannot know this — only the page can.
       const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
@@ -846,7 +873,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
       continue;
     }
-    const charge = m.admin ? 0 : pickBasePence;
+    let charge = priceOf(m, pick);
     const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
     // Persisted so the "change it" link has something to apply that the member
     // cannot alter in the request. It belongs to the pick the analysis was
@@ -862,9 +889,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     for (const cand of [pick, ...alternates]) {
       const attempt = newPickToken();
       const cl = cand.listing;
+      charge = priceOf(m, cand);
       const { data: row, error } = await admin
         .from("sourcing_sent")
-        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null, motivation: cand.motivation ?? null, screening: cand.screening ?? null })
+        .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null, motivation: cand.motivation ?? null, screening: cand.screening ?? null, deal_id: urlToDealId.get(cl.canonicalUrl) ?? null })
         .select("id")
         .single();
       if (!error && row) {
@@ -901,6 +929,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Whichever listing is actually going out carries its own screening, so a
       // stand-in never inherits the first choice's figures.
       screening: sending.screening ?? null,
+      dealId: urlToDealId.get(sending.listing.canonicalUrl) ?? null,
     });
     const res = await sendEmail({ to: m.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers });
     if (!res.sent) {
@@ -916,18 +945,31 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const sentAt = new Date().toISOString();
     const { error: sentErr } = await admin.from("sourcing_sent").update({ status: "sent", sent_at: sentAt }).eq("id", id);
     if (sentErr) console.error("[sourcing] sent-status update failed:", sentErr.message);
+    const dealId = urlToDealId.get(sending.listing.canonicalUrl) ?? null;
+    let transactionId: number | null = null;
     if (charge > 0) {
       try {
         // allowNegative only covers the race between the balance check above and this debit.
-        await debit(m.id, charge, {
+        transactionId = await debit(m.id, charge, {
           allowNegative: true,
-          meta: { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}` },
+          meta: dealId
+            ? { action: "cron:sourcing", action_id: id, provider: "marketplace", unit: "deal_open", quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily pick (deal sheet): ${sending.listing.address ?? sending.listing.title}` }
+            : { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}` },
         });
         summary.chargedBasePence += charge;
         void afterDebit(m.id).catch(() => {});
       } catch (err) {
         console.error("[sourcing] pick debit failed:", (err as Error)?.message ?? err);
       }
+    }
+    if (dealId) {
+      // The pick IS the open: the member has paid the deal's price and holds
+      // the page-verified listing, so the sheet on /deals is theirs from now on.
+      const { error: openErr } = await admin.from("deal_opens").upsert(
+        { user_id: m.id, canonical_url: sending.listing.canonicalUrl, deal_id: dealId, status: "open", charged_base_pence: charge, transaction_id: transactionId, verified_via: "pick", status_at_open: "available", band_at_open: sending.screening?.band ?? null, annual_profit_at_open: sending.screening?.surplus ?? null, fetched: false },
+        { onConflict: "user_id,canonical_url", ignoreDuplicates: true },
+      );
+      if (openErr) console.error("[sourcing] auto-open insert failed:", openErr.message);
     }
     const { error: profErr } = await admin.from("profiles").update({ sourcing_last_sent_at: sentAt }).eq("id", m.id);
     if (profErr) console.error("[sourcing] profile update failed:", profErr.message);

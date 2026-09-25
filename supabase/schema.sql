@@ -1567,3 +1567,138 @@ alter table public.subscription_events enable row level security;  -- no policie
 -- Supabase grants the API roles privileges on new public tables by default.
 -- RLS with no policies already returns nothing, but revoking says so outright.
 revoke all on public.subscription_events from anon, authenticated;
+
+-- =========================
+-- Deals marketplace
+-- =========================
+-- A browsable pool of every currently-active listing in the top scored areas
+-- that clears the income screening (src/lib/listing/screen.ts). One row per
+-- listing; the address, postcode and listing URL stay on sourced_listings
+-- and are only read once a member has paid to open the deal (deal_opens).
+-- The grid selects PUBLIC_DEAL_COLUMNS (src/lib/marketplace/grid.ts) and never
+-- the canonical_url. Service role only.
+create table if not exists public.marketplace_deals (
+  canonical_url text primary key references public.sourced_listings(canonical_url) on delete cascade,
+  -- The public handle. Reactivation reuses the row, so the id is stable for
+  -- the life of the listing and deal_opens.deal_id can never dangle.
+  id uuid not null default gen_random_uuid(),
+  source text not null,
+  kind text not null,                        -- sale | rent
+  postcode_area text,
+  outcode text,
+  town text,
+  bedrooms int,
+  price_amount numeric,                      -- sale: asking price; rent: pcm
+  price_period text,                         -- total | pcm
+  raw_type text,
+  tenure text,
+  photo text,
+  photos jsonb,
+  band text not null,                        -- 'qualified' while live; kept for the admin report on retirement
+  screening jsonb not null,
+  deal jsonb,                                -- deal.ts figures at house finance defaults
+  suitability text,                          -- ok | unknown
+  motivation jsonb,
+  -- screening.surplus: the annual surplus over a long let (purchase) or the
+  -- annual profit after rent (rent-to-rent). The ladder price and sort key.
+  annual_profit numeric,
+  uplift_pct numeric,                        -- purchase only
+  price_history jsonb not null default '[]'::jsonb,
+  reduced_at timestamptz,
+  listed_date timestamptz,
+  -- pending_verify: qualified on the feed, waiting for its first page fetch,
+  -- which supplies the photo and the live status. live: on the grid.
+  status text not null default 'pending_verify',
+  retired_reason text,                       -- sold | under_offer | let_agreed | removed | unqualified | unsuitable | stale_listed | stale_unseen | unverifiable | admin
+  retired_at timestamptz,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  last_checked_live_at timestamptz,
+  last_confirmed_at timestamptz not null default now(),
+  last_confirmed_via text not null default 'feed',   -- feed | live
+  next_check_due_at timestamptz,
+  -- Set by an open that could not verify the listing; the recheck takes these first.
+  check_requested_at timestamptz,
+  -- The last time a member's grid showed this deal: the recheck checks what
+  -- members are looking at before the tail.
+  last_shown_at timestamptz,
+  check_failures int not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists marketplace_deals_id_uidx on public.marketplace_deals (id);
+create index if not exists marketplace_deals_live_profit_idx on public.marketplace_deals (kind, annual_profit desc) where status = 'live';
+create index if not exists marketplace_deals_live_area_idx on public.marketplace_deals (postcode_area, kind) where status = 'live';
+create index if not exists marketplace_deals_live_seen_idx on public.marketplace_deals (first_seen_at desc) where status = 'live';
+create index if not exists marketplace_deals_due_idx on public.marketplace_deals (status, next_check_due_at) where status in ('live', 'pending_verify');
+alter table public.marketplace_deals enable row level security;  -- no policies: service role only
+revoke all on public.marketplace_deals from anon, authenticated;
+
+-- deal_opens: a member's unlocks. The row is inserted BEFORE the debit
+-- (status pending) and flipped to open after it; the id doubles as the
+-- ledger action_id, so a crash between the two is recovered by
+-- actionAlreadyCharged rather than charged twice. An open row is forever:
+-- a deal that later goes off market still reads in /deals/opened.
+create table if not exists public.deal_opens (
+  id uuid not null default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  canonical_url text not null,
+  deal_id uuid not null,
+  status text not null default 'pending',    -- pending | open
+  opened_at timestamptz not null default now(),
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_id bigint,
+  verified_via text,                         -- live | recent_live | recent_confirm | pick | admin
+  status_at_open text,
+  band_at_open text,
+  annual_profit_at_open numeric,
+  checked_listing_id uuid,
+  saved_at timestamptz,
+  -- Whether this open spent a page fetch, for the per-member hourly cap.
+  fetched boolean not null default false,
+  primary key (user_id, canonical_url)
+);
+create unique index if not exists deal_opens_id_uidx on public.deal_opens (id);
+create index if not exists deal_opens_user_idx on public.deal_opens (user_id, opened_at desc);
+create index if not exists deal_opens_deal_idx on public.deal_opens (deal_id);
+alter table public.deal_opens enable row level security;  -- no policies: service role only
+revoke all on public.deal_opens from anon, authenticated;
+
+-- marketplace_runs: one row per sweep / recheck pass, for /admin/deals.
+create table if not exists public.marketplace_runs (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null,                        -- sweep | recheck
+  dry boolean not null default false,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  summary jsonb not null default '{}'::jsonb
+);
+create index if not exists marketplace_runs_kind_idx on public.marketplace_runs (kind, started_at desc);
+alter table public.marketplace_runs enable row level security;  -- no policies: service role only
+revoke all on public.marketplace_runs from anon, authenticated;
+
+-- marketplace_cohorts: the PropertyData motivated-seller cohorts per area,
+-- refreshed weekly by the sweep (one credit per cohort per area).
+create table if not exists public.marketplace_cohorts (
+  postcode_area text primary key,
+  payload jsonb not null default '[]'::jsonb,
+  fetched_at timestamptz not null default now()
+);
+alter table public.marketplace_cohorts enable row level security;  -- no policies: service role only
+revoke all on public.marketplace_cohorts from anon, authenticated;
+
+-- The pick that came from the pool links to its deal sheet. APPLY BEFORE
+-- deploying the code that reads it: PICK_COLUMNS is a fixed select.
+alter table public.sourcing_sent add column if not exists deal_id uuid;
+
+-- Lead-form provisioning (src/app/api/internal/leads/provision): where the
+-- member came from, and when they first signed in so the activation can be
+-- reported back to the ad platform.
+alter table public.profiles add column if not exists lead_source jsonb;
+alter table public.profiles add column if not exists lead_activated_at timestamptz;
+
+-- The open-price ladder (src/lib/marketplace/ladder.ts). Bands on annual
+-- profit; editable from /admin/deals.
+insert into public.billing_settings (key, value)
+values ('deal_open_ladder', '[{"upTo":15000,"pence":25},{"upTo":25000,"pence":40},{"upTo":40000,"pence":60},{"upTo":60000,"pence":80},{"upTo":null,"pence":100}]'::jsonb)
+on conflict (key) do nothing;

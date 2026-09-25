@@ -113,6 +113,9 @@ export default async function AdminPage() {
           <Link href="/admin/picks" className="text-sm font-medium text-primary hover:underline">
             Daily picks
           </Link>
+          <Link href="/admin/deals" className="text-sm font-medium text-primary hover:underline">
+            Deals marketplace
+          </Link>
           <Link href="/admin/churn" className="text-sm font-medium text-primary hover:underline">
             Churn
           </Link>

@@ -10,7 +10,7 @@ import { CreditBadge } from "@/components/credit/CreditBadge";
 // their funnel. They are different products and never share a list.
 // Admins also get the admin dashboard link. The credit badge reads the
 // balance from the surrounding CreditProvider (see AppShell).
-export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "picks" | "reports" | "leads" | "account"; admin?: boolean }) {
+export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" | "deals" | "picks" | "reports" | "leads" | "account"; admin?: boolean }) {
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
     fontWeight: 600,
@@ -41,6 +41,9 @@ export function AppSwitcher({ active, admin }: { active: "estimate" | "markets" 
       </Link>
       <Link href="/markets" style={linkStyle(active === "markets")} aria-current={active === "markets" ? "page" : undefined}>
         Market Explorer
+      </Link>
+      <Link href="/deals" style={linkStyle(active === "deals")} aria-current={active === "deals" ? "page" : undefined}>
+        Deals
       </Link>
       <Link href="/picks" style={linkStyle(active === "picks")} aria-current={active === "picks" ? "page" : undefined}>
         Daily picks
