@@ -453,13 +453,20 @@ create table if not exists public.billing_plans (
 );
 alter table public.billing_plans add column if not exists perks jsonb not null default '{}'::jsonb;
 insert into public.billing_plans (code, name, price_pence, interval, monthly_credit_pence, perks, sort) values
-  ('starter',    'Starter',      1900,  'month', 1900,  '{"sourcingCadence":"weekly","priorityRefresh":false,"phoneSupport":false,"quarterlyBriefing":false}', 1),
-  ('pro',        'Pro',          3999,  'month', 5000,  '{"sourcingCadence":"weekly","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":false}', 2),
+  ('starter',    'Starter',      1900,  'month', 1900,  '{"sourcingCadence":"daily","priorityRefresh":false,"phoneSupport":false,"quarterlyBriefing":false}', 1),
+  ('pro',        'Pro',          3999,  'month', 5000,  '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":false}', 2),
   ('scale',      'Scale',        9900,  'month', 14000, '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":true,"quarterlyBriefing":true}', 3),
-  ('pro_annual', 'Pro (annual)', 36000, 'year',  5000,  '{"sourcingCadence":"weekly","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":true}', 4)
+  ('pro_annual', 'Pro (annual)', 36000, 'year',  5000,  '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":true}', 4)
 on conflict (code) do update set
   name = excluded.name, price_pence = excluded.price_pence, interval = excluded.interval,
   monthly_credit_pence = excluded.monthly_credit_pence, perks = excluded.perks, sort = excluded.sort;
+-- Daily picks for every plan. The seed above covers the four known rows; this
+-- catches any other row (a plan added by hand) that still says weekly. The DB
+-- row overrides src/lib/credit/perks.ts, so without this the live site would
+-- keep advertising the old cadence.
+update public.billing_plans
+   set perks = coalesce(perks, '{}'::jsonb) || '{"sourcingCadence":"daily"}'::jsonb
+ where coalesce(perks->>'sourcingCadence', '') <> 'daily';
 alter table public.billing_plans enable row level security;
 drop policy if exists "Signed-in users can read plans" on public.billing_plans;
 create policy "Signed-in users can read plans" on public.billing_plans for select to authenticated using (true);
