@@ -11,6 +11,7 @@ function regionSortValue(r: RegionCardData, key: SortKey): number | null {
     case "competition": return r.competition ? 100 - r.competition.intensity : null;
     case "seasonality": return r.seasonality?.score ?? null;
     case "directBooking": return r.directBooking?.score ?? null;
+    case "growth": return r.growth5y;
     default: return r.headline.totalSamples;
   }
 }

@@ -12,15 +12,19 @@ test('the reference layout: setup present, no deal, is six sections', () => {
 });
 
 test('every combination numbers itself consistently', () => {
-  const cases: Array<[boolean, boolean, number]> = [
-    [false, false, 5],
-    [true, false, 6],
-    [false, true, 6],
-    [true, true, 7],
+  const cases: Array<[boolean, boolean, boolean, number]> = [
+    [false, false, false, 5],
+    [true, false, false, 6],
+    [false, true, false, 6],
+    [true, true, false, 7],
+    [false, false, true, 6],
+    [true, false, true, 7],
+    [false, true, true, 7],
+    [true, true, true, 8],
   ];
-  for (const [setup, deal, total] of cases) {
-    const secs = sectionsFor({ setup, deal });
-    assert.equal(secs.length, total, `setup=${setup} deal=${deal}`);
+  for (const [setup, deal, diligence, total] of cases) {
+    const secs = sectionsFor({ setup, deal, diligence });
+    assert.equal(secs.length, total, `setup=${setup} deal=${deal} diligence=${diligence}`);
     // The plan closes the document in every combination.
     assert.equal(secs[secs.length - 1].id, 'plan');
     const nav = navFor(secs, 'plan');
@@ -37,6 +41,16 @@ test('the deal is an appendix to the economics, never the last word', () => {
   const ids = secs.map((s) => s.id);
   assert.ok(ids.indexOf('deal') > ids.indexOf('setup'));
   assert.ok(ids.indexOf('deal') < ids.indexOf('plan'));
+});
+
+test('due diligence follows the deal it informs and stays ahead of the plan', () => {
+  const secs = sectionsFor({ setup: true, deal: true, diligence: true });
+  const ids = secs.map((s) => s.id);
+  assert.ok(ids.indexOf('diligence') > ids.indexOf('deal'));
+  assert.ok(ids.indexOf('diligence') < ids.indexOf('plan'));
+  assert.equal(stamp(navFor(secs, 'diligence')), '07 / 08 — DUE DILIGENCE');
+  // A report saved before the registers were read has no such section.
+  assert.equal(sectionsFor({ setup: true, deal: false }).some((s) => s.id === 'diligence'), false);
 });
 
 test('stamps are zero-padded so the header does not jitter', () => {

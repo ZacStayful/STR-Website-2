@@ -86,6 +86,7 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
           publicUrl={siteUrl(`/f/${funnel.publicToken}`)}
           rotatedAt={funnel.rotatedAt}
           saturationGuide={SATURATION_GUIDE}
+          perLeadPence={{ standard: priceFor(false).perLeadPence, enhanced: priceFor(true).perLeadPence }}
         />
 
         <CostEstimator

@@ -9,8 +9,9 @@ import { gbp } from './format';
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** Twelve months of net cashflow against the fixed outgoing (rent or mortgage). */
-export function CashflowChart({ monthlyRevenue, fixedPcm, fixedLabel }: { monthlyRevenue: number[]; fixedPcm: number; fixedLabel: string }) {
-  const rows = useMemo(() => monthlyCashflow(monthlyRevenue, fixedPcm), [monthlyRevenue, fixedPcm]);
+export function CashflowChart({ monthlyRevenue, fixedPcm, fixedLabel, billsPcm }: { monthlyRevenue: number[]; fixedPcm: number; fixedLabel: string; billsPcm?: number }) {
+  // The same bills line the saved deal and the PDF used, so the three agree on every month's net.
+  const rows = useMemo(() => monthlyCashflow(monthlyRevenue, fixedPcm, billsPcm === undefined ? {} : { billsPcm }), [monthlyRevenue, fixedPcm, billsPcm]);
   const under = rows.filter((r) => r.underwater).length;
   const data = rows.map((r) => ({ name: MONTHS[r.month - 1], net: r.net, revenue: r.revenue }));
   return (

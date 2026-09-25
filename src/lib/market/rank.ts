@@ -4,7 +4,7 @@ import type { AreaCardData } from './explorer.ts';
 import type { PersonalScore } from './personalise.ts';
 import type { AreaTrend } from './trend.ts';
 
-export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy' | 'adr' | 'competition' | 'seasonality' | 'directBooking' | 'distance' | 'trend';
+export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy' | 'adr' | 'competition' | 'seasonality' | 'directBooking' | 'distance' | 'trend' | 'growth';
 
 export const SORT_LABELS: Record<SortKey, string> = {
   stayful: 'Stayful score',
@@ -18,6 +18,7 @@ export const SORT_LABELS: Record<SortKey, string> = {
   directBooking: 'Direct-booking potential',
   distance: 'Closest to home',
   trend: 'Rising enquiries',
+  growth: '5-yr price growth',
 };
 
 export interface ExplorerRow {
@@ -46,6 +47,7 @@ export function sortValue(row: ExplorerRow, key: SortKey): number | null {
     case 'directBooking': return c.directBooking?.score ?? null;
     case 'distance': return row.personal?.fit.distanceMiles === null || row.personal?.fit.distanceMiles === undefined ? null : -row.personal.fit.distanceMiles;
     case 'trend': return row.trend && row.trend.enquiries.direction !== 'insufficient' ? row.trend.enquiries.deltaPct : null;
+    case 'growth': return c.keyStats?.growth5y ?? null;
   }
 }
 

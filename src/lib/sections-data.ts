@@ -34,10 +34,10 @@ export const SECTIONS: AnalyserSection[] = [
     title: "Live data ingest",
     subtitle: "6 data sources in 10–20 seconds",
     description:
-      "While you wait, Stayful pulls live comparables from Airbnb, long-let valuations from PropertyData, amenities from Google Places and demand drivers from Ticketmaster — for your exact postcode.",
+      "While you wait, Stayful pulls live comparables from Airbnb, valuations, stamp duty, council tax and the property registers (EPC, flood, planning) from PropertyData, amenities from Google Places and demand drivers from Ticketmaster — for your exact postcode.",
     bullets: [
       "Airbtics live comp data",
-      "PropertyData long-let comps",
+      "PropertyData valuations and registers",
       "Google Places amenities",
       "Ticketmaster events",
     ],

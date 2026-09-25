@@ -6,7 +6,7 @@ import type {
 } from '../types';
 import { geocodePostcode } from '../apis/geocode';
 import { getShortLetData } from '../apis/airbtics';
-import { getLongLetData, getFloorArea, fetchPropertyValuation } from '../apis/propertydata';
+import { dueDiligenceFor, floorAreaFor, longLetFor, saleValuationFor } from './propertydata-steps';
 import { getNearbyAmenities } from '../apis/google-places';
 import { getNearbyEvents } from '../apis/ticketmaster';
 import { fetchPriceLabsRevenueEstimate, buildCrossValidation } from '../apis/pricelabs';
@@ -15,9 +15,15 @@ import { startAction, actionSpend } from '../credit/action';
 import { runMetered, type MeterContext } from '../credit/context';
 import { estimateAction, reportAction, type CreditAction } from '../credit/estimate';
 import { getUnitCostTable } from '../credit/unit-costs';
-import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '../broker';
+import { ask, nearbyListings, listingPerformance, strSecondOpinion, pdCouncilTax, pdMortgageRates, pdRegionKeyStats, pdStampDuty } from '../broker';
 import { matchTracked, nearbyPageOf, rankCompetitors, summariseCompetitors } from '../listing/competitors';
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '../listing/deal';
+import { billsFromCouncilTax, pickCouncilTaxBand } from '../listing/bills';
+import { countryForPostcode, stampDutyFromApi, type StampDutyFigure } from '../listing/stamp-duty';
+import { liveMortgageRate, type MortgageRateInfo } from '../listing/mortgage-rate';
+import { futureValueRange } from '../listing/growth';
+import { keyStatsForOutcode, outcodeGrowth, pdRegionForOutcode } from '../market/key-stats';
+import { outcodeOf } from '../apis/propertydata-parse';
 import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
 import { noticeForFailure, noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
@@ -145,7 +151,6 @@ export async function runAnalysis(
 ): Promise<AnalysisRun> {
   const { property } = input;
   const userId = opts.billedUserId;
-  const finance = opts.finance ?? DEFAULT_FINANCE_GOALS;
   const progress = (stage: string, pct: number, message: string) => opts.onProgress?.({ stage, progress: pct, message });
 
   const wantEnhanced = enhancedEnabled(input.enhancedRequested);
@@ -157,9 +162,12 @@ export async function runAnalysis(
       // ── Group 1 (parallel): Geocoding + (Short-let + Long-let) ──
       progress('geocoding', 10, 'Locating property...');
 
+      // Every PropertyData, Airbtics and PMI question below goes through the
+      // broker under this context: cached answers are reused, paid calls are
+      // metered to the member and capped by the daily budgets.
+      const brokerCtx = { mode: 'full' as const, userId };
+
       const geocodePromise = geocodePostcode(property.postcode);
-      // Floor area + build year come from /floor-areas before valuation.
-      const floorAreaPromise = getFloorArea(property.postcode, property.address, property.bedrooms);
 
       // Geocoding first — short-let needs coordinates for nearby listings.
       let coordinates: { lat: number; lng: number; locality?: string };
@@ -172,17 +180,50 @@ export async function runAnalysis(
 
       progress('geocoding', 20, 'Property located');
 
+      // Only once the postcode has geocoded, so a report that fails here
+      // has not charged the payer for a dozen PropertyData calls. Floor
+      // area comes from /floor-areas before the valuations. The council
+      // tax band and the national mortgage averages are only needed by the
+      // deal maths at the end; they start now so they add no time. The
+      // averages are bought once a day by the market-warm cron and a report
+      // only ever reads them.
+      const floorAreaPromise = floorAreaFor(property.postcode, property.address, property.bedrooms, brokerCtx);
+      const councilTaxPromise = ask(pdCouncilTax, { postcode: property.postcode }, brokerCtx);
+      const mortgageRatesPromise = ask(pdMortgageRates, {}, { ...brokerCtx, cacheOnly: true });
+      const taxCountry = countryForPostcode(property.postcode);
+      // Stamp duty on a known asking price can start now; on an estimated
+      // value it waits for the valuation.
+      const stampDutyPromise = !input.rentPcm && input.askingPrice ? ask(pdStampDuty, { value: input.askingPrice, country: taxCountry, mode: 'investment' }, brokerCtx) : null;
+      // EPC, flood, designations, listed buildings and exit liquidity: nine
+      // cached one-credit questions, needed before the risk score.
+      const dueDiligencePromise = dueDiligenceFor(property.postcode, property.address, brokerCtx);
+      // The outcode's historic price growth, from the region key stats the
+      // market-warm cron buys monthly; a report only reads the cache.
+      const growthPromise = (async () => {
+        const outcode = outcodeOf(property.postcode);
+        const region = pdRegionForOutcode(outcode);
+        if (!outcode || !region) return null;
+        const r = await ask(pdRegionKeyStats, { region }, { ...brokerCtx, cacheOnly: true });
+        const row = r.value ? keyStatsForOutcode(r.value, outcode) : null;
+        return row ? outcodeGrowth(row, region, r.updatedAt) : null;
+      })();
+
       const floorArea = await floorAreaPromise;
 
-      const longLetPromise = getLongLetData(property.postcode, property.bedrooms, {
-        propertyType: input.propertyType,
-        constructionDate: floorArea.constructionDate,
-        internalArea: floorArea.squareFeet,
-        ...(input.bathrooms && { bathrooms: input.bathrooms }),
-        finishQuality: FINISH_QUALITY,
-        outdoorSpace: input.outdoorSpace,
-        offStreetParking: input.parkingSpaces,
-      });
+      const longLetPromise = longLetFor(
+        property.postcode,
+        property.bedrooms,
+        {
+          propertyType: input.propertyType,
+          constructionDate: floorArea.constructionDate,
+          internalArea: floorArea.squareFeet,
+          ...(input.bathrooms && { bathrooms: input.bathrooms }),
+          finishQuality: FINISH_QUALITY,
+          outdoorSpace: input.outdoorSpace,
+          offStreetParking: input.parkingSpaces,
+        },
+        brokerCtx,
+      );
 
       const shortLetPromise = getShortLetData(
         property.postcode,
@@ -217,7 +258,7 @@ export async function runAnalysis(
       }
 
       // Sale valuation runs in parallel — never blocks or throws.
-      const saleValuationPromise = fetchPropertyValuation(property.postcode, property.bedrooms, input.propertyType);
+      const saleValuationPromise = saleValuationFor(property.postcode, property.bedrooms, input.propertyType, brokerCtx);
 
       // ── Listing-link extras, in parallel with the main calls ──
       // Tracked competitors within 1 km (one 5p bounds call per cell per
@@ -225,7 +266,6 @@ export async function runAnalysis(
       // The PMI second opinion is 50 credits, so it only runs in a full
       // report and only within its daily budget.
       const source = input.sourceListing;
-      const brokerCtx = { mode: 'full' as const, userId };
       const competitorsPromise = (async (): Promise<CompetitorsResult | null> => {
         const near = await ask(nearbyListings, { lat: coordinates.lat, lng: coordinates.lng }, brokerCtx);
         const page = nearbyPageOf(near.value);
@@ -345,6 +385,9 @@ export async function runAnalysis(
       progress('amenities', 75, 'Nearby amenities found');
       progress('events', 80, 'Local events discovered');
 
+      progress('diligence', 85, 'Checking flood risk, EPC and planning designations...');
+      const { epc, dueDiligence } = await dueDiligencePromise;
+
       // ── Final: run the analysis ──
       progress('analysis', 90, 'Running financial analysis...');
 
@@ -378,21 +421,48 @@ export async function runAnalysis(
 
       // Financials run on the (possibly overridden) shortLet values.
       const financials = calculateFinancials(shortLet, longLet);
-      const risk = assessRisk(shortLet, longLet, demandDrivers, nearbyEvents);
+      const risk = assessRisk(shortLet, longLet, demandDrivers, nearbyEvents, { floodRisk: dueDiligence?.floodRisk?.level ?? null });
       const verdict = generateVerdict(financials, risk);
 
       const now = new Date().toISOString();
 
       // ── Deal maths on the asking price / advertised rent (or the estimate) ──
-      const [competitors, secondOpinionOutcome] = await Promise.all([competitorsPromise, secondOpinionPromise]);
+      const [competitors, secondOpinionOutcome, councilTaxRes, mortgageRatesRes] = await Promise.all([competitorsPromise, secondOpinionPromise, councilTaxPromise, mortgageRatesPromise]);
       const secondOpinion = secondOpinionOutcome.value;
-      const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance };
+
+      // A member's saved goal profile wins; otherwise the higher of the
+      // national 2- and 3-year fixed averages, and only then the old 5.5%.
+      const live = liveMortgageRate(mortgageRatesRes.value);
+      const finance: FinanceGoals = opts.finance ?? { ...DEFAULT_FINANCE_GOALS, ...(live ? { mortgageRatePct: live.ratePct } : {}) };
+      const mortgageRate: MortgageRateInfo = { source: opts.finance ? 'profile' : live ? 'live' : 'default', live };
+
+      // Council tax from the property's own band replaces the council-tax
+      // share of the old flat £250 bills line.
+      const councilTax = pickCouncilTaxBand(councilTaxRes.value, property.address);
+      const bills = { ...billsFromCouncilTax(councilTax), councilTax };
+
+      // Stamp duty from PropertyData's calculator for the price the deal is
+      // on; the local bands are the fallback inside purchaseDeal.
+      const purchasePrice = input.rentPcm ? null : (input.askingPrice ?? propertyValuation?.estimatedValue ?? null);
+      let stampDuty: StampDutyFigure | undefined;
+      if (purchasePrice) {
+        const sd = await (stampDutyPromise ?? ask(pdStampDuty, { value: purchasePrice, country: taxCountry, mode: 'investment' }, brokerCtx));
+        stampDuty = sd.value ? stampDutyFromApi(sd.value, taxCountry, purchasePrice) : undefined;
+      }
+
+      // Where the value might go: the outcode's past five years projected
+      // forward as a range. Informational only; nothing else reads it.
+      const growth = await growthPromise;
+      const valueBase = input.askingPrice ?? propertyValuation?.estimatedValue ?? null;
+      const futureValue = growth && valueBase ? futureValueRange(valueBase, input.askingPrice ? 'asking-price' : 'estimated-value', growth.growth5y, growth.outcode, growth.asOf) : null;
+
+      const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance, country: taxCountry, stampDuty, mortgageRate, bills };
       let deal: DealResult | null = null;
       if (input.rentPcm) deal = { ...rentToRentDeal(input.rentPcm, dealBase), basis: 'advertised-rent' };
       else if (input.askingPrice) deal = { ...purchaseDeal(input.askingPrice, dealBase), basis: 'asking-price' };
       else if (propertyValuation?.estimatedValue) deal = { ...purchaseDeal(propertyValuation.estimatedValue, dealBase), basis: 'estimated-value' };
       const fixedPcm = deal?.kind === 'rent-to-rent' ? deal.advertisedRentPcm : deal?.kind === 'purchase' ? deal.mortgageMonthly : 0;
-      const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm) : null;
+      const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm, { billsPcm: bills.billsPcm }) : null;
 
       const result: AnalysisResult = {
         // The geocoder knows the town; the form only ever had a postcode.
@@ -412,6 +482,11 @@ export async function runAnalysis(
         updatedAt: now,
         crossValidation,
         propertyValuation,
+        councilTax,
+        epc,
+        dueDiligence,
+        growth,
+        futureValue,
         sourceListing: source,
         deal,
         cashflow,

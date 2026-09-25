@@ -95,6 +95,7 @@ import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
 import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
+import { DueDiligencePanel } from "./_components/DueDiligencePanel";
 import { SecondOpinionCard } from "./_components/SecondOpinionCard";
 import { EarningsRangeStrip } from "./_components/EarningsRangeStrip";
 import { beatTargets, earningsRangeOf, MIN_TOP_BADGE_LISTINGS, topQuarterThreshold } from "@/lib/comps/earnings";
@@ -314,6 +315,7 @@ const TAB_SECTIONS = [
   { id: "revenue", label: "Revenue", icon: PoundSterling, num: 4 },
   { id: "forecast", label: "Forecast", icon: LineChart, num: 5 },
   { id: "local-area", label: "Local Area", icon: MapPin, num: 6 },
+  { id: "due-diligence", label: "Due diligence", icon: ShieldCheck, num: 0 },
   { id: "bookings", label: "Bookings", icon: Target, num: 7 },
   { id: "risk", label: "Risk", icon: AlertTriangle, num: 8 },
   { id: "faq", label: "FAQ", icon: HelpCircle, num: 10 },
@@ -1201,6 +1203,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // customer's own funnel — see the section itself below.
     const visibleTabs = TAB_SECTIONS
       .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion || result?.enhancedNotice)
+      // The registers only exist on reports run since PropertyData supplied them.
+      .filter((tab) => tab.id !== "due-diligence" || result?.dueDiligence || result?.epc || result?.councilTax || result?.growth)
       .filter((tab) => tab.id !== "faq" || !funnel);
     const activeTabIndex = visibleTabs.findIndex((t) => t.id === activeTab);
     const activeTabInfo = activeTabIndex >= 0 ? { ...visibleTabs[activeTabIndex], num: activeTabIndex + 1 } : undefined;
@@ -1587,14 +1591,15 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
 
                   {/* ── Centered property value range block under both columns ── */}
                   {r.propertyValuation && (() => {
-                    const lower = r.propertyValuation.estimatedValue;
-                    const upper = Math.round(lower * 1.25);
+                    const point = r.propertyValuation.estimatedValue;
+                    const lower = r.propertyValuation.valuationRangeLow || point;
+                    const upper = r.propertyValuation.valuationRangeHigh || point;
                     return (
                       <div className="mt-6 border-t border-primary-foreground/15 pt-6 text-center">
                         <p className="text-xs text-primary-foreground/70 uppercase tracking-wider">Est. Property Value Range</p>
                         <div className="mt-3 flex items-center justify-center gap-3">
                           <div className="text-center">
-                            <p className="text-[10px] text-primary-foreground/50 uppercase tracking-wider mb-0.5">Conservative</p>
+                            <p className="text-[10px] text-primary-foreground/50 uppercase tracking-wider mb-0.5">Lower estimate</p>
                             <p className="text-xl font-semibold" style={{ color: "rgba(255,255,255,0.65)" }}>{gbp(lower)}</p>
                           </div>
                           <div className="flex-1" style={{ maxWidth: 120, height: 3, borderRadius: 2, background: "linear-gradient(to right, rgba(255,255,255,0.25), rgba(255,255,255,0.65))" }} />
@@ -1603,7 +1608,13 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                             <p className="text-2xl font-bold text-primary-foreground">{gbp(upper)}</p>
                           </div>
                         </div>
-                        <p className="mt-2 text-primary-foreground/30" style={{ fontSize: 10 }}>Range reflects current market uplift potential in this postcode</p>
+                        <p className="mt-2 text-primary-foreground/30" style={{ fontSize: 10 }}>
+                          Point estimate {gbp(point)}
+                          {r.propertyValuation.confidence ? ` · ${r.propertyValuation.confidence} confidence` : ""}
+                          {typeof r.propertyValuation.margin === "number"
+                            ? " · the range is PropertyData's own margin for this postcode"
+                            : " · the range is ±15% around the estimate"}
+                        </p>
                         <p className="mt-1 text-[11px] text-primary-foreground/60">Source: PropertyData</p>
                       </div>
                     );
@@ -1908,13 +1919,14 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               />
               <div className="space-y-6">
                 {r.deal && (
-                  <DealPanel deal={r.deal} grossRevenue={r.shortLet.annualRevenue} adr={r.shortLet.averageDailyRate} bedrooms={r.property.bedrooms} />
+                  <DealPanel deal={r.deal} grossRevenue={r.shortLet.annualRevenue} adr={r.shortLet.averageDailyRate} bedrooms={r.property.bedrooms} futureValue={r.futureValue ?? null} />
                 )}
                 {r.deal && r.cashflow && r.cashflow.length === 12 && (
                   <CashflowChart
                     monthlyRevenue={r.shortLet.monthlyRevenue}
                     fixedPcm={r.deal.kind === "rent-to-rent" ? r.deal.advertisedRentPcm : r.deal.mortgageMonthly}
                     fixedLabel={r.deal.kind === "rent-to-rent" ? "rent" : "mortgage"}
+                    billsPcm={r.deal.billsPcm}
                   />
                 )}
                 {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} />}
@@ -2874,6 +2886,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               })}
             </div>
           </section>
+
+          {/* ══════════════════════════════════════════════════════════
+              Section 7b: Due diligence (PropertyData registers)
+              ══════════════════════════════════════════════════════════ */}
+          {(r.dueDiligence || r.epc || r.councilTax || r.growth) && (
+            <section id="due-diligence" ref={setSectionRef("due-diligence")} className="mb-12">
+              <SectionHeading
+                icon={ShieldCheck}
+                title="Before You Commit"
+                subtitle="What the public registers say about this property, what it costs to hold, and how easily it would sell or let on."
+              />
+              <DueDiligencePanel result={r} />
+            </section>
+          )}
 
           {/* ══════════════════════════════════════════════════════════
               Section 8: Long-Term Direct Booking Potential

@@ -31,10 +31,11 @@ import 'server-only';
  *   national-ladder   last resort, always `low` confidence.
  *
  * The market snapshot's own area-average rent (`card.verdict.longLetMonthlyRent`)
- * is deliberately NOT used: `getLongLetData` silently substitutes a national
- * median when PropertyData has no answer or no key is set, so a figure taken from
- * the snapshot cannot be told apart from a national median. Adding that tier
- * needs provenance fields on AreaVerdict first.
+ * is deliberately NOT used: it comes from PropertyData's region key stats or
+ * one bounded valuation attempt and is null when neither answered, but
+ * AreaVerdict carries no provenance field, so a figure taken from the snapshot
+ * cannot say which source it was. Adding that tier needs provenance fields on
+ * AreaVerdict first.
  *
  * EXPECTED DISTRIBUTION. The same tier logic was run in SQL against the live
  * data before this was written, over 1,507 stored listings in 30 areas. A run

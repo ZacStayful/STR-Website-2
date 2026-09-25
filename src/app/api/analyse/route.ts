@@ -5,7 +5,7 @@ import { isAdminEmail } from '@/lib/admin';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { insufficientCreditResponse } from '@/lib/credit/http';
 import { postcodeAreaOf } from '@/lib/listing/normalise';
-import { parseMarketGoals, DEFAULT_FINANCE_GOALS, type FinanceGoals } from '@/lib/market/goals';
+import { parseMarketGoals, type FinanceGoals } from '@/lib/market/goals';
 import { parseAnalysisInput } from '@/lib/analysis/input';
 import { reserveAnalysis, runAnalysis, enhancedEnabled, GeocodeError, type AnalysisRunOptions } from '@/lib/analysis/run';
 import { reportAction } from '@/lib/credit/estimate';
@@ -73,7 +73,9 @@ export async function POST(request: Request) {
   let userEmail: string | null = null;
   let userName: string | null = null;
   let userMobile: string | null = null;
-  let finance: FinanceGoals = DEFAULT_FINANCE_GOALS;
+  // Undefined means no saved goal profile: the deal maths then borrows the
+  // national mortgage average instead of a fixed default.
+  let finance: FinanceGoals | undefined;
   let isAdmin = false;
   if (!isCalibrationBypass) {
     const supabase = await createSupabaseServerClient();
@@ -99,7 +101,7 @@ export async function POST(request: Request) {
     userMobile = profile.mobile ?? null;
     userId = user.id;
     userEmail = user.email ?? null;
-    finance = parseMarketGoals(profile.market_goals)?.finance ?? DEFAULT_FINANCE_GOALS;
+    finance = parseMarketGoals(profile.market_goals)?.finance;
   }
 
   let body: unknown;

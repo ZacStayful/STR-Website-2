@@ -43,6 +43,14 @@ export interface ReportEstimateOptions {
   markupOverride?: number;
 }
 
+/**
+ * The PropertyData calls every full report makes beyond the valuations:
+ * one credit each, all at postcode or outcode level and cached for weeks,
+ * so the reservation is the worst case of a postcode nobody has run before.
+ * Mortgage rates and region key stats are bought by the cron, not here.
+ */
+export const PD_REPORT_UNITS = ['stamp_duty', 'council_tax', 'energy_efficiency', 'flood_risk', 'conservation_area', 'listed_buildings', 'green_belt', 'aonb', 'national_park', 'demand', 'demand_rent'] as const;
+
 function line(table: UnitCostTable, provider: string, unit: string, quantity: number, worstCaseOnly = false, markupOverride?: number): EstimateLine {
   return { provider, unit, quantity, basePence: priceFor(table, provider, unit, quantity, markupOverride).basePence, worstCaseOnly };
 }
@@ -60,6 +68,7 @@ export function estimateAction(table: UnitCostTable, action: CreditAction, opts:
         line(table, 'propertydata', 'valuation_rent', 2, true, mk),
         line(table, 'propertydata', 'valuation_sale', 1, false, mk),
         line(table, 'propertydata', 'valuation_sale', 1, true, mk),
+        ...PD_REPORT_UNITS.map((u) => line(table, 'propertydata', u, 1, false, mk)),
         line(table, 'airbtics', 'report_all', 1, false, mk),
         line(table, 'airbtics', 'bounds', 1, false, mk),
         line(table, 'airbtics', 'market_search', 1, true, mk),

@@ -7,6 +7,7 @@ import { getMarketSnapshot } from "@/lib/market/cached";
 import { isAdminEmail } from "@/lib/admin";
 import { spendSummary } from "@/lib/broker/store";
 import { pmiAccount, pmiConfigured } from "@/lib/broker/providers/pmi";
+import { pdAccountCredits, propertyDataConfigured } from "@/lib/broker/providers/propertydata";
 
 export const metadata: Metadata = {
   title: "Admin — Stayful Intelligence",
@@ -89,9 +90,10 @@ export default async function AdminPage() {
   const recent = rows.slice(0, 15);
 
   const market = await getMarketHealth();
-  const [spend, pmi] = await Promise.all([
+  const [spend, pmi, pd] = await Promise.all([
     spendSummary(7).catch(() => []),
     pmiConfigured() ? pmiAccount().catch(() => null) : Promise.resolve(null),
+    propertyDataConfigured() ? pdAccountCredits().catch(() => null) : Promise.resolve(null),
   ]);
   const todayKey = new Date().toISOString().slice(0, 10);
   const spendToday = spend.filter((r) => r.day === todayKey);
@@ -150,6 +152,7 @@ export default async function AdminPage() {
       <p className="mb-3 text-sm text-muted-foreground">
         Every paid provider call goes through the data broker and is recorded here. Today: £{(todayPence / 100).toFixed(2)}
         {pmi ? ` · PMI credits remaining ${pmi.credits_remaining ?? "?"} of ${pmi.credits_monthly ?? "?"} (${pmi.plan ?? "plan"})` : pmiConfigured() ? " · PMI account unreachable" : " · PMI not configured"}
+        {pd ? ` · PropertyData credits remaining ${pd.remaining ?? "?"} of ${pd.limit ?? "?"}${pd.renewsAt ? ` (renews ${new Date(pd.renewsAt).toLocaleDateString("en-GB")})` : ""}` : propertyDataConfigured() ? " · PropertyData account unreachable" : " · PropertyData not configured"}
         . Run the <Link href="/api/internal/provider-spike?dry=1" className="text-primary hover:underline">provider spike</Link> (add <code>&amp;dry=0</code> to spend) to check parsers and coverage.
       </p>
       {spend.length === 0 ? (

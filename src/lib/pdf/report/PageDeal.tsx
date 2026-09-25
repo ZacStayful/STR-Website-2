@@ -84,6 +84,7 @@ export function PageDeal({
             </Text>
           </Link>
         ) : null}
+        {deal.growthLine ? <Text style={[T.bodyBold, { marginTop: 6, lineHeight: 1.4 }]}>{deal.growthLine}</Text> : null}
         <Text style={[T.body, { marginTop: 6, color: C.TEXT_MUTED, lineHeight: 1.4 }]}>{deal.note}</Text>
       </View>
     </Sheet>

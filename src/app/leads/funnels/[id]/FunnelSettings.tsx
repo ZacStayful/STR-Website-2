@@ -23,7 +23,15 @@ interface Props {
   publicUrl: string;
   rotatedAt: string | null;
   saturationGuide: Array<{ level: string; range: string; headline: string; meaning: string }>;
+  /**
+   * What one lead costs at each depth, in pence off the balance, priced on
+   * the server from the same table the analyse route charges with. Shown
+   * here so the option labels can never drift from the real price.
+   */
+  perLeadPence: { standard: number; enhanced: number };
 }
+
+const pounds = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 
 const INITIAL: FunnelState = {};
 const field = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground";
@@ -40,7 +48,7 @@ function Banner({ state }: { state: FunnelState }) {
   return null;
 }
 
-export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }: Props) {
+export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide, perLeadPence }: Props) {
   const [brandState, brandAction, brandPending] = useActionState(saveBrandAction, INITIAL);
   const [rulesState, rulesAction, rulesPending] = useActionState(saveRulesAction, INITIAL);
   const [rotateState, rotateAction, rotatePending] = useActionState(rotateTokenAction, INITIAL);
@@ -286,8 +294,8 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide }
           <div>
             <label className={labelCls} htmlFor="reportDepth">Report depth</label>
             <select id="reportDepth" name="reportDepth" defaultValue={funnel.reportDepth} className={`${field} mt-1`}>
-              <option value="standard">Standard — £2.12 a lead</option>
-              <option value="enhanced">Enhanced, with a second opinion — £4.37 a lead</option>
+              <option value="standard">Standard — about {pounds(perLeadPence.standard)} a lead</option>
+              <option value="enhanced">Enhanced, with a second opinion — about {pounds(perLeadPence.enhanced)} a lead</option>
             </select>
             <p className={hint}>Charged to your credit when a lead completes the form.</p>
           </div>

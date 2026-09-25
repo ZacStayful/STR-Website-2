@@ -110,6 +110,54 @@ test('concurrent identical requests share one call', async () => {
   assert.deepEqual(a.value, b.value);
 });
 
+test('cacheOnly never climbs a rung: unavailable on an empty cache, the stale answer once one exists', async () => {
+  let runs = 0;
+  const question = q([{ provider: 'propertydata', level: 3, costPence: 75, ttlMs: HOUR, run: async () => { runs++; return { v: 42 }; } }]);
+  const store = memoryStore();
+  const ledger = memoryLedger();
+  const empty = await resolveQuestion({ store, ledger, enabled }, question, { id: 'r' }, { mode: 'full', cacheOnly: true });
+  assert.equal(empty.unavailable, true);
+  assert.equal(runs, 0);
+  // A cron run buys it…
+  await resolveQuestion({ store, ledger, enabled }, question, { id: 'r' }, { mode: 'cron' });
+  assert.equal(runs, 1);
+  // …and a cacheOnly read long after the TTL still gets it, flagged stale, without spending.
+  const later = () => new Date(Date.now() + 48 * HOUR);
+  const r = await resolveQuestion({ store, ledger, enabled, now: later }, question, { id: 'r' }, { mode: 'full', userId: 'u1', cacheOnly: true });
+  assert.deepEqual(r.value, { v: 42 });
+  assert.equal(r.cached, true);
+  assert.equal(r.stale, true);
+  assert.equal(r.costPence, 0);
+  assert.equal(runs, 1);
+});
+
+test('a burst of asks reads today\'s spend once per payer and sees each other\'s spend', async () => {
+  process.env.BROKER_BUDGET_PROPERTYDATA = '12';
+  try {
+    let reads = 0;
+    const ledger = memoryLedger();
+    const counting = {
+      ...ledger,
+      async spentToday(provider: import('./types.ts').ProviderName, userId?: string | null) {
+        reads++;
+        await new Promise((r) => setTimeout(r, 5));
+        return ledger.spentToday(provider, userId);
+      },
+    };
+    let runs = 0;
+    const question = q([{ provider: 'propertydata', level: 3, costPence: 2.5, ttlMs: HOUR, run: async () => { runs++; return { v: runs }; } }]);
+    const deps = { store: memoryStore(), ledger: counting, enabled };
+    const results = await Promise.all(['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id) => resolveQuestion(deps, question, { id }, { mode: 'full', userId: 'u1' })));
+    // One global read and one member read for the whole burst…
+    assert.equal(reads, 2);
+    // …and the 12p budget lets four 2.5p calls through, not seven.
+    assert.equal(results.filter((r) => r.value).length, 4);
+    assert.equal(results.filter((r) => r.unavailable).length, 3);
+  } finally {
+    delete process.env.BROKER_BUDGET_PROPERTYDATA;
+  }
+});
+
 test('rungs run tagged with their question, so the budget can tell broker spend from report spend', async () => {
   let seen: string | undefined;
   const q = {

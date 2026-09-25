@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveReportData } from './derive.ts';
+import { buildPdfDeal, buildPdfDiligence, deriveReportData } from './derive.ts';
 import { sampleAnalysis } from './__fixtures__/sample.ts';
 
 // This module was untestable until its `@/lib/scores` import became relative:
@@ -127,6 +127,47 @@ test('no comparables at all still produces a renderable report', () => {
     assert.ok(Number.isFinite(v), 'never NaN — it would blank an SVG coordinate');
   }
   assert.equal(d.growth.repeatCustomers, null);
+});
+
+test('the due diligence page exists only when the registers said something', () => {
+  assert.equal(buildPdfDiligence(sampleAnalysis()), undefined, 'a report saved before the registers were read keeps its page count');
+  const r = sampleAnalysis({ withDiligence: true });
+  const d = buildPdfDiligence(r);
+  assert.ok(d);
+  assert.equal(d.epc?.rating, 'D');
+  assert.equal(d.epc?.inspected, '27 Jan 2023');
+  assert.deepEqual(d.floodRisk, { level: 'Low', high: false });
+  assert.equal(d.councilTax?.band, 'D');
+  assert.equal(d.councilTax?.council, 'Leicester');
+  assert.deepEqual(d.stampDuty, { name: 'SDLT', amount: 6500, ratePct: 5, live: true });
+  assert.equal(d.designations.length, 4);
+  assert.ok(d.designations.every((x) => x.status === 'outside'));
+  assert.equal(d.listed?.possiblyListed, false);
+  assert.equal(d.listed?.nearest[0].distance, '0.49 mi');
+  assert.equal(d.liquidity?.sale?.rating, 'Buyers market');
+  assert.equal(d.liquidity?.rent?.daysOnMarket, 142);
+  assert.equal(d.growth, null, 'no key stats on the sample');
+  assert.equal(d.notes.length, 2, 'the registers caveat and the business-rates note');
+  // The deal page carries the itemised bills and the live stamp duty.
+  const deal = buildPdfDeal(r);
+  assert.ok(deal?.note.includes('band D council tax'));
+  assert.ok(deal?.metrics.some((m) => m.label === 'Stamp duty' && m.sub?.includes('(live)')));
+});
+
+test('a High flood band and a listed neighbour are called out', () => {
+  const r = sampleAnalysis({ withDiligence: true });
+  const dd = r.dueDiligence!;
+  r.dueDiligence = {
+    ...dd,
+    floodRisk: { level: 'High', high: true },
+    listedBuildings: { possiblyListed: true, nearest: [{ name: 'The Old Bank', grade: 'II', distanceMiles: 0.03, url: null, listDate: null }, ...dd.listedBuildings!.nearest] },
+  };
+  const d = buildPdfDiligence(r);
+  assert.equal(d?.floodRisk?.high, true);
+  assert.equal(d?.listed?.possiblyListed, true);
+  assert.equal(d?.notes.length, 4);
+  assert.ok(d?.notes.some((n) => n.includes('may be listed')));
+  assert.ok(d?.notes.some((n) => n.includes('High flood band')));
 });
 
 // ── Comparable-history fields ─────────────────────────────────────────────

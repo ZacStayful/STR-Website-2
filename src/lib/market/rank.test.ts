@@ -56,3 +56,8 @@ test('daily rate sorts by the headline ADR with nulls last', () => {
   const rows = [row('A', { headline: { grossRevenue: 1, adr: 90, occupancy: 1, totalSamples: 1, bedroomsAvailable: [] } }), row('B', { headline: { grossRevenue: 1, adr: null, occupancy: 1, totalSamples: 1, bedroomsAvailable: [] } }), row('C', { headline: { grossRevenue: 1, adr: 140, occupancy: 1, totalSamples: 1, bedroomsAvailable: [] } })];
   assert.deepEqual(sortRows(rows, 'adr').map((r) => r.card.code), ['C', 'A', 'B']);
 });
+
+test('price growth sorts by the area\'s five-year figure with nulls last', () => {
+  const rows = [row('A', { keyStats: { growth5y: 4.2 } }), row('B', { keyStats: null }), row('C', { keyStats: { growth5y: 17.8 } })];
+  assert.deepEqual(sortRows(rows, 'growth').map((r) => r.card.code), ['C', 'A', 'B']);
+});

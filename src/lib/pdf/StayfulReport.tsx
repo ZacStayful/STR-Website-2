@@ -7,6 +7,7 @@ import { Page4Location } from "./report/Page4Location";
 import { Page5Setup } from "./report/Page5Setup";
 import { Page6Plan } from "./report/Page6Plan";
 import { PageDeal } from "./report/PageDeal";
+import { PageDiligence } from "./report/PageDiligence";
 import type { ReportChrome } from "./design/Chrome";
 import { contentsFor, navFor, sectionsFor } from "./sections";
 import type { PdfReportData } from "./derive";
@@ -30,6 +31,7 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
   const sections = sectionsFor({
     setup: Boolean(data.setup),
     deal: Boolean(data.deal),
+    diligence: Boolean(data.diligence),
   });
   const nav = (id: Parameters<typeof navFor>[1]) => navFor(sections, id);
 
@@ -56,6 +58,7 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
         <Page5Setup data={data} chrome={chrome} nav={nav("setup")} monthlyGain={data.strVsLtl.monthlyDiff} />
       ) : null}
       {data.deal ? <PageDeal deal={data.deal} chrome={chrome} nav={nav("deal")} /> : null}
+      {data.diligence ? <PageDiligence data={data.diligence} chrome={chrome} nav={nav("diligence")} /> : null}
       <Page6Plan data={data} chrome={chrome} nav={nav("plan")} />
     </Document>
   );

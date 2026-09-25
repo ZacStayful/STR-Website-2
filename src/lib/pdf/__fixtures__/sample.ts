@@ -1,5 +1,10 @@
 import type { AnalysisResult, ShortLetComparable, ShortLetData, RiskLevel } from "../../types.ts";
 import { annualEarningsRange } from "../../comps/earnings.ts";
+import { PD_FIXTURES } from "../../apis/__fixtures__/propertydata.ts";
+import { parseCouncilTax, parseDemand, parseEnergyEfficiency, parseListedBuildings } from "../../apis/propertydata-parse.ts";
+import { assembleDueDiligence } from "../../analysis/due-diligence.ts";
+import { pickCouncilTaxBand, billsFromCouncilTax } from "../../listing/bills.ts";
+import { purchaseDeal } from "../../listing/deal.ts";
 
 /**
  * A realistic analysis for exercising the report.
@@ -80,10 +85,48 @@ export interface SampleOverrides {
   address?: string;
   locality?: string | null;
   /**
+   * Adds what PropertyData's registers supply — EPC, flood band, designations,
+   * listed buildings, liquidity, council tax — plus a purchase deal priced with
+   * them, so the due diligence page renders. Built from PropertyData's own
+   * documented example responses.
+   */
+  withDiligence?: boolean;
+  /**
    * A report saved before the comparable-history fields existed: no stored
    * earnings range, local trend, stay profile, monthly occupancy or nearby count.
    */
   legacy?: boolean;
+}
+
+/** The register data for the sample flat, from PropertyData's documented examples. */
+function diligenceSample(grossAnnual: number): Pick<AnalysisResult, "councilTax" | "epc" | "dueDiligence" | "deal"> {
+  const councilTaxData = parseCouncilTax(PD_FIXTURES.councilTax);
+  const councilTax = pickCouncilTaxBand(councilTaxData ? { ...councilTaxData, council: "Leicester", properties: [] } : null, "22 Princess Road West");
+  const epcRows = (parseEnergyEfficiency(PD_FIXTURES.energyEfficiency) ?? []).map((e) => ({ ...e, address: "22 Princess Road West" }));
+  const { epc, dueDiligence } = assembleDueDiligence({
+    postcode: "LE1 6TE",
+    address: "22 Princess Road West, Leicester, LE1 6TE",
+    epc: epcRows.slice(0, 1),
+    flood: { level: "Low" },
+    conservationArea: { inside: false, name: null },
+    greenBelt: { inside: false, name: null },
+    aonb: { inside: false, name: null },
+    nationalPark: { inside: false, name: null },
+    listed: parseListedBuildings(PD_FIXTURES.listedBuildings),
+    demandSale: parseDemand(PD_FIXTURES.demand, "sale"),
+    demandRent: parseDemand(PD_FIXTURES.demandRent, "rent"),
+    fetchedAt: "2026-09-18T09:30:00.000Z",
+  });
+  const deal = purchaseDeal(130_000, {
+    grossRevenue: grossAnnual,
+    adr: 164,
+    bedrooms: 2,
+    country: "england",
+    stampDuty: { amount: 6_500, name: "SDLT", effectiveRatePct: 5, country: "england", source: "propertydata" },
+    mortgageRate: { source: "live", live: { ratePct: 5.5, product: "2-year fixed", date: "Sep 2026" } },
+    bills: { ...billsFromCouncilTax(councilTax), councilTax },
+  });
+  return { councilTax, epc, dueDiligence, deal: { ...deal, basis: "asking-price" } };
 }
 
 export function sampleAnalysis(o: SampleOverrides = {}): AnalysisResult {
@@ -225,6 +268,7 @@ export function sampleAnalysis(o: SampleOverrides = {}): AnalysisResult {
             source: "propertydata" as const,
           },
         }),
+    ...(o.withDiligence ? diligenceSample(grossAnnual) : {}),
   };
 }
 

@@ -6,6 +6,10 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type FinanceDefaults, type PurchaseDeal, type RentToRentDeal } from '@/lib/listing/deal';
+import type { StampDutyFigure } from '@/lib/listing/stamp-duty';
+import { liveMortgageRateLabel } from '@/lib/listing/mortgage-rate';
+import { futureValueSentence } from '@/lib/listing/growth';
+import type { FutureValueRange } from '@/lib/types';
 import type { DealResult } from '@/lib/types';
 import { gbp, gbpSigned } from './format';
 
@@ -19,7 +23,7 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
-function Field({ id, label, value, onChange, suffix, step, min, max }: { id: string; label: string; value: number; onChange: (n: number) => void; suffix?: string; step?: number; min?: number; max?: number }) {
+function Field({ id, label, value, onChange, suffix, step, min, max, hint }: { id: string; label: string; value: number; onChange: (n: number) => void; suffix?: string; step?: number; min?: number; max?: number; hint?: string }) {
   return (
     <div className="space-y-1">
       <Label htmlFor={id} className="text-xs">{label}</Label>
@@ -27,6 +31,7 @@ function Field({ id, label, value, onChange, suffix, step, min, max }: { id: str
         <Input id={id} type="number" inputMode="decimal" value={Number.isFinite(value) ? value : ''} step={step} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} className="h-8 text-sm" />
         {suffix && <span className="text-xs text-muted-foreground">{suffix}</span>}
       </div>
+      {hint && <p className="text-[10px] leading-snug text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -37,7 +42,7 @@ function Field({ id, label, value, onChange, suffix, step, min, max }: { id: str
  * still works. All maths is the same pure module the server used, so the
  * live figures and the saved report agree.
  */
-export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { deal: DealResult; grossRevenue: number; adr: number; bedrooms: number; setupCost?: number }) {
+export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, futureValue }: { deal: DealResult; grossRevenue: number; adr: number; bedrooms: number; setupCost?: number; futureValue?: FutureValueRange | null }) {
   // Start from the inputs the server used, so the first render matches the saved report and PDF.
   const initialFinance: FinanceDefaults =
     deal.kind === 'purchase'
@@ -45,13 +50,46 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { de
       : { ...DEFAULT_FINANCE, targetMarginPcm: deal.targetMarginPcm };
   const [finance, setFinance] = useState<FinanceDefaults>(initialFinance);
   const [price, setPrice] = useState(deal.kind === 'purchase' ? deal.askingPrice : deal.advertisedRentPcm);
-  const [bills, setBills] = useState(250);
+  const [bills, setBills] = useState(deal.billsPcm ?? 250);
   const setup = setupCost ?? deal.setupCost;
 
+  // The saved report priced stamp duty with PropertyData's calculator. That
+  // figure is reused while the price is the one it was priced for; once the
+  // price is edited the published bands for the same nation take over.
+  const savedStampDuty = useMemo<StampDutyFigure | undefined>(
+    () =>
+      deal.kind === 'purchase' && deal.stampDutySource === 'propertydata' && deal.stampDutyName && deal.taxCountry
+        ? { amount: deal.stampDuty, name: deal.stampDutyName, effectiveRatePct: deal.stampDutyEffectiveRatePct ?? 0, country: deal.taxCountry, source: 'propertydata' }
+        : undefined,
+    [deal],
+  );
+  const taxCountry = deal.kind === 'purchase' ? deal.taxCountry : undefined;
+  const askingPrice = deal.kind === 'purchase' ? deal.askingPrice : null;
+
   const live = useMemo<PurchaseDeal | RentToRentDeal>(() => {
-    const base = { grossRevenue, adr, bedrooms, finance, setupCost: setup, costs: { billsPcm: bills } };
+    const base = {
+      grossRevenue,
+      adr,
+      bedrooms,
+      finance,
+      setupCost: setup,
+      costs: { billsPcm: bills },
+      country: taxCountry,
+      stampDuty: price === askingPrice ? savedStampDuty : undefined,
+    };
     return deal.kind === 'purchase' ? purchaseDeal(Math.max(0, price), base) : rentToRentDeal(Math.max(0, price), base);
-  }, [deal.kind, grossRevenue, adr, bedrooms, finance, setup, bills, price]);
+  }, [deal.kind, grossRevenue, adr, bedrooms, finance, setup, bills, price, taxCountry, askingPrice, savedStampDuty]);
+
+  const councilTax = deal.councilTax ?? null;
+  const billsHint = councilTax
+    ? `incl. ${gbp(Math.round(councilTax.annual / 12))} council tax (band ${councilTax.band}); utilities, broadband and insurance on top`
+    : 'council tax, utilities, broadband and insurance';
+  const rateHint =
+    deal.kind === 'purchase' && deal.mortgageRateLive
+      ? deal.mortgageRateSource === 'live'
+        ? `market ${liveMortgageRateLabel(deal.mortgageRateLive)}`
+        : `your goal profile; market ${liveMortgageRateLabel(deal.mortgageRateLive)}`
+      : undefined;
 
   const basisLabel = deal.basis === 'asking-price' ? 'asking price' : deal.basis === 'advertised-rent' ? 'advertised rent' : 'estimated value';
 
@@ -77,7 +115,7 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { de
               <Stat label="Cash on cash" value={`${live.cashOnCashPct}%`} sub={`on ${gbp(live.cashRequired)} in`} />
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat label="Stamp duty" value={gbp(live.stampDuty)} sub="additional-property rate" />
+              <Stat label="Stamp duty" value={gbp(live.stampDuty)} sub={`${live.stampDutyName ?? 'SDLT'}, additional-property rate${live.stampDutySource === 'propertydata' ? ' (live)' : ''}`} />
               <Stat label="Setup budget" value={gbp(live.setupCost)} sub="furnishing & kit" />
               <Stat label={`Max price for ${finance.targetYieldPct}% yield`} value={gbp(live.maxPriceForTargetYield)} sub={live.maxPriceForTargetYield >= live.askingPrice ? 'above asking' : `${gbp(live.askingPrice - live.maxPriceForTargetYield)} below asking`} tone={live.maxPriceForTargetYield >= live.askingPrice ? 'good' : 'bad'} />
               <Stat label="Net operating / yr" value={gbp(live.netOperating)} sub="before mortgage" />
@@ -85,10 +123,13 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { de
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
               <Field id="deal-price" label="Purchase price" value={price} onChange={setPrice} suffix="£" step={1000} min={0} />
               <Field id="deal-deposit" label="Deposit" value={finance.depositPct} onChange={(v) => setFinance({ ...finance, depositPct: v })} suffix="%" step={5} min={0} max={100} />
-              <Field id="deal-rate" label="Mortgage rate" value={finance.mortgageRatePct} onChange={(v) => setFinance({ ...finance, mortgageRatePct: v })} suffix="%" step={0.25} min={0} max={25} />
+              <Field id="deal-rate" label="Mortgage rate" value={finance.mortgageRatePct} onChange={(v) => setFinance({ ...finance, mortgageRatePct: v })} suffix="%" step={0.25} min={0} max={25} hint={rateHint} />
               <Field id="deal-target" label="Target yield" value={finance.targetYieldPct} onChange={(v) => setFinance({ ...finance, targetYieldPct: v })} suffix="%" step={0.5} min={1} max={50} />
-              <Field id="deal-bills" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} />
+              <Field id="deal-bills" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} hint={billsHint} />
             </div>
+            {futureValue && (
+              <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{futureValueSentence(futureValue)}</p>
+            )}
           </>
         ) : (
           <>
@@ -107,7 +148,7 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost }: { de
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field id="deal-rent" label="Rent you would pay" value={price} onChange={setPrice} suffix="£ pcm" step={25} min={0} />
               <Field id="deal-margin" label="Target margin" value={finance.targetMarginPcm} onChange={(v) => setFinance({ ...finance, targetMarginPcm: v })} suffix="£ pcm" step={50} min={0} />
-              <Field id="deal-bills-r2r" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} />
+              <Field id="deal-bills-r2r" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} hint={billsHint} />
             </div>
             <div className="mt-4 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-muted-foreground">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />

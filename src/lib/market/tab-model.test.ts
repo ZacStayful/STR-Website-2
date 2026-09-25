@@ -32,7 +32,7 @@ function figures(over: Partial<LevelFigures> = {}): LevelFigures {
 function district(code: string, ready: boolean): DistrictCardData {
   const f = figures({ headline: { grossRevenue: ready ? 29800 : null, adr: ready ? 134 : null, occupancy: ready ? 61 : null, totalSamples: ready ? 6 : 2, bedroomsAvailable: [2] } });
   const localities = code === 'NG1' ? ['City centre', 'Lace Market', 'Hockley'] : [];
-  return { ...f, code, areaCode: 'NG', locality: localities[0] ?? null, localities, ready };
+  return { ...f, code, areaCode: 'NG', locality: localities[0] ?? null, localities, ready, keyStats: null };
 }
 
 function area(over: Partial<AreaCardData> = {}): AreaCardData {
@@ -44,6 +44,8 @@ function area(over: Partial<AreaCardData> = {}): AreaCardData {
     score: { score: 74, grade: 'B', gradeLabel: 'Strong', partial: false, components: [{ key: 'regulatory', label: 'Regulatory ease', weight: 15, earned: 15, detail: 'unrestricted' }] },
     managedByStayful: false,
     districts: [district('NG1', true), district('NG9', false)],
+    keyStats: null,
+    longLetSource: null,
     ...over,
   };
 }

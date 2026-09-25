@@ -85,7 +85,7 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
         )}
 
         <p className="mt-6 text-xs text-[#7a8274]">
-          {est ? `${est.note}. ` : ""}Estimates from Stayful Intelligence and its data partners. Running costs assume 15% platform fees, 15% management, 18% cleaning and £250 a month bills. Not financial advice.
+          {est ? `${est.note}. ` : ""}Estimates from Stayful Intelligence and its data partners. Running costs assume 15% platform fees, 15% management, 18% cleaning and {gbp(d?.billsPcm ?? 250)} a month bills. Not financial advice.
         </p>
         <div className="mt-8 rounded-2xl bg-[#2e3d2b] p-5 text-white">
           <p className="text-lg font-semibold">Want this for any listing?</p>

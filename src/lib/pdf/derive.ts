@@ -2,6 +2,9 @@ import type { AnalysisResult, ShortLetComparable } from "@/lib/types";
 import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "../scores.ts";
 import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./amenities.ts";
 import { splitAddress, formatIssued } from "./format.ts";
+import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
+import { diligenceNotes } from "../analysis/due-diligence.ts";
+import { futureValueSentence } from "../listing/growth.ts";
 import type { PdfBrand } from "./theme";
 import { bandPositions, beatTargets, earningsRangeOf, estimatePosition, MIN_TOP_BADGE_LISTINGS, topQuarterThreshold, type AnnualEarningsRange, type EstimatePosition } from "../comps/earnings.ts";
 import { readLocalTrend, trendShort } from "../comps/local-trend.ts";
@@ -87,6 +90,39 @@ export interface PdfDeal {
   metrics: { label: string; value: string; sub?: string }[];
   cashflow: { month: number; revenue: number; operating: number; fixed: number; net: number }[];
   note: string;
+  /** Where the value might go, from the outcode's historic growth; absent without a growth figure. */
+  growthLine?: string;
+}
+
+export interface PdfLiquidity {
+  rating: string | null;
+  daysOnMarket: number | null;
+  total: number | null;
+  perMonth: number | null;
+  monthsOfInventory: number | null;
+}
+
+export interface PdfGrowth {
+  outcode: string;
+  g1y: number | null;
+  g3y: number | null;
+  g5y: number | null;
+  g7y: number | null;
+  /** The future-value sentence (`futureValueSentence`), or null without a price. */
+  rangeLine: string | null;
+}
+
+/** The due diligence page: registers, council tax, stamp duty, liquidity and growth. */
+export interface PdfDiligence {
+  epc: { rating: string; score: number | null; inspected: string | null } | null;
+  floodRisk: { level: string; high: boolean } | null;
+  councilTax: { band: string; annual: number; council: string | null } | null;
+  stampDuty: { name: string; amount: number; ratePct: number | null; live: boolean } | null;
+  designations: { label: string; status: "inside" | "outside" | "unknown"; detail: string | null }[];
+  listed: { possiblyListed: boolean; nearest: { name: string; grade: string | null; distance: string }[] } | null;
+  liquidity: { sale: PdfLiquidity | null; rent: PdfLiquidity | null } | null;
+  growth: PdfGrowth | null;
+  notes: string[];
 }
 
 export interface PdfReportData {
@@ -115,6 +151,8 @@ export interface PdfReportData {
   brand?: PdfBrand;
   /** Deal economics when the report came from a listing (or an estimated value). */
   deal?: PdfDeal;
+  /** Present only when the analysis carried any register data. */
+  diligence?: PdfDiligence;
   overview: {
     grossRevenue: number;
     netRevenue: number;
@@ -645,12 +683,83 @@ export function sanitiseAddressForFilename(address: string): string {
     .slice(0, 80) || "Property";
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "27 Jan 2023" from a YYYY-MM-DD date, read as a calendar date (no time zone), or null. */
+function shortDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  const month = MONTHS[Number(m[2]) - 1];
+  return month ? `${Number(m[3])} ${month} ${m[1]}` : iso;
+}
+
+/**
+ * The due diligence page, from the register data the analysis stored.
+ * Undefined when there is none, so older reports keep their page count.
+ */
+export function buildPdfDiligence(result: AnalysisResult): PdfDiligence | undefined {
+  const dd = result.dueDiligence ?? null;
+  const epc = result.epc ?? null;
+  const ct = result.councilTax ?? null;
+  const growth = result.growth ?? null;
+  if (!dd && !epc && !ct && !growth) return undefined;
+  const deal = result.deal && result.deal.kind === "purchase" ? result.deal : null;
+
+  const designation = (label: string, d: { inside: boolean; name: string | null } | null | undefined) => ({
+    label,
+    status: d ? (d.inside ? ("inside" as const) : ("outside" as const)) : ("unknown" as const),
+    detail: d?.name ?? null,
+  });
+  const liquidity = (d: { rating: string | null; daysOnMarket: number | null; total: number | null; perMonth: number | null; monthsOfInventory: number | null } | null | undefined): PdfLiquidity | null =>
+    d ? { rating: d.rating, daysOnMarket: d.daysOnMarket, total: d.total, perMonth: d.perMonth, monthsOfInventory: d.monthsOfInventory } : null;
+
+  const notes = diligenceNotes(result);
+
+  return {
+    epc: epc ? { rating: epc.rating, score: epc.score, inspected: shortDate(epc.inspectionDate) } : null,
+    floodRisk: dd?.floodRisk ?? null,
+    councilTax: ct ? { band: ct.band, annual: Math.round(ct.annual), council: ct.council } : null,
+    stampDuty: deal
+      ? { name: deal.stampDutyName ?? "SDLT", amount: deal.stampDuty, ratePct: deal.stampDutyEffectiveRatePct ?? null, live: deal.stampDutySource === "propertydata" }
+      : null,
+    designations: dd
+      ? [
+          designation("Conservation area", dd.conservationArea),
+          designation("Green belt", dd.greenBelt),
+          designation("Area of Outstanding Natural Beauty", dd.aonb),
+          designation("National park", dd.nationalPark),
+        ]
+      : [],
+    listed: dd?.listedBuildings
+      ? {
+          possiblyListed: dd.listedBuildings.possiblyListed,
+          nearest: dd.listedBuildings.nearest.map((b) => ({ name: b.name, grade: b.grade, distance: b.distanceMiles !== null ? `${b.distanceMiles.toFixed(2)} mi` : "—" })),
+        }
+      : null,
+    liquidity: dd ? { sale: liquidity(dd.exitLiquidity.sale), rent: liquidity(dd.exitLiquidity.rent) } : null,
+    growth: growth
+      ? {
+          outcode: growth.outcode,
+          g1y: growth.growth1y,
+          g3y: growth.growth3y,
+          g5y: growth.growth5y,
+          g7y: growth.growth7y,
+          rangeLine: result.futureValue ? futureValueSentence(result.futureValue) : null,
+        }
+      : null,
+    notes,
+  };
+}
+
 /** Builds the deal page data from the listing-link additions on a result. */
 export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
   const d = result.deal;
   if (!d) return undefined;
   const cashflow = (result.cashflow ?? []).map((m) => ({ month: m.month, revenue: m.revenue, operating: m.operating, fixed: m.fixed, net: m.net }));
-  return pdfDealFrom(d, result.sourceListing?.url ?? null, cashflow);
+  const deal = pdfDealFrom(d, result.sourceListing?.url ?? null, cashflow);
+  if (d.kind === "purchase" && result.futureValue) deal.growthLine = futureValueSentence(result.futureValue);
+  return deal;
 }
 
 /** Same page data from a bare deal (used by the shareable deal sheet, which has no monthly series). */
@@ -660,7 +769,17 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
     d.basis === "asking-price" ? `Based on the asking price of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`
     : d.basis === "advertised-rent" ? `Based on the advertised rent of ${gbp(d.kind === "rent-to-rent" ? d.advertisedRentPcm : 0)} pcm`
     : `Based on the estimated property value of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`;
+  const bills = d.billsPcm ?? 250;
   if (d.kind === "purchase") {
+    const taxName = d.stampDutyName ?? "SDLT";
+    const taxWhere = taxName === "LBTT" ? "Scotland's" : taxName === "LTT" ? "Wales's" : "the England and Northern Ireland";
+    const mortgage =
+      d.mortgageRateSource === "live" && d.mortgageRateLive
+        ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at the market ${liveMortgageRateLabel(d.mortgageRateLive)}`
+        : d.mortgageRateSource === "default"
+          ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at ${d.mortgageRatePct}%, Stayful's standing assumption (no market average was available)`
+          : "mortgage assumes the deposit, rate and term in your Stayful goal profile";
+    const councilTax = d.councilTax ? `, of which £${Math.round(d.councilTax.annual / 12)} is band ${d.councilTax.band} council tax` : "";
     return {
       kind: "purchase",
       basisLabel,
@@ -670,13 +789,13 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
         { label: "Net yield", value: `${d.netYieldPct}%`, sub: "after running costs" },
         { label: "Monthly cashflow", value: `${d.cashflowMonthly < 0 ? "-" : ""}${gbp(Math.abs(d.cashflowMonthly))}`, sub: `after ${gbp(d.mortgageMonthly)} mortgage` },
         { label: "Cash on cash", value: `${d.cashOnCashPct}%`, sub: `on ${gbp(d.cashRequired)} in` },
-        { label: "Stamp duty", value: gbp(d.stampDuty), sub: "additional-property rate" },
+        { label: "Stamp duty", value: gbp(d.stampDuty), sub: `${taxName}, additional-property rate${d.stampDutySource === "propertydata" ? " (live)" : ""}` },
         { label: "Setup budget", value: gbp(d.setupCost) },
         { label: `Max price for ${d.targetYieldPct}% yield`, value: gbp(d.maxPriceForTargetYield) },
         { label: "Net operating / yr", value: gbp(d.netOperating), sub: "before mortgage" },
       ],
       cashflow,
-      note: "Yield and cashflow use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £250 a month bills; mortgage assumes the deposit, rate and term in your Stayful goal profile. Stamp duty is the England and Northern Ireland additional-property rate. Not financial advice.",
+      note: `Yield and cashflow use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £${bills} a month bills${councilTax}; ${mortgage}. Stamp duty is ${taxName} at ${taxWhere} additional-property rate${d.stampDutySource === "propertydata" ? ", from PropertyData's calculator on the report date" : ""}. Not financial advice.`,
     };
   }
   return {
@@ -694,6 +813,6 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
       { label: `Max rent for ${gbp(d.targetMarginPcm)} margin`, value: gbp(d.maxRentForTargetMargin) },
     ],
     cashflow,
-    note: "Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £250 a month bills. Not financial advice.",
+    note: `Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £${bills} a month bills${d.councilTax ? ` (band ${d.councilTax.band} council tax included)` : ""}. Not financial advice.`,
   };
 }
