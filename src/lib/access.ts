@@ -213,6 +213,36 @@ export function isLapsedSubscriber(profile: PartialAccount, now: number = Date.n
 }
 
 /**
+ * Has this account ever paid us anything? Any subscription (live, paused,
+ * lapsed or cancelled, Stripe or arranged by hand) or any top-up counts;
+ * admins count. Everyone else is on welcome, referral or adjustment credit
+ * only. This is the line between "paid" and "free" for early access to
+ * marketplace deals (src/lib/marketplace/visibility.ts) — nothing to do with
+ * whether they are a subscriber today, which is accountStatus().
+ *
+ * A team member's answer is their owner's: resolve the payer before asking.
+ */
+export type PaidTierAccount = PartialAccount & {
+  subscription_started_at?: string | null
+  last_topup_at?: string | null
+}
+
+export function hasEverPaid(profile: PaidTierAccount | null | undefined, opts: { admin?: boolean } = {}): boolean {
+  if (opts.admin) return true
+  if (!profile) return false
+  if (hasSubscriptionHistory(profile)) return true
+  if (profile.subscription_started_at) return true
+  // A plan granted by hand: no Stripe record, but a customer all the same.
+  if (profile.plan === 'pro' || !!profile.plan_code) return true
+  if (profile.last_topup_at) return true
+  return false
+}
+
+/** Columns hasEverPaid() reads. Select these together; every one already exists on profiles. */
+export const PAID_TIER_COLUMNS =
+  'plan, plan_code, stripe_subscription_id, stripe_subscription_status, subscription_started_at, last_topup_at'
+
+/**
  * Columns every billing-state check needs. Select these together, always.
  *
  * The Supabase client here is untyped, so a missing column is not a type error

@@ -16,6 +16,7 @@ import { areaRevenueFor } from "@/lib/listing/sourcing";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealSheet } from "@/lib/marketplace/open";
+import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { formatOpenPrice, openPricePence } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
@@ -53,7 +54,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // Deals opened by anyone on the team are open for everyone on it, and the
   // balance shown is the team's (the owner's), which is what pays.
   const { payerId } = await payerFor(user.id);
-  const sheet = await dealSheet(id, payerId, adminUser);
+  // Inside its early-access window a deal is a 404 for an account that has never paid.
+  const visibility = await dealVisibilityFor(user.id, adminUser);
+  const sheet = await dealSheet(id, payerId, adminUser, visibility);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
   const [settings, credit, cards, profileRes] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single()]);

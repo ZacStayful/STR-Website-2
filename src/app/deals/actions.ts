@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { openDeal, saveOpenedDealToPipeline } from '@/lib/marketplace/open';
+import { dealVisibilityFor } from '@/lib/marketplace/tier';
 import { payerFor } from '@/lib/team';
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -29,7 +30,8 @@ export async function openDealAction(formData: FormData): Promise<void> {
   if (payer.suspended) redirect(`/deals/${encodeURIComponent(id)}?msg=insufficient_credit`);
   let outcome;
   try {
-    outcome = await openDeal({ userId: payer.payerId, adminUser, dealId: id, memberId: payer.memberId });
+    const visibility = await dealVisibilityFor(user.id, adminUser);
+    outcome = await openDeal({ userId: payer.payerId, adminUser, dealId: id, memberId: payer.memberId, visibility });
   } catch (err) {
     console.error('[deals] open failed:', err);
     redirect(`/deals/${encodeURIComponent(id)}?msg=failed`);

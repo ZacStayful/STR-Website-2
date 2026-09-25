@@ -1888,3 +1888,41 @@ drop trigger if exists saved_searches_set_owner on public.saved_searches;
 create trigger saved_searches_set_owner
   before insert or update on public.saved_searches
   for each row execute function private.saved_searches_set_owner();
+
+-- =========================
+-- Early access to marketplace deals (src/lib/marketplace/visibility.ts)
+-- =========================
+-- An account that has ever paid (any subscription, any top-up, admins — see
+-- hasEverPaid in src/lib/access.ts) sees a deal the moment it goes live.
+-- Every other account, and every signed-out visitor, sees it
+-- free_deal_delay_hours later. Inside that window the deal is simply absent
+-- for them: not on the grid, the map, the counts, the teaser, by id, as an
+-- open or as a daily pick.
+--
+-- live_since is stamped by the trigger on every transition to 'live' (first
+-- entry, pending_verify → live, reactivation, admin restore), so none of the
+-- code paths that flip the status can forget it. A live row it has not
+-- stamped counts as brand new: hidden from the delayed tier, never shown
+-- early. APPLY BEFORE deploying the code that reads it: DEAL_COLUMNS
+-- (src/lib/marketplace/server.ts) is a fixed select, and every deal read
+-- filters on this column.
+alter table public.marketplace_deals add column if not exists live_since timestamptz;
+create or replace function private.marketplace_deals_stamp_live()
+returns trigger language plpgsql as $$
+begin
+  if new.status = 'live' and (tg_op = 'INSERT' or old.status is distinct from 'live') then
+    new.live_since := now();
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists marketplace_deals_stamp_live on public.marketplace_deals;
+create trigger marketplace_deals_stamp_live
+  before insert or update on public.marketplace_deals
+  for each row execute function private.marketplace_deals_stamp_live();
+-- Rows that were live before the column existed: their first sighting is the
+-- best date we have. live → live, so the trigger leaves this value alone.
+update public.marketplace_deals set live_since = coalesce(live_since, first_seen_at) where status = 'live' and live_since is null;
+create index if not exists marketplace_deals_live_since_idx on public.marketplace_deals (live_since) where status = 'live';
+-- The window, in hours. 0 switches it off. Edit the row to change it; no deploy needed.
+insert into public.billing_settings (key, value) values ('free_deal_delay_hours', '48') on conflict (key) do nothing;

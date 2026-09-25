@@ -4,14 +4,20 @@ import 'server-only';
  * What the marketplace pages read: the grid, the per-area counts for the map
  * and the teaser pages, and the signed photo URL. Service role, because the
  * tables have no member policies; every query here is scoped to what a
- * member may see (PUBLIC_DEAL_COLUMNS, status = live) and never returns the
- * listing URL, address or postcode.
+ * member may see (PUBLIC_DEAL_COLUMNS, status = live, and for accounts that
+ * have never paid only deals live since before the cutoff — see
+ * visibility.ts) and never returns the listing URL, address or postcode.
+ *
+ * Every reader takes the cutoff as an argument rather than looking it up, so
+ * the two cached readers key their cache on it (unstable_cache keys on the
+ * arguments) and a paid and a free request can never share an entry.
  */
 import { unstable_cache } from 'next/cache';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
+import type { DealVisibility } from './visibility';
 
 export interface DealPage {
   cards: DealCard[];
@@ -22,10 +28,11 @@ export interface DealPage {
 
 const EMPTY: DealPage = { cards: [], total: 0, page: 1, pages: 0 };
 
-export async function listDeals(f: DealFilters): Promise<DealPage> {
+export async function listDeals(f: DealFilters, visibility: DealVisibility): Promise<DealPage> {
   if (!hasServiceRole()) return EMPTY;
   const admin = createAdminClient();
   let q = admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`, { count: 'exact' }).eq('status', 'live');
+  if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
   if (f.areas.length > 0) q = q.in('postcode_area', f.areas);
   if (f.beds === '4+') q = q.gte('bedrooms', 4);
@@ -67,13 +74,15 @@ export interface AreaCount {
   total: number;
 }
 
-async function countsByAreaUncached(): Promise<AreaCount[]> {
+async function countsByAreaUncached(cutoffIso: string | null): Promise<AreaCount[]> {
   if (!hasServiceRole()) return [];
   const admin = createAdminClient();
   const PAGE = 1000;
   const byArea = new Map<string, AreaCount>();
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await admin.from('marketplace_deals').select('postcode_area, kind').eq('status', 'live').order('canonical_url', { ascending: true }).range(from, from + PAGE - 1);
+    let q = admin.from('marketplace_deals').select('postcode_area, kind').eq('status', 'live');
+    if (cutoffIso) q = q.lte('live_since', cutoffIso);
+    const { data, error } = await q.order('canonical_url', { ascending: true }).range(from, from + PAGE - 1);
     if (error) {
       console.error('[marketplace] area counts failed:', error.message);
       break;
@@ -91,7 +100,12 @@ async function countsByAreaUncached(): Promise<AreaCount[]> {
   return [...byArea.values()].sort((a, b) => b.total - a.total);
 }
 
-/** Live deals per area, cached for five minutes and invalidated by every sweep, recheck and admin retire. */
+/**
+ * Live deals per area, cached for five minutes and invalidated by every sweep,
+ * recheck and admin retire. Pass `visibility.hourCutoffIso`: null for a paying
+ * account (one entry), the hour-floored cutoff for everyone else (one entry
+ * per hour, so a free account sees a deal 48–49 hours after it went live).
+ */
 export const liveCountsByArea = unstable_cache(countsByAreaUncached, ['marketplace-area-counts'], { revalidate: 300, tags: [DEALS_TAG] });
 
 export function countFor(counts: AreaCount[], code: string, kind: DealKindFilter): number {
@@ -157,10 +171,12 @@ export interface AreaTeaser {
   area: { name: string; slug: string; score: number | null; occupancy: number | null; adr: number | null } | null;
 }
 
-async function teaserUncached(code: string): Promise<AreaTeaser | null> {
+async function teaserUncached(code: string, cutoffIso: string | null): Promise<AreaTeaser | null> {
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
-  const { data, error } = await admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`).eq('status', 'live').eq('postcode_area', code).order('annual_profit', { ascending: false, nullsFirst: false }).limit(2000);
+  let q = admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`).eq('status', 'live').eq('postcode_area', code);
+  if (cutoffIso) q = q.lte('live_since', cutoffIso);
+  const { data, error } = await q.order('annual_profit', { ascending: false, nullsFirst: false }).limit(2000);
   if (error) {
     console.error('[marketplace] teaser failed:', error.message);
     return null;
@@ -183,7 +199,7 @@ async function teaserUncached(code: string): Promise<AreaTeaser | null> {
   };
 }
 
-/** One area's public teaser, cached for an hour and invalidated with the pool. */
+/** One area's teaser, cached for an hour and invalidated with the pool. Takes `visibility.hourCutoffIso`, as liveCountsByArea does. */
 export const teaserForArea = unstable_cache(teaserUncached, ['marketplace-area-teaser'], { revalidate: 3600, tags: [DEALS_TAG] });
 
 /**
@@ -192,8 +208,8 @@ export const teaserForArea = unstable_cache(teaserUncached, ['marketplace-area-t
  * cached teaser is shared with the public area page; the photo signatures
  * are day-scoped so they are added outside the cache.
  */
-export async function marketDealsForArea(code: string, now: Date = new Date()): Promise<AreaDealsSummary | null> {
-  const t = await teaserForArea(code).catch((err) => {
+export async function marketDealsForArea(code: string, visibility: DealVisibility, now: Date = new Date()): Promise<AreaDealsSummary | null> {
+  const t = await teaserForArea(code, visibility.hourCutoffIso).catch((err) => {
     console.error('[marketplace] marketDealsForArea failed:', (err as Error)?.message ?? err);
     return null;
   });

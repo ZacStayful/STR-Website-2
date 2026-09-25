@@ -12,7 +12,8 @@ import { payersFor, payerIn } from "../team";
 import { getUnitCostTable } from "../credit/unit-costs";
 import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
-import { isPaused } from "../access";
+import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from "../access";
+import { dealVisibility, dealVisible } from "../marketplace/visibility";
 import { findOutcode } from "./html";
 import { queriesForGoals, dealForSourced, rankPicks, rankPicksByBand, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
@@ -118,7 +119,7 @@ function chunk<T>(list: T[], size: number): T[][] {
   return out;
 }
 
-type ProfileRow = {
+type ProfileRow = PaidTierAccount & {
   id: string;
   email: string | null;
   market_goals: unknown;
@@ -132,6 +133,8 @@ interface Member {
   id: string;
   email: string;
   admin: boolean;
+  /** Has the paying account (their own, or their team owner's) ever paid? Decides early access to pool deals. */
+  paid: boolean;
   goals: MarketGoals | null;
   basis: PickBasis;
   firstEver: boolean;
@@ -206,15 +209,19 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const pickBasePence = price.basePence;
   // A pick drawn from the marketplace pool is an auto-open: it unlocks the deal
   // sheet and is charged the deal's ladder price, not the flat pick price.
-  const ladder = (await getBillingSettings()).dealOpenLadder;
+  const settings = await getBillingSettings();
+  const ladder = settings.dealOpenLadder;
   const poolCutoffIso = new Date(Date.now() - NEW_WINDOW_MS).toISOString();
+  // Early access: a pool deal inside its window is not a pick for an account
+  // that has never paid, exactly as it is not on their grid.
+  const freeVisibility = dealVisibility("free", new Date(), settings.freeDealDelayHours);
 
   // ── Audience: picks on, signed in at least once; starved members first ──
   const profiles: ProfileRow[] = [];
   for (let from = 0; ; from += PAGE) {
     let q = admin
       .from("profiles")
-      .select("id, email, market_goals, plan_code, subscription_paused_from, subscription_paused_until, sourcing_last_sent_at")
+      .select(`id, email, market_goals, subscription_paused_from, subscription_paused_until, sourcing_last_sent_at, ${PAID_TIER_COLUMNS}`)
       .eq("sourcing_alerts", true)
       .not("welcome_checked_at", "is", null);
     if (opts.onlyUserIds) q = q.in("id", opts.onlyUserIds);
@@ -331,7 +338,28 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       skipped.push({ user: p.id, reason: "no_queries" });
       continue;
     }
-    members.push({ id: p.id, email: p.email, admin: isAdminEmail(p.email), goals, basis, firstEver: !p.sourcing_last_sent_at, queries, areaFit, rules });
+    members.push({ id: p.id, email: p.email, admin: isAdminEmail(p.email), paid: hasEverPaid(p, { admin: isAdminEmail(p.email) }), goals, basis, firstEver: !p.sourcing_last_sent_at, queries, areaFit, rules });
+  }
+
+  // ── Who pays for whom, before any candidate is judged ──
+  // A team member's picks are paid from their team owner's credit, and their
+  // early-access tier is the owner's too: the owner is the account that paid.
+  const payers = await payersFor(members.map((m) => m.id));
+  {
+    const audience = new Map(profiles.map((p) => [p.id, p as PaidTierAccount]));
+    const ownersToRead = [...new Set([...payers.values()].map((p) => p.payerId))].filter((id) => !audience.has(id));
+    const owners = new Map<string, PaidTierAccount>();
+    for (const some of chunk(ownersToRead, ID_CHUNK)) {
+      const { data, error } = await admin.from("profiles").select(`id, ${PAID_TIER_COLUMNS}`).in("id", some);
+      if (error) console.error("[sourcing] owner tier read failed:", error.message);
+      for (const r of (data ?? []) as (PaidTierAccount & { id: string })[]) owners.set(r.id, r);
+    }
+    for (const m of members) {
+      const payer = payers.get(m.id);
+      if (!payer) continue;
+      const owner = audience.get(payer.payerId) ?? owners.get(payer.payerId) ?? null;
+      m.paid = m.admin || hasEverPaid(owner);
+    }
   }
 
   // Shared query set, capped per run. Searches that carry a member's own
@@ -378,10 +406,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const byQuery = new Map<string, SourcedListing[]>();
   const seenUrls = new Set<string>();
   const urlToDealId = new Map<string, string>();
+  const urlToLiveSince = new Map<string, string | null>();
   const poolFor = async (query: SourcingQuery): Promise<SourcedListing[] | null> => {
     const { data, error } = await admin
       .from("marketplace_deals")
-      .select("canonical_url, id")
+      .select("canonical_url, id, live_since")
       .eq("status", "live")
       .eq("kind", query.kind)
       .eq("postcode_area", query.area)
@@ -392,14 +421,17 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       console.error("[sourcing] pool read failed:", error.message);
       return null;
     }
-    const rows = (data ?? []) as { canonical_url: string; id: string }[];
+    const rows = (data ?? []) as { canonical_url: string; id: string; live_since: string | null }[];
     if (rows.length === 0) return null;
     const out: SourcedListing[] = [];
     for (const urls of chunk(rows.map((r) => r.canonical_url), URL_CHUNK)) {
       const { data: snaps } = await admin.from("sourced_listings").select("canonical_url, snapshot").in("canonical_url", urls);
       for (const r of (snaps ?? []) as { canonical_url: string; snapshot: SourcedListing }[]) if (r.snapshot && typeof r.snapshot === "object") out.push(r.snapshot);
     }
-    for (const r of rows) urlToDealId.set(r.canonical_url, r.id);
+    for (const r of rows) {
+      urlToDealId.set(r.canonical_url, r.id);
+      urlToLiveSince.set(r.canonical_url, r.live_since);
+    }
     return out;
   };
   for (const { query } of queries) {
@@ -600,6 +632,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const nearMisses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[] = [];
     const consider = (l: SourcedListing, q: SourcingQuery, fromBackCatalogue: boolean) => {
       if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) return;
+      // A pool deal still inside its early-access window is not for a member
+      // whose account has never paid. Decided here, before anything is ranked,
+      // so neither the alternates nor the daily cap can reach it later.
+      if (!m.paid && urlToDealId.has(l.canonicalUrl) && !dealVisible(urlToLiveSince.get(l.canonicalUrl), freeVisibility.cutoffIso)) return;
       // Every ordinary pick has to be new. The back-catalogue pool is the one
       // exception, because a listing that has been sitting for months is exactly
       // what its member asked for.
@@ -730,9 +766,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   };
 
   // ── Credit: only members who have a candidate, in parallel chunks ──
-  // A team member's picks are paid from their team owner's credit; a
-  // suspended seat has none to spend.
-  const payers = await payersFor(withCandidates.map((m) => m.id));
+  // A team member's picks are paid from their team owner's credit (`payers`,
+  // resolved above); a suspended seat has none to spend.
   const affordable: Member[] = [];
   for (const some of chunk(withCandidates, 10)) {
     const balances = await Promise.all(some.map((m) => (m.admin || priceOf(m, ranked.get(m.id)?.[0]) <= 0 ? Promise.resolve(null) : payerIn(payers, m.id).suspended ? Promise.resolve(null) : getBalance(payerIn(payers, m.id).payerId).catch(() => null))));

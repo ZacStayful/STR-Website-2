@@ -53,6 +53,8 @@ export interface DealRow {
   status: DealStatus;
   retired_reason: RetiredReason | null;
   retired_at: string | null;
+  /** When the row last became live; stamped by a DB trigger, null only for a row that has never been live. */
+  live_since: string | null;
   first_seen_at: string;
   last_seen_at: string;
   last_checked_live_at: string | null;

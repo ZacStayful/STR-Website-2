@@ -3,9 +3,11 @@ import Link from "next/link";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { payerFor } from "@/lib/team";
+import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { parseDealFilters } from "@/lib/marketplace/grid";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor } from "@/lib/marketplace/queries";
+import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { DealCard } from "./_components/DealCard";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
 import { DealsMap } from "./_components/DealsMap";
@@ -35,7 +37,9 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [page, counts, settings] = await Promise.all([listDeals(filters), liveCountsByArea(), getBillingSettings()]);
+  // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
+  const visibility = await dealVisibilityFor(user.id, isAdminEmail(user.email));
+  const [page, counts, settings] = await Promise.all([listDeals(filters, visibility), liveCountsByArea(visibility.hourCutoffIso), getBillingSettings()]);
   const opened = await openedDealIds((await payerFor(user.id)).payerId, page.cards.map((c) => c.id));
   const now = new Date();
   const countMap: Record<string, number> = {};

@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { areaMetaForSlug } from "@/lib/market/areas";
 import { teaserForArea, photoUrlFor } from "@/lib/marketplace/queries";
+import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { describeType } from "@/lib/marketplace/grid";
 import { headlineFigure, priceLine } from "@/app/deals/_components/DealCard";
 import { siteUrl } from "@/lib/url";
@@ -35,7 +36,8 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
     data: { user },
   } = await supabase.auth.getUser();
   if (user) redirect(`/deals?areas=${encodeURIComponent(meta.code)}`);
-  const teaser = await teaserForArea(meta.code);
+  // Visitors see the delayed set: never more than a free member would.
+  const teaser = await teaserForArea(meta.code, (await publicDealVisibility()).hourCutoffIso);
   const now = new Date();
   const signup = `/signup?next=${encodeURIComponent(`/deals?areas=${meta.code}`)}`;
   return (

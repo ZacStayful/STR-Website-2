@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 import { siteUrl } from "@/lib/url";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { liveCountsByArea } from "@/lib/marketplace/queries";
+import { publicDealVisibility } from "@/lib/marketplace/tier";
 
 export const revalidate = 3600;
 
@@ -10,7 +11,7 @@ export const revalidate = 3600;
 // are public and listed for every area with a live deal.
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
-  const deals = await liveCountsByArea().catch(() => []);
+  const deals = await publicDealVisibility().then((v) => liveCountsByArea(v.hourCutoffIso)).catch(() => []);
   const routes = [
     { path: "/", priority: 1.0, changeFrequency: "weekly" as const },
     { path: "/markets", priority: 0.9, changeFrequency: "weekly" as const },

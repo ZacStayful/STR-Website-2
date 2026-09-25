@@ -4,6 +4,8 @@ import {
   ACCESS_COLUMNS,
   accessDenied,
   accountStatus,
+  hasEverPaid,
+  PAID_TIER_COLUMNS,
   isCancelScheduled,
   isLapsedSubscriber,
   isPaid,
@@ -177,4 +179,38 @@ test('accessDenied explains a missing profile without sending them to checkout t
   assert.equal(missing.code, 'unknown');
   assert.match(missing.error, /listing checks/);
   assert.equal(accessDenied(profile(), 'x').code, 'free');
+});
+
+test('hasEverPaid: welcome, referral or adjustment credit only is free', () => {
+  assert.equal(hasEverPaid(profile()), false);
+  assert.equal(hasEverPaid(null), false);
+  assert.equal(hasEverPaid(undefined), false);
+});
+
+test('hasEverPaid: any subscription ever counts, whatever its state today', () => {
+  assert.equal(hasEverPaid(profile({ stripe_subscription_id: 'sub_1', stripe_subscription_status: 'active' })), true);
+  assert.equal(hasEverPaid(profile({ stripe_subscription_id: 'sub_1', stripe_subscription_status: 'canceled' })), true);
+  assert.equal(hasEverPaid(profile({ stripe_subscription_status: 'past_due' })), true);
+  assert.equal(hasEverPaid({ ...profile(), subscription_started_at: '2026-01-01T00:00:00Z' }), true);
+  // Paused: the Stripe status stays active and the pause window is on the row.
+  assert.equal(hasEverPaid(profile({ stripe_subscription_id: 'sub_1', stripe_subscription_status: 'active', subscription_paused_from: '2026-01-01T00:00:00Z', subscription_paused_until: '2099-01-01T00:00:00Z' })), true);
+});
+
+test('hasEverPaid: a plan granted by hand and a top-up both count', () => {
+  assert.equal(hasEverPaid(profile({ plan: 'pro' })), true);
+  assert.equal(hasEverPaid(profile({ plan_code: 'starter' })), true);
+  assert.equal(hasEverPaid({ ...profile(), last_topup_at: '2026-09-01T00:00:00Z' }), true);
+});
+
+test('hasEverPaid: admins count as paid whatever the row says', () => {
+  assert.equal(hasEverPaid(profile(), { admin: true }), true);
+  assert.equal(hasEverPaid(null, { admin: true }), true);
+  assert.equal(hasEverPaid(profile(), { admin: false }), false);
+});
+
+test('PAID_TIER_COLUMNS names every column the rule reads and nothing the access gate does not already have', () => {
+  for (const col of ['plan', 'plan_code', 'stripe_subscription_id', 'stripe_subscription_status', 'subscription_started_at', 'last_topup_at']) {
+    assert.ok(PAID_TIER_COLUMNS.split(', ').includes(col), col);
+  }
+  assert.equal(PAID_TIER_COLUMNS.includes('subscription_paused'), false);
 });
