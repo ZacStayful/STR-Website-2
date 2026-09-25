@@ -8,6 +8,12 @@ import type { PlanningSignal } from './planning';
 /**
  * Loads the analyser reports the Market Explorer is built from.
  *
+ * Every source is loaded, including 'lead_db' — properties a Stayful lead
+ * database customer paid to analyse from their own lead list, which are meant
+ * to count here. No landlord details are ever sent with those, and nothing
+ * here selects the address column. Which rows then count, and where, is
+ * decided in aggregate.ts and quality.ts.
+ *
  * SERVER ONLY: uses the service-role client. Selects only the columns the
  * aggregator reads, with the monthly revenue breakdown pulled out of
  * `raw_response` by JSON path (never the whole document), and pages in
@@ -21,7 +27,9 @@ import type { PlanningSignal } from './planning';
 export const REPORT_COLUMNS =
   'id, created_at, source, postcode, postcode_area, bedrooms, adr, occupancy, gross_revenue, net_revenue, property_value_low, property_value_high, ' +
   'comp_avg_rating, comp_avg_review_count, comp_avg_listing_age, listing_density, demand_hospitals, demand_universities, demand_transport, demand_events, ' +
-  'monthly:raw_response->shortLet->monthlyRevenue';
+  'monthly:raw_response->shortLet->monthlyRevenue, ' +
+  // The analyser's own quality verdict, so synthetic estimates can be left out (quality.ts).
+  'comparables_found:raw_response->dataQuality->comparablesFound, quality_level:raw_response->dataQuality->>level';
 
 const PAGE = 1000;
 const MAX_PAGES = 50;

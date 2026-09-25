@@ -39,7 +39,7 @@ export function Page3Market({
         <Headline>How it stacks up against the neighbours</Headline>
         <Lead>
           {b.count > 0
-            ? `${b.count} active Airbnb ${b.count === 1 ? "listing" : "listings"} within ${b.radiusKm.toFixed(2)} km · median-aggregated · data from Airbnb via Airbtics`
+            ? `${data.compsLead} · Airbnb data via Airbtics`
             : "No active Airbnb listings were found close enough to compare against."}
         </Lead>
       </View>

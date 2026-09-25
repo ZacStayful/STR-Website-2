@@ -4,6 +4,7 @@ import { ExternalLink, Star } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import type { CompetitorsResult } from '@/lib/types';
 import type { TrackedListing } from '@/lib/listing/competitors';
+import { nearbyCountLabel } from '@/lib/comps/nearby';
 import { gbp, pct0, num0 } from './format';
 
 /** Relative-position dot map: the subject at the centre, competitors around it. */
@@ -42,7 +43,9 @@ export function CompetitorsPanel({ competitors, centre, bedrooms }: { competitor
         <div className="mb-3">
           <p className="text-sm font-semibold text-foreground">Competitors nearby</p>
           <p className="text-xs text-muted-foreground">
-            {s.count} tracked listings within about a kilometre, {s.earning} with bookings in the last year{s.sameSize ? `, ${s.sameSize} with ${bedrooms} bedrooms` : ''}.
+            {s.totalNearby && s.totalNearby > s.count
+              ? `Showing ${nearbyCountLabel(s.count, s.totalNearby)} Airbnb listings within about a kilometre; ${s.earning} of those had bookings in the last year${s.sameSize ? `, ${s.sameSize} with ${bedrooms} bedrooms` : ''}.`
+              : `${s.count} tracked listings within about a kilometre, ${s.earning} with bookings in the last year${s.sameSize ? `, ${s.sameSize} with ${bedrooms} bedrooms` : ''}.`}
             {competitors.updatedAt ? ` Data ${new Date(competitors.updatedAt).toLocaleDateString('en-GB')}.` : ''}
           </p>
         </div>

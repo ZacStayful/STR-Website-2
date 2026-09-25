@@ -18,6 +18,18 @@
  */
 
 import { meter } from '../credit/meter.ts';
+import {
+  calendarMonthMeans,
+  calendarMonthValues,
+  latestCompleteMonth,
+  seasonalMultipliers,
+  SEASONAL_WINDOW_MONTHS,
+  windowEndingAt,
+  windowLabel,
+  type MonthWindow,
+} from '../comps/months.ts';
+import { compHistoryExtras } from '../comps/extras.ts';
+import { boundsRadiusKm, listingsNearbyFrom } from '../comps/nearby.ts';
 import type {
   ShortLetData,
   ShortLetComparable,
@@ -261,20 +273,30 @@ export interface ShortLetOptions {
   specialFeatures?: string[];  // V3: e.g. ['sea_views','hot_tub','near_events_venue']
 }
 
-async function enrichWithThumbnails(
-  comparables: ShortLetComparable[],
+/**
+ * One bounds call around the property after report/all: thumbnails for the
+ * comparables, and Airbtics' total listing count for the box (the call only
+ * returns the first 50). The count is display only.
+ */
+async function enrichFromBounds(
+  data: ShortLetData,
   lat: number,
   lng: number,
   apiKey: string,
-  radiusKm: number,
+  reportRadiusKm: number,
 ): Promise<void> {
+  const comparables = data.comparables;
   if (comparables.length === 0) return;
+  // A missing report radius would make a zero-size box: size it from the
+  // comps instead, or skip the paid call.
+  const radiusKm = boundsRadiusKm(reportRadiusKm, comparables.map((c) => c.distance));
+  if (radiusKm <= 0) return;
   try {
     const boundsResult = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
     if (boundsResult?.listings) {
       const thumbMap = new Map<string, string>();
       for (const l of boundsResult.listings) {
-        if (l.thumbnail_url) thumbMap.set(l.listingID, l.thumbnail_url);
+        if (l.thumbnail_url) thumbMap.set(String(l.listingID), l.thumbnail_url);
       }
       for (const comp of comparables) {
         const listingId = comp.url.split('/rooms/')[1];
@@ -284,8 +306,10 @@ async function enrichWithThumbnails(
       }
       console.log(`[Airbtics] Enriched ${comparables.filter(c => c.thumbnailUrl).length}/${comparables.length} comps with thumbnails`);
     }
+    const nearby = listingsNearbyFrom(boundsResult?.totalCount, radiusKm, comparables.length);
+    if (nearby) data.listingsNearby = nearby;
   } catch {
-    // Non-critical — comps render fine without thumbnails
+    // Non-critical — comps render fine without thumbnails or a count
   }
 }
 
@@ -325,7 +349,7 @@ export async function getShortLetData(
       // If we got 12+ quality comps, use the report result directly
       if (reportAllResult.quality.comparablesFound >= TARGET_COMPARABLES) {
         console.log(`[Airbtics] Using report/all result: ${reportAllResult.quality.comparablesFound} comps found`);
-        await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
+        await enrichFromBounds(reportAllResult.data, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
         return reportAllResult;
       }
       console.log(`[Airbtics] report/all only found ${reportAllResult.quality.comparablesFound}/${TARGET_COMPARABLES} comps - trying bounds expansion`);
@@ -348,7 +372,7 @@ export async function getShortLetData(
     // Prefer whichever found more comparables
     if (reportAllResult && reportAllResult.quality.comparablesFound > marketsResult.quality.comparablesFound) {
       console.log(`[Airbtics] Keeping report/all result (${reportAllResult.quality.comparablesFound} > ${marketsResult.quality.comparablesFound} comps)`);
-      await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
+      await enrichFromBounds(reportAllResult.data, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
       return reportAllResult;
     }
     console.log(`[Airbtics] Using markets flow result: ${marketsResult.quality.comparablesFound} comps`);
@@ -360,7 +384,7 @@ export async function getShortLetData(
   // ── LAST RESORT: Return report/all result even with few comps ──
   if (reportAllResult) {
     console.log('[Airbtics] Returning report/all result as last resort');
-    await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
+    await enrichFromBounds(reportAllResult.data, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
     return reportAllResult;
   }
 
@@ -390,9 +414,11 @@ interface ReportComp {
   avg_booked_daily_rate_ltm: number;
   active_days_count_ltm: number;
   no_of_bookings_ltm: number;
-  revenue_ltm_monthly: Record<string, number>; // "YYYY-MM" → revenue
-  booked_daily_rate_ltm_monthly: Record<string, number>;
-  occupancy_rate_ltm_monthly: Record<string, number>;
+  // "YYYY-MM" → value, from 2021-01 despite the "ltm" names; some months null.
+  revenue_ltm_monthly: Record<string, number | null>;
+  booked_daily_rate_ltm_monthly: Record<string, number | null>;
+  occupancy_rate_ltm_monthly: Record<string, number | null>; // 0-100
+  no_of_bookings_ltm_monthly?: Record<string, number | null>;
   // V3: listing maturity date — present on bounds listings, may or may not be on report/all
   added_on?: string;
   created_date?: string;
@@ -456,6 +482,8 @@ interface ReportAllResult {
   radius: number;
   comps_status: string;
   comps: ReportComp[];
+  /** Airbtics documents a percentile block here; not yet seen on a UK report. */
+  kpi?: unknown;
   // V3 fix — Airbtics returns aggregate median stats at the report level.
   // PMI uses these directly rather than computing a median from the displayed
   // comp list. Verified against 13 PMI PDF reports.
@@ -708,34 +736,11 @@ function getReviewWeight(reviewCount: number | null | undefined): number {
   return 1.0;
 }
 
-/** V3 — Convert our monthly-revenue dict ("YYYY-MM"→revenue) to a 12-element array by calendar month. */
-function revenueDictToArray(dict: Record<string, number> | undefined): number[] | null {
-  if (!dict) return null;
-  const out: number[] = new Array(12).fill(0);
-  const counts: number[] = new Array(12).fill(0);
-  for (const [key, value] of Object.entries(dict)) {
-    const monthPart = key.split('-')[1];
-    if (!monthPart) continue;
-    const mi = parseInt(monthPart, 10) - 1;
-    if (mi >= 0 && mi < 12 && typeof value === 'number' && value > 0) {
-      out[mi] += value;
-      counts[mi] += 1;
-    }
-  }
-  for (let i = 0; i < 12; i++) {
-    if (counts[i] > 0) out[i] /= counts[i];
-  }
-  // If >80% of months are zero, treat as missing
-  const nonZero = out.filter(v => v > 0).length;
-  if (nonZero < 3) return null;
-  return out;
-}
-
 /**
  * V3 — Build a blended 12-point seasonal index.
  * Priority: 50% mature comps monthly average + 50% market (from first comp's dict) + fallback to UK default.
  */
-function buildSeasonalIndex(comps: ReportComp[]): { index: number[]; source: string } {
+function buildSeasonalIndex(comps: ReportComp[], window: MonthWindow | null = null): { index: number[]; source: string } {
   const now = new Date();
   const matureComps = comps.filter(c => {
     const d = parseCompDate(c);
@@ -748,7 +753,7 @@ function buildSeasonalIndex(comps: ReportComp[]): { index: number[]; source: str
     const totals = new Array(12).fill(0);
     const counts = new Array(12).fill(0);
     for (const comp of matureComps) {
-      const arr = revenueDictToArray(comp.revenue_ltm_monthly);
+      const arr = calendarMonthMeans(comp.revenue_ltm_monthly, window);
       if (!arr) continue;
       for (let i = 0; i < 12; i++) {
         if (arr[i] > 0) {
@@ -769,7 +774,7 @@ function buildSeasonalIndex(comps: ReportComp[]): { index: number[]; source: str
   const totals2 = new Array(12).fill(0);
   const counts2 = new Array(12).fill(0);
   for (const comp of comps) {
-    const arr = revenueDictToArray(comp.occupancy_rate_ltm_monthly);
+    const arr = calendarMonthMeans(comp.occupancy_rate_ltm_monthly, window);
     if (!arr) continue;
     for (let i = 0; i < 12; i++) {
       if (arr[i] > 0) {
@@ -1088,18 +1093,11 @@ function buildDataFromReportComps(
   const allComps = report.comps || [];
   console.log(`[V2] buildDataFromReportComps: ${allComps.length} raw comps`);
 
-  // V3 diagnostic — verify whether Airbtics report/all populates listing
-  // date fields. If all three are undefined, annualisation silently degrades
-  // to review-count uplift only and the seasonal-coverage correction never runs.
-  // Remove this log once confirmed.
-  const dateFieldSample = report.comps?.slice(0, 3).map((c: ReportComp) => ({
-    id: c.listingID ?? (c as unknown as { id?: string }).id,
-    added_on: (c as unknown as { added_on?: string }).added_on,
-    created_date: (c as unknown as { created_date?: string }).created_date,
-    listed_date: (c as unknown as { listed_date?: string }).listed_date,
-    active_days_count_ltm: c.active_days_count_ltm,
-  }));
-  console.log('[V3] Comp date field sample:', JSON.stringify(dateFieldSample, null, 2));
+  // Which top-level fields the report carries — in particular whether
+  // Airbtics' documented `kpi` percentile block turns up on UK reports.
+  // (Report comps carry no listing dates: annualisation only applies the
+  // review-count ramp-up uplift.)
+  console.log(`[Airbtics] report keys: ${Object.keys(report).join(',')}${report.kpi !== undefined ? ` kpi=${JSON.stringify(report.kpi)?.slice(0, 400)}` : ''}`);
 
   // ── Step 3a: Non-UK lat/lng filter ──
   const ukComps = allComps.filter(isUKListing);
@@ -1167,7 +1165,13 @@ function buildDataFromReportComps(
   // Fixes the "6-months-live comp with £20k revenue being read as £20k/year" bug:
   // immature listings are revenue-corrected for seasonal coverage, then ramp-up
   // uplift is applied based on review count.
-  const { index: seasonalIndex, source: seasonalSource } = buildSeasonalIndex(top12);
+  // The comps' monthly histories run back to 2021; fold only the latest
+  // SEASONAL_WINDOW_MONTHS complete months into calendar months, so the 2021
+  // lockdown stops shaping the seasonal curve. The anchor comes from the data
+  // (Airbtics lags a month or two), not the calendar.
+  const anchor = latestCompleteMonth(guestFiltered.map((c) => c.revenue_ltm_monthly), new Date());
+  const seasonWindow = windowEndingAt(anchor, SEASONAL_WINDOW_MONTHS);
+  const { index: seasonalIndex, source: seasonalSource } = buildSeasonalIndex(top12, seasonWindow);
   const enrichment = annualiseComps(top12, seasonalIndex);
   const annualisedCount = Array.from(enrichment.values()).filter(e => e.annualised).length;
   console.log(`[V3] Step 3f: seasonalSource=${seasonalSource}, comps_annualised=${annualisedCount}/${top12.length}`);
@@ -1217,6 +1221,21 @@ function buildDataFromReportComps(
       ...(typeof c.no_of_bookings_ltm === 'number' ? { bookings: c.no_of_bookings_ltm } : {}),
     };
   });
+
+  // Earnings ranges, local trend and stay lengths from the comps' histories.
+  // The displayed comps carry the ramp-up uplift, so each one's monthly band
+  // values are scaled by displayed ÷ raw revenue to stay in the table's units.
+  const history = compHistoryExtras({
+    anchor,
+    similar: guestFiltered,
+    displayed: top12.map((c) => {
+      const e = enrichment.get(c.listingID);
+      return { ...c, scale: e && e.rawRevenue > 0 ? e.annualisedRevenue / e.rawRevenue : 1 };
+    }),
+    displayedRevenues: comparables.map((c) => c.annualRevenue),
+  });
+  const bookingDicts = guestFiltered.filter((c) => c.no_of_bookings_ltm_monthly && Object.keys(c.no_of_bookings_ltm_monthly).length > 0).length;
+  console.log(`[V4] history: window=${seasonWindow ? windowLabel(seasonWindow) : 'none'} range=${history.earningsRange?.annual?.n ?? 0} bandMonths=${history.earningsRange?.monthly?.n.filter((n) => n >= 5).length ?? 0} trendN=${history.localTrend?.listings ?? 0} stayComps=${history.stayProfile?.listings ?? 0} bookingsDicts=${bookingDicts}/${guestFiltered.length}`);
 
   // ── Step 5 (V4): PMI-aligned target RevPAR + typical occupancy ──
   // Derived from analysis of 33 PMI PDF reports. The core insight: PMI does
@@ -1390,8 +1409,8 @@ function buildDataFromReportComps(
   console.log(`[V3] Step 6: quality multiplier = ${qualityMultiplier} (${finishQuality || 'average'})`);
 
   // ── Step 7: Separate ADR + occupancy seasonal curves from comp monthly data ──
-  const seasonalADRMultiplier = buildSeasonalMultipliers(enrichedComps, 'booked_daily_rate_ltm_monthly');
-  const seasonalOccMultiplier = buildSeasonalMultipliers(enrichedComps, 'occupancy_rate_ltm_monthly');
+  const seasonalADRMultiplier = seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly), seasonWindow);
+  const seasonalOccMultiplier = seasonalMultipliers(enrichedComps.map((c) => c.occupancy_rate_ltm_monthly), seasonWindow);
 
   // ── Step 8b (V3): Headline ADR multiplier — outdoor + parking only ──
   // V3 fix — headline mode strips location, property type and condition because
@@ -1417,12 +1436,24 @@ function buildDataFromReportComps(
       const monthlyADR = adr * seasonalADRMultiplier[i];
       const monthlyOcc = Math.min(occ * seasonalOccMultiplier[i], 1.0);
       const revenue = Math.round(monthlyADR * monthlyOcc * days);
-      return { adr: Math.round(monthlyADR), occupancy: Math.round(monthlyOcc * 100), revenue };
+      return { adr: Math.round(monthlyADR), occupancy: Math.round(monthlyOcc * 100), occ: monthlyOcc, revenue };
     });
   };
 
   const headlineForecast = buildForecast(adjusted_ADR, base_occ);
   const headlineAnnualRevenue = headlineForecast.reduce((s, m) => s + m.revenue, 0);
+
+  // TEMPORARY (remove once a few weeks of reports have been compared): what
+  // the all-history curves (2021 onwards) would have produced.
+  if (seasonWindow) {
+    const allAdr = seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly));
+    const allOcc = seasonalMultipliers(enrichedComps.map((c) => c.occupancy_rate_ltm_monthly));
+    const allHistory = DAYS_IN_MONTH.reduce((sum, days, i) => sum + Math.round(adjusted_ADR * allAdr[i] * Math.min(base_occ * allOcc[i], 1.0) * days), 0);
+    const delta = allHistory > 0 ? ((headlineAnnualRevenue - allHistory) / allHistory) * 100 : 0;
+    console.log(`[V4] seasonal window ${windowLabel(seasonWindow)}: annual £${headlineAnnualRevenue} (all-history £${allHistory}, Δ${delta.toFixed(1)}%)`);
+  } else {
+    console.log('[V4] seasonal window: none (no dated history) — all-history curves used');
+  }
 
   // ── Step 9 (V3 FIX): Scenarios (worst/base/best) ──
   // V2 had a copy-paste bug where `bestForecast = worstForecast`. V3 properly
@@ -1466,6 +1497,7 @@ function buildDataFromReportComps(
   // Note: the REPORT UI currently uses headline (report/all accuracy).
   // Scenarios layer is available for future UI integration.
   const monthlyRevenue = headlineForecast.map((m) => m.revenue);
+  const monthlyOccupancy = headlineForecast.map((m) => Math.round(m.occ * 1000) / 1000);
   const headlineAverageADR = Math.round(headlineForecast.reduce((s, m) => s + m.adr, 0) / 12);
   const headlineOccupancy = headlineForecast.reduce((s, m) => s + m.occupancy, 0) / 12 / 100;
 
@@ -1530,6 +1562,10 @@ function buildDataFromReportComps(
       locationClass,
       adrMultipliers,
       annualisationMeta,
+      monthlyOccupancy,
+      ...(history.earningsRange ? { earningsRange: history.earningsRange } : {}),
+      ...(history.localTrend ? { localTrend: history.localTrend } : {}),
+      ...(history.stayProfile ? { stayProfile: history.stayProfile } : {}),
     },
     quality: {
       comparablesFound,
@@ -1570,46 +1606,6 @@ function extractMonthlyFromComps(comps: ReportComp[]): number[] {
   return monthTotals.map((total, i) =>
     monthCounts[i] > 0 ? Math.round(total / monthCounts[i]) : 0,
   );
-}
-
-/**
- * Builds seasonal multipliers from comp monthly data.
- * multiplier[month] = monthAverage / annualAverage
- * Falls back to typical UK seasonal pattern if no real data.
- */
-function buildSeasonalMultipliers(
-  comps: ReportComp[],
-  monthlyField: 'booked_daily_rate_ltm_monthly' | 'occupancy_rate_ltm_monthly',
-): number[] {
-  const monthTotals: number[] = new Array(12).fill(0);
-  const monthCounts: number[] = new Array(12).fill(0);
-
-  for (const comp of comps) {
-    const monthlyData = comp[monthlyField];
-    if (!monthlyData) continue;
-    for (const [key, value] of Object.entries(monthlyData)) {
-      const monthPart = key.split('-')[1];
-      if (!monthPart) continue;
-      const monthIndex = parseInt(monthPart, 10) - 1;
-      if (monthIndex >= 0 && monthIndex < 12 && typeof value === 'number' && value > 0) {
-        monthTotals[monthIndex] += value;
-        monthCounts[monthIndex]++;
-      }
-    }
-  }
-
-  const monthAverages = monthTotals.map((total, i) =>
-    monthCounts[i] > 0 ? total / monthCounts[i] : 0,
-  );
-
-  const validMonths = monthAverages.filter(v => v > 0);
-  if (validMonths.length < 6) {
-    // Not enough real data, use default UK seasonal pattern
-    return [0.82, 0.85, 0.95, 1.00, 1.08, 1.18, 1.25, 1.22, 1.10, 0.98, 0.88, 0.80];
-  }
-
-  const annualAverage = validMonths.reduce((s, v) => s + v, 0) / validMonths.length;
-  return monthAverages.map(v => v > 0 ? v / annualAverage : 1.0);
 }
 
 /**
@@ -1675,15 +1671,22 @@ async function getShortLetDataFromMarkets(
   let monthlyRevenue: number[];
   let avgOccupancy: number;
 
-  if (revenue.length > 0) {
-    monthlyRevenue = extractLast12Months(revenue, 'p50');
-    const monthlyOccupancy = extractLast12Months(occupancy, 'p50');
+  // Placed by each item's own month label: the metrics come oldest first, and
+  // every consumer reads monthlyRevenue as January-first. Without usable
+  // labels the order is unknown, so fall through to the seasonal split.
+  const calendarRevenue = revenue.length > 0 ? calendarMonthValues(revenue, 'p50') : null;
+  if (calendarRevenue) {
+    monthlyRevenue = calendarRevenue;
+    const monthlyOccupancy = extractLast12Months(occupancy, 'p50'); // only averaged, so order is irrelevant
     avgOccupancy = monthlyOccupancy.length > 0
       ? monthlyOccupancy.reduce((a, b) => a + b, 0) / monthlyOccupancy.length / 100
       : summaryOccupancy || 0.65;
   } else {
     // Use summary annual revenue distributed with seasonal weighting
-    const base = (summaryRevenue || generateMarketEstimate(bedrooms).annualRevenue) / 12;
+    // (Also reached when monthly metrics came back without usable month
+    // labels: their annual total is still good, only the order is not.)
+    const unlabelledTotal = revenue.length > 0 ? extractLast12Months(revenue, 'p50').reduce((a, b) => a + b, 0) : 0;
+    const base = (summaryRevenue || unlabelledTotal || generateMarketEstimate(bedrooms).annualRevenue) / 12;
     const seasonalMultipliers = [0.82, 0.85, 0.95, 1.00, 1.08, 1.18, 1.25, 1.22, 1.10, 0.98, 0.88, 0.80];
     monthlyRevenue = seasonalMultipliers.map(m => Math.round(base * m));
     avgOccupancy = summaryOccupancy || 0.65;
@@ -1898,6 +1901,38 @@ function extractComparables(
 
 const BOUNDS_TIMEOUT_MS = 15_000;
 
+interface AirbticsReply {
+  ok: boolean;
+  status: number;
+  /** Parsed JSON body, or null when it was not JSON. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
+  /** Raw body text, for error logging. */
+  text: string;
+}
+
+/**
+ * One metered Airbtics call. The body is read inside the metered call so an
+ * `insufficient_credits` reply — which Airbtics sends with HTTP 200 — counts
+ * as failed and is never billed to the member.
+ */
+function airbticsCall(unit: string, key: string, url: string, init: RequestInit): Promise<AirbticsReply> {
+  return meter(
+    { provider: 'airbtics', unit, key, failed: (r) => !r.ok || r.data?.message === 'insufficient_credits' },
+    async () => {
+      const res = await fetch(url, init);
+      const text = await res.text().catch(() => '');
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
+      return { ok: res.ok, status: res.status, data, text };
+    },
+  );
+}
+
 /**
  * Fetches nearby listings within a bounding box using the bounds endpoint.
  * Cost: $0.05/call. Gives up after BOUNDS_TIMEOUT_MS (the callers all treat
@@ -1930,21 +1965,17 @@ async function fetchNearbyListings(
   console.log(`[DEBUG] listings/search/bounds radius: ${radiusKm}km (${radiusMetres}m)`);
   console.log('[DEBUG] listings/search/bounds body:', JSON.stringify(body));
 
-  const response = await meter(
-    { provider: 'airbtics', unit: 'bounds', key: `${lat.toFixed(3)},${lng.toFixed(3)}|${radiusKm}`, failed: (r) => !r.ok },
-    () =>
-      fetch(`${BASE_URL}/listings/search/bounds`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-        },
-        body: JSON.stringify(body),
-        cache: 'no-store',
-        // A hung bounds call must not take the whole request down with it.
-        signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
-      }),
-  );
+  const response = await airbticsCall('bounds', `${lat.toFixed(3)},${lng.toFixed(3)}|${radiusKm}`, `${BASE_URL}/listings/search/bounds`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+    // A hung bounds call must not take the whole request down with it.
+    signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
+  });
 
   console.log(`[DEBUG] listings/search/bounds HTTP status: ${response.status}`);
 
@@ -1953,14 +1984,14 @@ async function fetchNearbyListings(
     // reason (Forbidden, Limit Exceeded, Missing Authentication Token, etc.)
     // instead of just the HTTP status. Helps diagnose per-endpoint auth
     // when the same key works from other origins (e.g. local curl).
-    const errBody = await response.text().catch(() => '<unreadable body>');
     console.error(
-      `[DEBUG] Airbtics bounds search failed HTTP ${response.status} body: ${errBody.slice(0, 500)}`,
+      `[DEBUG] Airbtics bounds search failed HTTP ${response.status} body: ${response.text.slice(0, 500)}`,
     );
     return null;
   }
 
-  const data = await response.json();
+  const data = response.data;
+  if (!data) return null;
   console.log('[DEBUG] Airbtics raw response:', JSON.stringify(data).slice(0, 2000));
 
   if (data.message === 'insufficient_credits') {
@@ -2023,17 +2054,15 @@ async function fetchMarketSummary(
 
   console.log(`[DEBUG] markets/summary URL: ${url.toString()}`);
 
-  const response = await meter({ provider: 'airbtics', unit: 'market_summary', key: `${marketId}|${bedrooms}`, failed: (r) => !r.ok }, () =>
-    fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      cache: 'no-store',
-    }),
-  );
+  const response = await airbticsCall('market_summary', `${marketId}|${bedrooms}`, url.toString(), {
+    headers: { 'x-api-key': apiKey },
+    cache: 'no-store',
+  });
 
   console.log(`[DEBUG] markets/summary HTTP status: ${response.status}`);
-  if (!response.ok) return null;
+  if (!response.ok || !response.data) return null;
 
-  const data = await response.json();
+  const data = response.data;
   console.log('[DEBUG] Market summary raw:', JSON.stringify(data).slice(0, 1000));
 
   if (data.message === 'insufficient_credits' || typeof data.message !== 'object') {
@@ -2111,19 +2140,17 @@ async function findMarketId(postcode: string, apiKey: string): Promise<number | 
   url.searchParams.set('query', searchQuery);
   url.searchParams.set('country_code', 'GB');
 
-  const response = await meter({ provider: 'airbtics', unit: 'market_search', key: cacheKey, failed: (r) => !r.ok }, () =>
-    fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      cache: 'no-store',
-    }),
-  );
+  const response = await airbticsCall('market_search', cacheKey, url.toString(), {
+    headers: { 'x-api-key': apiKey },
+    cache: 'no-store',
+  });
 
-  if (!response.ok) {
+  if (!response.ok || !response.data) {
     marketIdCache.set(cacheKey, { id: null, expiresAt: Date.now() + CACHE_TTL_MS });
     return null;
   }
 
-  const data = await response.json();
+  const data = response.data;
   const markets = data.message;
 
   if (!Array.isArray(markets) || markets.length === 0 || data.message === 'insufficient_credits') {
@@ -2158,24 +2185,21 @@ async function fetchMetric(
 
   console.log(`[DEBUG] markets/metrics/${metric} URL: ${url.toString()}`);
 
-  const response = await meter({ provider: 'airbtics', unit: `metric_${metric}`, key: `${marketId}|${bedrooms}`, failed: (r) => !r.ok }, () =>
-    fetch(url.toString(), {
-      headers: { 'x-api-key': apiKey },
-      cache: 'no-store',
-    }),
-  );
+  const response = await airbticsCall(`metric_${metric}`, `${marketId}|${bedrooms}`, url.toString(), {
+    headers: { 'x-api-key': apiKey },
+    cache: 'no-store',
+  });
 
   console.log(`[DEBUG] markets/metrics/${metric} HTTP status: ${response.status}`);
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '<unreadable body>');
+  if (!response.ok || !response.data) {
     console.error(
-      `[DEBUG] markets/metrics/${metric} failed HTTP ${response.status} body: ${errBody.slice(0, 500)}`,
+      `[DEBUG] markets/metrics/${metric} failed HTTP ${response.status} body: ${response.text.slice(0, 500)}`,
     );
     return [];
   }
 
-  const data = await response.json();
+  const data = response.data;
   console.log(`[DEBUG] Market monthly (${metric}) raw:`, JSON.stringify(data).slice(0, 1000));
 
   if (data.message === 'insufficient_credits') {
@@ -2263,7 +2287,7 @@ function generateMarketEstimate(bedrooms: number): ShortLetData {
 // Thin, typed wrapper around the bounds search so callers outside this
 // file (the data broker) can list every tracked Airbnb near a point with
 // its own performance, without the comp-selection heuristics above.
-import type { TrackedListing } from '../listing/competitors';
+import type { NearbyListingsPage, TrackedListing } from '../listing/competitors';
 
 export function toTrackedListing(l: AirbticsListing, lat: number, lng: number): TrackedListing {
   const rawRating = l.reveiw_scores_rating ?? 0;
@@ -2297,10 +2321,19 @@ export function toTrackedListing(l: AirbticsListing, lat: number, lng: number): 
  * per-listing revenue / ADR / occupancy / reviews. One bounds call ($0.05).
  * Returns null when the key is missing, credits are out, or the call fails.
  */
-export async function findNearbyListings(lat: number, lng: number, radiusKm = 1): Promise<TrackedListing[] | null> {
+/** The first page of listings around a point, plus Airbtics' total count for the box. */
+export async function findNearbyListingsPage(lat: number, lng: number, radiusKm = 1): Promise<NearbyListingsPage | null> {
   const apiKey = process.env.AIRBTICS_API_KEY;
   if (!apiKey) return null;
   const result = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
   if (!result) return null;
-  return result.listings.map((l) => toTrackedListing(l, lat, lng));
+  return {
+    listings: result.listings.map((l) => toTrackedListing(l, lat, lng)),
+    totalCount: result.totalCount > 0 ? result.totalCount : null,
+    radiusKm,
+  };
+}
+
+export async function findNearbyListings(lat: number, lng: number, radiusKm = 1): Promise<TrackedListing[] | null> {
+  return (await findNearbyListingsPage(lat, lng, radiusKm))?.listings ?? null;
 }

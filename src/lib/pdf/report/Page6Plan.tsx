@@ -113,6 +113,25 @@ export function Page6Plan({
         </View>
       </View>
 
+      {/* ── Stays and changeovers ── */}
+      {data.stays ? (
+        <View style={{ marginTop: 14 }}>
+          <Text style={T.label}>STAYS AND CHANGEOVERS, MONTH BY MONTH</Text>
+          <View style={{ flexDirection: "row", marginTop: 6 }}>
+            {data.stays.months.map((m) => (
+              <View key={m.month} style={{ flex: 1, alignItems: "center" }}>
+                <Text style={T.metaMuted}>{m.month.slice(0, 3).toUpperCase()}</Text>
+                <Text style={[T.bodyBold, { marginTop: 3 }]}>{m.nights !== null ? m.nights.toFixed(1) : "—"}</Text>
+                <Text style={[T.body, { color: C.TEXT_MUTED }]}>{m.changeovers !== null ? String(m.changeovers) : "—"}</Text>
+              </View>
+            ))}
+          </View>
+          <Text style={[T.metaMuted, { marginTop: 5 }]}>
+            {`NIGHTS PER STAY (TOP) FROM SIMILAR LISTINGS' BOOKING HISTORY · CHANGEOVERS (BELOW) AT THIS REPORT'S FORECAST OCCUPANCY${data.stays.annualChangeovers !== null ? ` · ABOUT ${data.stays.annualChangeovers} A YEAR` : ""}`}
+          </Text>
+        </View>
+      ) : null}
+
       {/* ── What we handle ── */}
       <View style={{ marginTop: 16 }}>
         <Text style={T.label}>{`${company.toUpperCase()} HANDLES EVERYTHING`}</Text>
