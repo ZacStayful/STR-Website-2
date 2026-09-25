@@ -16,7 +16,7 @@ import { runMetered, type MeterContext } from '../credit/context';
 import { estimateAction, reportAction, type CreditAction } from '../credit/estimate';
 import { getUnitCostTable } from '../credit/unit-costs';
 import { ask, nearbyListings, listingPerformance, strSecondOpinion } from '../broker';
-import { matchTracked, rankCompetitors, summariseCompetitors } from '../listing/competitors';
+import { matchTracked, nearbyPageOf, rankCompetitors, summariseCompetitors } from '../listing/competitors';
 import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '../listing/deal';
 import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
@@ -228,7 +228,8 @@ export async function runAnalysis(
       const brokerCtx = { mode: 'full' as const, userId };
       const competitorsPromise = (async (): Promise<CompetitorsResult | null> => {
         const near = await ask(nearbyListings, { lat: coordinates.lat, lng: coordinates.lng }, brokerCtx);
-        const list = near.value;
+        const page = nearbyPageOf(near.value);
+        const list = page?.listings ?? null;
         const airbnbId = source?.source === 'airbnb' ? source.url.match(/\/rooms\/(\d+)/)?.[1] ?? null : null;
         let tracked = airbnbId && list ? matchTracked(list, airbnbId) : null;
         let provider = near.provider;
@@ -239,7 +240,7 @@ export async function runAnalysis(
         }
         if (!list && !tracked) return null;
         return {
-          summary: summariseCompetitors(list ?? [], property.bedrooms),
+          summary: summariseCompetitors(list ?? [], property.bedrooms, page?.totalCount ?? null),
           top: rankCompetitors(list ?? [], 8),
           tracked,
           trackedMissing: Boolean(airbnbId) && !tracked,
@@ -368,6 +369,9 @@ export async function runAnalysis(
         const padded: number[] = [...priceLabsData.monthlyRevenue];
         while (padded.length < 12) padded.push(0);
         shortLet.monthlyRevenue = padded.slice(0, 12) as ShortLetData['monthlyRevenue'];
+        // PriceLabs' own months replace ours, so our monthly occupancy no
+        // longer matches; changeovers fall back to the annual occupancy.
+        delete shortLet.monthlyOccupancy;
         console.log(`[PriceLabs RE] overrode headline: was £${crossValidation.airbticsRevenue}, now £${priceLabsData.annualRevenue} (range £${priceLabsData.rangeLow}-£${priceLabsData.rangeHigh})`);
       }
       console.log(`[PriceLabs RE] crossValidation: source=${crossValidation.source}, confidence=${crossValidation.confidence}, divergence=${crossValidation.divergencePct?.toFixed(1) ?? 'n/a'}%`);

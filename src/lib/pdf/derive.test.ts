@@ -128,3 +128,67 @@ test('no comparables at all still produces a renderable report', () => {
   }
   assert.equal(d.growth.repeatCustomers, null);
 });
+
+// ── Comparable-history fields ─────────────────────────────────────────────
+
+test('one definition of top 25%: TOP pills sit at or above the Beat revenue, which is the band\'s P75', () => {
+  const d = deriveReportData(sampleAnalysis());
+  const tops = d.comparables.filter((c) => c.top);
+  assert.equal(tops.length, 3);
+  for (const c of tops) assert.ok(c.annual >= d.marketTargets.beatRevenue);
+  assert.equal(d.marketTargets.beatRevenue, d.earnings!.range.p75);
+});
+
+test('newer reports carry the range, trend, stays and nearby lead', () => {
+  const d = deriveReportData(sampleAnalysis());
+  assert.ok(d.earnings && d.earnings.range.n === 12);
+  for (const v of Object.values(d.earnings.positions)) if (v !== null) assert.ok(Number.isFinite(v));
+  assert.match(d.localTrend!, /about 8% more in the year to Aug 2026/);
+  assert.equal(d.stays!.months.length, 12);
+  assert.equal(d.growth.avgStayNights, 2.7);
+  assert.equal(d.compsLead, '12 comparables from about 115 Airbnb listings within about 200 m');
+  assert.ok(!/median-aggregated/.test(d.compsLead));
+  assert.equal(d.monthly[6].occupancy, 0.7);
+});
+
+test('a legacy report derives the annual range from its comps and hides the rest', () => {
+  const now = deriveReportData(sampleAnalysis());
+  const old = deriveReportData(sampleAnalysis({ legacy: true }));
+  assert.deepEqual(old.earnings!.range, now.earnings!.range);
+  assert.equal(old.localTrend, null);
+  assert.equal(old.stays, null);
+  assert.match(old.compsLead, /^12 comparables( within|$)/);
+  // Average stay falls back to the per-comp annual figure, as before.
+  assert.ok(old.growth.avgStayNights !== null);
+});
+
+test('scenario occupancy is read as a percentage', () => {
+  const a = sampleAnalysis({ legacy: true });
+  const base = { annualRevenue: 1, averageDailyRate: 1, occupancyPercent: 72, monthly: Array.from({ length: 12 }, (_, i) => ({ label: String(i), adr: 1, occupancy: 72, revenue: 1 })) };
+  a.shortLet.scenarios = { worst: base, base, best: base };
+  assert.equal(deriveReportData(a).monthly[0].occupancy, 0.72);
+});
+
+test('malformed stored fields never reach the page as NaN', () => {
+  const a = sampleAnalysis();
+  Object.assign(a.shortLet, {
+    earningsRange: { annual: { p25: 'x' }, monthly: 7 },
+    localTrend: { to: 5 },
+    stayProfile: { months: [1] },
+    monthlyOccupancy: [Number.NaN],
+    listingsNearby: { count: -3 },
+  });
+  const d = deriveReportData(a);
+  assert.ok(d.earnings); // derived from the comps instead
+  for (const v of Object.values(d.earnings.positions)) if (v !== null) assert.ok(Number.isFinite(v));
+  assert.equal(d.localTrend, null);
+  assert.equal(d.stays, null);
+  for (const m of d.monthly) assert.ok(Number.isFinite(m.occupancy));
+});
+
+test('the page 3 lead fits one line in the worst case', () => {
+  const a = sampleAnalysis();
+  a.shortLet.listingsNearby = { count: 9999, radiusKm: 1.6, area: 'box' };
+  const lead = `${deriveReportData(a).compsLead} · Airbnb data via Airbtics`;
+  assert.ok(lead.length <= 95, lead);
+});

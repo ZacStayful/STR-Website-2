@@ -62,7 +62,10 @@ export function brokerLedger(): BrokerLedger {
     async spentToday(provider: ProviderName, userId?: string | null): Promise<number> {
       const start = new Date();
       start.setUTCHours(0, 0, 0, 0);
-      let q = admin.from('provider_calls').select('cost_pence').eq('provider', provider).eq('ok', true).gte('at', start.toISOString());
+      // Only calls the broker itself made (tagged with a question name, see
+      // tag.ts): report and fallback spend has its own reservation and must
+      // not use up the lookups' daily budget.
+      let q = admin.from('provider_calls').select('cost_pence').eq('provider', provider).eq('ok', true).gte('at', start.toISOString()).not('question', 'like', `${provider}.%`);
       if (userId) q = q.eq('user_id', userId);
       const { data, error } = await q;
       if (error) throw new Error(error.message);

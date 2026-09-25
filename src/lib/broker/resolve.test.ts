@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveQuestion, memoryStore, memoryLedger } from './resolve.ts';
 import type { Question } from './types.ts';
+import { countsTowardBrokerBudget, currentBrokerQuestion } from './tag.ts';
 
 type P = { id: string };
 type T = { v: number };
@@ -107,4 +108,19 @@ test('concurrent identical requests share one call', async () => {
   ]);
   assert.equal(runs, 1);
   assert.deepEqual(a.value, b.value);
+});
+
+test('rungs run tagged with their question, so the budget can tell broker spend from report spend', async () => {
+  let seen: string | undefined;
+  const q = {
+    name: 'nearbyListings',
+    key: () => 'cell',
+    rungs: [{ provider: 'airbtics' as const, level: 3 as const, costPence: 5, ttlMs: HOUR, run: async () => { seen = currentBrokerQuestion(); return { v: 1 }; } }],
+  };
+  await resolveQuestion({ store: memoryStore(), ledger: memoryLedger(), enabled: () => true }, q, {}, { mode: 'full' });
+  assert.equal(seen, 'nearbyListings');
+  assert.equal(currentBrokerQuestion(), undefined);
+  assert.equal(countsTowardBrokerBudget('airbtics', 'nearbyListings'), true);
+  assert.equal(countsTowardBrokerBudget('airbtics', 'airbtics.report_all'), false);
+  assert.equal(countsTowardBrokerBudget('airbtics', null), false);
 });
