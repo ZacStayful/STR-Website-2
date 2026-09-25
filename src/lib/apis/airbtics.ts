@@ -27,6 +27,8 @@ import {
   windowLabel,
   type MonthWindow,
 } from '../comps/months.ts';
+import { compHistoryExtras } from '../comps/extras.ts';
+import { boundsRadiusKm, listingsNearbyFrom } from '../comps/nearby.ts';
 import type {
   ShortLetData,
   ShortLetComparable,
@@ -270,20 +272,30 @@ export interface ShortLetOptions {
   specialFeatures?: string[];  // V3: e.g. ['sea_views','hot_tub','near_events_venue']
 }
 
-async function enrichWithThumbnails(
-  comparables: ShortLetComparable[],
+/**
+ * One bounds call around the property after report/all: thumbnails for the
+ * comparables, and Airbtics' total listing count for the box (the call only
+ * returns the first 50). The count is display only.
+ */
+async function enrichFromBounds(
+  data: ShortLetData,
   lat: number,
   lng: number,
   apiKey: string,
-  radiusKm: number,
+  reportRadiusKm: number,
 ): Promise<void> {
+  const comparables = data.comparables;
   if (comparables.length === 0) return;
+  // A missing report radius would make a zero-size box: size it from the
+  // comps instead, or skip the paid call.
+  const radiusKm = boundsRadiusKm(reportRadiusKm, comparables.map((c) => c.distance));
+  if (radiusKm <= 0) return;
   try {
     const boundsResult = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
     if (boundsResult?.listings) {
       const thumbMap = new Map<string, string>();
       for (const l of boundsResult.listings) {
-        if (l.thumbnail_url) thumbMap.set(l.listingID, l.thumbnail_url);
+        if (l.thumbnail_url) thumbMap.set(String(l.listingID), l.thumbnail_url);
       }
       for (const comp of comparables) {
         const listingId = comp.url.split('/rooms/')[1];
@@ -293,8 +305,10 @@ async function enrichWithThumbnails(
       }
       console.log(`[Airbtics] Enriched ${comparables.filter(c => c.thumbnailUrl).length}/${comparables.length} comps with thumbnails`);
     }
+    const nearby = listingsNearbyFrom(boundsResult?.totalCount, radiusKm, comparables.length);
+    if (nearby) data.listingsNearby = nearby;
   } catch {
-    // Non-critical — comps render fine without thumbnails
+    // Non-critical — comps render fine without thumbnails or a count
   }
 }
 
@@ -334,7 +348,7 @@ export async function getShortLetData(
       // If we got 12+ quality comps, use the report result directly
       if (reportAllResult.quality.comparablesFound >= TARGET_COMPARABLES) {
         console.log(`[Airbtics] Using report/all result: ${reportAllResult.quality.comparablesFound} comps found`);
-        await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
+        await enrichFromBounds(reportAllResult.data, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
         return reportAllResult;
       }
       console.log(`[Airbtics] report/all only found ${reportAllResult.quality.comparablesFound}/${TARGET_COMPARABLES} comps - trying bounds expansion`);
@@ -357,7 +371,7 @@ export async function getShortLetData(
     // Prefer whichever found more comparables
     if (reportAllResult && reportAllResult.quality.comparablesFound > marketsResult.quality.comparablesFound) {
       console.log(`[Airbtics] Keeping report/all result (${reportAllResult.quality.comparablesFound} > ${marketsResult.quality.comparablesFound} comps)`);
-      await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
+      await enrichFromBounds(reportAllResult.data, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
       return reportAllResult;
     }
     console.log(`[Airbtics] Using markets flow result: ${marketsResult.quality.comparablesFound} comps`);
@@ -369,7 +383,7 @@ export async function getShortLetData(
   // ── LAST RESORT: Return report/all result even with few comps ──
   if (reportAllResult) {
     console.log('[Airbtics] Returning report/all result as last resort');
-    await enrichWithThumbnails(reportAllResult.data.comparables, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
+    await enrichFromBounds(reportAllResult.data, lat, lng, apiKey, reportAllResult.quality.searchRadiusKm);
     return reportAllResult;
   }
 
@@ -399,9 +413,11 @@ interface ReportComp {
   avg_booked_daily_rate_ltm: number;
   active_days_count_ltm: number;
   no_of_bookings_ltm: number;
-  revenue_ltm_monthly: Record<string, number>; // "YYYY-MM" → revenue
-  booked_daily_rate_ltm_monthly: Record<string, number>;
-  occupancy_rate_ltm_monthly: Record<string, number>;
+  // "YYYY-MM" → value, from 2021-01 despite the "ltm" names; some months null.
+  revenue_ltm_monthly: Record<string, number | null>;
+  booked_daily_rate_ltm_monthly: Record<string, number | null>;
+  occupancy_rate_ltm_monthly: Record<string, number | null>; // 0-100
+  no_of_bookings_ltm_monthly?: Record<string, number | null>;
   // V3: listing maturity date — present on bounds listings, may or may not be on report/all
   added_on?: string;
   created_date?: string;
@@ -465,6 +481,8 @@ interface ReportAllResult {
   radius: number;
   comps_status: string;
   comps: ReportComp[];
+  /** Airbtics documents a percentile block here; not yet seen on a UK report. */
+  kpi?: unknown;
   // V3 fix — Airbtics returns aggregate median stats at the report level.
   // PMI uses these directly rather than computing a median from the displayed
   // comp list. Verified against 13 PMI PDF reports.
@@ -1074,18 +1092,11 @@ function buildDataFromReportComps(
   const allComps = report.comps || [];
   console.log(`[V2] buildDataFromReportComps: ${allComps.length} raw comps`);
 
-  // V3 diagnostic — verify whether Airbtics report/all populates listing
-  // date fields. If all three are undefined, annualisation silently degrades
-  // to review-count uplift only and the seasonal-coverage correction never runs.
-  // Remove this log once confirmed.
-  const dateFieldSample = report.comps?.slice(0, 3).map((c: ReportComp) => ({
-    id: c.listingID ?? (c as unknown as { id?: string }).id,
-    added_on: (c as unknown as { added_on?: string }).added_on,
-    created_date: (c as unknown as { created_date?: string }).created_date,
-    listed_date: (c as unknown as { listed_date?: string }).listed_date,
-    active_days_count_ltm: c.active_days_count_ltm,
-  }));
-  console.log('[V3] Comp date field sample:', JSON.stringify(dateFieldSample, null, 2));
+  // Which top-level fields the report carries — in particular whether
+  // Airbtics' documented `kpi` percentile block turns up on UK reports.
+  // (Report comps carry no listing dates: annualisation only applies the
+  // review-count ramp-up uplift.)
+  console.log(`[Airbtics] report keys: ${Object.keys(report).join(',')}${report.kpi !== undefined ? ` kpi=${JSON.stringify(report.kpi)?.slice(0, 400)}` : ''}`);
 
   // ── Step 3a: Non-UK lat/lng filter ──
   const ukComps = allComps.filter(isUKListing);
@@ -1209,6 +1220,21 @@ function buildDataFromReportComps(
       ...(typeof c.no_of_bookings_ltm === 'number' ? { bookings: c.no_of_bookings_ltm } : {}),
     };
   });
+
+  // Earnings ranges, local trend and stay lengths from the comps' histories.
+  // The displayed comps carry the ramp-up uplift, so each one's monthly band
+  // values are scaled by displayed ÷ raw revenue to stay in the table's units.
+  const history = compHistoryExtras({
+    anchor,
+    similar: guestFiltered,
+    displayed: top12.map((c) => {
+      const e = enrichment.get(c.listingID);
+      return { ...c, scale: e && e.rawRevenue > 0 ? e.annualisedRevenue / e.rawRevenue : 1 };
+    }),
+    displayedRevenues: comparables.map((c) => c.annualRevenue),
+  });
+  const bookingDicts = guestFiltered.filter((c) => c.no_of_bookings_ltm_monthly && Object.keys(c.no_of_bookings_ltm_monthly).length > 0).length;
+  console.log(`[V4] history: window=${seasonWindow ? windowLabel(seasonWindow) : 'none'} range=${history.earningsRange?.annual?.n ?? 0} bandMonths=${history.earningsRange?.monthly?.n.filter((n) => n >= 5).length ?? 0} trendN=${history.localTrend?.listings ?? 0} stayComps=${history.stayProfile?.listings ?? 0} bookingsDicts=${bookingDicts}/${guestFiltered.length}`);
 
   // ── Step 5 (V4): PMI-aligned target RevPAR + typical occupancy ──
   // Derived from analysis of 33 PMI PDF reports. The core insight: PMI does
@@ -1409,7 +1435,7 @@ function buildDataFromReportComps(
       const monthlyADR = adr * seasonalADRMultiplier[i];
       const monthlyOcc = Math.min(occ * seasonalOccMultiplier[i], 1.0);
       const revenue = Math.round(monthlyADR * monthlyOcc * days);
-      return { adr: Math.round(monthlyADR), occupancy: Math.round(monthlyOcc * 100), revenue };
+      return { adr: Math.round(monthlyADR), occupancy: Math.round(monthlyOcc * 100), occ: monthlyOcc, revenue };
     });
   };
 
@@ -1470,6 +1496,7 @@ function buildDataFromReportComps(
   // Note: the REPORT UI currently uses headline (report/all accuracy).
   // Scenarios layer is available for future UI integration.
   const monthlyRevenue = headlineForecast.map((m) => m.revenue);
+  const monthlyOccupancy = headlineForecast.map((m) => Math.round(m.occ * 1000) / 1000);
   const headlineAverageADR = Math.round(headlineForecast.reduce((s, m) => s + m.adr, 0) / 12);
   const headlineOccupancy = headlineForecast.reduce((s, m) => s + m.occupancy, 0) / 12 / 100;
 
@@ -1534,6 +1561,10 @@ function buildDataFromReportComps(
       locationClass,
       adrMultipliers,
       annualisationMeta,
+      monthlyOccupancy,
+      ...(history.earningsRange ? { earningsRange: history.earningsRange } : {}),
+      ...(history.localTrend ? { localTrend: history.localTrend } : {}),
+      ...(history.stayProfile ? { stayProfile: history.stayProfile } : {}),
     },
     quality: {
       comparablesFound,

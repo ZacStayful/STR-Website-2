@@ -368,6 +368,9 @@ export async function runAnalysis(
         const padded: number[] = [...priceLabsData.monthlyRevenue];
         while (padded.length < 12) padded.push(0);
         shortLet.monthlyRevenue = padded.slice(0, 12) as ShortLetData['monthlyRevenue'];
+        // PriceLabs' own months replace ours, so our monthly occupancy no
+        // longer matches; changeovers fall back to the annual occupancy.
+        delete shortLet.monthlyOccupancy;
         console.log(`[PriceLabs RE] overrode headline: was £${crossValidation.airbticsRevenue}, now £${priceLabsData.annualRevenue} (range £${priceLabsData.rangeLow}-£${priceLabsData.rangeHigh})`);
       }
       console.log(`[PriceLabs RE] crossValidation: source=${crossValidation.source}, confidence=${crossValidation.confidence}, divergence=${crossValidation.divergencePct?.toFixed(1) ?? 'n/a'}%`);
