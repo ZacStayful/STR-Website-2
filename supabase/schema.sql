@@ -1832,19 +1832,52 @@ revoke execute on function public.credit_debit_face(uuid, numeric, jsonb) from p
 alter table public.saved_searches add column if not exists owner_id uuid references public.profiles(id) on delete cascade;
 update public.saved_searches set owner_id = user_id where owner_id is null;
 create index if not exists saved_searches_owner_idx on public.saved_searches (owner_id, created_at desc);
--- team_members is service-role only, so a policy cannot read it directly
--- (the lookup would itself be filtered to nothing). This definer function
--- answers the one question the policy needs and nothing else.
-create or replace function public.is_active_member_of(p_owner uuid)
-returns boolean language sql security definer set search_path = public stable as $$
-  select exists (
-    select 1 from team_members
-    where member_id = auth.uid() and owner_id = p_owner and suspended_at is null
-  );
+-- Helpers live in `private`, a schema the API does not expose: nobody can
+-- call them over /rest/v1/rpc, and they are still usable from policies and
+-- triggers.
+create schema if not exists private;
+grant usage on schema private to authenticated;
+
+-- The caller's team owner while their seat is active, else null.
+-- team_members is service-role only, so a policy cannot read it directly;
+-- this definer function answers the one question the policy needs.
+create or replace function private.active_team_owner()
+returns uuid language sql security definer set search_path = public stable as $$
+  select owner_id from public.team_members
+  where member_id = (select auth.uid()) and suspended_at is null;
 $$;
-revoke execute on function public.is_active_member_of(uuid) from public, anon;
-grant execute on function public.is_active_member_of(uuid) to authenticated;
+revoke execute on function private.active_team_owner() from public;
+grant execute on function private.active_team_owner() to authenticated;
+
+-- Wrapped in (select ...) so each is evaluated once per query, not per row.
+-- `to authenticated`: anonymous requests never evaluate it.
 drop policy if exists "Team can read team searches" on public.saved_searches;
 create policy "Team can read team searches"
-  on public.saved_searches for select
-  using (owner_id = auth.uid() or public.is_active_member_of(owner_id));
+  on public.saved_searches for select to authenticated
+  using (owner_id = (select auth.uid()) or owner_id = (select private.active_team_owner()));
+
+-- owner_id is decided by the database, never by the writer. Signed-in users
+-- can write their own rows with the public key, so a client-supplied
+-- owner_id would let anyone plant a report in another account's team list.
+-- On insert it is derived from team membership (the team owner, else the
+-- author); once set it never moves. This also covers inserts from code that
+-- predates the column.
+create or replace function private.saved_searches_set_owner()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' and old.owner_id is not null then
+    new.owner_id := old.owner_id;
+  else
+    new.owner_id := coalesce(
+      (select tm.owner_id from public.team_members tm where tm.member_id = new.user_id),
+      new.user_id
+    );
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function private.saved_searches_set_owner() from public;
+drop trigger if exists saved_searches_set_owner on public.saved_searches;
+create trigger saved_searches_set_owner
+  before insert or update on public.saved_searches
+  for each row execute function private.saved_searches_set_owner();

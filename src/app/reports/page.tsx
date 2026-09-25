@@ -40,11 +40,12 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
-  // A team shares one list: everything paid for by the owner. A paused
-  // member sees only what they ran themselves until their seat is back.
+  // Which reports this person sees is decided by RLS on saved_searches:
+  // their own, plus — for an owner or an active team member — the team's.
+  // So a member also keeps the reports they ran before joining, and a
+  // paused member sees only their own until their seat is back.
   const payer = await payerFor(user.id);
-  const teamView = !payer.suspended;
-  const team = teamView ? await teamMembersOf(payer.payerId) : [];
+  const team = await teamMembersOf(payer.payerId);
   const showAuthors = team.length > 0;
 
   let query = supabase
@@ -52,7 +53,6 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
     .select(
       "id, user_id, address, postcode, bedrooms, kind, created_at, revenue:result->shortLet->annualRevenue, fit:result->verdict->>fit, source:source_listing->>source, source_url:source_listing->>url, deal_kind:deal->>kind, deal_yield:deal->>grossYieldPct, deal_margin:deal->>monthlyMargin",
     )
-    .eq(teamView ? "owner_id" : "user_id", teamView ? payer.payerId : user.id)
     .order("created_at", { ascending: false })
     .limit(200);
   const term = q?.trim();
