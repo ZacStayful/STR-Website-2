@@ -829,3 +829,13 @@
   .mx2-sort { margin-left: 0; }
 }
 .mx2-mcard-sub .mx-managed { display: inline-block; white-space: nowrap; vertical-align: middle; margin-top: 2px; }
+
+/* Marketplace deals on the area page */
+.mx2-mdeal { text-decoration: none; color: inherit; }
+.mx2-mdeal-thumb { position: relative; display: block; aspect-ratio: 4 / 3; width: 100%; border-radius: 10px; overflow: hidden; background: linear-gradient(135deg, var(--mx-sage-light), var(--mx-sage-mint)); margin-bottom: 4px; }
+.mx2-mdeal-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mx2-mdeal-thumb.is-empty { background: repeating-linear-gradient(45deg, #eef0ee, #eef0ee 6px, #e4e7dc 6px, #e4e7dc 12px); }
+.mx2-mdeal-thumb-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--mx-muted); }
+.mx2-mdeal-kind { position: absolute; left: 8px; top: 8px; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.02em; color: #fff; background: rgba(46,61,43,0.75); padding: 3px 8px; border-radius: 999px; }
+.mx2-mdeal-price { font-size: 13px; color: var(--mx-ink); white-space: nowrap; }
+.mx2-mdeal-live { color: var(--mx-sage-deep-2); }

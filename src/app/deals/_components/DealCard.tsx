@@ -1,22 +1,10 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
-import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
+import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
 
-const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
-
-export function priceLine(card: Pick<Card, "price_amount" | "price_period">): string | null {
-  if (card.price_amount === null) return null;
-  const n = Number(card.price_amount);
-  return card.price_period === "pcm" ? `${gbp(n)} pcm` : gbp(n);
-}
-
-export function headlineFigure(card: Pick<Card, "kind" | "annual_profit" | "uplift_pct">): { big: string; small: string } {
-  const profit = card.annual_profit === null ? null : Number(card.annual_profit);
-  if (card.kind === "rent") return { big: profit === null ? "—" : `${gbp(profit)}/yr`, small: "profit after rent" };
-  const uplift = card.uplift_pct === null ? null : Number(card.uplift_pct);
-  return { big: uplift === null ? "—" : `+${Math.round(uplift)}%`, small: profit === null ? "over a long let" : `${gbp(profit)}/yr over a long let` };
-}
+// Re-exported for the pages that format a deal without rendering this card.
+export { headlineFigure, priceLine };
 
 /**
  * One deal on the grid. Everything here is free to see: the figures, the

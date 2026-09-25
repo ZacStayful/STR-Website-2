@@ -189,3 +189,67 @@ export function describeType(card: Pick<DealCard, 'bedrooms' | 'raw_type' | 'ten
   const head = parts.join(' ');
   return card.tenure ? (head ? `${head} · ${card.tenure}` : card.tenure) : head;
 }
+
+const gbpWhole = (n: number): string => `£${Math.round(n).toLocaleString('en-GB')}`;
+
+/** "£250,000" or "£1,200 pcm". */
+export function priceLine(card: Pick<DealCard, 'price_amount' | 'price_period'>): string | null {
+  if (card.price_amount === null) return null;
+  const n = Number(card.price_amount);
+  return card.price_period === 'pcm' ? `${gbpWhole(n)} pcm` : gbpWhole(n);
+}
+
+/** The one number a card leads with: uplift for a purchase, annual profit for rent-to-rent. */
+export function headlineFigure(card: Pick<DealCard, 'kind' | 'annual_profit' | 'uplift_pct'>): { big: string; small: string } {
+  const profit = card.annual_profit === null ? null : Number(card.annual_profit);
+  if (card.kind === 'rent') return { big: profit === null ? '—' : `${gbpWhole(profit)}/yr`, small: 'profit after rent' };
+  const uplift = card.uplift_pct === null ? null : Number(card.uplift_pct);
+  return { big: uplift === null ? '—' : `+${Math.round(uplift)}%`, small: profit === null ? 'over a long let' : `${gbpWhole(profit)}/yr over a long let` };
+}
+
+// ── The Market Explorer's "deals on the market here" block ──
+
+/** One deal as the area page shows it: already formatted, nothing private, serialisable to the client. */
+export interface AreaDealView {
+  id: string;
+  kind: SourcingKind;
+  /** "Acomb · YO24" */
+  where: string;
+  type: string;
+  price: string | null;
+  figureBig: string;
+  figureSmall: string;
+  tags: Badges['tags'];
+  freshness: string;
+  freshnessKind: Badges['freshnessKind'];
+  photoUrl: string | null;
+  source: ListingSource;
+}
+
+export interface AreaDealsSummary {
+  code: string;
+  sale: number;
+  rent: number;
+  total: number;
+  medianProfit: number | null;
+  top: AreaDealView[];
+}
+
+export function areaDealView(card: DealCard, photoUrl: string | null, now: Date = new Date()): AreaDealView {
+  const badges = badgesFor(card, now);
+  const figure = headlineFigure(card);
+  return {
+    id: card.id,
+    kind: card.kind,
+    where: [card.town, card.outcode].filter(Boolean).join(' · '),
+    type: describeType(card),
+    price: priceLine(card),
+    figureBig: figure.big,
+    figureSmall: figure.small,
+    tags: badges.tags,
+    freshness: badges.freshness,
+    freshnessKind: badges.freshnessKind,
+    photoUrl,
+    source: card.source,
+  };
+}

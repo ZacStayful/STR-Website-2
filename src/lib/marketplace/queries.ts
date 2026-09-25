@@ -9,7 +9,7 @@ import 'server-only';
  */
 import { unstable_cache } from 'next/cache';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { PAGE_SIZE, PUBLIC_DEAL_COLUMNS, type DealCard, type DealFilters, type DealKindFilter } from './grid';
+import { PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
 
@@ -185,3 +185,18 @@ async function teaserUncached(code: string): Promise<AreaTeaser | null> {
 
 /** One area's public teaser, cached for an hour and invalidated with the pool. */
 export const teaserForArea = unstable_cache(teaserUncached, ['marketplace-area-teaser'], { revalidate: 3600, tags: [DEALS_TAG] });
+
+/**
+ * The Market Explorer's "deals on the market here" block: counts, the median
+ * profit and the top three deals, formatted and with signed photo URLs. The
+ * cached teaser is shared with the public area page; the photo signatures
+ * are day-scoped so they are added outside the cache.
+ */
+export async function marketDealsForArea(code: string, now: Date = new Date()): Promise<AreaDealsSummary | null> {
+  const t = await teaserForArea(code).catch((err) => {
+    console.error('[marketplace] marketDealsForArea failed:', (err as Error)?.message ?? err);
+    return null;
+  });
+  if (!t) return null;
+  return { code: t.code, sale: t.sale, rent: t.rent, total: t.total, medianProfit: t.medianProfit, top: t.top.map((c) => areaDealView(c, photoUrlFor(c, now), now)) };
+}

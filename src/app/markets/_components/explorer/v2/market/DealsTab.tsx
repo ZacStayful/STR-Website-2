@@ -7,6 +7,8 @@ import { formatListingPrice } from "@/lib/listing/format";
 import { PIPELINE_STATUSES, rowFromResolved, type CheckedListingRow } from "@/lib/listing/pipeline";
 import type { ResolvedListing } from "@/app/estimate/_components/listing-client-types";
 import type { ExplorerRow, MarketGoals } from "../../types";
+import type { AreaDealsSummary } from "@/lib/marketplace/grid";
+import { MarketDealsHere } from "./MarketDealsHere";
 import { listingVerdict } from "../../verdicts";
 import { VerdictChip } from "../../VerdictBits";
 import { ListingDrawer } from "../../ListingDrawer";
@@ -22,6 +24,7 @@ export function DealsTab({
   areaRow,
   goals,
   listings,
+  marketDeals,
   onListings,
   activeListing,
   onActiveListing,
@@ -30,6 +33,7 @@ export function DealsTab({
   areaRow: ExplorerRow;
   goals: MarketGoals | null;
   listings: CheckedListingRow[];
+  marketDeals: AreaDealsSummary | null;
   onListings: (next: CheckedListingRow[] | ((prev: CheckedListingRow[]) => CheckedListingRow[])) => void;
   activeListing: string | null;
   onActiveListing: (id: string | null) => void;
@@ -63,6 +67,8 @@ export function DealsTab({
 
   return (
     <div className="mx2-tabbody">
+      <MarketDealsHere summary={marketDeals} areaCode={code} areaName={areaRow.card.name} />
+
       <div className="mx2-section-head">
         <div>
           <h3>Your deals</h3>

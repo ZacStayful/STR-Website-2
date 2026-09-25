@@ -9,6 +9,7 @@ import { MarketPage } from "../_components/explorer/v2/market/MarketPage";
 import { loadExplorerUser } from "../_lib/loadExplorerUser";
 import { isSortKey } from "@/lib/market/rank";
 import { isTabKey } from "@/lib/market/tab-model";
+import { marketDealsForArea } from "@/lib/marketplace/queries";
 
 // One market as a full page: overview, sub-markets, listings, occupancy,
 // revenue, rates, seasonality, competition, licensing, long-let vs
@@ -48,7 +49,7 @@ export default async function AreaPage({
   if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort, district, tab }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
+  const [{ sort, district, tab }, snapshot, user, marketDeals] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user), marketDealsForArea(meta.code)]);
   const { cards } = snapshot;
   const card = cards.find((c) => c.code === meta.code) ?? null;
   // ?district=NG7 opens a sub-market inside the area; anything that is not one of its districts is ignored by the page.
@@ -65,6 +66,7 @@ export default async function AreaPage({
       alertWeekly={user.alertWeekly}
       sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
+      marketDeals={marketDeals}
       initialTab={isTabKey(tab) ? tab : "overview"}
       initialDistrict={initialDistrict}
       initialSort={isSortKey(sort) ? sort : "stayful"}
