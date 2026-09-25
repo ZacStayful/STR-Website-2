@@ -16,6 +16,8 @@ import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
 import type { Deal } from './deal.ts';
 import { propertyKind } from './suitability.ts';
+import { BAND_LABELS, screeningScore, screeningWorking, type Screening } from './screen.ts';
+import { motivationLabel, type Motivation } from './motivation.ts';
 
 export type PickBasis = 'goals' | 'house';
 export type PickStatus = 'pending' | 'sent' | 'failed';
@@ -62,6 +64,18 @@ export interface HouseAreaCard {
 export const HOUSE_AREAS = 8;
 
 /**
+ * The best-scored areas Stayful has real data for, best first. Areas still at
+ * the `early` confidence tier are left out: their score is not yet a claim
+ * worth searching on. Shared by the house pick and the marketplace sweep.
+ */
+export function topScoredAreas<C extends HouseAreaCard>(cards: C[], limit: number): C[] {
+  return cards
+    .filter((c) => c.score !== null && c.confidence.tier !== 'early')
+    .sort((a, b) => b.score!.score - a.score!.score)
+    .slice(0, Math.max(0, limit));
+}
+
+/**
  * The best-scored areas Stayful has real data for, as searches. With goals
  * (a member whose filter names no areas) the member's own kind, budget and
  * bedrooms apply; without, both kinds and no bounds, so the reply to the
@@ -72,10 +86,7 @@ export function houseQueries(cards: HouseAreaCard[], goals: MarketGoals | null, 
   const kinds: SourcingKind[] = goals ? (g.sourcingKind === 'both' ? ['sale', 'rent'] : [g.sourcingKind]) : ['sale', 'rent'];
   const bounds = goals ? budgetBounds(g.budget) : { min: null, max: null };
   const minBedrooms = goals ? g.bedrooms ?? null : null;
-  const areas = cards
-    .filter((c) => c.score !== null && c.confidence.tier !== 'early')
-    .sort((a, b) => b.score!.score - a.score!.score)
-    .slice(0, limit);
+  const areas = topScoredAreas(cards, limit);
   const out: SourcingQuery[] = [];
   for (const a of areas) {
     for (const kind of kinds) {
@@ -115,7 +126,7 @@ export const PICK_REASONS = [
   { key: 'no_houses', label: 'No houses', group: 'type', effect: 'flats only from now on' },
   { key: 'needs_work', label: 'Needs too much work', group: 'type', effect: 'we skip renovation projects and auctions' },
   { key: 'not_str_suitable', label: 'Could not be run as a short let', group: 'type', effect: 'we tighten the short-let checks' },
-  { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send better returns than this one' },
+  { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send properties that beat this one against a long-term let' },
   { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we switch you to rentals' },
   { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we switch you to sales' },
   { key: 'seen_it', label: 'Already seen it', group: 'other', effect: null },
@@ -164,11 +175,21 @@ export interface PickFeedback {
   rawType: string | null;
   /** Postcode district of the pick (a "bad spot" is skipped by district). */
   outcode?: string | null;
-  /** Gross yield % (purchase) or monthly margin £ (rent-to-rent) of the pick's deal. */
-  dealScore?: number | null;
+  /**
+   * The income screening's headline figure for the pick: uplift % for a
+   * purchase, annual profit £ for rent-to-rent. What "return too low" now
+   * compares against.
+   *
+   * Absent on picks sent before the screening existed, and that is deliberate:
+   * those rows carry a gross yield or a monthly margin, which are different
+   * quantities in different units. Letting them set a floor here would compare
+   * a 12.5% yield against a 12.5% uplift and silently mis-filter. They simply
+   * contribute nothing and age out of the 60-day feedback window.
+   */
+  screeningScore?: number | null;
 }
 
-/** Yield for a purchase, monthly margin for rent-to-rent: the number a "return too low" compares against. */
+/** Yield for a purchase, monthly margin for rent-to-rent. Kept for the admin report's own column. */
 export function dealScoreOf(deal: Deal | null | undefined): number | null {
   if (!deal) return null;
   return deal.kind === 'purchase' ? deal.grossYieldPct : deal.monthlyMargin;
@@ -245,7 +266,7 @@ export function feedbackRules(feedback: PickFeedback[]): AppliedRules {
     if (has('too_big') && f.bedrooms !== null && f.bedrooms > 1) r.maxBeds = Math.min(r.maxBeds ?? Infinity, f.bedrooms - 1);
     if (has('wrong_size') && f.bedrooms !== null) r.badSizes.add(f.bedrooms);
     if (has('wrong_type') && f.rawType) r.badTypes.add(f.rawType.toLowerCase());
-    if (has('poor_return') && f.kind && typeof f.dealScore === 'number') r.minReturn[f.kind] = Math.max(r.minReturn[f.kind] ?? -Infinity, f.dealScore);
+    if (has('poor_return') && f.kind && typeof f.screeningScore === 'number') r.minReturn[f.kind] = Math.max(r.minReturn[f.kind] ?? -Infinity, f.screeningScore);
     if (has('no_flats')) r.noFlats = true;
     if (has('no_houses')) r.noHouses = true;
     if (has('needs_work')) r.noWork = true;
@@ -344,7 +365,7 @@ export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedb
  * the member already said no to. Each rule is per kind where the rejected
  * pick's kind is known (a purchase budget is not a rent ceiling).
  */
-export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
+export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null; screening?: Screening | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
   return candidates.filter((c) => {
     const l = c.listing;
     const amount = l.price ? (l.kind === 'rent' ? (l.price.period === 'pw' ? (l.price.amount * 52) / 12 : l.price.amount) : l.price.amount) : null;
@@ -369,7 +390,10 @@ export function applyCandidateFeedback<C extends { listing: SourcedListing; deal
     if (rules.noWork && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
     const need = rules.minReturn[l.kind];
     if (need !== undefined) {
-      const score = dealScoreOf(c.deal);
+      // Same metric on both sides: the floor came from a screening, so it is
+      // compared against one. A candidate we could not screen is not dropped —
+      // there is nothing to compare, and silence costs the member their pick.
+      const score = screeningScore(c.screening);
       if (score !== null && score <= need) return false;
     }
     return true;
@@ -411,11 +435,24 @@ export interface PickEmailInput {
   firstEver: boolean;
   /** What the pick cost them, in base pence (0 for admins). */
   chargedBasePence: number;
+  /** Nothing matched the filter exactly and this is the nearest thing we found. */
+  nearMiss?: boolean;
+  /** The one setting to change, from analyseRelaxation. Shown only on a near miss. */
+  relaxation?: string | null;
+  /** The income screening this pick was sent on, shown as the working. */
+  screening?: Screening | null;
+  /** The marketplace deal this pick was drawn from, when it came from the pool: the email links to its sheet. */
+  dealId?: string | null;
 }
 
-export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string) {
+export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null } | null) {
   const base = siteUrl.replace(/\/$/, '');
+  const more = deal ? `${base}/deals?kind=${deal.kind}${deal.area ? `&areas=${encodeURIComponent(deal.area)}` : ''}${deal.bedrooms ? `&beds=${deal.bedrooms >= 4 ? '4%2B' : deal.bedrooms}` : ''}` : null;
   return {
+    /** The deal sheet on the marketplace, when the pick came from the pool. */
+    deal: deal ? `${base}/deals/${deal.dealId}` : null,
+    /** The marketplace filtered to this pick's kind, area and size. */
+    more,
     yes: `${base}/p/${token}?a=yes`,
     no: `${base}/p/${token}?a=no`,
     save: `${base}/picks?save=${encodeURIComponent(id)}`,
@@ -442,14 +479,41 @@ export function pickLabel(l: SourcedListing): string {
   return `${l.address ?? l.title} — ${bits.join(' · ')}`;
 }
 
+/**
+ * The reasons the seller or landlord looks ready to deal, in plain words.
+ *
+ * Built only from signals that actually fired, so the line can never claim more
+ * than the listing supports — and capped at three, because a wall of reasons
+ * reads as a sales pitch rather than evidence.
+ */
+export function describeMotivation(m: Motivation | null | undefined, limit = 3): string | null {
+  if (!m || m.fired.length === 0) return null;
+  const reasons = m.fired.slice(0, limit).map(motivationLabel);
+  return `Why this one: ${reasons.join(' · ')}.`;
+}
+
 export function pickEmail(input: PickEmailInput): { subject: string; text: string; html: string; headers: Record<string, string> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
-  const links = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl);
+  const links = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
   const kindWord = l.kind === 'rent' ? 'rent-to-rent' : 'to buy';
-  const subject = `Today's pick ${kindWord}: ${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}${pick.deal ? ` · ${pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`}` : ''}`;
+  const sc = input.screening && input.screening.band !== 'insufficient-data' ? input.screening : null;
+  // The subject leads on the screening where there is one: "42% above a long let"
+  // is the thing the member is deciding on, and it keeps the subject line and the
+  // body telling one story rather than two.
+  const scHeadline = sc ? (sc.kind === 'purchase' ? `${sc.upliftPct}% above a long let` : `£${Math.round(sc.annualProfit!).toLocaleString('en-GB')}/yr profit`) : null;
+  const subject = `Today's pick ${kindWord}: ${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}${scHeadline ? ` · ${scHeadline}` : pick.deal ? ` · ${pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`}` : ''}`;
+  const work = sc ? screeningWorking(sc) : [];
+  const scVerdict = sc ? `${BAND_LABELS[sc.band]} — ${sc.reason}` : null;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
   const dealLine = pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
+  const motivationLine = describeMotivation(pick.motivation ?? null);
+  // Said first and said plainly. A near miss presented as a match is a small
+  // lie that costs more trust than the empty day it was avoiding.
+  const nearMissLine = input.nearMiss
+    ? `Nothing matched your filter exactly today — this is the closest we found.`
+    : null;
+  const relaxLine = input.nearMiss ? input.relaxation ?? null : null;
   const intro = firstEver
     ? `Stayful Intelligence now finds you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. Each pick uses ${penceLabel(input.chargedBasePence || 10)} of your credit. Turn it off any time with the link at the bottom.`
     : null;
@@ -460,8 +524,14 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
     '',
     intro,
     intro ? '' : null,
+    nearMissLine,
+    nearMissLine ? '' : null,
     pickLabel(l),
     dealLine,
+    scVerdict,
+    ...(work.length > 0 ? work.map((w) => `  ${w.label}: ${w.value}`) : []),
+    motivationLine,
+    relaxLine,
     `Fit ${pick.fit}/100 · ${pick.areaName}`,
     why,
     '',
@@ -470,6 +540,8 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
     `Not for me: ${links.no}`,
     `Not for you? Tell us why in a couple of clicks and tomorrow's pick changes.`,
     '',
+    links.deal ? `Open the deal sheet: ${links.deal}` : null,
+    links.more ? `More deals like this: ${links.more}` : null,
     `Save to my pipeline: ${links.save}`,
     `Full report: ${links.report}`,
     `View listing: ${links.listing}`,
@@ -493,12 +565,18 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
       ${photo}
       <h1 style="font-size:22px;margin:0 0 6px">${esc(l.address ?? l.title)}</h1>
       <p style="margin:0 0 4px;font-weight:600">${esc(pickLabel(l).replace(/^.*? — /, ''))}</p>
+      ${nearMissLine ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:#f5f2e8;color:#2e3d2b;font-size:14px">${esc(nearMissLine)}</p>` : ''}
       <p style="margin:0 0 4px;color:#5d8156">${esc(dealLine)}</p>
+      ${scVerdict ? `<p style="margin:0 0 6px;font-weight:600;color:#2e3d2b">${esc(scVerdict)}</p>` : ''}
+      ${work.length > 0 ? `<table role="presentation" style="margin:0 0 12px;border-collapse:collapse;font-size:13px;color:#5b6657">${work.map((w) => `<tr><td style="padding:1px 12px 1px 0">${esc(w.label)}</td><td style="padding:1px 0;font-weight:600;color:#2e3d2b">${esc(w.value)}</td></tr>`).join('')}</table>` : ''}
+      ${motivationLine ? `<p style="margin:0 0 4px;color:#2e3d2b;font-size:14px"><strong>Why this one:</strong> ${esc(motivationLine.replace(/^Why this one: /, ''))}</p>` : ''}
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Fit ${pick.fit}/100 · ${esc(pick.areaName)} · ${esc(why)}</p>
       <p style="margin:0 0 6px;font-weight:600">Is this the kind of property you are looking for?</p>
       <p style="margin:0 0 4px">${btn(links.yes, 'Yes, more like this', true)}${btn(links.no, 'Not for me')}</p>
+      ${relaxLine ? `<p style="margin:0 0 14px;color:#2e3d2b;font-size:13px">${esc(relaxLine)} <a href="${esc(links.filter)}" style="color:#2e3d2b;font-weight:600">Change it</a></p>` : ''}
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Not for you? Tell us why in a couple of clicks and tomorrow&#8217;s pick changes.</p>
-      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', true)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
+      ${links.deal ? `<p style="margin:0 0 6px">${btn(links.deal, 'Open the deal sheet', true)}${links.more ? btn(links.more, 'More deals like this') : ''}</p>` : ''}
+      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', !links.deal)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
       <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a>.</p>
     </div>`.trim();
 

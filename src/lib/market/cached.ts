@@ -29,7 +29,7 @@ const TAG = 'market-area-cards';
 // The data cache persists across deployments, so bump this key whenever the
 // aggregation or card logic changes; otherwise the previous build's snapshot
 // is served until it expires.
-const CACHE_KEY = 'market-snapshot-v9';
+const CACHE_KEY = 'market-snapshot-v10';
 
 const EMPTY: ExplorerData = { cards: [], regions: [], national: [], generatedAt: '', totalReports: 0 };
 

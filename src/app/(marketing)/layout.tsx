@@ -1,6 +1,6 @@
 import { Nav } from "@/components/marketing-v3/Nav";
 import { Footer } from "@/components/marketing-v3/Footer";
-import { marketingFontClasses } from "@/lib/marketing-fonts";
+import { marketingFontClasses } from "@/lib/fonts";
 
 export default function MarketingLayout({
   children,

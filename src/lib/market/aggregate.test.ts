@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateRows, buildSnapshot, districtOf, monthKeys, normaliseOccupancy, type ReportRow } from './aggregate.ts';
+import { aggregateRows, buildSnapshot, DEFAULT_SERIES_SOURCES, districtOf, monthKeys, normaliseOccupancy, type ReportRow } from './aggregate.ts';
 
 let n = 0;
 function row(p: Partial<ReportRow> = {}): ReportRow {
@@ -10,6 +10,7 @@ function row(p: Partial<ReportRow> = {}): ReportRow {
     adr: 150, occupancy: 60, gross_revenue: 30000, net_revenue: 15000, property_value_low: 250000, property_value_high: 350000,
     comp_avg_rating: 4.8, comp_avg_review_count: 80, comp_avg_listing_age: 3, listing_density: null,
     demand_hospitals: 1, demand_universities: 0, demand_transport: 2, demand_events: 40, monthly: Array.from({ length: 12 }, () => 2500),
+    comparables_found: 12, quality_level: 'high',
     ...p,
   };
 }
@@ -136,4 +137,50 @@ test('a planning signal alone gives an area demand data', () => {
   const withPlanning = aggregateRows([bare], MONTHS, {}, { large_planning_apps_12m: 12, large_planning_apps_prev_12m: 9, planning_fetched_at: '2026-09-01T00:00:00Z' });
   assert.equal(withPlanning.demand!.large_planning_apps_12m, 12);
   assert.equal(withPlanning.demand!.share_hospital, null);
+});
+
+// ── Which reports count at all (quality.ts) ─────────────────────────────────
+
+test('a synthetic or low-quality estimate counts nowhere in the snapshot', () => {
+  const rows = [
+    row(),
+    row({ quality_level: 'moderate', comparables_found: 5 }),
+    row({ quality_level: 'low', comparables_found: 0, gross_revenue: 99999 }),
+    row({ quality_level: 'low', comparables_found: 8, gross_revenue: 99999 }),
+  ];
+  const snap = buildSnapshot(rows, { now: NOW });
+  assert.equal(snap.total_reports, 2);
+  assert.equal(snap.areas[0].total_sample_count, 2);
+  assert.equal(snap.areas[0].by_bedrooms[0].avg_gross_revenue, 30000);
+  assert.equal(snap.regions[0].total_sample_count, 2);
+  assert.equal(snap.national.find((b) => b.month === '2026-08')!.reports, 2);
+});
+
+test('a backfill row with no quality block still counts', () => {
+  const snap = buildSnapshot([row(), row({ source: 'monday_backfill', district: null, comparables_found: null, quality_level: null })], { now: NOW });
+  assert.equal(snap.total_reports, 2);
+});
+
+// ── Rows a lead-database customer paid to analyse ('lead_db') ───────────────
+
+test('a lead_db row counts in every figure but never in the trend series', () => {
+  const rows = [row(), row({ source: 'lead_db', gross_revenue: 50000 })];
+  const snap = buildSnapshot(rows, { now: NOW });
+  const ng = snap.areas[0];
+
+  assert.equal(snap.total_reports, 2);
+  assert.equal(ng.total_sample_count, 2);
+  assert.equal(ng.by_bedrooms[0].sample_count, 2);
+  assert.equal(ng.by_bedrooms[0].avg_gross_revenue, 40000);
+  assert.equal(ng.districts![0].total_sample_count, 2);
+  assert.equal(snap.regions[0].total_sample_count, 2);
+
+  // The series (reports per month, enquiries, trend arrows) sees only the live analyser row.
+  assert.equal(ng.series!.find((b) => b.month === '2026-08')!.reports, 1);
+  assert.equal(snap.national.find((b) => b.month === '2026-08')!.reports, 1);
+});
+
+test('the default series sources leave lead_db out', () => {
+  assert.equal(DEFAULT_SERIES_SOURCES.includes('lead_db'), false);
+  assert.deepEqual([...DEFAULT_SERIES_SOURCES], ['analyser', 'monday_backfill']);
 });

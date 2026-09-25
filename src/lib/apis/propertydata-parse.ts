@@ -14,6 +14,7 @@
  */
 
 import type { LongLetData } from '../types.ts';
+import { NATIONAL_MONTHLY_RENT } from '../market/rent-ladder.ts';
 
 export const PD_BASE = 'https://api.propertydata.co.uk';
 
@@ -566,8 +567,12 @@ export const AREA_BY_BEDROOMS: Record<number, number> = { 1: 500, 2: 700, 3: 900
 
 export const BATHROOMS_BY_BEDROOMS: Record<number, number> = { 1: 1, 2: 1, 3: 2, 4: 2, 5: 3 };
 
-/** UK national median monthly rents (2024, ONS/Zoopla blend): the last resort when the API has nothing. */
-export const UK_FALLBACK_MONTHLY_RENT: Record<number, number> = { 0: 950, 1: 1100, 2: 1400, 3: 1650, 4: 2050, 5: 2500 };
+/**
+ * UK national median monthly rents: the last resort when the API has nothing.
+ * One ladder for the whole codebase, declared in the market module so the
+ * explorer's rescaling and this fallback cannot drift apart.
+ */
+export const UK_FALLBACK_MONTHLY_RENT: Record<number, number> = NATIONAL_MONTHLY_RENT;
 
 export type ConstructionDate = 'pre_1914' | '1914_2000' | '2000_onwards';
 

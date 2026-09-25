@@ -8,11 +8,28 @@ import { expirePlanGrants, grant } from '../credit/ledger';
 import { cardNeedsUpdateEmail, paymentFailedEmail } from '../email/billing';
 import { setSubscriptionCancelled, setSubscriptionStarted } from '../apis/monday';
 import { getPlan } from '../credit/plans';
+import { recordSubscriptionEvent } from '../billing/subscription-events';
+import { monthlyPence } from '../billing/churn';
 import type { WebhookDeps } from './webhook';
 
-type UserRow = { id: string; email: string | null; plan_code: string | null; plan_source: string | null };
+type UserRow = {
+  id: string;
+  email: string | null;
+  plan_code: string | null;
+  plan_source: string | null;
+  cancel_reason: string | null;
+  cancel_reason_comment: string | null;
+  subscription_cancel_at: string | null;
+  subscription_paused_until: string | null;
+  stripe_subscription_status: string | null;
+};
 
-const SELECT = 'id, email, plan_code, plan_source';
+// The last five are what the churn log needs and the profile write alone did
+// not: the reason captured when the cancellation was SCHEDULED (read on the way
+// out, while it is still on the row), and the previous state, so a genuinely
+// new pause or cancellation can be told from Stripe re-sending the same object.
+const SELECT =
+  'id, email, plan_code, plan_source, cancel_reason, cancel_reason_comment, subscription_cancel_at, subscription_paused_until, stripe_subscription_status';
 
 /** The real dependencies for handleStripeEvent (the tests inject fakes). */
 export function liveWebhookDeps(): WebhookDeps {
@@ -65,5 +82,14 @@ export function liveWebhookDeps(): WebhookDeps {
     onSubscriptionCancelled: (email) => setSubscriptionCancelled(email).catch(() => {}),
     paymentFailedEmail: async (email, planCode) => paymentFailedEmail(email, { planName: (await getPlan(planCode))?.name ?? null }),
     cardNeedsUpdateEmail: (email) => cardNeedsUpdateEmail(email),
+    recordSubscriptionEvent: async (input) => {
+      // The price is resolved HERE rather than in the handler, so the handler
+      // stays pure and testable and only this file needs the plan table.
+      const plan = input.planCode ? await getPlan(input.planCode) : null;
+      return recordSubscriptionEvent(admin, {
+        ...input,
+        mrrPence: input.mrrPence ?? (plan ? monthlyPence({ pricePence: plan.pricePence, interval: plan.interval }) : null),
+      });
+    },
   };
 }

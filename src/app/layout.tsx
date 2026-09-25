@@ -1,13 +1,6 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { interVariable } from "@/lib/fonts";
 import "./globals.css";
-
-// The analyser (calculator.stayful.co.uk parity) is designed in Inter.
-// Marketing pages set their own font via --sf-font, so they're unaffected.
-const inter = Inter({
-  variable: "--font-sans",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Stayful — income-estimate software for UK short-term lets",
@@ -31,7 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased`}>{children}</body>
+      <body className={`${interVariable} font-sans antialiased`}>{children}</body>
     </html>
   );
 }

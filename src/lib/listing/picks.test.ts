@@ -1,33 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  houseQueries,
-  applyQueryFeedback,
-  applyCandidateFeedback,
-  confirmedNegatives,
-  cleanReasons,
-  isPickToken,
-  newPickToken,
-  startOfTodayUtc,
-  pickEmail,
-  pickLinks,
-  unsubscribeHeaders,
-  summarisePicks,
-  pickPrice,
-  spreadPick,
-  PER_LISTING_CAP,
-  dealScoreOf,
-  reasonLabel,
-  reasonEffect,
-  feedbackRules,
-  ruleApplied,
-  type HouseAreaCard,
-  type PickFeedback,
-  type PickRow,
-} from './picks.ts';
+import { houseQueries, topScoredAreas, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation } from './picks.ts';
 import { queriesForGoals, rentPcm, withinQueryPrice, type SourcedListing, type SourcedPick, type AreaRef, type SourcingQuery } from './sourcing.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import { purchaseDeal } from './deal.ts';
+import { screenPurchase } from './screen.ts';
 import { seedTable } from '../credit/costs.ts';
 
 const cards: HouseAreaCard[] = [
@@ -66,6 +43,12 @@ test('houseQueries takes the best-scored areas with real data, both kinds when t
   assert.deepEqual(qs.map((q) => `${q.kind}|${q.area}`), ['sale|M', 'rent|M', 'sale|NG', 'rent|NG']);
   assert.equal(qs[0].maxPrice, null);
   assert.equal(qs[0].minBedrooms, null);
+});
+
+test('topScoredAreas ranks by score, drops early-tier and unscored areas, and honours the limit', () => {
+  assert.deepEqual(topScoredAreas(cards, 10).map((c) => c.code), ['M', 'NG', 'LS']);
+  assert.deepEqual(topScoredAreas(cards, 1).map((c) => c.code), ['M']);
+  assert.deepEqual(topScoredAreas(cards, 0), []);
 });
 
 test('houseQueries honours a member\'s own kind, budget, bedrooms and rent ceiling', () => {
@@ -136,12 +119,52 @@ test('the v2 reasons each steer the candidate pool', () => {
   assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['too_cheap'], amount: 150_000 })])), ['house3', 'house4']);
   assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_location'], outcode: 'ng2' })])), ['flat2', 'house4']);
   assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['needs_work'] })])), ['flat2', 'house3']);
-  // Return too low on a 12% yield pick: only better yields survive.
-  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], dealScore: 12.5 })])), ['flat2', 'house4']);
   assert.equal(dealScoreOf(cands[0].deal), 16);
   assert.equal(reasonLabel('wrong_size'), 'Wrong size');
   assert.ok(reasonEffect('too_expensive'));
   assert.deepEqual(cleanReasons(['too_small', 'wrong_size', 'bogus']), ['too_small', 'wrong_size']);
+});
+
+test('"return too low" raises the floor on the screening, in the screening\'s own units', () => {
+  // Uplift % against a long-term let, which is what the member was shown.
+  const screened = (id: string, upliftPct: number) => ({
+    listing: listing({ id, bedrooms: 2, price: { amount: 150_000, period: 'total' as const } }),
+    deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }),
+    screening: screenPurchase({ bedrooms: 2, grossRevenue: { value: 24_000, source: 'estimated', confidence: 'medium' }, marketRent: { value: 700, source: 'estimated', confidence: 'medium' } }),
+    upliftPct,
+  });
+  const cands = [
+    { ...screened('weak', 0), screening: { ...screened('weak', 0).screening, upliftPct: 5 } },
+    { ...screened('mid', 0), screening: { ...screened('mid', 0).screening, upliftPct: 30 } },
+    { ...screened('strong', 0), screening: { ...screened('strong', 0).screening, upliftPct: 60 } },
+  ];
+  const ids = (out: typeof cands) => out.map((c) => c.listing.id);
+
+  // Said no to a 30% uplift: only better than that survives. The floor is
+  // strictly greater, so the rejected figure itself is excluded.
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], screeningScore: 30 })])), ['strong']);
+  assert.deepEqual(ids(applyCandidateFeedback(cands, [feedback({ reasons: ['poor_return'], screeningScore: 4 })])), ['weak', 'mid', 'strong']);
+});
+
+test('a return floor never comes from, or applies to, something with no screening', () => {
+  const withScreening = {
+    listing: listing({ id: 'screened', bedrooms: 2, price: { amount: 150_000, period: 'total' as const } }),
+    deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }),
+    screening: screenPurchase({ bedrooms: 2, grossRevenue: { value: 24_000, source: 'estimated', confidence: 'medium' }, marketRent: { value: 2_000, source: 'estimated', confidence: 'medium' } }),
+  };
+  const unscreened = { listing: listing({ id: 'bare', bedrooms: 2, price: { amount: 150_000, period: 'total' as const } }), deal: purchaseDeal(150_000, { grossRevenue: 24_000, adr: 110, bedrooms: 2 }) };
+
+  // Feedback from before the screening existed sets no floor at all: its stored
+  // figure was a gross yield, and comparing that against an uplift would
+  // mis-filter silently. Such rows age out of the 60-day window instead.
+  const legacy = feedbackRules([feedback({ reasons: ['poor_return'] })]);
+  assert.deepEqual(legacy.minReturn, {}, 'no screening on the row, so no floor');
+  assert.ok(legacy.inert.includes('poor_return'), 'and the member is told it changed nothing');
+
+  // A candidate we could not screen is not dropped by a floor either — there is
+  // nothing to compare it against, and going silent costs the member their pick.
+  const kept = applyCandidateFeedback([withScreening, unscreened], [feedback({ reasons: ['poor_return'], screeningScore: 500 })]);
+  assert.ok(kept.some((c) => c.listing.id === 'bare'), 'an unscreened candidate survives any floor');
 });
 
 test('reasons are cleaned to the known set and tokens are guarded', () => {
@@ -335,4 +358,84 @@ test('applyQueryFeedback reads the same rule set, so contradictory kinds cancel 
   assert.equal(rules.wantKind, null);
   assert.deepEqual(rules.cancelled.sort(), ['want_buy', 'want_r2r']);
   assert.deepEqual(applyQueryFeedback(qs, [], rules).map((q) => q.kind), ['sale', 'sale']);
+});
+
+// ── Telling the member why ──
+
+test('the reasons line is built only from signals that fired', () => {
+  assert.equal(describeMotivation(null), null);
+  assert.equal(describeMotivation({ score: 0, firmScore: 0, fired: [] }), null);
+  assert.equal(
+    describeMotivation({ score: 55, firmScore: 30, fired: ['long_on_market', 'chain_free'] }),
+    'Why this one: On the market a long time · Chain free.',
+  );
+});
+
+test('the reasons line does not turn into a sales pitch', () => {
+  const many = describeMotivation({
+    score: 100,
+    firmScore: 70,
+    fired: ['long_on_market', 'urgent_sale', 'price_reduced', 'chain_free', 'probate', 'auction'],
+  })!;
+  assert.equal(many.split(' · ').length, 3);
+});
+
+test('the email only says why when there is a why to give', () => {
+  const l = listing({});
+  const base = { listing: l, deal: null, areaFit: 70, areaName: 'Nottingham', fit: 74 };
+  const send = (pick: SourcedPick) =>
+    pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10 });
+
+  const quiet = send({ ...base, motivation: null });
+  assert.ok(!quiet.text.includes('Why this one'));
+  assert.ok(!quiet.html.includes('Why this one'));
+
+  const loud = send({ ...base, motivation: { score: 55, firmScore: 30, fired: ['long_on_market', 'price_reduced'] } });
+  assert.ok(loud.text.includes('Why this one: On the market a long time · Price reduced.'));
+  assert.ok(loud.html.includes('Why this one:'));
+  assert.ok(loud.html.includes('On the market a long time'));
+});
+
+// ── When nothing matched ──
+
+test('a near miss says so before it says anything else', () => {
+  const l = listing({});
+  const pick: SourcedPick = { listing: l, deal: null, areaFit: 70, areaName: 'Nottingham', fit: 60 };
+  const send = (over: Partial<Parameters<typeof pickEmail>[0]>) =>
+    pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10, ...over });
+
+  const plain = send({});
+  assert.ok(!plain.text.includes('Nothing matched'));
+
+  const near = send({ nearMiss: true, relaxation: 'Your tightest filter is how long it must have been on the market — currently 5 months. Change it to 3 months and 4 more would have qualified.' });
+  assert.ok(near.text.includes('Nothing matched your filter exactly today'));
+  assert.ok(near.html.includes('Nothing matched your filter exactly today'));
+  // The honest line comes before the property, not buried under it.
+  assert.ok(near.text.indexOf('Nothing matched') < near.text.indexOf('Fit '));
+  assert.ok(near.text.includes('Change it to 3 months'));
+  assert.ok(near.html.includes('4 more would have qualified'));
+});
+
+test('the advice is never shown on a pick that did match', () => {
+  const l = listing({});
+  const pick: SourcedPick = { listing: l, deal: null, areaFit: 70, areaName: 'Nottingham', fit: 60 };
+  const mail = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10, nearMiss: false, relaxation: 'Change your budget.' });
+  assert.ok(!mail.text.includes('Change your budget'));
+  assert.ok(!mail.html.includes('Change your budget'));
+});
+
+test('a pick drawn from the marketplace pool links to its deal sheet and to more like it', () => {
+  const l = listing({ postcodeArea: 'NG', bedrooms: 4 });
+  const links = pickLinks('https://x.test', 'p1', 'tok', l.canonicalUrl, { dealId: 'deal-1', kind: 'sale', area: 'NG', bedrooms: 4 });
+  assert.equal(links.deal, 'https://x.test/deals/deal-1');
+  assert.equal(links.more, 'https://x.test/deals?kind=sale&areas=NG&beds=4%2B');
+  assert.equal(pickLinks('https://x.test', 'p1', 'tok', l.canonicalUrl).deal, null);
+  const pick = { listing: l, deal: null, areaFit: 60, areaName: 'Nottingham', fit: 70 };
+  const withDeal = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 40, dealId: 'deal-1' });
+  assert.ok(withDeal.html.includes('https://x.test/deals/deal-1'));
+  assert.ok(withDeal.text.includes('Open the deal sheet: https://x.test/deals/deal-1'));
+  assert.ok(withDeal.text.includes('More deals like this: https://x.test/deals?kind=sale&areas=NG&beds=4%2B'));
+  const without = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10 });
+  assert.ok(!without.html.includes('/deals/'));
+  assert.ok(!without.text.includes('Open the deal sheet'));
 });

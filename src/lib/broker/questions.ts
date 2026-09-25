@@ -205,3 +205,28 @@ export const sourcingListings: Question<SourcingQuery, SourcedListing[]> = {
     { provider: 'onthemarket', level: 3, costPence: COST_PENCE.onthemarketFetch, ttlMs: TTL.sourcing, run: (q) => fetchOnTheMarketSearch(q) },
   ],
 };
+
+// ── The same search for the deals marketplace ──
+// Its own cache namespace, and it keeps every recognised portal (Zoopla
+// included): the marketplace confirms a Zoopla deal on the feed alone and
+// links it by the feed's own URL, where the digest needs a page it can read.
+export const marketplaceListings: Question<SourcingQuery, SourcedListing[]> = {
+  name: 'marketplaceListings',
+  key: (q) => q.key,
+  rungs: [
+    {
+      provider: 'pmi',
+      level: 3,
+      costPence: COST_PENCE.pmiListings,
+      ttlMs: TTL.sourcing,
+      run: async (q) => {
+        const c = areaCentroid(q.area);
+        if (!c) return null;
+        const resp = await pmiListings({ lat: c.lat, lng: c.lng, radiusM: PMI_LISTINGS_RADIUS_M }, { type: q.kind, sort: 'date_desc', perPage: 50 });
+        const list = fromPmiListings(resp, q.kind, { sources: 'all' });
+        return list.length > 0 ? list : null;
+      },
+    },
+    { provider: 'onthemarket', level: 3, costPence: COST_PENCE.onthemarketFetch, ttlMs: TTL.sourcing, run: (q) => fetchOnTheMarketSearch(q) },
+  ],
+};

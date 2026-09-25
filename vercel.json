@@ -11,7 +11,7 @@
 		},
 		{
 			"path": "/api/internal/market-warm",
-			"schedule": "45 6 * * *"
+			"schedule": "45 4 * * *"
 		},
 		{
 			"path": "/api/internal/sourcing",
@@ -40,6 +40,14 @@
 		{
 			"path": "/api/internal/crm-deliveries",
 			"schedule": "*/10 * * * *"
+		},
+		{
+			"path": "/api/internal/marketplace-sweep",
+			"schedule": "*/10 5-6 * * *"
+		},
+		{
+			"path": "/api/internal/marketplace-recheck",
+			"schedule": "0 * * * *"
 		}
 	]
 }

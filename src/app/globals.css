@@ -83,6 +83,17 @@
   --chart-3: #b45050;
   --chart-4: #c8b464;
   --chart-5: #786496;
+  /* Tenure bands on /admin/churn. SEQUENTIAL, not categorical: the bands are
+     ordered (under a month → a year or more), so it is one hue running light to
+     dark and revenue is seen darkening as it matures. Stepped for adjacent-pair
+     separation (worst pair ΔE 16.2 normal / 15.4 CVD against this surface) and
+     paired with 2px surface gaps, a legend and the band table below the chart,
+     because the two palest steps sit under 3:1 against the card. */
+  --tenure-1: #e0e9cc;
+  --tenure-2: #a3bd82;
+  --tenure-3: #627d4d;
+  --tenure-4: #35492a;
+  --tenure-5: #101a0b;
   --radius: 0.75rem;
   --sidebar: #d0d6ba;
   --sidebar-foreground: #5d8156;
@@ -143,6 +154,14 @@
   --chart-1: #8ab382;
   --chart-2: #bad6c7;
   --chart-3: #c45050;
+  /* Chosen for the dark surface rather than flipped: the light ramp's dark end
+     would vanish against it, so the whole ramp lifts and the direction holds
+     (dim = new, bright = long-tenured). */
+  --tenure-1: #3e5733;
+  --tenure-2: #5d8156;
+  --tenure-3: #8fa67c;
+  --tenure-4: #b8c7a1;
+  --tenure-5: #e0e9cc;
   --chart-4: #c8b464;
   --chart-5: #9884b6;
   --sidebar: #1a2118;
@@ -168,6 +187,14 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Inter is registered once, in src/lib/fonts.ts, as --font-inter. The root
+       layout used to register it a second time purely to publish it under this
+       name. Everything that reads --font-sans expects Inter — the analyser, the
+       /presentation page, the AppSwitcher fallback on routes that do not define
+       --font-dmsans — so alias it here instead of loading the family twice.
+       Scoped to body, exactly where the root layout's class used to set it, so
+       the @theme token above still answers anything outside it. */
+    --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }
   html {
     @apply font-sans;

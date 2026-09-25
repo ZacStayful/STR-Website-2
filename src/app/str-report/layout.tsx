@@ -1,13 +1,6 @@
 import type { Metadata } from "next";
-import { DM_Sans } from "next/font/google";
+import { dmSansVariable } from "@/lib/fonts";
 import "./styles.css";
-
-// DM Sans, weights 400 + 500 only, per the Stayful design system.
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500"],
-  variable: "--font-dm-sans",
-});
 
 export const metadata: Metadata = {
   title: "STR Intelligence Report | Stayful",
@@ -19,9 +12,9 @@ export const metadata: Metadata = {
 export default function StrReportLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
-      className={dmSans.variable}
+      className={dmSansVariable}
       style={{
-        fontFamily: "var(--font-dm-sans), system-ui, sans-serif",
+        fontFamily: "var(--font-dmsans), system-ui, sans-serif",
         background: "#ffffff",
         color: "#111827",
         minHeight: "100vh",

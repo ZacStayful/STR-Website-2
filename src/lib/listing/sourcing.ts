@@ -12,10 +12,14 @@ import { escapeHtml as esc } from '../email/escape.ts';
 import { scriptJsonById, parsePrice, findPostcode, findOutcode } from './html.ts';
 import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
+import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
 import type { MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
+import type { Motivation } from './motivation.ts';
+import { bandRank, type Screening } from './screen.ts';
+import type { MotivationMode } from '../market/goals.ts';
 
 export type SourcingKind = 'sale' | 'rent';
 
@@ -23,6 +27,8 @@ export interface SourcedListing {
   source: ListingSource;
   id: string;
   canonicalUrl: string;
+  /** The portal URL exactly as the feed gave it; the canonicaliser rewrites Zoopla rentals to a for-sale path, so this is the link to show. */
+  sourceUrl?: string | null;
   kind: SourcingKind;
   title: string;
   address: string | null;
@@ -45,6 +51,19 @@ export interface SourcedListing {
   sharedOwnership?: boolean | null;
   /** From the fetched page's description: permission (`true`), prohibition (`false`), silent / not read (`null`). */
   shortLetsPermitted?: boolean | null;
+  /**
+   * Motivation evidence. All optional: rows stored before these existed read
+   * with `?? null`, and the score treats a missing value as no signal rather
+   * than as a negative one.
+   */
+  /** The portal's own listing date (ISO). Their clock, not our first sighting. */
+  listedDate?: string | null;
+  /** Property identity across listings, so a relist can be matched (PMI `uprn`). */
+  uprn?: string | null;
+  /** OnTheMarket's bucket, verbatim: "Added > 14 days", "Reduced < 14 days". */
+  addedOrReduced?: string | null;
+  /** Keyed digest of the marketing agent. Never the name — see crypto/agent.ts. */
+  agentHash?: string | null;
 }
 
 export interface SourcingQuery {
@@ -89,6 +108,14 @@ export const MAX_AREAS_PER_MEMBER = 5;
  * Which areas a member's goals cover: their saved areas plus any area whose
  * centroid is within their distance limit of home, best fit first, capped so
  * a member with a wide radius does not fan out into dozens of searches.
+ *
+ * A null `maxDistanceMiles` is the form's "Anywhere in the UK", so it lifts the
+ * radius rather than removing the home entirely. It used to be read as falsy
+ * and skip this whole branch, which left a member who set a postcode and left
+ * the distance alone with no areas at all: no goals queries, and a silent drop
+ * to house picks chosen on Stayful's national score rather than their own fit.
+ * The most permissive answer was the most restrictive in practice. The cap
+ * below is what keeps "anywhere" from fanning out.
  */
 export function areasForGoals(goals: MarketGoals, savedAreas: string[], areas: AreaRef[], limit = MAX_AREAS_PER_MEMBER): AreaRef[] {
   const byCode = new Map(areas.map((a) => [a.code.toUpperCase(), a]));
@@ -98,9 +125,10 @@ export function areasForGoals(goals: MarketGoals, savedAreas: string[], areas: A
     if (a) picked.set(a.code, a);
   }
   const home = goals.home && goals.home.lat !== null && goals.home.lng !== null ? { lat: goals.home.lat, lng: goals.home.lng } : null;
-  if (home && goals.maxDistanceMiles) {
+  if (home) {
+    const within = (a: AreaRef) => !goals.maxDistanceMiles || haversineMiles(home, a.centroid!) <= goals.maxDistanceMiles;
     const near = areas
-      .filter((a) => a.centroid && haversineMiles(home, a.centroid) <= goals.maxDistanceMiles!)
+      .filter((a) => a.centroid && within(a))
       .sort((a, b) => (b.fit ?? -1) - (a.fit ?? -1));
     for (const a of near) picked.set(a.code, a);
   }
@@ -135,6 +163,61 @@ export function rentPcm(price: SourcedListing['price']): number | null {
   return null;
 }
 
+// ── How long it has been sitting ──
+
+/**
+ * `portal` is the listing's real age, from the site's own listing date, and
+ * `feed` is a data provider's measured months on market — both are the real
+ * thing. `sighting` is only a floor: it counts from when Stayful first saw the
+ * listing, which may be long after it went up. Anything shown to a member has
+ * to respect the difference — "on the market 5 months" and "we have been
+ * watching it 5 months" are not the same claim.
+ */
+export type AgeSource = 'portal' | 'sighting' | 'feed';
+
+export interface ListingAge {
+  days: number;
+  source: AgeSource;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Older than this and the date is wrong, not the listing. */
+const MAX_PLAUSIBLE_DAYS = 10 * 365;
+
+function daysSince(value: string | null | undefined, now: number): number | null {
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return null;
+  const days = Math.floor((now - t) / DAY_MS);
+  // A future date is a bad date; so is one from before the portals existed.
+  return days >= 0 && days <= MAX_PLAUSIBLE_DAYS ? days : null;
+}
+
+/**
+ * How long the listing has been up, preferring the portal's own date and
+ * falling back to our first sighting. Null when neither is usable — which the
+ * caller must read as "unknown", never as "new".
+ */
+export function ageFromDates(listedDate: string | null | undefined, firstSeenAt: string | null | undefined, now: Date = new Date()): ListingAge | null {
+  const at = now.getTime();
+  const portal = daysSince(listedDate ?? null, at);
+  if (portal !== null) return { days: portal, source: 'portal' };
+  const seen = daysSince(firstSeenAt ?? null, at);
+  return seen === null ? null : { days: seen, source: 'sighting' };
+}
+
+export function listingAge(listing: SourcedListing, firstSeenAt?: string | null, now: Date = new Date()): ListingAge | null {
+  return ageFromDates(listing.listedDate, firstSeenAt, now);
+}
+
+/** The median age of a cohort, for "slower than others round here". Null below `minSample`. */
+export function medianAgeDays(ages: (ListingAge | null)[], minSample = 12): number | null {
+  const days = ages.filter((a): a is ListingAge => a !== null).map((a) => a.days).sort((a, b) => a - b);
+  if (days.length < minSample) return null;
+  const mid = Math.floor(days.length / 2);
+  return days.length % 2 === 0 ? Math.round((days[mid - 1] + days[mid]) / 2) : days[mid];
+}
+
 /** Whether a listing sits inside its query's price bounds (rent compared per calendar month). */
 export function withinQueryPrice(listing: SourcedListing, q: SourcingQuery): boolean {
   if (!listing.price) return true;
@@ -160,6 +243,8 @@ export function onTheMarketSearchUrl(q: SourcingQuery): string | null {
 
 interface OtmCard {
   id?: unknown;
+  'days-since-added-reduced'?: unknown;
+  agent?: { name?: unknown };
   address?: unknown;
   'property-title'?: unknown;
   'humanised-property-type'?: unknown;
@@ -217,6 +302,10 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
       priceQualifier: str(raw['price-qualifier']),
       sharedOwnership: null,
       shortLetsPermitted: null,
+      listedDate: null,
+      uprn: null,
+      addedOrReduced: str(raw['days-since-added-reduced']),
+      agentHash: agentHash(str(raw.agent?.name)),
     });
   }
   return out;
@@ -229,12 +318,15 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
  * ourselves are usable, because every link in the digest (full report, add
  * to pipeline) goes through the server-side resolve.
  */
-export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind): SourcedListing[] {
+export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind, opts: { sources?: 'fetchable' | 'all' } = {}): SourcedListing[] {
   if (!resp || !Array.isArray(resp.listings)) return [];
   const out: SourcedListing[] = [];
   for (const l of resp.listings) {
     const detected = l.url ? detectListingUrl(l.url) : null;
-    if (!detected || !SERVER_FETCHABLE.has(detected.source)) continue;
+    if (!detected) continue;
+    // The digest needs a page it can read itself; the marketplace also takes
+    // Zoopla, which it confirms on the feed alone and links by the real URL.
+    if (opts.sources !== 'all' && !SERVER_FETCHABLE.has(detected.source)) continue;
     const pc = findPostcode(l.postcode ?? l.address ?? null);
     const outcode = pc?.outcode ?? findOutcode(l.postcode ?? l.address ?? null);
     const amount = typeof l.price === 'number' && l.price > 0 ? l.price : null;
@@ -242,6 +334,7 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       source: detected.source,
       id: detected.id,
       canonicalUrl: detected.canonicalUrl,
+      sourceUrl: l.url ?? null,
       kind,
       title: l.address ?? `${detected.source} listing ${detected.id}`,
       address: l.address ?? null,
@@ -260,6 +353,10 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       priceQualifier: null,
       sharedOwnership: null,
       shortLetsPermitted: null,
+      listedDate: typeof l.listed_date === 'string' && l.listed_date.trim() ? l.listed_date.trim() : null,
+      uprn: typeof l.uprn === 'string' && l.uprn.trim() ? l.uprn.trim() : null,
+      addedOrReduced: null,
+      agentHash: null,
     });
   }
   return out;
@@ -297,20 +394,72 @@ export interface SourcedPick {
   areaFit: number | null;
   areaName: string;
   fit: number;
+  /** What the motivation read said, so the email can give the reasons. */
+  motivation?: Motivation | null;
+}
+
+/**
+ * How far motivation may move a listing up the ranking under `prefer`. Kept
+ * small on purpose: a seller who wants to deal is worth finding, but the deal
+ * still has to work, and a listing that loses money is dropped before this is
+ * ever applied.
+ */
+export const MOTIVATION_LIFT = 20;
+
+export interface RankCandidate {
+  listing: SourcedListing;
+  deal: Deal | null;
+  areaFit: number | null;
+  areaName: string;
+  motivation?: Motivation | null;
+  /** Whether it clears the member's bar — decided by meetsMotivationBar. */
+  motivationQualifies?: boolean;
 }
 
 /** Ranks candidates for one member, dropping anything without a deal and anything losing money. */
-export function rankPicks(candidates: { listing: SourcedListing; deal: Deal | null; areaFit: number | null; areaName: string }[], limit = 5): SourcedPick[] {
-  const out: SourcedPick[] = [];
+// Generic so a caller's own fields (the suitability pre-check, the income
+// screening) survive ranking instead of being erased by the return type and
+// having to be re-attached from a side map.
+export function rankPicks<C extends RankCandidate>(candidates: C[], limit = 5, mode: MotivationMode = 'off'): (C & { fit: number })[] {
+  const out: (C & { fit: number })[] = [];
   for (const c of candidates) {
     if (!c.deal) continue;
+    // The money test comes first and is never relaxed: motivation is a reason to
+    // look harder at a deal that works, never a story told about one that does not.
     if (c.deal.kind === 'rent-to-rent' && c.deal.monthlyMargin <= 0) continue;
     if (c.deal.kind === 'purchase' && c.deal.grossYieldPct <= 0) continue;
+    if (mode === 'only' && c.motivationQualifies !== true) continue;
     const fit = blendFit(c.deal, c.areaFit);
     if (fit === null) continue;
-    out.push({ ...c, fit });
+    const lift = mode === 'off' ? 0 : Math.round((MOTIVATION_LIFT * (c.motivation?.score ?? 0)) / 100);
+    out.push({ ...c, fit: Math.min(100, fit + lift) });
   }
   return out.sort((a, b) => b.fit - a.fit || dealScore(b.deal) - dealScore(a.deal)).slice(0, limit);
+}
+
+/**
+ * rankPicks, run band by band. rankPicks keeps only the top `limit` by fit, so
+ * ranking the whole pool and sorting by band afterwards can drop a qualified
+ * listing that happened to rank 41st on fit while a medium one ranked 40th
+ * survives. Ranking each band separately, best band first, makes the cut
+ * inside a band: a qualified listing is only ever displaced by another
+ * qualified one. Candidates without a screening are treated as qualified,
+ * matching what the send loop assumes for unscreened rows.
+ */
+export function rankPicksByBand<C extends RankCandidate & { screening?: Screening | null }>(candidates: C[], limit = 5, mode: MotivationMode = 'off'): (C & { fit: number })[] {
+  const byBand = new Map<number, C[]>();
+  for (const c of candidates) {
+    const rank = bandRank(c.screening?.band ?? 'qualified');
+    const list = byBand.get(rank) ?? [];
+    list.push(c);
+    byBand.set(rank, list);
+  }
+  const out: (C & { fit: number })[] = [];
+  for (const rank of [...byBand.keys()].sort((a, b) => a - b)) {
+    if (out.length >= limit) break;
+    out.push(...rankPicks(byBand.get(rank)!, limit - out.length, mode));
+  }
+  return out;
 }
 
 function dealScore(d: Deal | null): number {

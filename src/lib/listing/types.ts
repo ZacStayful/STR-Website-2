@@ -5,7 +5,9 @@
  * deal maths, the explorer's listing tab) works from it and never from HTML.
  *
  * Only typed fields are stored. Descriptions, agent/host details and photo
- * copies are deliberately NOT kept — photos are referenced by URL only.
+ * copies are deliberately NOT kept — photos are referenced by URL only. The
+ * one concession is `agentHash`: a keyed one-way digest that answers "is this
+ * a different agent than last time" without keeping who the agent is.
  */
 
 export type ListingSource = 'rightmove' | 'onthemarket' | 'zoopla' | 'airbnb' | 'booking';
@@ -65,6 +67,23 @@ export interface ListingSnapshot {
   shortLetsPermitted?: boolean | null;
   features: string[];
   photos: string[];
+
+  /**
+   * When the portal says the listing first appeared, as an ISO date. This is
+   * the portal's own clock, not ours — the only trustworthy basis for days on
+   * market, since our own first sighting can be months late.
+   */
+  listedDate?: string;
+  /** The portal's last listing event: what changed and when. */
+  listingUpdate?: { reason: 'added' | 'reduced' | 'increased'; on: string | null };
+  /** Keyed digest of the marketing agent's name. Never the name itself. */
+  agentHash?: string | null;
+  /** Years left on the lease, when the portal states it. Under ~80 is unmortgageable. */
+  yearsRemainingOnLease?: number;
+  /** Rentals: when the property is free, as an ISO date. Already past means a live void. */
+  letAvailableDate?: string;
+  /** Rentals: the shortest tenancy the landlord will take, in months. */
+  minimumTermInMonths?: number;
 
   /** Short-let specific (Airbnb / Booking.com). */
   str?: {

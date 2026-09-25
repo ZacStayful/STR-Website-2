@@ -31,7 +31,9 @@ import {
   propertyTypeSlug,
   saleAttemptParams,
   ukCalendarDate,
+  UK_FALLBACK_MONTHLY_RENT,
 } from './propertydata-parse.ts';
+import { NATIONAL_MONTHLY_RENT, nationalRentFor } from '../market/rent-ladder.ts';
 
 const ERROR = { status: 'error', message: 'Invalid postcode' };
 
@@ -116,6 +118,16 @@ test('rent valuation is weekly and converted to a month', () => {
   assert.equal(parseValuationRent({ status: 'success', result: { estimate: 0 } }), null);
   assert.equal(parseValuationRent(ERROR), null);
   assert.deepEqual(fallbackLongLet(2), { monthlyRent: 1400, estimateHigh: 1610, estimateLow: 1190, comparables: [] });
+});
+
+test('the fallback rent is the shared national ladder, so the two cannot drift', () => {
+  // The explorer rescales area rents by this ladder's shape; the analyser's
+  // last-resort rent is the same object, not a copy that can be edited alone.
+  assert.equal(UK_FALLBACK_MONTHLY_RENT, NATIONAL_MONTHLY_RENT);
+  assert.equal(fallbackLongLet(3).monthlyRent, nationalRentFor(3));
+  assert.equal(fallbackLongLet(9).monthlyRent, nationalRentFor(5));
+  assert.equal(NATIONAL_MONTHLY_RENT[1], 1_100);
+  assert.equal(NATIONAL_MONTHLY_RENT[5], 2_500);
 });
 
 test('sale valuation reads the margin and confidence, with ±15% when no margin comes back', () => {

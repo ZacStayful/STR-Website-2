@@ -12,7 +12,7 @@ import { CreditBanner } from "@/components/credit/CreditBanner";
  * credit once, then renders the app nav (with the balance badge), the
  * low-balance banner and the provider that owns the out-of-credit modal.
  */
-export async function AppShell({ active, redirectTo, children }: { active: "estimate" | "markets" | "picks" | "reports" | "leads" | "account"; redirectTo: string; children: React.ReactNode }) {
+export async function AppShell({ active, redirectTo, children }: { active: "estimate" | "markets" | "deals" | "picks" | "reports" | "leads" | "account"; redirectTo: string; children: React.ReactNode }) {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
