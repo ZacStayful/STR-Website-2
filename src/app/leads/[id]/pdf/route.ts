@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
-import { leadScope } from '@/lib/leads/scope';
+import { leadScopeOrPaused } from '@/lib/leads/scope';
 import { touchLeads } from '@/lib/leads/activity';
 import { parseBrand } from '@/lib/funnels/brand';
 import { renderReportPdf, pdfBrandForFunnel, reportFilename } from '@/lib/pdf/render';
@@ -25,7 +25,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return new Response('Not authorised', { status: 401 });
   if (!hasServiceRole()) return new Response('Not available', { status: 503 });
-  const scope = await leadScope(user);
+  const scope = await leadScopeOrPaused(user);
+  if (scope === 'paused') return new Response('Your team access is paused', { status: 403 });
 
   const { data } = await createAdminClient()
     .from('leads')

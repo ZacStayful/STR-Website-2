@@ -5,7 +5,7 @@ import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { listFunnels } from "@/lib/funnels";
 import { funnelWalls } from "@/lib/funnels/alerts";
 import { listLeads, countLeads, type LeadRecord } from "@/lib/api/leads-query";
-import { leadScope } from "@/lib/leads/scope";
+import { leadScopeOrPaused } from "@/lib/leads/scope";
 import { LEAD_TABS, PAGE_SIZE, parseLeadFilters, queryFor, filtersQuery, isFiltered, type LeadFilters, type LeadTab } from "@/lib/leads/filters";
 import { LEAD_STAGES, STAGE_LABELS } from "@/lib/leads/stage";
 import { archivingSoon, archiveDueAt, retentionDate } from "@/lib/leads/retention";
@@ -84,7 +84,10 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
-  const scope = await leadScope(user);
+  // A paused seat is explained by the layout; nothing to show here.
+  const scope = await leadScopeOrPaused(user);
+  if (scope === "paused") return null;
+  const isOwner = scope.role === "owner";
 
   const [page, counts, funnels, archives] = await Promise.all([
     listLeads(scope.ownerId, queryFor(filters)),
@@ -122,15 +125,17 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               <Link href="/reports" className="underline underline-offset-2">My reports</Link>.
             </p>
           </div>
-          <Link
-            href="/leads/funnels"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
-          >
-            {funnels.length === 0 ? "Create a funnel" : "Manage funnels"}
-          </Link>
+          {isOwner ? (
+            <Link
+              href="/leads/funnels"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+            >
+              {funnels.length === 0 ? "Create a funnel" : "Manage funnels"}
+            </Link>
+          ) : null}
         </div>
 
-        <WallBanner notices={notices} showFunnelName={funnels.length > 1} />
+        {isOwner ? <WallBanner notices={notices} showFunnelName={funnels.length > 1} /> : null}
 
         {archives.count > 0 && filters.tab !== "archived" ? (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4">
@@ -155,12 +160,16 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
               A funnel gives you a link to put behind your own enquiry form. Whoever fills it in gets a report
               under your branding, and the lead lands here.
             </p>
-            <Link
-              href="/leads/funnels"
-              className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
-            >
-              Create your first funnel
-            </Link>
+            {isOwner ? (
+              <Link
+                href="/leads/funnels"
+                className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
+              >
+                Create your first funnel
+              </Link>
+            ) : (
+              <p className="mt-3 text-xs text-muted-foreground">The account owner sets funnels up.</p>
+            )}
           </div>
         ) : (
           <>

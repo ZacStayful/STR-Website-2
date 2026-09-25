@@ -4,6 +4,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { grant, redeemCode, CodeError } from './ledger';
 import { getBillingSettings } from './unit-costs';
 import { isDisposableEmail, normaliseMobile } from './abuse';
+import { teamOf, hasOpenInvite } from '../team';
 
 /**
  * Grants the one-off welcome credit to a member the first time we see them
@@ -17,6 +18,15 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
   const { data: profile } = await admin.from('profiles').select('id, mobile, mobile_key, welcome_checked_at, welcome_withheld_reason').eq('id', userId).maybeSingle();
   if (!profile) return { granted: false, withheld: null };
   if (profile.welcome_checked_at) return { granted: false, withheld: (profile.welcome_withheld_reason as string | null) ?? null };
+
+  // A team member spends the team's credit, not their own. Someone with an
+  // invite still open is decided later, not now: if they never join, they
+  // should still get the welcome credit anyone else would.
+  if ((await teamOf(userId)).role === 'member') {
+    await admin.from('profiles').update({ welcome_checked_at: new Date().toISOString(), welcome_withheld_reason: 'team_member' }).eq('id', userId);
+    return { granted: false, withheld: 'team_member' };
+  }
+  if (await hasOpenInvite(email)) return { granted: false, withheld: null };
 
   let withheld: string | null = null;
   if (isDisposableEmail(email)) withheld = 'disposable_email';
@@ -80,4 +90,5 @@ async function redeemPendingReferral(userId: string): Promise<void> {
 export const WELCOME_WITHHELD_COPY: Record<string, string> = {
   disposable_email: 'Welcome credit is not available for temporary email addresses. You can still top up or subscribe.',
   mobile_already_used: 'This mobile number has already received welcome credit on another account. You can still top up or subscribe.',
+  team_member: 'You use your team’s credit, so there is no separate welcome credit on this login.',
 };

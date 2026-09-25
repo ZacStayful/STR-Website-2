@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/AppShell";
 import { LeadsNav } from "./LeadsNav";
+import { leadScopeOrPaused } from "@/lib/leads/scope";
+import { teamName } from "@/lib/team";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +22,28 @@ export default async function LeadsLayout({ children }: { children: React.ReactN
   const { data: profile } = await supabase.from("profiles").select("id").eq("id", user.id).single();
   if (!profile) redirect("/upgrade?redirect=/leads");
 
+  const scope = await leadScopeOrPaused(user);
+  if (scope === "paused") {
+    return (
+      <AppShell active="leads" redirectTo="/leads">
+        <main className="mx-auto max-w-2xl px-4 py-16 text-center sm:px-6">
+          <h1 className="text-xl font-bold text-foreground">Your team access is paused</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Your seat couldn&apos;t be renewed because the team&apos;s balance is too low. It comes back automatically as
+            soon as the account owner tops up.
+          </p>
+        </main>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell active="leads" redirectTo="/leads">
       <div className="mx-auto max-w-4xl px-4 pt-8 sm:px-6">
-        <LeadsNav />
+        {scope.role === "member" ? (
+          <p className="mb-2 text-xs text-muted-foreground">You&apos;re working in {await teamName(scope.ownerId)}.</p>
+        ) : null}
+        <LeadsNav role={scope.role} />
       </div>
       {children}
     </AppShell>

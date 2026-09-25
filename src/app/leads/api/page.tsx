@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { ownerIdOrNull } from "@/lib/leads/scope";
+import { redirect } from "next/navigation";
 import { listApiKeys } from "@/lib/api/keys";
 import { siteUrl } from "@/lib/url";
 import { ROUTES } from "@/lib/api/openapi";
@@ -22,6 +24,8 @@ export default async function ApiPage() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
+  // The account owner's to manage; a team member works the leads.
+  if (!(await ownerIdOrNull(user))) redirect("/leads");
 
   const keys = await listApiKeys(user.id);
   const base = siteUrl();
