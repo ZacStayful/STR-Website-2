@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation } from './picks.ts';
+import { houseQueries, topScoredAreas, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation } from './picks.ts';
 import { queriesForGoals, rentPcm, withinQueryPrice, type SourcedListing, type SourcedPick, type AreaRef, type SourcingQuery } from './sourcing.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import { purchaseDeal } from './deal.ts';
@@ -43,6 +43,12 @@ test('houseQueries takes the best-scored areas with real data, both kinds when t
   assert.deepEqual(qs.map((q) => `${q.kind}|${q.area}`), ['sale|M', 'rent|M', 'sale|NG', 'rent|NG']);
   assert.equal(qs[0].maxPrice, null);
   assert.equal(qs[0].minBedrooms, null);
+});
+
+test('topScoredAreas ranks by score, drops early-tier and unscored areas, and honours the limit', () => {
+  assert.deepEqual(topScoredAreas(cards, 10).map((c) => c.code), ['M', 'NG', 'LS']);
+  assert.deepEqual(topScoredAreas(cards, 1).map((c) => c.code), ['M']);
+  assert.deepEqual(topScoredAreas(cards, 0), []);
 });
 
 test('houseQueries honours a member\'s own kind, budget, bedrooms and rent ceiling', () => {

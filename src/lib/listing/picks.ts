@@ -64,6 +64,18 @@ export interface HouseAreaCard {
 export const HOUSE_AREAS = 8;
 
 /**
+ * The best-scored areas Stayful has real data for, best first. Areas still at
+ * the `early` confidence tier are left out: their score is not yet a claim
+ * worth searching on. Shared by the house pick and the marketplace sweep.
+ */
+export function topScoredAreas<C extends HouseAreaCard>(cards: C[], limit: number): C[] {
+  return cards
+    .filter((c) => c.score !== null && c.confidence.tier !== 'early')
+    .sort((a, b) => b.score!.score - a.score!.score)
+    .slice(0, Math.max(0, limit));
+}
+
+/**
  * The best-scored areas Stayful has real data for, as searches. With goals
  * (a member whose filter names no areas) the member's own kind, budget and
  * bedrooms apply; without, both kinds and no bounds, so the reply to the
@@ -74,10 +86,7 @@ export function houseQueries(cards: HouseAreaCard[], goals: MarketGoals | null, 
   const kinds: SourcingKind[] = goals ? (g.sourcingKind === 'both' ? ['sale', 'rent'] : [g.sourcingKind]) : ['sale', 'rent'];
   const bounds = goals ? budgetBounds(g.budget) : { min: null, max: null };
   const minBedrooms = goals ? g.bedrooms ?? null : null;
-  const areas = cards
-    .filter((c) => c.score !== null && c.confidence.tier !== 'early')
-    .sort((a, b) => b.score!.score - a.score!.score)
-    .slice(0, limit);
+  const areas = topScoredAreas(cards, limit);
   const out: SourcingQuery[] = [];
   for (const a of areas) {
     for (const kind of kinds) {

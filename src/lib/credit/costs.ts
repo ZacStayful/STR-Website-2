@@ -62,6 +62,8 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   // ── OnTheMarket page fetches (our bandwidth; nominal) ──
   { provider: 'onthemarket', unit: 'search_page', label: 'OnTheMarket results page fetch', unitCostPence: 0.2, notes: 'nominal' },
   { provider: 'onthemarket', unit: 'listing_page', label: 'Listing page fetch (Rightmove / OnTheMarket)', unitCostPence: 0.2, notes: 'nominal' },
+  // ── Deals marketplace (priced by the deal_open_ladder billing setting, never metered) ──
+  { provider: 'marketplace', unit: 'deal_open', label: 'Deal sheet open (marketplace)', unitCostPence: 0, notes: 'base pence come from billing_settings.deal_open_ladder by annual profit; this row only labels the ledger' },
   // ── Our own data ──
   { provider: 'internal', unit: 'postcode_lookup', label: 'Stayful postcode figures (own data)', unitCostPence: 0 },
   { provider: 'internal', unit: 'stored_comp', label: 'Stayful stored comparable (own data)', unitCostPence: 0 },

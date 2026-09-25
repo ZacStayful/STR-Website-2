@@ -27,6 +27,8 @@ export interface SourcedListing {
   source: ListingSource;
   id: string;
   canonicalUrl: string;
+  /** The portal URL exactly as the feed gave it; the canonicaliser rewrites Zoopla rentals to a for-sale path, so this is the link to show. */
+  sourceUrl?: string | null;
   kind: SourcingKind;
   title: string;
   address: string | null;
@@ -307,12 +309,15 @@ export function parseOnTheMarketSearch(html: string, kind: SourcingKind): Source
  * ourselves are usable, because every link in the digest (full report, add
  * to pipeline) goes through the server-side resolve.
  */
-export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind): SourcedListing[] {
+export function fromPmiListings(resp: PmiListingsResponse | null, kind: SourcingKind, opts: { sources?: 'fetchable' | 'all' } = {}): SourcedListing[] {
   if (!resp || !Array.isArray(resp.listings)) return [];
   const out: SourcedListing[] = [];
   for (const l of resp.listings) {
     const detected = l.url ? detectListingUrl(l.url) : null;
-    if (!detected || !SERVER_FETCHABLE.has(detected.source)) continue;
+    if (!detected) continue;
+    // The digest needs a page it can read itself; the marketplace also takes
+    // Zoopla, which it confirms on the feed alone and links by the real URL.
+    if (opts.sources !== 'all' && !SERVER_FETCHABLE.has(detected.source)) continue;
     const pc = findPostcode(l.postcode ?? l.address ?? null);
     const outcode = pc?.outcode ?? findOutcode(l.postcode ?? l.address ?? null);
     const amount = typeof l.price === 'number' && l.price > 0 ? l.price : null;
@@ -320,6 +325,7 @@ export function fromPmiListings(resp: PmiListingsResponse | null, kind: Sourcing
       source: detected.source,
       id: detected.id,
       canonicalUrl: detected.canonicalUrl,
+      sourceUrl: l.url ?? null,
       kind,
       title: l.address ?? `${detected.source} listing ${detected.id}`,
       address: l.address ?? null,

@@ -132,6 +132,13 @@ test('fromPmiListings keeps only listings with a recognisable portal URL', () =>
   assert.equal(out[0].listedDate, '2026-04-24');
   assert.equal(out[0].uprn, '100031234567');
   assert.deepEqual(fromPmiListings(null, 'sale'), []);
+  // The marketplace takes every recognised portal, Zoopla included, and keeps
+  // the feed's own URL because the canonicaliser rewrites Zoopla rentals.
+  const all = fromPmiListings({ listings: [{ address: '3 Mid St', price: 1200, bedrooms: 3, url: 'https://www.zoopla.co.uk/to-rent/details/456/' }] }, 'rent', { sources: 'all' });
+  assert.equal(all.length, 1);
+  assert.equal(all[0].source, 'zoopla');
+  assert.equal(all[0].sourceUrl, 'https://www.zoopla.co.uk/to-rent/details/456/');
+  assert.equal(out[0].sourceUrl, 'https://www.rightmove.co.uk/properties/123#/?channel=RES_BUY');
 });
 
 test('dealForSourced uses per-bedroom figures and rankPicks drops losing deals', () => {

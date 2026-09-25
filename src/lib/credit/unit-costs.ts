@@ -1,6 +1,7 @@
 import { adminClient, hasServiceRole } from './db.ts';
 import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP, DEFAULT_FUNNEL_MARKUP } from './costs.ts';
 import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
+import { parseLadder, DEFAULT_DEAL_OPEN_LADDER, type DealOpenLadder } from '../marketplace/ladder.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -27,6 +28,8 @@ export interface BillingSettings {
   spendRates: SpendRates;
   topupPresetsPence: number[];
   referralPence: number;
+  /** What opening a marketplace deal sheet costs, by annual profit band. */
+  dealOpenLadder: DealOpenLadder;
 }
 
 export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
@@ -37,6 +40,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   spendRates: DEFAULT_SPEND_RATES,
   topupPresetsPence: [1000, 2500, 5000],
   referralPence: 1000,
+  dealOpenLadder: DEFAULT_DEAL_OPEN_LADDER,
 };
 
 export function invalidateCreditCaches(): void {
@@ -89,6 +93,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       },
       topupPresetsPence: Array.isArray(presets) && presets.length ? presets.map(Number).filter((n) => Number.isFinite(n) && n > 0) : [1000, 2500, 5000],
       referralPence: num('referral_pence', 1000),
+      dealOpenLadder: parseLadder(kv.get('deal_open_ladder')),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

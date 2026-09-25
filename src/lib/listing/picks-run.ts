@@ -21,8 +21,9 @@ import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
-import { screen, bandRank, marketRentFor, grossRevenueFor, isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
-import { storedAreaRentTable, areaRentKey } from "../broker/providers/internal";
+import { isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
+import { storedAreaRentTable } from "../broker/providers/internal";
+import { screenSourced, mergeSnapshotIntoListing } from "../marketplace/record";
 import { resolveListing } from "./server";
 import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type UnsuitableReason } from "./suitability";
 import type { ListingSnapshot } from "./types";
@@ -588,25 +589,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (fromBackCatalogue && !meetsMotivationBar(motivation ?? NO_MOTIVATION, { mode: "only", areaRelative: motiv?.areaRelative ?? false, areaMedianKnown: median !== null })) return;
       if (motiv?.mode === "only" && qualifies !== true) fails.push("motivation");
       const card = cardByCode.get(l.postcodeArea ?? q.area) ?? cardByCode.get(q.area);
-      const figures = card ? { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } } : null;
       const areaFit = m.goals ? m.areaFit.get(card?.code ?? q.area) ?? null : card?.score?.score ?? null;
       // Income screening: does this earn enough as a short let to be worth
       // recommending, against what the same property would make on a long let?
-      // The rent and revenue come from the same helpers the screening report
-      // uses, so the gate and the report can never disagree.
-      const rev = figures ? areaRevenueFor(figures, l.bedrooms) : null;
-      const exactBeds = l.bedrooms !== null && (card?.byBedrooms.some((b) => b.bedrooms === l.bedrooms && b.grossRevenue) ?? false);
-      const rent = marketRentFor({
-        kind: l.kind,
-        bedrooms: l.bedrooms,
-        advertisedRentPcm: l.kind === "rent" ? rentPcm(l.price) : null,
-        storedRent: l.postcodeArea && l.bedrooms !== null ? rentTable.get(areaRentKey(l.postcodeArea, l.bedrooms)) ?? null : null,
-      });
-      const screening = screen(l.kind, {
-        bedrooms: l.bedrooms,
-        grossRevenue: grossRevenueFor(rev?.grossRevenue ?? null, exactBeds),
-        marketRent: rent?.figure ?? null,
-      });
+      // One helper shared with the marketplace and the screening report, so
+      // the gate, the pool and the report can never disagree.
+      const { screening, figures } = screenSourced(l, card ?? null, rentTable);
       const candidate = {
         listing: l,
         deal: dealForSourced(l, figures, m.goals?.finance ?? null),
@@ -732,26 +720,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const s = res.snapshot;
       // Read before the merge below folds it into `merged.agentHash`.
       const previousAgentHash = l.agentHash ?? null;
-      const merged: SourcedListing = {
-        ...l,
-        title: s.title || l.title,
-        address: s.displayAddress ?? l.address,
-        postcode: s.postcode ?? l.postcode,
-        bedrooms: s.bedrooms ?? l.bedrooms,
-        bathrooms: s.bathrooms ?? l.bathrooms,
-        price: s.price && s.price.period !== "night" ? { amount: s.price.amount, period: s.price.period } : l.price,
-        rawType: s.rawType ?? l.rawType,
-        photo: s.photos[0] ?? l.photo,
-        tenure: s.tenure ?? l.tenure ?? null,
-        features: s.features.length > 0 ? s.features : (l.features ?? []),
-        priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
-        sharedOwnership: s.sharedOwnership ?? false,
-        shortLetsPermitted: s.shortLetsPermitted ?? null,
-        // The portal's own listing date beats anything the search card had, and
-        // is written back so tomorrow's run starts from the better answer.
-        listedDate: s.listedDate ?? l.listedDate ?? null,
-        agentHash: s.agentHash ?? l.agentHash ?? null,
-      };
+      // The portal's own listing date beats anything the search card had, and
+      // is written back so tomorrow's run starts from the better answer.
+      const merged: SourcedListing = mergeSnapshotIntoListing(l, s);
       // Liveness before suitability: a sold or let-agreed listing is not a pick
       // however well it scores. The search card cannot know this — only the page can.
       const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
