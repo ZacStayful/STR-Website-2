@@ -1,6 +1,7 @@
 import { requireScope, isResponse, apiJson, apiError } from '@/lib/api/auth';
 import { getLead } from '@/lib/api/leads-query';
 import { deleteLead } from '@/lib/api/leads-write';
+import { touchLeads } from '@/lib/leads/activity';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const lead = await getLead(auth.userId, id);
   if (!lead) return apiError('not_found', 'No lead with that id.');
+  // Reading one lead is using it; listing and exporting are not (activity.ts).
+  await touchLeads(auth.userId, [id]);
   return apiJson(lead);
 }
 

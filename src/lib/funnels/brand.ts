@@ -204,7 +204,7 @@ export function brandName(b: FunnelBrand): string {
  */
 export function consentText(b: FunnelBrand): string {
   const who = b.companyName ?? 'the company running this form';
-  return `I agree that ${who} may store my details and contact me about this property.`;
+  return `I agree that ${who} may store my details and contact me about this property. My details are kept for up to 6 months after they were last used, then deleted.`;
 }
 
 export type NewFunnelBrandResult =

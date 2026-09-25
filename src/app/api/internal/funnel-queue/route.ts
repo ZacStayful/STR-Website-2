@@ -55,6 +55,9 @@ export async function GET(request: Request) {
     .from('leads')
     .select('id, user_id, funnel_id, address, postcode, bedrooms, created_at')
     .eq('status', 'queued')
+    // An archived lead is one the customer chose to drop: running its report
+    // now would charge them for it.
+    .is('archived_at', null)
     .gte('created_at', cutoff)
     .order('created_at', { ascending: true })
     .limit(MAX_PER_RUN);

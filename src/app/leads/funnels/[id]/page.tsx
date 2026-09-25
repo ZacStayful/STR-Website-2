@@ -56,9 +56,14 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
               {funnel.active ? "Live — this link is accepting enquiries." : "Paused — the link returns a not-found page."}
             </p>
           </div>
-          <Link href="/leads/funnels" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
-            ← Funnels
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/leads?funnel=${funnel.id}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+              This funnel&apos;s leads →
+            </Link>
+            <Link href="/leads/funnels" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+              ← Funnels
+            </Link>
+          </div>
         </div>
 
         <WallBanner notices={walls.map((w) => ({ ...w, funnelId: funnel.id, funnelName: funnel.name }))} />

@@ -20,6 +20,21 @@ export interface FunnelMode {
    * customer can check their own branding without paying for a lead.
    */
   preview?: boolean;
+  /**
+   * Set when this is one lead's finished report (the prospect's /r page, or
+   * the customer's own lead page). The report's Download PDF then goes
+   * through the lead's own token rather than the funnel's, so it keeps
+   * working after the funnel is paused or deleted — the funnel token only
+   * authorises a live funnel.
+   */
+  reportToken?: string;
+}
+
+/** Where the report's Download PDF posts to. */
+export function reportPdfUrl(funnel: FunnelMode | undefined): string {
+  if (!funnel) return '/api/generate-pdf';
+  if (funnel.reportToken) return `/api/generate-pdf?r=${encodeURIComponent(funnel.reportToken)}`;
+  return `/api/generate-pdf?f=${encodeURIComponent(funnel.token)}`;
 }
 
 /** Where a funnel's submissions go. */

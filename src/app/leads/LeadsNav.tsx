@@ -27,7 +27,11 @@ export function LeadsNav() {
       {ITEMS.map((item) => {
         // "/leads" must not light up on "/leads/funnels", but "/leads/funnels"
         // does need to stay lit on "/leads/funnels/<id>".
-        const active = item.href === "/leads" ? pathname === "/leads" : pathname.startsWith(item.href);
+        // A single lead (/leads/<uuid>) belongs to the Leads tab too.
+        const active =
+          item.href === "/leads"
+            ? pathname === "/leads" || /^\/leads\/[0-9a-f-]{36}$/i.test(pathname)
+            : pathname.startsWith(item.href);
         return (
           <Link
             key={item.href}

@@ -1,4 +1,5 @@
 import { leadByReportToken } from '@/lib/leads/report';
+import { touchLeadByReportToken } from '@/lib/leads/activity';
 import { renderReportPdf, pdfBrandForFunnel, reportFilename } from '@/lib/pdf/render';
 
 export const runtime = 'nodejs';
@@ -26,6 +27,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     brand,
     preparedFor: lead.email ?? undefined,
   });
+
+  // The prospect (or the customer, from their CRM) coming back to the report
+  // is the lead still being used (retention.ts).
+  await touchLeadByReportToken(token);
 
   return new Response(new Uint8Array(buffer), {
     status: 200,

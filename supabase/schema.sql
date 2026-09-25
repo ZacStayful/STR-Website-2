@@ -1147,6 +1147,44 @@ create index if not exists leads_funnel_created_idx on public.leads (funnel_id, 
 create index if not exists leads_user_qualified_idx on public.leads (user_id, qualified, created_at desc);
 -- The queue drained after a top-up lands; tiny, so keep it partial.
 create index if not exists leads_queued_idx on public.leads (created_at) where status = 'queued';
+-- ── Pipeline stage ──
+-- The customer's own sales stage, for customers without a CRM. Deliberately
+-- separate from `status`, which is OUR delivery state (queued, pushed…):
+-- the two answer different questions and one must not overwrite the other.
+-- Fixed list, mirrored by LEAD_STAGES in src/lib/leads/stage.ts.
+alter table public.leads add column if not exists stage text not null default 'new';
+alter table public.leads add column if not exists stage_changed_at timestamptz;
+alter table public.leads drop constraint if exists leads_stage_check;
+alter table public.leads add constraint leads_stage_check
+  check (stage in ('new', 'contacted', 'meeting_booked', 'signed', 'lost'));
+
+-- ── Retention ── (src/lib/leads/retention.ts, /api/internal/lead-retention)
+-- A lead nobody has used for 6 months is archived, kept 7 days so it can be
+-- restored, then deleted. The customer is emailed 2 days before and again
+-- when it happens.
+--
+-- `last_activity_at` is what "used" means: the customer opening it, a
+-- single-lead API/MCP read, the prospect reopening their report, or a push
+-- to the CRM. The default fills EXISTING rows with the moment this runs, so
+-- the clock starts at launch and old leads are not all archived on night one.
+alter table public.leads add column if not exists last_activity_at timestamptz not null default now();
+-- The "archiving in 2 days" email went out. Cleared by any activity.
+alter table public.leads add column if not exists archive_warned_at timestamptz;
+alter table public.leads add column if not exists archived_at timestamptz;
+alter table public.leads add column if not exists archive_reason text;
+alter table public.leads drop constraint if exists leads_archive_reason_check;
+alter table public.leads add constraint leads_archive_reason_check
+  check (archive_reason is null or archive_reason in ('inactive', 'manual'));
+-- The "archived" email went out (inactive archives only).
+alter table public.leads add column if not exists archive_notified_at timestamptz;
+-- When the row is deleted. Set only once the customer has been told — a
+-- manual archive tells them on screen, an inactive one by email — so a
+-- failed email can never lead to data vanishing unannounced.
+alter table public.leads add column if not exists purge_after timestamptz;
+create index if not exists leads_user_archived_idx on public.leads (user_id, archived_at, created_at desc);
+create index if not exists leads_activity_idx on public.leads (last_activity_at) where archived_at is null;
+create index if not exists leads_purge_idx on public.leads (purge_after) where purge_after is not null;
+
 alter table public.leads enable row level security;
 drop policy if exists "Users can read own leads" on public.leads;
 create policy "Users can read own leads"

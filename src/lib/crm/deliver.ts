@@ -125,13 +125,19 @@ export async function runDelivery(deliveryId: string): Promise<CrmResult | null>
 
   const { data: leadData } = await admin
     .from('leads')
-    .select('id, user_id, funnel_id, name, email, phone, consent_at, address, postcode, bedrooms, result, qualification, report_token, created_at')
+    .select('id, user_id, funnel_id, name, email, phone, consent_at, address, postcode, bedrooms, result, qualification, report_token, created_at, archived_at')
     .eq('id', row.lead_id)
     .maybeSingle();
   if (!leadData) {
     // The lead was erased — a GDPR deletion, most likely. Nothing to send,
     // and the delivery must not keep retrying against a row that is gone.
     await finish(row, { ok: false, error: 'The lead no longer exists.', retryable: false });
+    return null;
+  }
+  if ((leadData as { archived_at: string | null }).archived_at) {
+    // The customer binned it (or it went unused) while a retry was pending.
+    // Sending it now would put a lead they chose to drop into their CRM.
+    await finish(row, { ok: false, error: 'The lead was archived before it could be sent.', retryable: false });
     return null;
   }
   const lead = leadData as LeadRow;
@@ -199,6 +205,9 @@ async function markLeadPushed(leadId: string, externalId: string | null): Promis
       crm_item_id: externalId,
       crm_pushed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
+      // Landing in the CRM is the lead being used (leads/activity.ts).
+      last_activity_at: new Date().toISOString(),
+      archive_warned_at: null,
     })
     .eq('id', leadId);
 }

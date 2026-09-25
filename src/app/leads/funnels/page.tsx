@@ -19,7 +19,7 @@ export default async function FunnelsPage() {
 
   // One count query for all funnels, grouped in memory — a per-funnel query
   // would be one round trip each.
-  const { data: leadRows } = await supabase.from("leads").select("funnel_id").eq("user_id", user.id);
+  const { data: leadRows } = await supabase.from("leads").select("funnel_id").eq("user_id", user.id).is("archived_at", null);
   const counts = new Map<string, number>();
   for (const r of leadRows ?? []) {
     const id = (r as { funnel_id: string | null }).funnel_id;

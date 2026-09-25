@@ -41,6 +41,12 @@ export default async function IntegrationsPage() {
           </p>
         </div>
 
+        <p className="mb-5 rounded-xl border border-border bg-muted/40 p-4 text-xs text-muted-foreground">
+          Leads that go unused for 6 months are archived, then deleted 7 days later — we email you before either
+          happens. The report links sent to your CRM stop working once a lead is deleted, so download the PDF into
+          your CRM if you need a permanent copy. Monday receives the PDF itself, so its copy is unaffected.
+        </p>
+
         <div className="space-y-5">
           <MondayPanel connection={withBlockers(monday)} />
           <WebhookPanel connection={withBlockers(webhook)} />
