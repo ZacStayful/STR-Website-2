@@ -2258,7 +2258,7 @@ function generateMarketEstimate(bedrooms: number): ShortLetData {
 // Thin, typed wrapper around the bounds search so callers outside this
 // file (the data broker) can list every tracked Airbnb near a point with
 // its own performance, without the comp-selection heuristics above.
-import type { TrackedListing } from '../listing/competitors';
+import type { NearbyListingsPage, TrackedListing } from '../listing/competitors';
 
 export function toTrackedListing(l: AirbticsListing, lat: number, lng: number): TrackedListing {
   const rawRating = l.reveiw_scores_rating ?? 0;
@@ -2292,10 +2292,19 @@ export function toTrackedListing(l: AirbticsListing, lat: number, lng: number): 
  * per-listing revenue / ADR / occupancy / reviews. One bounds call ($0.05).
  * Returns null when the key is missing, credits are out, or the call fails.
  */
-export async function findNearbyListings(lat: number, lng: number, radiusKm = 1): Promise<TrackedListing[] | null> {
+/** The first page of listings around a point, plus Airbtics' total count for the box. */
+export async function findNearbyListingsPage(lat: number, lng: number, radiusKm = 1): Promise<NearbyListingsPage | null> {
   const apiKey = process.env.AIRBTICS_API_KEY;
   if (!apiKey) return null;
   const result = await fetchNearbyListings(lat, lng, apiKey, radiusKm);
   if (!result) return null;
-  return result.listings.map((l) => toTrackedListing(l, lat, lng));
+  return {
+    listings: result.listings.map((l) => toTrackedListing(l, lat, lng)),
+    totalCount: result.totalCount > 0 ? result.totalCount : null,
+    radiusKm,
+  };
+}
+
+export async function findNearbyListings(lat: number, lng: number, radiusKm = 1): Promise<TrackedListing[] | null> {
+  return (await findNearbyListingsPage(lat, lng, radiusKm))?.listings ?? null;
 }

@@ -5,7 +5,7 @@ import { keepAlive } from '../keep-alive';
 import { areaTrend } from '../market/trend';
 import { ask, listingPerformance, nearbyListings, postcodeRevenue, strMarket, type BrokerContext, type ResolveResult } from '../broker';
 import { withTimeout } from '../timeout';
-import { matchTracked, rankCompetitors, summariseCompetitors, type TrackedListing } from './competitors';
+import { matchTracked, nearbyPageOf, rankCompetitors, summariseCompetitors, type TrackedListing } from './competitors';
 import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type FinanceDefaults } from './deal';
 import type { ListingKind } from './types';
 import { postcodeAreaOf } from './normalise';
@@ -109,7 +109,8 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
     hasPoint ? bounded(ask(nearbyListings, { lat: input.lat!, lng: input.lng! }, ctx), QUICK_BUDGET_MS.nearby) : Promise.resolve(null),
   ]);
 
-  const nearby: TrackedListing[] | null = nearbyRes?.value ?? null;
+  const nearbyPage = nearbyPageOf(nearbyRes?.value ?? null);
+  const nearby: TrackedListing[] | null = nearbyPage?.listings ?? null;
   if (nearbyRes && nearbyRes.unavailable && hasPoint) limited = true;
 
   let tracked: QuickEstimate['tracked'] = null;
@@ -126,7 +127,7 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
   }
 
   const competitors = nearby
-    ? { summary: summariseCompetitors(nearby, input.bedrooms), top: rankCompetitors(nearby, 8), cell: nearbyRes!.cached ? 'cached' : 'live', updatedAt: nearbyRes!.updatedAt, stale: nearbyRes!.stale }
+    ? { summary: summariseCompetitors(nearby, input.bedrooms, nearbyPage?.totalCount ?? null), top: rankCompetitors(nearby, 8), cell: nearbyRes!.cached ? 'cached' : 'live', updatedAt: nearbyRes!.updatedAt, stale: nearbyRes!.stale }
     : null;
 
   // Pick the estimate, best evidence first.
