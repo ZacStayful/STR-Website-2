@@ -25,6 +25,17 @@ export const DEMO_MANCHESTER: AnalysisResult = {
       { title: "MediaCity Waterfront", url: "#", bedrooms: 2, accommodates: 4, averageDailyRate: 180, occupancyRate: 0.57, annualRevenue: 37454, distance: 1.2, rating: 4.3, reviewCount: 31, listingAge: 0.9, daysAvailable: 260, amenityCount: 15 },
       { title: "Victoria Warehouse Flat", url: "#", bedrooms: 2, accommodates: 4, averageDailyRate: 160, occupancyRate: 0.64, annualRevenue: 37376, distance: 0.6, rating: 4.6, reviewCount: 85, listingAge: 3.5, daysAvailable: 305, amenityCount: 15 },
     ],
+    // Illustrative comparable-history fields (the Newcastle demo keeps the
+    // older shape, so the page's "absent" path stays visible too).
+    listingsNearby: { count: 1050, radiusKm: 1, area: "box" },
+    earningsRange: {
+      basis: "comparables",
+      annual: null,
+      monthly: { to: "2026-08", p25: [2040, 1785, 2376, 2796, 2509, 3799, 3039, 2758, 3376, 2962, 3058, 1767], p50: [2537, 2220, 2955, 3477, 3120, 4724, 3779, 3430, 4198, 3683, 3802, 2197], p75: [3190, 2793, 3716, 4374, 3925, 5941, 4753, 4314, 5280, 4632, 4782, 2763], n: [8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8] },
+    },
+    localTrend: { to: "2026-08", listings: 8, revenueChange: 0.06, adrChange: 0.04, occupancyPointsChange: 0.01, direction: "up", rising: 6, recentRevenue: 296000, priorRevenue: 279000 },
+    stayProfile: { from: "2023-09", to: "2026-08", months: [3.1, 2.9, 2.8, 2.6, 2.5, 2.4, 2.3, 2.3, 2.5, 2.6, 2.7, 3.2], annual: 2.6, listings: 8, basis: "established" },
+    monthlyOccupancy: [0.5, 0.5, 0.56, 0.62, 0.6, 0.72, 0.68, 0.66, 0.7, 0.64, 0.66, 0.46],
   },
   longLet: {
     monthlyRent: 1153,

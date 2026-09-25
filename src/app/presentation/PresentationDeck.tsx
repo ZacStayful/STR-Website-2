@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useMemo, useState } from "react";
 import type { AnalysisResult, RiskLevel } from "@/lib/types";
 import { deriveReportData, type PdfExpenses } from "@/lib/pdf/derive";
+import { reportAvgStayNights } from "@/lib/comps/stays";
 import { overallRiskScore100, riskFactors100 } from "@/lib/scores";
 import { C, gbp, riskLevelColors, riskScoreColors, riskScoreLabel, scoreColors } from "./_lib/tokens";
 import { CASE_STUDIES, averageAccuracy } from "./_lib/caseStudies";
@@ -102,7 +103,13 @@ export function PresentationDeck({
   const [bills, setBills] = useState(0);
 
   // Editable assumptions for the time-to-competitive estimate.
-  const [avgStayNights, setAvgStayNights] = useState(3);
+  // Average stay starts from the comparables' booking history when the
+  // report has it; 3 nights otherwise. Either way it stays editable.
+  const [dataStayNights] = useState(() => {
+    const n = reportAvgStayNights(result.shortLet);
+    return n ? Math.round(n * 2) / 2 : null;
+  });
+  const [avgStayNights, setAvgStayNights] = useState(dataStayNights ?? 3);
   const [reviewOneIn, setReviewOneIn] = useState(3);
 
   const data = useMemo(
@@ -276,7 +283,7 @@ export function PresentationDeck({
               ) : null}
             </div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, color: C.gray500, marginTop: 6 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Avg stay <NumField value={avgStayNights} onChange={setAvgStayNights} suffix="nts" step={1} max={30} width={48} /></span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>Avg stay <NumField value={avgStayNights} onChange={setAvgStayNights} suffix="nts" step={0.5} max={30} width={52} />{dataStayNights !== null && avgStayNights === dataStayNights ? <span style={{ fontSize: 11 }}>from local booking data</span> : null}</span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>1 in <NumField value={reviewOneIn} onChange={setReviewOneIn} step={1} max={20} width={44} /> guests review</span>
             </div>
 
