@@ -13,6 +13,7 @@ import { trendLabel } from "@/lib/market/trend";
 import type { ExplorerRow } from "./types";
 import { KeyTiles, Kv, VerdictBlock, Working } from "./VerdictBits";
 import { ListingThumb, listingMeta } from "./ListingsPane";
+import { nearbyCountLabel } from "@/lib/comps/nearby";
 
 const LISTING_STATUS_LABEL: Record<string, string> = { under_offer: "Under offer", let_agreed: "Let agreed", sold: "Sold", removed: "Removed from the market" };
 const SOURCE_LABEL: Record<string, string> = { "postcode-reports": "Recent Stayful reports for this postcode", competitors: "Tracked Airbnbs within 1 km", "area-bedrooms": "Area average for this size", area: "Area average across all sizes", "pmi-market": "Property Market Intel area snapshot" };
@@ -308,12 +309,12 @@ export function ListingDrawer({
             <p>Seasonality, the underwater months and the cashflow chart come from the full report’s live comparables; the quick view works from the annual figure only.</p>
           </Working>
 
-          <Working title="Competition nearby" small={comps ? `${comps.summary.count} tracked Airbnbs within 1 km` : "no tracked listings found"}>
+          <Working title="Competition nearby" small={comps ? `${nearbyCountLabel(comps.summary.count, comps.summary.totalNearby)} Airbnbs within 1 km` : "no tracked listings found"}>
             {comps ? (
               <>
                 <Kv
                   rows={[
-                    { k: "Tracked within 1 km", v: String(comps.summary.count) },
+                    { k: "Tracked within 1 km", v: nearbyCountLabel(comps.summary.count, comps.summary.totalNearby) },
                     { k: `Same size (${listing.bedrooms ?? "?"} bed)`, v: String(comps.summary.sameSize) },
                     { k: "Median revenue", v: comps.summary.medianRevenue ? gbp(comps.summary.medianRevenue) : "—" },
                     { k: "Top quartile", v: comps.summary.topQuartileRevenue ? gbp(comps.summary.topQuartileRevenue) : "—" },
