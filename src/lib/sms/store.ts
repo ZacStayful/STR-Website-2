@@ -248,3 +248,13 @@ export async function unpricedMessages(admin: Admin, limit: number, now: Date = 
   }
   return (data ?? []) as { id: string; twilio_sid: string }[];
 }
+
+/** The most texts a member may get in a UK calendar month (billing_settings.sms_monthly_cap; 8 unless changed). */
+export const DEFAULT_MONTHLY_CAP = 8;
+
+export async function smsMonthlyCap(admin: Admin): Promise<number> {
+  const { data, error } = await admin.from('billing_settings').select('value').eq('key', 'sms_monthly_cap').maybeSingle();
+  if (error) console.warn('[sms] monthly cap read failed, using the default:', error.message);
+  const n = Number((data as { value: unknown } | null)?.value);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_MONTHLY_CAP;
+}

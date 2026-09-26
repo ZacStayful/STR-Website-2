@@ -55,8 +55,12 @@ export function SignupForm({ next = '' }: { next?: string }) {
           className="w-full h-10 rounded-lg border border-border bg-input/50 px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <p className="text-xs text-muted-foreground">
-          We may text you about urgent account or report issues. No marketing.
+          We only text you about urgent account issues, or deal alerts if you ask for them below.
         </p>
+        <label className="flex items-start gap-2 pt-1 text-sm">
+          <input type="checkbox" name="sms_opt_in" className="mt-0.5 h-4 w-4 shrink-0 rounded border-border" />
+          <span>Text me when a deal I&apos;m tracking changes (you can turn this off any time)</span>
+        </label>
       </div>
       <div className="space-y-1.5">
         <label htmlFor="password" className="text-sm font-medium">
