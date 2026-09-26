@@ -146,6 +146,22 @@ export async function countDeals(f: DealFilters, visibility: DealVisibility, mem
   return count ?? 0;
 }
 
+/**
+ * For an account inside the delay: how many live deals matching these same
+ * filters are still in their early-access window — the free member's
+ * banner. The grid's own query with the cutoff turned round, so the number
+ * is real. Null when there is no window for this account or it cannot be read.
+ */
+export async function earlyAccessCount(f: DealFilters, visibility: DealVisibility): Promise<number | null> {
+  if (!hasServiceRole() || !visibility.cutoffIso) return null;
+  const { count, error } = await dealsQuery(createAdminClient(), f, visibility, { reaction: null, countOnly: true, earlyAfter: visibility.cutoffIso });
+  if (error) {
+    console.warn('[marketplace] earlyAccessCount failed:', error.message);
+    return null;
+  }
+  return count ?? 0;
+}
+
 export interface AreaCount {
   code: string;
   sale: number;

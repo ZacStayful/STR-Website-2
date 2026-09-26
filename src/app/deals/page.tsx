@@ -6,13 +6,15 @@ import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { filtersToSearch, parseDealFilters } from "@/lib/marketplace/grid";
-import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals } from "@/lib/marketplace/queries";
+import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount } from "@/lib/marketplace/queries";
+import { earlyAccessBanner, earlyAccessFor, isFiltered } from "@/lib/marketplace/early-access";
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
+import { EarlyAccessBanner } from "./_components/EarlyAccessBanner";
 import { DealsMap } from "./_components/DealsMap";
 import { Pagination } from "./_components/Pagination";
 
@@ -43,7 +45,13 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
   const visibility = await dealVisibilityFor(user.id, isAdminEmail(user.email));
   // The member's own Keep / Pass shape the grid: passed deals leave it, and ?view= shows only kept or only passed.
-  const [page, counts, settings] = await Promise.all([listDeals(filters, visibility, { userId: user.id }), liveCountsByArea(visibility.hourCutoffIso), getBillingSettings()]);
+  // Early access: a free member gets one line with the real count of deals they are waiting on (matching this search); a paying member gets a badge on each of those deals.
+  const [page, counts, settings, waiting] = await Promise.all([
+    listDeals(filters, visibility, { userId: user.id }),
+    liveCountsByArea(visibility.hourCutoffIso),
+    getBillingSettings(),
+    visibility.tier === "free" && filters.view === "all" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
+  ]);
   const ids = page.cards.map((c) => c.id);
   const [opened, reactions] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids)]);
   // Nothing left in the default view: say so if it is because they passed on all of it.
@@ -52,6 +60,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const countMap: Record<string, number> = {};
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);
   const message = typeof raw.msg === "string" ? MESSAGES[raw.msg] ?? null : null;
+  const banner = earlyAccessBanner(waiting, isFiltered(filters));
   const totalLive = counts.reduce((n, c) => n + c.total, 0);
 
   // What this member was shown goes to the front of the recheck queue; deals
@@ -74,6 +83,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
         {message && <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>}
 
         <GoalsStrip total={page.total} fromWelcome={cameFromWelcome(raw.from)} />
+        <EarlyAccessBanner text={banner} />
         <DealsFilterBar filters={filters} counts={counts} total={page.total} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -109,7 +119,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {page.cards.map((card) => (
-                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} />
+                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} />
                 ))}
               </ul>
             )}

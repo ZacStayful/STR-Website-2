@@ -3,6 +3,7 @@ import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
+import { earlyAccessHint } from "@/lib/marketplace/early-access";
 import { PASS_REASON_GROUPS, type DealReaction } from "@/lib/marketplace/reactions";
 import { DealCardFrame } from "./DealCardFrame";
 
@@ -25,6 +26,12 @@ export interface DealCardProps {
   opened?: boolean;
   /** The member's own Keep / Pass on it (reactionsFor in src/lib/marketplace/reactions-server.ts). */
   reaction?: DealReaction | null;
+  /**
+   * For a paying member only: the deal is still inside the free members'
+   * delay, and this is when they get it (earlyAccessFor in
+   * src/lib/marketplace/early-access.ts). Never set it for a free member.
+   */
+  earlyAccess?: { freeAt: Date } | null;
   /** Keep / Pass (and `share`) under the card. False draws a read-only card. Default true. */
   actions?: boolean;
   /** The share button for this deal, when sharing is on. */
@@ -37,7 +44,7 @@ export interface DealCardProps {
  * Never the address, the postcode or the listing link. Reused by the /deals
  * grid and, later, the Today screen and My deals.
  */
-export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction = null, actions = true, share }: DealCardProps) {
+export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction = null, earlyAccess = null, actions = true, share }: DealCardProps) {
   const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
   const badges = badgesFor(card, now);
   const figure = headlineFigure(card);
@@ -56,6 +63,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         )}
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
           <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+          {earlyAccess && <span className="rounded-full bg-warning px-2 py-0.5 text-[11px] font-semibold text-warning-foreground">Early access</span>}
           {badges.tags.map((t) => (
             <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
           ))}
@@ -70,6 +78,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         <p className="mt-1.5 truncate text-sm font-medium text-foreground">{where || "Location on the sheet"}</p>
         {motivation.length > 0 && <p className="truncate text-xs font-medium text-primary">{motivation.join(" · ")}</p>}
         <p className="truncate text-xs text-muted-foreground">{describeType(card)}</p>
+        {earlyAccess && <p className="mt-1 text-[11px] font-medium text-foreground">{earlyAccessHint(earlyAccess.freeAt, now)}</p>}
         <div className="mt-2 flex items-center justify-between gap-2">
           <span className={"text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}</span>
           <span className={"rounded-md px-2 py-1 text-xs font-semibold " + (opened ? "bg-primary/10 text-primary" : "bg-primary text-primary-foreground")}>{open}</span>
