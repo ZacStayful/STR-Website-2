@@ -15,6 +15,7 @@ import 'server-only';
 import type { createAdminClient } from '../supabase/admin';
 import { loadTrackedDeals, type TrackedLoad } from '../listing/tracked-server';
 import { parseHistory, type PriceHistoryEntry } from '../listing/recheck';
+import type { Deal } from '../listing/deal';
 import { describeType } from '../marketplace/grid';
 import { mapLimit } from './daily-server';
 import { placeOf, type Link } from './message';
@@ -26,6 +27,8 @@ const ID_CHUNK = 150;
 export interface MemberTracking {
   load: TrackedLoad;
   pipelineHistory: Map<string, PriceHistoryEntry[]>;
+  /** Each pipeline row's stored deal figures (checked_listings.deal), for the figure at a new price. */
+  pipelineDeal: Map<string, Deal | null>;
   revived: Map<string, { at: string; from: string | null }>;
 }
 
@@ -46,11 +49,15 @@ export async function trackingFor(admin: Admin, members: readonly { id: string; 
     }
   }
   const histories = new Map<string, PriceHistoryEntry[]>();
+  const figures = new Map<string, Deal | null>();
   const rows = [...rowIds];
   for (let i = 0; i < rows.length; i += ID_CHUNK) {
-    const { data, error } = await admin.from('checked_listings').select('id, price_history').in('id', rows.slice(i, i + ID_CHUNK));
+    const { data, error } = await admin.from('checked_listings').select('id, price_history, deal').in('id', rows.slice(i, i + ID_CHUNK));
     if (error) console.warn('[notify] pipeline history read failed:', error.message);
-    for (const r of (data ?? []) as { id: string; price_history: unknown }[]) histories.set(r.id, parseHistory(r.price_history));
+    for (const r of (data ?? []) as { id: string; price_history: unknown; deal: unknown }[]) {
+      histories.set(r.id, parseHistory(r.price_history));
+      figures.set(r.id, r.deal && typeof r.deal === 'object' ? (r.deal as Deal) : null);
+    }
   }
   const revived = new Map<string, { at: string; from: string | null }>();
   const deals = [...dealIds];
@@ -67,8 +74,13 @@ export async function trackingFor(admin: Admin, members: readonly { id: string; 
     const load = loads[i];
     if (!load) return;
     const mine = new Map<string, PriceHistoryEntry[]>();
-    for (const v of load.view) if (v.checkedListingId && histories.has(v.checkedListingId)) mine.set(v.checkedListingId, histories.get(v.checkedListingId)!);
-    out.set(m.id, { load, pipelineHistory: mine, revived });
+    const mineDeal = new Map<string, Deal | null>();
+    for (const v of load.view) {
+      if (!v.checkedListingId) continue;
+      if (histories.has(v.checkedListingId)) mine.set(v.checkedListingId, histories.get(v.checkedListingId)!);
+      mineDeal.set(v.checkedListingId, figures.get(v.checkedListingId) ?? null);
+    }
+    out.set(m.id, { load, pipelineHistory: mine, pipelineDeal: mineDeal, revived });
   });
   return out;
 }

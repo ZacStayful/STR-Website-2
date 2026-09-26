@@ -3,7 +3,7 @@ import { payerFor } from "@/lib/team";
 import { resolveListing } from "@/lib/listing/server";
 import { quickEstimate } from "@/lib/listing/quick";
 import { serverFetchEnabled } from "@/lib/listing/fetch";
-import { diffListing, parseHistory, pendingEntries, markNotified, dealAtNewPrice, recheckEmail, type PriceHistoryEntry, type RecheckAlertItem } from "@/lib/listing/recheck";
+import { diffListing, parseHistory, dealAtNewPrice } from "@/lib/listing/recheck";
 import type { ListingSnapshot, ListingSource, ListingStatus } from "@/lib/listing/types";
 import type { QuickEstimate } from "@/lib/listing/quick-types";
 import type { Deal } from "@/lib/listing/deal";
@@ -11,8 +11,6 @@ import { runMetered, newActionId } from "@/lib/credit/context";
 import { getBalance } from "@/lib/credit/ledger";
 import { isEnforcing } from "@/lib/credit/http";
 import { isAdminEmail } from "@/lib/admin";
-import { sendEmail, isEmailConfigured } from "@/lib/email/send";
-import { siteUrl } from "@/lib/url";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Daily re-check of saved listings ──────────────────────────────────
@@ -24,8 +22,10 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 //     status and deal follow the new figures.
 //   - Airbnb rows refresh their tracked figures monthly through the broker
 //     (no page fetch; budgeted like any quick view).
-// Changes are emailed the same run, one email per member; a failed send is
-// retried next run because entries stay `notified: false` until sent.
+// Changes are RECORDED here and nothing is sent (Batch 6): the 06:55
+// collector (/api/internal/deal-alerts) turns them into alerts, and the
+// member's one daily email carries them. A listing marked removed is read
+// again every few days for a month, so one that comes back is noticed.
 //
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/listing-recheck?dry=1"
 //
@@ -46,6 +46,10 @@ const AIRBNB_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const AIRBNB_MAX_PER_RUN = 10;
 const PORTAL_SOURCES: ListingSource[] = ["rightmove", "onthemarket"];
 const DEFAULT_MAX_PER_RUN = 40;
+/** A removed listing is re-read this often, inside the same cap... */
+const REMOVED_EVERY_MS = 3 * 24 * 60 * 60 * 1000;
+/** ...for this long after it went, in case it comes back (a transient 404, a relist on the same URL). */
+const REMOVED_FOR_MS = 30 * 24 * 60 * 60 * 1000;
 
 function maxPerRun(): number {
   const n = Number(process.env.LISTING_RECHECK_MAX_PER_RUN ?? DEFAULT_MAX_PER_RUN);
@@ -73,7 +77,13 @@ interface Row {
   created_at: string;
 }
 
-type Profile = { email: string | null; plan_code: string | null };
+
+/** When a row was recorded as removed: its latest removed entry, else when it was last checked. */
+function removedAt(r: Row): number {
+  const entries = parseHistory(r.price_history).filter((e) => e.status === "removed");
+  const last = entries[entries.length - 1];
+  return last ? new Date(last.at).getTime() : lastSeen(r);
+}
 
 function lastSeen(r: Row): number {
   return new Date(r.rechecked_at ?? r.last_checked_at ?? r.created_at).getTime();
@@ -101,8 +111,6 @@ export async function GET(request: Request) {
     .from("checked_listings")
     .select("id, user_id, canonical_url, source, kind, postcode, lat, lng, snapshot, quick_estimate, deal, listing_status, price_history, rechecked_at, last_checked_at, created_at")
     .neq("status", "passed")
-    // A removed listing cannot change again, so it never re-enters the queue.
-    .or("listing_status.is.null,listing_status.neq.removed")
     .in("source", [...PORTAL_SOURCES, "airbnb"])
     .order("rechecked_at", { ascending: true, nullsFirst: true })
     .limit(cap * 2 + AIRBNB_MAX_PER_RUN);
@@ -113,7 +121,8 @@ export async function GET(request: Request) {
   const rows = (data ?? []) as unknown as Row[];
 
   // Portal listings: one fetch per URL, oldest first, skipping anything seen
-  // today and anything already gone (a removed listing cannot change again).
+  // today. A removed listing is read again every REMOVED_EVERY_MS for
+  // REMOVED_FOR_MS after it went (it may come back); after that it is left.
   // Every row that is skipped without a fetch still gets its rechecked_at
   // stamped, or it sits at the front of the oldest-first queue forever and,
   // once enough of them build up, nothing behind them is ever checked again.
@@ -122,8 +131,14 @@ export async function GET(request: Request) {
   for (const r of rows) {
     if (!PORTAL_SOURCES.includes(r.source)) continue;
     if (r.listing_status === "removed") {
-      deferred.push(r.id);
-      continue;
+      if (now.getTime() - removedAt(r) > REMOVED_FOR_MS) {
+        deferred.push(r.id);
+        continue;
+      }
+      // Not due yet: left as it is. Stamping it would restart its clock and it
+      // would never come due; it is not at the front of the queue meanwhile,
+      // because everything live is read daily.
+      if (now.getTime() - lastSeen(r) < REMOVED_EVERY_MS) continue;
     }
     if (now.getTime() - lastSeen(r) < PORTAL_MIN_AGE_MS) continue;
     if (!serverFetchEnabled(r.source)) {
@@ -139,7 +154,7 @@ export async function GET(request: Request) {
   // Airbnb listings: monthly figure refresh through the broker, a few per run.
   const airbnb = rows.filter((r) => r.source === "airbnb" && now.getTime() - lastSeen(r) >= AIRBNB_MIN_AGE_MS).sort((a, b) => lastSeen(a) - lastSeen(b)).slice(0, AIRBNB_MAX_PER_RUN);
 
-  const summary = { dry, candidates: rows.length, portalUrls: urls.length, airbnb: airbnb.length, fetched: 0, changed: 0, removed: 0, skipped: 0, paused: false, airbnbRefreshed: 0, emails: 0, emailFailures: 0, ranOutOfTime: false };
+  const summary = { dry, candidates: rows.length, portalUrls: urls.length, airbnb: airbnb.length, fetched: 0, changed: 0, removed: 0, skipped: 0, paused: false, airbnbRefreshed: 0, ranOutOfTime: false };
   if (dry) {
     return Response.json({ ...summary, wouldFetch: urls.map(([u, rs]) => ({ url: u, members: rs.length, lastSeen: new Date(Math.min(...rs.map(lastSeen))).toISOString() })), wouldRefresh: airbnb.map((r) => r.canonical_url) });
   }
@@ -235,50 +250,9 @@ export async function GET(request: Request) {
     }
   }
 
-  // Email everything still unnotified: this run's changes plus any earlier
-  // ones whose email failed. Recorded as notified only after a successful
-  // send. Listings the member has since Passed are left alone.
-  const { data: pendingData, error: pendErr } = await admin
-    .from("checked_listings")
-    .select("id, user_id, canonical_url, snapshot, price_history, profiles!inner(email, plan_code)")
-    .neq("status", "passed")
-    .contains("price_history", [{ notified: false }]);
-  if (pendErr) console.error("[recheck] pending select failed:", pendErr.message);
-  const byUser = new Map<string, { profile: Profile; items: (RecheckAlertItem & { history: PriceHistoryEntry[] })[] }>();
-  for (const raw of (pendingData ?? []) as unknown as { id: string; user_id: string; canonical_url: string; snapshot: ListingSnapshot; price_history: unknown; profiles: Profile }[]) {
-    const history = parseHistory(raw.price_history);
-    const pending = pendingEntries(history);
-    if (pending.length === 0) continue;
-    const entry = byUser.get(raw.user_id) ?? { profile: raw.profiles, items: [] };
-    entry.items.push({ id: raw.id, title: raw.snapshot.title, address: raw.snapshot.displayAddress ?? null, canonicalUrl: raw.canonical_url, entries: pending, history });
-    byUser.set(raw.user_id, entry);
-  }
-  const perUser: { user: string; items: number; sent: boolean; reason?: string }[] = [];
-  for (const [userId, { profile, items }] of byUser) {
-    if (!profile || !profile.email) {
-      perUser.push({ user: userId, items: items.length, sent: false, reason: "no_email" });
-      continue;
-    }
-    if (!isEmailConfigured()) {
-      perUser.push({ user: userId, items: items.length, sent: false, reason: "email_not_configured" });
-      continue;
-    }
-    const res = await sendEmail({ to: profile.email, ...recheckEmail(items, siteUrl()) });
-    perUser.push({ user: userId, items: items.length, sent: res.sent, reason: res.reason });
-    if (!res.sent) {
-      summary.emailFailures += 1;
-      continue;
-    }
-    summary.emails += 1;
-    for (const item of items) {
-      const { error: upErr } = await admin.from("checked_listings").update({ price_history: markNotified(item.history) }).eq("id", item.id);
-      if (upErr) console.error("[recheck] mark notified failed:", upErr.message);
-    }
-  }
-
   if (deferred.length > 0) {
     const { error: defErr } = await admin.from("checked_listings").update({ rechecked_at: nowIso }).in("id", deferred);
     if (defErr) console.error("[recheck] deferred stamp failed:", defErr.message);
   }
-  return Response.json({ ...summary, deferred: deferred.length, ms: Date.now() - started, members: perUser });
+  return Response.json({ ...summary, deferred: deferred.length, ms: Date.now() - started });
 }

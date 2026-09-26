@@ -10,7 +10,7 @@
  * The rules, so an email never says something that stopped being true:
  *   - Passed or Secured (the member's own) never alerts.
  *   - One stream per deal: a deal on both lists (a pipeline row and a kept
- *     marketplace deal share a canonical URL) is told once.
+ *     marketplace deal share B5's key, d-<deal id>) is told once.
  *   - Price drops collapse: first price → price now. If "now" is not lower
  *     than where it started, there is no drop to tell.
  *   - A price drop on a deal that has since gone is not told; the "gone" is.
@@ -20,6 +20,7 @@
  * Pure: no network, no database, no server-only.
  */
 import type { AlertType, ChangeInput } from './message.ts';
+import type { PriceHistoryEntry } from '../listing/recheck.ts';
 
 /** Alerts older than this are dropped rather than sent: a switch turned back on never floods. */
 export const ALERT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -46,7 +47,7 @@ export interface AlertRow {
   user_id: string;
   alert_type: AlertType;
   source: 'pipeline' | 'marketplace';
-  canonical_url: string;
+  deal_key: string;
   deal_id: string | null;
   checked_listing_id: string | null;
   event_at: string;
@@ -119,9 +120,9 @@ export function settleChanges(rows: readonly AlertRow[], current: CurrentState, 
     live.push(r);
   }
 
-  // Group by deal (canonical URL): one stream per deal, whichever list it is on.
+  // Group by deal (B5's key): one stream per deal, whichever list it is on.
   const byUrl = new Map<string, AlertRow[]>();
-  for (const r of live) byUrl.set(r.canonical_url, [...(byUrl.get(r.canonical_url) ?? []), r]);
+  for (const r of live) byUrl.set(r.deal_key, [...(byUrl.get(r.deal_key) ?? []), r]);
 
   const changes: Settled['changes'] = [];
   for (const list of byUrl.values()) {
@@ -186,4 +187,147 @@ export function plausiblePriceChange(previous: number | null | undefined, next: 
 /** Every alert id a list of settled changes stands for: what finishSend marks notified. */
 export function alertIdsOf(changes: readonly { id: string; mergedIds?: string[] }[]): string[] {
   return changes.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
+}
+
+// ── Collecting: what changed on a member's tracked deals (the 06:55 cron) ──
+
+const GONE_REASONS: ReadonlySet<string> = new Set(['sold', 'under_offer', 'let_agreed', 'removed']);
+/** A deal can come back on the market once a fortnight at most, as far as alerts go. */
+export const BACK_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+/** "Getting attention": this many OTHER accounts opened or kept it in the last week. */
+export const NEARLY_GONE_WATCHERS = 3;
+
+/** One tracked deal as the collector needs it. Built by the server from Batch 5's loadTrackedDeals. */
+export interface TrackedForAlerts {
+  /** B5's key: 'd-<deal id>' or 'l-<row id>'. The dedupe key, never a URL. */
+  key: string;
+  stage: string;
+  kind: 'sale' | 'rent';
+  opened: boolean;
+  /** Only when opened (the caller applies B5's address rule; this re-checks). */
+  address: string | null;
+  town: string | null;
+  type: string | null;
+  dealId: string | null;
+  checkedListingId: string | null;
+  /** When the member started tracking it at this stage: nothing before this alerts. */
+  trackedSince: string;
+  /** The pipeline row's own history. */
+  pipelineHistory: readonly PriceHistoryEntry[] | null;
+  /** The row's stored figures, for the figure at a new price when there is no marketplace deal. */
+  pipelineDeal: { kind: string; askingPrice?: number; advertisedRentPcm?: number; grossYieldPct?: number; monthlyMargin?: number } | null;
+  deal: {
+    status: string;
+    priceAmount: number | null;
+    pricePeriod: string | null;
+    /** The card's headline figure at the CURRENT price (figureLine), or null. */
+    figure: string | null;
+    liveSince: string | null;
+    retiredReason: string | null;
+    retiredAt: string | null;
+    history: readonly PriceHistoryEntry[];
+    revivedAt: string | null;
+    revivedFrom: string | null;
+  } | null;
+}
+
+export interface AlertInsert {
+  user_id: string;
+  alert_type: AlertType;
+  source: 'pipeline' | 'marketplace';
+  deal_key: string;
+  deal_id: string | null;
+  checked_listing_id: string | null;
+  event_at: string;
+  payload: AlertPayload;
+}
+
+/** What this member has already been alerted about, from deal_alerts (any state). */
+export interface AlertedBefore {
+  /** Lowest new price any price_drop alert for this deal carried. */
+  lowestDrop: ReadonlyMap<string, number>;
+  /** Latest back_on_market event per deal. */
+  lastBack: ReadonlyMap<string, number>;
+  /** Latest gone alert per deal, and what it said. */
+  lastGone?: ReadonlyMap<string, { at: number; status: string }>;
+}
+
+function pipelineFigure(d: TrackedForAlerts['pipelineDeal'], amount: number): string | null {
+  if (!d) return null;
+  if (d.kind === 'purchase' && d.askingPrice === amount && typeof d.grossYieldPct === 'number') return `${d.grossYieldPct.toFixed(1)}% gross yield`;
+  if (d.kind === 'rent-to-rent' && d.advertisedRentPcm === amount && typeof d.monthlyMargin === 'number') return `£${Math.round(d.monthlyMargin).toLocaleString('en-GB')}/mo margin`;
+  return null;
+}
+
+/**
+ * Every alert this member's tracked deals have earned since they started
+ * tracking them (and within ALERT_MAX_AGE_MS). The unique key on deal_alerts
+ * (user, type, deal, event time) makes writing the same one twice a no-op.
+ *
+ *   price_drop      a recorded drop, below any price already alerted (so a
+ *                   feed/page flip-flop cannot alert twice), not a relabel.
+ *                   The figure is the one computed at that very price, else
+ *                   none: never a stale number.
+ *   gone            it went under offer / sold / let agreed / off the market.
+ *   back_on_market  it came back from one of those AND a page read confirmed
+ *                   it live (live_since after the revival); once a fortnight.
+ *   nearly_gone     3+ other accounts opened or kept it in the last week.
+ * Passed and Secured deals earn nothing.
+ */
+export function alertsFor(userId: string, items: readonly TrackedForAlerts[], watchers: ReadonlyMap<string, number>, before: AlertedBefore, now: Date = new Date()): AlertInsert[] {
+  const out: AlertInsert[] = [];
+  for (const it of items) {
+    if (QUIET_STAGES.has(it.stage)) continue;
+    const floor = Math.max(time(it.trackedSince), now.getTime() - ALERT_MAX_AGE_MS);
+    const source: AlertInsert['source'] = it.dealId ? 'marketplace' : 'pipeline';
+    const base = { user_id: userId, source, deal_key: it.key, deal_id: it.dealId, checked_listing_id: it.checkedListingId };
+    const common: AlertPayload = { kind: it.kind, opened: it.opened, address: it.opened ? it.address : null, town: it.town, type: it.type, stage: it.stage };
+    const push = (alert_type: AlertType, event_at: string, payload: AlertPayload) => out.push({ ...base, alert_type, event_at, payload: { ...common, ...payload } });
+
+    // ── Price drops: the marketplace record when there is one (always pcm for rent, re-screened), else the row's ──
+    const history = it.deal ? it.deal.history : it.pipelineHistory ?? [];
+    let lowest = before.lowestDrop.get(it.key) ?? Infinity;
+    for (const e of [...history].sort((a, b) => time(a.at) - time(b.at))) {
+      // notified: the pre-Batch-6 re-check already emailed it. Never told twice.
+      if (e.notified || time(e.at) <= floor || e.previousAmount === null || e.amount === null) continue;
+      if (!(e.amount < e.previousAmount) || !plausiblePriceChange(e.previousAmount, e.amount)) continue;
+      if (!(e.amount < lowest)) continue;
+      lowest = e.amount;
+      const period = it.deal?.pricePeriod ?? e.period ?? 'total';
+      const figure = it.deal ? (it.deal.priceAmount === e.amount ? it.deal.figure : null) : pipelineFigure(it.pipelineDeal, e.amount);
+      push('price_drop', e.at, { oldAmount: e.previousAmount, newAmount: e.amount, period, figure });
+    }
+
+    // ── Gone: once per going. A listing the feed keeps reviving and its page keeps
+    // retiring would otherwise say "gone" every day; the same news is not told
+    // again unless it came back (and was told so) in between. ──
+    let told = before.lastGone?.get(it.key) ?? null;
+    const backSince = (at: number) => (before.lastBack.get(it.key) ?? -Infinity) > at;
+    const gone = (at: string, status: string) => {
+      if (told && told.status === status && !backSince(told.at)) return;
+      push('gone', at, { status });
+      told = { at: time(at), status };
+    };
+    const goneEvents: { at: string; status: string }[] = [];
+    if (it.deal?.retiredReason && GONE_REASONS.has(it.deal.retiredReason) && it.deal.status === 'retired' && it.deal.retiredAt && time(it.deal.retiredAt) > floor) goneEvents.push({ at: it.deal.retiredAt, status: it.deal.retiredReason });
+    for (const e of it.pipelineHistory ?? []) if (!e.notified && time(e.at) > floor && e.status && GONE_REASONS.has(e.status)) goneEvents.push({ at: e.at, status: e.status });
+    for (const g of goneEvents.sort((a, b) => time(a.at) - time(b.at))) gone(g.at, g.status);
+
+    // ── Back on the market ──
+    const lastBack = before.lastBack.get(it.key) ?? -Infinity;
+    const d = it.deal;
+    if (d?.revivedAt && d.revivedFrom && GONE_REASONS.has(d.revivedFrom) && d.status === 'live' && time(d.liveSince) >= time(d.revivedAt) && time(d.revivedAt) > floor && time(d.revivedAt) - lastBack >= BACK_COOLDOWN_MS) {
+      push('back_on_market', d.revivedAt, { previousStatus: d.revivedFrom, newAmount: d.priceAmount, period: d.pricePeriod });
+    }
+    for (const e of it.pipelineHistory ?? []) {
+      if (!e.notified && time(e.at) > floor && e.status === 'available' && e.previousStatus && GONE_REASONS.has(e.previousStatus) && time(e.at) - lastBack >= BACK_COOLDOWN_MS) {
+        push('back_on_market', e.at, { previousStatus: e.previousStatus, newAmount: e.amount, period: e.period });
+      }
+    }
+
+    // ── Getting attention: once per member per deal per time live ──
+    const n = it.dealId ? watchers.get(it.dealId) ?? 0 : 0;
+    if (d && d.status === 'live' && d.liveSince && n >= NEARLY_GONE_WATCHERS) push('nearly_gone', d.liveSince, { watchers: n });
+  }
+  return out;
 }

@@ -29,7 +29,7 @@ import { indexCohorts, lookupCohorts, type CohortMember } from '../listing/cohor
 import { buildDealRecord, feedStatusOf, qualifiesForMarketplace, type AreaCardLike } from './record';
 import { retiredReasonFor } from './status';
 import { nextCheckDueAt } from './cadence';
-import { REACTIVATABLE_REASONS, type DealRow } from './types';
+import { REACTIVATABLE_REASONS, RETURNING_REASONS, type DealRow } from './types';
 import { chunk, loadDealsByUrls, loadScreenContext, priceChangeColumns, recordColumns, recordRun, retireDeal, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 import { serverFetchEnabled } from '../listing/fetch';
 import type { Band } from '../listing/screen';
@@ -275,13 +275,25 @@ async function reconcile(admin: Admin, deal: DealRow, l: SourcedListing, rec: Re
   const stamp = now.toISOString();
   const count = (reason: string) => (summary.retired[reason] = (summary.retired[reason] ?? 0) + 1);
   if (deal.status === 'retired') {
-    // Back in the feed and qualifying again after a retirement the feed can undo: same row, same id.
-    if (deal.retired_reason && REACTIVATABLE_REASONS.has(deal.retired_reason) && qualifiesForMarketplace(rec) && !feedGone) {
+    // Back in the feed and qualifying again: same row, same id. A retirement
+    // the feed can undo (unqualified, stale) or — Batch 6 — one that meant the
+    // listing went (sold / under offer / let agreed / removed), which is then
+    // "back on the market": stamped, and confirmed by a page read before it
+    // goes live wherever the source can be read.
+    const reason = deal.retired_reason;
+    const returning = Boolean(reason && RETURNING_REASONS.has(reason));
+    if (reason && (REACTIVATABLE_REASONS.has(reason) || returning) && qualifiesForMarketplace(rec) && !feedGone) {
       const fetchable = serverFetchEnabled(l.source);
-      const { error } = await admin
-        .from('marketplace_deals')
-        .update({ ...recordColumns(l, rec), status: fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: stamp, check_failures: 0, updated_at: stamp })
-        .eq('canonical_url', deal.canonical_url);
+      // The price may have moved while it was off the market: record it, as any reprice is.
+      const { columns: priceCols } = priceChangeColumns(deal, rec, stamp);
+      const revive = { ...recordColumns(l, rec), ...priceCols, status: fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: stamp, check_failures: 0, updated_at: stamp };
+      const run = (columns: Record<string, unknown>) => admin.from('marketplace_deals').update(columns).eq('canonical_url', deal.canonical_url);
+      let { error } = await run(returning ? { ...revive, revived_at: stamp, revived_from: reason } : revive);
+      if (error && returning) {
+        // A database without the Batch 6 columns still revives the deal; it just cannot say it came back.
+        console.warn('[marketplace-sweep] revival stamp failed (schema behind?):', error.message);
+        ({ error } = await run(revive));
+      }
       if (error) console.error('[marketplace-sweep] reactivate failed:', error.message);
       else summary.reactivated += 1;
     }

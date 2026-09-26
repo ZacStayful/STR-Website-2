@@ -2441,15 +2441,17 @@ grant execute on function public.claim_notification_slot(uuid, date, text, text,
 -- collector (/api/internal/deal-alerts); the unique key makes a re-run a
 -- no-op. Pending = notified_at is null, whatever send_id says; notified_at
 -- is set only after the email carrying it was sent (finish_notification_send),
--- so an alert in a failed email goes in the next one. canonical_url is the
--- dedupe key across a deal's pipeline row and its marketplace row, and is
--- never rendered unless the member opened the deal. Service role only.
+-- so an alert in a failed email goes in the next one. deal_key is Batch 5's
+-- key for the deal on My deals ('d-<deal id>' for a marketplace deal, with
+-- or without a pipeline row; 'l-<row id>' for a listing the member added):
+-- one stream per deal whichever list it is on, and never a URL, so an
+-- unopened deal's listing can never leak through here. Service role only.
 create table if not exists public.deal_alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references public.profiles(id) on delete cascade,
   alert_type text not null,                   -- price_drop | back_on_market | nearly_gone | gone
   source text not null,                       -- pipeline | marketplace
-  canonical_url text not null,
+  deal_key text not null,                    -- 'd-<deal id>' | 'l-<checked_listings id>'
   deal_id uuid,
   checked_listing_id uuid,
   event_at timestamptz not null,              -- the change's own timestamp
@@ -2458,7 +2460,7 @@ create table if not exists public.deal_alerts (
   notified_at timestamptz,
   created_at timestamptz not null default now()
 );
-create unique index if not exists deal_alerts_event_uidx on public.deal_alerts (user_id, alert_type, canonical_url, event_at);
+create unique index if not exists deal_alerts_event_uidx on public.deal_alerts (user_id, alert_type, deal_key, event_at);
 create index if not exists deal_alerts_pending_idx on public.deal_alerts (user_id, created_at) where notified_at is null;
 create index if not exists deal_alerts_user_idx on public.deal_alerts (user_id, created_at desc);
 do $$

@@ -48,7 +48,7 @@ export async function pendingChanges(admin: Admin, userIds: readonly string[], n
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await admin
         .from('deal_alerts')
-        .select('id, user_id, alert_type, source, canonical_url, deal_id, checked_listing_id, event_at, created_at, payload')
+        .select('id, user_id, alert_type, source, deal_key, deal_id, checked_listing_id, event_at, created_at, payload')
         .in('user_id', some)
         .is('notified_at', null)
         .gte('created_at', since)
