@@ -1891,7 +1891,8 @@ create trigger saved_searches_set_owner
 
 -- =========================
 -- Early access to marketplace deals (src/lib/marketplace/visibility.ts)
--- ==================-- An account that has ever paid (any subscription, any top-up, admins — see
+-- =========================
+-- An account that has ever paid (any subscription, any top-up, admins — see
 -- hasEverPaid in src/lib/access.ts) sees a deal the moment it goes live.
 -- Every other account, and every signed-out visitor, sees it
 -- free_deal_delay_hours later. Inside that window the deal is simply absent
@@ -1975,7 +1976,8 @@ alter table public.profiles add column if not exists picks_paused_email_at times
 -- when it was sent to this member, so a second press of the admin button
 -- never sends twice. Null: not yet.
 alter table public.profiles add column if not exists daily_notice_sent_at timestamptz;
-=======
+
+-- =========================
 -- Batch 2: signup questions and nav
 -- =========================
 -- onboarding_skips: how many times the member has tapped "Skip for now" on
