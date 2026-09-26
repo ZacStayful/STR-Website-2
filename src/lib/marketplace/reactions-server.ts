@@ -97,7 +97,12 @@ export async function reactionsFor(userId: string, dealIds: string[]): Promise<M
   return out;
 }
 
-/** Every deal the member has kept, newest first. The kept list other batches build on. */
+/**
+ * Every deal the member has kept, newest first: the kept list other batches
+ * build on. Ids only, whatever each deal's state now: a kept deal may since
+ * have gone, and the caller must still apply the member's visibility
+ * (dealVisible) before showing one.
+ */
 export async function keptDealIds(userId: string): Promise<string[]> {
   if (!hasServiceRole()) return [];
   const admin = createAdminClient();

@@ -117,7 +117,7 @@ function SharedCard({ card, kind, where, photoUrl, now }: { card: NonNullable<Aw
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photoUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-[#7a8274]">Photo for members</div>
+          <div className="flex h-full w-full items-center justify-center text-xs text-[#7a8274]">{card.source === "zoopla" ? "Photo on the listing" : "Photo coming"}</div>
         )}
         <span className="absolute left-3 top-3 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{kind}</span>
       </div>
