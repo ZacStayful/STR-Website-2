@@ -1891,7 +1891,8 @@ create trigger saved_searches_set_owner
 
 -- =========================
 -- Early access to marketplace deals (src/lib/marketplace/visibility.ts)
--- ==================-- An account that has ever paid (any subscription, any top-up, admins — see
+-- =========================
+-- An account that has ever paid (any subscription, any top-up, admins — see
 -- hasEverPaid in src/lib/access.ts) sees a deal the moment it goes live.
 -- Every other account, and every signed-out visitor, sees it
 -- free_deal_delay_hours later. Inside that window the deal is simply absent
