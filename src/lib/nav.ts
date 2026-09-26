@@ -1,19 +1,18 @@
 /**
  * The members' navigation: three items, one config object.
  *
- * My deals points at a stand-in until its real page exists; when it does,
- * change the `href` here and nothing else. Every members-only
- * surface still announces itself with the section name it always used
- * (`Section`, the AppShell `active` prop), and `NAV_FOR_SECTION` says which
- * of the three items that section lights up — so a page that leaves the nav
- * (the analyser, the Market Explorer, daily picks) still highlights the item
- * it lives under.
+ * Every members-only surface still announces itself with the section name it
+ * always used (`Section`, the AppShell `active` prop), and `NAV_FOR_SECTION`
+ * says which of the three items that section lights up — so a page that
+ * leaves the nav (the analyser, the Market Explorer, daily picks) still
+ * highlights the item it lives under. My deals (/my-deals) announces itself
+ * as `reports`, the section it replaced.
  *
  * Pure, so the mapping is tested rather than trusted.
  */
 export const NAV_TARGETS = {
   today: { label: 'Today', href: '/today' },
-  myDeals: { label: 'My deals', href: '/reports' }, // Batch 5: point at the My deals page
+  myDeals: { label: 'My deals', href: '/my-deals' },
   account: { label: 'Account', href: '/account' },
 } as const;
 

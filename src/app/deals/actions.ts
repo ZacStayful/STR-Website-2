@@ -12,7 +12,7 @@ import { ensureReferralCode } from '@/lib/credit/referral';
 import { siteUrl } from '@/lib/url';
 import { payerFor } from '@/lib/team';
 import { isPipelineStatus } from '@/lib/listing/pipeline';
-import { dealReturnPath, withParam } from '@/lib/listing/return-path';
+import { dealReturnPath, myDealsFocusPath, withParam } from '@/lib/listing/return-path';
 import { applyStageAfterOpen } from '@/lib/listing/stage-server';
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -68,7 +68,8 @@ export async function savePipelineAction(formData: FormData): Promise<void> {
   const payer = await payerFor(user.id);
   const result = await saveOpenedDealToPipeline(user.id, id, adminUser, payer.payerId);
   if (!result.ok) redirect(`/deals/${encodeURIComponent(id)}?msg=${result.code === 'missing' ? 'missing' : result.code === 'not_open' ? 'not_open' : 'save_failed'}`);
-  redirect(`/markets?pane=listings&listing=${encodeURIComponent(result.checkedListingId)}`);
+  // The deal's place on My deals (the Explorer's listings pane still takes old links).
+  redirect(myDealsFocusPath(`d-${id}`));
 }
 
 // ── Keep, Pass (and Share, below): called from the card's buttons ──

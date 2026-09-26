@@ -12,6 +12,7 @@ test('the nav has exactly three items, each with a label and an internal href', 
   }
   assert.ok(LEADS_NAV.href.startsWith('/'));
   assert.equal(NAV_TARGETS.today.href, '/today');
+  assert.equal(NAV_TARGETS.myDeals.href, '/my-deals');
 });
 
 test('every section highlights one of the nav items (or Leads)', () => {

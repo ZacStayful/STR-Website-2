@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { gbp } from "@/lib/market/format";
-import { dealReturn, listingFit, type CheckedListingRow } from "@/lib/listing/pipeline";
+import { dealReturn, listingFit, pipelineStatusInfo, type CheckedListingRow } from "@/lib/listing/pipeline";
 import type { ExplorerRow } from "./types";
 import { bestIndex } from "../CompareBar";
 import { formatListingPrice } from "@/lib/listing/format";
@@ -62,7 +62,7 @@ export function ListingCompare({ rows, areaOf, onRemove, onClear }: { rows: Chec
                   <tr><td className="mx-cmp-rowlabel">Direct booking</td>{areas.map((a, i) => <td key={rows[i].id}>{a?.card.directBooking?.label ?? "—"}</td>)}</tr>
                   <tr><td className="mx-cmp-rowlabel">From home</td>{areas.map((a, i) => <td key={rows[i].id}>{a?.personal?.fit.distanceMiles != null ? `${a.personal.fit.distanceMiles} mi` : "—"}</td>)}</tr>
                   <tr><td className="mx-cmp-rowlabel">Licensing</td>{areas.map((a, i) => <td key={rows[i].id}>{a?.card.licensing.headline ?? "—"}</td>)}</tr>
-                  <tr><td className="mx-cmp-rowlabel">Status</td>{rows.map((r) => <td key={r.id}>{r.status}</td>)}</tr>
+                  <tr><td className="mx-cmp-rowlabel">Status</td>{rows.map((r) => <td key={r.id}>{pipelineStatusInfo(r.status).label}</td>)}</tr>
                 </tbody>
               </table>
             </div>

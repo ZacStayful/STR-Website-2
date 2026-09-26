@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { PIPELINE_STATUSES, LISTING_SORT_LABELS, sortListings, type CheckedListingRow, type ListingSort, type PipelineStatus } from "@/lib/listing/pipeline";
@@ -71,6 +72,10 @@ export function ListingsPane({
           {(Object.keys(LISTING_SORT_LABELS) as ListingSort[]).map((k) => <option key={k} value={k}>{LISTING_SORT_LABELS[k]}</option>)}
         </select>
       </div>
+      {/* Batch 5: the pipeline's home is now /my-deals; this pane stays for old links and the map. */}
+      <p className="mx-note mx-note--ok" style={{ margin: "10px 16px 0" }}>
+        Your deals now live in <Link href="/my-deals" style={{ fontWeight: 600, textDecoration: "underline" }}>My deals</Link>.
+      </p>
       <div className="mx-tabs" role="group" aria-label="Pipeline status">
         <button type="button" aria-pressed={statusFilter === "all"} onClick={() => onStatusFilter("all")}>All</button>
         {counts.map((s) => (
