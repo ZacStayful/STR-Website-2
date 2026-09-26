@@ -1975,7 +1975,8 @@ alter table public.profiles add column if not exists picks_paused_email_at times
 -- when it was sent to this member, so a second press of the admin button
 -- never sends twice. Null: not yet.
 alter table public.profiles add column if not exists daily_notice_sent_at timestamptz;
-=======
+
+-- =========================
 -- Batch 2: signup questions and nav
 -- =========================
 -- onboarding_skips: how many times the member has tapped "Skip for now" on
@@ -1987,3 +1988,50 @@ alter table public.profiles add column if not exists daily_notice_sent_at timest
 -- and nothing else is affected.
 alter table public.profiles add column if not exists onboarding_skips smallint not null default 0;
 grant update (onboarding_skips) on public.profiles to authenticated;
+
+-- =========================
+-- Batch 3: deal card
+-- =========================
+-- deal_reactions: a member's Keep or Pass on a marketplace deal, from the
+-- card's buttons (src/lib/marketplace/reactions-server.ts). Both are free and
+-- neither reveals the address. One row per (member, deal): the actions write
+-- the target state (upsert on the key, or delete), so a double tap can never
+-- make a second row. `reasons` are PICK_REASONS keys (src/lib/listing/picks.ts)
+-- and only ever set on a pass; the daily picks run turns them into the same
+-- rules a "no" on a pick makes. updated_at is written by the code (there is
+-- no trigger) and is what "the latest answer wins" compares against
+-- sourcing_sent.responded_at. Keyed on the signed-in member, not the team
+-- owner: opens are shared across a team, opinions are not.
+create table if not exists public.deal_reactions (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  deal_id uuid not null references public.marketplace_deals(id) on delete cascade,
+  reaction text not null check (reaction in ('keep', 'pass')),
+  reasons text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, deal_id)
+);
+create index if not exists deal_reactions_user_idx on public.deal_reactions (user_id, reaction, updated_at desc);
+create index if not exists deal_reactions_deal_idx on public.deal_reactions (deal_id);
+alter table public.deal_reactions enable row level security;  -- no policies: service role only
+revoke all on public.deal_reactions from anon, authenticated;
+
+-- deal_shares: a public link to one marketplace deal (/d/<token>), one per
+-- (sharer, deal) so sharing again hands back the same link. Same token shape
+-- as a checked listing's share_token (24 random bytes, base64url). The page
+-- shows only what the card shows — never the address, postcode or listing
+-- link, even when the sharer has opened the deal — and carries the sharer's
+-- referral code on its join button.
+create table if not exists public.deal_shares (
+  token text primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  deal_id uuid not null references public.marketplace_deals(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists deal_shares_user_deal_uidx on public.deal_shares (user_id, deal_id);
+alter table public.deal_shares enable row level security;  -- no policies: service role only
+revoke all on public.deal_shares from anon, authenticated;
+
+-- The grid embeds deal_reactions to hide a member's passes; tell PostgREST
+-- about the new relationships now rather than on its next schema reload.
+notify pgrst, 'reload schema';

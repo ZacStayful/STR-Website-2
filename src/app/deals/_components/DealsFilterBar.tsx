@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
-import { filtersToSearch, KIND_LABELS, SORT_LABELS, type DealFilters, type DealKindFilter, type DealSort } from "@/lib/marketplace/grid";
+import { filtersToSearch, KIND_LABELS, SORT_LABELS, VIEW_LABELS, type DealFilters, type DealKindFilter, type DealSort, type DealView } from "@/lib/marketplace/grid";
 import type { AreaCount } from "@/lib/marketplace/queries";
 
 const BEDS = ["any", "1", "2", "3", "4+"] as const;
@@ -17,6 +17,8 @@ export function DealsFilterBar({ filters, counts, total }: { filters: DealFilter
   const chosen = filters.areas.map((code) => areaMetaForCode(code));
   return (
     <form method="get" action="/deals" className="rounded-xl border border-border bg-card p-3">
+      {/* Kept / Passed is the member's own list, so it survives Apply like any other filter. */}
+      {filters.view !== "all" && <input type="hidden" name="view" value={filters.view} />}
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-xs text-muted-foreground">
           <span className="block">Deal</span>
@@ -78,7 +80,19 @@ export function DealsFilterBar({ filters, counts, total }: { filters: DealFilter
         {filtersToSearch(filters) !== "" && (
           <Link href="/deals" className="rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted">Clear</Link>
         )}
-        <span className="ml-auto text-xs text-muted-foreground">{total.toLocaleString("en-GB")} live deal{total === 1 ? "" : "s"}</span>
+        <nav className="ml-auto flex items-center gap-1 text-xs" aria-label="Your deals">
+          {(Object.keys(VIEW_LABELS) as DealView[]).map((v) => (
+            <Link
+              key={v}
+              href={`/deals${filtersToSearch({ ...filters, view: v, page: 1 })}`}
+              aria-current={filters.view === v ? "page" : undefined}
+              className={"rounded-md px-2 py-1 font-medium " + (filters.view === v ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}
+            >
+              {VIEW_LABELS[v]}
+            </Link>
+          ))}
+        </nav>
+        <span className="text-xs text-muted-foreground">{total.toLocaleString("en-GB")} {filters.view === "kept" ? "kept" : filters.view === "passed" ? "passed" : "live"} deal{total === 1 ? "" : "s"}</span>
       </div>
       {chosen.length > 0 && (
         <p className="mt-2 flex flex-wrap gap-1.5">

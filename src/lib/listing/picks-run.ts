@@ -24,6 +24,8 @@ import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
 import { missedRowFor } from "./picks-paused";
+import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
+import { dealFeedbackFor } from "../marketplace/reactions-server";
 import { isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
 import { storedAreaRentTable } from "../broker/providers/internal";
 import { screenSourced, mergeSnapshotIntoListing } from "../marketplace/record";
@@ -245,13 +247,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const missedToday = new Set<string>();
   const feedbackByUser = new Map<string, PickFeedback[]>();
   const feedbackSince = new Date(Date.now() - FEEDBACK_WINDOW_MS).toISOString();
-  type FeedbackRow = { user_id: string; canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown; deal: unknown };
+  type FeedbackRow = { user_id: string; canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown; deal: unknown; responded_at: unknown };
   const feedbackRows: FeedbackRow[] = [];
   for (const some of chunk(ids, ID_CHUNK)) {
     const [savedRes, todayRes, fbRes, missedRes] = await Promise.all([
       admin.from("saved_areas").select("user_id, postcode_area").in("user_id", some),
       admin.from("sourcing_sent").select("user_id").in("user_id", some).gte("sent_at", todayIso),
-      admin.from("sourcing_sent").select("user_id, canonical_url, reaction, reaction_source, reasons, kind, postcode_area, deal").in("user_id", some).not("reaction", "is", null).gte("responded_at", feedbackSince),
+      admin.from("sourcing_sent").select("user_id, canonical_url, reaction, reaction_source, reasons, kind, postcode_area, deal, responded_at").in("user_id", some).not("reaction", "is", null).gte("responded_at", feedbackSince),
       admin.from("sourcing_missed").select("user_id").in("user_id", some).gte("missed_at", todayIso),
     ]);
     for (const s of (savedRes.data ?? []) as { user_id: string; postcode_area: string }[]) savedByUser.set(s.user_id, [...(savedByUser.get(s.user_id) ?? []), s.postcode_area.toUpperCase()]);
@@ -288,25 +290,38 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const { data } = await admin.from("sourced_listings").select("canonical_url, snapshot").in("canonical_url", urls);
     for (const r of (data ?? []) as { canonical_url: string; snapshot: SourcedListing }[]) feedbackListing.set(r.canonical_url, r.snapshot);
   }
+  // Each answer keeps its listing and time so it can be merged with the grid's below.
+  const pickEntries = new Map<string, FeedbackEntry[]>();
   for (const r of feedbackRows) {
     const l = feedbackListing.get(r.canonical_url) ?? null;
     const amount = l?.price ? (l.kind === "rent" ? (l.price.period === "pw" ? Math.round((l.price.amount * 52) / 12) : l.price.amount) : l.price.period === "total" ? l.price.amount : null) : null;
-    feedbackByUser.set(r.user_id, [
-      ...(feedbackByUser.get(r.user_id) ?? []),
+    pickEntries.set(r.user_id, [
+      ...(pickEntries.get(r.user_id) ?? []),
       {
-        reaction: r.reaction === "yes" || r.reaction === "no" ? r.reaction : null,
-        reactionSource: r.reaction_source === "form" || r.reaction_source === "link" ? r.reaction_source : null,
-        reasons: cleanReasons(r.reasons),
-        kind: r.kind === "sale" || r.kind === "rent" ? r.kind : null,
-        postcodeArea: typeof r.postcode_area === "string" ? r.postcode_area : null,
-        bedrooms: l?.bedrooms ?? null,
-        amount,
-        rawType: l?.rawType ?? null,
-        // Older stored snapshots carry no outcode; the postcode still has one.
-        outcode: l?.outcode ?? findOutcode(l?.postcode ?? l?.address ?? null),
-        screeningScore: screeningScore(feedbackScreening.get(`${r.user_id}|${r.canonical_url}`) ?? null),
+        url: r.canonical_url,
+        // Already in the filter above, so selecting it adds no new way for this read to fail.
+        at: typeof r.responded_at === "string" ? r.responded_at : null,
+        feedback: {
+          reaction: r.reaction === "yes" || r.reaction === "no" ? r.reaction : null,
+          reactionSource: r.reaction_source === "form" || r.reaction_source === "link" ? r.reaction_source : null,
+          reasons: cleanReasons(r.reasons),
+          kind: r.kind === "sale" || r.kind === "rent" ? r.kind : null,
+          postcodeArea: typeof r.postcode_area === "string" ? r.postcode_area : null,
+          bedrooms: l?.bedrooms ?? null,
+          amount,
+          rawType: l?.rawType ?? null,
+          // Older stored snapshots carry no outcode; the postcode still has one.
+          outcode: l?.outcode ?? findOutcode(l?.postcode ?? l?.address ?? null),
+          screeningScore: screeningScore(feedbackScreening.get(`${r.user_id}|${r.canonical_url}`) ?? null),
+        },
       },
     ]);
+  }
+  // A Keep or Pass on the /deals grid is an answer too (src/lib/marketplace/reactions.ts).
+  // One answer per listing, the latest: a deal both picked and passed counts once.
+  const grid = await dealFeedbackFor(admin, ids, feedbackSince);
+  for (const id of new Set([...pickEntries.keys(), ...grid.entries.keys()])) {
+    feedbackByUser.set(id, mergeFeedback(pickEntries.get(id) ?? [], grid.entries.get(id) ?? []));
   }
 
   const members: Member[] = [];
@@ -487,6 +502,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const { data: sentRows } = await admin.from("sourcing_sent").select("user_id, canonical_url").in("user_id", some).gte("sent_at", sentSince);
     for (const r of (sentRows ?? []) as { user_id: string; canonical_url: string }[]) sentByUser.set(r.user_id, new Set([...(sentByUser.get(r.user_id) ?? []), r.canonical_url]));
   }
+  // A deal the member passed on the grid is never their pick, however long ago
+  // they passed it: a pool pick is an auto-open, and they would be charged for it.
+  for (const [userId, urls] of grid.passedUrls) sentByUser.set(userId, new Set([...(sentByUser.get(userId) ?? []), ...urls]));
   const cutoff = Date.now() - NEW_WINDOW_MS;
 
   // ── What a data provider already knows about these areas ──
