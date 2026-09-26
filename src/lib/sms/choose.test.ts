@@ -141,3 +141,15 @@ test('contactCanReceive needs verified, on, not stopped and a UK mobile', () => 
   assert.equal(contactCanReceive({ ...contact, phone_e164: null }), false);
   assert.equal(contactCanReceive(undefined), false);
 });
+
+test('a planned text says which kinds of change it tells, and is withdrawn if any is switched off before sending', async () => {
+  const { stillWanted } = await import('./choose.ts');
+  const plan = planMemberText(input({ changes: [change('p'), change('g', { alertType: 'gone', status: 'sold' })] }));
+  assert.equal(plan.send, true);
+  if (plan.send) {
+    assert.deepEqual([...plan.types].sort(), ['gone', 'price_drop']);
+    assert.equal(stillWanted(plan.types, allOn), true);
+    assert.equal(stillWanted(plan.types, { ...allOn, sms_gone: false }), false);
+    assert.equal(stillWanted(plan.types, null), false);
+  }
+});

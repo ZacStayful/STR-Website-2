@@ -26,7 +26,7 @@ import { pendingChanges } from '../notify/alerts-server';
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from '../notify/sends';
 import { siteUrl } from '../url';
 import { isSmsConfigured, isSmsDryRun, smsAlertsEnabled, twilioConfig } from './config';
-import { contactCanReceive, planMemberText, TEXTED_LOOKBACK_MS } from './choose';
+import { contactCanReceive, planMemberText, stillWanted, TEXTED_LOOKBACK_MS } from './choose';
 import { maskPhone } from './phone';
 import { myDealsLink } from './render';
 import { sendSms } from './send';
@@ -131,7 +131,7 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
       continue;
     }
 
-    // ── Just before sending: the contact again (a STOP may have landed seconds ago) ──
+    // A first look before claiming the day's slot (a STOP may have landed since the run began).
     const fresh = await getContact(admin, userId);
     if (!contactCanReceive(fresh) || fresh.phone_e164 !== contact.phone_e164) {
       members.push({ user: userId, sent: false, reason: 'contact_changed' });
@@ -164,6 +164,15 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
       await updateMessage(admin, messageId, { outcome: 'refused' });
       await releaseClaim(admin, claim.id);
       members.push({ user: userId, sent: false, reason: 'slot_unmarked' });
+      continue;
+    }
+
+    // ── The last look, as close to Twilio as it can be: STOP, the member's on/off, the number, and the switches ──
+    const [last, lastSwitches] = await Promise.all([getContact(admin, userId), smsSwitchesFor(admin, [userId])]);
+    if (!contactCanReceive(last) || last.phone_e164 !== fresh.phone_e164 || !stillWanted(plan.types, lastSwitches?.get(userId))) {
+      await updateMessage(admin, messageId, { outcome: 'refused' });
+      await finishSend(admin, claim.id, false, { ...sendSummary, outcome: 'withdrawn' }, []);
+      members.push({ user: userId, sent: false, reason: 'changed_before_send' });
       continue;
     }
 

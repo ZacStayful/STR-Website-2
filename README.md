@@ -202,9 +202,12 @@ Account → Notifications (a 6-digit code, from the same number as the alerts).
   `sms`), and `billing_settings.sms_monthly_cap` (8) a UK calendar month.
   Several changes go in the same text.
 - **Never twice:** `sms_messages.alert_ids`. A text does not close an alert;
-  the daily email still carries it.
+  the daily email still carries it. The collector records changes for members
+  who get texts even when their "Changes on deals I'm tracking" email is off;
+  the emails still follow that switch.
 - **STOP:** `/api/twilio/inbound` switches every account on that number off at
-  once; START switches it back. Every text ends "Reply STOP to opt out".
+  once; START switches it back. A number that replied STOP gets no more
+  verification codes either. Every text ends "Reply STOP to opt out".
 - **Cost:** every text and its Twilio price is in `sms_messages`; the estimate
   is in `provider_calls` (`twilio:sms`). This month's spend:
 

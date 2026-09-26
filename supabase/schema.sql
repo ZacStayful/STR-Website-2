@@ -2589,7 +2589,7 @@ revoke all on public.sms_verifications from anon, authenticated;
 -- statement, so parallel guesses can never get past five. The limit here and
 -- MAX_ATTEMPTS in src/lib/sms/verify.ts are the same number.
 create or replace function public.sms_verification_attempt(p_id uuid, p_user uuid)
-returns table (code_hash text, phone_e164 text, attempts int)
+returns table (code_hash text, phone_e164 text, attempts int, created_at timestamptz)
 language sql
 as $$
   update public.sms_verifications v
@@ -2600,7 +2600,7 @@ as $$
      and v.superseded_at is null
      and v.expires_at > now()
      and v.attempts < 5
-  returning v.code_hash, v.phone_e164, v.attempts;
+  returning v.code_hash, v.phone_e164, v.attempts, v.created_at;
 $$;
 revoke all on function public.sms_verification_attempt(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.sms_verification_attempt(uuid, uuid) to service_role;

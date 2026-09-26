@@ -96,7 +96,7 @@ export interface MemberPlanInput {
 export type SkipReason = 'not_receiving' | 'slot_used' | 'monthly_cap' | 'nothing_new' | 'unrenderable';
 
 export type MemberPlan =
-  | { send: true; body: string; alertIds: string[]; described: number; counted: number }
+  | { send: true; body: string; alertIds: string[]; described: number; counted: number; types: AlertType[] }
   | { send: false; reason: SkipReason };
 
 export function planMemberText(input: MemberPlanInput): MemberPlan {
@@ -118,5 +118,11 @@ export function planMemberText(input: MemberPlanInput): MemberPlan {
   const rendered = renderSmsText(orderForText(eligible, input.createdAt), input.link);
   if (!rendered) return { send: false, reason: 'unrenderable' };
   const alertIds = [...new Set(rendered.counted.flatMap((c) => [c.id, ...((c as { mergedIds?: string[] }).mergedIds ?? [])]))];
-  return { send: true, body: rendered.body, alertIds, described: rendered.described.length, counted: rendered.counted.length };
+  const types = [...new Set(rendered.counted.map((c) => c.alertType))];
+  return { send: true, body: rendered.body, alertIds, described: rendered.described.length, counted: rendered.counted.length, types };
+}
+
+/** Whether every kind of change a planned text tells is still switched on (read again just before sending). */
+export function stillWanted(types: readonly AlertType[], switches: NotificationState | null | undefined): boolean {
+  return Boolean(switches) && types.every((t) => switches![SMS_SWITCH_FOR[t]] === true);
 }
