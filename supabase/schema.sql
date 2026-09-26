@@ -2519,3 +2519,16 @@ alter table public.profiles add column if not exists alert_missed boolean not nu
 -- what. Read separately, never in DEAL_COLUMNS.
 alter table public.marketplace_deals add column if not exists revived_at timestamptz;
 alter table public.marketplace_deals add column if not exists revived_from text;
+
+-- =========================
+-- Batch 7: pipeline actions
+-- =========================
+-- The next step shown on each My deals item and deal page
+-- (src/lib/pipeline, src/app/my-deals/_components/NextStepSlot.tsx).
+--
+-- billing_settings 'offer_discount_bands': the Offer stage's discount bands
+-- (src/lib/pipeline/offer-rules.ts), edited at /admin/offer-range.
+-- Deliberately NOT seeded. With no row, the offer range shows the member's
+-- target figure only and never a guessed discount. Shape:
+--   { "purchase":   [ { "minMonths": 6, "minReductions": 2, "discountPct": 8 }, ... ],
+--     "rentToRent": [ { "minWeeks": 4, "discountPct": 5 }, ... ] }
