@@ -65,7 +65,8 @@ test('a pass on a deal with no row lands in Passed', () => {
 test('precedence: pipeline row over reaction over open', () => {
   const d = deal('x');
   const items = trackedDeals(input({
-    pipeline: [row('r1', { canonicalUrl: d.canonicalUrl, status: 'viewing', analysedReportId: 'rep1' })],
+    pipeline: [row('r1', { canonicalUrl: d.canonicalUrl, status: 'viewing', analysedReportId: 'rep1', updatedAt: '2026-09-10T00:00:00.000Z' })],
+    // An older pass: the row changed since, so the row's stage stands.
     reactions: [{ userId: ME, dealId: 'x', reaction: 'pass', updatedAt: '2026-09-09T00:00:00.000Z' }],
     opens: [{ dealId: 'x', openedAt: '2026-09-01T00:00:00.000Z', viaPick: false }],
     deals: deals(d),
@@ -111,6 +112,8 @@ test('forViewer: own item wins, teammates are named, and a teammate report is bo
       row('theirs', { userId: MATE, canonicalUrl: d.canonicalUrl, status: 'offer', analysedReportId: 'rep', updatedAt: '2026-09-05T00:00:00.000Z' }),
       row('solo', { userId: MATE, status: 'viewing' }),
     ],
+    // The team opened it, so the teammate's report is the viewer's to see.
+    opens: [{ dealId: 't', openedAt: '2026-08-30T00:00:00.000Z', viaPick: false }],
     deals: deals(d),
   }));
   const view = forViewer(items, ME);
@@ -160,4 +163,39 @@ test('matchesFocus finds an item by its key or by the pipeline row behind it', (
   assert.equal(matchesFocus({ key: 'd-1', checkedListingId: 'r9' }, 'l-r9'), true);
   assert.equal(matchesFocus({ key: 'd-1', checkedListingId: null }, 'l-r9'), false);
   assert.equal(matchesFocus({ key: 'd-1', checkedListingId: null }, null), false);
+});
+
+test("a teammate's row on a deal the team never opened shows only the card: no URL, address or report", () => {
+  const d = deal('x');
+  const items = trackedDeals(input({ pipeline: [row('b', { userId: MATE, canonicalUrl: d.canonicalUrl, status: 'viewing', analysedReportId: 'rep' })], reactions: [{ userId: ME, dealId: 'x', reaction: 'keep', updatedAt: '2026-09-01T00:00:00.000Z' }], deals: deals(d) }));
+  const mate = items.find((i) => i.userId === MATE)!;
+  assert.equal(mate.opened, false);
+  assert.equal(mate.canonicalUrl, null);
+  assert.equal(mate.listing, null);
+  assert.equal(mate.reportId, null);
+  const [mine] = forViewer(items, ME);
+  assert.equal(mine.mine, true);
+  assert.equal(mine.reportId, null);
+  // Once the team opens it, the teammate's row (and its report) are the viewer's to see.
+  const opened = trackedDeals(input({ pipeline: [row('b', { userId: MATE, canonicalUrl: d.canonicalUrl, status: 'viewing', analysedReportId: 'rep' })], reactions: [{ userId: ME, dealId: 'x', reaction: 'keep', updatedAt: '2026-09-01T00:00:00.000Z' }], opens: [{ dealId: 'x', openedAt: '2026-09-02T00:00:00.000Z', viaPick: false }], deals: deals(d) }));
+  assert.equal(opened.find((i) => i.userId === MATE)!.listing?.address, '1 b Street');
+  assert.equal(forViewer(opened, ME)[0].reportId, 'rep');
+});
+
+test('a teammate listing that is not a marketplace deal keeps its address in the team view', () => {
+  const [item] = trackedDeals(input({ pipeline: [row('solo', { userId: MATE })] }));
+  assert.equal(item.opened, true);
+  assert.equal(item.listing?.address, '1 solo Street');
+});
+
+test("a Pass given after the row last changed wins (the card's Pass does not touch the row); an older one does not", () => {
+  const d = deal('p');
+  const base = { pipeline: [row('r', { canonicalUrl: d.canonicalUrl, status: 'viewing', updatedAt: '2026-09-05T00:00:00.000Z' })], deals: deals(d) };
+  const newer = trackedDeals(input({ ...base, reactions: [{ userId: ME, dealId: 'p', reaction: 'pass', updatedAt: '2026-09-06T00:00:00.000Z' }] }));
+  assert.equal(newer[0].stage, 'passed');
+  assert.equal(newer[0].lastChangedAt, '2026-09-06T00:00:00.000Z');
+  const older = trackedDeals(input({ ...base, reactions: [{ userId: ME, dealId: 'p', reaction: 'pass', updatedAt: '2026-09-04T00:00:00.000Z' }] }));
+  assert.equal(older[0].stage, 'viewing');
+  const keep = trackedDeals(input({ ...base, reactions: [{ userId: ME, dealId: 'p', reaction: 'keep', updatedAt: '2026-09-06T00:00:00.000Z' }] }));
+  assert.equal(keep[0].stage, 'viewing');
 });

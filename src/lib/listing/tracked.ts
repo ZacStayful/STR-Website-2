@@ -14,13 +14,17 @@
  *                       "yes", a keep, a stage, a save), so untouched picks do
  *                       not pile up at Kept.
  *
- * Precedence, per person and deal: pipeline row > reaction > open. A row is
- * matched to a marketplace deal by canonical_url.
+ * Precedence, per person and deal: pipeline row > reaction > open, except
+ * that a Pass given after the row last changed (the card's Pass button, which
+ * does not touch the row) puts the deal in Passed. A row is matched to a
+ * marketplace deal by canonical_url.
  *
- * THE ADDRESS RULE: `canonicalUrl` and `listing` (which carries the address)
- * are only ever set on an item whose address the member may see: their own
- * pipeline row, or a deal their team has opened. A kept deal that nobody has
- * opened carries neither, whatever the caller passed in.
+ * THE ADDRESS RULE: `canonicalUrl`, `listing` (which carries the address) and
+ * `reportId` (a report carries the address too) are only ever set on an item
+ * whose address the viewer may see: their own pipeline row, a deal their team
+ * has opened, or a teammate's listing that is not a marketplace deal at all.
+ * A marketplace deal nobody on the team has opened carries none of them,
+ * whoever's row it came from and whatever the caller passed in.
  *
  * For other batches (Batch 6 reads this for watchlist alerts):
  *   - trackedDeals(input)       every (person, deal) being tracked, with
@@ -139,26 +143,32 @@ export function trackedDeals(input: TrackedInput): TrackedDeal[] {
     has.set(userId, set);
   };
   const anyone = new Set<string>();
+  const reactionOf = new Map(input.reactions.map((x) => [`${x.userId}:${x.dealId}`, x]));
 
-  // 1. Pipeline rows: the member's own record, so the address is theirs.
+  // 1. Pipeline rows. The viewer's own row is their own record, so the
+  //    address is theirs; a teammate's row on a marketplace deal the team has
+  //    not opened shows only what the deal's card shows.
   for (const r of input.pipeline) {
     const deal = dealsByUrl.get(r.canonicalUrl) ?? null;
+    const opened = r.userId === input.viewerId || !deal || openedIds.has(deal.id);
+    const pass = deal ? reactionOf.get(`${r.userId}:${deal.id}`) : undefined;
+    const passedSince = pass?.reaction === 'pass' && time(pass.updatedAt) > time(r.updatedAt);
     out.push({
       key: deal ? `d-${deal.id}` : `l-${r.id}`,
-      stage: isPipelineStatus(r.status) ? r.status : KEPT_STATUS,
+      stage: passedSince ? 'passed' : isPipelineStatus(r.status) ? r.status : KEPT_STATUS,
       kind: r.kind,
       area: r.postcodeArea,
       price: r.price,
-      lastChangedAt: r.updatedAt,
-      opened: true,
+      lastChangedAt: passedSince ? pass!.updatedAt : r.updatedAt,
+      opened,
       dealId: deal?.id ?? null,
       dealStatus: deal?.status ?? null,
       checkedListingId: r.id,
-      canonicalUrl: r.canonicalUrl,
-      reportId: r.analysedReportId,
+      canonicalUrl: opened ? r.canonicalUrl : null,
+      reportId: opened ? r.analysedReportId : null,
       userId: r.userId,
       source: 'pipeline',
-      listing: { title: r.title, address: r.displayAddress, photo: r.photo, bedrooms: r.bedrooms, source: r.source },
+      listing: opened ? { title: r.title, address: r.displayAddress, photo: r.photo, bedrooms: r.bedrooms, source: r.source } : null,
     });
     if (deal) {
       mark(r.userId, deal.id);
@@ -239,7 +249,8 @@ export function forViewer(items: TrackedDeal[], viewerId: string): ViewerDeal[] 
   for (const list of groups.values()) {
     const sorted = [...list].sort((a, b) => time(b.lastChangedAt) - time(a.lastChangedAt));
     const winner = sorted.find((it) => it.userId === viewerId) ?? sorted[0];
-    const withReport = winner.reportId ? winner : sorted.find((it) => it.reportId);
+    // Only onto an item whose address the viewer may see (a report carries it).
+    const withReport = winner.reportId ? winner : winner.opened ? sorted.find((it) => it.reportId && it.opened) : undefined;
     out.push({
       ...winner,
       mine: winner.userId === viewerId,

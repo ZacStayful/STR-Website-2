@@ -45,6 +45,7 @@ const MESSAGES: Record<string, { text: string; tone: "ok" | "warn" }> = {
   failed: { text: "Something went wrong opening that deal. Nothing was charged. Please try again.", tone: "warn" },
   not_open: { text: "Open the deal first to save it to your pipeline.", tone: "warn" },
   save_failed: { text: "We could not save that deal to your pipeline just now.", tone: "warn" },
+  stage_failed: { text: "Unlocked, but we couldn’t move it to that stage just now. Choose it again below.", tone: "warn" },
 };
 
 export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string }> }) {
@@ -86,9 +87,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // Batch 5 (My deals): this member's stage for the deal, and the full report
   // to open instead of running (and paying for) another one. A report counts
   // only if it still exists and this member may read it (Team reports' rule).
-  const tracking = await dealTrackingFor({ userId: user.id, dealId: deal.id, canonicalUrl: deal.canonical_url, opened: Boolean(priv), openViaPick: priv?.open.verified_via === "pick" });
+  const tracking = await dealTrackingFor({ userId: user.id, deal });
   let report: { id: string; userId: string } | null = null;
   if (priv && tracking.reportCandidates.length > 0) {
+    // Ids come from pipeline rows in scope: a handful for one listing.
     const { data: readable } = await supabase.from("saved_searches").select("id").in("id", tracking.reportCandidates.map((c) => c.id));
     const ok = new Set(((readable ?? []) as { id: string }[]).map((r) => r.id));
     report = tracking.reportCandidates.find((c) => ok.has(c.id)) ?? null;
@@ -162,7 +164,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   <div className="min-w-0 flex-1 basis-56">
                     <StageSelect itemKey={`d-${deal.id}`} stage={tracking.stage} opened={Boolean(priv)} dealId={deal.id} dealLive={deal.status === "live"} openPence={pence} back={dealPath} untracked={!tracking.tracked} />
                   </div>
-                  {tracking.tracked && (
+                  {tracking.onMyDeals && (
                     <Link href={myDealsFocusPath(`d-${deal.id}`)} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See in My deals</Link>
                   )}
                 </div>

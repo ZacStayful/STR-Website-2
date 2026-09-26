@@ -25,6 +25,7 @@ import { loadDealById, loadDealsByUrls } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { setDealReaction } from '../marketplace/reactions-server';
 import { dealVisibilityFor } from '../marketplace/tier';
+import { dealVisible } from '../marketplace/visibility';
 import { saveOpenedDealToPipeline } from '../marketplace/open';
 import { stageNeedsOpen, type PipelineStatus } from './pipeline';
 
@@ -133,17 +134,22 @@ export async function setStageForMember(input: { userId: string; adminUser: bool
   const opened = Boolean(open) || input.adminUser;
 
   if (!opened) {
+    const reacted = await hasReaction(admin, userId, deal.id);
+    // Inside its early-access window a deal does not exist for an account that
+    // has never paid, by id or otherwise: not its price, not whether it is
+    // live. A deal they already kept or passed is one they saw.
+    const visibility = await dealVisibilityFor(userId, input.adminUser);
+    if (!reacted && !dealVisible(deal.live_since, visibility.cutoffIso)) return { ok: false, code: 'missing' };
     if (stageNeedsOpen(stage)) {
       // Refused here, not just in the dropdown: past Kept needs the address.
       if (deal.status !== 'live') return { ok: false, code: 'gone' };
       const settings = await getBillingSettings();
       return { ok: false, code: 'needs_open', openPence: openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder) };
     }
-    if (await hasReaction(admin, userId, deal.id)) {
+    if (reacted) {
       return (await writeReaction(admin, userId, deal.id, stage)) ? { ok: true, stage, checkedListingId: null } : { ok: false, code: 'failed' };
     }
     // A first reaction goes through the card's own rules: live, and visible to this account.
-    const visibility = await dealVisibilityFor(userId, input.adminUser);
     const res = await setDealReaction(userId, deal.id, stage === 'passed' ? 'pass' : 'keep', visibility);
     return res.ok ? { ok: true, stage, checkedListingId: null } : { ok: false, code: res.code };
   }

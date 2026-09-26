@@ -55,8 +55,10 @@ export async function openDealAction(formData: FormData): Promise<void> {
     redirect(`/deals/${encodeURIComponent(id)}?msg=${outcome.code}${extra}`);
   }
   const stage = formData.get('stage');
-  if (isPipelineStatus(stage)) await applyStageAfterOpen({ userId: user.id, adminUser, dealId: id, payerId: payer.payerId, stage });
+  const staged = isPipelineStatus(stage) ? await applyStageAfterOpen({ userId: user.id, adminUser, dealId: id, payerId: payer.payerId, stage }) : true;
   const back = dealReturnPath(formData.get('back'));
+  // The open went through either way; say so when the stage did not.
+  if (!staged) redirect(withParam(back ?? `/deals/${encodeURIComponent(id)}`, 'msg', 'stage_failed'));
   if (back) redirect(outcome.alreadyOpen ? back : withParam(back, 'msg', 'opened'));
   redirect(`/deals/${encodeURIComponent(id)}${outcome.alreadyOpen ? '' : '?msg=opened'}`);
 }

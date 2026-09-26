@@ -35,7 +35,8 @@ function gbp(v: number | string | null): string {
  * and a paused member sees only their own until their seat is back.
  *
  * A report already shown on one of their deals (`shownOnDeals`) is left out
- * here, so it appears once, on the deal.
+ * here, so it appears once, on the deal, except in a search: someone
+ * searching for an address (or following an old /reports?q= link) finds it.
  */
 export async function ReportsList({ userId, showAuthors, q, shownOnDeals }: { userId: string; showAuthors: boolean; q: string | undefined; shownOnDeals: Set<string> }) {
   const supabase = await createSupabaseServerClient();
@@ -50,7 +51,7 @@ export async function ReportsList({ userId, showAuthors, q, shownOnDeals }: { us
   if (term) query = query.or(`address.ilike.%${term.replace(/[%,()]/g, "")}%,postcode.ilike.%${term.replace(/[%,()]/g, "")}%`);
   const { data, error } = await query;
   const all = (error ? [] : (data ?? [])) as unknown as Row[];
-  const rows = all.filter((r) => !shownOnDeals.has(r.id));
+  const rows = term ? all : all.filter((r) => !shownOnDeals.has(r.id));
   const onDeals = all.length - rows.length;
   const authors = showAuthors ? await profileNames([...new Set(rows.map((r) => r.user_id))]) : new Map();
 

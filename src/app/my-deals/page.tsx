@@ -19,6 +19,7 @@ export const metadata: Metadata = {
 
 const MESSAGES: Record<string, string> = {
   opened: "Opened. The address and the listing link are on the deal, and it has moved to the stage you chose.",
+  stage_failed: "Opened, but we couldn’t move it to that stage just now. Choose it again below.",
 };
 
 /**
@@ -51,8 +52,8 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
   // person may read: saved_searches' RLS is the Team reports rule).
   const linked = [...new Set(load.view.map((v) => v.reportId).filter((id): id is string => Boolean(id)))];
   const existing = new Set<string>();
-  if (linked.length > 0) {
-    const { data } = await supabase.from("saved_searches").select("id").in("id", linked);
+  for (let i = 0; i < linked.length; i += 150) {
+    const { data } = await supabase.from("saved_searches").select("id").in("id", linked.slice(i, i + 150));
     for (const r of (data ?? []) as { id: string }[]) existing.add(r.id);
   }
   const view: ViewerDeal[] = load.view.map((v) => (v.reportId && !existing.has(v.reportId) ? { ...v, reportId: null, reportUserId: null } : v));

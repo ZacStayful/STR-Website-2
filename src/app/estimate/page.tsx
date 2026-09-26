@@ -414,6 +414,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   const [backHref, setBackHref] = useState<string | null>(null);
   // One run at a time (see handleSubmit).
   const submittingRef = useRef(false);
+  // The listing ?listing= brought in: only its report is the deal's.
+  const urlListingRef = useRef<string | null>(null);
   // Whether this render is a public white-label funnel. A ref because the
   // unload handlers below read it without wanting to re-register.
   const isFunnelRef = useRef(Boolean(funnel));
@@ -629,7 +631,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
           body: JSON.stringify({ url }),
         });
         const result = await readResolvedListing(res);
-        if (result.ok) applyListing(result.listing);
+        if (result.ok) {
+          urlListingRef.current = result.listing.snapshot.canonicalUrl;
+          applyListing(result.listing);
+        }
         else setError(result.error);
       } catch {
         setError(RESOLVE_NETWORK_ERROR);
@@ -710,6 +715,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
 
   const runSubmit = async () => {
     setError(null);
+    // A report for the deal this page was opened from (?listing= with ?back=),
+    // not another listing analysed afterwards on the same page.
+    const fromDeal = Boolean(backHref) && listing !== null && listing.snapshot.canonicalUrl === urlListingRef.current;
     // Credit check before anything is spent; opens the top-up modal when
     // short. A funnel prospect has no account and no credit of their own —
     // solvency is the funnel owner's, checked server-side by its route.
@@ -753,7 +761,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               photo: listing.snapshot.photos[0],
             },
             checkedListingId: listing.checkedListingId ?? undefined,
-            fromDeal: Boolean(backHref),
+            fromDeal,
           }),
         }),
       });
@@ -762,7 +770,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
         const data = await res.json();
         // The deal already has its report (or a tab ran it first): open it, never run it again.
         if (res.status === 409 && typeof data.reportId === "string") {
-          window.location.assign(`/reports/${encodeURIComponent(data.reportId)}${backHref ? `?back=${encodeURIComponent(backHref)}` : ""}`);
+          window.location.assign(`/reports/${encodeURIComponent(data.reportId)}${fromDeal && backHref ? `?back=${encodeURIComponent(backHref)}` : ""}`);
           return;
         }
         setError(data.error || "Something went wrong. Please try again.");
@@ -830,7 +838,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                 setResult(event.data as AnalysisResult);
                 // From a deal: the address becomes the saved report, so a refresh
                 // reopens it rather than offering the form (and a charge) again.
-                if (backHref && typeof event.data.reportId === "string") window.history.replaceState(null, "", `/reports/${encodeURIComponent(event.data.reportId)}?back=${encodeURIComponent(backHref)}`);
+                if (fromDeal && backHref && typeof event.data.reportId === "string") window.history.replaceState(null, "", `/reports/${encodeURIComponent(event.data.reportId)}?back=${encodeURIComponent(backHref)}`);
                 if (!funnel) {
                   if (event.credit && typeof event.credit.chargedPence === "number" && event.credit.chargedPence > 0) creditCtx?.toast(`This report used ${formatCredit(event.credit.chargedPence)} of credit`);
                   notifyCreditChanged();
