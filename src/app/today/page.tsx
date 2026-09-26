@@ -153,7 +153,7 @@ export default async function TodayPage() {
           </>
         )}
 
-        <EarlyAccessBanner text={banner} />
+        <EarlyAccessBanner text={banner} returnTo="/today" />
 
         <nav aria-label="More" className="flex flex-wrap gap-x-5 gap-y-1 border-t border-border pt-4 text-sm">
           <Link href="/deals" className="font-medium text-foreground underline-offset-4 hover:underline">Browse all deals</Link>
