@@ -66,10 +66,11 @@ export async function verifiedElsewhere(admin: Admin, phone: string, exceptUserI
 }
 
 /**
- * The number is proved: it becomes the member's texting number, and any
- * earlier STOP on it is cleared — verifying is a fresh yes, and the code
- * could only arrive because Twilio no longer blocks the number. A first
- * number turns texts on; a change of number keeps the member's own on/off.
+ * The number is proved: it becomes the member's texting number, and an
+ * earlier STOP by reply is cleared — verifying is a fresh yes (checkCode has
+ * already refused if the number texted STOP after the code went). A stop we
+ * put on it ourselves (admin) stays. A first number turns texts on; a change
+ * of number keeps the member's own on/off.
  */
 export async function saveVerifiedNumber(admin: Admin, userId: string, phone: string, consentSource: 'signup' | 'account', now: Date = new Date()): Promise<'ok' | 'taken' | 'error'> {
   const at = now.toISOString();
@@ -81,8 +82,9 @@ export async function saveVerifiedNumber(admin: Admin, userId: string, phone: st
     enabled: existing?.verified_at ? existing.enabled : true,
     consent_at: existing?.consent_at && existing.phone_e164 === phone ? existing.consent_at : at,
     consent_source: consentSource,
-    stopped_at: null,
-    stop_source: null,
+    // Verifying is a fresh yes to a STOP by reply; never to a stop we put on the number ourselves.
+    stopped_at: existing?.stop_source === 'admin' && existing.phone_e164 === phone ? existing.stopped_at : null,
+    stop_source: existing?.stop_source === 'admin' && existing.phone_e164 === phone ? 'admin' : null,
     updated_at: at,
   };
   const { error } = await admin.from('sms_contacts').upsert(row, { onConflict: 'user_id' });
@@ -159,6 +161,12 @@ export async function insertMessage(admin: Admin, row: MessageInsert): Promise<s
   return String((data as { id: string }).id);
 }
 
+/** Take back a record that never led to a send (a code refused by the resend limits). */
+export async function deleteMessage(admin: Admin, id: string): Promise<void> {
+  const { error } = await admin.from('sms_messages').delete().eq('id', id).eq('outcome', 'pending');
+  if (error) console.error('[sms] message delete failed:', error.message);
+}
+
 export async function updateMessage(admin: Admin, id: string, patch: Record<string, unknown>): Promise<boolean> {
   const { error } = await admin.from('sms_messages').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
   if (error) console.error('[sms] message update failed:', error.message);
@@ -183,14 +191,16 @@ export async function messageById(admin: Admin, id: string): Promise<MessageRow 
 
 /**
  * Code texts in the last day, by this member and to this number (any
- * account): the resend limits count both. Null when unreadable, which the
- * caller treats as "limit reached".
+ * account), other than the one being decided: the resend limits count both.
+ * The caller records its own send FIRST and then reads, so of two requests
+ * at the same moment at least one always sees the other (no burst gets past
+ * the limits). Null when unreadable, which the caller treats as "limit reached".
  */
-export async function recentCodeSends(admin: Admin, userId: string, phone: string, now: Date = new Date()): Promise<{ user: string[]; number: string[] } | null> {
+export async function recentCodeSends(admin: Admin, userId: string, phone: string, exceptId: string, now: Date = new Date()): Promise<{ user: string[]; number: string[] } | null> {
   const since = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
   const [mine, theirs] = await Promise.all([
-    admin.from('sms_messages').select('created_at').eq('user_id', userId).eq('kind', 'verify').gte('created_at', since),
-    admin.from('sms_messages').select('created_at').eq('phone_e164', phone).eq('kind', 'verify').gte('created_at', since),
+    admin.from('sms_messages').select('created_at').eq('user_id', userId).eq('kind', 'verify').neq('id', exceptId).gte('created_at', since),
+    admin.from('sms_messages').select('created_at').eq('phone_e164', phone).eq('kind', 'verify').neq('id', exceptId).gte('created_at', since),
   ]);
   if (mine.error || theirs.error) {
     console.warn('[sms] code history read failed:', (mine.error ?? theirs.error)?.message);
@@ -319,5 +329,38 @@ export async function textsThisMonth(admin: Admin, userIds: readonly string[], m
     }
     for (const r of (data ?? []) as { user_id: string }[]) out.set(r.user_id, (out.get(r.user_id) ?? 0) + 1);
   }
+  return out;
+}
+
+/**
+ * Whether this number's last STOP/START keyword (at or after `since`, when
+ * given) was STOP. Covers numbers with no account row yet: someone who
+ * replied STOP to a code they never asked for gets no more codes. Null when
+ * unreadable, which the caller treats as "stopped".
+ */
+export async function numberStopped(admin: Admin, phone: string, since?: string): Promise<boolean | null> {
+  let q = admin.from('sms_messages').select('body, created_at').eq('phone_e164', phone).eq('direction', 'inbound').in('body', ['STOP', 'START']);
+  if (since) q = q.gte('created_at', since);
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+  if (error) {
+    console.warn('[sms] keyword history read failed:', error.message);
+    return null;
+  }
+  return (data?.[0] as { body: string } | undefined)?.body === 'STOP';
+}
+
+/**
+ * Members who get texts about their deals: a receiving number and at least
+ * one text switch on. The alert collector records changes for them even
+ * when their email switch for changes is off (the emails still follow that
+ * switch). Any failure reads as nobody, so the collector behaves as before.
+ */
+export async function textAlertMemberIds(admin: Admin, onlyUserIds?: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  const contacts = await receivingContacts(admin, onlyUserIds);
+  if (!contacts || contacts.length === 0) return out;
+  const switches = await smsSwitchesFor(admin, contacts.map((c) => c.user_id));
+  if (!switches) return out;
+  for (const [id, state] of switches) if (state.sms_price_drop || state.sms_back_on_market || state.sms_nearly_gone || state.sms_gone) out.add(id);
   return out;
 }
