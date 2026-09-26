@@ -124,8 +124,8 @@ export default async function AdminPage() {
           <Link href="/admin/activity" className="text-sm font-medium text-primary hover:underline">
             High intent
           </Link>
-          <Link href="/admin/offer-range" className="text-sm font-medium text-primary hover:underline">
-            Offer range
+          <Link href="/admin/next-steps" className="text-sm font-medium text-primary hover:underline">
+            Next steps
           </Link>
           <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
             → Analyser

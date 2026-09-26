@@ -415,7 +415,7 @@ Thanks,
       notMarketplace: `The offer guide works on deals from the Stayful marketplace.`,
       // DRAFT — Zac to rewrite
       noHistory: `We don't know how long it has been on the market, so this uses your target only.`,
-      // Shown while no discount bands are set at /admin/offer-range. Empty means nothing is shown.
+      // Shown while no discount bands are set at /admin/next-steps. Empty means nothing is shown.
       bandsNotSet: ``,
     },
     // DRAFT — Zac to rewrite

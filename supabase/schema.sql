@@ -2527,7 +2527,7 @@ alter table public.marketplace_deals add column if not exists revived_from text;
 -- (src/lib/pipeline, src/app/my-deals/_components/NextStepSlot.tsx).
 --
 -- billing_settings 'offer_discount_bands': the Offer stage's discount bands
--- (src/lib/pipeline/offer-rules.ts), edited at /admin/offer-range.
+-- (src/lib/pipeline/offer-rules.ts), edited at /admin/next-steps.
 -- Deliberately NOT seeded. With no row, the offer range shows the member's
 -- target figure only and never a guessed discount. Shape:
 --   { "purchase":   [ { "minMonths": 6, "minReductions": 2, "discountPct": 8 }, ... ],

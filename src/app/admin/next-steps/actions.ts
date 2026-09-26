@@ -10,7 +10,7 @@ import { invalidateOfferRules } from '@/lib/pipeline/rules-server';
 async function requireAdmin() {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login?redirect=/admin/offer-range');
+  if (!user) redirect('/login?redirect=/admin/next-steps');
   if (!isAdminEmail(user.email)) notFound();
   return user;
 }
@@ -26,13 +26,13 @@ export async function saveOfferRulesAction(formData: FormData): Promise<void> {
     const v = formData.get(name);
     return typeof v === 'string' ? v : null;
   });
-  if (!rules) redirect('/admin/offer-range?msg=bad');
+  if (!rules) redirect('/admin/next-steps?msg=bad');
   try {
     await updateBillingSetting(OFFER_RULES_KEY, rules);
   } catch (err) {
-    console.error('[admin/offer-range] save failed:', err);
-    redirect('/admin/offer-range?msg=failed');
+    console.error('[admin/next-steps] save failed:', err);
+    redirect('/admin/next-steps?msg=failed');
   }
   invalidateOfferRules();
-  redirect('/admin/offer-range?msg=saved');
+  redirect('/admin/next-steps?msg=saved');
 }

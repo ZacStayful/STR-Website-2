@@ -2,7 +2,7 @@
  * The offer range's discount bands: how far below the asking figure to open,
  * given how long the listing has been on the market (and, for a purchase,
  * how many times it has been reduced). A business rule, so it is stored in
- * billing_settings under OFFER_RULES_KEY and edited at /admin/offer-range,
+ * billing_settings under OFFER_RULES_KEY and edited at /admin/next-steps,
  * never hard-coded.
  *
  * Each row reads as one sentence: "on the market at least X (and reduced at
