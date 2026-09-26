@@ -16,6 +16,7 @@
  * Pure, so the rules are tested once.
  */
 import { randomBytes } from 'node:crypto';
+import type { NotificationKey } from '../notifications/registry.ts';
 
 export type Slot = 'daily' | 'weekly';
 
@@ -32,6 +33,19 @@ export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
 export function slotFor(kind: SendKind): Slot {
   return SLOT_FOR[kind];
 }
+
+/**
+ * The switches behind each email: what one-click unsubscribe turns off, so
+ * that "stop these emails" really stops that email. Your week goes when its
+ * missed-deals or areas section has something to say, so both go off.
+ */
+export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey[]>> = {
+  todays_5: ['daily_picks'],
+  deal_changes: ['deal_changes'],
+  picks_paused: ['credit_alerts'],
+  your_week: ['weekly_missed', 'weekly_alerts'],
+  notice: ['daily_picks'],
+};
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */
 export function capDay(now: Date = new Date()): string {

@@ -48,3 +48,14 @@ test('send tokens are unguessable and validated before use', async () => {
   assert.equal(isSendToken('short'), false);
   assert.equal(isSendToken("x'; drop table"), false);
 });
+
+test('one-click unsubscribe turns off every switch behind that email, and only those', async () => {
+  const { SWITCHES_BEHIND } = await import('./cap.ts');
+  const { isNotificationKey } = await import('../notifications/registry.ts');
+  for (const [kind, keys] of Object.entries(SWITCHES_BEHIND)) {
+    assert.ok(keys.length > 0, `${kind} has a switch`);
+    for (const k of keys) assert.ok(isNotificationKey(k), `${kind}: ${k} is registered`);
+  }
+  assert.deepEqual([...SWITCHES_BEHIND.your_week].sort(), ['weekly_alerts', 'weekly_missed']);
+  assert.deepEqual(SWITCHES_BEHIND.deal_changes, ['deal_changes']);
+});
