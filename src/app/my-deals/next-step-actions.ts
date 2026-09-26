@@ -64,9 +64,13 @@ export async function setChecklistItemAction(itemKey: unknown, stage: unknown, k
 /** Records a copy or an "Open in email" of one of the messages. */
 export async function trackStepAction(itemKey: unknown, stage: unknown, kind: unknown, action: unknown, itemId: unknown): Promise<void> {
   if (!isItemKey(itemKey) || !isPipelineStatus(stage) || !isKind(kind) || (action !== 'copy' && action !== 'email') || typeof itemId !== 'string' || !MESSAGE_IDS.has(itemId)) return;
-  const me = await currentMember();
-  if (!me) return;
-  await recordStepEvent({ userId: me.id, itemKey, stage, kind, action, itemId });
+  try {
+    const me = await currentMember();
+    if (me) await recordStepEvent({ userId: me.id, itemKey, stage, kind, action, itemId });
+  } catch (err) {
+    // Usage tracking must never surface as an error for what the member did.
+    console.warn('[next-step] copy/email not recorded:', err);
+  }
 }
 
 /** The Secured stage's "Talk to us": the Market Explorer's enquiry, labelled as from My deals, and recorded. */

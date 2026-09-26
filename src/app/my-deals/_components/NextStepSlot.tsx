@@ -32,5 +32,6 @@ export async function NextStepSlot(props: {
   if (!itemKey) return null;
   const view = await nextStepFor({ itemKey, stage: props.stage, facts: props.facts });
   if (!view) return null;
-  return <NextStepCard view={view} variant={props.variant ?? "compact"} />;
+  // Keyed by stage: a move re-mounts it, so the new stage starts fresh (the offer amount pre-fills).
+  return <NextStepCard key={view.stage} view={view} variant={props.variant ?? "compact"} />;
 }

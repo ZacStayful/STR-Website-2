@@ -22,7 +22,7 @@ export function Checklist({ itemKey, stage, kind, items }: { itemKey: string; st
     apply(next);
     setError(false);
     start(async () => {
-      const res = await setChecklistItemAction(itemKey, stage, kind, id, next);
+      const res = await setChecklistItemAction(itemKey, stage, kind, id, next).catch(() => ({ ok: false }));
       if (!res.ok) {
         apply(!next);
         setError(true);

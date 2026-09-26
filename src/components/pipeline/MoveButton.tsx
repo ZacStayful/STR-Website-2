@@ -23,9 +23,13 @@ export function MoveButton({ itemKey, stage, kind, label }: { itemKey: string; s
   function move() {
     setError(null);
     start(async () => {
-      const res = await moveFromNextStepAction(itemKey, stage, kind);
-      if (res.ok) router.refresh();
-      else setError(ERRORS[res.error]);
+      try {
+        const res = await moveFromNextStepAction(itemKey, stage, kind);
+        if (res.ok) router.refresh();
+        else setError(ERRORS[res.error]);
+      } catch {
+        setError(ERRORS.failed);
+      }
     });
   }
 
