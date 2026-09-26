@@ -5,6 +5,8 @@ import { sendEmail, isEmailConfigured } from "../email/send";
 import { dailyNoticeEmail } from "../email/daily-notice";
 import { siteUrl } from "../url";
 import type { RunResult } from "./picks-run";
+import { claimSlot, finishSend, markSending, releaseClaim } from "../notify/sends";
+import { sendKey } from "../notify/cap";
 
 // ─── One-off "picks are now daily" notice ─────────────────────────────
 // Pressed by hand from /admin/picks, dry run first. Goes to every member
@@ -12,6 +14,10 @@ import type { RunResult } from "./picks-run";
 // enrolled and signed in at least once) and has not had it yet. Each send
 // is stamped on the profile as it goes, so a second press, or a press after
 // a run out of time, never sends twice. Nothing here runs on deploy.
+//
+// It counts toward the one-a-day cap (src/lib/notify/cap.ts): a member who
+// has already had their daily email today is skipped, unstamped, and gets
+// the notice from a later press.
 
 const TIME_BUDGET_MS = 50_000;
 const SAMPLE = 20;
@@ -48,14 +54,28 @@ export async function runDailyNotice(opts: { dry: boolean }): Promise<RunResult>
   if (!isEmailConfigured()) return { status: 200, body: { dry: false, audience: rows.length, sent: 0, failed: 0, remaining: rows.length, error: "email_not_configured" } };
   let sent = 0;
   let failed = 0;
+  // Already had today's email: left for a later press.
+  let capped = 0;
   const failures: string[] = [];
   let i = 0;
   for (; i < rows.length; i += 1) {
     if (Date.now() - started > TIME_BUDGET_MS) break;
     const r = rows[i];
     if (!r.email) continue;
+    const claim = await claimSlot(admin, r.id, "notice");
+    if (!claim.ok && claim.reason === "slot_used") {
+      capped += 1;
+      continue;
+    }
+    const claimId = claim.ok ? claim.id : null;
     const mail = dailyNoticeEmail({ siteUrl: siteUrl(), firstName: firstNameOf(r.full_name) });
-    const res = await sendEmail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text });
+    if (claimId && !(await markSending(admin, claimId, { notice: "daily_picks" }, null))) {
+      await releaseClaim(admin, claimId);
+      capped += 1;
+      continue;
+    }
+    const res = await sendEmail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text, ...(claim.ok ? { idempotencyKey: sendKey("daily", r.id, claim.day) } : {}) });
+    if (claimId) await finishSend(admin, claimId, res.sent, null, []);
     if (!res.sent) {
       failed += 1;
       if (failures.length < SAMPLE) failures.push(`${r.email} (${res.reason ?? "failed"})`);
@@ -67,6 +87,6 @@ export async function runDailyNotice(opts: { dry: boolean }): Promise<RunResult>
     if (stampErr) console.error("[daily-notice] stamp failed:", stampErr.message);
     sent += 1;
   }
-  const remaining = rows.length - i + failed;
-  return { status: 200, body: { dry: false, audience: rows.length, sent, failed, failures, remaining, ranOutOfTime: i < rows.length, ms: Date.now() - started } };
+  const remaining = rows.length - i + failed + capped;
+  return { status: 200, body: { dry: false, audience: rows.length, sent, failed, capped, failures, remaining, ranOutOfTime: i < rows.length, ms: Date.now() - started } };
 }
