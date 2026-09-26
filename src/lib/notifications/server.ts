@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { NOTIFICATION_COLUMNS, notificationPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
+import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, notificationPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
 
 /**
  * The only writer of the notification columns. Service role, because the
@@ -27,6 +27,10 @@ export async function readNotifications(userId: string): Promise<NotificationSta
   const full = await admin.from('profiles').select(NOTIFICATION_COLUMNS).eq('id', userId).maybeSingle();
   if (!full.error) return full.data ? notificationState(full.data as NotificationRow) : null;
   console.warn('[notifications] select failed (schema behind?):', full.error.message);
-  const legacy = await admin.from('profiles').select('sourcing_alerts, sourcing_opted_out_at, alert_weekly').eq('id', userId).maybeSingle();
-  return legacy.data ? notificationState(legacy.data as NotificationRow) : null;
+  // Each fallback only drops columns; a missing one reads as its default (on).
+  for (const columns of [NOTIFICATION_COLUMNS_BEFORE_BATCH_6, 'sourcing_alerts, sourcing_opted_out_at, alert_weekly']) {
+    const older = await admin.from('profiles').select(columns).eq('id', userId).maybeSingle();
+    if (!older.error) return older.data ? notificationState(older.data as NotificationRow) : null;
+  }
+  return null;
 }

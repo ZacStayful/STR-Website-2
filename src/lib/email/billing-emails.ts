@@ -2,8 +2,8 @@
  * Confirmation emails for the self-serve pause and cancel flows.
  *
  * Pure: these build the message, the caller sends it. That keeps them
- * unit-testable and free of `server-only`, matching digestEmail in
- * src/lib/market/alerts.ts.
+ * unit-testable and free of `server-only`, matching the member emails in
+ * src/lib/notify (message.ts, render-email.ts).
  *
  * Both carry a link straight back to /account, because the most valuable thing
  * a member can do after either email is change their mind.

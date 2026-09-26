@@ -10,9 +10,9 @@
  * Pure: no server-only, no Supabase. Tested.
  */
 
-export type NotificationKey = 'daily_picks' | 'weekly_alerts' | 'credit_alerts';
+export type NotificationKey = 'daily_picks' | 'deal_changes' | 'weekly_missed' | 'weekly_alerts' | 'credit_alerts';
 
-export type NotificationColumn = 'sourcing_alerts' | 'alert_weekly' | 'alert_credit';
+export type NotificationColumn = 'sourcing_alerts' | 'alert_tracked' | 'alert_missed' | 'alert_weekly' | 'alert_credit';
 
 export interface NotificationType {
   key: NotificationKey;
@@ -36,15 +36,29 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = [
     key: 'daily_picks',
     column: 'sourcing_alerts',
     label: 'Daily picks',
-    description: 'One property a day that fits your filter, by email. Each pick uses a little of your credit.',
+    description: 'Today’s 5 each morning: one pick that fits your filter (it uses a little of your credit) and the rest of your Today.',
     defaultOn: true,
     optOutStampColumn: 'sourcing_opted_out_at',
+  },
+  {
+    key: 'deal_changes',
+    column: 'alert_tracked',
+    label: 'Changes on deals I’m tracking',
+    description: 'A price drop, a deal back on the market, going fast or gone: in your morning email, or on its own when there is none.',
+    defaultOn: true,
+  },
+  {
+    key: 'weekly_missed',
+    column: 'alert_missed',
+    label: 'Weekly: deals I missed',
+    description: 'On Mondays, the deals that matched you and went under offer or let agreed that week.',
+    defaultOn: true,
   },
   {
     key: 'weekly_alerts',
     column: 'alert_weekly',
     label: 'Weekly area alerts',
-    description: 'A Monday email when a saved area’s enquiry trend flips, its data becomes Confirmed, or a listing in your pipeline moves.',
+    description: 'On Mondays, when a saved area’s enquiry trend flips or its data becomes Confirmed.',
     defaultOn: true,
   },
   {
@@ -57,7 +71,13 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = [
 ];
 
 /** Every column the registry reads: select these together. */
-export const NOTIFICATION_COLUMNS = 'sourcing_alerts, sourcing_opted_out_at, alert_weekly, alert_credit';
+export const NOTIFICATION_COLUMNS = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit';
+
+/**
+ * The same, as it was before the Batch 6 columns: what a database that has
+ * not had them added yet can still answer (readNotifications falls back).
+ */
+export const NOTIFICATION_COLUMNS_BEFORE_BATCH_6 = 'sourcing_alerts, sourcing_opted_out_at, alert_weekly, alert_credit';
 
 /** The one line the panel says about what it does not control. */
 export const ALWAYS_SENT_NOTE = 'Billing and receipt emails are always sent.';

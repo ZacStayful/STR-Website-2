@@ -10,8 +10,6 @@
 import type { AreaCardData } from './explorer.ts';
 import type { AreaTrend } from './trend.ts';
 import { formatMonth } from './trend.ts';
-import { escapeHtml as esc } from '../email/escape.ts';
-import { manageNotificationsUrl } from '../url.ts';
 
 export interface SavedAreaState {
   postcode_area: string;
@@ -63,7 +61,8 @@ export function digestChanges(
   return out;
 }
 
-function line(c: AlertChange): string {
+/** One area's change in words: "Leeds (LS): enquiries now rising (+12%), previously steady". */
+export function areaChangeLine(c: AlertChange): string {
   const parts: string[] = [];
   if (c.trendChanged) {
     const pct = c.deltaPct === null ? '' : ` (${c.deltaPct > 0 ? '+' : ''}${Math.round(c.deltaPct * 100)}%)`;
@@ -72,45 +71,4 @@ function line(c: AlertChange): string {
   }
   if (c.becameConfirmed) parts.push('now backed by enough reports to be Confirmed');
   return `${c.name} (${c.code}): ${parts.join('; ')}${c.since ? ` — tracking since ${formatMonth(c.since)}` : ''}`;
-}
-
-/** A pipeline listing that moved in the last week (from the daily re-check), for the Monday digest. */
-export interface ListingWeekChange {
-  id: string;
-  label: string; // address or title
-  summary: string; // e.g. "price down from £220,000 to £210,000 (−4.5%)"
-}
-
-export function digestEmail(changes: AlertChange[], siteUrl: string, listingChanges: ListingWeekChange[] = []): { subject: string; text: string; html: string } {
-  const subject =
-    changes.length === 0
-      ? `Market Explorer: ${listingChanges.length} of your listings moved this week`
-      : changes.length === 1
-        ? `Market Explorer: ${changes[0].name} has changed`
-        : `Market Explorer: ${changes.length} of your saved areas have changed`;
-  const items = changes.map(line);
-  const text = [
-    'Your weekly Market Explorer update from Stayful.',
-    '',
-    ...items.map((i) => `• ${i}`),
-    ...(listingChanges.length > 0 ? ['', 'Listings in your pipeline this week:', ...listingChanges.map((l) => `• ${l.label}: ${l.summary} — ${siteUrl}/markets?pane=listings&listing=${encodeURIComponent(l.id)}`)] : []),
-    '',
-    `Open the explorer: ${siteUrl}/markets`,
-    `Manage notifications: ${manageNotificationsUrl(siteUrl)}`,
-  ].join('\n');
-  const areasHtml = changes.length > 0 ? `<ul style="padding-left:18px">${changes.map((c) => `<li style="margin:8px 0"><a href="${siteUrl}/markets/${esc(c.code.toLowerCase())}" style="color:#2e3d2b">${esc(line(c))}</a></li>`).join('')}</ul>` : '';
-  const listingsHtml =
-    listingChanges.length > 0
-      ? `<h2 style="font-size:16px;margin:18px 0 6px">Listings in your pipeline this week</h2><ul style="padding-left:18px">${listingChanges.map((l) => `<li style="margin:8px 0"><a href="${esc(`${siteUrl}/markets?pane=listings&listing=${encodeURIComponent(l.id)}`)}" style="color:#2e3d2b"><strong>${esc(l.label)}</strong>: ${esc(l.summary)}</a></li>`).join('')}</ul>`
-      : '';
-  const html = `
-    <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#2e3d2b;max-width:560px">
-      <p style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5d8156;font-weight:600">Stayful Market Explorer</p>
-      <h1 style="font-size:22px;margin:0 0 14px">${changes.length > 0 ? 'Your saved areas moved this week' : 'Your pipeline moved this week'}</h1>
-      ${areasHtml}
-      ${listingsHtml}
-      <p style="margin:22px 0"><a href="${siteUrl}/markets" style="display:inline-block;background:#5d8156;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:600">Open the Market Explorer</a></p>
-      <p style="color:#7a8274;font-size:12px">You get this because you saved these areas or listings. <a href="${esc(manageNotificationsUrl(siteUrl))}" style="color:#7a8274">Manage notifications</a>.</p>
-    </div>`.trim();
-  return { subject, text, html };
 }

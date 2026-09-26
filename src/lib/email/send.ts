@@ -29,6 +29,16 @@ export async function sendEmail(params: {
   from?: string;
   /** Where a reply goes. `safeReplyTo` in ./from.ts vets it. */
   replyTo?: string;
+  /**
+   * Resend's Idempotency-Key (an HTTP header on the API call, not an email
+   * header). Resend keeps it 24 hours: the same key and payload again returns
+   * the first answer without sending twice, and a different payload under the
+   * same key is refused (409). The capped member emails pass their slot
+   * (src/lib/notify/cap.ts sendKey). With a key, an ambiguous failure — the
+   * network dropped, or Resend answered 5xx, so the email may or may not have
+   * gone — is retried once at once with the same key, which settles it.
+   */
+  idempotencyKey?: string;
 }): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = params.from ?? process.env.EMAIL_FROM;
@@ -36,28 +46,34 @@ export async function sendEmail(params: {
     console.warn("[email] not configured (RESEND_API_KEY / EMAIL_FROM) — skipping send");
     return { sent: false, reason: "not_configured" };
   }
-  try {
-    const res = await fetch(RESEND_ENDPOINT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        from,
-        to: [params.to],
-        subject: params.subject,
-        html: params.html,
-        text: params.text,
-        ...(params.replyTo ? { reply_to: params.replyTo } : {}),
-        ...(params.headers ? { headers: params.headers } : {}),
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "<unreadable>");
-      console.error(`[email] Resend HTTP ${res.status}: ${body.slice(0, 400)}`);
-      return { sent: false, reason: `http_${res.status}` };
+  const body = JSON.stringify({
+    from,
+    to: [params.to],
+    subject: params.subject,
+    html: params.html,
+    text: params.text,
+    ...(params.replyTo ? { reply_to: params.replyTo } : {}),
+    ...(params.headers ? { headers: params.headers } : {}),
+  });
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+  if (params.idempotencyKey) headers["Idempotency-Key"] = params.idempotencyKey;
+  // Without a key a retry could send twice, so only a keyed send gets one.
+  const attempts = params.idempotencyKey ? 2 : 1;
+  let last: SendResult = { sent: false, reason: "network" };
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const res = await fetch(RESEND_ENDPOINT, { method: "POST", headers, body });
+      if (res.ok) return { sent: true };
+      const text = await res.text().catch(() => "<unreadable>");
+      console.error(`[email] Resend HTTP ${res.status}: ${text.slice(0, 400)}`);
+      last = { sent: false, reason: `http_${res.status}` };
+      // A 4xx is a definite answer (bad request, or this key already used for
+      // another email): retrying cannot change it.
+      if (res.status < 500) return last;
+    } catch (err) {
+      console.error("[email] send failed:", err);
+      last = { sent: false, reason: "network" };
     }
-    return { sent: true };
-  } catch (err) {
-    console.error("[email] send failed:", err);
-    return { sent: false, reason: "network" };
   }
+  return last;
 }

@@ -120,3 +120,24 @@ which are required, and what breaks without them.
 
 Scheduled jobs are declared in `vercel.json` and live under
 `src/app/api/internal/`.
+
+## Member emails
+
+Every non-billing email to a member is built in `src/lib/notify`. The content is
+plain data (`message.ts`), rendered to email in one place (`render-email.ts`).
+
+A member gets at most one of these a day, and two on Mondays. The cap is
+enforced in one place, `notification_sends`: a capped email claims its slot
+before it sends, and Resend's idempotency key is the slot. Billing and receipt
+emails never go through the cap.
+
+| UTC | Job | Sends |
+|---|---|---|
+| 06:00 | `listing-recheck` | Nothing: records price and status changes on pipeline rows |
+| 06:55 | `deal-alerts` | Nothing: turns changes on tracked deals into `deal_alerts` |
+| 07:00, 07:20, 07:40 | `sourcing` | Today's 5: the charged pick, the rest of the member's Today, and changes |
+| 08:00 | `picks-paused` | The out-of-credit letter, instead of the daily email, with changes |
+| Mon 08:00 | `alerts` | Your week: deals missed, your deals, your areas |
+| 08:10 | `daily-digest` | The daily email for anyone who had none: Today's 5 without a pick, or changes only |
+
+Each one takes `?dry=1` and reports who would get what.

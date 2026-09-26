@@ -107,6 +107,12 @@ export interface PausedEmailInput {
   misses: MissedPick[];
   siteUrl: string;
   firstName?: string | null;
+  /**
+   * Anything else due today, already rendered (src/lib/notify): the changes
+   * on deals the member tracks. The letter goes instead of the daily email,
+   * so what that email would have carried rides here rather than being lost.
+   */
+  extra?: { text: string; html: string; subjectSuffix?: string | null } | null;
 }
 
 /** The letter itself: plain, one button. */
@@ -115,7 +121,8 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
   const topUp = `${base}/account/billing`;
   const manage = manageNotificationsUrl(base);
   const n = input.misses.length;
-  const subject = n === 1 ? 'Your daily picks have paused: 1 pick you missed' : `Your daily picks have paused: ${n} picks you missed`;
+  const baseSubject = n === 1 ? 'Your daily picks have paused: 1 pick you missed' : `Your daily picks have paused: ${n} picks you missed`;
+  const subject = input.extra?.subjectSuffix ? `${baseSubject} · ${input.extra.subjectSuffix}` : baseSubject;
   const hi = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
   const since = input.misses[0] ? dayWords(input.misses[0].missedAt) : '';
   const lines = input.misses.map(missedPickLine);
@@ -132,6 +139,7 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
     '',
     'Figures are Stayful estimates for the area and size of property. The address and listing come with the pick itself.',
     '',
+    ...(input.extra ? [input.extra.text, ''] : []),
     `Manage notifications: ${manage}`,
   ].join('\n');
   const html = `
@@ -142,6 +150,7 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
       <ul style="margin:0 0 18px;padding-left:18px">${lines.map((l) => `<li style="margin:4px 0">${esc(l)}</li>`).join('')}</ul>
       <p style="margin:0 0 18px"><a href="${esc(topUp)}" style="display:inline-block;background:#5d8156;color:#fff;text-decoration:none;padding:10px 20px;border-radius:999px;font-weight:600">Top up</a></p>
       <p style="margin:0 0 14px;color:#5b6657;font-size:13px">Top up and picks start again with tomorrow morning&#8217;s run. Figures are Stayful estimates for the area and size of property; the address and listing come with the pick itself.</p>
+      ${input.extra ? `<div style="margin:0 0 18px">${input.extra.html}</div>` : ''}
       <p style="margin:0;color:#7a8274;font-size:12px">Stayful Intelligence · <a href="${esc(manage)}" style="color:#7a8274">Manage notifications</a></p>
     </div>`.trim();
   return { subject, text, html };

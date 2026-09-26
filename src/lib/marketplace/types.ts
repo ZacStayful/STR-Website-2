@@ -23,6 +23,16 @@ export type RetiredReason =
 /** Retirements the sweep may undo when the listing is back in the feed and qualifies again. */
 export const REACTIVATABLE_REASONS: ReadonlySet<RetiredReason> = new Set<RetiredReason>(['unqualified', 'stale_listed', 'stale_unseen', 'unverifiable']);
 
+/**
+ * Retirements that mean the listing went (Batch 6): back in the feed without
+ * a gone status, and qualifying, it is revived too — but always through a page
+ * read (pending_verify) where the source can be read, and stamped revived_at /
+ * revived_from, which is what "back on the market" alerts on. A deal the feed
+ * brings back is the same row and the same id: a relist under a new portal id
+ * is a new listing and is not matched to the old one.
+ */
+export const RETURNING_REASONS: ReadonlySet<RetiredReason> = new Set<RetiredReason>(['sold', 'under_offer', 'let_agreed', 'removed']);
+
 export type ConfirmedVia = 'feed' | 'live';
 
 export interface DealRow {

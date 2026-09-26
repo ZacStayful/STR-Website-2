@@ -10,6 +10,10 @@
 			"schedule": "0 6 * * *"
 		},
 		{
+			"path": "/api/internal/deal-alerts",
+			"schedule": "55 6 * * *"
+		},
+		{
 			"path": "/api/internal/market-warm",
 			"schedule": "45 4 * * *"
 		},
@@ -28,6 +32,10 @@
 		{
 			"path": "/api/internal/picks-paused",
 			"schedule": "0 8 * * *"
+		},
+		{
+			"path": "/api/internal/daily-digest",
+			"schedule": "10 8 * * *"
 		},
 		{
 			"path": "/api/internal/credit-sweep",
@@ -59,7 +67,7 @@
 		},
 		{
 			"path": "/api/internal/marketplace-recheck",
-			"schedule": "0 * * * *"
+			"schedule": "30 * * * *"
 		}
 	]
 }
