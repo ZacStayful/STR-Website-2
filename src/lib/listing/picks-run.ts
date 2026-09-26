@@ -973,7 +973,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // ── Send: the day's slot, the pending row, the email, then the charge ──
   const base = siteUrl();
   const notReady = new Map<string, TodayPlan | null>();
-  const plans = await Promise.race([plansReady, new Promise<Map<string, TodayPlan | null>>((r) => setTimeout(() => r(notReady), Math.max(0, DAILY_READY_BY_MS - elapsed())))]);
+  let readyTimer: ReturnType<typeof setTimeout> | undefined;
+  const plans = await Promise.race([plansReady, new Promise<Map<string, TodayPlan | null>>((r) => (readyTimer = setTimeout(() => r(notReady), Math.max(0, DAILY_READY_BY_MS - elapsed()))))]);
+  clearTimeout(readyTimer);
   if (plans === notReady) console.warn("[sourcing] today lists not ready; sending picks without teasers");
   const [alertsOn, pending] = await alertsReady;
   for (const { member: m, pick, alternates, candidates, nearMiss } of picks) {
