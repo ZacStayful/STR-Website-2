@@ -11,6 +11,8 @@ import type { ConfirmedVia, DealStatus } from './types.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
 export type DealSort = 'profit' | 'uplift' | 'newest' | 'price';
+/** Which of the member's own reactions the grid shows: everything they have not passed, only kept, or only passed. */
+export type DealView = 'all' | 'kept' | 'passed';
 
 export interface DealFilters {
   kind: DealKindFilter;
@@ -24,16 +26,18 @@ export interface DealFilters {
   /** Uplift floor, %. Sales only: rentals have no uplift figure. */
   minUplift: number | null;
   sort: DealSort;
+  view: DealView;
   page: number;
 }
 
 export const PAGE_SIZE = 24;
 export const MAX_PAGE = 500;
 
-export const DEFAULT_FILTERS: DealFilters = { kind: 'both', areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'profit', page: 1 };
+export const DEFAULT_FILTERS: DealFilters = { kind: 'both', areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'profit', view: 'all', page: 1 };
 
 export const SORT_LABELS: Record<DealSort, string> = { profit: 'Highest profit', uplift: 'Highest uplift', newest: 'Newest', price: 'Lowest price' };
 export const KIND_LABELS: Record<DealKindFilter, string> = { both: 'Buy or rent', sale: 'To buy', rent: 'Rent-to-rent' };
+export const VIEW_LABELS: Record<DealView, string> = { all: 'All', kept: 'Kept', passed: 'Passed' };
 
 const AREA_CODES = new Set(AREA_META.map((a) => a.code));
 
@@ -54,6 +58,7 @@ export function parseDealFilters(raw: Raw): DealFilters {
   const kind = first(raw.kind);
   const beds = first(raw.beds);
   const sort = first(raw.sort);
+  const view = first(raw.view);
   const areasRaw = raw.areas ?? raw.area;
   const areaList = (Array.isArray(areasRaw) ? areasRaw : areasRaw ? areasRaw.split(',') : [])
     .map((a) => a.trim().toUpperCase())
@@ -69,6 +74,7 @@ export function parseDealFilters(raw: Raw): DealFilters {
     minProfit: num(raw.minProfit, 0, 10_000_000),
     minUplift: num(raw.minUplift, 0, 10_000),
     sort: sort === 'uplift' || sort === 'newest' || sort === 'price' ? sort : 'profit',
+    view: view === 'kept' || view === 'passed' ? view : 'all',
     page: num(raw.page, 1, MAX_PAGE) ?? 1,
   };
 }
@@ -84,6 +90,7 @@ export function filtersToSearch(f: Partial<DealFilters>): string {
   if (f.minProfit) p.set('minProfit', String(f.minProfit));
   if (f.minUplift) p.set('minUplift', String(f.minUplift));
   if (f.sort && f.sort !== 'profit') p.set('sort', f.sort);
+  if (f.view && f.view !== 'all') p.set('view', f.view);
   if (f.page && f.page > 1) p.set('page', String(f.page));
   const s = p.toString();
   return s ? `?${s}` : '';
@@ -120,6 +127,15 @@ export const PUBLIC_DEAL_COLUMNS = [
 
 export const PRIVATE_DEAL_COLUMNS: readonly string[] = ['canonical_url', 'address', 'postcode', 'photo', 'photos'];
 
+/**
+ * What a query that renders a DealCard selects: the public columns plus the
+ * card's motivation line inputs and the early-access clock. None of the extra
+ * three holds an address; the deal page already shows motivation to every
+ * member. Kept separate from PUBLIC_DEAL_COLUMNS so the cached area teaser
+ * (up to 2,000 rows) does not carry them.
+ */
+export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since`;
+
 export interface DealCard {
   id: string;
   source: ListingSource;
@@ -144,6 +160,12 @@ export interface DealCard {
   last_confirmed_via: ConfirmedVia;
   /** True when the row carries a photo, so the card knows whether to ask the photo route. */
   has_photo?: boolean;
+  /** CARD_COLUMNS only: the stored motivation verdict, for the card's motivation line. */
+  motivation?: unknown;
+  /** CARD_COLUMNS only: our recorded price changes, for "Reduced twice". */
+  price_history?: unknown;
+  /** CARD_COLUMNS only: when the deal went live, which starts the early-access window. */
+  live_since?: string | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
+import { motivationLine } from "@/lib/marketplace/motivation-line";
 
 // Re-exported for the pages that format a deal without rendering this card.
 export { headlineFigure, priceLine };
@@ -16,6 +17,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false }: { card
   const badges = badgesFor(card, now);
   const figure = headlineFigure(card);
   const price = priceLine(card);
+  const motivation = motivationLine(card, now);
   const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ");
   const open = opened ? "Opened" : `Open · ${formatOpenPrice(openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder))}`;
   return (
@@ -42,6 +44,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false }: { card
           </div>
           <p className="text-xs text-muted-foreground">{figure.small}</p>
           <p className="mt-1.5 truncate text-sm font-medium text-foreground">{where || "Location on the sheet"}</p>
+          {motivation.length > 0 && <p className="truncate text-xs font-medium text-primary">{motivation.join(" · ")}</p>}
           <p className="truncate text-xs text-muted-foreground">{describeType(card)}</p>
           <div className="mt-2 flex items-center justify-between gap-2">
             <span className={"text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}</span>

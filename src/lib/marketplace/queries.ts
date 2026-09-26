@@ -14,7 +14,7 @@ import 'server-only';
  */
 import { unstable_cache } from 'next/cache';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
+import { CARD_COLUMNS, PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
 import type { DealVisibility } from './visibility';
@@ -31,7 +31,7 @@ const EMPTY: DealPage = { cards: [], total: 0, page: 1, pages: 0 };
 export async function listDeals(f: DealFilters, visibility: DealVisibility): Promise<DealPage> {
   if (!hasServiceRole()) return EMPTY;
   const admin = createAdminClient();
-  let q = admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`, { count: 'exact' }).eq('status', 'live');
+  let q = admin.from('marketplace_deals').select(`${CARD_COLUMNS}, photo`, { count: 'exact' }).eq('status', 'live');
   if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
   if (f.areas.length > 0) q = q.in('postcode_area', f.areas);

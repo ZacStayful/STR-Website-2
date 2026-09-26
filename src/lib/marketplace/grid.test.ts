@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView } from './grid.ts';
+import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView } from './grid.ts';
 
 test('parseDealFilters whitelists every value and clamps numbers', () => {
   assert.deepEqual(parseDealFilters({}), DEFAULT_FILTERS);
   const f = parseDealFilters({ kind: 'rent', areas: 'yo,bs,zz', beds: '4+', minPrice: '£100,000', maxPrice: '250000', minProfit: '12000', minUplift: '40%', sort: 'newest', page: '3' });
-  assert.deepEqual(f, { kind: 'rent', areas: ['YO', 'BS'], beds: '4+', minPrice: 100_000, maxPrice: 250_000, minProfit: 12_000, minUplift: 40, sort: 'newest', page: 3 });
-  const junk = parseDealFilters({ kind: 'drop table', beds: '9', sort: 'evil', page: '-4', minPrice: 'abc', maxPrice: '50', areas: ['YO', 'YO', 'nope'] });
+  assert.deepEqual(f, { kind: 'rent', areas: ['YO', 'BS'], beds: '4+', minPrice: 100_000, maxPrice: 250_000, minProfit: 12_000, minUplift: 40, sort: 'newest', view: 'all', page: 3 });
+  const junk = parseDealFilters({ kind: 'drop table', beds: '9', sort: 'evil', view: 'everyone', page: '-4', minPrice: 'abc', maxPrice: '50', areas: ['YO', 'YO', 'nope'] });
   assert.deepEqual(junk, { ...DEFAULT_FILTERS, areas: ['YO'], maxPrice: 50 });
   assert.equal(parseDealFilters({ page: '99999' }).page, 500);
   assert.equal(parseDealFilters({ minPrice: '300000', maxPrice: '200000' }).maxPrice, null, 'an inverted range drops the ceiling');
@@ -22,10 +22,25 @@ test('filtersToSearch round-trips and omits defaults', () => {
   assert.equal(filtersToSearch({ areas: ['YO'] }), '?areas=YO');
 });
 
+test('the kept and passed views survive the URL round trip; anything else is the default view', () => {
+  assert.equal(parseDealFilters({ view: 'kept' }).view, 'kept');
+  assert.equal(parseDealFilters({ view: 'passed' }).view, 'passed');
+  assert.equal(parseDealFilters({ view: 'all' }).view, 'all');
+  assert.equal(parseDealFilters({ view: ['kept', 'passed'] }).view, 'kept');
+  const f = parseDealFilters({ kind: 'rent', view: 'passed', page: '2' });
+  assert.equal(filtersToSearch(f), '?kind=rent&view=passed&page=2');
+  assert.deepEqual(parseDealFilters(Object.fromEntries(new URLSearchParams(filtersToSearch(f)))), f);
+  assert.equal(filtersToSearch({ ...DEFAULT_FILTERS, view: 'all' }), '', 'the default view is omitted');
+});
+
 test('the grid never selects what a member pays for', () => {
   for (const col of PRIVATE_DEAL_COLUMNS) {
     assert.ok(!PUBLIC_DEAL_COLUMNS.split(', ').includes(col), `${col} must not be public`);
   }
+  for (const col of PRIVATE_DEAL_COLUMNS) {
+    assert.ok(!CARD_COLUMNS.split(', ').includes(col), `${col} must not be on the card`);
+  }
+  assert.ok(CARD_COLUMNS.startsWith(PUBLIC_DEAL_COLUMNS), 'the card reads everything the grid does');
   assert.ok(PUBLIC_DEAL_COLUMNS.includes('id'));
   assert.ok(PUBLIC_DEAL_COLUMNS.includes('outcode'));
   assert.equal(PAGE_SIZE, 24);
