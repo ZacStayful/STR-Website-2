@@ -172,6 +172,17 @@ export function settleChanges(rows: readonly AlertRow[], current: CurrentState, 
   return { changes, dismissed };
 }
 
+/**
+ * Whether a recorded price change is a real one. diffListing compares amounts
+ * without their period, so a portal re-labelling a rent between pw and pcm
+ * reads as a 4.3× move. No real asking price moves 3× between two readings:
+ * treat that as a relabel, never as a drop (or a rise) to tell anyone about.
+ */
+export function plausiblePriceChange(previous: number | null | undefined, next: number | null | undefined): boolean {
+  if (typeof previous !== 'number' || typeof next !== 'number' || !(previous > 0) || !(next > 0)) return false;
+  return Math.max(previous, next) / Math.min(previous, next) < 3;
+}
+
 /** Every alert id a list of settled changes stands for: what finishSend marks notified. */
 export function alertIdsOf(changes: readonly { id: string; mergedIds?: string[] }[]): string[] {
   return changes.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
