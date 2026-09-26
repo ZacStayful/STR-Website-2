@@ -18,6 +18,7 @@ import { CARD_COLUMNS, PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDe
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
 import type { DealVisibility } from './visibility';
+import { reactionFilter, type ReactionFilter } from './reactions';
 
 export interface DealPage {
   cards: DealCard[];
@@ -28,11 +29,36 @@ export interface DealPage {
 
 const EMPTY: DealPage = { cards: [], total: 0, page: 1, pages: 0 };
 
-export async function listDeals(f: DealFilters, visibility: DealVisibility): Promise<DealPage> {
-  if (!hasServiceRole()) return EMPTY;
-  const admin = createAdminClient();
-  let q = admin.from('marketplace_deals').select(`${CARD_COLUMNS}, photo`, { count: 'exact' }).eq('status', 'live');
-  if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
+type Admin = ReturnType<typeof createAdminClient>;
+
+interface QueryOptions {
+  /** The member's Keep / Pass view (reactions.ts reactionFilter), or null for none. */
+  reaction: ReactionFilter | null;
+  /** A head-only count instead of a page of cards. */
+  countOnly: boolean;
+  /** Count the deals still inside the early-access window at this cutoff instead of the visible ones. */
+  earlyAfter?: string;
+}
+
+/**
+ * One query for every grid read, so the page, its count, the "you passed on
+ * all of these" check and the early-access banner can never apply different
+ * filters. The visibility cutoff is Batch 1's rule (visibility.ts), applied
+ * here and nowhere else.
+ */
+function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, opts: QueryOptions) {
+  const columns = opts.countOnly ? 'id' : `${CARD_COLUMNS}, photo`;
+  let q = admin
+    .from('marketplace_deals')
+    .select(opts.reaction ? `${columns}, ${opts.reaction.embed}` : columns, { count: 'exact', head: opts.countOnly })
+    .eq('status', 'live');
+  if (opts.reaction) {
+    for (const [column, value] of opts.reaction.eq) q = q.eq(column, value);
+    if (opts.reaction.absent) q = q.is('deal_reactions', null);
+  }
+  // A live deal with no live_since is brand new as far as the window goes (visibility.ts dealVisible).
+  if (opts.earlyAfter) q = q.or(`live_since.is.null,live_since.gt.${opts.earlyAfter}`);
+  else if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
   if (f.areas.length > 0) q = q.in('postcode_area', f.areas);
   if (f.beds === '4+') q = q.gte('bedrooms', 4);
@@ -42,6 +68,7 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility): Pro
   if (f.minProfit !== null) q = q.gte('annual_profit', f.minProfit);
   // Rentals carry no uplift figure, so an uplift floor only ever narrows sales.
   if (f.minUplift !== null && f.kind === 'sale') q = q.gte('uplift_pct', f.minUplift);
+  if (opts.countOnly) return q;
   switch (f.sort) {
     case 'uplift':
       q = q.order('uplift_pct', { ascending: false, nullsFirst: false }).order('annual_profit', { ascending: false, nullsFirst: false });
@@ -55,16 +82,68 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility): Pro
     default:
       q = q.order('annual_profit', { ascending: false, nullsFirst: false });
   }
-  q = q.order('canonical_url', { ascending: true });
-  const from = (f.page - 1) * PAGE_SIZE;
-  const { data, error, count } = await q.range(from, from + PAGE_SIZE - 1);
-  if (error) {
-    console.error('[marketplace] listDeals failed:', error.message);
+  return q.order('canonical_url', { ascending: true });
+}
+
+/** PostgREST's answer to an offset past the last row. */
+const pastTheEnd = (error: { code?: string } | null): boolean => error?.code === 'PGRST103';
+
+/**
+ * One page of the grid for this member. `f.view` picks what their own
+ * reactions do: 'all' hides what they passed, 'kept' and 'passed' show only
+ * those. With no member (`userId` null) reactions play no part.
+ *
+ * A page past the end — a stale link, or the member passed the last deals on
+ * it — serves the last page rather than claiming nothing matches.
+ */
+export async function listDeals(f: DealFilters, visibility: DealVisibility, member: { userId: string | null } = { userId: null }): Promise<DealPage> {
+  if (!hasServiceRole()) return EMPTY;
+  const admin = createAdminClient();
+  let reaction = reactionFilter(f.view, member.userId);
+  const run = (page: number) => {
+    const from = (page - 1) * PAGE_SIZE;
+    return dealsQuery(admin, f, visibility, { reaction, countOnly: false }).range(from, from + PAGE_SIZE - 1);
+  };
+  let page = f.page;
+  let res = await run(page);
+  if (res.error && reaction && !pastTheEnd(res.error)) {
+    // deal_reactions not there yet (schema not run, or PostgREST's cache is
+    // behind): the whole grid must not go blank over it. Kept and passed
+    // cannot be answered without the table; everything else can.
+    console.error('[marketplace] listDeals reaction filter failed:', res.error.message);
+    if (f.view !== 'all') return EMPTY;
+    reaction = null;
+    res = await run(page);
+  }
+  if (page > 1 && (pastTheEnd(res.error) || (!res.error && (res.data?.length ?? 0) === 0))) {
+    const { count } = await dealsQuery(admin, f, visibility, { reaction, countOnly: true });
+    const last = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
+    if (last < page) {
+      page = last;
+      res = await run(page);
+    }
+  }
+  if (res.error) {
+    console.error('[marketplace] listDeals failed:', res.error.message);
     return EMPTY;
   }
-  const total = count ?? 0;
-  const cards = ((data ?? []) as unknown as (DealCard & { photo: string | null })[]).map(({ photo, ...card }) => ({ ...card, has_photo: Boolean(photo) }));
-  return { cards, total, page: f.page, pages: Math.ceil(total / PAGE_SIZE) };
+  const total = res.count ?? 0;
+  const cards = ((res.data ?? []) as unknown as (DealCard & { photo: string | null; deal_reactions?: unknown })[]).map(({ photo, deal_reactions: _r, ...card }) => {
+    void _r;
+    return { ...card, has_photo: Boolean(photo) };
+  });
+  return { cards, total, page, pages: Math.ceil(total / PAGE_SIZE) };
+}
+
+/** How many deals match these filters in another view (e.g. how many of them this member passed). Null when it cannot be read. */
+export async function countDeals(f: DealFilters, visibility: DealVisibility, member: { userId: string | null }): Promise<number | null> {
+  if (!hasServiceRole()) return null;
+  const { count, error } = await dealsQuery(createAdminClient(), f, visibility, { reaction: reactionFilter(f.view, member.userId), countOnly: true });
+  if (error) {
+    console.warn('[marketplace] countDeals failed:', error.message);
+    return null;
+  }
+  return count ?? 0;
 }
 
 export interface AreaCount {

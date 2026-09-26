@@ -5,8 +5,9 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { parseDealFilters } from "@/lib/marketplace/grid";
-import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor } from "@/lib/marketplace/queries";
+import { filtersToSearch, parseDealFilters } from "@/lib/marketplace/grid";
+import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals } from "@/lib/marketplace/queries";
+import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { DealCard } from "./_components/DealCard";
@@ -41,17 +42,21 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
   // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
   const visibility = await dealVisibilityFor(user.id, isAdminEmail(user.email));
-  const [page, counts, settings] = await Promise.all([listDeals(filters, visibility), liveCountsByArea(visibility.hourCutoffIso), getBillingSettings()]);
-  const opened = await openedDealIds((await payerFor(user.id)).payerId, page.cards.map((c) => c.id));
+  // The member's own Keep / Pass shape the grid: passed deals leave it, and ?view= shows only kept or only passed.
+  const [page, counts, settings] = await Promise.all([listDeals(filters, visibility, { userId: user.id }), liveCountsByArea(visibility.hourCutoffIso), getBillingSettings()]);
+  const ids = page.cards.map((c) => c.id);
+  const [opened, reactions] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids)]);
+  // Nothing left in the default view: say so if it is because they passed on all of it.
+  const passedHere = page.total === 0 && filters.view === "all" ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
   const now = new Date();
   const countMap: Record<string, number> = {};
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);
   const message = typeof raw.msg === "string" ? MESSAGES[raw.msg] ?? null : null;
   const totalLive = counts.reduce((n, c) => n + c.total, 0);
 
-  // What this member was shown goes to the front of the recheck queue.
-  const shownIds = page.cards.map((c) => c.id);
-  after(() => recordShown(shownIds));
+  // What this member was shown goes to the front of the recheck queue; deals
+  // they passed are not what they are looking at.
+  if (filters.view !== "passed") after(() => recordShown(ids));
 
   return (
     <main className="min-h-screen bg-background">
@@ -75,19 +80,40 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
           <section>
             {page.cards.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center">
-                <p className="text-sm font-medium text-foreground">{totalLive === 0 ? "The marketplace is filling up." : "Nothing matches that filter yet."}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {totalLive === 0 ? "The first sweep runs each morning and new deals go live once we have checked their listing page. Check back tomorrow." : "Try a wider price range, another area, or drop the profit floor. New deals arrive every morning."}
-                </p>
+                {filters.view === "kept" ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground">No kept deals here yet.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Tap Keep on any deal to put it on this list. Keeping is free.</p>
+                  </>
+                ) : filters.view === "passed" ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground">No passed deals here.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Deals you pass leave your grid and show up here, so you can undo.</p>
+                  </>
+                ) : passedHere ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground">You’ve passed on every deal that matches.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      <Link href={`/deals${filtersToSearch({ ...filters, view: "passed", page: 1 })}`} className="font-medium text-foreground underline-offset-4 hover:underline">Show passed deals</Link> or widen the filter. New deals arrive every morning.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium text-foreground">{totalLive === 0 ? "The marketplace is filling up." : "Nothing matches that filter yet."}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {totalLive === 0 ? "The first sweep runs each morning and new deals go live once we have checked their listing page. Check back tomorrow." : "Try a wider price range, another area, or drop the profit floor. New deals arrive every morning."}
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {page.cards.map((card) => (
-                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} />
+                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} />
                 ))}
               </ul>
             )}
-            <Pagination filters={filters} total={page.total} pages={page.pages} />
+            <Pagination filters={{ ...filters, page: page.page }} total={page.total} pages={page.pages} />
           </section>
           <aside className="order-first lg:order-none">
             <DealsMap counts={countMap} filters={filters} />
