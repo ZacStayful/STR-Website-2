@@ -42,6 +42,10 @@ export interface SendRequest {
   statusCallback?: string | null;
 }
 
+export function basicAuth(accountSid: string, authToken: string): string {
+  return `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`;
+}
+
 export function messagesUrl(accountSid: string): string {
   return `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(accountSid)}/Messages.json`;
 }
@@ -58,7 +62,7 @@ export function buildSendRequest(r: SendRequest): { url: string; init: { method:
     init: {
       method: 'POST',
       headers: {
-        Authorization: `Basic ${Buffer.from(`${r.accountSid}:${r.authToken}`).toString('base64')}`,
+        Authorization: basicAuth(r.accountSid, r.authToken),
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
       },

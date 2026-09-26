@@ -18,6 +18,9 @@
 /** One segment of GSM-7. Anything longer is never sent. */
 export const MAX_SMS_LENGTH = 160;
 
+/** The last line of every text we send. */
+export const OPT_OUT_LINE = 'Reply STOP to opt out';
+
 // GSM 03.38 basic character set (the escape character itself excluded).
 const BASIC =
   '@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&\'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà';

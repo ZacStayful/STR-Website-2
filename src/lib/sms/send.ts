@@ -19,11 +19,9 @@
 
 import { meter } from '../credit/meter.ts';
 import { twilioConfig, isSmsDryRun } from './config.ts';
-import { gsmLength, MAX_SMS_LENGTH } from './gsm.ts';
+import { gsmLength, MAX_SMS_LENGTH, OPT_OUT_LINE } from './gsm.ts';
 import { isUkMobile, maskPhone } from './phone.ts';
 import { buildSendRequest, parseSendResponse } from './twilio.ts';
-
-export const OPT_OUT_LINE = 'Reply STOP to opt out';
 
 const TIMEOUT_MS = 10_000;
 

@@ -17,6 +17,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { randomInt, timingSafeEqual } from 'node:crypto';
+import { OPT_OUT_LINE } from './gsm.ts';
 
 export const CODE_TTL_MS = 10 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
@@ -91,5 +92,5 @@ export function verificationOpen(v: { expires_at: string; attempts: number; veri
 
 /** The code text. Every text we send ends with the opt-out line. */
 export function codeText(code: string): string {
-  return `Stayful: your code is ${code}. It expires in 10 minutes. Reply STOP to opt out`;
+  return `Stayful: your code is ${code}. It expires in 10 minutes. ${OPT_OUT_LINE}`;
 }
