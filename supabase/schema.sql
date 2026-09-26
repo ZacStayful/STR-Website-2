@@ -2334,3 +2334,20 @@ exception when others then
   return null;
 end;
 $$;
+
+-- =========================
+-- Batch 5: my deals
+-- =========================
+-- My deals (/my-deals) groups every deal a member tracks by stage. The stage
+-- of a pipeline row is checked_listings.status, which gains two keys:
+-- 'contacted' and 'secured' (src/lib/listing/pipeline.ts). The column is
+-- plain text with no check constraint, so the new keys need no DDL, and
+-- existing rows are not migrated: 'watching' is shown as "Kept".
+--
+-- report_started_at: a full report in flight for this pipeline row.
+-- /api/analyse claims it with one conditional UPDATE before reserving any
+-- credit, so a double click, a second tab or a refresh cannot start (and
+-- charge) a second report for the same listing while the first runs. Cleared
+-- when the run ends; a claim older than three minutes (the route's limit is
+-- sixty seconds) is treated as abandoned. Not in ACCESS_COLUMNS.
+alter table public.checked_listings add column if not exists report_started_at timestamptz;

@@ -1,23 +1,57 @@
 /**
- * Client-safe types and pure helpers for a member's checked listings (the
- * deal pipeline shown in the Market Explorer).
+ * Client-safe types and pure helpers for a member's checked listings: the
+ * deal pipeline, shown on My deals (/my-deals) and in the Market Explorer.
  */
 import type { Deal } from './deal.ts';
 import type { ListingKind, ListingSource, ListingStatus } from './types.ts';
 import type { QuickEstimate } from './quick-types.ts';
 import { postcodeAreaOf } from './normalise.ts';
 
-export type PipelineStatus = 'watching' | 'viewing' | 'offer' | 'passed';
+/**
+ * A deal's stage. The keys are what checked_listings.status stores and are
+ * never renamed or migrated: 'watching' predates the "Kept" label, and every
+ * existing row keeps it. The database has no check constraint on the column,
+ * so the keys are validated here, by isPipelineStatus.
+ */
+export type PipelineStatus = 'watching' | 'contacted' | 'viewing' | 'offer' | 'secured' | 'passed';
 
-export const PIPELINE_STATUSES: { key: PipelineStatus; label: string; colour: string }[] = [
-  { key: 'watching', label: 'Watching', colour: '#5d8156' },
-  { key: 'viewing', label: 'Viewing booked', colour: '#9a7b2e' },
-  { key: 'offer', label: 'Offer made', colour: '#2e3d2b' },
-  { key: 'passed', label: 'Passed', colour: '#9aa39b' },
+/**
+ * The stages in the order a deal moves through them, Passed last. `short` is
+ * the lower-case word for a count ("3 contacted"). Colours are from the
+ * analyser palette (src/app/globals.css).
+ */
+export const PIPELINE_STATUSES: { key: PipelineStatus; label: string; short: string; colour: string }[] = [
+  { key: 'watching', label: 'Kept', short: 'kept', colour: '#5d8156' },
+  { key: 'contacted', label: 'Contacted agent / landlord', short: 'contacted', colour: '#6e9164' },
+  { key: 'viewing', label: 'Viewing booked', short: 'viewing', colour: '#9a7b2e' },
+  { key: 'offer', label: 'Offer made', short: 'offer', colour: '#2e3d2b' },
+  { key: 'secured', label: 'Secured', short: 'secured', colour: '#1e2a1c' },
+  { key: 'passed', label: 'Passed', short: 'passed', colour: '#9aa39b' },
 ];
 
+/** The first stage: kept, not yet contacted. */
+export const KEPT_STATUS: PipelineStatus = 'watching';
+
+// Derived from the list, so a key can never be accepted here without a label
+// there (the Explorer's `.find(...)!` lookups would crash on one).
+const PIPELINE_KEYS: ReadonlySet<string> = new Set(PIPELINE_STATUSES.map((s) => s.key));
+
 export function isPipelineStatus(v: unknown): v is PipelineStatus {
-  return v === 'watching' || v === 'viewing' || v === 'offer' || v === 'passed';
+  return typeof v === 'string' && PIPELINE_KEYS.has(v);
+}
+
+/** The label and colour for a stage. */
+export function pipelineStatusInfo(key: PipelineStatus): { key: PipelineStatus; label: string; short: string; colour: string } {
+  return PIPELINE_STATUSES.find((s) => s.key === key) ?? PIPELINE_STATUSES[0];
+}
+
+/**
+ * Whether a marketplace deal has to be opened before it can be at this
+ * stage. Kept and Passed need nothing a member pays for; contacting the agent
+ * needs the address and the listing link, which only an open reveals.
+ */
+export function stageNeedsOpen(stage: PipelineStatus): boolean {
+  return stage !== 'watching' && stage !== 'passed';
 }
 
 export interface CheckedListingRow {

@@ -11,6 +11,9 @@ import { createDealShare } from '@/lib/marketplace/share';
 import { ensureReferralCode } from '@/lib/credit/referral';
 import { siteUrl } from '@/lib/url';
 import { payerFor } from '@/lib/team';
+import { isPipelineStatus } from '@/lib/listing/pipeline';
+import { dealReturnPath, myDealsFocusPath, withParam } from '@/lib/listing/return-path';
+import { applyStageAfterOpen } from '@/lib/listing/stage-server';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -25,6 +28,11 @@ async function member() {
  * Open a deal sheet: verify the listing is still on the market, charge the
  * ladder price, unlock. Never from a bare link — the member presses the
  * button on the deal page.
+ *
+ * Two optional fields, sent only by My deals' "Open this deal to contact the
+ * agent" (a stage past Kept needs the open): `stage`, applied to the member's
+ * own pipeline once the open has gone through, and `back`, where to land
+ * afterwards (a deal page or My deals only). Without them, nothing changes.
  */
 export async function openDealAction(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '');
@@ -46,6 +54,12 @@ export async function openDealAction(formData: FormData): Promise<void> {
     const extra = outcome.code === 'insufficient_credit' ? `&need=${outcome.requiredPence ?? 0}&have=${outcome.availablePence ?? 0}` : '';
     redirect(`/deals/${encodeURIComponent(id)}?msg=${outcome.code}${extra}`);
   }
+  const stage = formData.get('stage');
+  const staged = isPipelineStatus(stage) ? await applyStageAfterOpen({ userId: user.id, adminUser, dealId: id, payerId: payer.payerId, stage }) : true;
+  const back = dealReturnPath(formData.get('back'));
+  // The open went through either way; say so when the stage did not.
+  if (!staged) redirect(withParam(back ?? `/deals/${encodeURIComponent(id)}`, 'msg', 'stage_failed'));
+  if (back) redirect(outcome.alreadyOpen ? back : withParam(back, 'msg', 'opened'));
   redirect(`/deals/${encodeURIComponent(id)}${outcome.alreadyOpen ? '' : '?msg=opened'}`);
 }
 
@@ -56,7 +70,8 @@ export async function savePipelineAction(formData: FormData): Promise<void> {
   const payer = await payerFor(user.id);
   const result = await saveOpenedDealToPipeline(user.id, id, adminUser, payer.payerId);
   if (!result.ok) redirect(`/deals/${encodeURIComponent(id)}?msg=${result.code === 'missing' ? 'missing' : result.code === 'not_open' ? 'not_open' : 'save_failed'}`);
-  redirect(`/markets?pane=listings&listing=${encodeURIComponent(result.checkedListingId)}`);
+  // The deal's place on My deals (the Explorer's listings pane still takes old links).
+  redirect(myDealsFocusPath(`d-${id}`));
 }
 
 // ── Keep, Pass (and Share, below): called from the card's buttons ──

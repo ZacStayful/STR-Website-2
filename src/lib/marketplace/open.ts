@@ -31,6 +31,7 @@ import { snapshotFromDeal } from './record';
 import { dealVisible, PAID_VISIBILITY, type DealVisibility } from './visibility';
 import type { DealOpenRow, DealRow, VerifiedVia } from './types';
 import type { ListingSnapshot } from '../listing/types';
+import { KEPT_STATUS, type PipelineStatus } from '../listing/pipeline';
 
 /** Fetch-backed opens one member may make in an hour: enough to browse, not enough to trip the shared breaker. */
 export const OPENS_WITH_FETCH_PER_HOUR = 20;
@@ -250,16 +251,18 @@ export async function dealSheet(dealId: string, userId: string, adminUser: boole
 }
 
 /**
- * Saves an opened deal to the member's pipeline (checked_listings) at no
- * charge and outside the daily resolve cap: the snapshot is the live page's
- * when there is one, else a minimal one built from the listing.
+ * Puts an opened deal on the person's OWN pipeline (checked_listings is
+ * personal), at no charge and outside the daily resolve cap. `accountId` is
+ * whose opens to look in: the team owner's for a member, since unlocks are
+ * the team's.
+ *
+ * Insert-if-absent: a row the person already has for this listing (one they
+ * checked or saved before) keeps its snapshot, quick view and re-check
+ * stamps. Only its stage moves, and only when `stage` is given. A new row
+ * starts at `stage`, else Kept. The snapshot is the live page's when there
+ * is one, else a minimal one built from the listing.
  */
-/**
- * Saves an opened deal into the person's OWN pipeline (checked_listings is
- * personal). `accountId` is whose opens to look in — the team owner's for a
- * member, since unlocks are the team's.
- */
-export async function saveOpenedDealToPipeline(userId: string, dealId: string, adminUser: boolean, accountId: string = userId): Promise<{ ok: true; checkedListingId: string } | { ok: false; code: 'missing' | 'not_open' | 'failed' }> {
+export async function saveOpenedDealToPipeline(userId: string, dealId: string, adminUser: boolean, accountId: string = userId, stage?: PipelineStatus): Promise<{ ok: true; checkedListingId: string; created: boolean } | { ok: false; code: 'missing' | 'not_open' | 'failed' }> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
   // No visibility gate: the save needs an open, and an open is forever.
   const sheet = await dealSheet(dealId, accountId, adminUser, PAID_VISIBILITY);
@@ -267,35 +270,69 @@ export async function saveOpenedDealToPipeline(userId: string, dealId: string, a
   if (!sheet.priv) return { ok: false, code: 'not_open' };
   const admin = createAdminClient();
   const s = sheet.priv.snapshot;
-  const row = {
-    user_id: userId,
-    canonical_url: s.canonicalUrl,
-    source: s.source,
-    kind: s.kind,
-    postcode: s.postcode ?? null,
-    postcode_area: postcodeAreaOf(s.outcode ?? s.postcode) ?? sheet.deal.postcode_area,
-    lat: s.lat ?? null,
-    lng: s.lng ?? null,
-    snapshot: s,
-    quick_estimate: null,
-    deal: sheet.deal.deal ?? null,
-    listing_status: s.status ?? null,
-    // Not a resolve: the daily cap counts last_checked_at, and this save spent nothing.
-    last_checked_at: null,
-    rechecked_at: null,
-    updated_at: new Date().toISOString(),
+  // The deal's own key, so the row always matches the deal it came from.
+  const canonicalUrl = sheet.deal.canonical_url;
+  const nowIso = new Date().toISOString();
+
+  const existing = async (): Promise<{ id: string; status: string } | null> => {
+    const { data, error } = await admin.from('checked_listings').select('id, status').eq('user_id', userId).eq('canonical_url', canonicalUrl).maybeSingle();
+    if (error) console.error('[marketplace] pipeline read failed:', error.message);
+    return (data as { id: string; status: string } | null) ?? null;
   };
-  const { data, error } = await admin.from('checked_listings').upsert(row, { onConflict: 'user_id,canonical_url' }).select('id').single();
-  if (error || !data?.id) {
-    console.error('[marketplace] pipeline save failed:', error?.message);
-    return { ok: false, code: 'failed' };
+  const moveTo = async (id: string, from: string): Promise<boolean> => {
+    if (!stage || stage === from) return true;
+    const { error } = await admin.from('checked_listings').update({ status: stage, updated_at: nowIso }).eq('id', id).eq('user_id', userId);
+    if (error) console.error('[marketplace] pipeline stage failed:', error.message);
+    return !error;
+  };
+
+  let checkedListingId: string;
+  let created = false;
+  const had = await existing();
+  if (had) {
+    if (!(await moveTo(had.id, had.status))) return { ok: false, code: 'failed' };
+    checkedListingId = had.id;
+  } else {
+    const row = {
+      user_id: userId,
+      canonical_url: canonicalUrl,
+      source: s.source,
+      kind: s.kind,
+      postcode: s.postcode ?? null,
+      postcode_area: postcodeAreaOf(s.outcode ?? s.postcode) ?? sheet.deal.postcode_area,
+      lat: s.lat ?? null,
+      lng: s.lng ?? null,
+      snapshot: { ...s, canonicalUrl },
+      quick_estimate: null,
+      deal: sheet.deal.deal ?? null,
+      status: stage ?? KEPT_STATUS,
+      listing_status: s.status ?? null,
+      // Not a resolve: the daily cap counts last_checked_at, and this save spent nothing.
+      last_checked_at: null,
+      rechecked_at: null,
+      updated_at: nowIso,
+    };
+    const { data, error } = await admin.from('checked_listings').insert(row).select('id').single();
+    if (error?.code === '23505') {
+      // A double submit got there first: use its row, and still apply the stage.
+      const again = await existing();
+      if (!again || !(await moveTo(again.id, again.status))) return { ok: false, code: 'failed' };
+      checkedListingId = again.id;
+    } else if (error || !data?.id) {
+      console.error('[marketplace] pipeline save failed:', error?.message);
+      return { ok: false, code: 'failed' };
+    } else {
+      checkedListingId = String(data.id);
+      created = true;
+    }
   }
-  const checkedListingId = String(data.id);
-  if (sheet.priv.open.id !== 'admin') {
-    const { error: upErr } = await admin.from('deal_opens').update({ checked_listing_id: checkedListingId, saved_at: new Date().toISOString() }).eq('id', sheet.priv.open.id);
+  // The open row is the team's, so it records only the first save; the
+  // pipeline row itself is looked up per person (by canonical_url).
+  if (sheet.priv.open.id !== 'admin' && !sheet.priv.open.checked_listing_id) {
+    const { error: upErr } = await admin.from('deal_opens').update({ checked_listing_id: checkedListingId, saved_at: nowIso }).eq('id', sheet.priv.open.id).is('checked_listing_id', null);
     if (upErr) console.error('[marketplace] saved update failed:', upErr.message);
   }
-  return { ok: true, checkedListingId };
+  return { ok: true, checkedListingId, created };
 }
 
 export interface OpenedDeal {

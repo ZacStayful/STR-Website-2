@@ -6,6 +6,7 @@ import { isAdminEmail } from '@/lib/admin';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { checkListingForMember } from '@/lib/listing/server';
 import { pickForMember, recordReaction, markPickSaved } from '@/lib/listing/picks-server';
+import { myDealsFocusPath } from '@/lib/listing/return-path';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -28,7 +29,7 @@ export async function savePickAction(formData: FormData): Promise<void> {
   const { supabase, user } = await member();
   const pick = await pickForMember(id, user.id);
   if (!pick) redirect('/picks?msg=missing');
-  if (pick.checkedListingId) redirect(`/markets?pane=listings&listing=${encodeURIComponent(pick.checkedListingId)}`);
+  if (pick.checkedListingId) redirect(myDealsFocusPath(`l-${pick.checkedListingId}`));
 
   const { data: profile } = await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
   const goals = parseMarketGoals(profile?.market_goals);
@@ -43,7 +44,8 @@ export async function savePickAction(formData: FormData): Promise<void> {
   const checkedId = outcome.body.checkedListingId;
   if (!checkedId) redirect('/picks?msg=failed');
   await markPickSaved(id, user.id, checkedId);
-  redirect(`/markets?pane=listings&listing=${encodeURIComponent(checkedId)}`);
+  // The deal's place on My deals (the Explorer's listings pane still takes old links).
+  redirect(myDealsFocusPath(`l-${checkedId}`));
 }
 
 export async function reactToPickAction(formData: FormData): Promise<void> {

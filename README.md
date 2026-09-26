@@ -105,7 +105,8 @@ which are required, and what breaks without them.
 | `src/app/(auth)` | Sign in, sign up, password reset |
 | `src/app/estimate` | The analyser |
 | `src/app/markets` | Market Explorer |
-| `src/app/reports` | Saved report history |
+| `src/app/my-deals` | My deals: every deal a member is working on, grouped by stage (Kept, Contacted, Viewing, Offer, Secured, Passed), and the Reports tab. The merge of pipeline, Keep / Pass, opens and picks is `src/lib/listing/tracked.ts` (pure, tested); its reads are `tracked-server.ts` |
+| `src/app/reports` | `/reports/[id]` reopens a saved report (linked from emails and PDFs); `/reports` itself redirects to My deals' Reports tab |
 | `src/app/picks` | Daily picks: every property the sourcing cron has emailed the member, with feedback and save-to-pipeline. `src/app/p/[token]` is where the email buttons land (public, token-keyed) |
 | `src/app/admin/picks` | Daily picks admin: the feedback report, the test-pick and dry-run buttons, and `responses` — every answer a member has given, with the pattern cuts and a CSV export |
 | `src/app/account` | Plan management (pause, cancel, sign out) and `/account/billing`: credit balance, top-ups, usage history |
