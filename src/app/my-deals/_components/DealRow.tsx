@@ -100,12 +100,10 @@ export function DealRow({
         </Link>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-2">
-            <p className="truncate text-base font-bold text-foreground">
-              {big}
-              {small && <span className="ml-1 text-xs font-normal text-muted-foreground">{small}</span>}
-            </p>
+            <p className="truncate text-base font-bold text-foreground">{big}</p>
             {price && <p className="shrink-0 text-sm font-semibold text-foreground">{price}</p>}
           </div>
+          {small && <p className="truncate text-xs text-muted-foreground">{small}</p>}
           <Link href={href} className="block truncate text-sm font-medium text-foreground hover:underline">
             {title}
           </Link>

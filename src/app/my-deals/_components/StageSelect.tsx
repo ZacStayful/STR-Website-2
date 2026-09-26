@@ -117,7 +117,7 @@ export function StageSelect({
               <input type="hidden" name="id" value={dealId} />
               <input type="hidden" name="stage" value={wanted} />
               <input type="hidden" name="back" value={back} />
-              <p className="font-semibold text-foreground">Open this deal to contact the agent{price !== null ? ` · ${formatOpenPrice(price)}` : ""}</p>
+              <p className="font-semibold text-foreground">Contacting the agent needs the deal opened</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 The address and the listing link come with the open. We check it is still on the market before charging, then move it to “{PIPELINE_STATUSES.find((s) => s.key === wanted)?.label}”.
               </p>
