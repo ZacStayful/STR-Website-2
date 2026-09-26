@@ -12,6 +12,7 @@ import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { StageSelect } from "./StageSelect";
 import { NextStepSlot } from "./NextStepSlot";
+import { factsFromTracked } from "@/lib/pipeline/slot-facts";
 
 const KIND: Record<string, string> = { sale: "To buy", rent: "Rent-to-rent", str: "Short let" };
 
@@ -133,7 +134,8 @@ export function DealRow({
         {reportAction}
       </div>
 
-      <NextStepSlot stage={item.stage} dealId={item.dealId} checkedListingId={item.checkedListingId} opened={item.opened} />
+      {/* Batch 7: the next step, for the viewer's own opened deals only. */}
+      <NextStepSlot stage={item.stage} dealId={item.dealId} checkedListingId={item.checkedListingId} opened={item.opened} itemKey={item.key} mine={item.mine} facts={factsFromTracked(item, card, address)} />
     </li>
   );
 }
