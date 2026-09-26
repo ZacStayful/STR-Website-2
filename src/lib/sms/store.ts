@@ -66,9 +66,10 @@ export async function verifiedElsewhere(admin: Admin, phone: string, exceptUserI
 }
 
 /**
- * The number is proved: it becomes the member's texting number, texts are on,
- * and any earlier STOP on it is cleared — verifying is a fresh yes, and the
- * code could only arrive because Twilio no longer blocks the number.
+ * The number is proved: it becomes the member's texting number, and any
+ * earlier STOP on it is cleared — verifying is a fresh yes, and the code
+ * could only arrive because Twilio no longer blocks the number. A first
+ * number turns texts on; a change of number keeps the member's own on/off.
  */
 export async function saveVerifiedNumber(admin: Admin, userId: string, phone: string, consentSource: 'signup' | 'account', now: Date = new Date()): Promise<'ok' | 'taken' | 'error'> {
   const at = now.toISOString();
@@ -77,7 +78,7 @@ export async function saveVerifiedNumber(admin: Admin, userId: string, phone: st
     user_id: userId,
     phone_e164: phone,
     verified_at: at,
-    enabled: true,
+    enabled: existing?.verified_at ? existing.enabled : true,
     consent_at: existing?.consent_at && existing.phone_e164 === phone ? existing.consent_at : at,
     consent_source: consentSource,
     stopped_at: null,
