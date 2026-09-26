@@ -11,7 +11,6 @@ import type { MarketGoals } from '../market/goals.ts';
 import { DEFAULT_GOALS } from '../market/goals.ts';
 import { budgetBounds, describeDeal, queryKey, type SourcedListing, type SourcedPick, type SourcingKind, type SourcingQuery } from './sourcing.ts';
 import { formatListingPrice } from './format.ts';
-import { escapeHtml as esc } from '../email/escape.ts';
 import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
 import type { Deal } from './deal.ts';
@@ -19,6 +18,8 @@ import { propertyKind } from './suitability.ts';
 import { BAND_LABELS, screeningScore, screeningWorking, type Screening } from './screen.ts';
 import { motivationLabel, type Motivation } from './motivation.ts';
 import { manageNotificationsUrl } from '../url.ts';
+import type { Block, Section, Unsubscribe } from '../notify/message.ts';
+import { renderEmail } from '../notify/render-email.ts';
 
 export type PickBasis = 'goals' | 'house';
 export type PickStatus = 'pending' | 'sent' | 'failed';
@@ -497,7 +498,13 @@ export function describeMotivation(m: Motivation | null | undefined, limit = 3):
   return `Why this one: ${reasons.join(' · ')}.`;
 }
 
-export function pickEmail(input: PickEmailInput): { subject: string; text: string; html: string; headers: Record<string, string> } {
+/**
+ * This morning's pick as a section of the daily email (src/lib/notify): the
+ * same wording, buttons and figures the pick email has always had, as data.
+ * The pick is the one thing in the email that is charged, by the picks run,
+ * exactly as before; building it charges nothing.
+ */
+export function pickSection(input: PickEmailInput): { section: Section; subject: string; headline: string; eyebrow: string; unsubscribe: Unsubscribe; links: ReturnType<typeof pickLinks> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
   const links = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
@@ -507,7 +514,10 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
   // is the thing the member is deciding on, and it keeps the subject line and the
   // body telling one story rather than two.
   const scHeadline = sc ? (sc.kind === 'purchase' ? `${sc.upliftPct}% above a long let` : `£${Math.round(sc.annualProfit!).toLocaleString('en-GB')}/yr profit`) : null;
-  const subject = `Today's pick ${kindWord}: ${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}${scHeadline ? ` · ${scHeadline}` : pick.deal ? ` · ${pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`}` : ''}`;
+  const figure = scHeadline ?? (pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
+  const what = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}`;
+  const subject = `Today's pick ${kindWord}: ${what}${figure ? ` · ${figure}` : ''}`;
+  const headline = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}${kindWord} in ${pick.areaName}${figure ? `, ${figure}` : ''}`;
   const work = sc ? screeningWorking(sc) : [];
   const scVerdict = sc ? `${BAND_LABELS[sc.band]} — ${sc.reason}` : null;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
@@ -515,79 +525,64 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
   const motivationLine = describeMotivation(pick.motivation ?? null);
   // Said first and said plainly. A near miss presented as a match is a small
   // lie that costs more trust than the empty day it was avoiding.
-  const nearMissLine = input.nearMiss
-    ? `Nothing matched your filter exactly today — this is the closest we found.`
-    : null;
+  const nearMissLine = input.nearMiss ? `Nothing matched your filter exactly today — this is the closest we found.` : null;
   const relaxLine = input.nearMiss ? input.relaxation ?? null : null;
   const intro = firstEver
     ? `Stayful Intelligence now finds you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. Each pick uses ${penceLabel(input.chargedBasePence || 10)} of your credit. Turn it off any time with the link at the bottom.`
     : null;
-  const costNote = input.chargedBasePence > 0 ? `This pick used ${penceLabel(input.chargedBasePence)} of your credit.` : null;
+  const costNote = input.chargedBasePence > 0 ? ` This pick used ${penceLabel(input.chargedBasePence)} of your credit.` : '';
 
-  const text = [
-    `Today's pick from Stayful Intelligence (${kindWord}).`,
-    '',
-    intro,
-    intro ? '' : null,
-    nearMissLine,
-    nearMissLine ? '' : null,
-    pickLabel(l),
-    dealLine,
-    scVerdict,
-    ...(work.length > 0 ? work.map((w) => `  ${w.label}: ${w.value}`) : []),
-    motivationLine,
-    relaxLine,
-    `Fit ${pick.fit}/100 · ${pick.areaName}`,
-    why,
-    '',
-    `Is this the kind of property you are looking for?`,
-    `Yes, more like this: ${links.yes}`,
-    `Not for me: ${links.no}`,
-    `Not for you? Tell us why in a couple of clicks and tomorrow's pick changes.`,
-    '',
-    links.deal ? `Open the deal sheet: ${links.deal}` : null,
-    links.more ? `More deals like this: ${links.more}` : null,
-    `See today’s 5: ${links.today}`,
-    `Save to my pipeline: ${links.save}`,
-    `Full report: ${links.report}`,
-    `View listing: ${links.listing}`,
-    `Set my filter: ${links.filter}`,
-    '',
-    'Figures are area averages for the size of property; run a full report before acting on one.',
-    costNote,
-    `All your picks: ${links.picks}`,
-    `Stop daily picks: ${links.unsubscribe}`,
-    `Manage notifications: ${links.notifications}`,
-  ]
-    .filter((line): line is string => line !== null)
-    .join('\n');
+  const blocks: Block[] = [];
+  if (intro) blocks.push({ type: 'text', text: intro, tone: 'small' });
+  if (l.photo) blocks.push({ type: 'image', url: l.photo });
+  blocks.push({ type: 'heading', text: l.address ?? l.title });
+  blocks.push({ type: 'text', text: pickLabel(l).replace(/^.*? — /, ''), tone: 'strong' });
+  if (nearMissLine) blocks.push({ type: 'text', text: nearMissLine, tone: 'callout' });
+  blocks.push({ type: 'text', text: dealLine, tone: 'accent' });
+  if (scVerdict) blocks.push({ type: 'text', text: scVerdict, tone: 'strong' });
+  if (work.length > 0) blocks.push({ type: 'facts', rows: work });
+  if (motivationLine) blocks.push({ type: 'text', text: motivationLine });
+  if (relaxLine) blocks.push({ type: 'text', text: relaxLine });
+  blocks.push({ type: 'text', text: `Fit ${pick.fit}/100 · ${pick.areaName} · ${why}`, tone: 'muted' });
+  blocks.push({ type: 'text', text: 'Is this the kind of property you are looking for?', tone: 'strong' });
+  blocks.push({ type: 'buttons', links: [{ label: 'Yes, more like this', url: links.yes, primary: true }, { label: 'Not for me', url: links.no }] });
+  blocks.push({ type: 'text', text: 'Not for you? Tell us why in a couple of clicks and tomorrow’s pick changes.', tone: 'muted' });
+  if (links.deal) blocks.push({ type: 'buttons', links: [{ label: 'Open the deal sheet', url: links.deal, primary: true }, ...(links.more ? [{ label: 'More deals like this', url: links.more }] : [])] });
+  blocks.push({
+    type: 'buttons',
+    links: [
+      { label: 'Save to my pipeline', url: links.save, primary: !links.deal },
+      { label: 'Full report', url: links.report },
+      { label: 'View listing', url: links.listing },
+      { label: basis === 'goals' ? 'Edit my filter' : 'Set my filter', url: links.filter },
+      { label: 'See today’s 5', url: links.today },
+    ],
+  });
+  blocks.push({ type: 'text', text: `Figures are area averages for the size of property; run a full report before acting on one.${costNote}`, tone: 'muted' });
+  blocks.push({ type: 'buttons', links: [{ label: 'All your picks', url: links.picks }] });
 
-  const btn = (href: string, label: string, primary = false) =>
-    `<a href="${esc(href)}" style="display:inline-block;margin:4px 6px 4px 0;padding:10px 16px;border-radius:8px;font-weight:600;text-decoration:none;font-size:14px;${primary ? 'background:#5d8156;color:#fff' : 'background:#eef2ea;color:#2e3d2b'}">${esc(label)}</a>`;
-  const photo = l.photo ? `<img src="${esc(l.photo)}" alt="" width="560" style="display:block;width:100%;max-width:560px;border-radius:12px;margin:0 0 14px">` : '';
-  const html = `
-    <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#2e3d2b;max-width:560px">
-      <p style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5d8156;font-weight:600">Stayful daily pick · ${esc(kindWord)}</p>
-      ${intro ? `<p style="color:#5b6657;font-size:14px;border-left:3px solid #5d8156;padding-left:10px">${esc(intro)}</p>` : ''}
-      ${photo}
-      <h1 style="font-size:22px;margin:0 0 6px">${esc(l.address ?? l.title)}</h1>
-      <p style="margin:0 0 4px;font-weight:600">${esc(pickLabel(l).replace(/^.*? — /, ''))}</p>
-      ${nearMissLine ? `<p style="margin:0 0 12px;padding:10px 12px;border-radius:8px;background:#f5f2e8;color:#2e3d2b;font-size:14px">${esc(nearMissLine)}</p>` : ''}
-      <p style="margin:0 0 4px;color:#5d8156">${esc(dealLine)}</p>
-      ${scVerdict ? `<p style="margin:0 0 6px;font-weight:600;color:#2e3d2b">${esc(scVerdict)}</p>` : ''}
-      ${work.length > 0 ? `<table role="presentation" style="margin:0 0 12px;border-collapse:collapse;font-size:13px;color:#5b6657">${work.map((w) => `<tr><td style="padding:1px 12px 1px 0">${esc(w.label)}</td><td style="padding:1px 0;font-weight:600;color:#2e3d2b">${esc(w.value)}</td></tr>`).join('')}</table>` : ''}
-      ${motivationLine ? `<p style="margin:0 0 4px;color:#2e3d2b;font-size:14px"><strong>Why this one:</strong> ${esc(motivationLine.replace(/^Why this one: /, ''))}</p>` : ''}
-      <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Fit ${pick.fit}/100 · ${esc(pick.areaName)} · ${esc(why)}</p>
-      <p style="margin:0 0 6px;font-weight:600">Is this the kind of property you are looking for?</p>
-      <p style="margin:0 0 4px">${btn(links.yes, 'Yes, more like this', true)}${btn(links.no, 'Not for me')}</p>
-      ${relaxLine ? `<p style="margin:0 0 14px;color:#2e3d2b;font-size:13px">${esc(relaxLine)} <a href="${esc(links.filter)}" style="color:#2e3d2b;font-weight:600">Change it</a></p>` : ''}
-      <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Not for you? Tell us why in a couple of clicks and tomorrow&#8217;s pick changes.</p>
-      ${links.deal ? `<p style="margin:0 0 6px">${btn(links.deal, 'Open the deal sheet', true)}${links.more ? btn(links.more, 'More deals like this') : ''}</p>` : ''}
-      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', !links.deal)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}${btn(links.today, 'See today’s 5')}</p>
-      <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a> · <a href="${esc(links.notifications)}" style="color:#7a8274">Manage notifications</a>.</p>
-    </div>`.trim();
+  return {
+    section: { key: 'pick', title: null, blocks },
+    subject,
+    headline,
+    eyebrow: `Stayful daily pick · ${kindWord}`,
+    unsubscribe: { label: 'Stop daily picks', url: links.unsubscribe, oneClickUrl: links.unsubscribePost },
+    links,
+  };
+}
 
-  return { subject, text, html, headers: unsubscribeHeaders(links) };
+/** The pick on its own, as an email: what the admin test send and the tests render. */
+export function pickEmail(input: PickEmailInput): { subject: string; text: string; html: string; headers: Record<string, string> } {
+  const p = pickSection(input);
+  return renderEmail({
+    kind: 'todays_5',
+    subject: p.subject,
+    eyebrow: p.eyebrow,
+    sections: [p.section],
+    reason: 'You get this because daily picks are on.',
+    manageUrl: p.links.notifications,
+    unsubscribe: p.unsubscribe,
+  });
 }
 
 // ── Admin summary ──
