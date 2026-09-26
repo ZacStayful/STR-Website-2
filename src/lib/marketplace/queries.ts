@@ -17,7 +17,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { CARD_COLUMNS, PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
-import type { DealVisibility } from './visibility';
+import { dealVisible, type DealVisibility } from './visibility';
 import { reactionFilter, type ReactionFilter } from './reactions';
 
 export interface DealPage {
@@ -38,6 +38,8 @@ interface QueryOptions {
   countOnly: boolean;
   /** Count the deals still inside the early-access window at this cutoff instead of the visible ones. */
   earlyAfter?: string;
+  /** Columns read on top of the card's, for a server-side caller that never sends them to a page (the Today ranking). */
+  extraColumns?: string;
 }
 
 /**
@@ -47,7 +49,7 @@ interface QueryOptions {
  * here and nowhere else.
  */
 function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, opts: QueryOptions) {
-  const columns = opts.countOnly ? 'id' : `${CARD_COLUMNS}, photo`;
+  const columns = opts.countOnly ? 'id' : `${CARD_COLUMNS}, photo${opts.extraColumns ? `, ${opts.extraColumns}` : ''}`;
   let q = admin
     .from('marketplace_deals')
     .select(opts.reaction ? `${columns}, ${opts.reaction.embed}` : columns, { count: 'exact', head: opts.countOnly })
@@ -160,6 +162,60 @@ export async function earlyAccessCount(f: DealFilters, visibility: DealVisibilit
     return null;
   }
   return count ?? 0;
+}
+
+/** What the Today ranking reads on top of the card: deal figures, the short-let pre-check, the screening. None is an address or a link. */
+const RANKING_COLUMNS = 'deal, suitability, screening';
+
+export type RankingRow = DealCard & { deal: unknown; suitability: unknown; screening: unknown };
+
+/**
+ * The pool the Today screen ranks for one member: the grid's own query
+ * (visibility cutoff, their passes left out, kind, areas, price), best
+ * profit first, up to `limit` rows, with the three ranking columns added.
+ * Server-side only — the ranking columns never reach a page. Empty on any
+ * failure; a deal_reactions table the schema has not caught up with costs
+ * only the pass filter, as it does on the grid.
+ */
+export async function rankingPool(f: DealFilters, visibility: DealVisibility, member: { userId: string | null }, limit: number): Promise<RankingRow[]> {
+  if (!hasServiceRole()) return [];
+  const admin = createAdminClient();
+  const filters: DealFilters = { ...f, view: 'all', sort: 'profit', page: 1 };
+  let reaction = reactionFilter('all', member.userId);
+  const run = () => dealsQuery(admin, filters, visibility, { reaction, countOnly: false, extraColumns: RANKING_COLUMNS }).range(0, Math.max(0, limit - 1));
+  let res = await run();
+  if (res.error && reaction) {
+    console.error('[marketplace] rankingPool reaction filter failed:', res.error.message);
+    reaction = null;
+    res = await run();
+  }
+  if (res.error) {
+    console.error('[marketplace] rankingPool failed:', res.error.message);
+    return [];
+  }
+  return ((res.data ?? []) as unknown as (RankingRow & { photo: string | null; deal_reactions?: unknown })[]).map(({ photo, deal_reactions: _r, ...row }) => {
+    void _r;
+    return { ...row, has_photo: Boolean(photo) };
+  });
+}
+
+/**
+ * Cards by id, in the order asked, for a list chosen earlier (Today's stored
+ * selection): only deals still live and visible to this member now. A deal
+ * that has since gone simply drops out.
+ */
+export async function dealCardsByIds(ids: string[], visibility: DealVisibility): Promise<DealCard[]> {
+  if (!hasServiceRole() || ids.length === 0) return [];
+  const { data, error } = await createAdminClient().from('marketplace_deals').select(`${CARD_COLUMNS}, photo`).in('id', ids).eq('status', 'live');
+  if (error) {
+    console.error('[marketplace] dealCardsByIds failed:', error.message);
+    return [];
+  }
+  const byId = new Map<string, DealCard>();
+  for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) {
+    if (dealVisible(card.live_since ?? null, visibility.cutoffIso)) byId.set(card.id, { ...card, has_photo: Boolean(photo) });
+  }
+  return ids.map((id) => byId.get(id)).filter((c): c is DealCard => c !== undefined);
 }
 
 export interface AreaCount {

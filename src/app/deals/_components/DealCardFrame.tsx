@@ -5,6 +5,7 @@ import { Bookmark, BookmarkCheck, X } from "lucide-react";
 import { nextReaction, type DealReaction } from "@/lib/marketplace/reaction-state";
 import type { ReasonGroupView } from "@/lib/marketplace/reactions";
 import { savePassReasonsAction, setDealReactionAction, type ReactionActionResult } from "../actions";
+import { useDealReactionListener } from "./deal-reaction-listener";
 
 type Stage = "card" | "why" | "thanks" | "gone";
 
@@ -44,6 +45,8 @@ export function DealCardFrame({
   const [reasons, setReasons] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // Set only on pages that count answers (Today); absent on /deals.
+  const listener = useDealReactionListener();
 
   function react(tapped: DealReaction) {
     if (pending) return;
@@ -59,7 +62,7 @@ export function DealCardFrame({
         setReaction(before);
         setStage("card");
         setError(ERRORS[res.error]);
-      }
+      } else listener?.reacted(dealId, target);
     });
   }
 
@@ -72,6 +75,7 @@ export function DealCardFrame({
         setReaction(null);
         setReasons([]);
         setStage("card");
+        listener?.reacted(dealId, null);
       } else {
         setError(ERRORS[res.error]);
       }
@@ -83,9 +87,16 @@ export function DealCardFrame({
     setError(null);
     startTransition(async () => {
       const res = await savePassReasonsAction(dealId, reasons);
-      if (res.ok) setStage("thanks");
-      else setError(ERRORS.failed);
+      if (res.ok) {
+        setStage("thanks");
+        listener?.settled(dealId);
+      } else setError(ERRORS.failed);
     });
+  }
+
+  function close() {
+    setStage("gone");
+    listener?.settled(dealId);
   }
 
   if (stage === "gone") return null;
@@ -100,7 +111,7 @@ export function DealCardFrame({
               Undo
             </button>
           </p>
-          <button type="button" onClick={() => setStage("gone")} className="rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label="Dismiss">
+          <button type="button" onClick={close} className="rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label="Dismiss">
             <X size={14} aria-hidden />
           </button>
         </div>
@@ -136,7 +147,7 @@ export function DealCardFrame({
               <button type="button" onClick={saveReasons} disabled={pending || reasons.length === 0} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-40">
                 Save
               </button>
-              <button type="button" onClick={() => setStage("gone")} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+              <button type="button" onClick={close} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
                 Skip
               </button>
             </div>

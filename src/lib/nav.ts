@@ -26,11 +26,12 @@ export const NAV_ORDER: readonly NavKey[] = ['today', 'myDeals', 'account'];
 export const LEADS_NAV = { label: 'Leads', href: '/leads' } as const;
 
 /** The section a members-only layout announces (AppShell's `active`). Unchanged from the seven-item nav. */
-export type Section = 'estimate' | 'markets' | 'deals' | 'picks' | 'reports' | 'leads' | 'account';
+export type Section = 'today' | 'estimate' | 'markets' | 'deals' | 'picks' | 'reports' | 'leads' | 'account';
 
 export type ActiveNav = NavKey | 'leads';
 
 export const NAV_FOR_SECTION: Record<Section, ActiveNav> = {
+  today: 'today',
   estimate: 'today',
   markets: 'today',
   deals: 'today',
