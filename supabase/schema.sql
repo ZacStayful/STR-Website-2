@@ -2351,3 +2351,169 @@ $$;
 -- when the run ends; a claim older than three minutes (the route's limit is
 -- sixty seconds) is treated as abandoned. Not in ACCESS_COLUMNS.
 alter table public.checked_listings add column if not exists report_started_at timestamptz;
+
+-- =========================
+-- Batch 6: emails and alerts
+-- =========================
+-- notification_sends: the ONE record of every capped member email, and so
+-- the cap itself (src/lib/notify/cap.ts, sends.ts). A member gets at most
+-- one non-billing email a day (the "daily" slot: Today's 5, the changes-only
+-- email, the picks-paused letter, an admin notice) and on Mondays one more
+-- (the "weekly" slot: Your week). The unique key is the cap: whoever inserts
+-- the row owns the slot, so two passes, two crons or a retry can never send
+-- a second one. Billing and receipt emails never touch this table.
+--
+-- status: claimed (the slot is ours, nothing sent yet) → sending (the email
+-- is going to Resend) → sent | failed. A claim that never reached Resend and
+-- is older than a few minutes may be taken over (claim_notification_slot); a
+-- `sending` row never is, because the email may have gone. `day` is the UTC
+-- date, the same day the picks' "sent today" guard uses. `summary` records
+-- what went (deal ids, alert ids, counts), never an address. Service role
+-- only. Deliberately a table, not columns on profiles (ACCESS_COLUMNS).
+create table if not exists public.notification_sends (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  slot text not null,                         -- daily | weekly
+  kind text not null,                         -- todays_5 | deal_changes | picks_paused | your_week | notice
+  channel text not null default 'email',      -- Batch 8 adds 'sms', with its own rows
+  status text not null default 'claimed',     -- claimed | sending | sent | failed
+  summary jsonb not null default '{}'::jsonb,
+  -- One-click unsubscribe for this email (/api/notify/unsubscribe/<token>).
+  unsubscribe_token text,
+  claimed_at timestamptz not null default now(),
+  sending_at timestamptz,
+  sent_at timestamptz
+);
+create unique index if not exists notification_sends_slot_uidx on public.notification_sends (user_id, day, slot, channel);
+create index if not exists notification_sends_day_idx on public.notification_sends (day, slot);
+create unique index if not exists notification_sends_unsub_uidx on public.notification_sends (unsubscribe_token) where unsubscribe_token is not null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.notification_sends'::regclass and conname = 'notification_sends_slot_check') then
+    alter table public.notification_sends add constraint notification_sends_slot_check check (slot in ('daily', 'weekly'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.notification_sends'::regclass and conname = 'notification_sends_status_check') then
+    alter table public.notification_sends add constraint notification_sends_status_check check (status in ('claimed', 'sending', 'sent', 'failed'));
+  end if;
+end $$;
+alter table public.notification_sends enable row level security;  -- no policies: service role only
+revoke all on public.notification_sends from anon, authenticated;
+
+-- Claim a slot, or take over a stale claim that never reached Resend.
+-- Returns the row id when the slot is now the caller's, null when it is
+-- taken. One statement each way, so two callers can never both win.
+create or replace function public.claim_notification_slot(
+  p_user uuid,
+  p_day date,
+  p_slot text,
+  p_kind text,
+  p_channel text default 'email',
+  p_stale_after interval default interval '5 minutes'
+)
+returns uuid
+language plpgsql
+as $$
+declare
+  v_id uuid;
+begin
+  insert into public.notification_sends (user_id, day, slot, kind, channel)
+  values (p_user, p_day, p_slot, p_kind, p_channel)
+  on conflict (user_id, day, slot, channel) do nothing
+  returning id into v_id;
+  if v_id is not null then
+    return v_id;
+  end if;
+  update public.notification_sends
+     set kind = p_kind, claimed_at = now(), summary = '{}'::jsonb, unsubscribe_token = null
+   where user_id = p_user and day = p_day and slot = p_slot and channel = p_channel
+     and status = 'claimed' and claimed_at < now() - p_stale_after
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+revoke all on function public.claim_notification_slot(uuid, date, text, text, text, interval) from public, anon, authenticated;
+grant execute on function public.claim_notification_slot(uuid, date, text, text, text, interval) to service_role;
+
+-- deal_alerts: one row per member per change on a deal they track (Part C:
+-- price drop, back on market, nearly gone, gone). Pipeline rows and kept
+-- marketplace deals share it: one alert model. Written by the 06:55
+-- collector (/api/internal/deal-alerts); the unique key makes a re-run a
+-- no-op. Pending = notified_at is null, whatever send_id says; notified_at
+-- is set only after the email carrying it was sent (finish_notification_send),
+-- so an alert in a failed email goes in the next one. canonical_url is the
+-- dedupe key across a deal's pipeline row and its marketplace row, and is
+-- never rendered unless the member opened the deal. Service role only.
+create table if not exists public.deal_alerts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  alert_type text not null,                   -- price_drop | back_on_market | nearly_gone | gone
+  source text not null,                       -- pipeline | marketplace
+  canonical_url text not null,
+  deal_id uuid,
+  checked_listing_id uuid,
+  event_at timestamptz not null,              -- the change's own timestamp
+  payload jsonb not null default '{}'::jsonb, -- old/new price, profit, statuses, watcher count
+  send_id uuid,                               -- the notification_sends row that carried it
+  notified_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists deal_alerts_event_uidx on public.deal_alerts (user_id, alert_type, canonical_url, event_at);
+create index if not exists deal_alerts_pending_idx on public.deal_alerts (user_id, created_at) where notified_at is null;
+create index if not exists deal_alerts_user_idx on public.deal_alerts (user_id, created_at desc);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.deal_alerts'::regclass and conname = 'deal_alerts_type_check') then
+    alter table public.deal_alerts add constraint deal_alerts_type_check check (alert_type in ('price_drop', 'back_on_market', 'nearly_gone', 'gone'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.deal_alerts'::regclass and conname = 'deal_alerts_source_check') then
+    alter table public.deal_alerts add constraint deal_alerts_source_check check (source in ('pipeline', 'marketplace'));
+  end if;
+end $$;
+alter table public.deal_alerts enable row level security;  -- no policies: service role only
+revoke all on public.deal_alerts from anon, authenticated;
+
+-- Close a send: the slot sent or failed, and — only when it was sent — the
+-- alerts it carried marked notified, in one transaction.
+create or replace function public.finish_notification_send(
+  p_id uuid,
+  p_sent boolean,
+  p_summary jsonb default null,
+  p_alert_ids uuid[] default null
+)
+returns void
+language plpgsql
+as $$
+begin
+  update public.notification_sends
+     set status = case when p_sent then 'sent' else 'failed' end,
+         sent_at = case when p_sent then now() else null end,
+         summary = coalesce(p_summary, summary)
+   where id = p_id;
+  if p_sent and p_alert_ids is not null and cardinality(p_alert_ids) > 0 then
+    update public.deal_alerts
+       set notified_at = now(), send_id = p_id
+     where id = any(p_alert_ids) and notified_at is null;
+  end if;
+end;
+$$;
+revoke all on function public.finish_notification_send(uuid, boolean, jsonb, uuid[]) from public, anon, authenticated;
+grant execute on function public.finish_notification_send(uuid, boolean, jsonb, uuid[]) to service_role;
+
+-- Two notification switches (src/lib/notifications/registry.ts), on by
+-- default like the others. Written only by the notifications writer (service
+-- role), so no column grant. NOT in ACCESS_COLUMNS: a database that has not
+-- had this run reads them as their default and nothing else is affected.
+--   alert_tracked  "Changes on deals I'm tracking": the daily alerts and
+--                  Your week's recap of your deals
+--   alert_missed   "Weekly: deals I missed": Your week's first section
+alter table public.profiles add column if not exists alert_tracked boolean not null default true;
+alter table public.profiles add column if not exists alert_missed boolean not null default true;
+
+-- Back on market: a deal retired as sold / under offer / let agreed /
+-- removed that the feed shows again is revived to pending_verify, and goes
+-- live (re-stamping live_since, so the early-access window restarts) only
+-- once a page read confirms it. These record that it came back and from
+-- what. Read separately, never in DEAL_COLUMNS.
+alter table public.marketplace_deals add column if not exists revived_at timestamptz;
+alter table public.marketplace_deals add column if not exists revived_from text;
