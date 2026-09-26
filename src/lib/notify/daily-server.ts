@@ -18,6 +18,7 @@ import { todaySelection, type MemberContext } from '../today/selection';
 import { displayOrder, todayKey, TODAY_SIZE } from '../today/day';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
+import { payersFor, type Payer } from '../team';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -31,6 +32,13 @@ export interface TodayPlan {
   answered: Set<string>;
   /** Live cards for the stored deals, by id (visibility is applied per member at draw time). */
   cards: Map<string, DealCard>;
+}
+
+/** payersFor, a chunk at a time: one `.in()` over every member would outgrow the request at scale. */
+export async function payersForAll(userIds: readonly string[]): Promise<Map<string, Payer>> {
+  const out = new Map<string, Payer>();
+  for (let i = 0; i < userIds.length; i += ID_CHUNK) for (const [k, v] of await payersFor(userIds.slice(i, i + ID_CHUNK))) out.set(k, v);
+  return out;
 }
 
 /** Run `fn` over `items` with at most `limit` in flight. */

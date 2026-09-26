@@ -7,10 +7,10 @@ import { areaMetaForCode } from "../market/areas";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
 import { missesToList, missedPickLine, pausedEmail, pausedEmailDue, type MissedPick } from "./picks-paused";
-import { changesPhrase, changesSection } from "../notify/message";
+import { changesPhrase, changesSection, type ChangeInput } from "../notify/message";
 import { renderSections, listUnsubscribeHeaders } from "../notify/render-email";
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
-import { newSendToken, sendKey } from "../notify/cap";
+import { capDay, newSendToken, sendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import type { RunResult } from "./picks-run";
 
@@ -187,13 +187,25 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       continue;
     }
     const base = siteUrl();
-    const { section: changes, used } = changesSection(alertsOn.has(userId) ? pending.get(userId)?.changes ?? [] : [], base);
-    const changeIds = used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
-    const phrase = changesPhrase(used);
-    const extra = changes ? { ...renderSections([changes]), subjectSuffix: phrase } : null;
-    const mail = pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra });
+    // The letter with (or, when its delivery cannot be recorded, without) the
+    // changes on deals they track. Built after the claim, so changes only ever
+    // ride a letter whose slot records them as told.
+    const letter = (withChanges: boolean) => {
+      const settled = withChanges && alertsOn.has(userId) ? pending.get(userId) ?? null : null;
+      const given = settled?.changes ?? [];
+      const { section: changes, used } = changesSection(given, base);
+      const ids = (list: readonly ChangeInput[]) => list.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
+      const extra = changes ? { ...renderSections([changes]), subjectSuffix: changesPhrase(used) } : null;
+      return {
+        mail: pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra }),
+        used,
+        // What a sent letter closes: what it told, what it would not tell, what settling dismissed.
+        closing: [...new Set([...ids(used), ...ids(given.filter((c) => !used.includes(c))), ...(settled?.dismissed ?? [])])],
+      };
+    };
     if (opts.dry) {
-      wouldEmail.push({ email: p.email, picks: list.length, lines: list.map(missedPickLine), changes: used.map((c) => ({ id: c.id, type: c.alertType })), slot: slots === null ? "unreadable" : "free" });
+      const preview = letter(true);
+      wouldEmail.push({ email: p.email, picks: list.length, lines: list.map(missedPickLine), changes: preview.used.map((c) => ({ id: c.id, type: c.alertType })), slot: slots === null ? "unreadable" : "free" });
       perUser.push({ user: userId, email: p.email, picks: list.length, sent: false, reason: "would_send" });
       continue;
     }
@@ -202,16 +214,19 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       continue;
     }
     // The day's slot. A cap table the schema has not caught up with does not
-    // stop the letter: it goes as it did before this batch, without changes.
+    // stop the letter: it goes as it did before this batch, without changes,
+    // and still under the slot's idempotency key, so no second daily email
+    // can follow it once the table is readable again.
     const claim = await claimSlot(admin, userId, "picks_paused", now);
     if (!claim.ok && claim.reason === "slot_used") {
       skip("slot_used");
       continue;
     }
     const claimId = claim.ok ? claim.id : null;
+    const { mail, used, closing } = letter(claimId !== null);
     const unsubscribeToken = claimId ? newSendToken() : null;
     const unsubscribeUrl = unsubscribeToken ? `${base.replace(/\/$/, "")}/api/notify/unsubscribe/${unsubscribeToken}` : null;
-    const sendSummary = { misses: list.length, alerts: claimId ? changeIds : [], subject: mail.subject };
+    const sendSummary = { misses: list.length, alerts: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]), subject: mail.subject };
     if (claimId && !(await markSending(admin, claimId, sendSummary, unsubscribeToken))) {
       await releaseClaim(admin, claimId);
       skip("slot_unwritable");
@@ -223,7 +238,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       html: mail.html,
       text: mail.text,
       ...(unsubscribeUrl ? { headers: listUnsubscribeHeaders({ url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }) } : {}),
-      ...(claim.ok ? { idempotencyKey: sendKey("daily", userId, claim.day) } : {}),
+      idempotencyKey: sendKey("daily", userId, claim.ok ? claim.day : capDay(now)),
     });
     if (!res.sent) {
       summary.emailFailures += 1;
@@ -231,7 +246,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       skip(res.reason ?? "send_failed");
       continue;
     }
-    if (claimId) await finishSend(admin, claimId, true, sendSummary, changeIds);
+    if (claimId) await finishSend(admin, claimId, true, sendSummary, closing);
     summary.emails += 1;
     const sentAt = new Date().toISOString();
     const { error: profErr } = await admin.from("profiles").update({ picks_paused_email_at: sentAt }).eq("id", userId);

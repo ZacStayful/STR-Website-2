@@ -6,7 +6,7 @@ import { dailyNoticeEmail } from "../email/daily-notice";
 import { siteUrl } from "../url";
 import type { RunResult } from "./picks-run";
 import { claimSlot, finishSend, markSending, releaseClaim } from "../notify/sends";
-import { sendKey } from "../notify/cap";
+import { capDay, sendKey } from "../notify/cap";
 
 // ─── One-off "picks are now daily" notice ─────────────────────────────
 // Pressed by hand from /admin/picks, dry run first. Goes to every member
@@ -74,7 +74,9 @@ export async function runDailyNotice(opts: { dry: boolean }): Promise<RunResult>
       capped += 1;
       continue;
     }
-    const res = await sendEmail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text, ...(claim.ok ? { idempotencyKey: sendKey("daily", r.id, claim.day) } : {}) });
+    // Always under the slot's key, claimed or not: a slot the table could not
+    // record still cannot be sent a second, different daily email.
+    const res = await sendEmail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text, idempotencyKey: sendKey("daily", r.id, claim.ok ? claim.day : capDay()) });
     if (claimId) await finishSend(admin, claimId, res.sent, null, []);
     if (!res.sent) {
       failed += 1;

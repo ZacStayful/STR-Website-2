@@ -208,3 +208,26 @@ test('a listing that keeps flipping gone is told gone once, until it has come ba
   const sold = tracked({ deal: { ...again.deal!, retiredReason: 'sold' } });
   assert.deepEqual(alertsFor(U, [sold], new Map(), toldBefore, NOW).map((a) => a.payload.status), ['sold']);
 });
+
+// ── Review fixes ──
+
+import { closingIds } from './alerts.ts';
+
+test('a sent email closes what it told, what it would not tell, and what settling dismissed', () => {
+  // Day 1: gone then back; the email tells "back" and must close the older "gone" with it.
+  const gone = row({ id: 'g', alert_type: 'gone', event_at: '2026-09-20T05:00:00Z', payload: { kind: 'sale', status: 'under_offer' } });
+  const back = row({ id: 'b', alert_type: 'back_on_market', event_at: '2026-09-27T05:00:00Z', payload: { kind: 'sale', previousStatus: 'under_offer' } });
+  const settled = settleChanges([gone, back], state(), NOW);
+  const closing = closingIds({ changeIds: alertIdsOf(settled.changes), refusedIds: ['r'] }, settled);
+  assert.deepEqual(closing.sort(), ['b', 'g', 'r']);
+  // Without the settle result, only what was told and refused.
+  assert.deepEqual(closingIds({ changeIds: ['x'], refusedIds: [] }, null), ['x']);
+});
+
+test('a watcher count older than two days is not sent', () => {
+  const fresh = row({ id: 'n1', alert_type: 'nearly_gone', created_at: '2026-09-27T06:55:00Z', payload: { kind: 'sale', watchers: 4 } });
+  const stale = row({ id: 'n2', alert_type: 'nearly_gone', deal_key: 'd-d2', deal_id: 'd2', created_at: '2026-09-25T06:55:00Z', payload: { kind: 'sale', watchers: 4 } });
+  const s = settleChanges([fresh, stale], state({ deals: new Map([['d1', { status: 'live', priceAmount: 1, pricePeriod: 'total' }], ['d2', { status: 'live', priceAmount: 1, pricePeriod: 'total' }]]) }), NOW);
+  assert.deepEqual(s.changes.map((c) => c.id), ['n1']);
+  assert.ok(s.dismissed.includes('n2'));
+});

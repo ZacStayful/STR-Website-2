@@ -172,3 +172,9 @@ test('whatever a listing calls itself cannot inject markup', () => {
   assert.ok(!e.html.includes('<img src=x'));
   assert.ok(e.html.includes('&lt;script&gt;'));
 });
+
+test('changes the builder refuses are reported, so a sent email can close them', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [], changes: [change(), change({ id: 'up', newAmount: 250_000, mergedIds: ['up2'] })], freeCutoffIso: null, unsubscribe: null })!;
+  assert.deepEqual(built.changeIds, ['a1']);
+  assert.deepEqual(built.refusedIds, ['up', 'up2']);
+});

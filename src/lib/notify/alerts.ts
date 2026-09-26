@@ -24,6 +24,8 @@ import type { PriceHistoryEntry } from '../listing/recheck.ts';
 
 /** Alerts older than this are dropped rather than sent: a switch turned back on never floods. */
 export const ALERT_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+/** "N other members opened or kept it in the last 7 days" is only sent while the count is this fresh. */
+export const NEARLY_GONE_FRESH_MS = 2 * 24 * 60 * 60 * 1000;
 
 /** What the collector stores in deal_alerts.payload. `address` only ever when the member opened the deal. */
 export interface AlertPayload {
@@ -98,7 +100,12 @@ function toChange(r: AlertRow, over: Partial<ChangeInput> = {}): ChangeInput {
 export interface Settled {
   /** What to tell, oldest deal first. Each carries every alert id it stands for (id + mergedIds). */
   changes: (ChangeInput & { mergedIds: string[] })[];
-  /** Alerts that will not be told (passed, gone, superseded, no longer true). Left to expire. */
+  /**
+   * Alerts that will not be told (passed, gone, superseded, no longer true).
+   * Closed together with the email that told the others (closingIds), so one
+   * can never come back on its own later — e.g. an old "gone" told the day
+   * after the "back on the market" that superseded it.
+   */
   dismissed: string[];
 }
 
@@ -165,8 +172,9 @@ export function settleChanges(rows: readonly AlertRow[], current: CurrentState, 
     }
 
     // ── Attention: once, and only while it is live ──
+    // The watcher count was true when collected; after two days it is too stale to send.
     for (const r of list.filter((x) => x.alert_type === 'nearly_gone')) {
-      if (!liveNow || goneNow || toldGone) dismissed.push(r.id);
+      if (!liveNow || goneNow || toldGone || now.getTime() - time(r.created_at) > NEARLY_GONE_FRESH_MS) dismissed.push(r.id);
       else changes.push({ ...toChange(r), mergedIds: [] });
     }
   }
@@ -187,6 +195,15 @@ export function plausiblePriceChange(previous: number | null | undefined, next: 
 /** Every alert id a list of settled changes stands for: what finishSend marks notified. */
 export function alertIdsOf(changes: readonly { id: string; mergedIds?: string[] }[]): string[] {
   return changes.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
+}
+
+/**
+ * What a SENT email closes: the alerts it told, the ones the builder would
+ * not tell, and the ones settling dismissed. Only ever passed to finishSend
+ * after a successful send; a failed email closes nothing.
+ */
+export function closingIds(built: { changeIds: readonly string[]; refusedIds: readonly string[] }, settled: Pick<Settled, 'dismissed'> | null | undefined): string[] {
+  return [...new Set([...built.changeIds, ...built.refusedIds, ...(settled?.dismissed ?? [])])];
 }
 
 // ── Collecting: what changed on a member's tracked deals (the 06:55 cron) ──

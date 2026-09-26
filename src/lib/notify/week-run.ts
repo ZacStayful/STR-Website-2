@@ -24,7 +24,6 @@ import { digestChanges, type SavedAreaState } from '../market/alerts';
 import { parseMarketGoals } from '../market/goals';
 import { hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from '../access';
 import { isAdminEmail } from '../admin';
-import { payersFor } from '../team';
 import { getBillingSettings } from '../credit/unit-costs';
 import { filtersForGoals } from '../today/candidates';
 import { parseHistory } from '../listing/recheck';
@@ -33,7 +32,7 @@ import { siteUrl } from '../url';
 import { renderEmail } from './render-email';
 import { claimSlot, finishSend, markSending, releaseClaim } from './sends';
 import { newSendToken, sendKey, slotAllowed } from './cap';
-import { mapLimit } from './daily-server';
+import { mapLimit, payersForAll } from './daily-server';
 import { trackedLink, trackedPlace, trackingFor } from './tracked-read';
 import { buildYourWeek, missedFor, recapItems, WENT_REASONS, type RecapSource, type WentDeal } from './week';
 
@@ -152,7 +151,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
     }
   }
   const wentIds = went.map((d) => d.id);
-  const payers = await payersFor(ids);
+  const payers = await payersForAll(ids);
   const seen = new Map<string, Set<string>>();
   const see = (userId: string, dealId: string) => seen.set(userId, new Set([...(seen.get(userId) ?? []), dealId]));
   if (wentIds.length > 0) {

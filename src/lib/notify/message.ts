@@ -283,6 +283,8 @@ export interface BuiltMessage {
   teaserIds: string[];
   /** Every alert id the changes in the email stand for (collapsed ones included): what to mark sent. */
   changeIds: string[];
+  /** Alerts given to the builder that it would not tell (not true as stated). Closed with the email, never told later. */
+  refusedIds: string[];
   /** Teasers the early-access backstop removed. Should always be empty. */
   droppedTeasers: string[];
 }
@@ -333,6 +335,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     },
     teaserIds: kept.map((c) => c.id),
     changeIds: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
+    refusedIds: input.changes.filter((c) => !used.includes(c)).flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     droppedTeasers: dropped,
   };
 }

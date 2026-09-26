@@ -20,7 +20,6 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from '../access';
 import { isAdminEmail } from '../admin';
-import { payersFor } from '../team';
 import { getBillingSettings } from '../credit/unit-costs';
 import { parseMarketGoals } from '../market/goals';
 import { dealVisibility, PAID_VISIBILITY } from '../marketplace/visibility';
@@ -32,7 +31,8 @@ import { renderEmail } from './render-email';
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './sends';
 import { newSendToken, sendKey } from './cap';
 import { pendingChanges, trackedAlertsOn } from './alerts-server';
-import { mapLimit, teasersFrom, todayPlans } from './daily-server';
+import { closingIds } from './alerts';
+import { mapLimit, payersForAll, teasersFrom, todayPlans } from './daily-server';
 
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
@@ -110,7 +110,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   if (ids.length === 0) return { status: 200, body: { ...summary, members: perUser } };
 
   // ── Whose day is already spent, whose changes are on, what tier each is ──
-  const [slots, alertsOn, pending, payers, settings] = await Promise.all([slotsInUse(admin, ids, 'daily', now), trackedAlertsOn(admin, ids), pendingChanges(admin, ids, now), payersFor(ids), getBillingSettings()]);
+  const [slots, alertsOn, pending, payers, settings] = await Promise.all([slotsInUse(admin, ids, 'daily', now), trackedAlertsOn(admin, ids), pendingChanges(admin, ids, now), payersForAll(ids), getBillingSettings()]);
   if (slots === null && !opts.dry) return { status: 503, body: { error: 'notification_sends unreadable (schema behind?); nothing sent' } };
   const owners = new Map<string, PaidTierAccount>();
   const ownerIds = [...new Set([...payers.values()].map((p) => p.payerId))].filter((id) => !byId.has(id));
@@ -195,7 +195,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     }
     const mail = renderEmail(built.message);
     const res = await sendEmail({ to: p.email!, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers, idempotencyKey: sendKey('daily', p.id, claim.day) });
-    await finishSend(admin, claim.id, res.sent, sendSummary, res.sent ? built.changeIds : []);
+    // Sent: close what it told, what it would not tell and what settling dismissed. Failed: close nothing.
+    await finishSend(admin, claim.id, res.sent, sendSummary, res.sent ? closingIds(built, alertsOn.has(p.id) ? pending.get(p.id) : null) : []);
     if (!res.sent) {
       summary.emailFailures += 1;
       perUser.push({ user: p.id, sent: false, reason: res.reason });

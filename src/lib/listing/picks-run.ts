@@ -42,7 +42,7 @@ import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "..
 import { capDay, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
-import type { Settled } from "../notify/alerts";
+import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
 import { siteUrl } from "../url";
 
@@ -1060,7 +1060,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // (below, exactly as before); nothing else in the email is.
     const plan = plans.get(m.id) ?? null;
     const visibility = m.paid ? PAID_VISIBILITY : freeVisibility;
-    const settled = alertsOn.has(m.id) ? pending.get(m.id) ?? null : null;
+    // Changes ride only an email whose slot is recorded, because that is what
+    // marks them told; without it (cap table unreadable) they wait for the next
+    // email rather than be told twice. The admin's test send shows them without
+    // marking anything.
+    const settled = alertsOn.has(m.id) && (claimId || opts.ignoreToday) ? pending.get(m.id) ?? null : null;
     const built = buildDaily({
       siteUrl: base,
       pick: { section: section.section, headline: section.headline },
@@ -1080,7 +1084,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
     if (built.droppedTeasers.length > 0) console.error("[sourcing] early-access backstop dropped teasers", JSON.stringify({ user: m.id, dropped: built.droppedTeasers }));
     const sendSummary = { pickId: id, pickDealId, teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, todayReady: plan !== null, subject: mail.subject };
-    if (claimId) await markSending(admin, claimId, sendSummary, null);
+    // A failed write here leaves the row "claimed", which a later run could take
+    // over after five minutes; the send below still carries the slot's
+    // idempotency key, so Resend refuses any second, different daily email.
+    if (claimId && !(await markSending(admin, claimId, sendSummary, null))) console.error("[sourcing] mark sending failed; relying on the idempotency key", JSON.stringify({ user: m.id }));
     const res = await sendEmail({
       to: m.email,
       subject: mail.subject,
@@ -1099,6 +1106,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (claimId) await finishSend(admin, claimId, false, sendSummary, []);
       continue;
     }
+    // The slot sent and its alerts told, straight away: nothing between the
+    // send and this record can be interrupted into telling them twice.
+    if (claimId) await finishSend(admin, claimId, true, sendSummary, closingIds(built, settled));
     summary.emails += 1;
     perUser.push({ user: m.id, basis: m.basis, candidates, sent: true });
     const sentAt = new Date().toISOString();
@@ -1135,8 +1145,6 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
     const { error: profErr } = await admin.from("profiles").update({ sourcing_last_sent_at: sentAt }).eq("id", m.id);
     if (profErr) console.error("[sourcing] profile update failed:", profErr.message);
-    // The slot sent, and the alerts it carried told (never on an admin test).
-    if (claimId) await finishSend(admin, claimId, true, sendSummary, built.changeIds);
   }
 
   return done({ status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } });

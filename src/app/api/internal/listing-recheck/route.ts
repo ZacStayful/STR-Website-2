@@ -50,6 +50,13 @@ const DEFAULT_MAX_PER_RUN = 40;
 const REMOVED_EVERY_MS = 3 * 24 * 60 * 60 * 1000;
 /** ...for this long after it went, in case it comes back (a transient 404, a relist on the same URL). */
 const REMOVED_FOR_MS = 30 * 24 * 60 * 60 * 1000;
+/** At most this many of a run's fetches go to removed listings; the rest stay for live ones. */
+const REMOVED_MAX_PER_RUN = 10;
+/**
+ * A removed listing past REMOVED_FOR_MS is stamped this far ahead, which takes
+ * it out of the queue for good (rechecked_at is read by nothing but this queue).
+ */
+const REMOVED_FOR_GOOD = "2999-01-01T00:00:00.000Z";
 
 function maxPerRun(): number {
   const n = Number(process.env.LISTING_RECHECK_MAX_PER_RUN ?? DEFAULT_MAX_PER_RUN);
@@ -107,10 +114,13 @@ export async function GET(request: Request) {
   const nowIso = now.toISOString();
   const cap = maxPerRun();
 
+  const COLUMNS = "id, user_id, canonical_url, source, kind, postcode, lat, lng, snapshot, quick_estimate, deal, listing_status, price_history, rechecked_at, last_checked_at, created_at";
+  // Live rows, stalest first.
   const { data, error } = await admin
     .from("checked_listings")
-    .select("id, user_id, canonical_url, source, kind, postcode, lat, lng, snapshot, quick_estimate, deal, listing_status, price_history, rechecked_at, last_checked_at, created_at")
+    .select(COLUMNS)
     .neq("status", "passed")
+    .or("listing_status.is.null,listing_status.neq.removed")
     .in("source", [...PORTAL_SOURCES, "airbnb"])
     .order("rechecked_at", { ascending: true, nullsFirst: true })
     .limit(cap * 2 + AIRBNB_MAX_PER_RUN);
@@ -118,7 +128,20 @@ export async function GET(request: Request) {
     console.error("[recheck] select failed:", error.message);
     return Response.json({ error: "Query failed" }, { status: 500 });
   }
-  const rows = (data ?? []) as unknown as Row[];
+  // Removed rows that are due another look, read on their own and capped, so
+  // they can never crowd the live queue out of a run.
+  const dueIso = new Date(now.getTime() - REMOVED_EVERY_MS).toISOString();
+  const { data: removedData, error: removedErr } = await admin
+    .from("checked_listings")
+    .select(COLUMNS)
+    .neq("status", "passed")
+    .eq("listing_status", "removed")
+    .in("source", PORTAL_SOURCES)
+    .or(`rechecked_at.is.null,rechecked_at.lte.${dueIso}`)
+    .order("rechecked_at", { ascending: true, nullsFirst: true })
+    .limit(REMOVED_MAX_PER_RUN);
+  if (removedErr) console.error("[recheck] removed select failed:", removedErr.message);
+  const rows = [...((data ?? []) as unknown as Row[]), ...((removedData ?? []) as unknown as Row[])];
 
   // Portal listings: one fetch per URL, oldest first, skipping anything seen
   // today. A removed listing is read again every REMOVED_EVERY_MS for
@@ -127,18 +150,15 @@ export async function GET(request: Request) {
   // stamped, or it sits at the front of the oldest-first queue forever and,
   // once enough of them build up, nothing behind them is ever checked again.
   const deferred: string[] = [];
+  const forGood: string[] = [];
   const byUrl = new Map<string, Row[]>();
   for (const r of rows) {
     if (!PORTAL_SOURCES.includes(r.source)) continue;
-    if (r.listing_status === "removed") {
-      if (now.getTime() - removedAt(r) > REMOVED_FOR_MS) {
-        deferred.push(r.id);
-        continue;
-      }
-      // Not due yet: left as it is. Stamping it would restart its clock and it
-      // would never come due; it is not at the front of the queue meanwhile,
-      // because everything live is read daily.
-      if (now.getTime() - lastSeen(r) < REMOVED_EVERY_MS) continue;
+    // Removed rows only arrive here when due (the query above); past the
+    // month they are taken out of the queue for good.
+    if (r.listing_status === "removed" && now.getTime() - removedAt(r) > REMOVED_FOR_MS) {
+      forGood.push(r.id);
+      continue;
     }
     if (now.getTime() - lastSeen(r) < PORTAL_MIN_AGE_MS) continue;
     if (!serverFetchEnabled(r.source)) {
@@ -250,9 +270,13 @@ export async function GET(request: Request) {
     }
   }
 
+  if (forGood.length > 0) {
+    const { error: goodErr } = await admin.from("checked_listings").update({ rechecked_at: REMOVED_FOR_GOOD }).in("id", forGood);
+    if (goodErr) console.error("[recheck] removed-for-good stamp failed:", goodErr.message);
+  }
   if (deferred.length > 0) {
     const { error: defErr } = await admin.from("checked_listings").update({ rechecked_at: nowIso }).in("id", deferred);
     if (defErr) console.error("[recheck] deferred stamp failed:", defErr.message);
   }
-  return Response.json({ ...summary, deferred: deferred.length, ms: Date.now() - started });
+  return Response.json({ ...summary, deferred: deferred.length, removedForGood: forGood.length, ms: Date.now() - started });
 }

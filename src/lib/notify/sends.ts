@@ -54,8 +54,11 @@ export async function releaseClaim(admin: Admin, id: string): Promise<void> {
 
 /**
  * About to send: what is going out (never an address) and the email's
- * unsubscribe token. Returns false when the row could not be written, in
- * which case the caller must not send — the slot would stay takeable.
+ * unsubscribe token. Returns false when the row could not be written: the
+ * slot then stays takeable after five minutes, so the caller either does not
+ * send, or sends with the slot's idempotency key (cap.ts sendKey) — every
+ * capped sender does — which makes Resend refuse any second, different email
+ * in the same slot.
  */
 export async function markSending(admin: Admin, id: string, summary: Record<string, unknown>, unsubscribeToken: string | null): Promise<boolean> {
   const { data, error } = await admin
