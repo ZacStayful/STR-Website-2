@@ -3,6 +3,7 @@ import type { EmailOtpType } from '@supabase/supabase-js'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { runSignInHooks } from '@/lib/auth/sign-in-hooks'
+import { postAuthPath } from '@/lib/auth/landing'
 
 // Signs a member in from a token-hash link:
 //   /auth/confirm?token_hash=…&type=magiclink&next=/deals
@@ -18,8 +19,9 @@ export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl
   const tokenHash = searchParams.get('token_hash')
   const type = searchParams.get('type')
-  const next = safeInternalPath(searchParams.get('next'), '/deals')
-  const loginUrl = (reason: string) => `${origin}/login?error=${encodeURIComponent(reason)}&redirect=${encodeURIComponent(next)}`
+  // An absent destination means the landing rule decides (src/lib/auth/landing.ts).
+  const next = safeInternalPath(searchParams.get('next'), '')
+  const loginUrl = (reason: string) => `${origin}/login?error=${encodeURIComponent(reason)}${next ? `&redirect=${encodeURIComponent(next)}` : ''}`
 
   if (!tokenHash || !type || !TYPES.has(type)) return NextResponse.redirect(loginUrl('missing_token'))
 
@@ -31,10 +33,10 @@ export async function GET(request: NextRequest) {
     const {
       data: { user },
     } = await supabase.auth.getUser()
-    if (user) return NextResponse.redirect(`${origin}${next}`)
+    if (user) return NextResponse.redirect(`${origin}${postAuthPath(next)}`)
     return NextResponse.redirect(loginUrl('link_expired'))
   }
 
   await runSignInHooks(supabase)
-  return NextResponse.redirect(`${origin}${next}`)
+  return NextResponse.redirect(`${origin}${postAuthPath(next)}`)
 }

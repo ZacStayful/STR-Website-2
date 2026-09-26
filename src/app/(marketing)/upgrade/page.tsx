@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { teamOf } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { safeInternalPath } from "@/lib/safe-path";
+import { HOME_PATH } from "@/lib/auth/landing";
 import { getCreditSummary } from "@/lib/credit/summary";
 import { formatGbp } from "@/lib/credit/pricing";
 import { ACCESS_COLUMNS, accountStatus, planName } from "@/lib/access";
@@ -31,8 +32,8 @@ export default async function UpgradePage({
   searchParams: Promise<{ redirect?: string }>;
 }) {
   const { redirect: redirectParam } = await searchParams;
-  const wanted = safeInternalPath(redirectParam, "/estimate");
-  const back = /^\/(upgrade|login|signup)(\/|\?|$)/.test(wanted) ? "/estimate" : wanted;
+  const wanted = safeInternalPath(redirectParam, HOME_PATH);
+  const back = /^\/(upgrade|login|signup|welcome)(\/|\?|$)/.test(wanted) ? HOME_PATH : wanted;
 
   const supabase = await createSupabaseServerClient();
   const {

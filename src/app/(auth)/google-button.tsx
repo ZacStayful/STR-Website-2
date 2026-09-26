@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser'
 
-export function GoogleButton({ next = '/estimate' }: { next?: string }) {
+export function GoogleButton({ next = '' }: { next?: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -17,7 +17,8 @@ export function GoogleButton({ next = '/estimate' }: { next?: string }) {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent(next)}`,
+        // The callback applies the landing rule; only an explicit destination is carried.
+        redirectTo: `${siteUrl}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`,
       },
     })
     if (error) {

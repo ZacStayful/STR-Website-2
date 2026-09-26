@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMarketGoals, goalsFromForm, normalisePostcode, describeGoals, DEFAULT_GOALS, parseMotivationGoals, thresholdDaysFor } from './goals.ts';
+import { parseMarketGoals, goalsFromForm, normalisePostcode, describeGoals, DEFAULT_GOALS, parseMotivationGoals, thresholdDaysFor, goalsFromWelcome } from './goals.ts';
 
 test('normalisePostcode accepts UK shapes and rejects junk', () => {
   assert.equal(normalisePostcode('ng2 5gb'), 'NG2 5GB');
@@ -119,4 +119,29 @@ test('the filter shows up in the summary chips only when it is on', () => {
   assert.ok(describeGoals(only).includes('Motivated only · 5+ mo listed'));
   const rent = { ...base, sourcingKind: 'rent' as const, motivation: { ...base.motivation, mode: 'prefer' as const } };
   assert.ok(describeGoals(rent).includes('Prefer motivated · 8+ wk listed'));
+});
+
+test('goalsFromWelcome keeps the defaults for everything the screen does not ask', () => {
+  const g = goalsFromWelcome({ kind: 'sale', budget: '200-350', maxRentPcm: 1500, postcode: 'NG2 5GB', maxDistanceMiles: 50 });
+  assert.equal(g.version, 1);
+  assert.equal(g.sourcingKind, 'sale');
+  assert.equal(g.budget, '200-350');
+  assert.equal(g.maxRentPcm, null, 'a rent ceiling is dropped for buy-only');
+  assert.deepEqual(g.home, { postcode: 'NG2 5GB', lat: null, lng: null });
+  assert.equal(g.maxDistanceMiles, 50);
+  assert.deepEqual(g.priorities, DEFAULT_GOALS.priorities);
+  assert.deepEqual(g.finance, DEFAULT_GOALS.finance);
+  assert.deepEqual(g.motivation, DEFAULT_GOALS.motivation);
+  assert.equal(g.bedrooms, null);
+
+  const rent = goalsFromWelcome({ kind: 'rent', budget: 'u200', maxRentPcm: 1500, postcode: null, maxDistanceMiles: 25 });
+  assert.equal(rent.budget, null, 'a budget band is dropped for rent-only');
+  assert.equal(rent.maxRentPcm, 1500);
+  assert.equal(rent.home, null);
+  assert.equal(rent.maxDistanceMiles, null, 'no radius without a home');
+
+  const both = goalsFromWelcome({ kind: 'both', budget: null, maxRentPcm: null, postcode: null, maxDistanceMiles: null });
+  assert.equal(both.sourcingKind, 'both');
+  assert.equal(both.budget, null);
+  assert.equal(both.maxRentPcm, null);
 });

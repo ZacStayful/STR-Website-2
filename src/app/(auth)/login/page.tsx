@@ -22,7 +22,7 @@ function errorMessage(error: string | undefined): string | null {
 
 export default async function LoginPage({ searchParams }: { searchParams: SearchParams }) {
   const { redirect, error, email } = await searchParams
-  const redirectTo = safeInternalPath(redirect, '/estimate')
+  const redirectTo = safeInternalPath(redirect, '')
   const notice = errorMessage(error)
   const prefill = typeof email === 'string' && email.includes('@') ? email : ''
 
