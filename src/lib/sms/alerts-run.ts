@@ -75,7 +75,7 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
   // ── Who can receive texts at all ──
   const contacts = await receivingContacts(admin, opts.onlyUserIds);
   if (contacts === null) return { status: 503, body: { error: 'sms_contacts unreadable (schema behind?); nothing sent' } };
-  const summary = { dry, considered: contacts.length, sent: 0, failed: 0, maybeSent: 0, ranOutOfTime: false, priced: 0 };
+  const summary = { dry, considered: contacts.length, sent: 0, failed: 0, maybeSent: 0, ranOutOfTime: false, windowClosed: false, priced: 0 };
   const members: PerMember[] = [];
   if (contacts.length === 0) return { status: 200, body: { ...summary, members } };
   const ids = contacts.map((c) => c.user_id);
@@ -100,6 +100,11 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
   for (const contact of contacts) {
     if (Date.now() - started > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
+      break;
+    }
+    // A run that starts at 19:59 must not send at 20:00: the clock, not the start time, decides each text.
+    if (!dry && !inSendingWindow(new Date())) {
+      summary.windowClosed = true;
       break;
     }
     const userId = contact.user_id;
