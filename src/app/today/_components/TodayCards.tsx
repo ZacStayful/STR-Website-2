@@ -5,6 +5,7 @@ import Link from "next/link";
 import { DealReactionListenerContext, type DealReactionListener } from "@/app/deals/_components/deal-reaction-listener";
 import { finishLine, isDone, tally } from "@/lib/today/day";
 import type { DealReaction } from "@/lib/marketplace/reaction-state";
+import { useChecklist } from "./Checklist";
 
 /**
  * The day's cards, and the finish line that replaces them once every one has
@@ -20,17 +21,16 @@ import type { DealReaction } from "@/lib/marketplace/reaction-state";
 export function TodayCards({
   ids,
   initial,
-  onKeep,
   children,
 }: {
   /** The deals that count towards "done": every card with Keep / Pass. */
   ids: string[];
   /** Answers already given, from the server. */
   initial: Record<string, DealReaction>;
-  /** Told after a Keep has saved (the first-week checklist listens). */
-  onKeep?: () => void;
   children: React.ReactNode;
 }) {
+  // A Keep may finish "Keep 3 deals": the first-week checklist re-checks.
+  const onKeep = useChecklist()?.refresh;
   const [answers, setAnswers] = useState<Map<string, DealReaction>>(() => new Map(Object.entries(initial)));
   const [awaiting, setAwaiting] = useState<Set<string>>(() => new Set());
 

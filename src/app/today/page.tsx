@@ -13,9 +13,11 @@ import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { filtersForGoals } from "@/lib/today/candidates";
 import { displayOrder, greeting, matchLine } from "@/lib/today/day";
 import { todaySelection, todaysPick, type TodaysPick } from "@/lib/today/selection";
+import { syncChecklist } from "@/lib/today/checklist-server";
 import { DealCard } from "@/app/deals/_components/DealCard";
 import { EarlyAccessBanner } from "@/app/deals/_components/EarlyAccessBanner";
 import { ShareDealButton } from "@/app/deals/_components/ShareDealButton";
+import { Checklist, ChecklistProvider } from "./_components/Checklist";
 import { PasteLinkBox } from "./_components/PasteLinkBox";
 import { TodayCards } from "./_components/TodayCards";
 
@@ -55,11 +57,13 @@ export default async function TodayPage() {
   // The search the member's goals point at: the same one /deals counts, so "N match" and the cards agree.
   const filters = filtersForGoals(goals, savedAreas);
 
-  const [selection, pick, count, waiting] = await Promise.all([
+  const [selection, pick, count, waiting, checklist] = await Promise.all([
     todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility }, now),
     todaysPick(user.id, now),
     countDeals(filters, visibility, { userId: user.id }),
     visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
+    // The first-week checklist, brought up to date now: any "+£1" it shows is marked seen.
+    syncChecklist(user.id, { markSeen: true, now }),
   ]);
 
   const stored = selection?.dealIds ?? [];
@@ -94,7 +98,10 @@ export default async function TodayPage() {
 
   return (
     <main className="min-h-screen bg-background">
+      <ChecklistProvider initial={checklist}>
       <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:py-8">
+        <Checklist />
+
         <header>
           <h1 className="text-2xl font-bold text-foreground">{greeting(now, profile?.full_name ?? null)}</h1>
           {line && <p className="mt-1 text-sm text-muted-foreground">{line}</p>}
@@ -154,6 +161,7 @@ export default async function TodayPage() {
           <Link href="/picks" className="font-medium text-foreground underline-offset-4 hover:underline">Past picks</Link>
         </nav>
       </div>
+      </ChecklistProvider>
     </main>
   );
 }

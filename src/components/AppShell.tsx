@@ -7,6 +7,7 @@ import { teamCreditSnapshot } from "@/lib/team/credit";
 import { ownsAnyFunnel } from "@/lib/funnels/ownership";
 import type { Section } from "@/lib/nav";
 import { ensureWelcomeGrant } from "@/lib/credit/welcome";
+import { syncChecklist } from "@/lib/today/checklist-server";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { CreditBanner } from "@/components/credit/CreditBanner";
@@ -40,6 +41,11 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
       console.error("[AppShell] last_seen hook failed:", err);
     }
   });
+  // First-week checklist: a step done on any page (an open, a report, a
+  // share) is credited as the member moves on, not only when they next open
+  // Today, which brings it up to date itself. Returns at once for anyone past
+  // their first week, and never throws.
+  if (active !== "today") after(() => syncChecklist(user.id));
 
   let credit: CreditSnapshot | null = null;
   try {

@@ -30,6 +30,17 @@ export interface CreditSummary {
   welcomeWithheldReason: string | null;
 }
 
+/** Every welcome-kind grant this account has had, in pence. 0 when it cannot be read: the setting then stands. */
+async function welcomeGrantedPence(userId: string): Promise<number> {
+  if (!hasServiceRole()) return 0;
+  const { data, error } = await createAdminClient().from('credit_grants').select('amount_pence').eq('user_id', userId).eq('kind', 'welcome');
+  if (error) {
+    console.warn('[credit] welcome grants read failed:', error.message);
+    return 0;
+  }
+  return ((data ?? []) as { amount_pence: unknown }[]).reduce((n, r) => n + (Number(r.amount_pence) || 0), 0);
+}
+
 export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   // Annual subscribers are credited month by month; make sure this month's slot exists.
   try {
@@ -58,7 +69,12 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
   if (plan) {
     cycle = { planCode: plan.code, planName: plan.name, allowancePence: plan.monthlyCreditPence, usedPence: Math.max(0, plan.monthlyCreditPence - balance.buckets.planPence), endsAt: balance.planExpiresAt ?? profile?.current_period_end ?? null };
   } else {
-    const welcome = settings.welcomeGrantPence;
+    // Welcome credit is the welcome grant plus any first-week checklist
+    // rewards (src/lib/today/checklist.ts), which are welcome-kind so they
+    // spend at face value. Measured against what was actually granted, so the
+    // rewards cannot make "used" read low; never below the setting, so an
+    // account whose welcome was withheld reads exactly as it always has.
+    const welcome = Math.max(settings.welcomeGrantPence, await welcomeGrantedPence(userId));
     cycle = { planCode: null, planName: null, allowancePence: welcome, usedPence: Math.max(0, welcome - balance.buckets.welcomePence), endsAt: null };
   }
 
