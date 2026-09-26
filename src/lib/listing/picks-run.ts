@@ -14,19 +14,19 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from "../access";
 import { dealVisibility, dealVisible } from "../marketplace/visibility";
-import { findOutcode } from "./html";
-import { queriesForGoals, dealForSourced, rankPicks, rankPicksByBand, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, applyCandidateFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, cleanReasons, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, type PickBasis, type PickFeedback } from "./picks";
+import { rankForMember, toPickFeedback } from "./rank";
 import { missedRowFor } from "./picks-paused";
 import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
 import { dealFeedbackFor } from "../marketplace/reactions-server";
-import { isSendable, parseScreening, screeningScore, type Band, type Screening } from "./screen";
+import { isSendable, parseScreening, type Band, type Screening } from "./screen";
 import { storedAreaRentTable } from "../broker/providers/internal";
 import { screenSourced, mergeSnapshotIntoListing } from "../marketplace/record";
 import { openPricePence } from "../marketplace/ladder";
@@ -293,27 +293,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Each answer keeps its listing and time so it can be merged with the grid's below.
   const pickEntries = new Map<string, FeedbackEntry[]>();
   for (const r of feedbackRows) {
-    const l = feedbackListing.get(r.canonical_url) ?? null;
-    const amount = l?.price ? (l.kind === "rent" ? (l.price.period === "pw" ? Math.round((l.price.amount * 52) / 12) : l.price.amount) : l.price.period === "total" ? l.price.amount : null) : null;
     pickEntries.set(r.user_id, [
       ...(pickEntries.get(r.user_id) ?? []),
       {
         url: r.canonical_url,
         // Already in the filter above, so selecting it adds no new way for this read to fail.
         at: typeof r.responded_at === "string" ? r.responded_at : null,
-        feedback: {
-          reaction: r.reaction === "yes" || r.reaction === "no" ? r.reaction : null,
-          reactionSource: r.reaction_source === "form" || r.reaction_source === "link" ? r.reaction_source : null,
-          reasons: cleanReasons(r.reasons),
-          kind: r.kind === "sale" || r.kind === "rent" ? r.kind : null,
-          postcodeArea: typeof r.postcode_area === "string" ? r.postcode_area : null,
-          bedrooms: l?.bedrooms ?? null,
-          amount,
-          rawType: l?.rawType ?? null,
-          // Older stored snapshots carry no outcode; the postcode still has one.
-          outcode: l?.outcode ?? findOutcode(l?.postcode ?? l?.address ?? null),
-          screeningScore: screeningScore(feedbackScreening.get(`${r.user_id}|${r.canonical_url}`) ?? null),
-        },
+        feedback: toPickFeedback(r, feedbackListing.get(r.canonical_url) ?? null, feedbackScreening.get(`${r.user_id}|${r.canonical_url}`) ?? null),
       },
     ]);
   }
@@ -734,30 +720,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (motiv) for (const l of olderCandidates.get(`${q.kind}|${q.area}`) ?? []) consider(l, q, true);
     }
     candidateCount.set(m.id, candidates.length);
-    const afterFeedback = applyCandidateFeedback(candidates, feedbackByUser.get(m.id) ?? [], m.rules);
-    // ── The income gate ──
-    // Applied BEFORE ranking, because rankPicks keeps only the top SPREAD_DEPTH:
-    // screening afterwards would discard a qualifying property that happened to
-    // rank 41st. Counted per band so the admin report can tell a thin market
-    // apart from a bar that is too high.
-    const kept = afterFeedback.filter((c) => {
-      if (!c.screening) return true;
-      screened[c.screening.band] = (screened[c.screening.band] ?? 0) + 1;
-      return isSendable(c.screening);
-    });
-    // Band decides what may be sent; fit still decides the order within a band.
-    // The two are not comparable across kinds (an uplift % against a profit in
-    // pounds), whereas blendFit already normalises both onto one scale. Ranked
-    // band by band so the SPREAD_DEPTH cut can never drop a qualified listing
-    // in favour of a medium one that happened to fit better.
-    const list: Ranked[] = rankPicksByBand(kept, SPREAD_DEPTH, motiv?.mode ?? "off");
-    // "Could not be run as a short let": only send this member listings that
-    // already clear the check on the search card, never ones that need the
-    // page to rescue them. Band sorting happens INSIDE each of these buckets,
-    // or the page reads would be aimed at listings that cannot clear the check.
-    const ok = list.filter((p) => p.precheck === "ok");
-    const unknown = m.rules.strictSuitability ? [] : list.filter((p) => p.precheck !== "ok");
-    if (ok.length + unknown.length === 0) {
+    // Feedback, the income gate, fit and the short-let split: shared with the
+    // Today page (see rank.ts), so the email and the page rank alike.
+    const result = rankForMember(candidates, feedbackByUser.get(m.id) ?? [], m.rules, { depth: SPREAD_DEPTH, mode: motiv?.mode ?? "off" });
+    for (const [band, n] of Object.entries(result.screened) as [Band, number][]) screened[band] = (screened[band] ?? 0) + n;
+    const list: Ranked[] = result.ranked;
+    if (list.length === 0) {
       // Nothing matched. A strict filter reads as a broken product when it just
       // goes quiet, so send the nearest thing and say which setting stopped the
       // rest — but only when there is a nearest thing whose deal actually works.
@@ -765,8 +733,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (!fallback) {
         // Saying which of the two happened matters: one is a thin market, the
         // other is the income bar, and only the second is ours to reconsider.
-        const gated = afterFeedback.length > 0 && kept.length === 0;
-        perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: gated ? "nothing_qualified" : "nothing_new" });
+        perUser.push({ user: m.id, basis: m.basis, candidates: candidates.length, sent: false, reason: result.gated ? "nothing_qualified" : "nothing_new" });
         continue;
       }
       candidateCount.set(m.id, candidates.length + nearMisses.length);
@@ -774,7 +741,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       ranked.set(m.id, [fallback.pick]);
       continue;
     }
-    ranked.set(m.id, [...ok, ...unknown]);
+    ranked.set(m.id, list);
   }
   const withCandidates = members.filter((m) => ranked.has(m.id));
 
