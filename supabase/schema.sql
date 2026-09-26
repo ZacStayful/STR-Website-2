@@ -2519,3 +2519,140 @@ alter table public.profiles add column if not exists alert_missed boolean not nu
 -- what. Read separately, never in DEAL_COLUMNS.
 alter table public.marketplace_deals add column if not exists revived_at timestamptz;
 alter table public.marketplace_deals add column if not exists revived_from text;
+
+-- =========================
+-- Batch 8: sms
+-- =========================
+-- Text alerts (src/lib/sms). OFF for everyone, existing members included,
+-- until a member verifies a UK mobile and switches texts on. At most one text
+-- a member a day (Batch 6's notification_sends, channel 'sms') and a monthly
+-- cap (billing_settings.sms_monthly_cap), 08:00–20:00 UK time only. Texts are
+-- free to members: the cost is house spend, logged in provider_calls and here.
+-- Nothing below is in ACCESS_COLUMNS.
+
+-- The per-type switches (src/lib/notifications/registry.ts, channel 'sms').
+-- Off by default. Turned on together when a member verifies their number,
+-- then each can be turned off in Account → Notifications. Written only by the
+-- notifications writer (service role), so no column grant. They are in
+-- NOTIFICATION_COLUMNS, a fixed select; readNotifications falls back to the
+-- older column list when these are missing, so the panel keeps working if
+-- the code deploys before this is run. NOT in ACCESS_COLUMNS.
+alter table public.profiles add column if not exists sms_price_drop boolean not null default false;
+alter table public.profiles add column if not exists sms_back_on_market boolean not null default false;
+alter table public.profiles add column if not exists sms_nearly_gone boolean not null default false;
+alter table public.profiles add column if not exists sms_gone boolean not null default false;
+
+-- sms_contacts: the member's texting number and its state. One row per member
+-- who has started verifying. `enabled` is the member's own on/off. `stopped_at`
+-- is a reply of STOP (or Twilio refusing with 21610): a hard block on every
+-- text to that number, on every account, until START clears it. Verification
+-- swaps the number in only once the new one is proved, so a change of number
+-- never sends to an unverified phone. Service role only.
+create table if not exists public.sms_contacts (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  phone_e164 text,
+  verified_at timestamptz,
+  enabled boolean not null default false,
+  consent_at timestamptz,
+  consent_source text,                        -- signup | account
+  stopped_at timestamptz,
+  stop_source text,                           -- keyword | twilio | admin
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+-- One account per verified number, so a STOP can never be ambiguous.
+create unique index if not exists sms_contacts_verified_phone_uidx on public.sms_contacts (phone_e164) where verified_at is not null;
+create index if not exists sms_contacts_phone_idx on public.sms_contacts (phone_e164);
+alter table public.sms_contacts enable row level security;  -- no policies: service role only
+revoke all on public.sms_contacts from anon, authenticated;
+
+-- sms_verifications: one row per code sent. The code itself is never stored,
+-- only an HMAC of (id, code). Ten minutes, five guesses (counted by
+-- sms_verification_attempt before the compare); a newer code supersedes it.
+create table if not exists public.sms_verifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  phone_e164 text not null,
+  code_hash text not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  attempts int not null default 0,
+  verified_at timestamptz,
+  superseded_at timestamptz
+);
+create index if not exists sms_verifications_user_idx on public.sms_verifications (user_id, created_at desc);
+alter table public.sms_verifications enable row level security;  -- no policies: service role only
+revoke all on public.sms_verifications from anon, authenticated;
+
+-- Take one guess: counts it and hands back the hash only while the code is
+-- still open (unexpired, unused, not replaced, under five guesses). One
+-- statement, so parallel guesses can never get past five. The limit here and
+-- MAX_ATTEMPTS in src/lib/sms/verify.ts are the same number.
+create or replace function public.sms_verification_attempt(p_id uuid, p_user uuid)
+returns table (code_hash text, phone_e164 text, attempts int)
+language sql
+as $$
+  update public.sms_verifications v
+     set attempts = v.attempts + 1
+   where v.id = p_id
+     and v.user_id = p_user
+     and v.verified_at is null
+     and v.superseded_at is null
+     and v.expires_at > now()
+     and v.attempts < 5
+  returning v.code_hash, v.phone_e164, v.attempts;
+$$;
+revoke all on function public.sms_verification_attempt(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.sms_verification_attempt(uuid, uuid) to service_role;
+
+-- sms_messages: every text sent (verification codes and alerts) and every
+-- keyword received, with Twilio's sid, delivery status and price, so the
+-- spend can be reconciled against Twilio. `alert_ids` are the deal_alerts a
+-- text told: an alert is never texted twice. Inbound rows keep the keyword,
+-- never the member's words. `outcome`: pending (about to call Twilio) →
+-- accepted | refused | unknown (the call failed mid-way; the text may have
+-- gone, so it counts as sent) | dry_run. Service role only.
+create table if not exists public.sms_messages (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  direction text not null,                    -- outbound | inbound
+  kind text not null,                         -- verify | alert | keyword
+  phone_e164 text not null,
+  body text,
+  alert_ids uuid[] not null default '{}'::uuid[],
+  send_id uuid,                               -- the notification_sends row an alert text used
+  dry_run boolean not null default false,
+  outcome text not null default 'pending',
+  twilio_sid text,
+  status text,
+  status_at timestamptz,
+  error_code int,
+  segments int,
+  price numeric,
+  price_unit text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists sms_messages_sid_uidx on public.sms_messages (twilio_sid) where twilio_sid is not null;
+create index if not exists sms_messages_user_idx on public.sms_messages (user_id, created_at desc);
+create index if not exists sms_messages_phone_idx on public.sms_messages (phone_e164, created_at desc);
+create index if not exists sms_messages_unpriced_idx on public.sms_messages (created_at) where twilio_sid is not null and price is null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.sms_messages'::regclass and conname = 'sms_messages_direction_check') then
+    alter table public.sms_messages add constraint sms_messages_direction_check check (direction in ('outbound', 'inbound'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.sms_messages'::regclass and conname = 'sms_messages_kind_check') then
+    alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.sms_messages'::regclass and conname = 'sms_messages_outcome_check') then
+    alter table public.sms_messages add constraint sms_messages_outcome_check check (outcome in ('pending', 'accepted', 'refused', 'unknown', 'dry_run', 'received'));
+  end if;
+end $$;
+alter table public.sms_messages enable row level security;  -- no policies: service role only
+revoke all on public.sms_messages from anon, authenticated;
+
+-- The monthly cap: texts a member may get per UK calendar month. Editable
+-- without a deploy.
+insert into public.billing_settings (key, value) values ('sms_monthly_cap', '8'::jsonb)
+on conflict (key) do nothing;

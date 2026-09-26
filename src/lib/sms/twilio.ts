@@ -167,3 +167,24 @@ export function signatureValid(authToken: string | null | undefined, header: str
   }
   return ok;
 }
+
+// ── Reconciliation ──
+
+export function messageUrl(accountSid: string, sid: string): string {
+  return `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(accountSid)}/Messages/${encodeURIComponent(sid)}.json`;
+}
+
+/**
+ * The price Twilio charged for a message, once it knows it (null until
+ * then). Twilio writes it as a negative decimal string ("-0.05600"); we
+ * store what it cost, as a positive number in Twilio's price unit.
+ */
+export function parseMessagePrice(json: unknown): { price: number | null; priceUnit: string | null; segments: number | null } {
+  const o = (json && typeof json === 'object' ? json : {}) as Record<string, unknown>;
+  const raw = num(o.price);
+  return {
+    price: raw === null ? null : Math.abs(raw),
+    priceUnit: typeof o.price_unit === 'string' ? o.price_unit : null,
+    segments: num(o.num_segments),
+  };
+}

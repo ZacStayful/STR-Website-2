@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildSendRequest, ERROR_OPTED_OUT, isFailedStatus, messagesUrl, parseSendResponse, signatureValid, statusAdvances, twilioSignature,
+  buildSendRequest, ERROR_OPTED_OUT, isFailedStatus, messageUrl, messagesUrl, parseMessagePrice, parseSendResponse, signatureValid, statusAdvances, twilioSignature,
 } from './twilio.ts';
 
 // Twilio's own published test vectors (twilio-node's validation tests and the
@@ -104,4 +104,10 @@ test('failed, undelivered and canceled mean the text never arrived', () => {
   assert.equal(isFailedStatus('undelivered'), true);
   assert.equal(isFailedStatus('delivered'), false);
   assert.equal(isFailedStatus(null), false);
+});
+
+test('a message\'s price is read as a positive number once Twilio knows it', () => {
+  assert.deepEqual(parseMessagePrice({ price: '-0.05600', price_unit: 'USD', num_segments: '1' }), { price: 0.056, priceUnit: 'USD', segments: 1 });
+  assert.deepEqual(parseMessagePrice({ price: null, price_unit: 'USD' }), { price: null, priceUnit: 'USD', segments: null });
+  assert.equal(messageUrl('AC1', 'SM2'), 'https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/SM2.json');
 });
