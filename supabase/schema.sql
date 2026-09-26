@@ -19,8 +19,10 @@ create table if not exists public.profiles (
   email text,
   full_name text,
   mobile text,
-  plan text not null default 'free',                  -- 'free' | 'pro'
+  plan text not null default 'free' check (plan in ('free', 'pro')),
   trial_ends_at timestamptz not null default (now() + interval '14 days'),
+  -- On the live project from before this file tracked it; nothing in this app reads it.
+  trial_started_at timestamptz not null default now(),
   stripe_customer_id text,
   stripe_subscription_id text,
   stripe_subscription_status text,                    -- 'trialing' | 'active' | 'past_due' | 'canceled' | ...
@@ -60,6 +62,7 @@ alter table public.profiles add column if not exists reports_total integer not n
 alter table public.profiles add column if not exists plan_source text;
 alter table public.profiles add column if not exists subscription_started_at timestamptz;
 alter table public.profiles add column if not exists subscription_ended_at timestamptz;
+alter table public.profiles add column if not exists trial_started_at timestamptz not null default now();
 
 -- The Stripe webhook falls back to matching a payment by email when it has no
 -- user id, and does so case-insensitively. Index the lowered email so that
@@ -101,12 +104,30 @@ update public.profiles
    and stripe_subscription_id is null
    and stripe_subscription_status is null;
 
+-- `plan` only ever holds 'free' or 'pro' (the paid tier is plan_code). The
+-- check is inline in the create-table block above; this adds it to a table
+-- created before it was.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.profiles'::regclass and conname = 'profiles_plan_check') then
+    alter table public.profiles add constraint profiles_plan_check check (plan in ('free', 'pro'));
+  end if;
+end $$;
+
 alter table public.profiles enable row level security;
 
 drop policy if exists "Users can view own profile" on public.profiles;
 create policy "Users can view own profile"
   on public.profiles for select
   using (auth.uid() = id);
+
+-- On the live project from before this file tracked it. Every row is made by
+-- the on_auth_user_created trigger below, so the primary key refuses a
+-- member's own insert unless their row is missing.
+drop policy if exists "Users can insert own profile" on public.profiles;
+create policy "Users can insert own profile"
+  on public.profiles for insert
+  with check (auth.uid() = id);
 
 drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile"
@@ -476,7 +497,7 @@ create table if not exists public.unit_costs (
   provider text not null,
   unit text not null,
   label text not null,
-  unit_cost_pence numeric(12,4) not null default 0,   -- our real cost per unit
+  unit_cost_pence numeric(16,8) not null default 0,   -- our real cost per unit (8 places: per-token and per-character prices)
   markup numeric(6,2) not null default 5,             -- base charge = unit_cost × markup
   notes text,
   updated_at timestamptz not null default now(),
@@ -540,7 +561,7 @@ create table if not exists public.credit_transactions (
   provider text,
   unit text,
   quantity numeric(14,4),
-  unit_cost_pence numeric(12,4),
+  unit_cost_pence numeric(16,8),
   markup numeric(6,2),
   raw_cost_pence numeric(14,4),
   description text,
@@ -989,13 +1010,13 @@ end $$;
 -- explorer snapshot; no member-facing policy, so RLS with no policies.
 create table if not exists public.area_planning_signals (
   postcode_area text primary key,
-  lat numeric,
-  lng numeric,
-  radius_km numeric,
+  lat numeric not null,
+  lng numeric not null,
+  radius_km numeric not null,
   large_apps_12m integer,
   large_apps_prev_12m integer,
-  fetched_at timestamptz default now(),
-  source text default 'planit'
+  fetched_at timestamptz not null default now(),
+  source text not null default 'planit'
 );
 alter table public.area_planning_signals enable row level security;
 
@@ -2082,3 +2103,234 @@ create table if not exists public.checklist_steps (
 );
 alter table public.checklist_steps enable row level security;  -- no policies: service role only
 revoke all on public.checklist_steps from anon, authenticated;
+
+-- =========================
+-- Other Stayful tools on this database
+-- =========================
+-- Tables and functions that other Stayful tools created on the live project,
+-- not this app. Declared here so this file describes the whole public
+-- schema: a fresh project built from it matches live, and re-running it on
+-- live changes nothing. Those tools still own these; change a definition
+-- there first, then mirror it here.
+-- This app only reads analyser_reports (the market explorer, planning
+-- signals and the internal broker provider). The live project also has the
+-- `allotment`, `outreach` and `private` schemas, which belong to other tools
+-- and are not tracked in this file.
+
+-- analyser_reports: one row per analyser run (source 'analyser' by default).
+create table if not exists public.analyser_reports (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  address text,
+  postcode text,
+  postcode_area text,
+  bedrooms integer,
+  adr numeric,
+  occupancy numeric,
+  gross_revenue numeric,
+  purchase_price numeric,
+  lead_email text,
+  source text default 'analyser',
+  raw_response jsonb,
+  net_revenue numeric,
+  property_value_low numeric,
+  property_value_high numeric,
+  comp_count integer,
+  comp_radius_km numeric,
+  comp_avg_adr numeric,
+  comp_avg_occupancy numeric,
+  comp_avg_annual_revenue numeric,
+  filename text,
+  extraction_status text default 'ok',
+  extraction_error text,
+  comp_avg_rating numeric,
+  comp_avg_review_count numeric,
+  comp_avg_listing_age numeric,
+  active_listings integer,
+  listing_density numeric,
+  demand_hospitals integer,
+  demand_universities integer,
+  demand_transport integer,
+  demand_events integer,
+  lat numeric,
+  lng numeric,
+  market_signals_version integer,
+  request_id text
+);
+create unique index if not exists analyser_reports_source_request_id_key on public.analyser_reports (source, request_id) where request_id is not null;
+create index if not exists idx_analyser_reports_area_created on public.analyser_reports (postcode_area, created_at);
+create index if not exists idx_analyser_reports_bedrooms on public.analyser_reports (bedrooms);
+create index if not exists idx_analyser_reports_postcode_area on public.analyser_reports (postcode_area);
+alter table public.analyser_reports enable row level security;  -- no policies: service role only
+
+-- airbtics_report_cache: Airbtics report ids kept until expires_at.
+create table if not exists public.airbtics_report_cache (
+  cache_key text primary key,
+  report_id text not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index if not exists idx_airbtics_report_cache_expires on public.airbtics_report_cache (expires_at);
+alter table public.airbtics_report_cache enable row level security;  -- no policies: service role only
+
+-- admin_users / admin_password_resets: an admin sign-in (salted password
+-- hashes, reset tokens). Service role only: unlike the tables around them,
+-- anon and authenticated hold no grants on these at all.
+create table if not exists public.admin_users (
+  email text primary key,
+  password_hash text not null,
+  password_salt text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.admin_users enable row level security;
+revoke all on public.admin_users from anon, authenticated;
+
+create table if not exists public.admin_password_resets (
+  token_hash text primary key,
+  email text not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  requested_ip text
+);
+create index if not exists idx_admin_password_resets_email on public.admin_password_resets (email);
+create index if not exists idx_admin_password_resets_expires on public.admin_password_resets (expires_at);
+alter table public.admin_password_resets enable row level security;
+revoke all on public.admin_password_resets from anon, authenticated;
+
+-- bulk_jobs / bulk_job_rows: bulk analyser runs from a spreadsheet, one job
+-- per upload and one row per property in it, claimed by workers through
+-- claim_bulk_rows below.
+create table if not exists public.bulk_jobs (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  created_by text,
+  filename text,
+  status text not null default 'draft',
+  total_rows integer not null default 0,
+  runnable_rows integer not null default 0,
+  header_map jsonb,
+  paused_reason text,
+  confirmed_at timestamptz,
+  finished_at timestamptz
+);
+alter table public.bulk_jobs enable row level security;  -- no policies: service role only
+
+create table if not exists public.bulk_job_rows (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.bulk_jobs(id) on delete cascade,
+  row_number integer not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  input_email text,
+  input_phone text,
+  input_phone_e164 text,
+  input_address text,
+  input_postcode text,
+  input_bedrooms integer,
+  input_guests integer,
+  warnings jsonb not null default '[]'::jsonb,
+  monday_item_id text,
+  monday_item_name text,
+  match_method text,
+  monday_prev_values jsonb,
+  status text not null default 'pending',
+  attempts integer not null default 0,
+  max_attempts integer not null default 2,
+  claim_token uuid,
+  claimed_at timestamptz,
+  started_at timestamptz,
+  finished_at timestamptz,
+  error_code text,
+  error_message text,
+  report_id uuid references public.analyser_reports(id) on delete set null,
+  gross_revenue numeric,
+  net_revenue numeric,
+  long_let_monthly numeric,
+  recommendation text,
+  qualification text,
+  uplift_pct numeric,
+  data_quality_level text,
+  comparables_found integer,
+  monday_synced boolean not null default false,
+  pdf_uploaded boolean not null default false,
+  input_desired_rent numeric
+);
+create index if not exists idx_bulk_job_rows_claim on public.bulk_job_rows (status, claimed_at);
+create index if not exists idx_bulk_job_rows_job on public.bulk_job_rows (job_id);
+create unique index if not exists uq_bulk_job_rows_job_row on public.bulk_job_rows (job_id, row_number);
+alter table public.bulk_job_rows enable row level security;  -- no policies: service role only
+comment on column public.bulk_job_rows.input_desired_rent is 'Monthly rent the landlord is asking for, in GBP. Null when the sheet had no value, in which case the assessment estimates it and flags it as estimated.';
+
+-- Hands a worker its next rows, capped across every worker at once.
+create or replace function public.claim_bulk_rows(p_limit integer, p_claim_token uuid, p_max_inflight integer default 6, p_stale_seconds integer default 900)
+returns setof public.bulk_job_rows
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_inflight int;
+  v_take     int;
+begin
+  -- Global ceiling on rows running at once, across every worker. This is the
+  -- Airbtics spend-rate throttle, not just a concurrency limit.
+  select count(*) into v_inflight
+    from bulk_job_rows r
+   where r.status in ('claimed', 'running')
+     and r.claimed_at > now() - make_interval(secs => p_stale_seconds);
+
+  v_take := least(p_limit, greatest(p_max_inflight - v_inflight, 0));
+  if v_take <= 0 then
+    return;
+  end if;
+
+  return query
+  with candidate as (
+    select r.id
+      from bulk_job_rows r
+      join bulk_jobs j on j.id = r.job_id
+     where j.status = 'running'
+       and r.attempts < r.max_attempts
+       and (
+             r.status = 'pending'
+             -- Reclaim anything abandoned by a killed invocation. The window is
+             -- ~15x the worst-case row time, so it can't race a live worker.
+             or (r.status in ('claimed', 'running')
+                 and r.claimed_at < now() - make_interval(secs => p_stale_seconds))
+           )
+     order by j.created_at, r.row_number
+     limit v_take
+     for update of r skip locked
+  )
+  update bulk_job_rows r
+     set status      = 'claimed',
+         claim_token = p_claim_token,
+         claimed_at  = now(),
+         -- Incremented AT CLAIM, not on completion, so a row that hard-kills
+         -- its worker (OOM, timeout) burns max_attempts and then stops rather
+         -- than looping forever on someone else's credit.
+         attempts    = r.attempts + 1,
+         updated_at  = now()
+    from candidate c
+   where r.id = c.id
+  returning r.*;
+end;
+$$;
+revoke all on function public.claim_bulk_rows(integer, uuid, integer, integer) from public, anon, authenticated;
+grant execute on function public.claim_bulk_rows(integer, uuid, integer, integer) to service_role;
+
+-- Text to a number, or null when it is not one.
+create or replace function public.safe_numeric(t text)
+returns numeric
+language plpgsql
+immutable
+as $$
+begin
+  return t::numeric;
+exception when others then
+  return null;
+end;
+$$;
