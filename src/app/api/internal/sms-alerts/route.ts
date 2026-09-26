@@ -1,23 +1,21 @@
-import { runCollector } from "@/lib/notify/alerts-collect";
+import { runSmsAlerts } from "@/lib/sms/alerts-run";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
-// ─── Tracked-deal alerts collector (Batch 6) ──────────────────────────
-// Vercel cron (vercel.json: 06:55 UTC, after listing-recheck at 06:00,
-// marketplace-recheck at 06:30 and the sweep's last pass at 06:50, before the
-// 07:00 picks run). Records, per member, the price drops, deals back on the
-// market, deals getting attention and deals gone on what they track, into
-// deal_alerts. Sends nothing: the daily email carries them. Idempotent.
-// Also runs hourly at :40 from 07:40 to 19:40 UTC (Batch 8), so a change the
-// hourly marketplace recheck finds can be texted within the hour
-// (/api/internal/sms-alerts); the email still carries it the next morning.
+// ─── Text alerts (Batch 8) ─────────────────────────────────────────────
+// Vercel cron (vercel.json: every 15 minutes, 07:00–19:45 UTC; the run
+// itself only sends 08:00–20:00 UK time, so the clock change needs no edit).
+// At most one text per member per day, and the monthly cap, through Batch 6's
+// send record. Reads Batch 6's alerts, which the collector
+// (/api/internal/deal-alerts) records hourly in the day.
 //
-//   ?dry=1          what would be recorded; writes nothing
+//   ?dry=1          what would be texted, to whom; claims, records and sends nothing
+//   ?dry=1&anytime=1  the same outside 08:00–20:00 (dry runs only)
 //   ?only=<email>   one member
 //
-//   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/deal-alerts?dry=1"
+//   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/sms-alerts?dry=1"
 //
-// Kill switch: DEAL_ALERTS_ENABLED=false.
+// Sends nothing unless SMS_ALERTS_ENABLED=true and Twilio is configured.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -27,7 +25,7 @@ export async function GET(request: Request) {
   if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const params = new URL(request.url).searchParams;
   const dry = params.get("dry") === "1";
-  if (process.env.DEAL_ALERTS_ENABLED === "false" && !dry) return Response.json({ enabled: false, reason: "DEAL_ALERTS_ENABLED is 'false'" });
+  const ignoreWindow = dry && params.get("anytime") === "1";
 
   let onlyUserIds: string[] | undefined;
   const only = params.get("only")?.trim().toLowerCase();
@@ -44,6 +42,6 @@ export async function GET(request: Request) {
     onlyUserIds = [id];
   }
 
-  const result = await runCollector({ dry, onlyUserIds });
+  const result = await runSmsAlerts({ dry, onlyUserIds, ignoreWindow });
   return Response.json(result.body, { status: result.status });
 }

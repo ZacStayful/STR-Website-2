@@ -74,6 +74,8 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
       data: {
         full_name: fullName,
         mobile: normalisedMobile,
+        // Batch 8: asked for deal texts. Sends nothing: Account → Notifications asks them to verify the number first.
+        ...(formData.get('sms_opt_in') === 'on' ? { sms_opt_in: true } : {}),
       },
     },
   })

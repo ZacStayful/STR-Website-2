@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, notificationPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
+import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, NOTIFICATION_COLUMNS_BEFORE_BATCH_8, notificationPatch, notificationsPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
 
 /**
  * The only writer of the notification columns. Service role, because the
@@ -12,6 +12,14 @@ import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, notification
 export async function setNotification(userId: string, key: NotificationKey, on: boolean): Promise<boolean> {
   if (!hasServiceRole()) return false;
   const { error } = await createAdminClient().from('profiles').update(notificationPatch(key, on)).eq('id', userId);
+  if (error) console.error('[notifications] profile update failed:', error.message);
+  return !error;
+}
+
+/** Several switches in one write: a member's text switches, turned on together when they verify their number. */
+export async function setNotifications(userId: string, keys: readonly NotificationKey[], on: boolean): Promise<boolean> {
+  if (!hasServiceRole() || keys.length === 0) return false;
+  const { error } = await createAdminClient().from('profiles').update(notificationsPatch(keys, on)).eq('id', userId);
   if (error) console.error('[notifications] profile update failed:', error.message);
   return !error;
 }
@@ -27,8 +35,9 @@ export async function readNotifications(userId: string): Promise<NotificationSta
   const full = await admin.from('profiles').select(NOTIFICATION_COLUMNS).eq('id', userId).maybeSingle();
   if (!full.error) return full.data ? notificationState(full.data as NotificationRow) : null;
   console.warn('[notifications] select failed (schema behind?):', full.error.message);
-  // Each fallback only drops columns; a missing one reads as its default (on).
-  for (const columns of [NOTIFICATION_COLUMNS_BEFORE_BATCH_6, 'sourcing_alerts, sourcing_opted_out_at, alert_weekly']) {
+  // Each fallback only drops columns; a missing one reads as its default
+  // (on for the emails, off for the Batch 8 texts).
+  for (const columns of [NOTIFICATION_COLUMNS_BEFORE_BATCH_8, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, 'sourcing_alerts, sourcing_opted_out_at, alert_weekly']) {
     const older = await admin.from('profiles').select(columns).eq('id', userId).maybeSingle();
     if (!older.error) return older.data ? notificationState(older.data as NotificationRow) : null;
   }
