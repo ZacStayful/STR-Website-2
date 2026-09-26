@@ -34,7 +34,6 @@ import { analyseRelaxation, closestMatch, describeRelaxation } from '../listing/
 import { loadPicks } from '../listing/picks-server';
 import type { DealFilters } from '../marketplace/grid';
 import { rankingPool, type RankingRow } from '../marketplace/queries';
-import { keptDealIds } from '../marketplace/reactions-server';
 import type { DealVisibility } from '../marketplace/visibility';
 import { applyKindFeedback, buildCandidate, CLOSEST_ADVICE, dealKey, filtersForGoals, nearestAreas, nearestOutside, orderForToday, referencePoint, WIDEN_AREA_ADVICE, type Built, type CandidateContext, type TodayCandidate } from './candidates';
 import { feedbackForMember } from './feedback';
@@ -84,8 +83,15 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   }
   if (first.data) return fromRow(first.data);
 
-  const exclude = await excludedFor(admin, member, day);
-  const chosen = await chooseToday(admin, member, exclude, now);
+  let chosen: Omit<TodaySelection, 'day'>;
+  try {
+    const exclude = await excludedFor(admin, member, day);
+    chosen = await chooseToday(admin, member, exclude, now);
+  } catch (err) {
+    // The page says the day's deals are not ready rather than failing.
+    console.error('[today] choosing failed:', (err as Error)?.message ?? err);
+    return null;
+  }
   // An empty day is not stored: nothing to keep steady, and the next visit
   // may find something (a deal leaving the early-access window, a read that
   // failed this time).
@@ -108,11 +114,25 @@ function fromRow(r: { day: unknown; deal_ids: unknown; near_miss: unknown; advic
   };
 }
 
-/** Everything that can never be on this member's Today again: opened, kept, or shown on an earlier day. */
+/**
+ * Everything that can never be on this member's Today again: kept or passed
+ * (read here directly, so a pass stays out even when the pool's own pass
+ * filter has to fall back), opened, or shown on an earlier day.
+ */
 async function excludedFor(admin: Admin, member: MemberContext, day: string): Promise<Set<string>> {
   const out = new Set<string>();
-  const [kept] = await Promise.all([
-    keptDealIds(member.userId),
+  await Promise.all([
+    (async () => {
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await admin.from('deal_reactions').select('deal_id').eq('user_id', member.userId).order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
+        if (error) {
+          console.warn('[today] reactions read failed:', error.message);
+          break;
+        }
+        for (const r of (data ?? []) as { deal_id: string }[]) out.add(r.deal_id);
+        if ((data?.length ?? 0) < PAGE) break;
+      }
+    })(),
     (async () => {
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await admin.from('deal_opens').select('deal_id').eq('user_id', member.payerId).eq('status', 'open').order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
@@ -136,7 +156,6 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
       }
     })(),
   ]);
-  for (const id of kept) out.add(id);
   return out;
 }
 

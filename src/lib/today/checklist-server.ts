@@ -131,6 +131,36 @@ async function stepRows(admin: Admin, userId: string): Promise<StepRow[] | null>
   return (data ?? []) as StepRow[];
 }
 
+/**
+ * Deals this member opened themselves. Not the daily pick's automatic open,
+ * not an admin's free look, and — because a team's opens are all recorded
+ * against the owner — not one a team member opened on the owner's account:
+ * that open's charge carries the member's id, and it was not the owner who
+ * did it.
+ */
+async function ownOpens(admin: Admin, userId: string): Promise<number> {
+  const { data, error } = await admin
+    .from('deal_opens')
+    .select('transaction_id')
+    .eq('user_id', userId)
+    .eq('status', 'open')
+    .not('verified_via', 'in', '(pick,admin)')
+    .not('transaction_id', 'is', null)
+    .limit(50);
+  if (error) {
+    console.warn('[checklist] opens read failed:', error.message);
+    return 0;
+  }
+  const ids = ((data ?? []) as { transaction_id: number | string }[]).map((r) => r.transaction_id);
+  if (ids.length === 0) return 0;
+  const { count, error: txErr } = await admin.from('credit_transactions').select('id', { count: 'exact', head: true }).in('id', ids).is('metadata->>member_id', null);
+  if (txErr) {
+    console.warn('[checklist] open charges read failed:', txErr.message);
+    return 0;
+  }
+  return count ?? 0;
+}
+
 /** What the member's own records show. A read that fails counts as not done — never as done. */
 async function evidenceFor(admin: Admin, userId: string, marketGoals: unknown): Promise<Evidence> {
   const exists = async (label: string, q: PromiseLike<{ count: number | null; error: { message: string } | null }>): Promise<number> => {
@@ -144,8 +174,7 @@ async function evidenceFor(admin: Admin, userId: string, marketGoals: unknown): 
   const head = { count: 'exact' as const, head: true };
   const [keeps, opened, reported, dealShares, listingShares] = await Promise.all([
     exists('keeps', admin.from('deal_reactions').select('deal_id', head).eq('user_id', userId).eq('reaction', 'keep')),
-    // Their own opens only: the daily pick's automatic open, and an admin's free look, are not something they did.
-    exists('opens', admin.from('deal_opens').select('deal_id', head).eq('user_id', userId).eq('status', 'open').not('verified_via', 'in', '(pick,admin)')),
+    ownOpens(admin, userId),
     exists('reports', admin.from('saved_searches').select('id', head).eq('user_id', userId)),
     exists('deal shares', admin.from('deal_shares').select('token', head).eq('user_id', userId)),
     exists('listing shares', admin.from('checked_listings').select('id', head).eq('user_id', userId).not('share_token', 'is', null)),
