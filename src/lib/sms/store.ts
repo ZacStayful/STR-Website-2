@@ -10,6 +10,8 @@ import 'server-only';
  * the limit already reached. Never text on a guess.
  */
 import type { createAdminClient } from '../supabase/admin';
+import { notificationState, type NotificationRow, type NotificationState } from '../notifications/registry';
+import { contactCanReceive } from './choose';
 
 export type Admin = ReturnType<typeof createAdminClient>;
 
@@ -28,10 +30,6 @@ export interface SmsContact {
 
 const CONTACT_COLUMNS = 'user_id, phone_e164, verified_at, enabled, consent_at, consent_source, stopped_at, stop_source';
 
-/** Whether texts may go to this contact at all (the per-type switches are separate). */
-export function contactCanReceive(c: Pick<SmsContact, 'phone_e164' | 'verified_at' | 'enabled' | 'stopped_at'> | null | undefined): boolean {
-  return Boolean(c && c.phone_e164 && c.verified_at && c.enabled && !c.stopped_at);
-}
 
 export async function getContact(admin: Admin, userId: string): Promise<SmsContact | null> {
   const { data, error } = await admin.from('sms_contacts').select(CONTACT_COLUMNS).eq('user_id', userId).maybeSingle();
@@ -230,9 +228,14 @@ export async function textedAlertIds(admin: Admin, userIds: readonly string[], s
   return out;
 }
 
-/** Outbound texts Twilio took that have no price yet, oldest first, at least an hour old. */
+/**
+ * Outbound texts Twilio took that have no price yet, oldest first: at least
+ * an hour old (Twilio prices a message once it is final) and at most a week
+ * (one it never priced, e.g. failed, stops being asked about).
+ */
 export async function unpricedMessages(admin: Admin, limit: number, now: Date = new Date()): Promise<{ id: string; twilio_sid: string }[]> {
   const before = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  const after = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await admin
     .from('sms_messages')
     .select('id, twilio_sid')
@@ -240,6 +243,7 @@ export async function unpricedMessages(admin: Admin, limit: number, now: Date = 
     .not('twilio_sid', 'is', null)
     .is('price', null)
     .lt('created_at', before)
+    .gte('created_at', after)
     .order('created_at', { ascending: true })
     .limit(limit);
   if (error) {
@@ -257,4 +261,62 @@ export async function smsMonthlyCap(admin: Admin): Promise<number> {
   if (error) console.warn('[sms] monthly cap read failed, using the default:', error.message);
   const n = Number((data as { value: unknown } | null)?.value);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_MONTHLY_CAP;
+}
+
+/**
+ * The text switches of these members. Null when unreadable (the Batch 8
+ * columns missing, say): the caller then sends nothing.
+ */
+export async function smsSwitchesFor(admin: Admin, userIds: readonly string[]): Promise<Map<string, NotificationState> | null> {
+  const out = new Map<string, NotificationState>();
+  for (let i = 0; i < userIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('profiles').select('id, sms_price_drop, sms_back_on_market, sms_nearly_gone, sms_gone').in('id', userIds.slice(i, i + ID_CHUNK));
+    if (error) {
+      console.warn('[sms] text switches read failed (schema behind?):', error.message);
+      return null;
+    }
+    for (const r of (data ?? []) as (NotificationRow & { id: string })[]) out.set(r.id, notificationState(r));
+  }
+  return out;
+}
+
+/** When each alert was recorded (deal_alerts.created_at, ms). Unreadable ones are simply absent, so never texted. */
+export async function alertCreatedAt(admin: Admin, alertIds: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < alertIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('deal_alerts').select('id, created_at').in('id', alertIds.slice(i, i + ID_CHUNK));
+    if (error) {
+      console.warn('[sms] alert times read failed:', error.message);
+      return out;
+    }
+    for (const r of (data ?? []) as { id: string; created_at: string }[]) {
+      const t = Date.parse(r.created_at);
+      if (Number.isFinite(t)) out.set(r.id, t);
+    }
+  }
+  return out;
+}
+
+/**
+ * Texts each member has had since `monthStart` (a YYYY-MM-DD UK date), from
+ * Batch 6's send record: sent, or on its way. Null when unreadable, which
+ * the caller treats as the cap reached.
+ */
+export async function textsThisMonth(admin: Admin, userIds: readonly string[], monthStart: string): Promise<Map<string, number> | null> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < userIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin
+      .from('notification_sends')
+      .select('user_id')
+      .eq('channel', 'sms')
+      .gte('day', monthStart)
+      .in('status', ['sent', 'sending'])
+      .in('user_id', userIds.slice(i, i + ID_CHUNK));
+    if (error) {
+      console.warn('[sms] monthly count read failed (schema behind?):', error.message);
+      return null;
+    }
+    for (const r of (data ?? []) as { user_id: string }[]) out.set(r.user_id, (out.get(r.user_id) ?? 0) + 1);
+  }
+  return out;
 }

@@ -14,6 +14,14 @@
 			"schedule": "55 6 * * *"
 		},
 		{
+			"path": "/api/internal/deal-alerts",
+			"schedule": "40 7-19 * * *"
+		},
+		{
+			"path": "/api/internal/sms-alerts",
+			"schedule": "*/15 7-19 * * *"
+		},
+		{
 			"path": "/api/internal/market-warm",
 			"schedule": "45 4 * * *"
 		},
