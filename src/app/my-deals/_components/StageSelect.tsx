@@ -34,6 +34,7 @@ export function StageSelect({
   openPence = null,
   back,
   compact = false,
+  untracked = false,
 }: {
   /** The My deals key: `d-<dealId>` or `l-<checkedListingId>`. */
   itemKey: string;
@@ -48,9 +49,11 @@ export function StageSelect({
   /** Where to land after opening (a My deals focus path, or the deal page). */
   back: string;
   compact?: boolean;
+  /** Not on My deals yet (the deal page, for a deal the member has not kept): the dropdown starts on "Not in My deals". */
+  untracked?: boolean;
 }) {
   const router = useRouter();
-  const [current, setCurrent] = useState<PipelineStatus>(stage);
+  const [current, setCurrent] = useState<PipelineStatus | "">(untracked ? "" : stage);
   const [wanted, setWanted] = useState<PipelineStatus | null>(null);
   const [price, setPrice] = useState<number | null>(openPence);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +83,7 @@ export function StageSelect({
     });
   }
 
-  const label = PIPELINE_STATUSES.find((s) => s.key === current)?.label ?? "Kept";
+  const label = PIPELINE_STATUSES.find((s) => s.key === current)?.label ?? "Not in My deals";
 
   return (
     <div className={compact ? "" : "space-y-2"}>
@@ -93,6 +96,11 @@ export function StageSelect({
           aria-label={`Stage: ${label}`}
           className="h-9 min-w-0 flex-1 rounded-md border border-border bg-card px-2 text-sm font-medium text-foreground disabled:opacity-60 sm:flex-none"
         >
+          {current === "" && (
+            <option value="" disabled>
+              Not in My deals
+            </option>
+          )}
           {PIPELINE_STATUSES.map((s) => (
             <option key={s.key} value={s.key}>
               {s.label}

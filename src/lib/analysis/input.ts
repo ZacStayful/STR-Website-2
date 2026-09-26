@@ -31,6 +31,11 @@ export interface AnalysisInput {
   rentPcm: number | null;
   sourceListing: SourceListingRef | null;
   checkedListingId: string | null;
+  /**
+   * Run from a deal's Full report button: a pipeline row that already has a
+   * report is not analysed (or charged) again. See src/lib/analysis/report-claim.ts.
+   */
+  fromDeal: boolean;
   /** The form asked for the PMI second opinion. The kill switch is the caller's. */
   enhancedRequested: boolean;
 }
@@ -142,6 +147,7 @@ export function parseAnalysisInput(body: unknown): ParseResult {
       sourceListing: sourceRef(b.sourceListing, askingPrice, rentPcm),
       checkedListingId:
         typeof b.checkedListingId === 'string' && /^[0-9a-f-]{36}$/i.test(b.checkedListingId) ? b.checkedListingId : null,
+      fromDeal: b.fromDeal === true,
       enhancedRequested: b.enhanced === true,
     },
   };

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { payerFor } from "@/lib/team";
+import { payerFor, personName, profileNames } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { getCreditSummary } from "@/lib/credit/summary";
@@ -21,7 +21,12 @@ import { formatOpenPrice, openPricePence } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { headlineFigure, priceLine } from "../_components/DealCard";
-import { openDealAction, savePipelineAction } from "../actions";
+import { openDealAction } from "../actions";
+import { dealTrackingFor } from "@/lib/listing/tracked-server";
+import { myDealsFocusPath } from "@/lib/listing/return-path";
+import { formatQuote, reportQuotePence } from "@/lib/credit/report-quote";
+import { StageSelect } from "@/app/my-deals/_components/StageSelect";
+import { NextStepSlot } from "@/app/my-deals/_components/NextStepSlot";
 import { ShareDealButton } from "../_components/ShareDealButton";
 
 export const metadata: Metadata = { title: "Deal — Stayful Intelligence", robots: { index: false, follow: false } };
@@ -77,6 +82,20 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const message = msg ? MESSAGES[msg] ?? null : null;
   const insufficient = msg === "insufficient_credit";
   const where = [deal.town, area?.name && area.name !== deal.town ? area.name : null, deal.outcode].filter(Boolean).join(" · ");
+
+  // Batch 5 (My deals): this member's stage for the deal, and the full report
+  // to open instead of running (and paying for) another one. A report counts
+  // only if it still exists and this member may read it (Team reports' rule).
+  const tracking = await dealTrackingFor({ userId: user.id, dealId: deal.id, canonicalUrl: deal.canonical_url, opened: Boolean(priv), openViaPick: priv?.open.verified_via === "pick" });
+  let report: { id: string; userId: string } | null = null;
+  if (priv && tracking.reportCandidates.length > 0) {
+    const { data: readable } = await supabase.from("saved_searches").select("id").in("id", tracking.reportCandidates.map((c) => c.id));
+    const ok = new Set(((readable ?? []) as { id: string }[]).map((r) => r.id));
+    report = tracking.reportCandidates.find((c) => ok.has(c.id)) ?? null;
+  }
+  const reportBy = report && report.userId !== user.id ? personName((await profileNames([report.userId])).get(report.userId)) : null;
+  const quote = priv && !report ? await reportQuotePence(payerId, adminUser) : null;
+  const dealPath = `/deals/${deal.id}`;
 
   // The purchase / rent-to-rent model at the member's own finance settings when they have set them.
   let model: Deal | null = null;
@@ -139,18 +158,25 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 <p className="text-xs text-muted-foreground">{describeType(card)}{priv?.postcode ? ` · ${priv.postcode}` : ""}</p>
                 <p className={"mt-1 text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}{deal.listed_date ? ` · listed ${new Date(deal.listed_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
 
+                <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-3">
+                  <div className="min-w-0 flex-1 basis-56">
+                    <StageSelect itemKey={`d-${deal.id}`} stage={tracking.stage} opened={Boolean(priv)} dealId={deal.id} dealLive={deal.status === "live"} openPence={pence} back={dealPath} untracked={!tracking.tracked} />
+                  </div>
+                  {tracking.tracked && (
+                    <Link href={myDealsFocusPath(`d-${deal.id}`)} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See in My deals</Link>
+                  )}
+                </div>
+                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} />
+
                 {priv ? (
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <a href={priv.listingUrl} target="_blank" rel="noopener noreferrer" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">View on {SOURCE_LABELS[deal.source]}</a>
-                    {priv.open.checked_listing_id ? (
-                      <Link href={`/markets?pane=listings&listing=${encodeURIComponent(priv.open.checked_listing_id)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open in pipeline</Link>
+                    {report ? (
+                      <Link href={`/reports/${report.id}?back=${encodeURIComponent(dealPath)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open full report{reportBy ? ` · ${reportBy}’s` : ""}</Link>
                     ) : (
-                      <form action={savePipelineAction}>
-                        <input type="hidden" name="id" value={deal.id} />
-                        <button type="submit" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Save to pipeline</button>
-                      </form>
+                      // The deal's own URL, so the report links back to this deal; `back` brings the member here after.
+                      <Link href={`/estimate?listing=${encodeURIComponent(deal.canonical_url)}&back=${encodeURIComponent(dealPath)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full report{quote !== null ? ` · about ${formatQuote(quote)}` : ""}</Link>
                     )}
-                    <Link href={`/estimate?listing=${encodeURIComponent(priv.listingUrl)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full report</Link>
                     <Link href={`/deals?kind=${deal.kind}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
                     {priv.open.id !== "admin" && <span className="text-[11px] text-muted-foreground">Opened {new Date(priv.open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}{Number(priv.open.charged_base_pence) > 0 ? ` for ${formatOpenPrice(Number(priv.open.charged_base_pence))}` : ""}</span>}
                   </div>

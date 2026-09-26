@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { payerFor } from '@/lib/team';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -9,6 +10,7 @@ import { parseMarketGoals, type FinanceGoals } from '@/lib/market/goals';
 import { parseAnalysisInput } from '@/lib/analysis/input';
 import { reserveAnalysis, runAnalysis, enhancedEnabled, GeocodeError, type AnalysisRunOptions } from '@/lib/analysis/run';
 import { reportAction } from '@/lib/credit/estimate';
+import { claimReportRun, releaseReportRun } from '@/lib/analysis/report-claim';
 
 // This route streams SSE while `runAnalysis` makes several sequential
 // external API calls; the default 10s function timeout (Hobby) would cut
@@ -113,7 +115,29 @@ export async function POST(request: Request) {
 
   const parsed = parseAnalysisInput(body);
   if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 });
-  const input = parsed.input;
+  const input = { ...parsed.input };
+
+  // ─── One report at a time per listing ─────────────────────────
+  // Claimed before any credit is reserved, so a double click, a second tab
+  // or a refresh cannot start (and charge) a second report for the same
+  // pipeline row while the first runs. See src/lib/analysis/report-claim.ts.
+  let claimedRow: string | null = null;
+  if (userId && input.checkedListingId) {
+    const claim = await claimReportRun(userId, input.checkedListingId, { fromDeal: input.fromDeal });
+    if (claim.kind === 'not_own') {
+      // Never link a report to someone else's row.
+      input.checkedListingId = null;
+    } else if (claim.kind === 'running') {
+      return Response.json({ error: 'A full report for this listing is already running. It will be saved to the deal in a minute.', code: 'report_running' }, { status: 409 });
+    } else if (claim.kind === 'reported') {
+      return Response.json({ error: 'This deal already has a full report.', code: 'already_reported', reportId: claim.reportId }, { status: 409 });
+    } else if (claim.kind === 'claimed') {
+      claimedRow = input.checkedListingId;
+    }
+  }
+  const release = async () => {
+    if (userId && claimedRow) await releaseReportRun(userId, claimedRow);
+  };
 
   const runOpts: AnalysisRunOptions = {
     billedUserId: userId,
@@ -130,6 +154,7 @@ export async function POST(request: Request) {
   } catch (err) {
     // The action name must match what was priced, so an enhanced report
     // reports itself as such in the out-of-credit payload.
+    await release();
     if (err instanceof InsufficientCreditError) {
       return insufficientCreditResponse(err, reportAction(enhancedEnabled(input.enhancedRequested)));
     }
@@ -137,122 +162,142 @@ export async function POST(request: Request) {
   }
 
   // ─── Streaming SSE Response ──────────────────────────────────
+  // The run is handed to after() as well as streamed: once the credit is
+  // spent, the report is finished, saved and linked to its listing even if
+  // the browser goes away (a refresh, a closed tab). Sends after that point
+  // are dropped instead of throwing, which used to abort the run half-charged.
+  let clientGone = false;
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       const send = (data: Record<string, unknown>) => {
-        controller.enqueue(new TextEncoder().encode(sseEvent(data)));
+        if (clientGone) return;
+        try {
+          controller.enqueue(new TextEncoder().encode(sseEvent(data)));
+        } catch {
+          clientGone = true;
+        }
       };
 
-      try {
-        const { result, spend } = await runAnalysis(prepared, input, {
-          ...runOpts,
-          onProgress: (e) => send({ stage: e.stage, progress: e.progress, message: e.message }),
-        });
+      after((async () => {
+        try {
+          const { result, spend } = await runAnalysis(prepared, input, {
+            ...runOpts,
+            onProgress: (e) => send({ stage: e.stage, progress: e.progress, message: e.message }),
+          });
 
-        // Persist the report so it can be reopened from /reports, and link it
-        // to the checked listing it came from. Done before `complete` so the
-        // client receives the report id with the result.
-        if (userId) {
-          try {
-            const supabase = await createSupabaseServerClient();
-            // A team member's report is the team's: it lands in the shared
-            // list under the owner who paid for it, credited to its author.
-            const { payerId: ownerId } = await payerFor(userId);
-            const { data: saved, error: saveError } = await supabase
-              .from('saved_searches')
-              .insert({
-                user_id: userId,
-                owner_id: ownerId,
-                name: result.property.address,
-                address: result.property.address,
-                postcode: result.property.postcode,
-                postcode_area: postcodeAreaOf(result.property.postcode),
-                guest_count: result.property.guests,
-                bedrooms: result.property.bedrooms,
-                kind: input.sourceListing?.kind ?? (input.rentPcm ? 'rent' : 'sale'),
-                result,
-                source_listing: input.sourceListing,
-                deal: result.deal,
-                checked_listing_id: input.checkedListingId,
-              })
-              .select('id')
-              .single();
-            if (saveError) console.error('[api/analyse] report save failed:', saveError.message);
-            else if (saved?.id) {
-              result.reportId = saved.id as string;
-              if (input.checkedListingId) {
-                await supabase
-                  .from('checked_listings')
-                  .update({ analysed_report_id: saved.id, updated_at: new Date().toISOString() })
-                  .eq('id', input.checkedListingId)
-                  .eq('user_id', userId);
+          // Persist the report so it can be reopened from /reports, and link it
+          // to the checked listing it came from. Done before `complete` so the
+          // client receives the report id with the result.
+          if (userId) {
+            try {
+              const supabase = await createSupabaseServerClient();
+              // A team member's report is the team's: it lands in the shared
+              // list under the owner who paid for it, credited to its author.
+              const { payerId: ownerId } = await payerFor(userId);
+              const { data: saved, error: saveError } = await supabase
+                .from('saved_searches')
+                .insert({
+                  user_id: userId,
+                  owner_id: ownerId,
+                  name: result.property.address,
+                  address: result.property.address,
+                  postcode: result.property.postcode,
+                  postcode_area: postcodeAreaOf(result.property.postcode),
+                  guest_count: result.property.guests,
+                  bedrooms: result.property.bedrooms,
+                  kind: input.sourceListing?.kind ?? (input.rentPcm ? 'rent' : 'sale'),
+                  result,
+                  source_listing: input.sourceListing,
+                  deal: result.deal,
+                  checked_listing_id: input.checkedListingId,
+                })
+                .select('id')
+                .single();
+              if (saveError) console.error('[api/analyse] report save failed:', saveError.message);
+              else if (saved?.id) {
+                result.reportId = saved.id as string;
+                if (input.checkedListingId) {
+                  await supabase
+                    .from('checked_listings')
+                    .update({ analysed_report_id: saved.id, updated_at: new Date().toISOString() })
+                    .eq('id', input.checkedListingId)
+                    .eq('user_id', userId);
+                }
+                // Keep the last 200 reports per member.
+                const { data: older } = await supabase.from('saved_searches').select('id').eq('user_id', userId).order('created_at', { ascending: false }).range(200, 400);
+                if (older && older.length > 0) {
+                  await supabase.from('saved_searches').delete().in('id', older.map((r) => r.id));
+                }
               }
-              // Keep the last 200 reports per member.
-              const { data: older } = await supabase.from('saved_searches').select('id').eq('user_id', userId).order('created_at', { ascending: false }).range(200, 400);
-              if (older && older.length > 0) {
-                await supabase.from('saved_searches').delete().in('id', older.map((r) => r.id));
-              }
+            } catch (err) {
+              console.error('[api/analyse] report save threw:', err);
             }
-          } catch (err) {
-            console.error('[api/analyse] report save threw:', err);
           }
-        }
 
-        send({
-          stage: 'complete',
-          progress: 100,
-          message: 'Analysis complete',
-          data: result,
-          credit: { actionId: prepared.ctx.actionId, basePence: spend.basePence, chargedPence: spend.chargedPence },
-        });
+          send({
+            stage: 'complete',
+            progress: 100,
+            message: 'Analysis complete',
+            data: result,
+            credit: { actionId: prepared.ctx.actionId, basePence: spend.basePence, chargedPence: spend.chargedPence },
+          });
 
-        // Generate the PDF report and upload it to the user's enquiry row
-        // (Monday "Reports" file column), matched by email. Awaited before
-        // closing the stream so Vercel doesn't kill the function mid-upload.
-        const effectiveEmail = input.email ?? userEmail;
-        if (effectiveEmail) {
+          // Generate the PDF report and upload it to the user's enquiry row
+          // (Monday "Reports" file column), matched by email. Awaited before
+          // closing the stream so Vercel doesn't kill the function mid-upload.
+          const effectiveEmail = input.email ?? userEmail;
+          if (effectiveEmail) {
+            try {
+              const { uploadPdfToMonday } = await import('@/lib/apis/monday');
+              // The shared renderer, not a hand-built element: this copy and the
+              // one the member downloads then cannot drift apart.
+              const { renderReportPdf, reportFilename } = await import('@/lib/pdf/render');
+              const buffer = await renderReportPdf(result, { preparedFor: effectiveEmail });
+              await uploadPdfToMonday(
+                { email: effectiveEmail, name: userName ?? undefined, mobile: userMobile ?? undefined },
+                buffer,
+                reportFilename(result),
+              );
+            } catch (err) {
+              console.error('[Monday] PDF upload error:', err);
+            }
+          }
+
+          // Usage is metered per provider call (credit ledger). reports_total is
+          // a reporting counter only, written with the service-role client: the
+          // usage counters are not grantable to `authenticated` (see the column
+          // grants in supabase/schema.sql).
+          if (userId) {
+            try {
+              const admin = createAdminClient();
+              const { data: current } = await admin.from('profiles').select('reports_total').eq('id', userId).single();
+              await admin
+                .from('profiles')
+                .update({ last_seen_at: new Date().toISOString(), reports_total: (current?.reports_total ?? 0) + 1 })
+                .eq('id', userId);
+            } catch (err) {
+              console.error('[api/analyse] usage hook failed:', err);
+            }
+          }
+        } catch (err) {
+          if (err instanceof GeocodeError) {
+            send({ stage: 'error', progress: 0, message: err.message });
+          } else {
+            console.error('Unexpected error in /api/analyse:', err);
+            send({ stage: 'error', progress: 0, message: 'An unexpected error occurred. Please try again.' });
+          }
+        } finally {
+          await release();
           try {
-            const { uploadPdfToMonday } = await import('@/lib/apis/monday');
-            // The shared renderer, not a hand-built element: this copy and the
-            // one the member downloads then cannot drift apart.
-            const { renderReportPdf, reportFilename } = await import('@/lib/pdf/render');
-            const buffer = await renderReportPdf(result, { preparedFor: effectiveEmail });
-            await uploadPdfToMonday(
-              { email: effectiveEmail, name: userName ?? undefined, mobile: userMobile ?? undefined },
-              buffer,
-              reportFilename(result),
-            );
-          } catch (err) {
-            console.error('[Monday] PDF upload error:', err);
+            controller.close();
+          } catch {
+            /* the browser already went */
           }
         }
-
-        // Usage is metered per provider call (credit ledger). reports_total is
-        // a reporting counter only, written with the service-role client: the
-        // usage counters are not grantable to `authenticated` (see the column
-        // grants in supabase/schema.sql).
-        if (userId) {
-          try {
-            const admin = createAdminClient();
-            const { data: current } = await admin.from('profiles').select('reports_total').eq('id', userId).single();
-            await admin
-              .from('profiles')
-              .update({ last_seen_at: new Date().toISOString(), reports_total: (current?.reports_total ?? 0) + 1 })
-              .eq('id', userId);
-          } catch (err) {
-            console.error('[api/analyse] usage hook failed:', err);
-          }
-        }
-      } catch (err) {
-        if (err instanceof GeocodeError) {
-          send({ stage: 'error', progress: 0, message: err.message });
-        } else {
-          console.error('Unexpected error in /api/analyse:', err);
-          send({ stage: 'error', progress: 0, message: 'An unexpected error occurred. Please try again.' });
-        }
-      } finally {
-        controller.close();
-      }
+      })());
+    },
+    cancel() {
+      clientGone = true;
     },
   });
 

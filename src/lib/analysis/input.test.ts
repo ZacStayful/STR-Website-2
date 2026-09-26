@@ -96,6 +96,9 @@ test('enhanced is reported as asked for; the kill switch is the caller’s', () 
   assert.equal(ok({ ...valid, enhanced: true }).enhancedRequested, true);
   assert.equal(ok({ ...valid, enhanced: 'true' }).enhancedRequested, false); // strictly boolean
   assert.equal(ok(valid).enhancedRequested, false);
+  assert.equal(ok(valid).fromDeal, false);
+  assert.equal(ok({ ...valid, fromDeal: true }).fromDeal, true);
+  assert.equal(ok({ ...valid, fromDeal: 'yes' }).fromDeal, false); // strictly boolean
 });
 
 test('email is kept only when it looks like an address', () => {

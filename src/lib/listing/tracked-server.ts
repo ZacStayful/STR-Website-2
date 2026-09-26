@@ -22,7 +22,7 @@ import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { loadSourcedListings } from '../marketplace/server';
-import { toCheckedListingRow } from './pipeline';
+import { isPipelineStatus, KEPT_STATUS, toCheckedListingRow, type PipelineStatus } from './pipeline';
 import { forViewer, trackedDeals, type TrackedDeal, type TrackedDealFacts, type TrackedOpenInput, type TrackedPickAnswerInput, type TrackedPipelineInput, type TrackedReactionInput, type ViewerDeal } from './tracked';
 
 const PAGE = 1000;
@@ -170,4 +170,44 @@ export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | '
     }
   }
   return { items, view, cards, addresses, people, payerId, visibility };
+}
+
+/** One deal, for its own page: this person's stage, whether it is on their My deals, and any report to open. */
+export interface DealTracking {
+  stage: PipelineStatus;
+  /** On this person's My deals (their own row, reaction, or an open that counts). */
+  tracked: boolean;
+  checkedListingId: string | null;
+  /** Report ids from the pipeline rows in scope, this person's first, then the team's most recent. Not checked to exist. */
+  reportCandidates: { id: string; userId: string }[];
+}
+
+/**
+ * The same rules as trackedDeals, for one deal. `canonicalUrl` is read
+ * server-side only. A pick's automatic open counts once someone in scope
+ * said yes to it, as on My deals.
+ */
+export async function dealTrackingFor(input: { userId: string; dealId: string; canonicalUrl: string; opened: boolean; openViaPick: boolean }): Promise<DealTracking> {
+  const none: DealTracking = { stage: KEPT_STATUS, tracked: false, checkedListingId: null, reportCandidates: [] };
+  if (!hasServiceRole()) return none;
+  const admin = createAdminClient();
+  const { people } = await trackedScope(input.userId, 'team');
+  const [rowsRes, reactionRes, pickRes] = await Promise.all([
+    admin.from('checked_listings').select('id, user_id, status, analysed_report_id, updated_at').in('user_id', people).eq('canonical_url', input.canonicalUrl).order('updated_at', { ascending: false }),
+    admin.from('deal_reactions').select('reaction').eq('user_id', input.userId).eq('deal_id', input.dealId).maybeSingle(),
+    input.openViaPick ? admin.from('sourcing_sent').select('user_id').in('user_id', people).eq('deal_id', input.dealId).eq('reaction', 'yes').limit(1) : Promise.resolve({ data: [] as unknown[], error: null }),
+  ]);
+  if (rowsRes.error) console.warn('[tracked] deal rows read failed:', rowsRes.error.message);
+  const rows = (rowsRes.data ?? []) as { id: string; user_id: string; status: unknown; analysed_report_id: string | null }[];
+  const own = rows.find((r) => r.user_id === input.userId) ?? null;
+  const reaction = (reactionRes.data as { reaction?: unknown } | null)?.reaction;
+  const pickYes = (pickRes.data ?? []).length > 0;
+  const stage: PipelineStatus = own ? (isPipelineStatus(own.status) ? own.status : KEPT_STATUS) : reaction === 'pass' ? 'passed' : KEPT_STATUS;
+  const ordered = own ? [own, ...rows.filter((r) => r !== own)] : rows;
+  return {
+    stage,
+    tracked: Boolean(own || reaction === 'keep' || reaction === 'pass' || (input.opened && (!input.openViaPick || pickYes))),
+    checkedListingId: own?.id ?? null,
+    reportCandidates: ordered.filter((r) => r.analysed_report_id).map((r) => ({ id: r.analysed_report_id!, userId: r.user_id })),
+  };
 }

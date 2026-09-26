@@ -85,6 +85,7 @@ import { SetupCalculator } from "@/components/SetupCalculator";
 import { AnalyserNarrator } from "@/components/AnalyserNarrator";
 import { ListingLinkBox } from "./_components/ListingLinkBox";
 import { ReportOptions } from "@/components/credit/ReportOptions";
+import { dealReturnPath, returnLabel } from "@/lib/listing/return-path";
 import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
 import { type FunnelMode, type FunnelPrefill, funnelAnalyseUrl, funnelLabel, reportPdfUrl } from "@/lib/funnels/mode";
@@ -408,6 +409,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const listingGuestsRef = useRef<{ bedrooms: string; guests: string } | null>(null);
   const autoListingRef = useRef(false);
+  // ?back= from a deal or My deals: where "Back to this deal" goes. A report
+  // run with it is the deal's, and the deal is never charged for a second.
+  const [backHref, setBackHref] = useState<string | null>(null);
+  // One run at a time (see handleSubmit).
+  const submittingRef = useRef(false);
   // Whether this render is a public white-label funnel. A ref because the
   // unload handlers below read it without wanting to re-register.
   const isFunnelRef = useRef(Boolean(funnel));
@@ -631,6 +637,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     })();
   }, [initialResult, applyListing]);
 
+  useEffect(() => {
+    if (funnel) return;
+    setBackHref(dealReturnPath(new URLSearchParams(window.location.search).get("back")));
+  }, [funnel]);
+
   // Auto-collapse sidebar on mobile
   useEffect(() => {
     const checkWidth = () => {
@@ -684,8 +695,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     { key: "analysis", label: "Running analysis..." },
   ];
 
+  // The Run button is only disabled once `preflight` has answered, so a second
+  // click during that round trip used to start (and charge) a second report.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await runSubmit();
+    } finally {
+      submittingRef.current = false;
+    }
+  };
+
+  const runSubmit = async () => {
     setError(null);
     // Credit check before anything is spent; opens the top-up modal when
     // short. A funnel prospect has no account and no credit of their own —
@@ -730,12 +753,18 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               photo: listing.snapshot.photos[0],
             },
             checkedListingId: listing.checkedListingId ?? undefined,
+            fromDeal: Boolean(backHref),
           }),
         }),
       });
 
       if (!res.ok) {
         const data = await res.json();
+        // The deal already has its report (or a tab ran it first): open it, never run it again.
+        if (res.status === 409 && typeof data.reportId === "string") {
+          window.location.assign(`/reports/${encodeURIComponent(data.reportId)}${backHref ? `?back=${encodeURIComponent(backHref)}` : ""}`);
+          return;
+        }
         setError(data.error || "Something went wrong. Please try again.");
         setLoading(false);
         return;
@@ -799,6 +828,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
 
               if (event.stage === "complete" && event.data) {
                 setResult(event.data as AnalysisResult);
+                // From a deal: the address becomes the saved report, so a refresh
+                // reopens it rather than offering the form (and a charge) again.
+                if (backHref && typeof event.data.reportId === "string") window.history.replaceState(null, "", `/reports/${encodeURIComponent(event.data.reportId)}?back=${encodeURIComponent(backHref)}`);
                 if (!funnel) {
                   if (event.credit && typeof event.credit.chargedPence === "number" && event.credit.chargedPence > 0) creditCtx?.toast(`This report used ${formatCredit(event.credit.chargedPence)} of credit`);
                   notifyCreditChanged();
@@ -1408,6 +1440,12 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
         >
           {/* Top header with action buttons */}
           <div className="flex items-center justify-end gap-2 px-6 py-3 border-b border-border bg-card/50">
+            {backHref && (
+              <Link href={backHref} className="mr-auto inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:opacity-90">
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                {returnLabel(backHref)}
+              </Link>
+            )}
             <Button variant="secondary" size="sm" onClick={handleReset}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
               New Analysis
@@ -1498,7 +1536,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                 )}
                 {r.reportId && (
                   <p className="mt-1 text-xs text-primary-foreground/70">
-                    Saved to <Link href="/reports" className="underline-offset-2 hover:underline">My reports</Link>
+                    Saved to <Link href={listing?.checkedListingId ? `/my-deals?focus=l-${encodeURIComponent(listing.checkedListingId)}` : "/my-deals?tab=reports"} className="underline-offset-2 hover:underline">My deals</Link>
                   </p>
                 )}
               </div>
@@ -3299,6 +3337,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                 <Search className="h-5 w-5 text-primary" aria-hidden="true" />
                 Analyse Your Property
               </CardTitle>
+              {backHref && (
+                <Link href={backHref} className="text-xs font-medium text-muted-foreground underline-offset-4 hover:underline">
+                  ← {returnLabel(backHref)}
+                </Link>
+              )}
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-6">
