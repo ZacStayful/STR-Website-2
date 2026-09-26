@@ -2036,3 +2036,49 @@ revoke all on public.deal_shares from anon, authenticated;
 -- The grid embeds deal_reactions to hide a member's passes; tell PostgREST
 -- about the new relationships now rather than on its next schema reload.
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 4: today screen
+-- =========================
+-- today_selections: the deals Today shows a member for one day
+-- (src/lib/today). Chosen once, on the member's first visit after the day
+-- turns over at 07:00 UTC (the hour the picks email goes out), then read
+-- back, so every reload and every device shows the same list. `day` is the
+-- date that Today-day started on, in UTC. A deal stored here never comes
+-- back to that member's Today on a later day. The daily pick is NOT stored:
+-- it is read from sourcing_sent on every visit, because it can land after
+-- the list was chosen. `advice` is the one-line "what to change" shown when
+-- nothing matched exactly and the list holds the closest deal instead.
+-- Service role only.
+create table if not exists public.today_selections (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  deal_ids uuid[] not null default '{}',
+  near_miss boolean not null default false,
+  advice text,
+  created_at timestamptz not null default now(),
+  primary key (user_id, day)
+);
+alter table public.today_selections enable row level security;  -- no policies: service role only
+revoke all on public.today_selections from anon, authenticated;
+
+-- checklist_steps: the first-week checklist on Today. One row per (member,
+-- step), written when the step is first seen done in the member's own
+-- activity, never self-reported. The £1 reward is a `welcome`-kind grant
+-- with source_ref 'checklist:<step>:<user>', so credit_grants' unique
+-- source_ref makes a second payment impossible; grant_id records it here.
+-- skipped_reason says why a step will never be paid (welcome credit
+-- withheld, a team member, done after the first seven days). seen_at is
+-- when the "+£1 credit" line was shown. Deliberately a table, not columns
+-- on profiles (see ACCESS_COLUMNS in src/lib/access.ts). Service role only.
+create table if not exists public.checklist_steps (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  step text not null check (step in ('goals', 'keep3', 'open', 'report', 'share')),
+  completed_at timestamptz not null default now(),
+  grant_id uuid,
+  skipped_reason text,
+  seen_at timestamptz,
+  primary key (user_id, step)
+);
+alter table public.checklist_steps enable row level security;  -- no policies: service role only
+revoke all on public.checklist_steps from anon, authenticated;
