@@ -15,6 +15,7 @@ import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
 import { EarlyAccessBanner } from "./_components/EarlyAccessBanner";
+import { ShareDealButton } from "./_components/ShareDealButton";
 import { DealsMap } from "./_components/DealsMap";
 import { Pagination } from "./_components/Pagination";
 
@@ -119,7 +120,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {page.cards.map((card) => (
-                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} />
+                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} share={<ShareDealButton dealId={card.id} />} />
                 ))}
               </ul>
             )}

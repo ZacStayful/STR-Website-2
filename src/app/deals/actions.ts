@@ -7,6 +7,9 @@ import { openDeal, saveOpenedDealToPipeline } from '@/lib/marketplace/open';
 import { dealVisibilityFor } from '@/lib/marketplace/tier';
 import { isDealReaction, type DealReaction } from '@/lib/marketplace/reactions';
 import { setDealReaction, setPassReasons } from '@/lib/marketplace/reactions-server';
+import { createDealShare } from '@/lib/marketplace/share';
+import { ensureReferralCode } from '@/lib/credit/referral';
+import { siteUrl } from '@/lib/url';
 import { payerFor } from '@/lib/team';
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -92,4 +95,29 @@ export async function savePassReasonsAction(dealId: unknown, reasons: unknown): 
   const me = await signedIn();
   if (!me) return { ok: false };
   return { ok: await setPassReasons(me.user.id, dealId, reasons.slice(0, 20)) };
+}
+
+export type ShareActionResult = { ok: true; url: string } | { ok: false; error: 'signed_out' | 'missing' | 'failed' };
+
+/**
+ * The member's public link to a deal (/d/<token>): what the card shows and
+ * nothing more, with a join button carrying their referral code so both
+ * sides get the referral credit. Free.
+ */
+export async function shareDealAction(dealId: unknown): Promise<ShareActionResult> {
+  if (typeof dealId !== 'string' || !UUID.test(dealId)) return { ok: false, error: 'missing' };
+  const me = await signedIn();
+  if (!me) return { ok: false, error: 'signed_out' };
+  const visibility = await dealVisibilityFor(me.user.id, me.adminUser);
+  const share = await createDealShare(me.user.id, dealId, visibility);
+  if (!share.ok) return { ok: false, error: share.code };
+  // The join button reads the sharer's code; make sure they have one. A
+  // failure here must never cost them the link: the button falls back to a
+  // plain sign-up.
+  try {
+    await ensureReferralCode(me.user.id);
+  } catch (err) {
+    console.warn('[deal-share] referral code failed:', (err as Error)?.message ?? err);
+  }
+  return { ok: true, url: siteUrl(`/d/${share.token}`) };
 }

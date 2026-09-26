@@ -22,6 +22,7 @@ import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplac
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { headlineFigure, priceLine } from "../_components/DealCard";
 import { openDealAction, savePipelineAction } from "../actions";
+import { ShareDealButton } from "../_components/ShareDealButton";
 
 export const metadata: Metadata = { title: "Deal — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -90,7 +91,11 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
-        <p className="mb-3 text-xs"><Link href="/deals" className="text-muted-foreground hover:underline">← All deals</Link></p>
+        <div className="mb-3 flex items-center justify-between gap-2 text-xs">
+          <Link href="/deals" className="text-muted-foreground hover:underline">← All deals</Link>
+          {/* Batch 3: a public link showing only what the card shows (never the address), on the member's referral code. */}
+          <ShareDealButton dealId={deal.id} />
+        </div>
 
         {message && <p className={"mb-4 rounded-md border p-3 text-sm " + (message.tone === "ok" ? "border-primary/40 bg-primary/10 text-foreground" : "border-destructive/40 bg-destructive/10 text-destructive")}>{message.text}</p>}
         {insufficient && (
