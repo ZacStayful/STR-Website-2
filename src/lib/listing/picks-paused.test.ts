@@ -106,3 +106,17 @@ test('the letter is plain, has one Top up button, the manage link, and never the
   assert.ok(one.text.startsWith('Hi,'));
   assert.ok(one.text.includes('Here is the pick we found for you'));
 });
+
+test('the letter carries the changes the daily email would have, and says so in the subject', () => {
+  const base = { misses: [miss()], siteUrl: 'https://x.test', firstName: null };
+  const plain = pausedEmail(base);
+  const extra = { text: 'CHANGES ON YOUR DEALS\n\n• Price drop: £200,000 → £185,000', html: '<h2>Changes on your deals</h2>', subjectSuffix: '1 price drop on a deal you kept' };
+  const withChanges = pausedEmail({ ...base, extra });
+  assert.equal(withChanges.subject, `${plain.subject} · 1 price drop on a deal you kept`);
+  assert.ok(withChanges.text.includes('Price drop: £200,000 → £185,000'));
+  assert.ok(withChanges.html.includes('<h2>Changes on your deals</h2>'));
+  // Manage notifications still closes the letter, after the changes.
+  assert.ok(withChanges.text.indexOf('Price drop') < withChanges.text.indexOf('Manage notifications'));
+  // With nothing extra the letter is exactly as it was.
+  assert.deepEqual(pausedEmail({ ...base, extra: null }), plain);
+});

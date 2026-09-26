@@ -139,6 +139,8 @@ export type AlertType = 'price_drop' | 'back_on_market' | 'nearly_gone' | 'gone'
  */
 export interface ChangeInput {
   id: string;
+  /** Other alert ids this one stands for (collapsed price drops): marked sent with it. */
+  mergedIds?: string[];
   alertType: AlertType;
   kind: 'sale' | 'rent';
   opened: boolean;
@@ -279,7 +281,7 @@ export interface BuiltMessage {
   message: Message;
   /** Teaser ids actually in the email, in order. */
   teaserIds: string[];
-  /** Change (alert) ids actually in the email. */
+  /** Every alert id the changes in the email stand for (collapsed ones included): what to mark sent. */
   changeIds: string[];
   /** Teasers the early-access backstop removed. Should always be empty. */
   droppedTeasers: string[];
@@ -330,7 +332,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
       unsubscribe: input.unsubscribe,
     },
     teaserIds: kept.map((c) => c.id),
-    changeIds: used.map((c) => c.id),
+    changeIds: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     droppedTeasers: dropped,
   };
 }

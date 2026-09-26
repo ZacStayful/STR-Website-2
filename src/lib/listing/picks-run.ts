@@ -13,7 +13,7 @@ import { getUnitCostTable } from "../credit/unit-costs";
 import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from "../access";
-import { dealVisibility, dealVisible } from "../marketplace/visibility";
+import { dealVisibility, dealVisible, PAID_VISIBILITY } from "../marketplace/visibility";
 import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
@@ -21,7 +21,7 @@ import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, type PickBasis, type PickFeedback } from "./picks";
 import { rankForMember, toPickFeedback, FEEDBACK_WINDOW_MS } from "./rank";
 import { missedRowFor } from "./picks-paused";
 import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
@@ -36,6 +36,14 @@ import { suitabilityFromListing, suitabilityFromSnapshot, type Suitability, type
 import type { ListingSnapshot } from "./types";
 import type { AppliedRules } from "./picks";
 import { sendEmail, isEmailConfigured } from "../email/send";
+import { buildDaily } from "../notify/message";
+import { renderEmail } from "../notify/render-email";
+import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
+import { capDay, sendKey, testSendKey } from "../notify/cap";
+import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
+import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
+import type { Settled } from "../notify/alerts";
+import type { MemberContext } from "../today/selection";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -73,6 +81,12 @@ const SNAPSHOT_WAIT_MS = 20_000;
 const QUERY_BUDGET_MS = 30_000;
 /** Page verification of picks (one page fetch per distinct listing) stops here. */
 const VERIFY_UNTIL_MS = 40_000;
+/**
+ * The send loop waits for Today's lists (chosen while verification waits on
+ * the network) at most until here; a member whose list is not ready by then
+ * gets their pick and changes without teasers rather than a delayed send.
+ */
+const DAILY_READY_BY_MS = 44_000;
 const NEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** How far down a member's ranking the pick may reach when better candidates are capped or unsuitable. */
 const SPREAD_DEPTH = 40;
@@ -391,14 +405,46 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
   const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence };
+  // What Today's list needs to know about a member (src/lib/today/selection.ts).
+  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: savedByUser.get(m.id) ?? [], visibility: m.paid ? PAID_VISIBILITY : freeVisibility });
   if (dry) {
+    // What each member's daily email would carry besides the pick, read
+    // without writing anything: a Today list only if one is stored already
+    // (the real run chooses one), the changes waiting for them, and whether
+    // their daily slot is already spent. The pick itself is chosen at send
+    // time, after page reads a dry run does not make.
+    const ids = members.map((m) => m.id);
+    const [slots, plans, alertsOn, pending] = await Promise.all([
+      slotsInUse(admin, ids, "daily"),
+      todayPlans(admin, members.map(memberContextOf), new Date(), { create: false }),
+      trackedAlertsOn(admin, ids),
+      pendingChanges(admin, ids),
+    ]);
     return done({
       status: 200,
       body: {
         ...summary,
         skipped,
         wouldQuery: queries.map((q) => ({ key: q.query.key, members: q.members, own: q.own })),
-        wouldEmail: members.map((m) => ({ user: m.id, email: m.email, basis: m.basis, firstEver: m.firstEver, queries: m.queries.map((q) => q.key) })),
+        wouldEmail: members.map((m) => {
+          const plan = plans.get(m.id) ?? null;
+          const changes = alertsOn.has(m.id) ? pending.get(m.id)?.changes ?? [] : [];
+          return {
+            user: m.id,
+            email: m.email,
+            basis: m.basis,
+            firstEver: m.firstEver,
+            queries: m.queries.map((q) => q.key),
+            daily: {
+              slot: slots === null ? "unreadable" : slots.get(m.id)?.status ?? "free",
+              tier: m.paid ? "paid" : "free",
+              today: plan ? teasersFrom(plan, null, m.paid ? PAID_VISIBILITY : freeVisibility).map((c) => c.id) : "chosen_at_send",
+              changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
+              changesSwitch: alertsOn.has(m.id),
+              wouldCharge: "the pick only, exactly as before",
+            },
+          };
+        }),
       },
     });
   }
@@ -787,6 +833,21 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     else summary.missed = missedRows.length;
   }
 
+  // ── Today's 5 and the changes, for everyone who can be sent a pick (Batch 6) ──
+  // Started now and left to run while the page verification below waits on
+  // the network, so the send loop only reads results. Each member's list is
+  // the one /today shows them (todaySelection chooses and stores it once a
+  // day); the changes are the alerts the 06:55 collector recorded for them.
+  const dailyIds = affordable.map((m) => m.id);
+  const alertsReady = Promise.all([trackedAlertsOn(admin, dailyIds), pendingChanges(admin, dailyIds)]).catch((err) => {
+    console.error("[sourcing] changes read failed:", (err as Error)?.message ?? err);
+    return [new Set<string>(), new Map<string, Settled>()] as const;
+  });
+  const plansReady = todayPlans(admin, affordable.map(memberContextOf), new Date(), { create: true, concurrency: 6 }).catch((err) => {
+    console.error("[sourcing] today lists failed:", (err as Error)?.message ?? err);
+    return new Map<string, TodayPlan | null>();
+  });
+
   // ── Verify each candidate against its listing page (one read per distinct listing, house-metered) ──
   // The page carries what the search card does not: tenure, the shared-
   // ownership flag and the description's line on short lets. The merged
@@ -909,14 +970,28 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     picks.push({ member: m, pick: chosen, alternates, candidates, nearMiss: Boolean((list[0] as Ranked | undefined)?.nearMiss) });
   }
 
-  // ── Send: pending row first, then the email, then the charge ──
+  // ── Send: the day's slot, the pending row, the email, then the charge ──
   const base = siteUrl();
+  const notReady = new Map<string, TodayPlan | null>();
+  const plans = await Promise.race([plansReady, new Promise<Map<string, TodayPlan | null>>((r) => setTimeout(() => r(notReady), Math.max(0, DAILY_READY_BY_MS - elapsed())))]);
+  if (plans === notReady) console.warn("[sourcing] today lists not ready; sending picks without teasers");
+  const [alertsOn, pending] = await alertsReady;
   for (const { member: m, pick, alternates, candidates, nearMiss } of picks) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
       continue;
     }
+    // The day's one email slot (src/lib/notify/cap.ts). Taken already means the
+    // member has had their daily email; nothing more today. A cap table the
+    // schema has not caught up with does not stop the pick: it goes as before.
+    // The admin's test send never touches the member's real slot.
+    const claim = opts.ignoreToday ? null : await claimSlot(admin, m.id, "todays_5");
+    if (claim && !claim.ok && claim.reason === "slot_used") {
+      perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "slot_used" });
+      continue;
+    }
+    const claimId = claim?.ok ? claim.id : null;
     let charge = priceOf(m, pick);
     const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
     // Persisted so the "change it" link has something to apply that the member
@@ -952,11 +1027,14 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (!sending || !rowId) {
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: insErr?.code === "23505" ? "already_sent" : "insert_failed" });
       if (insErr && insErr.code !== "23505") console.error("[sourcing] sourcing_sent insert failed:", insErr.message);
+      // Nothing was sent: give the slot back for the 08:10 digest.
+      if (claimId) await releaseClaim(admin, claimId);
       continue;
     }
     if (sending !== pick) assigned.set(sending.listing.canonicalUrl, (assigned.get(sending.listing.canonicalUrl) ?? 0) + 1);
     const id = rowId;
-    const mail = pickEmail({
+    const pickDealId = urlToDealId.get(sending.listing.canonicalUrl) ?? null;
+    const section = pickSection({
       pick: sending,
       siteUrl: base,
       id,
@@ -973,15 +1051,50 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Whichever listing is actually going out carries its own screening, so a
       // stand-in never inherits the first choice's figures.
       screening: sending.screening ?? null,
-      dealId: urlToDealId.get(sending.listing.canonicalUrl) ?? null,
+      dealId: pickDealId,
     });
-    const res = await sendEmail({ to: m.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers });
+    // Today's 5: the pick, the rest of the member's Today in the order /today
+    // draws it, and the changes on deals they track. Only the pick is charged
+    // (below, exactly as before); nothing else in the email is.
+    const plan = plans.get(m.id) ?? null;
+    const visibility = m.paid ? PAID_VISIBILITY : freeVisibility;
+    const settled = alertsOn.has(m.id) ? pending.get(m.id) ?? null : null;
+    const built = buildDaily({
+      siteUrl: base,
+      pick: { section: section.section, headline: section.headline },
+      teasers: plan ? teasersFrom(plan, pickDealId, visibility) : [],
+      advice: plan?.nearMiss ? plan.advice : null,
+      changes: settled?.changes ?? [],
+      freeCutoffIso: m.paid ? null : freeVisibility.cutoffIso,
+      unsubscribe: section.unsubscribe,
+    });
+    const mail = built ? renderEmail(built.message) : null;
+    if (!built || !mail) {
+      // Unreachable with a pick in hand; kept so a future change cannot send nothing and charge.
+      if (claimId) await releaseClaim(admin, claimId);
+      await admin.from("sourcing_sent").update({ status: "failed" }).eq("id", id);
+      perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "build_failed" });
+      continue;
+    }
+    if (built.droppedTeasers.length > 0) console.error("[sourcing] early-access backstop dropped teasers", JSON.stringify({ user: m.id, dropped: built.droppedTeasers }));
+    const sendSummary = { pickId: id, pickDealId, teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, todayReady: plan !== null, subject: mail.subject };
+    if (claimId) await markSending(admin, claimId, sendSummary, null);
+    const res = await sendEmail({
+      to: m.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+      headers: mail.headers,
+      idempotencyKey: opts.ignoreToday ? testSendKey(token) : sendKey("daily", m.id, claim?.ok ? claim.day : capDay()),
+    });
     if (!res.sent) {
       summary.emailFailures += 1;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: res.reason });
       // Kept as failed: Resend may have accepted the message even though we saw an error.
       const { error: failErr } = await admin.from("sourcing_sent").update({ status: "failed" }).eq("id", id);
       if (failErr) console.error("[sourcing] failed-status update failed:", failErr.message);
+      // The slot is spent for today and its alerts stay pending for tomorrow's email.
+      if (claimId) await finishSend(admin, claimId, false, sendSummary, []);
       continue;
     }
     summary.emails += 1;
@@ -989,7 +1102,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const sentAt = new Date().toISOString();
     const { error: sentErr } = await admin.from("sourcing_sent").update({ status: "sent", sent_at: sentAt }).eq("id", id);
     if (sentErr) console.error("[sourcing] sent-status update failed:", sentErr.message);
-    const dealId = urlToDealId.get(sending.listing.canonicalUrl) ?? null;
+    const dealId = pickDealId;
     let transactionId: number | null = null;
     if (charge > 0) {
       try {
@@ -1020,6 +1133,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
     const { error: profErr } = await admin.from("profiles").update({ sourcing_last_sent_at: sentAt }).eq("id", m.id);
     if (profErr) console.error("[sourcing] profile update failed:", profErr.message);
+    // The slot sent, and the alerts it carried told (never on an admin test).
+    if (claimId) await finishSend(admin, claimId, true, sendSummary, built.changeIds);
   }
 
   return done({ status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } });

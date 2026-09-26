@@ -102,6 +102,17 @@ function htmlOfSection(s: Section, first: boolean): string {
   return `${title}${s.blocks.map(htmlOfBlock).join('')}`;
 }
 
+/**
+ * Sections as a fragment to place inside another email (the picks-paused
+ * letter carries the changes this way, keeping its own plain layout).
+ */
+export function renderSections(sections: readonly Section[]): { text: string; html: string } {
+  return {
+    text: sections.flatMap((s, n) => (n === 0 ? textOfSection(s) : ['', ...textOfSection(s)])).join('\n'),
+    html: sections.map((s, n) => htmlOfSection(s, n === 0)).join(''),
+  };
+}
+
 // ── The email ──
 
 export function renderEmail(m: Message): RenderedEmail {

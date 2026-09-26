@@ -7,6 +7,11 @@ import { areaMetaForCode } from "../market/areas";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
 import { missesToList, missedPickLine, pausedEmail, pausedEmailDue, type MissedPick } from "./picks-paused";
+import { changesPhrase, changesSection } from "../notify/message";
+import { renderSections, listUnsubscribeHeaders } from "../notify/render-email";
+import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
+import { newSendToken, sendKey } from "../notify/cap";
+import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import type { RunResult } from "./picks-run";
 
 // ─── "Your picks have paused": the run ────────────────────────────────
@@ -18,6 +23,12 @@ import type { RunResult } from "./picks-run";
 // letter, and never once they have credit again. Team members are skipped
 // (their owner pays, and already gets the out-of-credit email); so is anyone
 // who switched "picks paused / out of credit" or daily picks off.
+//
+// The letter goes INSTEAD of the daily email (Batch 6): it takes the day's
+// one email slot (src/lib/notify/cap.ts), so the 08:10 digest skips the
+// member, and it carries the changes on deals they track that the daily
+// email would have carried. A member whose slot is already spent today is
+// left for the next run, when the letter is still due.
 //
 // Entry points: /api/internal/picks-paused (the cron, secret-gated, ?dry=1)
 // and the admin page's dry-run button (session-gated).
@@ -115,10 +126,12 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     for (const p of (rows ?? []) as ProfileRow[]) profiles.set(p.id, p);
   }
   const payers = await payersFor(ids);
+  // What the daily email would have carried: the changes on deals they track.
+  const [alertsOn, pending, slots] = await Promise.all([trackedAlertsOn(admin, ids), pendingChanges(admin, ids, now), slotsInUse(admin, ids, "daily", now)]);
 
   const summary = { dry: opts.dry, considered: ids.length, emails: 0, emailFailures: 0, superseded: 0, ranOutOfTime: false };
   const perUser: { user: string; email: string | null; picks: number; sent: boolean; reason?: string }[] = [];
-  const wouldEmail: { email: string; picks: number; lines: string[] }[] = [];
+  const wouldEmail: { email: string; picks: number; lines: string[]; changes: { id: string; type: string }[]; slot: string }[] = [];
   for (const [userId, rows] of byUser) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
@@ -169,9 +182,18 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       skip("not_due");
       continue;
     }
-    const mail = pausedEmail({ misses: list, siteUrl: siteUrl(), firstName: firstNameOf(p.full_name) });
+    if (slots?.has(userId)) {
+      skip("slot_used");
+      continue;
+    }
+    const base = siteUrl();
+    const { section: changes, used } = changesSection(alertsOn.has(userId) ? pending.get(userId)?.changes ?? [] : [], base);
+    const changeIds = used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
+    const phrase = changesPhrase(used);
+    const extra = changes ? { ...renderSections([changes]), subjectSuffix: phrase } : null;
+    const mail = pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra });
     if (opts.dry) {
-      wouldEmail.push({ email: p.email, picks: list.length, lines: list.map(missedPickLine) });
+      wouldEmail.push({ email: p.email, picks: list.length, lines: list.map(missedPickLine), changes: used.map((c) => ({ id: c.id, type: c.alertType })), slot: slots === null ? "unreadable" : "free" });
       perUser.push({ user: userId, email: p.email, picks: list.length, sent: false, reason: "would_send" });
       continue;
     }
@@ -179,12 +201,37 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       skip("email_not_configured");
       continue;
     }
-    const res = await sendEmail({ to: p.email, subject: mail.subject, html: mail.html, text: mail.text });
+    // The day's slot. A cap table the schema has not caught up with does not
+    // stop the letter: it goes as it did before this batch, without changes.
+    const claim = await claimSlot(admin, userId, "picks_paused", now);
+    if (!claim.ok && claim.reason === "slot_used") {
+      skip("slot_used");
+      continue;
+    }
+    const claimId = claim.ok ? claim.id : null;
+    const unsubscribeToken = claimId ? newSendToken() : null;
+    const unsubscribeUrl = unsubscribeToken ? `${base.replace(/\/$/, "")}/api/notify/unsubscribe/${unsubscribeToken}` : null;
+    const sendSummary = { misses: list.length, alerts: claimId ? changeIds : [], subject: mail.subject };
+    if (claimId && !(await markSending(admin, claimId, sendSummary, unsubscribeToken))) {
+      await releaseClaim(admin, claimId);
+      skip("slot_unwritable");
+      continue;
+    }
+    const res = await sendEmail({
+      to: p.email,
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+      ...(unsubscribeUrl ? { headers: listUnsubscribeHeaders({ url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }) } : {}),
+      ...(claim.ok ? { idempotencyKey: sendKey("daily", userId, claim.day) } : {}),
+    });
     if (!res.sent) {
       summary.emailFailures += 1;
+      if (claimId) await finishSend(admin, claimId, false, sendSummary, []);
       skip(res.reason ?? "send_failed");
       continue;
     }
+    if (claimId) await finishSend(admin, claimId, true, sendSummary, changeIds);
     summary.emails += 1;
     const sentAt = new Date().toISOString();
     const { error: profErr } = await admin.from("profiles").update({ picks_paused_email_at: sentAt }).eq("id", userId);

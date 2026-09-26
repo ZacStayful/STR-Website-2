@@ -30,6 +30,10 @@
 			"schedule": "0 8 * * *"
 		},
 		{
+			"path": "/api/internal/daily-digest",
+			"schedule": "10 8 * * *"
+		},
+		{
 			"path": "/api/internal/credit-sweep",
 			"schedule": "0 3 * * *"
 		},
