@@ -27,6 +27,7 @@ import { myDealsFocusPath } from "@/lib/listing/return-path";
 import { formatQuote, reportQuotePence } from "@/lib/credit/report-quote";
 import { StageSelect } from "@/app/my-deals/_components/StageSelect";
 import { NextStepSlot } from "@/app/my-deals/_components/NextStepSlot";
+import { factsFromCard } from "@/lib/pipeline/slot-facts";
 import { ShareDealButton } from "../_components/ShareDealButton";
 
 export const metadata: Metadata = { title: "Deal — Stayful Intelligence", robots: { index: false, follow: false } };
@@ -162,13 +163,14 @@ export default async function DealPage({ params, searchParams }: { params: Promi
 
                 <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-3">
                   <div className="min-w-0 flex-1 basis-56">
-                    <StageSelect itemKey={`d-${deal.id}`} stage={tracking.stage} opened={Boolean(priv)} dealId={deal.id} dealLive={deal.status === "live"} openPence={pence} back={dealPath} untracked={!tracking.tracked} />
+                    <StageSelect key={tracking.stage} itemKey={`d-${deal.id}`} stage={tracking.stage} opened={Boolean(priv)} dealId={deal.id} dealLive={deal.status === "live"} openPence={pence} back={dealPath} untracked={!tracking.tracked} />
                   </div>
                   {tracking.onMyDeals && (
                     <Link href={myDealsFocusPath(`d-${deal.id}`)} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See in My deals</Link>
                   )}
                 </div>
-                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} />
+                {/* Batch 7: the next step, for the member's own opened deal only. */}
+                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" />
 
                 {priv ? (
                   <div className="mt-4 flex flex-wrap items-center gap-2">

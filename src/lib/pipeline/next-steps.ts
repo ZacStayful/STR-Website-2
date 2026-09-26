@@ -341,14 +341,26 @@ Thanks,
     title: `Suggested offer`,
     // How the figure itself reads.
     figure: {
-      // DRAFT — Zac to rewrite (both figures known)
-      range: `{low} to {high}`,
-      // DRAFT — Zac to rewrite (both figures land on the same number)
-      exact: `{opening}`,
-      // DRAFT — Zac to rewrite (only your target is known)
-      upTo: `Up to {high}`,
-      // DRAFT — Zac to rewrite (only the listing's history is known)
-      around: `Around {opening}`,
+      purchase: {
+        // DRAFT — Zac to rewrite (both figures known)
+        range: `{low} to {high}`,
+        // DRAFT — Zac to rewrite (both figures land on the same number)
+        exact: `{opening}`,
+        // DRAFT — Zac to rewrite (only your target is known)
+        upTo: `Up to {high}`,
+        // DRAFT — Zac to rewrite (only the listing's history is known)
+        around: `Around {opening}`,
+      },
+      rentToRent: {
+        // DRAFT — Zac to rewrite
+        range: `{low} to {high} a month`,
+        // DRAFT — Zac to rewrite
+        exact: `{opening} a month`,
+        // DRAFT — Zac to rewrite
+        upTo: `Up to {high} a month`,
+        // DRAFT — Zac to rewrite
+        around: `Around {opening} a month`,
+      },
     },
     targetPart: {
       // DRAFT — Zac to rewrite

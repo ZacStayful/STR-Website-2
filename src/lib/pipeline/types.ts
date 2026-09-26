@@ -73,9 +73,16 @@ export interface PerKind {
   rentToRent: string;
 }
 
+export interface OfferFigure {
+  range: string;
+  exact: string;
+  upTo: string;
+  around: string;
+}
+
 export interface OfferWording {
   title: string;
-  figure: { range: string; exact: string; upTo: string; around: string };
+  figure: { purchase: OfferFigure; rentToRent: OfferFigure };
   targetPart: PerKind;
   targetPartAtAsking: PerKind;
   historyPart: { ageAndCuts: string; ageOnly: string };

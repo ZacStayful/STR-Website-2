@@ -108,7 +108,9 @@ const MANAGEMENT_LEADS_EMAIL_COL = process.env.MONDAY_MANAGEMENT_LEADS_EMAIL_COL
 /**
  * "Talk to us about managing here": creates a lead on the Management Leads
  * board with the contact details and area, and posts the message as an
- * update on the item (so no further column ids need guessing).
+ * update on the item (so no further column ids need guessing). A hidden
+ * `source` of 'my-deals' (the Secured stage's "Talk to us", Batch 7) labels
+ * the lead as coming from a secured deal instead of the Market Explorer.
  */
 export async function managementEnquiryAction(_prev: EnquiryState, formData: FormData): Promise<EnquiryState> {
   // Same gate as the explorer itself: members only.
@@ -123,6 +125,7 @@ export async function managementEnquiryAction(_prev: EnquiryState, formData: For
   const phone = field('phone', 40);
   const area = field('area', 2).toUpperCase();
   const message = field('message', 2000);
+  const fromMyDeals = field('source', 20) === 'my-deals';
   if (!name || !email.includes('@') || !/^[A-Z]{1,2}$/.test(area)) {
     return { error: 'Name, a valid email and an area are required.', sent: false };
   }
@@ -134,7 +137,7 @@ export async function managementEnquiryAction(_prev: EnquiryState, formData: For
     }`,
     {
       boardId: MANAGEMENT_LEADS_BOARD,
-      name: `Market Explorer enquiry: ${name} (${areaName})`,
+      name: `${fromMyDeals ? 'My deals enquiry' : 'Market Explorer enquiry'}: ${name} (${areaName})`,
       values: JSON.stringify({ [MANAGEMENT_LEADS_EMAIL_COL]: email }),
     },
   );
@@ -142,7 +145,7 @@ export async function managementEnquiryAction(_prev: EnquiryState, formData: For
   if (!itemId) return { error: 'We could not send your enquiry right now. Email hello@stayful.co.uk and we will pick it up.', sent: false };
 
   const body = [
-    `Market Explorer management enquiry`,
+    fromMyDeals ? `My deals: secured deal management enquiry` : `Market Explorer management enquiry`,
     `Area: ${areaName} (${area})`,
     `Name: ${name}`,
     `Email: ${email}`,
