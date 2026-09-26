@@ -1,8 +1,8 @@
 /**
  * The members' navigation: three items, one config object.
  *
- * Today and My deals point at stand-ins until their real pages exist; when
- * they do, change the `href` here and nothing else. Every members-only
+ * My deals points at a stand-in until its real page exists; when it does,
+ * change the `href` here and nothing else. Every members-only
  * surface still announces itself with the section name it always used
  * (`Section`, the AppShell `active` prop), and `NAV_FOR_SECTION` says which
  * of the three items that section lights up — so a page that leaves the nav
@@ -12,7 +12,7 @@
  * Pure, so the mapping is tested rather than trusted.
  */
 export const NAV_TARGETS = {
-  today: { label: 'Today', href: '/deals' }, // Batch 4: point at the Today page
+  today: { label: 'Today', href: '/today' },
   myDeals: { label: 'My deals', href: '/reports' }, // Batch 5: point at the My deals page
   account: { label: 'Account', href: '/account' },
 } as const;

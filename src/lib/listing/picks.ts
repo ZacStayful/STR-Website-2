@@ -460,6 +460,8 @@ export function pickLinks(siteUrl: string, id: string, token: string, listingUrl
     report: `${base}/estimate?listing=${encodeURIComponent(listingUrl)}`,
     filter: `${base}/markets?goals=1`,
     picks: `${base}/picks`,
+    /** The member's Today screen: this pick first, then the rest of the day's five. */
+    today: `${base}/today`,
     unsubscribe: `${base}/p/${token}?a=unsubscribe`,
     unsubscribePost: `${base}/api/picks/unsubscribe/${token}`,
     /** The Notifications panel: every switch in one place. */
@@ -545,6 +547,7 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
     '',
     links.deal ? `Open the deal sheet: ${links.deal}` : null,
     links.more ? `More deals like this: ${links.more}` : null,
+    `See today’s 5: ${links.today}`,
     `Save to my pipeline: ${links.save}`,
     `Full report: ${links.report}`,
     `View listing: ${links.listing}`,
@@ -580,7 +583,7 @@ export function pickEmail(input: PickEmailInput): { subject: string; text: strin
       ${relaxLine ? `<p style="margin:0 0 14px;color:#2e3d2b;font-size:13px">${esc(relaxLine)} <a href="${esc(links.filter)}" style="color:#2e3d2b;font-weight:600">Change it</a></p>` : ''}
       <p style="margin:0 0 14px;color:#7a8274;font-size:13px">Not for you? Tell us why in a couple of clicks and tomorrow&#8217;s pick changes.</p>
       ${links.deal ? `<p style="margin:0 0 6px">${btn(links.deal, 'Open the deal sheet', true)}${links.more ? btn(links.more, 'More deals like this') : ''}</p>` : ''}
-      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', !links.deal)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}</p>
+      <p style="margin:0 0 18px">${btn(links.save, 'Save to my pipeline', !links.deal)}${btn(links.report, 'Full report')}${btn(links.listing, 'View listing')}${btn(links.filter, basis === 'goals' ? 'Edit my filter' : 'Set my filter')}${btn(links.today, 'See today’s 5')}</p>
       <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one.${costNote ? ` ${esc(costNote)}` : ''} See every pick at <a href="${esc(links.picks)}" style="color:#7a8274">${esc(links.picks)}</a>. <a href="${esc(links.unsubscribe)}" style="color:#7a8274">Stop daily picks</a> · <a href="${esc(links.notifications)}" style="color:#7a8274">Manage notifications</a>.</p>
     </div>`.trim();
 

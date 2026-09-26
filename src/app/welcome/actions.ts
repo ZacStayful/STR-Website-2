@@ -12,9 +12,8 @@ import { isAdminEmail } from '@/lib/admin';
 import { goalsFromWelcome, parseMarketGoals } from '@/lib/market/goals';
 import { areaCodeFrom } from '@/lib/market/lead-goals';
 import { parseWelcomeAnswers, WELCOME_FIELDS } from '@/lib/onboarding/answers';
-import { dealsPathForGoals } from '@/lib/onboarding/deal-filters';
 import { skipsFrom } from '@/lib/onboarding/status';
-import { welcomeReturnPath } from '@/lib/auth/landing';
+import { HOME_PATH, welcomeReturnPath } from '@/lib/auth/landing';
 
 export type WelcomeState = { error: string | null };
 
@@ -109,5 +108,6 @@ export async function completeWelcomeAction(_prev: WelcomeState, formData: FormD
 
   revalidatePath('/markets');
   revalidatePath('/picks');
-  redirect(dealsPathForGoals(goals, [...areas]));
+  // Today opens on the count of deals these answers match, then the day's picks.
+  redirect(HOME_PATH);
 }
