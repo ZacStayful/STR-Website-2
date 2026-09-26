@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { teamCreditSnapshot } from "@/lib/team/credit";
@@ -20,6 +21,22 @@ export async function AppShell({ active, redirectTo, children }: { active: "esti
   if (!user) redirect(`/login?redirect=${encodeURIComponent(redirectTo)}`);
 
   const admin = isAdminEmail(user.email);
+
+  // "Last active" for the admin's high-intent list. Every members-only page
+  // renders through here, so this is the one place that sees every visit;
+  // written after the response, at most once an hour per member, with the
+  // member's own client (the column is granted to `authenticated`).
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const hourAgoIso = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+  after(async () => {
+    try {
+      await supabase.from("profiles").update({ last_seen_at: nowIso }).eq("id", user.id).or(`last_seen_at.is.null,last_seen_at.lt.${hourAgoIso}`);
+    } catch (err) {
+      console.error("[AppShell] last_seen hook failed:", err);
+    }
+  });
+
   let credit: CreditSnapshot | null = null;
   try {
     await ensureWelcomeGrant(user.id, user.email ?? null);

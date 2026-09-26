@@ -9,6 +9,7 @@ import { formatListingPrice } from './format.ts';
 import { purchaseDeal, rentToRentDeal, type Deal } from './deal.ts';
 import type { QuickEstimate } from './quick-types.ts';
 import { escapeHtml as esc } from '../email/escape.ts';
+import { manageNotificationsUrl } from '../url.ts';
 
 export interface PriceHistoryEntry {
   at: string;
@@ -140,6 +141,7 @@ export function recheckEmail(items: RecheckAlertItem[], siteUrl: string): { subj
     '',
     `Your pipeline: ${pipeline}`,
     'Mark a listing as Passed in your pipeline to stop re-checking it.',
+    `Manage notifications: ${manageNotificationsUrl(siteUrl)}`,
   ].join('\n');
   const html = `
     <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#2e3d2b;max-width:560px">
@@ -152,7 +154,7 @@ export function recheckEmail(items: RecheckAlertItem[], siteUrl: string): { subj
         )
         .join('')}</ul>
       <p style="margin:22px 0"><a href="${esc(pipeline)}" style="display:inline-block;background:#5d8156;color:#fff;text-decoration:none;padding:10px 18px;border-radius:999px;font-weight:600">Open my pipeline</a></p>
-      <p style="color:#7a8274;font-size:12px">You get this because these listings are in your pipeline. Mark one as Passed to stop re-checking it.</p>
+      <p style="color:#7a8274;font-size:12px">You get this because these listings are in your pipeline. Mark one as Passed to stop re-checking it. <a href="${esc(manageNotificationsUrl(siteUrl))}" style="color:#7a8274">Manage notifications</a>.</p>
     </div>`.trim();
   return { subject, text, html };
 }

@@ -26,7 +26,7 @@ export const DEALS_TAG = 'marketplace-deals';
 
 /** Every column the run modules read. The grid uses PUBLIC_DEAL_COLUMNS instead. */
 export const DEAL_COLUMNS =
-  'canonical_url, id, source, kind, postcode_area, outcode, town, bedrooms, price_amount, price_period, raw_type, tenure, photo, photos, band, screening, deal, suitability, motivation, annual_profit, uplift_pct, price_history, reduced_at, listed_date, status, retired_reason, retired_at, first_seen_at, last_seen_at, last_checked_live_at, last_confirmed_at, last_confirmed_via, next_check_due_at, check_requested_at, last_shown_at, check_failures, created_at, updated_at';
+  'canonical_url, id, source, kind, postcode_area, outcode, town, bedrooms, price_amount, price_period, raw_type, tenure, photo, photos, band, screening, deal, suitability, motivation, annual_profit, uplift_pct, price_history, reduced_at, listed_date, status, retired_reason, retired_at, live_since, first_seen_at, last_seen_at, last_checked_live_at, last_confirmed_at, last_confirmed_via, next_check_due_at, check_requested_at, last_shown_at, check_failures, created_at, updated_at';
 
 export type Admin = ReturnType<typeof createAdminClient>;
 

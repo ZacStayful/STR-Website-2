@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { liveCountsByArea } from "@/lib/marketplace/queries";
+import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { siteUrl } from "@/lib/url";
 
 const PAGE_TITLE = "Short-let deals on the market right now, by area";
@@ -17,7 +18,8 @@ export const revalidate = 3600;
 
 /** The public index: every area with live deals, linked to its teaser page. */
 export default async function ShortLetDealsIndexPage() {
-  const counts = (await liveCountsByArea()).filter((c) => c.total > 0);
+  // Visitors see the delayed set: never more than a free member would.
+  const counts = (await liveCountsByArea((await publicDealVisibility()).hourCutoffIso)).filter((c) => c.total > 0);
   return (
     <div className="mx-auto max-w-4xl px-5 py-14">
       <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Deals marketplace</p>

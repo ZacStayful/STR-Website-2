@@ -2,6 +2,10 @@
  * What each plan includes beyond credit. Mirrors `billing_plans.perks` so the
  * pricing page, the crons and the account page agree; the DB row wins when
  * present (see planPerks() in plans.ts), this is the fallback.
+ *
+ * Daily picks go to every enrolled member every day, free accounts included:
+ * the sourcing cron (src/lib/listing/picks-run.ts) never reads the cadence.
+ * The perk is kept so the pricing page states it and older DB rows still parse.
  */
 
 export type SourcingCadence = 'weekly' | 'daily';
@@ -15,13 +19,13 @@ export interface PlanPerks {
 
 export type PlanCode = 'starter' | 'pro' | 'scale' | 'pro_annual';
 
-export const FREE_PERKS: PlanPerks = { sourcingCadence: 'weekly', priorityRefresh: false, phoneSupport: false, quarterlyBriefing: false };
+export const FREE_PERKS: PlanPerks = { sourcingCadence: 'daily', priorityRefresh: false, phoneSupport: false, quarterlyBriefing: false };
 
 export const PLAN_PERKS: Record<PlanCode, PlanPerks> = {
-  starter: { sourcingCadence: 'weekly', priorityRefresh: false, phoneSupport: false, quarterlyBriefing: false },
-  pro: { sourcingCadence: 'weekly', priorityRefresh: true, phoneSupport: false, quarterlyBriefing: false },
+  starter: { sourcingCadence: 'daily', priorityRefresh: false, phoneSupport: false, quarterlyBriefing: false },
+  pro: { sourcingCadence: 'daily', priorityRefresh: true, phoneSupport: false, quarterlyBriefing: false },
   scale: { sourcingCadence: 'daily', priorityRefresh: true, phoneSupport: true, quarterlyBriefing: true },
-  pro_annual: { sourcingCadence: 'weekly', priorityRefresh: true, phoneSupport: false, quarterlyBriefing: true },
+  pro_annual: { sourcingCadence: 'daily', priorityRefresh: true, phoneSupport: false, quarterlyBriefing: true },
 };
 
 export function perksFor(planCode: string | null | undefined, fromDb?: Partial<PlanPerks> | null): PlanPerks {
@@ -35,17 +39,13 @@ export function perksFor(planCode: string | null | undefined, fromDb?: Partial<P
   };
 }
 
-/**
- * @deprecated Daily picks go to every enrolled member every day; the cadence
- * perk no longer gates the sourcing cron. Kept so the `billing_plans.perks`
- * seed and older DB rows still parse.
- */
-export function sourcingRunsToday(cadence: SourcingCadence, now: Date = new Date()): boolean {
-  return cadence === 'daily' || now.getUTCDay() === 1;
+/** The pick line as the pricing page states it. Derived from the perk, so it can never promise more than the row says. */
+export function pickLine(cadence: SourcingCadence): string {
+  return cadence === 'daily' ? 'One property pick a day by email' : 'One property pick a week by email';
 }
 
 export function perkLines(p: PlanPerks): string[] {
-  const lines = ['One property pick a day by email'];
+  const lines = [pickLine(p.sourcingCadence)];
   if (p.priorityRefresh) lines.push('Priority data refresh');
   if (p.phoneSupport) lines.push('Phone support');
   if (p.quarterlyBriefing) lines.push('Quarterly market briefing');

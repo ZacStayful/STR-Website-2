@@ -10,6 +10,8 @@ import { loadExplorerUser } from "../_lib/loadExplorerUser";
 import { isSortKey } from "@/lib/market/rank";
 import { isTabKey } from "@/lib/market/tab-model";
 import { marketDealsForArea } from "@/lib/marketplace/queries";
+import { dealVisibilityFor } from "@/lib/marketplace/tier";
+import { isAdminEmail } from "@/lib/admin";
 
 // One market as a full page: overview, sub-markets, listings, occupancy,
 // revenue, rates, seasonality, competition, licensing, long-let vs
@@ -49,7 +51,8 @@ export default async function AreaPage({
   if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage />;
 
   const access = await getMarketAccess();
-  const [{ sort, district, tab }, snapshot, user, marketDeals] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user), marketDealsForArea(meta.code)]);
+  const visibility = await dealVisibilityFor(access.user?.id ?? null, isAdminEmail(access.user?.email));
+  const [{ sort, district, tab }, snapshot, user, marketDeals] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user), marketDealsForArea(meta.code, visibility)]);
   const { cards } = snapshot;
   const card = cards.find((c) => c.code === meta.code) ?? null;
   // ?district=NG7 opens a sub-market inside the area; anything that is not one of its districts is ignored by the page.
@@ -63,8 +66,6 @@ export default async function AreaPage({
       goals={user.goals}
       savedAreas={user.savedAreas}
       userEmail={user.email}
-      alertWeekly={user.alertWeekly}
-      sourcingAlerts={user.sourcingAlerts}
       listings={user.listings}
       marketDeals={marketDeals}
       initialTab={isTabKey(tab) ? tab : "overview"}

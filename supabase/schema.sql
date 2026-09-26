@@ -453,13 +453,20 @@ create table if not exists public.billing_plans (
 );
 alter table public.billing_plans add column if not exists perks jsonb not null default '{}'::jsonb;
 insert into public.billing_plans (code, name, price_pence, interval, monthly_credit_pence, perks, sort) values
-  ('starter',    'Starter',      1900,  'month', 1900,  '{"sourcingCadence":"weekly","priorityRefresh":false,"phoneSupport":false,"quarterlyBriefing":false}', 1),
-  ('pro',        'Pro',          3999,  'month', 5000,  '{"sourcingCadence":"weekly","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":false}', 2),
+  ('starter',    'Starter',      1900,  'month', 1900,  '{"sourcingCadence":"daily","priorityRefresh":false,"phoneSupport":false,"quarterlyBriefing":false}', 1),
+  ('pro',        'Pro',          3999,  'month', 5000,  '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":false}', 2),
   ('scale',      'Scale',        9900,  'month', 14000, '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":true,"quarterlyBriefing":true}', 3),
-  ('pro_annual', 'Pro (annual)', 36000, 'year',  5000,  '{"sourcingCadence":"weekly","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":true}', 4)
+  ('pro_annual', 'Pro (annual)', 36000, 'year',  5000,  '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":true}', 4)
 on conflict (code) do update set
   name = excluded.name, price_pence = excluded.price_pence, interval = excluded.interval,
   monthly_credit_pence = excluded.monthly_credit_pence, perks = excluded.perks, sort = excluded.sort;
+-- Daily picks for every plan. The seed above covers the four known rows; this
+-- catches any other row (a plan added by hand) that still says weekly. The DB
+-- row overrides src/lib/credit/perks.ts, so without this the live site would
+-- keep advertising the old cadence.
+update public.billing_plans
+   set perks = coalesce(perks, '{}'::jsonb) || '{"sourcingCadence":"daily"}'::jsonb
+ where coalesce(perks->>'sourcingCadence', '') <> 'daily';
 alter table public.billing_plans enable row level security;
 drop policy if exists "Signed-in users can read plans" on public.billing_plans;
 create policy "Signed-in users can read plans" on public.billing_plans for select to authenticated using (true);
@@ -1881,3 +1888,91 @@ drop trigger if exists saved_searches_set_owner on public.saved_searches;
 create trigger saved_searches_set_owner
   before insert or update on public.saved_searches
   for each row execute function private.saved_searches_set_owner();
+
+-- =========================
+-- Early access to marketplace deals (src/lib/marketplace/visibility.ts)
+-- =========================
+-- An account that has ever paid (any subscription, any top-up, admins — see
+-- hasEverPaid in src/lib/access.ts) sees a deal the moment it goes live.
+-- Every other account, and every signed-out visitor, sees it
+-- free_deal_delay_hours later. Inside that window the deal is simply absent
+-- for them: not on the grid, the map, the counts, the teaser, by id, as an
+-- open or as a daily pick.
+--
+-- live_since is stamped by the trigger on every transition to 'live' (first
+-- entry, pending_verify → live, reactivation, admin restore), so none of the
+-- code paths that flip the status can forget it. A live row it has not
+-- stamped counts as brand new: hidden from the delayed tier, never shown
+-- early. APPLY BEFORE deploying the code that reads it: DEAL_COLUMNS
+-- (src/lib/marketplace/server.ts) is a fixed select, and every deal read
+-- filters on this column.
+alter table public.marketplace_deals add column if not exists live_since timestamptz;
+create or replace function private.marketplace_deals_stamp_live()
+returns trigger language plpgsql as $$
+begin
+  if new.status = 'live' and (tg_op = 'INSERT' or old.status is distinct from 'live') then
+    new.live_since := now();
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists marketplace_deals_stamp_live on public.marketplace_deals;
+create trigger marketplace_deals_stamp_live
+  before insert or update on public.marketplace_deals
+  for each row execute function private.marketplace_deals_stamp_live();
+-- Rows that were live before the column existed: their first sighting is the
+-- best date we have. live → live, so the trigger leaves this value alone.
+update public.marketplace_deals set live_since = coalesce(live_since, first_seen_at) where status = 'live' and live_since is null;
+create index if not exists marketplace_deals_live_since_idx on public.marketplace_deals (live_since) where status = 'live';
+-- The window, in hours. 0 switches it off. Edit the row to change it; no deploy needed.
+insert into public.billing_settings (key, value) values ('free_deal_delay_hours', '48') on conflict (key) do nothing;
+
+-- =========================
+-- Notifications panel (src/lib/notifications)
+-- =========================
+-- One switch per notification type, each a boolean on profiles:
+--   sourcing_alerts  daily picks (with sourcing_opted_out_at, above)
+--   alert_weekly     weekly area alerts
+--   alert_credit     "picks paused / out of credit": the paused-picks letter
+--                    and the low-balance / out-of-credit emails
+-- The panel is the only place these change (service role, via
+-- src/lib/notifications/server.ts); the goals modal no longer writes them.
+-- Billing and receipt emails have no switch.
+alter table public.profiles add column if not exists alert_credit boolean not null default true;
+
+-- =========================
+-- "Your picks have paused" (src/lib/listing/picks-paused.ts)
+-- =========================
+-- When the daily-picks run finds a member a property but their credit will
+-- not cover it, the pick is recorded here — figures only, never the address,
+-- postcode or URL — and the 08:00 cron (/api/internal/picks-paused) sends
+-- one letter per member: on the first day, then at most every seven days
+-- while they stay out of credit, listing everything missed since the last
+-- letter, and never once they have credit again. Service role only.
+create table if not exists public.sourcing_missed (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  canonical_url text not null,
+  missed_at timestamptz not null default now(),
+  kind text not null,                        -- sale | rent
+  postcode_area text,
+  bedrooms int,
+  price_amount numeric,                      -- sale: asking price; rent: pcm
+  price_period text,                         -- total | pcm
+  annual_profit numeric,                     -- screening.surplus, £/yr
+  need_pence numeric not null default 0,     -- what the pick would have cost
+  emailed_at timestamptz,                    -- the letter that listed it
+  superseded_at timestamptz,                 -- a pick went out after it, so it never resurfaces
+  unique (user_id, canonical_url)
+);
+create index if not exists sourcing_missed_user_idx on public.sourcing_missed (user_id, missed_at desc);
+create index if not exists sourcing_missed_pending_idx on public.sourcing_missed (missed_at) where emailed_at is null and superseded_at is null;
+alter table public.sourcing_missed enable row level security;  -- no policies: service role only
+revoke all on public.sourcing_missed from anon, authenticated;
+-- When the last paused letter went out (null: never).
+alter table public.profiles add column if not exists picks_paused_email_at timestamptz;
+
+-- One-off "picks are now daily" notice (src/lib/listing/daily-notice-run.ts):
+-- when it was sent to this member, so a second press of the admin button
+-- never sends twice. Null: not yet.
+alter table public.profiles add column if not exists daily_notice_sent_at timestamptz;

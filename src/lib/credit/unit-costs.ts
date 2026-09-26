@@ -30,6 +30,11 @@ export interface BillingSettings {
   referralPence: number;
   /** What opening a marketplace deal sheet costs, by annual profit band. */
   dealOpenLadder: DealOpenLadder;
+  /**
+   * How long a marketplace deal is held back from accounts that have never
+   * paid (src/lib/marketplace/visibility.ts). 0 switches the window off.
+   */
+  freeDealDelayHours: number;
 }
 
 export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
@@ -41,6 +46,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   topupPresetsPence: [1000, 2500, 5000],
   referralPence: 1000,
   dealOpenLadder: DEFAULT_DEAL_OPEN_LADDER,
+  freeDealDelayHours: 48,
 };
 
 export function invalidateCreditCaches(): void {
@@ -94,6 +100,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       topupPresetsPence: Array.isArray(presets) && presets.length ? presets.map(Number).filter((n) => Number.isFinite(n) && n > 0) : [1000, 2500, 5000],
       referralPence: num('referral_pence', 1000),
       dealOpenLadder: parseLadder(kv.get('deal_open_ladder')),
+      freeDealDelayHours: Math.max(0, num('free_deal_delay_hours', 48)),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

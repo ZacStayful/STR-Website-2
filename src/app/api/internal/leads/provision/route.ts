@@ -87,8 +87,8 @@ export async function POST(request: Request) {
   // ── The member: existing by email, else created ──
   let userId: string | null = null;
   let created = false;
-  const { data: existing } = await admin.from("profiles").select("id, market_goals, mobile, lead_source").ilike("email", email).limit(1);
-  const existingRow = (existing ?? [])[0] as { id: string; market_goals: unknown; mobile: string | null; lead_source: unknown } | undefined;
+  const { data: existing } = await admin.from("profiles").select("id, market_goals, mobile, lead_source, sourcing_opted_out_at").ilike("email", email).limit(1);
+  const existingRow = (existing ?? [])[0] as { id: string; market_goals: unknown; mobile: string | null; lead_source: unknown; sourcing_opted_out_at: string | null } | undefined;
   if (existingRow) {
     userId = existingRow.id;
   } else {
@@ -107,7 +107,10 @@ export async function POST(request: Request) {
 
   // ── Goals, area, provenance. Never overwrite goals a member set themselves. ──
   const update: Record<string, unknown> = { lead_source: { source, leadId, provisionedAt: nowIso, ...(existingRow?.lead_source && typeof existingRow.lead_source === "object" ? { first: existingRow.lead_source } : {}) } };
-  if (!existingRow?.market_goals) Object.assign(update, { market_goals: goals, market_goals_updated_at: nowIso, sourcing_alerts: true, sourcing_opted_out_at: null });
+  if (!existingRow?.market_goals) Object.assign(update, { market_goals: goals, market_goals_updated_at: nowIso });
+  // A member who turned picks off in Notifications stays off: only an account
+  // that never made that choice is enrolled here.
+  if (!existingRow?.market_goals && !existingRow?.sourcing_opted_out_at) Object.assign(update, { sourcing_alerts: true, sourcing_opted_out_at: null });
   if (mobile && !existingRow?.mobile) update.mobile = mobile;
   if (name && created) update.full_name = name;
   // The trigger creates the profile on auth.users insert; it may lag a fresh createUser by a moment.

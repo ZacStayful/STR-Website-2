@@ -30,7 +30,7 @@ function PriorityPills({ name, value, label, help }: { name: string; value: Prio
   );
 }
 
-export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = true, onClose }: { goals: MarketGoals | null; alertWeekly?: boolean; sourcingAlerts?: boolean; onClose: () => void }) {
+export function GoalsModal({ goals, onClose }: { goals: MarketGoals | null; onClose: () => void }) {
   const g = goals ?? DEFAULT_GOALS;
   const [state, action, pending] = useActionState(saveMarketGoalsAction, initial);
   const [clearing, startClear] = useTransition();
@@ -205,14 +205,9 @@ export function GoalsModal({ goals, alertWeekly = true, sourcingAlerts = true, o
                 </label>
               </>
             )}
-            <label className="mx-check">
-              <input type="checkbox" name="sourcingAlerts" value="1" defaultChecked={sourcingAlerts} />
-              <span>Email me one property a day that fits this filter (10p of credit per pick, only when there is something new). Picks you save are re-checked for price drops automatically.</span>
-            </label>
-            <label className="mx-check">
-              <input type="checkbox" name="alertWeekly" value="1" defaultChecked={alertWeekly} />
-              <span>Email me weekly when a saved area’s enquiry trend flips or its data becomes Confirmed.</span>
-            </label>
+            <p className="mx-goals-note">
+              Your daily pick uses this filter. Daily picks, weekly area alerts and the other emails are switched on or off in <a href="/account/notifications">Notifications</a>.
+            </p>
           </section>
 
           {state.error && <p className="mx-note mx-note--error">{state.error}</p>}

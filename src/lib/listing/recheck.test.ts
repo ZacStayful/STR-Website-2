@@ -47,4 +47,6 @@ test('recheck email lists every item with a deep link and escapes html', () => {
   assert.match(mail.text, /\/markets\?pane=listings&listing=abc/);
   assert.ok(mail.html.includes('1 High St &amp; Co'));
   assert.ok(!mail.html.includes('<1>'));
+  assert.ok(mail.text.includes('Manage notifications: https://intelligence.stayful.co.uk/account/notifications'));
+  assert.ok(mail.html.includes('href="https://intelligence.stayful.co.uk/account/notifications"'));
 });

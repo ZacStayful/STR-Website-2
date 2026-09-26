@@ -10,18 +10,23 @@ import { maybeAutoTopup } from '../stripe/auto-topup';
 
 /**
  * Runs after a member's balance changed because of a debit: the 80% and £0
- * emails (once per cycle each), the Monday "hit zero" flag, and auto top-up.
- * Best-effort; never throws into the request that triggered it.
+ * emails (once per cycle each, and only while the "Picks paused / out of
+ * credit" switch is on — src/lib/notifications), the Monday "hit zero" flag,
+ * and auto top-up. Best-effort; never throws into the request that
+ * triggered it.
  */
 export async function afterDebit(userId: string): Promise<void> {
   try {
     const admin = createAdminClient();
     const [summary, { data: p }] = await Promise.all([
       getCreditSummary(userId),
-      admin.from('profiles').select('email, last_low_balance_email_at, last_out_of_credit_email_at, last_topup_warning_email_at, hit_zero_at, current_period_end, auto_topup_amount_pence, auto_topup_threshold_pence').eq('id', userId).maybeSingle(),
+      admin.from('profiles').select('email, alert_credit, last_low_balance_email_at, last_out_of_credit_email_at, last_topup_warning_email_at, hit_zero_at, current_period_end, auto_topup_amount_pence, auto_topup_threshold_pence').eq('id', userId).maybeSingle(),
     ]);
     if (!p) return;
-    const email = (p.email as string | null) ?? null;
+    // The switch covers the two credit warnings only. The pre-charge warning
+    // below precedes a card payment and is always sent, as receipts are.
+    const email = p.alert_credit === false ? null : ((p.email as string | null) ?? null);
+    const paymentEmail = (p.email as string | null) ?? null;
     const now = new Date();
     // "This cycle" = since the current plan period started (or the last 30 days for free accounts).
     const cycleStart = summary.cycle?.endsAt ? new Date(new Date(summary.cycle.endsAt).getTime() - 31 * 86_400_000) : new Date(now.getTime() - 30 * 86_400_000);
@@ -35,7 +40,7 @@ export async function afterDebit(userId: string): Promise<void> {
       const patch: Record<string, unknown> = {};
       if (!p.hit_zero_at || !sentThisCycle(p.hit_zero_at)) {
         patch.hit_zero_at = now.toISOString();
-        if (email) void flagHitZero(email, now.toISOString()).catch(() => {});
+        if (paymentEmail) void flagHitZero(paymentEmail, now.toISOString()).catch(() => {});
       }
       if (email && !sentThisCycle(p.last_out_of_credit_email_at)) {
         patch.last_out_of_credit_email_at = now.toISOString();
@@ -64,7 +69,7 @@ export async function afterDebit(userId: string): Promise<void> {
     // the balance reads 'low' the charge is imminent or already happening,
     // and a warning about a payment that is about to be taken in the same
     // breath is not a warning.
-    if (email) {
+    if (paymentEmail) {
       const decision = shouldWarnBeforeTopup({
         spendableBasePence: summary.spendableBasePence,
         thresholdPence: Number(p.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE),
@@ -77,7 +82,7 @@ export async function afterDebit(userId: string): Promise<void> {
         // a nuisance, and a send that succeeds without being recorded would
         // repeat on every debit.
         await admin.from('profiles').update({ last_topup_warning_email_at: now.toISOString() }).eq('id', userId);
-        void topupComingEmail(email, {
+        void topupComingEmail(paymentEmail, {
           amountPence: Number(p.auto_topup_amount_pence),
           thresholdPence: Number(p.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE),
           remainingPence: summary.spendableBasePence,

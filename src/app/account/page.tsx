@@ -197,7 +197,8 @@ export default async function AccountPage({
             <li><Link href="/reports" className="underline">My reports</Link></li>
             <li><Link href="/leads" className="underline">Leads</Link> · enquiries from your white-label funnels, kept apart from your own reports</li>
             <li><Link href="/account/team" className="underline">Team</Link> · invite colleagues to work your leads (£10 a month each)</li>
-            <li><Link href="/picks" className="underline">Daily picks</Link> · one property a day by email, turn on or off there</li>
+            <li><Link href="/account/notifications" className="underline">Notifications</Link> · daily picks, weekly area alerts and credit warnings, on or off</li>
+            <li><Link href="/picks" className="underline">Daily picks</Link> · every property we have sent you</li>
             <li><Link href="/markets" className="underline">Market Explorer</Link></li>
             <li>
               <Link href="/extension/connect" className="underline">Browser extension</Link>

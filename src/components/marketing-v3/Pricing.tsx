@@ -3,7 +3,7 @@ import { getPlans, type BillingPlan } from "@/lib/credit/plans";
 import { getBillingSettings, getUnitCostTable } from "@/lib/credit/unit-costs";
 import { estimateAction } from "@/lib/credit/estimate";
 import { formatGbp } from "@/lib/credit/pricing";
-import { perkLines } from "@/lib/credit/perks";
+import { perkLines, pickLine, FREE_PERKS } from "@/lib/credit/perks";
 import { SubscribeButton } from "@/components/credit/SubscribeButton";
 
 /**
@@ -79,6 +79,7 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Market Explorer: UK area rankings</li>
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Paste any Rightmove, OnTheMarket or Airbnb link</li>
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Live comparables, forecast &amp; risk</li>
+                <li><Icon name="check" size={13} color="var(--sage-500)" /> {pickLine(FREE_PERKS.sourcingCadence)}</li>
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Top-ups from {formatGbp(settings.topupPresetsPence[0] ?? 1000).replace(".00", "")}</li>
               </ul>
               <a href={signupHref} className="btn btn-ghost" style={{ width: "100%", justifyContent: "center" }}>

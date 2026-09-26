@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Daily picks cron ─────────────────────────────────────────────────
-// Vercel cron (vercel.json: 07:00 UTC, with a resumable second pass at 07:20).
+// Vercel cron (vercel.json: 07:00 UTC, with resumable passes at 07:20 and 07:40).
 // Sending is ON unless SOURCING_ENABLED=false, the kill switch. The run itself
 // lives in src/lib/listing/picks-run.ts, shared with the admin page.
 //

@@ -26,8 +26,9 @@ import { postcodeAreaOf } from '../listing/normalise';
 import { openPricePence } from './ladder';
 import { openDecision, hasRecentLiveCheck, type FetchOutcome } from './status';
 import { retiredReasonFor } from './status';
-import { applyLiveResult, fetchDealPage, loadDealById, loadScreenContext, loadSourcedListings, revalidateDeals, type Admin } from './server';
+import { applyLiveResult, fetchDealPage, loadDealById, loadScreenContext, loadSourcedListings, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 import { snapshotFromDeal } from './record';
+import { dealVisible, PAID_VISIBILITY, type DealVisibility } from './visibility';
 import type { DealOpenRow, DealRow, VerifiedVia } from './types';
 import type { ListingSnapshot } from '../listing/types';
 
@@ -57,7 +58,7 @@ async function flipToOpen(admin: Admin, row: DealOpenRow, transactionId: number 
  * removed. `memberId` is the team member who pressed the button, recorded on
  * the debit for the owner's usage history.
  */
-export async function openDeal(input: { userId: string; adminUser: boolean; dealId: string; memberId?: string | null }): Promise<OpenOutcome> {
+export async function openDeal(input: { userId: string; adminUser: boolean; dealId: string; memberId?: string | null; visibility: DealVisibility }): Promise<OpenOutcome> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
   const admin = createAdminClient();
   const now = new Date();
@@ -74,6 +75,10 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
       return { ok: true, alreadyOpen: true, verifiedVia: existing.verified_via, chargedBasePence: Number(existing.charged_base_pence) };
     }
   }
+  // Early access: an account that has never paid cannot open a deal inside
+  // its window by any route. Checked after the "already theirs" branch so a
+  // pool pick they were charged for stays open to them.
+  if (!dealVisible(deal.live_since, input.visibility.cutoffIso)) return { ok: false, code: 'missing' };
   if (deal.status === 'retired') return { ok: false, code: 'gone' };
   if (deal.status === 'pending_verify') return { ok: false, code: 'checking' };
 
@@ -218,13 +223,16 @@ export interface DealSheet {
   priv: DealSheetPrivate | null;
 }
 
-export async function dealSheet(dealId: string, userId: string, adminUser: boolean): Promise<DealSheet | null> {
+export async function dealSheet(dealId: string, userId: string, adminUser: boolean, visibility: DealVisibility): Promise<DealSheet | null> {
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
   const deal = await loadDealById(admin, dealId);
   if (!deal) return null;
   const open = await existingOpen(admin, userId, deal.canonical_url);
   const unlocked = open?.status === 'open' || adminUser;
+  // Inside its early-access window a deal does not exist for an account
+  // that has never paid — unless it is already theirs (a pool pick).
+  if (!unlocked && !dealVisible(deal.live_since, visibility.cutoffIso)) return null;
   if (!unlocked) return { deal, listing: null, priv: null };
   const sourced = (await loadSourcedListings(admin, [deal.canonical_url])).get(deal.canonical_url) ?? null;
   const listing = sourced?.listing ?? null;
@@ -253,7 +261,8 @@ export async function dealSheet(dealId: string, userId: string, adminUser: boole
  */
 export async function saveOpenedDealToPipeline(userId: string, dealId: string, adminUser: boolean, accountId: string = userId): Promise<{ ok: true; checkedListingId: string } | { ok: false; code: 'missing' | 'not_open' | 'failed' }> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
-  const sheet = await dealSheet(dealId, accountId, adminUser);
+  // No visibility gate: the save needs an open, and an open is forever.
+  const sheet = await dealSheet(dealId, accountId, adminUser, PAID_VISIBILITY);
   if (!sheet) return { ok: false, code: 'missing' };
   if (!sheet.priv) return { ok: false, code: 'not_open' };
   const admin = createAdminClient();
@@ -306,7 +315,8 @@ export async function listOpened(userId: string): Promise<OpenedDeal[]> {
   const ids = [...new Set(opens.map((o) => o.deal_id))];
   const deals = new Map<string, DealRow>();
   for (let i = 0; i < ids.length; i += 150) {
-    const { data: rows } = await admin.from('marketplace_deals').select('canonical_url, id, source, kind, postcode_area, outcode, town, bedrooms, price_amount, price_period, raw_type, tenure, photo, photos, band, screening, deal, suitability, motivation, annual_profit, uplift_pct, price_history, reduced_at, listed_date, status, retired_reason, retired_at, first_seen_at, last_seen_at, last_checked_live_at, last_confirmed_at, last_confirmed_via, next_check_due_at, check_requested_at, last_shown_at, check_failures, created_at, updated_at').in('id', ids.slice(i, i + 150));
+    // An open is forever, so no visibility gate: the member paid for these.
+    const { data: rows } = await admin.from('marketplace_deals').select(DEAL_COLUMNS).in('id', ids.slice(i, i + 150));
     for (const d of (rows ?? []) as unknown as DealRow[]) deals.set(d.id, d);
   }
   return opens.map((open) => ({ open, deal: deals.get(open.deal_id) ?? null }));
