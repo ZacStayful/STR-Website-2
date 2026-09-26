@@ -7,7 +7,7 @@
  * function, so the rule lives in one place: a member answers the welcome
  * questions before anything else, and /welcome itself sends anyone who has
  * already answered (or skipped enough times) on to where they were going,
- * or to the deals grid.
+ * or to Today.
  *
  * Two flows are never interrupted: accepting a team invite (the join page is
  * where the invite token is, and the owner's settings apply) and a password
@@ -18,7 +18,7 @@
 import { safeInternalPath } from '../safe-path.ts';
 
 /** Where a member who has answered (or skipped) the welcome questions lands. */
-export const HOME_PATH = '/deals';
+export const HOME_PATH = '/today';
 export const WELCOME_PATH = '/welcome';
 
 /** Destinations the welcome screen must never sit in front of. */

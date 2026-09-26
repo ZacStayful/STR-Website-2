@@ -22,7 +22,7 @@ import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
 import { houseQueries, applyQueryFeedback, feedbackRules, pickEmail, pickPrice, newPickToken, startOfTodayUtc, type PickBasis, type PickFeedback } from "./picks";
-import { rankForMember, toPickFeedback } from "./rank";
+import { rankForMember, toPickFeedback, FEEDBACK_WINDOW_MS } from "./rank";
 import { missedRowFor } from "./picks-paused";
 import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
 import { dealFeedbackFor } from "../marketplace/reactions-server";
@@ -74,7 +74,6 @@ const QUERY_BUDGET_MS = 30_000;
 /** Page verification of picks (one page fetch per distinct listing) stops here. */
 const VERIFY_UNTIL_MS = 40_000;
 const NEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const FEEDBACK_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 /** How far down a member's ranking the pick may reach when better candidates are capped or unsuitable. */
 const SPREAD_DEPTH = 40;
 /** How many members may receive the same listing in one day (across passes). */

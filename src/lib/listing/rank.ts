@@ -20,6 +20,9 @@ import { findOutcode } from './html.ts';
 /** The short-let check as far as the search card can answer it; anything worse never reaches ranking. */
 export type Precheck = 'ok' | 'unknown';
 
+/** How far back a member's answers still shape what they are offered. One window for the email and Today. */
+export const FEEDBACK_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+
 export interface RankOptions {
   /** How far down the ranking to keep. The picks run reaches 40 deep when better candidates are capped or unsuitable. */
   depth: number;

@@ -7,6 +7,7 @@ import { sendEmail } from "@/lib/email/send";
 import { escapeHtml } from "@/lib/email/escape";
 import { siteUrl } from "@/lib/url";
 import { confirmLink } from "@/lib/auth/magic-link";
+import { HOME_PATH } from "@/lib/auth/landing";
 
 // ─── Lead-form provisioning ───────────────────────────────────────────
 // Turns a Meta lead-form submission (relayed by n8n) into a member: the
@@ -150,7 +151,8 @@ export async function POST(request: Request) {
   if (linkErr || !link?.properties?.hashed_token) {
     console.error("[leads] magic link failed:", linkErr?.message);
   } else {
-    magicLink = confirmLink(link.properties.hashed_token, "/deals");
+    // "Sign in and see today's deals": the link lands on Today, like every other sign-in.
+    magicLink = confirmLink(link.properties.hashed_token, HOME_PATH);
     let areaName: string | null = null;
     if (areaCode) {
       const { areaMetaForCode } = await import("@/lib/market/areas");

@@ -12,7 +12,7 @@ test('no destination lands on the welcome screen', () => {
 test('an explicit destination goes through the welcome screen', () => {
   assert.equal(postAuthPath('/markets'), '/welcome?next=%2Fmarkets');
   assert.equal(postAuthPath('/reports?q=ng2'), '/welcome?next=%2Freports%3Fq%3Dng2');
-  assert.equal(postAuthPath(HOME_PATH), '/welcome?next=%2Fdeals');
+  assert.equal(postAuthPath(HOME_PATH), '/welcome?next=%2Ftoday');
 });
 
 test('team invites and password resets are never interrupted', () => {
@@ -37,6 +37,7 @@ test('open redirects are refused', () => {
 });
 
 test('welcome returns the member to their destination, else home', () => {
+  assert.equal(HOME_PATH, '/today', 'home is the Today screen');
   assert.equal(welcomeReturnPath(null), HOME_PATH);
   assert.equal(welcomeReturnPath('/markets'), '/markets');
   assert.equal(welcomeReturnPath('/team/join?token=abc'), '/team/join?token=abc');
