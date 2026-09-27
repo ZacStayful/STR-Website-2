@@ -19,6 +19,7 @@ import { alertsFor, type AlertedBefore, type AlertInsert, type TrackedForAlerts 
 import { trackedPlace, trackingFor, type MemberTracking } from './tracked-read';
 import { describeType } from '../marketplace/grid';
 import { parseHistory } from '../listing/recheck';
+import { textAlertMemberIds } from '../sms/store';
 
 const PAGE = 1000;
 const ID_CHUNK = 150;
@@ -100,13 +101,17 @@ export async function runCollector(opts: { dry: boolean; onlyUserIds?: string[] 
   }
 
   // ── Members with "Changes on deals I'm tracking" on. The column missing = nobody (never send what may be off). ──
+  // Batch 8: plus members who get these changes by text, whatever their email
+  // switch says. Recording an alert sends nothing: every email still checks
+  // alert_tracked before carrying it (trackedAlertsOn). Unreadable = nobody extra.
+  const texted = await textAlertMemberIds(admin, opts.onlyUserIds);
   const members: { id: string; email: string; admin: boolean }[] = [];
   for (let from = 0; ; from += PAGE) {
     let q = admin.from('profiles').select('id, email, alert_tracked').not('email', 'is', null);
     if (opts.onlyUserIds) q = q.in('id', opts.onlyUserIds);
     const { data, error } = await q.order('id', { ascending: true }).range(from, from + PAGE - 1);
     if (error) return { status: 503, body: { error: `profiles read failed (schema behind?): ${error.message}` } };
-    for (const r of (data ?? []) as { id: string; email: string; alert_tracked: boolean | null }[]) if (r.alert_tracked !== false) members.push({ id: r.id, email: r.email, admin: isAdminEmail(r.email) });
+    for (const r of (data ?? []) as { id: string; email: string; alert_tracked: boolean | null }[]) if (r.alert_tracked !== false || texted.has(r.id)) members.push({ id: r.id, email: r.email, admin: isAdminEmail(r.email) });
     if ((data?.length ?? 0) < PAGE) break;
   }
   if (members.length === 0) return { status: 200, body: { dry: opts.dry, members: 0, alerts: 0 } };

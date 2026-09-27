@@ -1,5 +1,5 @@
 /**
- * Every email a member can switch off, in one list.
+ * Every email and text a member can switch off, in one list.
  *
  * The Notifications panel (/account/notifications) renders this list, the
  * server writer (./server.ts) only writes columns named here, and every
@@ -10,12 +10,20 @@
  * Pure: no server-only, no Supabase. Tested.
  */
 
-export type NotificationKey = 'daily_picks' | 'deal_changes' | 'weekly_missed' | 'weekly_alerts' | 'credit_alerts';
+export type NotificationKey = 'daily_picks' | 'deal_changes' | 'weekly_missed' | 'weekly_alerts' | 'credit_alerts' | SmsNotificationKey;
 
-export type NotificationColumn = 'sourcing_alerts' | 'alert_tracked' | 'alert_missed' | 'alert_weekly' | 'alert_credit';
+/** Batch 8: one text switch per kind of change on a tracked deal. */
+export type SmsNotificationKey = 'sms_price_drop' | 'sms_back_on_market' | 'sms_nearly_gone' | 'sms_gone';
+
+export type NotificationColumn = 'sourcing_alerts' | 'alert_tracked' | 'alert_missed' | 'alert_weekly' | 'alert_credit' | SmsNotificationKey;
+
+/** How it reaches the member. The panel lists each channel separately. */
+export type NotificationChannel = 'email' | 'sms';
 
 export interface NotificationType {
   key: NotificationKey;
+  /** Email unless set. */
+  channel?: NotificationChannel;
   /** The profiles column that holds the switch. */
   column: NotificationColumn;
   label: string;
@@ -68,10 +76,60 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = [
     description: 'A note when your daily picks pause because your credit ran out, and when your balance is running low.',
     defaultOn: true,
   },
+  // ── Texts (Batch 8, src/lib/sms). Off until the member verifies a number,
+  // which turns all four on; each can then be turned off here. At most one
+  // text a day, however many of these have news. ──
+  {
+    key: 'sms_price_drop',
+    channel: 'sms',
+    column: 'sms_price_drop',
+    label: 'Price drops',
+    description: 'A deal you track drops its price.',
+    defaultOn: false,
+  },
+  {
+    key: 'sms_back_on_market',
+    channel: 'sms',
+    column: 'sms_back_on_market',
+    label: 'Back on the market',
+    description: 'A deal you track that had gone is available again.',
+    defaultOn: false,
+  },
+  {
+    key: 'sms_nearly_gone',
+    channel: 'sms',
+    column: 'sms_nearly_gone',
+    label: 'Getting attention',
+    description: 'Three or more other members opened or kept a deal you track this week.',
+    defaultOn: false,
+  },
+  {
+    key: 'sms_gone',
+    channel: 'sms',
+    column: 'sms_gone',
+    label: 'Gone',
+    description: 'A deal you track goes under offer, sells or is let.',
+    defaultOn: false,
+  },
 ];
 
+export function channelOf(t: Pick<NotificationType, 'channel'>): NotificationChannel {
+  return t.channel ?? 'email';
+}
+
+export const EMAIL_NOTIFICATION_TYPES: readonly NotificationType[] = NOTIFICATION_TYPES.filter((t) => channelOf(t) === 'email');
+export const SMS_NOTIFICATION_TYPES: readonly NotificationType[] = NOTIFICATION_TYPES.filter((t) => channelOf(t) === 'sms');
+export const SMS_NOTIFICATION_KEYS: readonly SmsNotificationKey[] = SMS_NOTIFICATION_TYPES.map((t) => t.key as SmsNotificationKey);
+
 /** Every column the registry reads: select these together. */
-export const NOTIFICATION_COLUMNS = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit';
+export const NOTIFICATION_COLUMNS = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit, sms_price_drop, sms_back_on_market, sms_nearly_gone, sms_gone';
+
+/**
+ * The same, as it was before the Batch 8 text switches: what a database that
+ * has not had them added yet can still answer (readNotifications falls back;
+ * a missing text switch reads as off).
+ */
+export const NOTIFICATION_COLUMNS_BEFORE_BATCH_8 = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit';
 
 /**
  * The same, as it was before the Batch 6 columns: what a database that has
@@ -106,6 +164,11 @@ export function notificationState(row: NotificationRow | null | undefined): Noti
     out[t.key] = typeof v === 'boolean' ? v : t.defaultOn;
   }
   return out;
+}
+
+/** The profile update that moves several switches at once (a member's text switches, on verifying). */
+export function notificationsPatch(keys: readonly NotificationKey[], on: boolean, now: Date = new Date()): Record<string, boolean | string | null> {
+  return Object.assign({}, ...keys.map((k) => notificationPatch(k, on, now)));
 }
 
 /** The profile update that moves one switch, including its opt-out stamp. */
