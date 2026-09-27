@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { siteUrl } from "@/lib/url";
+import { GOALS_EDITOR_HREF } from "@/lib/nav";
 
 export const metadata: Metadata = {
   title: "Privacy policy — Stayful Intelligence",
@@ -49,7 +50,7 @@ export default function PrivacyPage() {
 
         <h2 id="profile">How your profile is used</h2>
         <p>
-          Your answers are used to filter and rank the deals we show you and to calculate figures such as profit at your own finance terms. This is automated, but it only decides which deals appear and in what order. It never decides whether you can use the service, what you pay, or anything with a legal or similarly significant effect on you. It is not financial advice. You can view and change every answer at any time from <Link href="/markets?goals=1">your goals</Link>.
+          Your answers are used to filter and rank the deals we show you and to calculate figures such as profit at your own finance terms. This is automated, but it only decides which deals appear and in what order. It never decides whether you can use the service, what you pay, or anything with a legal or similarly significant effect on you. It is not financial advice. You can view and change every answer at any time from <Link href={GOALS_EDITOR_HREF}>your profile</Link>.
         </p>
 
         <h2 id="sharing">Who we share it with</h2>

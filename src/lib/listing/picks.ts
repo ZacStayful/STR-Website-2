@@ -18,6 +18,7 @@ import { propertyKind } from './suitability.ts';
 import { BAND_LABELS, screeningScore, screeningWorking, type Screening } from './screen.ts';
 import { motivationLabel, type Motivation } from './motivation.ts';
 import { manageNotificationsUrl } from '../url.ts';
+import { GOALS_EDITOR_HREF } from '../nav.ts';
 import type { Block, Section, Unsubscribe } from '../notify/message.ts';
 import { renderEmail } from '../notify/render-email.ts';
 
@@ -489,7 +490,8 @@ export function pickLinks(siteUrl: string, id: string, token: string, listingUrl
     no: `${base}/p/${token}?a=no`,
     save: `${base}/picks?save=${encodeURIComponent(id)}`,
     report: `${base}/estimate?listing=${encodeURIComponent(listingUrl)}`,
-    filter: `${base}/markets?goals=1`,
+    /** The profile page (Batch 12), where every answer is changed. */
+    filter: `${base}${GOALS_EDITOR_HREF}`,
     picks: `${base}/picks`,
     /** The member's Today screen: this pick first, then the rest of the day's five. */
     today: `${base}/today`,

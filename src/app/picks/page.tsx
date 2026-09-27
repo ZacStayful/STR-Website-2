@@ -12,7 +12,7 @@ import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
 import { myDealsFocusPath } from "@/lib/listing/return-path";
-import { NAV_TARGETS } from "@/lib/nav";
+import { NAV_TARGETS, GOALS_EDITOR_HREF } from "@/lib/nav";
 import { savePickAction, reactToPickAction } from "./actions";
 
 export const metadata: Metadata = {
@@ -99,7 +99,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
             </>
           )}
           <p className="mt-3 flex flex-wrap gap-2 text-sm">
-            <Link href="/markets?goals=1" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">{goals ? "Edit filter" : "Set my filter"}</Link>
+            <Link href={GOALS_EDITOR_HREF} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">{goals ? "Edit filter" : "Set my filter"}</Link>
             <Link href={NAV_TARGETS.myDeals.href} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open My deals</Link>
           </p>
           {enabled === false && <p className="mt-3 text-xs text-muted-foreground">Daily picks are off. Turn them on above to get one a day again.</p>}
@@ -171,7 +171,7 @@ function PickCard({ pick: p, tab, showReasons, finance, widths }: { pick: PickVi
           {p.relaxation && (
             <p className="mt-2 text-xs text-muted-foreground">
               Not an exact match — your {p.relaxation.label.toLowerCase()} is {p.relaxation.current}.{" "}
-              <Link href="/markets?goals=1" className="underline">Change it</Link>
+              <Link href={GOALS_EDITOR_HREF} className="underline">Change it</Link>
             </p>
           )}
           <p className="mt-1 text-xs text-muted-foreground">

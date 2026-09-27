@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { getMarketSnapshot } from "@/lib/market/cached";
+import { redirect } from "next/navigation";
 import { getMarketAccess, requireMarketAccess } from "@/lib/market/gate";
+import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "./_components/product/MarketExplorerProductPage";
 import { FindShell } from "./_components/explorer/v2/find/FindShell";
@@ -41,6 +43,8 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
 
   const access = await getMarketAccess();
   const [{ sort, q, pane, listing, check, region, level, goals: goalsParam }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
+  // /markets?goals=1 opened the goals panel; the emails already sent carry it, so it goes to the profile page (Batch 12).
+  if (goalsParam === "1") redirect(GOALS_EDITOR_HREF);
   const { cards, regions, national } = snapshot;
   // ?region=north-west narrows to that region; absent (or "all") is every area.
   const initialRegion = isRegionSlug(region) && region !== "all" ? region : null;
@@ -74,7 +78,6 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
       initialLevel={initialLevel}
       initialActiveListing={activeListing}
       initialCheckUrl={checkUrl}
-      initialGoalsOpen={goalsParam === "1"}
       initialSort={isSortKey(sort) ? sort : "stayful"}
       initialQuery={typeof q === "string" ? q.slice(0, 40) : ""}
     />

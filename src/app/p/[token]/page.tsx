@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { notFound } from "next/navigation";
 import { after } from "next/server";
 import { pickByToken, recordReaction } from "@/lib/listing/picks-server";
@@ -109,7 +110,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
                     {done === "1"
                       ? `Done — ${offer.label.toLowerCase()} is now ${offer.suggested}. Tomorrow's pick uses the new setting.`
                       : "That offer is no longer available. You can change it yourself from your filter."}{" "}
-                    <Link href="/markets?goals=1" className="underline">Open my filter</Link>
+                    <Link href={GOALS_EDITOR_HREF} className="underline">Open my filter</Link>
                   </p>
                 ) : (
                   <>
@@ -122,11 +123,11 @@ export default async function PickResponsePage({ params, searchParams }: { param
                       <form action={applyRelaxationAction} className="mt-3 flex flex-wrap gap-2">
                         <input type="hidden" name="token" value={token} />
                         <button type="submit" className="rounded-md bg-[#2e3d2b] px-4 py-2 text-sm font-semibold text-white">Change it to {offer.suggested}</button>
-                        <Link href="/markets?goals=1" className="rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium">Edit the whole filter</Link>
+                        <Link href={GOALS_EDITOR_HREF} className="rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium">Edit the whole filter</Link>
                       </form>
                     ) : (
                       <p className="mt-3">
-                        <Link href="/markets?goals=1" className="rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium inline-block">Edit my filter</Link>
+                        <Link href={GOALS_EDITOR_HREF} className="rounded-md border border-[#e4e7dc] px-4 py-2 text-sm font-medium inline-block">Edit my filter</Link>
                       </p>
                     )}
                   </>
@@ -179,7 +180,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
                         </p>
                       )}
                       <p className="mt-3 text-xs text-[#7a8274]">
-                        Want to change more than this? <Link href="/markets?goals=1" className="underline">Edit your filter</Link> and set your area, budget and size directly.
+                        Want to change more than this? <Link href={GOALS_EDITOR_HREF} className="underline">Edit your filter</Link> and set your area, budget and size directly.
                       </p>
                     </>
                   ) : (
@@ -235,7 +236,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
               ) : (
                 <Link href={`/estimate?listing=${encodeURIComponent(l.canonicalUrl)}`} className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">Full report</Link>
               )}
-              <Link href="/markets?goals=1" className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">{pick.basis === "house" ? "Set my filter" : "Edit my filter"}</Link>
+              <Link href={GOALS_EDITOR_HREF} className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">{pick.basis === "house" ? "Set my filter" : "Edit my filter"}</Link>
               <Link href="/picks" className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">All my picks</Link>
             </div>
             {pick.basis === "house" && <p className="mt-4 text-xs text-[#7a8274]">This was a Stayful house pick from one of the best-scoring areas we track. Set a filter and tomorrow’s pick will be in your area, budget and size.</p>}

@@ -41,6 +41,7 @@ import { getBalance } from '../credit/ledger';
 import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
 import { cardRangeLine } from '../marketplace/profit-range';
+import { profileNudgesFor } from '../profile/server';
 
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
@@ -180,6 +181,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     summary.noCreditForTodays5 = noCredit.size;
   }
   const wouldEmail: Record<string, unknown>[] = [];
+  // Batch 12: "Your profile is 60% done" for anyone whose profile is not
+  // complete. Team members are never asked, so never nudged.
+  const nudges = await profileNudgesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id));
+  const profileUrl = `${base.replace(/\/$/, '')}/profile`;
 
   await mapLimit(open, 4, async (p) => {
     if (elapsed() > TIME_BUDGET_MS) {
@@ -208,6 +213,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       unsubscribe: { label: kind === 'todays_5' ? 'Stop daily picks' : 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       // Batch 10: each deal's profit as a range at the member's finance.
       figureFor: (c) => cardRangeLine(c, parseMarketGoals(p.market_goals)?.finance ?? null, settings.dealPricing.profitRangePct),
+      profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
     });
     if (!built) {
       perUser.push({ user: p.id, sent: false, reason: 'nothing_to_say' });
