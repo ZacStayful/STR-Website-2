@@ -6,6 +6,7 @@ import {
   priceLabel,
   quoteSource,
   fullAnalysisDue,
+  dealAnalysisDue,
   planCreditFor,
   newPricingActive,
   fullAnalysesIncluded,
@@ -164,6 +165,34 @@ test('after a quick look, the upgrade is the difference', () => {
 test('the PMI add-on goes on top and is never reduced', () => {
   const due = fullAnalysisDue({ fullPence: 400, openPaidBasePence: 60, withPmi: true, pmiPence: 200 });
   assert.deepEqual(due, { analysisBasePence: 340, pmiBasePence: 200, totalBasePence: 540 });
+});
+
+test('one tap on an unopened deal: the quick look first, then the rest, totalling the fixed price', () => {
+  const due = dealAnalysisDue({ fullPence: 400, pmiPence: 200, withPmi: false, opened: false, openPaidBasePence: null, openPricePence: 60 });
+  assert.deepEqual(due, { openBasePence: 60, analysisBasePence: 340, pmiBasePence: 0, totalBasePence: 340, purchaseBasePence: 400 });
+  // With PMI ticked: £6 on the button, taken as 60p + £3.40 + £2.
+  assert.equal(dealAnalysisDue({ fullPence: 400, pmiPence: 200, withPmi: true, opened: false, openPaidBasePence: null, openPricePence: 60 }).purchaseBasePence, 600);
+});
+
+test('an opened deal: the button is the difference, and nothing is opened again', () => {
+  const due = dealAnalysisDue({ fullPence: 400, pmiPence: 200, withPmi: false, opened: true, openPaidBasePence: 60, openPricePence: 60 });
+  assert.deepEqual(due, { openBasePence: 0, analysisBasePence: 340, pmiBasePence: 0, totalBasePence: 340, purchaseBasePence: 340 });
+  // Opened by a daily-deals email at £0: the full price.
+  assert.equal(dealAnalysisDue({ fullPence: 400, pmiPence: 200, withPmi: false, opened: true, openPaidBasePence: 0, openPricePence: 60 }).purchaseBasePence, 400);
+});
+
+test('the two debits of a one-tap walk the grants exactly as one debit of the total would', () => {
+  const grants: GrantLite[] = [
+    { id: 'plan', kind: 'plan', priority: 1, remainingPence: 150, spendRate: 1, expiresAt: '2026-10-20T00:00:00Z', createdAt: '2026-09-20T00:00:00Z' },
+    { id: 'top', kind: 'topup', priority: 3, remainingPence: 2000, spendRate: 1.3, expiresAt: null, createdAt: '2026-09-01T00:00:00Z' },
+  ];
+  const now = new Date('2026-09-27T00:00:00Z');
+  const whole = allocate(grants, 400, now);
+  const first = allocate(grants, 60, now);
+  const after = grants.map((g) => ({ ...g, remainingPence: g.remainingPence - (first.parts.find((p) => p.grantId === g.id)?.facePence ?? 0) }));
+  const second = allocate(after, 340, now);
+  assert.equal(Math.round(first.facePence + second.facePence), Math.round(whole.facePence));
+  assert.equal(Math.round(whole.facePence), 475);
 });
 
 test('the difference is never below zero', () => {

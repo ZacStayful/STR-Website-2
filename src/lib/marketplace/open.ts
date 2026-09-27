@@ -42,7 +42,8 @@ export type OpenOutcome =
 
 const OPEN_COLUMNS = 'id, user_id, canonical_url, deal_id, status, opened_at, charged_base_pence, transaction_id, verified_via, status_at_open, band_at_open, annual_profit_at_open, checked_listing_id, saved_at, fetched';
 
-async function existingOpen(admin: Admin, userId: string, canonicalUrl: string): Promise<DealOpenRow | null> {
+/** The account's open row for a deal (any status), or null. */
+export async function existingOpen(admin: Admin, userId: string, canonicalUrl: string): Promise<DealOpenRow | null> {
   const { data } = await admin.from('deal_opens').select(OPEN_COLUMNS).eq('user_id', userId).eq('canonical_url', canonicalUrl).maybeSingle();
   return (data as DealOpenRow | null) ?? null;
 }
@@ -228,6 +229,22 @@ export interface DealSheet {
   priv: DealSheetPrivate | null;
 }
 
+/**
+ * The listing behind a deal, with its private facts (address, postcode,
+ * photos): the sourced row, the last page read, and the snapshot the sheet
+ * and a Full analysis work from. Server-side only, and ungated: the CALLER
+ * decides who may see any of it (dealSheet: an open; a Full analysis: to
+ * check it can run before anything is charged, never shown).
+ */
+export async function dealListingFor(admin: Admin, deal: DealRow): Promise<{ listing: import('../listing/sourcing').SourcedListing | null; live: ListingSnapshot | null; snapshot: ListingSnapshot | null }> {
+  const sourced = (await loadSourcedListings(admin, [deal.canonical_url])).get(deal.canonical_url) ?? null;
+  const listing = sourced?.listing ?? null;
+  const { data: snapRow } = await admin.from('listing_snapshots').select('snapshot').eq('canonical_url', deal.canonical_url).maybeSingle();
+  const live = (snapRow?.snapshot as ListingSnapshot | undefined) ?? null;
+  const snapshot = listing ? snapshotFromDeal(listing, live) : live;
+  return { listing, live, snapshot };
+}
+
 export async function dealSheet(dealId: string, userId: string, adminUser: boolean, visibility: DealVisibility): Promise<DealSheet | null> {
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
@@ -239,11 +256,7 @@ export async function dealSheet(dealId: string, userId: string, adminUser: boole
   // that has never paid — unless it is already theirs (a pool pick).
   if (!unlocked && !dealVisible(deal.live_since, visibility.cutoffIso)) return null;
   if (!unlocked) return { deal, listing: null, priv: null };
-  const sourced = (await loadSourcedListings(admin, [deal.canonical_url])).get(deal.canonical_url) ?? null;
-  const listing = sourced?.listing ?? null;
-  const { data: snapRow } = await admin.from('listing_snapshots').select('snapshot').eq('canonical_url', deal.canonical_url).maybeSingle();
-  const live = (snapRow?.snapshot as ListingSnapshot | undefined) ?? null;
-  const snapshot = listing ? snapshotFromDeal(listing, live) : live;
+  const { listing, live, snapshot } = await dealListingFor(admin, deal);
   if (!snapshot) return { deal, listing, priv: null };
   const photos = [...new Set([...(live?.photos ?? []), ...(deal.photos ?? []), ...(deal.photo ? [deal.photo] : [])])];
   const openRow: DealOpenRow = open ?? { id: 'admin', user_id: userId, canonical_url: deal.canonical_url, deal_id: deal.id, status: 'open', opened_at: new Date().toISOString(), charged_base_pence: 0, transaction_id: null, verified_via: 'admin', status_at_open: null, band_at_open: null, annual_profit_at_open: null, checked_listing_id: null, saved_at: null, fetched: false };

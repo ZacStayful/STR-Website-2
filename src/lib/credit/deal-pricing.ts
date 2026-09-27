@@ -213,6 +213,12 @@ export function priceLabel(quote: Quote, opts: { admin?: boolean; spendableBaseP
   };
 }
 
+/** A label on one line: "£4", "£5.20 · £4 on a plan"; empty for an admin. */
+export function priceText(label: Pick<PriceLabel, 'main' | 'nudge' | 'state'>): string {
+  if (label.state === 'admin') return '';
+  return label.nudge ? `${label.main} · ${label.nudge}` : label.main;
+}
+
 /** Which kind of credit a quote draws on, for wording: 'plan' | 'welcome' | 'topup' | 'mixed' | 'none'. */
 export function quoteSource(quote: Quote): 'plan' | 'welcome' | 'topup' | 'mixed' | 'none' {
   const kinds = new Set(quote.parts.map((p) => (p.kind === 'adjustment' ? 'topup' : p.kind)));
@@ -243,6 +249,26 @@ export function fullAnalysisDue(input: { fullPence: number; openPaidBasePence: n
   const analysis = round4(Math.max(0, input.fullPence - paid));
   const pmi = input.withPmi ? round4(Math.max(0, input.pmiPence)) : 0;
   return { analysisBasePence: analysis, pmiBasePence: pmi, totalBasePence: round4(analysis + pmi) };
+}
+
+export interface DealAnalysisDue extends FullAnalysisDue {
+  /** The Quick look charged first, when the deal is not open to this account yet; else 0. */
+  openBasePence: number;
+  /** Everything the purchase takes: that Quick look, the analysis and PMI. What the button shows. */
+  purchaseBasePence: number;
+}
+
+/**
+ * A Full analysis as it is charged: a deal not open to this account yet is
+ * opened first at its Quick look price (the ladder, by openDeal), and the
+ * analysis then costs the rest of the fixed price. One tap on an unopened
+ * deal therefore totals exactly the fixed price, the same as a Quick look
+ * followed by an upgrade; PMI is on top of either.
+ */
+export function dealAnalysisDue(input: { fullPence: number; pmiPence: number; withPmi: boolean; opened: boolean; openPaidBasePence: number | null | undefined; openPricePence: number }): DealAnalysisDue {
+  const open = input.opened ? 0 : round4(Math.max(0, Number(input.openPricePence) || 0));
+  const rest = fullAnalysisDue({ fullPence: input.fullPence, openPaidBasePence: input.opened ? input.openPaidBasePence : open, withPmi: input.withPmi, pmiPence: input.pmiPence });
+  return { ...rest, openBasePence: open, purchaseBasePence: round4(open + rest.totalBasePence) };
 }
 
 // ── Plan credit and the new-pricing date ──

@@ -3452,3 +3452,85 @@ begin
     insert into public.billing_settings (key, value) values ('batch10_rates_applied_at', to_jsonb(now()));
   end if;
 end $$;
+
+-- ── Saved analyses (src/lib/analysis/reuse.ts) ──
+-- A Full analysis of a feed deal, kept so the next Full analysis of the same
+-- deal within analysis_reuse_days reuses it instead of paying the providers
+-- again. Only what the providers said about the PROPERTY is kept: never the
+-- member's deal maths, cash flow, finance, name, notes, stage or report id.
+-- Written only by the server from a fresh run (never copied from
+-- saved_searches, which its author can edit). Service role only.
+create table if not exists public.deal_analyses (
+  id uuid primary key default gen_random_uuid(),
+  deal_id uuid not null,
+  canonical_url text not null,
+  input_key text not null,                   -- the fixed inputs the providers were asked (deal-input.ts)
+  inputs jsonb not null,
+  result jsonb not null,                     -- { result, stampDuty, stampDutyPrice }: see SharedAnalysis
+  has_second_opinion boolean not null default false,
+  raw_cost_pence numeric(14,4) not null default 0,
+  action_id uuid,                            -- the purchase that ran it (provider_calls.action_id)
+  analysed_at timestamptz not null default now(),
+  second_opinion_at timestamptz
+);
+create index if not exists deal_analyses_lookup_idx on public.deal_analyses (deal_id, input_key, analysed_at desc);
+alter table public.deal_analyses enable row level security;  -- no policies: service role only
+revoke all on public.deal_analyses from anon, authenticated;
+
+-- ── Full analysis and PMI purchases (src/lib/analysis/deal-analysis.ts) ──
+-- One row per purchase; its id is the ledger action_id of its debits. The
+-- row is claimed (pending) BEFORE anything is charged, and one pending row per
+-- account and deal (or per report, for PMI) is the double-tap guard: a second
+-- tab gets "already running". A Full analysis is charged only once the
+-- analysis is complete and saved; a failed one is marked failed and costs
+-- nothing (a Quick look it charged on the way stays: the deal is open).
+--   user_id    the account that pays (a team member's owner)
+--   buyer_id   who pressed the button; the report is theirs
+--   quoted_base_pence       the total the member confirmed, Quick look included
+--   analysis_base_pence     the Full analysis debit: its price less open_credit
+--   pmi_base_pence          the PMI debit, taken only if PMI answered
+--   open_credit_base_pence  what the account paid to open the deal, off the price
+create table if not exists public.analysis_purchases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  buyer_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,                        -- full_analysis | pmi_addon
+  status text not null default 'pending',    -- pending | complete | failed
+  deal_id uuid,
+  canonical_url text,
+  report_id uuid,                            -- the report made (full_analysis) or added to (pmi_addon)
+  analysis_id uuid,                          -- the deal_analyses row used
+  with_pmi boolean not null default false,
+  input_key text,
+  inputs jsonb,
+  quoted_base_pence numeric(14,4),
+  analysis_base_pence numeric(14,4) not null default 0,
+  pmi_base_pence numeric(14,4) not null default 0,
+  open_credit_base_pence numeric(14,4) not null default 0,
+  opened_by_purchase boolean not null default false,
+  open_action_id uuid,                       -- the deal_opens row this purchase opened (its debit's action_id)
+  reservation_id uuid,
+  reused boolean,
+  second_opinion boolean,                    -- PMI answered (only then is pmi_addon charged)
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_ids bigint[] not null default '{}',
+  failure text,
+  ready_at timestamptz,
+  run_started_at timestamptz,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+create unique index if not exists analysis_purchases_running_uidx on public.analysis_purchases (user_id, deal_id) where kind = 'full_analysis' and status = 'pending';
+create unique index if not exists analysis_purchases_pmi_running_uidx on public.analysis_purchases (report_id) where kind = 'pmi_addon' and status = 'pending';
+create index if not exists analysis_purchases_user_idx on public.analysis_purchases (user_id, created_at desc);
+create index if not exists analysis_purchases_deal_idx on public.analysis_purchases (deal_id, user_id, created_at desc);
+alter table public.analysis_purchases enable row level security;  -- no policies: service role only
+revoke all on public.analysis_purchases from anon, authenticated;
+
+-- A report made by a Full analysis of a feed deal says which deal (the deal
+-- page finds it by this, pipeline row or not) and when its figures were
+-- found, which the report shows as "Analysed on" when that was before today.
+-- Such reports are never pruned by the 200-report limit: they were paid for.
+alter table public.saved_searches add column if not exists deal_id uuid;
+alter table public.saved_searches add column if not exists analysed_at timestamptz;
+create index if not exists saved_searches_deal_idx on public.saved_searches (owner_id, deal_id) where deal_id is not null;
