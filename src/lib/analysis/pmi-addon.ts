@@ -25,7 +25,8 @@ import { runMetered } from '../credit/context';
 import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from './input';
 import { enhancedEnabled, fetchSecondOpinion } from './run';
-import { quoteMatches } from './deal-analysis-rules';
+import { ANALYSIS_STALE_MS, faceMatches, quoteMatches } from './deal-analysis-rules';
+import { quoterFor } from '../credit/quote-server';
 import { logActivity } from '../activity/log';
 import type { SharedAnalysis } from './reuse';
 
@@ -63,7 +64,7 @@ export function pmiAddonHttpStatus(code: PmiAddonCode): number {
   return 500;
 }
 
-export async function addSecondOpinion(input: { supabase: ServerClient; userId: string; adminUser: boolean; reportId: string; quotedBasePence: unknown }): Promise<PmiAddonResult> {
+export async function addSecondOpinion(input: { supabase: ServerClient; userId: string; adminUser: boolean; reportId: string; quotedBasePence: unknown; quotedFacePence?: unknown }): Promise<PmiAddonResult> {
   if (!hasServiceRole()) return fail('failed');
   // The member's own client: a report they cannot read does not exist for them.
   const { data: report, error: readErr } = await input.supabase.from('saved_searches').select('id, deal_id, result').eq('id', input.reportId).maybeSingle();
@@ -93,8 +94,23 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
     const available = bal?.spendableBasePence ?? 0;
     if (available < price) return fail('insufficient_credit', { requiredPence: price, availablePence: Math.max(0, Math.round(available)) });
   }
+  // What they pay from their own credit, as the button showed it.
+  if (price > 0) {
+    const walk = (await quoterFor(payer.payerId, false)).quote(price);
+    if (walk.shortfallBasePence <= 0 && !faceMatches(input.quotedFacePence, walk.facePence)) return fail('price_changed', { pricePence: price });
+  }
 
   // ── Claim: one pending PMI purchase per report ──
+  // A claim whose request died (the 60s limit, a slow PMI retry) would block
+  // this report for good: one older than any request can last is let go
+  // first. Its report still has no opinion (checked above), and the charge
+  // only ever follows writing one, so it charged nothing.
+  const staleBefore = new Date(Date.now() - ANALYSIS_STALE_MS).toISOString();
+  const { data: stale } = await admin.from('analysis_purchases').select('id, reservation_id').eq('report_id', input.reportId).eq('kind', 'pmi_addon').eq('status', 'pending').lt('created_at', staleBefore);
+  for (const row of (stale ?? []) as { id: string; reservation_id: string | null }[]) {
+    const { data: gone } = await admin.from('analysis_purchases').update({ status: 'failed', failure: 'abandoned', completed_at: new Date().toISOString() }).eq('id', row.id).eq('status', 'pending').select('id');
+    if ((gone ?? []).length > 0) await release(row.reservation_id);
+  }
   const { data: claimed, error: claimErr } = await admin
     .from('analysis_purchases')
     .insert({ user_id: payer.payerId, buyer_id: input.userId, kind: 'pmi_addon', status: 'pending', deal_id: report.deal_id, report_id: input.reportId, analysis_id: full.analysis_id, with_pmi: true, quoted_base_pence: price, pmi_base_pence: price, ready_at: new Date().toISOString(), run_started_at: new Date().toISOString() })
@@ -115,6 +131,8 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
   if (price > 0) {
     try {
       reservationId = await reserve(payer.payerId, 'pmi_addon', purchaseId, price, 5);
+      // Kept on the purchase, so an abandoned one lets its hold go (above).
+      if (reservationId) await admin.from('analysis_purchases').update({ reservation_id: reservationId }).eq('id', purchaseId);
     } catch (err) {
       if (err instanceof InsufficientCreditError && isEnforcing()) {
         await finish('failed', { failure: 'insufficient_credit' });

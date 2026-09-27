@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisQuote, quoteMatches, purchaseStale, runWindowClosed, analysisMessage, analysisHttpStatus, analysisDescription, ANALYSIS_STALE_MS, RUN_START_WINDOW_MS } from './deal-analysis-rules.ts';
+import { analysisQuote, quoteMatches, faceMatches, purchaseStale, runWindowClosed, analysisMessage, analysisHttpStatus, analysisDescription, ANALYSIS_STALE_MS, RUN_START_WINDOW_MS } from './deal-analysis-rules.ts';
 
 const PRICING = { fullAnalysisPence: 400, pmiAddonPence: 200 };
 
@@ -34,14 +34,19 @@ test('only the confirmed price is charged', () => {
   assert.equal(quoteMatches('', due), false);
 });
 
-test('a pending purchase is abandoned only once nothing has touched it for three minutes', () => {
+test('a pending purchase is abandoned only once no request can still pick it up', () => {
   const now = new Date('2026-09-27T12:00:00Z');
   const at = (msAgo: number) => new Date(now.getTime() - msAgo).toISOString();
+  // A start that died before it was ready: three minutes.
   assert.equal(purchaseStale({ created_at: at(10_000), ready_at: null, run_started_at: null }, now), false);
   assert.equal(purchaseStale({ created_at: at(ANALYSIS_STALE_MS + 1), ready_at: null, run_started_at: null }, now), true);
-  // A run that started recently is alive, however old the claim.
+  // A run that started recently is alive, however old the claim; one older than any run can last is dead.
   assert.equal(purchaseStale({ created_at: at(9 * 60_000), ready_at: at(9 * 60_000), run_started_at: at(30_000) }, now), false);
   assert.equal(purchaseStale({ created_at: at(9 * 60_000), ready_at: at(9 * 60_000), run_started_at: at(ANALYSIS_STALE_MS) }, now), true);
+  // Ready but its run not asked for yet: it can still be claimed until the run window closes, so it is not abandoned before.
+  assert.equal(purchaseStale({ created_at: at(5 * 60_000), ready_at: at(5 * 60_000), run_started_at: null }, now), false);
+  assert.equal(purchaseStale({ created_at: at(RUN_START_WINDOW_MS - 1000), ready_at: at(RUN_START_WINDOW_MS - 1000), run_started_at: null }, now), false);
+  assert.equal(purchaseStale({ created_at: at(RUN_START_WINDOW_MS), ready_at: at(RUN_START_WINDOW_MS), run_started_at: null }, now), true);
   assert.equal(purchaseStale({ created_at: 'nonsense', ready_at: null, run_started_at: null }, now), true);
 });
 
@@ -70,4 +75,15 @@ test('status codes the client can act on', () => {
 test('the ledger line names the area, never the address', () => {
   assert.equal(analysisDescription({ town: 'Manchester', postcode_area: 'M', kind: 'sale' }, false), 'Full analysis: Manchester, M (to buy)');
   assert.equal(analysisDescription({ town: null, postcode_area: null, kind: 'rent' }, true), 'Full analysis: a deal (rent-to-rent), from a saved analysis');
+});
+
+test('the face price confirmed must be what the credit would pay now, to the half penny', () => {
+  assert.equal(faceMatches(520, 520), true);
+  assert.equal(faceMatches(520, 520.4), true);
+  assert.equal(faceMatches(400, 410.1), false);
+  assert.equal(faceMatches('475', 475), true);
+  assert.equal(faceMatches('abc', 475), false);
+  // A page from before the check sends none.
+  assert.equal(faceMatches(undefined, 475), true);
+  assert.equal(faceMatches(null, 475), true);
 });

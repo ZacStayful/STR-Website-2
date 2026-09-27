@@ -8,7 +8,7 @@ import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { getCreditSummary } from "@/lib/credit/summary";
 import { quoterFor } from "@/lib/credit/quote-server";
-import { formatPence, priceText } from "@/lib/credit/deal-pricing";
+import { addOnLabel, formatPence, openCreditBase, priceText } from "@/lib/credit/deal-pricing";
 import { getAreaCards } from "@/lib/market/cached";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { parseMarketGoals } from "@/lib/market/goals";
@@ -116,7 +116,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const reportBy = report && report.userId !== user.id ? personName((await profileNames([report.userId])).get(report.userId)) : null;
   const dealPath = `/deals/${deal.id}`;
   const opened = Boolean(priv);
-  const openPaid = priv && priv.open.id !== "admin" ? Number(priv.open.charged_base_pence) || 0 : 0;
+  const openPaid = priv && priv.open.id !== "admin" ? openCreditBase(priv.open) : 0;
 
   // Can a Full analysis run on this listing (a full postcode; a rental's
   // rent)? Worked out exactly as the purchase does, before anything is shown
@@ -258,7 +258,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 )}
                 {canBuy && (
                   <div className="mt-3">
-                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
                   </div>
                 )}
                 {report && pmiLabel && <p className="mt-2 text-[11px] text-muted-foreground">No second opinion on it yet? Add one from PMI on the report · {priceText(pmiLabel) || "free"}.</p>}

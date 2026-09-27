@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { emailKey } from '@/lib/supabase/email-key';
 import { isAdminEmail } from '@/lib/admin';
-import { getBillingSettings, getUnitCostTable, syncUnitCosts, updateBillingSetting, updateUnitCost } from '@/lib/credit/unit-costs';
+import { getBillingSettings, getUnitCostTable, invalidateCreditCaches, syncUnitCosts, updateBillingSetting, updateUnitCost } from '@/lib/credit/unit-costs';
 import { grant } from '@/lib/credit/ledger';
 import { fullAnalysisRawCeiling } from '@/lib/credit/estimate';
 import { MAX_RANGE_PCT } from '@/lib/credit/deal-pricing';
@@ -93,12 +93,17 @@ export async function updateDealPricingAction(_prev: ActionState, formData: Form
       const at = Date.parse(`${rawDate}T00:00:00Z`);
       if (!Number.isFinite(at)) return { ok: false, message: 'That date is not a date.' };
       // The date already saved stays as it is, even once it has passed: only
-      // a new or moved date must give members their 14 days.
-      const current = (await getBillingSettings()).dealPricing.newPricingPlanned;
+      // a new or moved date must give members their 14 days, and never a date
+      // before the one members were told (a later one is fine).
+      invalidateCreditCaches();
+      const saved = (await getBillingSettings()).dealPricing;
+      const current = saved.newPricingPlanned;
       const unchanged = current !== null && current.slice(0, 10) === rawDate;
       if (!unchanged) {
         const earliest = await earliestPricingDate();
         if (at < earliest.getTime()) return { ok: false, message: `The new prices can start ${earliest.toISOString().slice(0, 10)} at the earliest: every member needs 14 days' notice (the notice email sets the clock).` };
+        const told = saved.pricingNoticeFor ? Date.parse(saved.pricingNoticeFor) : NaN;
+        if (Number.isFinite(told) && at < told) return { ok: false, message: `Members have been told the new prices start ${saved.pricingNoticeFor!.slice(0, 10)}. Choose that date or a later one.` };
       }
       newPricingFrom = new Date(at).toISOString();
     }

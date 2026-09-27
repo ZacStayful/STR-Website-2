@@ -233,6 +233,20 @@ export function priceLabel(quote: Quote, opts: { admin?: boolean; spendableBaseP
   };
 }
 
+/**
+ * An add-on's price as this member would pay it on top of `base`: the face
+ * of the two bought together less the face of `base` alone, since the walk
+ * takes the add-on from whatever credit `base` leaves ("+£2", or "+£2.45 ·
+ * £2 on a plan" once the plan credit runs out part way). Short when the two
+ * together are; empty for an admin, like every price.
+ */
+export function addOnLabel(total: PriceLabel, base: PriceLabel, addBasePence: number): PriceLabel {
+  if (total.state === 'admin' || base.state === 'admin') return { main: '', nudge: null, split: null, state: 'admin', facePence: 0, basePence: addBasePence };
+  if (total.state === 'short' || base.state === 'short') return { main: formatPence(addBasePence), nudge: null, split: null, state: 'short', facePence: addBasePence, basePence: addBasePence };
+  const face = round4(Math.max(0, total.facePence - base.facePence));
+  return { main: formatPence(face), nudge: face > addBasePence + 0.005 ? `${formatPence(addBasePence)} on a plan` : null, split: null, state: 'ok', facePence: face, basePence: addBasePence };
+}
+
 /** A label on one line: "£4", "£5.20 · £4 on a plan"; empty for an admin. */
 export function priceText(label: Pick<PriceLabel, 'main' | 'nudge' | 'state'>): string {
   if (label.state === 'admin') return '';
@@ -276,6 +290,20 @@ export interface DealAnalysisDue extends FullAnalysisDue {
   openBasePence: number;
   /** Everything the purchase takes: that Quick look, the analysis and PMI. What the button shows. */
   purchaseBasePence: number;
+}
+
+/**
+ * What an account's open of a deal counts towards its Full analysis, in base
+ * pence: what the open was charged. A daily pick opened before Batch 10 whose
+ * charge failed still recorded its price, with no transaction: nothing was
+ * paid, so it counts as nothing. Every place that prices an upgrade uses
+ * this, so the button and the server always agree.
+ */
+export function openCreditBase(open: { charged_base_pence?: unknown; transaction_id?: unknown; verified_via?: unknown } | null | undefined): number {
+  if (!open) return 0;
+  if (open.verified_via === 'pick' && (open.transaction_id === null || open.transaction_id === undefined)) return 0;
+  const charged = Number(open.charged_base_pence);
+  return Number.isFinite(charged) && charged > 0 ? charged : 0;
 }
 
 /**

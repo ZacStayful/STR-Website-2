@@ -43,6 +43,8 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import type { createSupabaseServerClient } from '../supabase/server';
 import { payerFor } from '../team';
 import { getBillingSettings } from '../credit/unit-costs';
+import { openCreditBase } from '../credit/deal-pricing';
+import { quoterFor } from '../credit/quote-server';
 import { debit, getBalance, release, reserve, InsufficientCreditError } from '../credit/ledger';
 import { isEnforcing } from '../credit/http';
 import { afterDebit } from '../credit/after-debit';
@@ -66,7 +68,7 @@ import { dealAnalysisInput, dealListingPrice } from './deal-input';
 import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, type SharedAnalysis } from './reuse';
 import { logActivity, recordActivity } from '../activity/log';
 import { reminderEvent } from './take-up';
-import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
+import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type Admin = ReturnType<typeof createAdminClient>;
@@ -144,15 +146,28 @@ function toPurchase(r: Record<string, unknown>): PurchaseRow {
 }
 
 
-/** Marks a purchase failed (only while pending) and lets its hold go. Never throws. */
-async function failPurchase(admin: Admin, row: Pick<PurchaseRow, 'id' | 'reservation_id'>, reason: string): Promise<void> {
+/**
+ * Marks a purchase failed (only while pending) and lets its hold go. With
+ * `unclaimed`, only while no run has claimed it (the claim's own condition),
+ * so a run that got in first is never failed under itself: false then, and
+ * the hold stays with the run. Never throws.
+ */
+async function failPurchase(admin: Admin, row: Pick<PurchaseRow, 'id' | 'reservation_id'>, reason: string, opts: { unclaimed?: boolean } = {}): Promise<boolean> {
   try {
-    const { error } = await admin.from('analysis_purchases').update({ status: 'failed', failure: reason.slice(0, 200), completed_at: new Date().toISOString() }).eq('id', row.id).eq('status', 'pending');
-    if (error) console.error('[deal-analysis] mark failed failed:', error.message);
+    let q = admin.from('analysis_purchases').update({ status: 'failed', failure: reason.slice(0, 200), completed_at: new Date().toISOString() }).eq('id', row.id).eq('status', 'pending');
+    if (opts.unclaimed) q = q.is('run_started_at', null);
+    const { data, error } = await q.select('id');
+    if (error) {
+      console.error('[deal-analysis] mark failed failed:', error.message);
+      // Unknown whether a run holds it: its hold stays.
+      if (opts.unclaimed) return false;
+    } else if (opts.unclaimed && (data ?? []).length === 0) return false;
   } catch (err) {
     console.error('[deal-analysis] mark failed threw:', err);
+    if (opts.unclaimed) return false;
   }
   await release(row.reservation_id);
+  return true;
 }
 
 // ── What the member can already open ──
@@ -197,15 +212,22 @@ async function settleIfAbandoned(admin: Admin, row: PurchaseRow, now: Date): Pro
     const { data } = await admin.from('saved_searches').select('id').eq('user_id', row.buyer_id).eq('deal_id', row.deal_id).gte('created_at', row.created_at).order('created_at', { ascending: false }).limit(1);
     reportId = ((data ?? []) as { id: string }[])[0]?.id ?? null;
   }
-  if (reportId) {
-    const { error } = await admin.from('analysis_purchases').update({ status: 'complete', report_id: reportId, failure: 'settled after the run stopped', completed_at: now.toISOString() }).eq('id', row.id).eq('status', 'pending');
-    if (error) console.error('[deal-analysis] settle failed:', error.message);
-    await release(row.reservation_id);
-    console.warn(`[deal-analysis] purchase ${row.id} settled as complete after its run stopped`);
-    return { reportId };
+  // Settled only as it was read: a run that claimed it since is alive and left alone.
+  let q = admin
+    .from('analysis_purchases')
+    .update(reportId ? { status: 'complete', report_id: reportId, failure: 'settled after the run stopped', completed_at: now.toISOString() } : { status: 'failed', failure: 'abandoned', completed_at: now.toISOString() })
+    .eq('id', row.id)
+    .eq('status', 'pending');
+  q = row.run_started_at ? q.eq('run_started_at', row.run_started_at) : q.is('run_started_at', null);
+  const { data: settled, error } = await q.select('id');
+  if (error) {
+    console.error('[deal-analysis] settle failed:', error.message);
+    return 'running';
   }
-  await failPurchase(admin, row, 'abandoned');
-  return { reportId: null };
+  if ((settled ?? []).length === 0) return 'running';
+  await release(row.reservation_id);
+  if (reportId) console.warn(`[deal-analysis] purchase ${row.id} settled as complete after its run stopped`);
+  return { reportId };
 }
 
 // ── Start ──
@@ -216,7 +238,7 @@ export type StartResult = { ok: true; purchaseId: string; openedNow: boolean } |
  * `from`: 'stage' or 'kept_step' when the member came from a reminder's
  * button (the deal page's ?from=), for the reminder_acted event.
  */
-export async function startDealAnalysis(input: { supabase: ServerClient; userId: string; adminUser: boolean; dealId: string; withPmi: boolean; quotedBasePence: unknown; from?: unknown }): Promise<StartResult> {
+export async function startDealAnalysis(input: { supabase: ServerClient; userId: string; adminUser: boolean; dealId: string; withPmi: boolean; quotedBasePence: unknown; quotedFacePence?: unknown; from?: unknown }): Promise<StartResult> {
   if (!hasServiceRole()) return fail('failed');
   const admin = createAdminClient();
   const now = new Date();
@@ -237,9 +259,21 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   }
   const pending = (pendingRows ?? [])[0] as Record<string, unknown> | undefined;
   if (pending) {
-    const settled = await settleIfAbandoned(admin, toPurchase(pending), now);
-    if (settled === 'running') return fail('running');
-    if (settled.reportId) return fail('already_done', { reportId: settled.reportId });
+    const row = toPurchase(pending);
+    if (row.buyer_id === input.userId && row.ready_at && !row.run_started_at && !runWindowClosed(row, now)) {
+      // Their own purchase, started but its run never asked for (the
+      // connection dropped between the two requests, or another tab): let it
+      // go and start afresh, unless a run claims it first.
+      if (!(await failPurchase(admin, row, 'started again', { unclaimed: true }))) return fail('running');
+    } else {
+      const settled = await settleIfAbandoned(admin, row, now);
+      if (settled === 'running') return fail('running');
+      // Theirs to open only if they can read it (its buyer may have left the team since).
+      if (settled.reportId) {
+        const { data: readableRow } = await input.supabase.from('saved_searches').select('id').eq('id', settled.reportId).maybeSingle();
+        if (readableRow) return fail('already_done', { reportId: settled.reportId });
+      }
+    }
   }
 
   // ── Can it be analysed at all? Checked before anything is charged. ──
@@ -265,12 +299,18 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   const settings = await getBillingSettings();
   const pricing = settings.dealPricing;
   const ladderPence = openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
-  const quote = analysisQuote({ admin: input.adminUser, pricing, opened: isOpen, openPaidBasePence: isOpen ? Number(open?.charged_base_pence ?? 0) : 0, openPricePence: ladderPence, withPmi });
+  const quote = analysisQuote({ admin: input.adminUser, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladderPence, withPmi });
   if (!quoteMatches(input.quotedBasePence, quote.due)) return fail('price_changed', { quote });
   if (!input.adminUser && quote.due.purchaseBasePence > 0 && isEnforcing()) {
     const bal = await getBalance(accountId).catch(() => null);
     const available = bal?.spendableBasePence ?? 0;
     if (available < quote.due.purchaseBasePence) return fail('insufficient_credit', { requiredPence: quote.due.purchaseBasePence, availablePence: Math.max(0, Math.round(available)) });
+  }
+  // And what they pay from their own credit, as the button showed it: a
+  // daily charge or a top-up since the page loaded can move it.
+  if (!input.adminUser && quote.due.purchaseBasePence > 0) {
+    const walk = (await quoterFor(accountId, false)).quote(quote.due.purchaseBasePence);
+    if (walk.shortfallBasePence <= 0 && !faceMatches(input.quotedFacePence, walk.facePence)) return fail('price_changed', { quote });
   }
 
   // ── Claim: one pending purchase per account and deal ──
@@ -318,7 +358,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
       return fail(outcome.code);
     }
     const row = await existingOpen(admin, accountId, deal.canonical_url);
-    openCredit = Number(row?.charged_base_pence ?? outcome.chargedBasePence) || 0;
+    openCredit = row ? openCreditBase(row) : Math.max(0, Number(outcome.chargedBasePence) || 0);
     openedNow = !outcome.alreadyOpen;
     openActionId = openedNow ? (row?.id ?? null) : null;
     // The same event (and key) as a Quick look's, so the deal counts as opened once.
@@ -376,9 +416,17 @@ export async function claimDealAnalysisRun(userId: string, purchaseId: string, d
   if (row.status === 'complete') return fail('already_done', row.report_id ? { reportId: row.report_id } : {});
   if (row.status === 'failed') return fail('failed', { openedByPurchase: row.opened_by_purchase });
   if (!row.ready_at) return fail('running');
-  if (!row.run_started_at && runWindowClosed(row, now)) {
-    await failPurchase(admin, row, 'run never started');
+  if (row.run_started_at) return fail('running');
+  if (runWindowClosed(row, now)) {
+    await failPurchase(admin, row, 'run never started', { unclaimed: true });
     return fail('expired', { openedByPurchase: row.opened_by_purchase });
+  }
+  // Still on the account that is paying, and not paused since the start: a
+  // reused analysis runs no metered action, so nothing later would check.
+  const payer = await payerFor(userId);
+  if (payer.suspended || payer.payerId !== row.user_id) {
+    await failPurchase(admin, row, payer.suspended ? 'seat paused' : 'no longer on the paying account', { unclaimed: true });
+    return fail('seat_paused', { openedByPurchase: row.opened_by_purchase });
   }
   const { data: taken, error: takeErr } = await admin.from('analysis_purchases').update({ run_started_at: now.toISOString() }).eq('id', purchaseId).eq('status', 'pending').is('run_started_at', null).select(PURCHASE_COLUMNS);
   if (takeErr) {

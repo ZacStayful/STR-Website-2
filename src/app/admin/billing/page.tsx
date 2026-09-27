@@ -14,6 +14,8 @@ import { PricingNoticePanel } from "./PricingNoticePanel";
 
 export const metadata: Metadata = { title: "Billing admin — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
+// The pricing notice is sent from here (a server action on this page) and gives itself 45 seconds a press.
+export const maxDuration = 60;
 
 function sevenDaysAgoIso(): string {
   return new Date(Date.now() - 7 * 86_400_000).toISOString();

@@ -21,6 +21,9 @@ import {
   DEFAULT_DEAL_PRICING,
   earliestPricingDateFrom,
   type GrantLite,
+  openCreditBase,
+  addOnLabel,
+  priceText,
 } from './deal-pricing.ts';
 import { seedTable } from './costs.ts';
 import { fullAnalysisRawCeiling } from './estimate.ts';
@@ -328,4 +331,44 @@ test('the new pricing date applies only once a notice has announced it, and neve
   assert.equal(effectivePricingDate('2026-10-22T00:00:00.000Z', '2026-10-15T00:00:00.000Z'), '2026-10-22T00:00:00.000Z');
   // Brought forward after the notice: not until members are told.
   assert.equal(effectivePricingDate('2026-10-10T00:00:00.000Z', '2026-10-15T00:00:00.000Z'), null);
+});
+
+test('openCreditBase: what an open counts towards a Full analysis', () => {
+  assert.equal(openCreditBase(null), 0);
+  // A Quick look: what it was charged.
+  assert.equal(openCreditBase({ charged_base_pence: 60, transaction_id: 12, verified_via: 'live' }), 60);
+  assert.equal(openCreditBase({ charged_base_pence: '60.0000', transaction_id: 12, verified_via: 'recent_live' }), 60);
+  // A daily pick that was charged counts; one whose charge failed (no transaction) was never paid for.
+  assert.equal(openCreditBase({ charged_base_pence: 40, transaction_id: 7, verified_via: 'pick' }), 40);
+  assert.equal(openCreditBase({ charged_base_pence: 40, transaction_id: null, verified_via: 'pick' }), 0);
+  // The included pick under daily deals: recorded at nothing, linked to the day's charge.
+  assert.equal(openCreditBase({ charged_base_pence: 0, transaction_id: 99, verified_via: 'pick' }), 0);
+  // Admin looks and nonsense.
+  assert.equal(openCreditBase({ charged_base_pence: 0, transaction_id: null, verified_via: 'admin' }), 0);
+  assert.equal(openCreditBase({ charged_base_pence: 'x', transaction_id: 1, verified_via: 'live' }), 0);
+  assert.equal(openCreditBase({ charged_base_pence: -5, transaction_id: 1, verified_via: 'live' }), 0);
+});
+
+test('addOnLabel: PMI priced as it would be paid on top of the analysis', () => {
+  const now = new Date('2026-09-27T12:00:00Z');
+  const grant = (kind: string, remaining: number, rate: number, i: number): GrantLite => ({ id: `${kind}${i}`, kind, priority: kind === 'plan' ? 1 : kind === 'welcome' ? 2 : 3, remainingPence: remaining, spendRate: rate, expiresAt: null, createdAt: `2026-09-0${i}T00:00:00Z` });
+  const label = (grants: GrantLite[], base: number) => priceLabel(allocate(grants, base, now));
+  // Plan credit covers both: +£2.
+  const plan = [grant('plan', 5000, 1, 1)];
+  assert.equal(priceText(addOnLabel(label(plan, 600), label(plan, 400), 200)), '£2');
+  // £4.50 of plan credit: the analysis takes £4, PMI takes the last 50p and £1.50 at 1.3× (£1.95): +£2.45.
+  const mixed = [grant('plan', 450, 1, 1), grant('topup', 2000, 1.3, 2)];
+  const pmi = addOnLabel(label(mixed, 600), label(mixed, 400), 200);
+  assert.equal(priceText(pmi), '£2.45 · £2 on a plan');
+  assert.equal(pmi.facePence, 245);
+  // Top-up only: +£2.60 · £2 on a plan.
+  assert.equal(priceText(addOnLabel(label([grant('topup', 2000, 1.3, 1)], 600), label([grant('topup', 2000, 1.3, 1)], 400), 200)), '£2.60 · £2 on a plan');
+  // Not enough for both: the plan price, short.
+  const few = [grant('plan', 500, 1, 1)];
+  const short = addOnLabel(label(few, 600), label(few, 400), 200);
+  assert.equal(short.state, 'short');
+  assert.equal(short.main, '£2');
+  // Admin: no price.
+  const admin = priceLabel(allocate([], 0, now), { admin: true });
+  assert.equal(priceText(addOnLabel(admin, admin, 0)), '');
 });

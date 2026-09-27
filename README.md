@@ -160,7 +160,12 @@ estimate: confirm it against the Twilio console and correct it on
    and, once only, moves top-up and adjustment credit from 1.5× to 1.3× (the
    setting and existing balances). Nothing is added to `ACCESS_COLUMNS`. Until
    it is run, a Full analysis says "Something went wrong" and charges nothing,
-   and top-ups still spend at 1.5×.
+   and top-ups still spend at 1.5×. Straight after running it, check that no
+   top-up bought while it ran kept the old rate:
+   `select count(*) from credit_grants where kind in ('topup', 'adjustment') and spend_rate = 1.5 and remaining_pence > 0;`
+   should be 0. If it is not, run the same `where` as `update credit_grants
+   set spend_rate = 1.3 where …`, then and only then (a rate changed later on
+   `/admin/billing` must never be undone).
 2. **Live at merge:** Quick look (the ladder, 25p to £1), Full analysis of a
    feed deal (£4 on a plan, less what the account paid to open it), PMI's
    second opinion (+£2), saved analyses reused for 30 days, top-up credit at

@@ -21,7 +21,7 @@ export interface AnalysisPanelProps {
   blocked: string | null;
   /** The price without and with PMI, at this member's rates. */
   price: { without: PriceLabel; withPmi: PriceLabel };
-  /** "+£2" (or "+£2.60 · £2 on a plan") for the PMI line; null when PMI is switched off. */
+  /** "+£2" (or "+£2.60 · £2 on a plan") for the PMI line: what ticking it adds for this member (addOnLabel). Null when PMI is switched off. */
   pmi: PriceLabel | null;
   /** The deal is not open to them yet: the purchase opens it first (the Quick look is part of the price). */
   opensDeal: boolean;
@@ -58,29 +58,33 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
   async function confirm() {
     if (busy || blocked) return;
     setPhase({ kind: "starting" });
+    // Set once the purchase has started: from then on a lost connection may
+    // have left a Quick look charged (a one-tap opens the deal first).
+    let started: { purchaseId?: string; openedNow?: boolean } | null = null;
     try {
       const start = await creditFetch(`/api/deals/${encodeURIComponent(dealId)}/analysis`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ withPmi: withPmi && Boolean(pmi), quotedBasePence: label.state === "admin" ? 0 : label.basePence, ...(from ? { from } : {}) }),
+        body: JSON.stringify({ withPmi: withPmi && Boolean(pmi), ...(label.state === "admin" ? { quotedBasePence: 0 } : { quotedBasePence: label.basePence, quotedFacePence: label.facePence }), ...(from ? { from } : {}) }),
       });
-      const started = (await start.json().catch(() => ({}))) as { purchaseId?: string; error?: string; code?: string; reportId?: string };
-      if (!start.ok || !started.purchaseId) {
-        if (started.reportId) {
-          window.location.assign(`/reports/${encodeURIComponent(started.reportId)}?back=${encodeURIComponent(`/deals/${dealId}`)}`);
+      const answer = (await start.json().catch(() => ({}))) as { purchaseId?: string; openedNow?: boolean; error?: string; code?: string; reportId?: string };
+      if (!start.ok || !answer.purchaseId) {
+        if (answer.reportId) {
+          window.location.assign(`/reports/${encodeURIComponent(answer.reportId)}?back=${encodeURIComponent(`/deals/${dealId}`)}`);
           return;
         }
-        setPhase({ kind: "error", message: started.error ?? "Something went wrong. Nothing was charged; please try again." });
+        setPhase({ kind: "error", message: answer.error ?? "Something went wrong. Nothing was charged; please try again." });
         // A new price (or a deal opened on the way) needs the page's own prices.
-        if (started.code === "price_changed" || started.code === "insufficient_credit") setTimeout(() => window.location.reload(), 3000);
+        if (answer.code === "price_changed" || answer.code === "insufficient_credit") setTimeout(() => window.location.reload(), 3000);
         return;
       }
+      started = answer;
       notifyCreditChanged();
       setPhase({ kind: "running", progress: 5, message: "Starting your Full analysis…" });
       const run = await fetch(`/api/deals/${encodeURIComponent(dealId)}/analysis/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ purchaseId: started.purchaseId }),
+        body: JSON.stringify({ purchaseId: answer.purchaseId }),
       });
       if (!run.ok || !run.body) {
         const data = (await run.json().catch(() => ({}))) as { error?: string; reportId?: string };
@@ -124,7 +128,14 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
       // The stream ended without a result: the run still finishes on the server.
       setPhase({ kind: "error", message: "We lost the connection, but your Full analysis carries on. Refresh this page in a minute to open it." });
     } catch {
-      setPhase({ kind: "error", message: "We couldn’t reach the server. Nothing was charged; please try again." });
+      setPhase({
+        kind: "error",
+        message: !started
+          ? "We couldn’t reach the server. Nothing was charged; please try again."
+          : started.openedNow
+            ? "We lost the connection. The Full analysis hasn’t been charged unless it finished (refresh to see); the Quick look it opened stays yours. Please try again."
+            : "We lost the connection. The Full analysis hasn’t been charged unless it finished: refresh this page to see, or try again.",
+      });
     }
   }
 

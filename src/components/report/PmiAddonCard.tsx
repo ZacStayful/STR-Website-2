@@ -23,7 +23,7 @@ export function PmiAddonCard({ reportId, label }: { reportId: string; label: Pri
       const res = await creditFetch(`/api/reports/${encodeURIComponent(reportId)}/pmi`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quotedBasePence: label.state === "admin" ? 0 : label.basePence }),
+        body: JSON.stringify(label.state === "admin" ? { quotedBasePence: 0 } : { quotedBasePence: label.basePence, quotedFacePence: label.facePence }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
       if (res.ok) {

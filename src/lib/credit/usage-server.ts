@@ -54,10 +54,10 @@ export async function usagePeriodFor(payerId: string, onPlan: boolean, now: Date
   return { kind: 'month', start, label: now.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'Europe/London' }) };
 }
 
-/** Every debit and refund on the account since `since`, as ledger lines. */
-export async function usageLinesSince(payerId: string, since: Date): Promise<{ lines: LedgerLine[]; truncated: boolean }> {
+/** Every debit and refund on the account since `since`, as ledger lines. `failed`: the ledger could not be read. */
+export async function usageLinesSince(payerId: string, since: Date): Promise<{ lines: LedgerLine[]; truncated: boolean; failed: boolean }> {
   const lines: LedgerLine[] = [];
-  if (!hasServiceRole()) return { lines, truncated: false };
+  if (!hasServiceRole()) return { lines, truncated: false, failed: true };
   const admin = createAdminClient();
   for (let from = 0; from < MAX_LINES; from += PAGE) {
     const { data, error } = await admin
@@ -65,17 +65,17 @@ export async function usageLinesSince(payerId: string, since: Date): Promise<{ l
       .select('kind, action, provider, unit, action_id, amount_pence, metadata')
       .eq('user_id', payerId)
       .in('kind', ['debit', 'refund'])
-      .gte('created_at', since.toISOString())
+      .gte('at', since.toISOString())
       .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) {
       console.error('[usage] ledger read failed:', error.message);
-      break;
+      return { lines: [], truncated: false, failed: true };
     }
     for (const r of (data ?? []) as { kind: string; action: string | null; provider: string | null; unit: string | null; action_id: string | null; amount_pence: number | string; metadata: Record<string, unknown> | null }[]) {
       lines.push({ kind: r.kind === 'refund' ? 'refund' : 'debit', action: r.action, provider: r.provider, unit: r.unit, actionId: r.action_id, facePence: Math.abs(Number(r.amount_pence) || 0), metadata: r.metadata });
     }
-    if ((data?.length ?? 0) < PAGE) return { lines, truncated: false };
+    if ((data?.length ?? 0) < PAGE) return { lines, truncated: false, failed: false };
   }
-  return { lines, truncated: true };
+  return { lines, truncated: true, failed: false };
 }

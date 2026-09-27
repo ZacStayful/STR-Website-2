@@ -21,7 +21,7 @@ import { createAdminClient } from '../supabase/admin';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { pricingNoticeEmail, type NoticePlan } from '../email/pricing-notice';
 import { siteUrl } from '../url';
-import { getBillingSettings, updateBillingSetting } from './unit-costs';
+import { getBillingSettings, invalidateCreditCaches, updateBillingSetting } from './unit-costs';
 import { getPlans } from './plans';
 import { PRICING_NOTICE_DAYS } from './deal-pricing';
 import { ladderRangeText } from '../marketplace/ladder';
@@ -47,11 +47,17 @@ function firstNameOf(fullName: string | null): string | null {
   return first && first.length > 1 ? first : null;
 }
 
-/** Whether the notice may go now, and the date it announces. */
-export function noticeAllowed(planned: string | null, now: Date = new Date()): { ok: true; date: string } | { ok: false; reason: string } {
+/**
+ * Whether the notice may go now, and the date it announces. Never a date
+ * before one already announced: members told that date must not get the
+ * change sooner (a later date is fine).
+ */
+export function noticeAllowed(planned: string | null, now: Date = new Date(), announced: string | null = null): { ok: true; date: string } | { ok: false; reason: string } {
   if (!planned) return { ok: false, reason: 'No new pricing date is saved. Set one under Deal prices first.' };
   const at = Date.parse(planned);
   if (!Number.isFinite(at)) return { ok: false, reason: 'The saved date is not a date.' };
+  const told = announced ? Date.parse(announced) : NaN;
+  if (Number.isFinite(told) && at < told) return { ok: false, reason: `Members have been told ${announced!.slice(0, 10)}. The new pricing date cannot be earlier than that: move it to ${announced!.slice(0, 10)} or later.` };
   const days = (at - now.getTime()) / (24 * 60 * 60 * 1000);
   if (days < PRICING_NOTICE_DAYS) return { ok: false, reason: `The new pricing date is ${planned.slice(0, 10)}, less than ${PRICING_NOTICE_DAYS} days away. Move it later before sending the notice.` };
   return { ok: true, date: planned.slice(0, 10) };
@@ -65,8 +71,10 @@ export async function runPricingNotice(opts: { dry: boolean }): Promise<NoticeRu
   } catch {
     return { status: 503, body: { error: 'Storage not configured' } };
   }
+  // Fresh settings: a date saved a moment ago on another server must be the one announced.
+  invalidateCreditCaches();
   const settings = await getBillingSettings();
-  const allowed = noticeAllowed(settings.dealPricing.newPricingPlanned);
+  const allowed = noticeAllowed(settings.dealPricing.newPricingPlanned, new Date(), settings.dealPricing.pricingNoticeFor);
 
   const rows: Row[] = [];
   for (let from = 0; from < MAX_AUDIENCE; from += PAGE) {

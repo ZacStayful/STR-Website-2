@@ -16,6 +16,7 @@ import type { createSupabaseServerClient } from '../supabase/server';
 import { payerFor } from '../team';
 import { getBillingSettings } from '../credit/unit-costs';
 import { quoterFor } from '../credit/quote-server';
+import { openCreditBase } from '../credit/deal-pricing';
 import type { FinanceDefaults } from '../listing/deal';
 import type { DealCard } from './grid';
 import { cardView, NOT_OPENED, type CardState, type CardView } from './card-view';
@@ -31,15 +32,15 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
   for (let i = 0; i < dealIds.length; i += CHUNK) {
     const ids = dealIds.slice(i, i + CHUNK);
     const [opens, reports, deals] = await Promise.all([
-      admin.from('deal_opens').select('deal_id, charged_base_pence').eq('user_id', payerId).eq('status', 'open').in('deal_id', ids),
+      admin.from('deal_opens').select('deal_id, charged_base_pence, transaction_id, verified_via').eq('user_id', payerId).eq('status', 'open').in('deal_id', ids),
       // A missing column (schema.sql not run yet) reads as no analyses.
       supabase.from('saved_searches').select('id, user_id, deal_id').in('deal_id', ids),
       admin.from('marketplace_deals').select('id, canonical_url').in('id', ids),
     ]);
     if (opens.error) console.error('[card-state] opens read failed:', opens.error.message);
-    for (const r of (opens.data ?? []) as { deal_id: string; charged_base_pence: number | string | null }[]) {
+    for (const r of (opens.data ?? []) as { deal_id: string; charged_base_pence: number | string | null; transaction_id: number | null; verified_via: string | null }[]) {
       const s = out.get(r.deal_id);
-      if (s) Object.assign(s, { opened: true, openPaidBasePence: Math.max(0, Number(r.charged_base_pence) || 0) });
+      if (s) Object.assign(s, { opened: true, openPaidBasePence: openCreditBase(r) });
     }
     if (!reports.error) {
       const rows = (reports.data ?? []) as { id: string; user_id: string; deal_id: string }[];

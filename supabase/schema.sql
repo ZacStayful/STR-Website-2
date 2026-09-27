@@ -3534,6 +3534,32 @@ revoke all on public.analysis_purchases from anon, authenticated;
 alter table public.saved_searches add column if not exists deal_id uuid;
 alter table public.saved_searches add column if not exists analysed_at timestamptz;
 create index if not exists saved_searches_deal_idx on public.saved_searches (owner_id, deal_id) where deal_id is not null;
+-- Only the server sets them (a Full analysis it ran and charged for): the
+-- cards, the deal page and the purchase itself trust them. Signed-in members
+-- can write their own saved_searches rows with the public key (the policy
+-- above is FOR ALL), so from them a value is dropped on insert and kept as it
+-- was on update. The service role (the server) and the SQL editor are not
+-- touched. A plain (invoker) function: current_user is the caller's role.
+create or replace function private.saved_searches_keep_analysis()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' then
+      new.deal_id := null;
+      new.analysed_at := null;
+    else
+      new.deal_id := old.deal_id;
+      new.analysed_at := old.analysed_at;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function private.saved_searches_keep_analysis() from public;
+drop trigger if exists saved_searches_keep_analysis on public.saved_searches;
+create trigger saved_searches_keep_analysis
+  before insert or update on public.saved_searches
+  for each row execute function private.saved_searches_keep_analysis();
 
 -- ── Daily deals: one charge per member per day (src/lib/listing/daily-deals-server.ts) ──
 -- From new_pricing_from, a delivered Today's 5 costs todays_5_daily_pence,
@@ -3569,3 +3595,5 @@ revoke all on public.daily_deal_charges from anon, authenticated;
 alter table public.profiles add column if not exists pricing_notice_sent_at timestamptz;
 insert into public.billing_settings (key, value) values ('pricing_notice_date', 'null'::jsonb)
 on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

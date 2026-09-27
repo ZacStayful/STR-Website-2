@@ -13,11 +13,38 @@ import 'server-only';
  * gone through, so the record never claims a charge the ledger does not have.
  * Admins are never charged; the caller does not call for them.
  */
-import type { createAdminClient } from '../supabase/admin';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { debit } from '../credit/ledger';
 import { afterDebit } from '../credit/after-debit';
+import type { Payer } from '../team';
 
 type Admin = ReturnType<typeof createAdminClient>;
+
+const ID_CHUNK = 150;
+
+/**
+ * Who pays for whom, for the runs that charge (the picks passes and the
+ * digest): like payersForAll, except that a lookup that fails is null, never
+ * "everyone pays for themselves", which would charge a team member's own
+ * balance and miss a paused seat. Each chunk is tried twice.
+ */
+export async function payersForCharging(userIds: readonly string[]): Promise<Map<string, Payer> | null> {
+  const out = new Map<string, Payer>();
+  if (userIds.length === 0 || !hasServiceRole()) return out;
+  const admin = createAdminClient();
+  for (let i = 0; i < userIds.length; i += ID_CHUNK) {
+    const some = userIds.slice(i, i + ID_CHUNK);
+    let rows: { member_id: string; owner_id: string; suspended_at: string | null }[] | null = null;
+    for (let attempt = 0; attempt < 2 && rows === null; attempt += 1) {
+      const { data, error } = await admin.from('team_members').select('member_id, owner_id, suspended_at').in('member_id', some);
+      if (error) console.error('[daily-deals] team lookup failed:', error.message);
+      else rows = (data ?? []) as { member_id: string; owner_id: string; suspended_at: string | null }[];
+    }
+    if (rows === null) return null;
+    for (const r of rows) out.set(r.member_id, { payerId: r.owner_id, memberId: r.member_id, suspended: Boolean(r.suspended_at) });
+  }
+  return out;
+}
 
 export interface DailyCharge {
   charged: boolean;

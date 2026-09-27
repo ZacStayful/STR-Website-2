@@ -36,10 +36,10 @@ import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './
 import { newSendToken, sendKey } from './cap';
 import { pendingChanges, trackedAlertsOn } from './alerts-server';
 import { closingIds } from './alerts';
-import { mapLimit, payersForAll, teasersFrom, todayPlans } from './daily-server';
+import { mapLimit, teasersFrom, todayPlans } from './daily-server';
 import { getBalance } from '../credit/ledger';
 import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
-import { chargeDailyDeals } from '../listing/daily-deals-server';
+import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
 import { cardRangeLine } from '../marketplace/profit-range';
 
 const TIME_BUDGET_MS = 50_000;
@@ -118,8 +118,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   if (ids.length === 0) return { status: 200, body: { ...summary, members: perUser } };
 
   // ── Whose day is already spent, whose changes are on, what tier each is ──
-  const [slots, alertsOn, pending, payers, settings] = await Promise.all([slotsInUse(admin, ids, 'daily', now), trackedAlertsOn(admin, ids), pendingChanges(admin, ids, now), payersForAll(ids), getBillingSettings()]);
+  const [slots, alertsOn, pending, payers, settings] = await Promise.all([slotsInUse(admin, ids, 'daily', now), trackedAlertsOn(admin, ids), pendingChanges(admin, ids, now), payersForCharging(ids), getBillingSettings()]);
   if (slots === null && !opts.dry) return { status: 503, body: { error: 'notification_sends unreadable (schema behind?); nothing sent' } };
+  // Unknown who pays for whom: a team member would be charged on their own balance and a paused seat sent to.
+  if (payers === null) return { status: 503, body: { error: 'Team lookup failed; nothing sent or charged' } };
   const owners = new Map<string, PaidTierAccount>();
   const ownerIds = [...new Set([...payers.values()].map((p) => p.payerId))].filter((id) => !byId.has(id));
   for (let i = 0; i < ownerIds.length; i += ID_CHUNK) {

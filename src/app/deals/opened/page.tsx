@@ -38,7 +38,7 @@ export default async function OpenedDealsPage() {
   const finance = parseMarketGoals(profileRes.data?.market_goals)?.finance ?? null;
   // What each open actually took from the balance (top-up credit at its rate), not its plan price.
   const paid = new Map<number, number>();
-  const txIds = rows.map((r) => r.open.transaction_id).filter((t): t is number => typeof t === "number");
+  const txIds = rows.filter((r) => Number(r.open.charged_base_pence) > 0).map((r) => r.open.transaction_id).filter((t): t is number => typeof t === "number");
   if (txIds.length > 0 && hasServiceRole()) {
     const { data } = await createAdminClient().from("credit_transactions").select("id, amount_pence").in("id", txIds.slice(0, 500));
     for (const t of (data ?? []) as { id: number; amount_pence: number | string }[]) paid.set(Number(t.id), Math.abs(Number(t.amount_pence) || 0));
@@ -59,7 +59,8 @@ export default async function OpenedDealsPage() {
             {rows.map(({ open, deal }) => {
               const area = deal?.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
               const range = deal ? rangeFromScreening(deal, finance, settings.dealPricing.profitRangePct) : null;
-              const paidPence = open.transaction_id !== null ? paid.get(Number(open.transaction_id)) ?? null : null;
+              // What the open itself cost. The daily pick under daily deals is linked to that day's charge but cost nothing itself: "included".
+              const paidPence = open.transaction_id !== null && Number(open.charged_base_pence) > 0 ? paid.get(Number(open.transaction_id)) ?? null : null;
               const gone = deal?.status === "retired";
               return (
                 <li key={open.id} className="rounded-xl border border-border bg-card p-3">

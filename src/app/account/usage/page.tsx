@@ -51,7 +51,7 @@ export default async function UsagePage() {
   const [credit, quoter] = await Promise.all([teamCreditSnapshot({ id: user.id, admin }), quoterFor(payerId, admin)]);
   const onPlan = Boolean(credit.cycle?.planCode);
   const period = await usagePeriodFor(payerId, onPlan);
-  const { lines, truncated } = await usageLinesSince(payerId, period.start);
+  const { lines, truncated, failed } = await usageLinesSince(payerId, period.start);
   const breakdown = usageBreakdown(lines);
   const daily = dailyDealsLineFor(quoter.label(admin ? 0 : quoter.pricing.todays5DailyPence), quoter.pricing.todays5DailyPence);
   const member = credit.member;
@@ -73,7 +73,7 @@ export default async function UsagePage() {
 
         <section className="rounded-xl border border-border bg-card p-5">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <p className="text-2xl font-bold text-foreground">{formatPence(breakdown.totalFacePence)} <span className="text-sm font-normal text-muted-foreground">used</span></p>
+            <p className="text-2xl font-bold text-foreground">{failed ? "—" : formatPence(breakdown.totalFacePence)} <span className="text-sm font-normal text-muted-foreground">used</span></p>
             <p className="text-sm text-muted-foreground">
               Balance {formatPence(Math.max(0, credit.totalPence))}
               {usedPct !== null ? ` · ${usedPct}% of ${formatPence(allowance)} plan credit used` : ""}
@@ -81,6 +81,8 @@ export default async function UsagePage() {
           </div>
           {admin ? (
             <p className="mt-3 text-sm text-muted-foreground">Admin account: usage is logged, never charged.</p>
+          ) : failed ? (
+            <p className="mt-3 text-sm text-muted-foreground">We couldn’t load your usage just now. Try again in a minute, or see every charge in <Link href="/account/billing#usage-history" className="underline">Billing</Link>.</p>
           ) : breakdown.totalFacePence <= 0 ? (
             <p className="mt-3 text-sm text-muted-foreground">Nothing spent {period.kind === "plan" ? "this period" : "this month"} yet.</p>
           ) : (

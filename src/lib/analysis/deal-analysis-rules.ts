@@ -48,16 +48,41 @@ export function quoteMatches(quotedBasePence: unknown, due: Pick<DealAnalysisDue
   return Number.isFinite(q) && Math.abs(q - due.purchaseBasePence) < 0.005;
 }
 
+/**
+ * What the member pays, as well as the plan price: the face price on the
+ * button they confirmed against what the purchase would take from their
+ * credit now (the grant walk). Within half a penny, since the button shows
+ * whole pennies. A page from before this check sends none: not compared.
+ */
+export function faceMatches(quotedFacePence: unknown, facePence: number): boolean {
+  if (quotedFacePence === undefined || quotedFacePence === null || quotedFacePence === '') return true;
+  const q = typeof quotedFacePence === 'number' ? quotedFacePence : typeof quotedFacePence === 'string' ? Number(quotedFacePence) : NaN;
+  return Number.isFinite(q) && Math.abs(q - facePence) < 0.5;
+}
+
 export interface PendingTimes {
   created_at: string;
   ready_at: string | null;
   run_started_at: string | null;
 }
 
-/** A pending purchase that no request is working on any more. */
+/**
+ * A pending purchase that no request is working on any more, and none can
+ * pick up again:
+ *   run claimed   dead once older than any run can last (the 60s limit)
+ *   ready         its run may still be asked for until the window closes,
+ *                 so only then (settling it sooner would race the claim)
+ *   not ready     the start itself died (it never outlives the 60s limit)
+ */
 export function purchaseStale(row: PendingTimes, now: Date = new Date()): boolean {
-  const last = Date.parse(row.run_started_at ?? row.ready_at ?? row.created_at);
-  return !Number.isFinite(last) || now.getTime() - last >= ANALYSIS_STALE_MS;
+  if (row.run_started_at) return olderThan(row.run_started_at, ANALYSIS_STALE_MS, now);
+  if (row.ready_at) return runWindowClosed(row, now);
+  return olderThan(row.created_at, ANALYSIS_STALE_MS, now);
+}
+
+function olderThan(iso: string, ms: number, now: Date): boolean {
+  const t = Date.parse(iso);
+  return !Number.isFinite(t) || now.getTime() - t >= ms;
 }
 
 /** A started purchase whose run was never asked for in time. */

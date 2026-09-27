@@ -5,8 +5,8 @@ import { addSecondOpinion, pmiAddonHttpStatus } from '@/lib/analysis/pmi-addon';
 
 /**
  * Adds the PMI second opinion to a finished Full analysis
- * (src/lib/analysis/pmi-addon.ts). Body: { quotedBasePence } — the price the
- * member confirmed.
+ * (src/lib/analysis/pmi-addon.ts). Body: { quotedBasePence, quotedFacePence }
+ * — the price the member confirmed, on a plan and from their own credit.
  */
 // PMI can rate-limit and is retried once after ten seconds.
 export const maxDuration = 60;
@@ -19,13 +19,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: 'Sign in first.', code: 'signed_out' }, { status: 401 });
-  let body: { quotedBasePence?: unknown } = {};
+  let body: { quotedBasePence?: unknown; quotedFacePence?: unknown } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
     /* no price confirmed: refused below */
   }
-  const outcome = await addSecondOpinion({ supabase, userId: user.id, adminUser: isAdminEmail(user.email), reportId: id, quotedBasePence: body.quotedBasePence });
+  const outcome = await addSecondOpinion({ supabase, userId: user.id, adminUser: isAdminEmail(user.email), reportId: id, quotedBasePence: body.quotedBasePence, quotedFacePence: body.quotedFacePence });
   if (outcome.ok) return Response.json({ ok: true, chargedBasePence: outcome.chargedBasePence });
   if (outcome.code === 'insufficient_credit' && outcome.requiredPence !== undefined) {
     const res = insufficientCreditResponse({ requiredPence: outcome.requiredPence, availablePence: outcome.availablePence ?? 0 }, 'pmi_addon');

@@ -41,10 +41,10 @@ import { renderEmail } from "../notify/render-email";
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
 import { capDay, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
-import { payersForAll, teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
+import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
 import { cardRangeLine, profitRange } from "../marketplace/profit-range";
-import { chargeDailyDeals } from "./daily-deals-server";
+import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
 import { siteUrl } from "../url";
@@ -374,9 +374,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // ── Who pays for whom, before any candidate is judged ──
   // A team member's picks are paid from their team owner's credit, and their
   // early-access tier is the owner's too: the owner is the account that paid.
-  // In chunks: one lookup for a whole audience is a request too long to send,
-  // and a failed lookup would bill members' own accounts.
-  const payers = await payersForAll(members.map((m) => m.id));
+  // In chunks: one lookup for a whole audience is a request too long to send.
+  // A lookup that fails stops the pass: it would bill members' own accounts
+  // and miss paused seats (the next pass tries again).
+  const payers = await payersForCharging(members.map((m) => m.id));
+  if (!payers) return done({ status: 503, body: { error: "Team lookup failed; nothing sent or charged" } });
   {
     const audience = new Map(profiles.map((p) => [p.id, p as PaidTierAccount]));
     const ownersToRead = [...new Set([...payers.values()].map((p) => p.payerId))].filter((id) => !audience.has(id));

@@ -12,6 +12,8 @@ import { DealRow } from "./_components/DealRow";
 import { cardStatesFor } from "@/lib/marketplace/card-state";
 import { cardView, NOT_OPENED } from "@/lib/marketplace/card-view";
 import { quoterFor } from "@/lib/credit/quote-server";
+import { dealVisibilityFor } from "@/lib/marketplace/tier";
+import { dealVisible } from "@/lib/marketplace/visibility";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { FocusScroll } from "./_components/FocusScroll";
 import { ReportsList } from "./_components/ReportsList";
@@ -66,13 +68,17 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
   // Batch 10: each marketplace deal's range at this member's finance, its
   // badges, and its prices at what they pay.
   const dealIds = [...new Set(view.map((v) => v.dealId).filter((id): id is string => Boolean(id)))];
-  const [states, quoter, profileRes] = await Promise.all([cardStatesFor(supabase, user.id, load.payerId, dealIds), quoterFor(load.payerId, adminUser), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle()]);
+  const [states, quoter, profileRes, visibility] = await Promise.all([cardStatesFor(supabase, user.id, load.payerId, dealIds), quoterFor(load.payerId, adminUser), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), dealVisibilityFor(user.id, adminUser)]);
   const finance = parseMarketGoals(profileRes.data?.market_goals)?.finance ?? null;
   const viewFor = (item: ViewerDeal) => {
     const c = item.dealId ? load.cards.get(item.dealId) ?? null : null;
     if (!c) return null;
     const state = states.get(c.id) ?? NOT_OPENED;
-    return cardView({ card: c, state: { ...state, opened: state.opened || item.opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, label: quoter.label });
+    const opened = state.opened || item.opened;
+    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, label: quoter.label });
+    // Still in its early-access window for this member (a free member's list
+    // can hold one, e.g. after a plan ends): nothing on it can be bought yet.
+    return !opened && !dealVisible(c.live_since, visibility.cutoffIso) ? { ...v, quickLook: null, fullAnalysis: null } : v;
   };
 
   const counts = stageCounts(view);
