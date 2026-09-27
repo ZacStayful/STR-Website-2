@@ -41,7 +41,7 @@ export const EMPTY_BALANCE: Balance = {
   spendableBasePence: 0,
   reservedBasePence: 0,
   planExpiresAt: null,
-  rates: { plan: 1, welcome: 1, topup: 1.5, adjustment: 1.5 },
+  rates: { plan: 1, welcome: 1, topup: 1.3, adjustment: 1.3 },
 };
 
 interface RpcError {

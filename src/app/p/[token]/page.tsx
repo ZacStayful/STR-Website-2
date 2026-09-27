@@ -5,8 +5,9 @@ import { after } from "next/server";
 import { pickByToken, recordReaction } from "@/lib/listing/picks-server";
 import { isPickToken, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type PickFeedback } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
-import { describeDeal } from "@/lib/listing/sourcing";
-import { BAND_LABELS, screeningScore, screeningWorking } from "@/lib/listing/screen";
+import { BAND_LABELS, screeningScore } from "@/lib/listing/screen";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
@@ -64,6 +65,11 @@ export default async function PickResponsePage({ params, searchParams }: { param
   const cancelled = pick.reasons.filter((r) => rules.cancelled.includes(r));
   const noted = pick.reasons.filter((r) => !changed.includes(r) && !cancelled.includes(r));
   const price = l.price ? formatListingPrice(l.price) : null;
+  // Batch 10: the profit as an area-estimate range, at the finance the pick was worked out on.
+  const widths = (await getBillingSettings()).dealPricing.profitRangePct;
+  const pickFinance = pick.deal?.kind === "purchase" ? { depositPct: pick.deal.depositPct, mortgageRatePct: pick.deal.mortgageRatePct, termYears: pick.deal.termYears } : null;
+  const range = profitRange({ kind: l.kind === "rent" ? "rent" : "sale", priceAmount: l.price?.amount ?? null, pricePeriod: l.price?.period ?? null, bedrooms: l.bedrooms, grossRevenue: pick.screening?.grossRevenue?.value ?? null, confidence: pick.screening?.confidence ?? null, finance: pickFinance, widths });
+  const uplift = pick.screening?.kind === "purchase" ? upliftTag(pick.screening.upliftPct) : null;
 
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
@@ -128,19 +134,16 @@ export default async function PickResponsePage({ params, searchParams }: { param
               </section>
             )}
             {l.photo && <img src={l.photo} alt="" className="mt-4 w-full rounded-2xl border border-[#e4e7dc] object-cover" style={{ maxHeight: 320 }} />}
-            {pick.deal && <p className="mt-4 text-sm font-medium text-[#5d8156]">{describeDeal(pick.deal)}</p>}
+            {range && (
+              <p className="mt-4 text-sm font-medium text-[#5d8156]">
+                {range.label} · area estimate, {range.basis}
+                {uplift ? ` · ${uplift}` : ""}
+              </p>
+            )}
             {pick.screening && pick.screening.band !== "insufficient-data" && (
               <div className="mt-3 rounded-lg bg-[#f5f2e8] p-3">
                 <p className="text-sm font-semibold text-[#2e3d2b]">{BAND_LABELS[pick.screening.band]}</p>
-                <p className="mt-0.5 text-xs text-[#5b6657]">{pick.screening.reason}</p>
-                <dl className="mt-2 space-y-0.5">
-                  {screeningWorking(pick.screening).map((w) => (
-                    <div key={w.label} className="flex justify-between gap-4 text-xs">
-                      <dt className="text-[#5b6657]">{w.label}</dt>
-                      <dd className="font-semibold text-[#2e3d2b]">{w.value}</dd>
-                    </div>
-                  ))}
-                </dl>
+                <p className="mt-0.5 text-xs text-[#5b6657]">Our screening of the area and size. A Full analysis works out the exact figures for this property.</p>
               </div>
             )}
             {pick.fit !== null && <p className="mt-1 text-xs text-[#7a8274]">Fit {pick.fit}/100 · {pick.basis === "house" ? "Stayful house pick" : "picked for your filter"}</p>}
@@ -227,13 +230,17 @@ export default async function PickResponsePage({ params, searchParams }: { param
 
             <div className="mt-6 flex flex-wrap gap-2">
               <Link href={`/picks?save=${encodeURIComponent(pick.id)}`} className="rounded-md bg-[#5d8156] px-4 py-2 text-sm font-semibold text-white">Save to my pipeline</Link>
-              <Link href={`/estimate?listing=${encodeURIComponent(l.canonicalUrl)}`} className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">Full report</Link>
+              {pick.dealId ? (
+                <Link href={`/deals/${pick.dealId}?analysis=1`} className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">Full analysis</Link>
+              ) : (
+                <Link href={`/estimate?listing=${encodeURIComponent(l.canonicalUrl)}`} className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">Full report</Link>
+              )}
               <Link href="/markets?goals=1" className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">{pick.basis === "house" ? "Set my filter" : "Edit my filter"}</Link>
               <Link href="/picks" className="rounded-md border border-[#e4e7dc] bg-white px-4 py-2 text-sm font-medium">All my picks</Link>
             </div>
             {pick.basis === "house" && <p className="mt-4 text-xs text-[#7a8274]">This was a Stayful house pick from one of the best-scoring areas we track. Set a filter and tomorrow’s pick will be in your area, budget and size.</p>}
             <p className="mt-6 text-xs text-[#7a8274]">
-              Figures are area averages for the size of property; run a full report before acting on one. Not financial advice. <Link href={`/p/${token}?a=unsubscribe`} className="underline">Stop daily picks</Link>.
+              Profit here is an area estimate for the size of property, shown as a range; a Full analysis gives the exact figures for this property before you act on one. Not financial advice. <Link href={`/p/${token}?a=unsubscribe`} className="underline">Stop daily picks</Link>.
             </p>
           </>
         )}

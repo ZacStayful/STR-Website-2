@@ -28,6 +28,8 @@ export interface CreditSummary {
   autoTopup: { amountPence: number | null; thresholdPence: number };
   topupPresetsPence: number[];
   welcomeWithheldReason: string | null;
+  /** One day of daily deals in base pence (billing_settings.todays_5_daily_pence), for the Usage chip. */
+  dailyDealsPence: number;
 }
 
 /** Every welcome-kind grant this account has had, in pence. 0 when it cannot be read: the setting then stands. */
@@ -36,6 +38,30 @@ async function welcomeGrantedPence(userId: string): Promise<number> {
   const { data, error } = await createAdminClient().from('credit_grants').select('amount_pence').eq('user_id', userId).eq('kind', 'welcome');
   if (error) {
     console.warn('[credit] welcome grants read failed:', error.message);
+    return 0;
+  }
+  return ((data ?? []) as { amount_pence: unknown }[]).reduce((n, r) => n + (Number(r.amount_pence) || 0), 0);
+}
+
+/**
+ * Plan credit granted for the period the member is in: the renewal grant
+ * plus any mid-cycle upgrade difference, i.e. every plan grant that has not
+ * expired. 0 when it cannot be read or none is live.
+ *
+ * This, not `billing_plans.monthly_credit_pence`, is the allowance: plan
+ * credit changes at each member's NEXT renewal, so while a change rolls out
+ * the plan row says one thing and the member's current grant another.
+ */
+async function currentPlanGrantedPence(userId: string): Promise<number> {
+  if (!hasServiceRole()) return 0;
+  const { data, error } = await createAdminClient()
+    .from('credit_grants')
+    .select('amount_pence')
+    .eq('user_id', userId)
+    .eq('kind', 'plan')
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+  if (error) {
+    console.warn('[credit] plan grants read failed:', error.message);
     return 0;
   }
   return ((data ?? []) as { amount_pence: unknown }[]).reduce((n, r) => n + (Number(r.amount_pence) || 0), 0);
@@ -67,7 +93,9 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
 
   let cycle: CreditSummary['cycle'] = null;
   if (plan) {
-    cycle = { planCode: plan.code, planName: plan.name, allowancePence: plan.monthlyCreditPence, usedPence: Math.max(0, plan.monthlyCreditPence - balance.buckets.planPence), endsAt: balance.planExpiresAt ?? profile?.current_period_end ?? null };
+    const granted = await currentPlanGrantedPence(userId);
+    const allowance = granted > 0 ? granted : plan.monthlyCreditPence;
+    cycle = { planCode: plan.code, planName: plan.name, allowancePence: allowance, usedPence: Math.max(0, allowance - balance.buckets.planPence), endsAt: balance.planExpiresAt ?? profile?.current_period_end ?? null };
   } else {
     // Welcome credit is the welcome grant plus any first-week checklist
     // rewards (src/lib/today/checklist.ts), which are welcome-kind so they
@@ -94,5 +122,6 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     autoTopup: { amountPence: profile?.auto_topup_amount_pence ?? null, thresholdPence: profile?.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE },
     topupPresetsPence: settings.topupPresetsPence,
     welcomeWithheldReason: profile?.welcome_withheld_reason ?? null,
+    dailyDealsPence: settings.dealPricing.todays5DailyPence,
   };
 }

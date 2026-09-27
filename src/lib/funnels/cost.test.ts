@@ -19,20 +19,20 @@ function cost(over: Partial<Parameters<typeof funnelCost>[0]> = {}) {
 }
 
 test('a standard lead quotes the price the plan committed to', () => {
-  // £2.91 for the report itself at the x2 funnel markup, spent at the 1.5x
-  // top-up rate (£2.08 before the PropertyData due diligence calls were added
-  // to every report). The quoted per-lead headline also includes an
-  // address-autocomplete session, which is charged as its own action and is
-  // not part of a report.
+  // £2.52 for the report itself at the x2 funnel markup, spent at the 1.3x
+  // top-up rate (£2.91 at the old 1.5x; £2.08 before the PropertyData due
+  // diligence calls were added to every report). The quoted per-lead
+  // headline also includes an address-autocomplete session, which is charged
+  // as its own action and is not part of a report.
   const c = cost();
-  assert.equal(c.perLeadPence, 291);
+  assert.equal(c.perLeadPence, 252);
 });
 
 test('an enhanced lead adds the PMI second opinion on top', () => {
   const c = cost({ enhanced: true });
-  assert.equal(c.perLeadPence, 516);
-  // 75p raw × 2 markup × 1.5 top-up rate = £2.25 for the second opinion.
-  assert.equal(c.perLeadPence - cost().perLeadPence, 225);
+  assert.equal(c.perLeadPence, 447);
+  // 75p raw × 2 markup × 1.3 top-up rate = £1.95 for the second opinion.
+  assert.equal(c.perLeadPence - cost().perLeadPence, 195);
 });
 
 test('the worst case is above the typical, because that is what solvency is checked against', () => {
@@ -43,7 +43,7 @@ test('the worst case is above the typical, because that is what solvency is chec
 test('a month is the per-lead price times the leads', () => {
   const c = cost({ leadsPerMonth: 100 });
   assert.equal(c.monthlyPence, c.perLeadPence * 100);
-  assert.equal(c.monthlyPence, 29_100);
+  assert.equal(c.monthlyPence, 25_200);
 });
 
 test('the markup is applied — this is where a half-applied one shows up', () => {
@@ -59,7 +59,7 @@ test('the top-up spend rate is applied, not just the base price', () => {
   // actually pays by a third.
   const c = cost();
   assert.ok(c.perLeadPence > c.perLeadBasePence);
-  assert.equal(c.perLeadPence, Math.round(c.perLeadBasePence * 1.5));
+  assert.equal(c.perLeadPence, Math.round(c.perLeadBasePence * DEFAULT_SPEND_RATES.topup));
 });
 
 test('a nonsense spend rate under-quotes nothing — it falls back to 1, not 0', () => {

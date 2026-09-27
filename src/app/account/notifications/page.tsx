@@ -9,6 +9,10 @@ import { isSmsConfigured, isSmsDryRun } from '@/lib/sms/config';
 import { ukMobile } from '@/lib/sms/phone';
 import { DEFAULT_MONTHLY_CAP, getContact, smsMonthlyCap } from '@/lib/sms/store';
 import { setNotificationAction } from './actions';
+import { isAdminEmail } from '@/lib/admin';
+import { payerFor } from '@/lib/team';
+import { quoterFor } from '@/lib/credit/quote-server';
+import { dailyDealsLineFor, dailyDealsMode } from '@/lib/listing/daily-deals';
 import { SmsSection } from './SmsSection';
 
 export const dynamic = 'force-dynamic';
@@ -36,6 +40,19 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   if (!user) redirect('/login?redirect=/account/notifications');
 
   const state = (await readNotifications(user.id)) ?? notificationState(null);
+
+  // Batch 10: what daily deals cost THIS member, next to their switch.
+  const quoter = await quoterFor((await payerFor(user.id)).payerId, isAdminEmail(user.email));
+  const dailyPence = quoter.pricing.todays5DailyPence;
+  const dailyLine = dailyDealsLineFor(quoter.label(quoter.admin ? 0 : dailyPence), dailyPence);
+  const from = quoter.pricing.newPricingFrom ? new Date(quoter.pricing.newPricingFrom) : null;
+  const dailyPrice = quoter.admin
+    ? 'Admin account: never charged.'
+    : dailyDealsMode(quoter.pricing) === 'per_day'
+      ? `${dailyLine}.`
+      : from && Number.isFinite(from.getTime())
+        ? `Until ${from.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })} each pick is charged from your credit, its price shown with it. From then: ${dailyLine}.`
+        : 'Each pick is charged from your credit, its price shown with it.';
 
   // Texts (Batch 8): the member's number and its state, read server-side.
   const admin = hasServiceRole() ? createAdminClient() : null;
@@ -68,6 +85,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                   <div>
                     <p className="font-semibold">{t.label}</p>
                     <p className="mt-0.5 text-sm text-[#7a8274]">{t.description}</p>
+                    {t.key === 'daily_picks' && <p className="mt-1 text-sm font-medium text-[#2e3d2b]">{dailyPrice}</p>}
                   </div>
                   <form action={setNotificationAction} className="shrink-0">
                     <input type="hidden" name="key" value={t.key} />

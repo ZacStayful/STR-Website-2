@@ -12,7 +12,7 @@ import { RateComparison } from "./RateComparison";
 /**
  * The blocking out-of-credit dialog: what was needed, what's left, then two
  * ways forward — upgrade (primary, spends at the plan rate) or a one-click
- * top-up (spends at 1.5×).
+ * top-up (spends at the top-up rate, 1.3× by default).
  */
 export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetail | null; onClose: () => void }) {
   const credit = useCreditOptional();

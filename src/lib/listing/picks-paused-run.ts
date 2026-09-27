@@ -2,7 +2,10 @@ import "server-only";
 
 import { createAdminClient } from "../supabase/admin";
 import { getBalance } from "../credit/ledger";
-import { payersFor, payerIn } from "../team";
+import { payerIn } from "../team";
+import { payersForAll } from "../notify/daily-server";
+import { getBillingSettings } from "../credit/unit-costs";
+import { dailyDealsMode } from "./daily-deals";
 import { areaMetaForCode } from "../market/areas";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { siteUrl } from "../url";
@@ -125,7 +128,9 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     if (pErr) return done({ status: 500, body: { error: `profiles read failed (schema behind?): ${pErr.message}` } });
     for (const p of (rows ?? []) as ProfileRow[]) profiles.set(p.id, p);
   }
-  const payers = await payersFor(ids);
+  // In chunks: one lookup for the whole list is a request too long to send.
+  const payers = await payersForAll(ids);
+  const perDay = dailyDealsMode((await getBillingSettings()).dealPricing, now) === "per_day";
   // What the daily email would have carried: the changes on deals they track.
   const [alertsOn, pending, slots] = await Promise.all([trackedAlertsOn(admin, ids), pendingChanges(admin, ids, now), slotsInUse(admin, ids, "daily", now)]);
 
@@ -197,7 +202,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       const ids = (list: readonly ChangeInput[]) => list.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
       const extra = changes ? { ...renderSections([changes]), subjectSuffix: changesPhrase(used) } : null;
       return {
-        mail: pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra }),
+        mail: pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra, perDay }),
         used,
         // What a sent letter closes: what it told, what it would not tell, what settling dismissed.
         closing: [...new Set([...ids(used), ...ids(given.filter((c) => !used.includes(c))), ...(settled?.dismissed ?? [])])],

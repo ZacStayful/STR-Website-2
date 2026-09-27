@@ -14,7 +14,6 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { isAdminEmail } from '../admin';
 import { payersForAll } from './daily-server';
-import { figureLine } from './message';
 import { alertsFor, type AlertedBefore, type AlertInsert, type TrackedForAlerts } from './alerts';
 import { trackedPlace, trackingFor, type MemberTracking } from './tracked-read';
 import { describeType } from '../marketplace/grid';
@@ -76,7 +75,8 @@ function itemsOf(t: MemberTracking): TrackedForAlerts[] {
             status: card.status,
             priceAmount: Number.isFinite(amount) ? amount : null,
             pricePeriod: card.price_period,
-            figure: figureLine(card),
+            // Batch 10: a deal's profit is only ever shown as a range, so no single figure is kept for its alerts.
+            figure: null,
             liveSince: card.live_since ?? null,
             retiredReason: card.retired_reason,
             retiredAt: card.retired_at,

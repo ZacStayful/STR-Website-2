@@ -68,7 +68,10 @@ async function pmi<T>(path: string, init: { method?: 'GET' | 'POST'; query?: Rec
   try {
     const res = await meter(
       // Every PMI path bills credits: str-estimate 50, str/market 3, listings 1, account 0.
-      { provider: 'pmi', unit: PMI_UNITS[path] ?? 'other', key: url.pathname + url.search, failed: (r) => !r.ok && r.status !== 404 },
+      // A second opinion that comes back 404 gave the member nothing, so it
+      // is not charged to them (the report says so); other paths' 404s are
+      // answers ("nothing listed here") and stay billed as before.
+      { provider: 'pmi', unit: PMI_UNITS[path] ?? 'other', key: url.pathname + url.search, failed: (r) => !r.ok && (r.status !== 404 || path === '/valuations/str-estimate') },
       () =>
         fetch(url, {
           method: init.method ?? 'GET',

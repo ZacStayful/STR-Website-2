@@ -59,7 +59,9 @@ test('share tokens have the same shape as every other token', () => {
 
 test('the preview title holds card facts only, and none in the members-only state', () => {
   const c = card();
-  assert.equal(shareTitle(c, 'York · YO24', 'card'), '+45% £9,000/yr over a long let · 3 bed terraced · Freehold · York · YO24');
+  // Batch 10: the profit only ever as the range the page shows, never one figure.
+  assert.equal(shareTitle(c, 'York · YO24', 'card', '£450–£700/mo'), '£450–£700/mo area estimate · 3 bed terraced · Freehold · York · YO24');
+  assert.equal(shareTitle(c, 'York · YO24', 'card'), '3 bed terraced · Freehold · York · YO24');
   const hidden = shareTitle(c, 'York', 'members_only');
   assert.equal(hidden, 'A new short-let deal in York — available to members');
   assert.ok(!/\d{2},\d{3}|%|£/.test(hidden), 'no figure, price or percentage while in early access');

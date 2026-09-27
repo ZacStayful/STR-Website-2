@@ -5,13 +5,17 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings, getUnitCostTable } from "@/lib/credit/unit-costs";
-import { estimateAction } from "@/lib/credit/estimate";
+import { estimateAction, fullAnalysisRawCeiling } from "@/lib/credit/estimate";
+import { earliestPricingDate } from "@/lib/credit/pricing-date";
 import { formatGbp } from "@/lib/credit/pricing";
 import { isEnforcing } from "@/lib/credit/http";
 import { BillingAdminClient } from "./BillingAdminClient";
+import { PricingNoticePanel } from "./PricingNoticePanel";
 
 export const metadata: Metadata = { title: "Billing admin — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
+// The pricing notice is sent from here (a server action on this page) and gives itself 45 seconds a press.
+export const maxDuration = 60;
 
 function sevenDaysAgoIso(): string {
   return new Date(Date.now() - 7 * 86_400_000).toISOString();
@@ -66,6 +70,12 @@ export default async function BillingAdminPage() {
   const rows = [...table.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.unit.localeCompare(b.unit)).map((u) => ({ ...u, stat: stats.get(`${u.provider}:${u.unit}`) ?? null }));
   const report = estimateAction(table, "report");
   const enhanced = estimateAction(table, "report_enhanced");
+  const priceLabs = process.env.PRICELABS_AS_PRIMARY === "true";
+  const guards = {
+    ceilingRawPence: fullAnalysisRawCeiling(table, { priceLabs }),
+    ceilingRawPmiPence: fullAnalysisRawCeiling(table, { pmi: true, priceLabs }),
+    earliestDate: (await earliestPricingDate()).toISOString().slice(0, 10),
+  };
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
@@ -89,7 +99,10 @@ export default async function BillingAdminPage() {
         A standard report is quoted at <strong>{formatGbp(report.typicalBasePence)}</strong> typical / {formatGbp(report.maxBasePence)} worst case at the plan rate ({formatGbp(report.typicalBasePence * settings.spendRates.topup)} from top-up credit); the enhanced report with the PMI second opinion is <strong>{formatGbp(enhanced.typicalBasePence)}</strong> / {formatGbp(enhanced.maxBasePence)}.
       </p>
 
-      <BillingAdminClient rows={rows} settings={settings} codes={(codes.data ?? []).map((c) => ({ code: String(c.code), kind: String(c.kind), amountPence: Number(c.amount_pence), maxRedemptions: c.max_redemptions === null ? null : Number(c.max_redemptions), redeemedCount: Number(c.redeemed_count) || 0, expiresAt: (c.expires_at as string | null) ?? null, active: c.active !== false, createdBy: (c.created_by as string | null) ?? null, referral: Boolean(c.owner_user_id) }))} />
+      <div className="mb-6">
+        <PricingNoticePanel planned={settings.dealPricing.newPricingPlanned} announced={settings.dealPricing.pricingNoticeFor} earliest={guards.earliestDate} />
+      </div>
+      <BillingAdminClient rows={rows} settings={settings} guards={guards} codes={(codes.data ?? []).map((c) => ({ code: String(c.code), kind: String(c.kind), amountPence: Number(c.amount_pence), maxRedemptions: c.max_redemptions === null ? null : Number(c.max_redemptions), redeemedCount: Number(c.redeemed_count) || 0, expiresAt: (c.expires_at as string | null) ?? null, active: c.active !== false, createdBy: (c.created_by as string | null) ?? null, referral: Boolean(c.owner_user_id) }))} />
     </div>
   );
 }

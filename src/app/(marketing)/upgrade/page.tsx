@@ -13,6 +13,7 @@ import { formatPlanDate } from "@/lib/subscription";
 import { resumeFromUpgradeAction } from "@/app/account/actions";
 import { Pricing } from "@/components/marketing-v3/Pricing";
 import { TopupCard } from "@/components/credit/TopupCard";
+import { DEFAULT_SPEND_RATES } from "@/lib/credit/pricing";
 
 export const metadata: Metadata = {
   title: "Choose a plan — Stayful Intelligence",
@@ -77,7 +78,7 @@ export default async function UpgradePage({
                 ? "Admin accounts run everything free; this page is what members see."
                 : summary
                   ? `You have ${formatGbp(summary.totalPence)} of credit${summary.cycle?.planName ? ` (${formatGbp(summary.buckets.planPence)} of this month's ${summary.cycle.planName} credit left)` : ""}. Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${summary.rates.topup}× the plan rate.`
-                  : "Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at 1.5× the plan rate."}
+                  : `Subscribing gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${DEFAULT_SPEND_RATES.topup}× the plan rate.`}
           </p>
           {paused && (
             <div className="upgrade-ctas" style={{ marginTop: 16 }}>

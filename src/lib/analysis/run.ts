@@ -2,7 +2,7 @@ import 'server-only';
 
 import type {
   AnalysisResult, ShortLetData, LongLetData, DemandDrivers, NearbyEvent, DataQuality,
-  CompetitorsResult, DealResult,
+  CompetitorsResult,
 } from '../types';
 import { geocodePostcode } from '../apis/geocode';
 import { getShortLetData } from '../apis/airbtics';
@@ -17,15 +17,14 @@ import { estimateAction, reportAction, type CreditAction } from '../credit/estim
 import { getUnitCostTable } from '../credit/unit-costs';
 import { ask, nearbyListings, listingPerformance, strSecondOpinion, pdCouncilTax, pdMortgageRates, pdRegionKeyStats, pdStampDuty } from '../broker';
 import { matchTracked, nearbyPageOf, rankCompetitors, summariseCompetitors } from '../listing/competitors';
-import { purchaseDeal, rentToRentDeal, monthlyCashflow } from '../listing/deal';
-import { billsFromCouncilTax, pickCouncilTaxBand } from '../listing/bills';
+import { pickCouncilTaxBand } from '../listing/bills';
 import { countryForPostcode, stampDutyFromApi, type StampDutyFigure } from '../listing/stamp-duty';
-import { liveMortgageRate, type MortgageRateInfo } from '../listing/mortgage-rate';
-import { futureValueRange } from '../listing/growth';
+import { liveMortgageRate } from '../listing/mortgage-rate';
 import { keyStatsForOutcode, outcodeGrowth, pdRegionForOutcode } from '../market/key-stats';
 import { outcodeOf } from '../apis/propertydata-parse';
-import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals';
+import type { FinanceGoals } from '../market/goals';
 import type { AnalysisInput } from './input';
+import { dealFigures } from './deal-figures';
 import { noticeForFailure, noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
 
 /**
@@ -109,6 +108,48 @@ const SPECIAL_FEATURES: string[] = [];
 /** True when the member asked for the PMI second opinion and it is switched on. */
 export function enhancedEnabled(requested: boolean): boolean {
   return requested && process.env.PMI_SECOND_OPINION !== 'false';
+}
+
+export type SecondOpinionValue = NonNullable<AnalysisResult['secondOpinion']>;
+export interface SecondOpinionOutcome {
+  value: SecondOpinionValue | null;
+  notice: EnhancedNotice | null;
+}
+
+/**
+ * The PMI second opinion for one property. Its own function so that a
+ * report run and the add-on bought later from a finished report
+ * (src/lib/analysis/pmi-addon.ts) ask PMI exactly the same question. Runs
+ * under whatever meter context the caller is in.
+ *
+ * A failure never throws: it comes back as a notice, and the caller never
+ * charges for an opinion that did not arrive.
+ */
+export async function fetchSecondOpinion(
+  q: { postcode: string; bedrooms: number; bathrooms: number | undefined; propertyType: string },
+  brokerCtx: { mode: 'full'; userId: string | null },
+): Promise<SecondOpinionOutcome> {
+  try {
+    const r = await ask(
+      strSecondOpinion,
+      {
+        postcode: q.postcode,
+        bedrooms: q.bedrooms,
+        bathrooms: q.bathrooms,
+        propertyType: q.propertyType === 'flat' ? 'apartment' : 'house',
+      },
+      brokerCtx,
+    );
+    if (r.value) {
+      return { value: { ...r.value, provider: 'pmi' as const, updatedAt: r.updatedAt }, notice: null };
+    }
+    // PMI answered with nothing usable — no error to classify, but the
+    // customer is just as short of the feature they paid for.
+    return { value: null, notice: noticeForEmptyResult() };
+  } catch (err) {
+    console.error('[analyse] second opinion failed:', err);
+    return { value: null, notice: noticeForFailure(err) };
+  }
 }
 
 /**
@@ -301,30 +342,9 @@ export async function runAnalysis(
       // by the callbacks. TypeScript narrows such a variable to `null` at the
       // point it is read back, so the field's type would claim "always null"
       // while the runtime value was a notice — compiling fine and lying.
-      type SecondOpinionValue = NonNullable<AnalysisResult['secondOpinion']>;
-      const secondOpinionPromise: Promise<{ value: SecondOpinionValue | null; notice: EnhancedNotice | null }> =
-        (async () => {
-          if (!wantEnhanced) return { value: null, notice: null };
-          const r = await ask(
-            strSecondOpinion,
-            {
-              postcode: property.postcode,
-              bedrooms: property.bedrooms,
-              bathrooms: input.bathrooms,
-              propertyType: input.propertyType === 'flat' ? 'apartment' : 'house',
-            },
-            brokerCtx,
-          );
-          if (r.value) {
-            return { value: { ...r.value, provider: 'pmi' as const, updatedAt: r.updatedAt }, notice: null };
-          }
-          // PMI answered with nothing usable — no error to classify, but the
-          // customer is just as short of the feature they paid for.
-          return { value: null, notice: noticeForEmptyResult() };
-        })().catch((err) => {
-          console.error('[analyse] second opinion failed:', err);
-          return { value: null, notice: noticeForFailure(err) };
-        });
+      const secondOpinionPromise: Promise<SecondOpinionOutcome> = wantEnhanced
+        ? fetchSecondOpinion({ postcode: property.postcode, bedrooms: property.bedrooms, bathrooms: input.bathrooms, propertyType: input.propertyType }, brokerCtx)
+        : Promise.resolve({ value: null, notice: null });
 
       const [shortLetResult, longLetResult, priceLabsResult, saleValuationResult] = await Promise.allSettled([
         shortLetPromise,
@@ -430,16 +450,9 @@ export async function runAnalysis(
       const [competitors, secondOpinionOutcome, councilTaxRes, mortgageRatesRes] = await Promise.all([competitorsPromise, secondOpinionPromise, councilTaxPromise, mortgageRatesPromise]);
       const secondOpinion = secondOpinionOutcome.value;
 
-      // A member's saved goal profile wins; otherwise the higher of the
-      // national 2- and 3-year fixed averages, and only then the old 5.5%.
-      const live = liveMortgageRate(mortgageRatesRes.value);
-      const finance: FinanceGoals = opts.finance ?? { ...DEFAULT_FINANCE_GOALS, ...(live ? { mortgageRatePct: live.ratePct } : {}) };
-      const mortgageRate: MortgageRateInfo = { source: opts.finance ? 'profile' : live ? 'live' : 'default', live };
-
-      // Council tax from the property's own band replaces the council-tax
-      // share of the old flat £250 bills line.
+      // Council tax from the property's own band (the deal maths turns it
+      // into the bills line).
       const councilTax = pickCouncilTaxBand(councilTaxRes.value, property.address);
-      const bills = { ...billsFromCouncilTax(councilTax), councilTax };
 
       // Stamp duty from PropertyData's calculator for the price the deal is
       // on; the local bands are the fallback inside purchaseDeal.
@@ -450,19 +463,23 @@ export async function runAnalysis(
         stampDuty = sd.value ? stampDutyFromApi(sd.value, taxCountry, purchasePrice) : undefined;
       }
 
-      // Where the value might go: the outcode's past five years projected
-      // forward as a range. Informational only; nothing else reads it.
+      // The deal at the member's finance, the cash flow and the five-year
+      // value. Pure (src/lib/analysis/deal-figures.ts), so a saved analysis
+      // can be priced again at another member's finance with no provider call.
       const growth = await growthPromise;
-      const valueBase = input.askingPrice ?? propertyValuation?.estimatedValue ?? null;
-      const futureValue = growth && valueBase ? futureValueRange(valueBase, input.askingPrice ? 'asking-price' : 'estimated-value', growth.growth5y, growth.outcode, growth.asOf) : null;
-
-      const dealBase = { grossRevenue: shortLet.annualRevenue, adr: shortLet.averageDailyRate, bedrooms: property.bedrooms, finance, country: taxCountry, stampDuty, mortgageRate, bills };
-      let deal: DealResult | null = null;
-      if (input.rentPcm) deal = { ...rentToRentDeal(input.rentPcm, dealBase), basis: 'advertised-rent' };
-      else if (input.askingPrice) deal = { ...purchaseDeal(input.askingPrice, dealBase), basis: 'asking-price' };
-      else if (propertyValuation?.estimatedValue) deal = { ...purchaseDeal(propertyValuation.estimatedValue, dealBase), basis: 'estimated-value' };
-      const fixedPcm = deal?.kind === 'rent-to-rent' ? deal.advertisedRentPcm : deal?.kind === 'purchase' ? deal.mortgageMonthly : 0;
-      const cashflow = shortLet.annualRevenue > 0 ? monthlyCashflow(shortLet.monthlyRevenue, fixedPcm, { billsPcm: bills.billsPcm }) : null;
+      const { deal, cashflow, futureValue } = dealFigures({
+        shortLet,
+        bedrooms: property.bedrooms,
+        taxCountry,
+        askingPrice: input.askingPrice,
+        rentPcm: input.rentPcm,
+        estimatedValue: propertyValuation?.estimatedValue ?? null,
+        councilTax,
+        stampDuty,
+        growth,
+        finance: opts.finance,
+        liveRate: liveMortgageRate(mortgageRatesRes.value),
+      });
 
       const result: AnalysisResult = {
         // The geocoder knows the town; the form only ever had a postcode.

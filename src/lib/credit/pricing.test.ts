@@ -27,11 +27,11 @@ test('unknown unit prices at zero and flags not found', () => {
 
 test('spendable base converts each bucket through its rate', () => {
   const s = spendableBase({ planPence: 500, welcomePence: 0, topupPence: 1000, adjustmentPence: 0 });
-  assert.equal(s, 1166.6667);
+  assert.equal(s, 1269.2308);
 });
 
-test('top-up credit drains 1.5× faster', () => {
-  assert.equal(toGrantPence(730, DEFAULT_SPEND_RATES.topup), 1095);
+test('top-up credit drains 1.3× faster', () => {
+  assert.equal(toGrantPence(730, DEFAULT_SPEND_RATES.topup), 949);
   assert.equal(toGrantPence(730, DEFAULT_SPEND_RATES.plan), 730);
 });
 
@@ -121,17 +121,19 @@ test('a funnel lead at x2 costs what the pricing was set from', () => {
   // ~4p off a top-up) — that is why the per-lead totals below are a few
   // pence above these. The PropertyData due diligence calls (eleven
   // credits a report) were added to every report, funnel leads included,
-  // with the owner's agreement: £2.08 → £2.91 a standard lead.
+  // with the owner's agreement: £2.08 → £2.91 a standard lead. Batch 10
+  // moved top-up credit from 1.5× to 1.3× (the x2 lead price itself is
+  // untouched): £2.91 → £2.52 off a top-up.
   const topup = DEFAULT_SPEND_RATES.topup;
   assert.equal((std2.typicalBasePence / 100).toFixed(2), '1.94', 'standard report base at x2');
   assert.equal((enh2.typicalBasePence / 100).toFixed(2), '3.44', 'enhanced report base at x2');
-  assert.equal(((std2.typicalBasePence * topup) / 100).toFixed(2), '2.91', 'standard off a top-up');
-  assert.equal(((enh2.typicalBasePence * topup) / 100).toFixed(2), '5.16', 'enhanced off a top-up');
+  assert.equal(((std2.typicalBasePence * topup) / 100).toFixed(2), '2.52', 'standard off a top-up');
+  assert.equal(((enh2.typicalBasePence * topup) / 100).toFixed(2), '4.47', 'enhanced off a top-up');
 
   // And the per-lead totals actually quoted, report + one address lookup.
   const ac2 = estimateAction(t, 'autocomplete', { markupOverride: 2 });
-  assert.equal((((std2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '2.95');
-  assert.equal((((enh2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '5.20');
+  assert.equal((((std2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '2.56');
+  assert.equal((((enh2.typicalBasePence + ac2.typicalBasePence) * topup) / 100).toFixed(2), '4.51');
 
   // The worst case is what gets reserved, so it must stay above the typical.
   assert.ok(std2.maxBasePence > std2.typicalBasePence);

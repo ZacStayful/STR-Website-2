@@ -30,7 +30,7 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: "What does it cost?",
-    a: "Every account starts with £20 of free credit, no card required — about five standard reports, or two with the PMI second opinion added. After that, subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.5× the plan rate. Cancel any time, no contract.",
+    a: "Every account starts with £20 of free credit, no card required — about five Full analyses of deals, or three with the PMI second opinion added. After that, subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.3× the plan rate. Cancel any time, no contract.",
   },
   {
     q: "Can I use this for properties I don't own yet?",

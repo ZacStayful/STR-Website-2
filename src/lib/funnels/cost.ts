@@ -43,7 +43,7 @@ export interface FunnelCostInput {
   /** The funnel markup from billing settings (2 by default). */
   markup: number;
   /**
-   * Spend rates. Top-up credit is spent at 1.5x, which is what a
+   * Spend rates. Top-up credit is spent at its rate (1.3x by default), which is what a
    * pay-per-use customer will actually be charged — quoting the base rate
    * would under-state it by a third.
    */

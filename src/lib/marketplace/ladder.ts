@@ -94,3 +94,12 @@ export function describeBand(ladder: DealOpenLadder, index: number): string {
   if (prev === null) return `under ${k(band.upTo)}`;
   return `${k(prev)}–${k(band.upTo)}`;
 }
+
+/** "25p to £1": the cheapest and dearest Quick look on the ladder, for copy that states the price (terms, pricing, public pages). */
+export function ladderRangeText(ladder: DealOpenLadder = DEFAULT_DEAL_OPEN_LADDER): string {
+  const prices = ladder.map((b) => b.pence).filter((p) => Number.isFinite(p));
+  if (prices.length === 0) return formatOpenPrice(DEFAULT_DEAL_OPEN_LADDER[0].pence);
+  const lo = Math.min(...prices);
+  const hi = Math.max(...prices);
+  return lo === hi ? formatOpenPrice(lo) : `${formatOpenPrice(lo)} to ${formatOpenPrice(hi)}`;
+}

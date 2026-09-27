@@ -12,6 +12,8 @@ import { parseAnalysisInput } from '@/lib/analysis/input';
 import { reserveAnalysis, runAnalysis, enhancedEnabled, GeocodeError, type AnalysisRunOptions } from '@/lib/analysis/run';
 import { reportAction } from '@/lib/credit/estimate';
 import { claimReportRun, releaseReportRun } from '@/lib/analysis/report-claim';
+import { analysisComplete } from '@/lib/analysis/reuse';
+import { actionSpend, refundAction } from '@/lib/credit/action';
 
 // This route streams SSE while `runAnalysis` makes several sequential
 // external API calls; the default 10s function timeout (Hobby) would cut
@@ -181,10 +183,28 @@ export async function POST(request: Request) {
 
       after((async () => {
         try {
-          const { result, spend } = await runAnalysis(prepared, input, {
+          const run = await runAnalysis(prepared, input, {
             ...runOpts,
             onProgress: (e) => send({ stage: e.stage, progress: e.progress, message: e.message }),
           });
+          const { result } = run;
+          let { spend } = run;
+
+          // A report with no short-let figures (the short-let provider
+          // failed) is a failed report: whatever it charged is refunded, and
+          // it is neither saved nor linked to the deal, so it can be run again.
+          if (!analysisComplete(result)) {
+            if (userId) await refundAction(prepared.ctx.actionId, 'Report could not get short-let figures');
+            send({ stage: 'error', progress: 0, message: 'We couldn’t get short-let figures for this property just now, so the report wasn’t saved and you haven’t been charged for it. Please try again later.' });
+            return;
+          }
+          // An enhanced report whose second opinion did not come back tells
+          // the member they were not charged for it; make that true.
+          if (userId && result.enhancedNotice && !result.secondOpinion) {
+            const back = await refundAction(prepared.ctx.actionId, 'Second opinion did not come back', { provider: 'pmi', unit: 'str_estimate' });
+            if (back > 0) spend = await actionSpend(prepared.ctx.actionId).catch(() => spend);
+          }
+          let reportSaved = false;
 
           // Persist the report so it can be reopened from /reports, and link it
           // to the checked listing it came from. Done before `complete` so the
@@ -216,6 +236,7 @@ export async function POST(request: Request) {
                 .single();
               if (saveError) console.error('[api/analyse] report save failed:', saveError.message);
               else if (saved?.id) {
+                reportSaved = true;
                 result.reportId = saved.id as string;
                 if (input.checkedListingId) {
                   await supabase
@@ -224,14 +245,23 @@ export async function POST(request: Request) {
                     .eq('id', input.checkedListingId)
                     .eq('user_id', userId);
                 }
-                // Keep the last 200 reports per member.
-                const { data: older } = await supabase.from('saved_searches').select('id').eq('user_id', userId).order('created_at', { ascending: false }).range(200, 400);
+                // Keep the last 200 reports per member. A Full analysis of a
+                // feed deal (deal_id set) was bought at a fixed price and is
+                // never pruned.
+                const { data: older } = await supabase.from('saved_searches').select('id').eq('user_id', userId).is('deal_id', null).order('created_at', { ascending: false }).range(200, 400);
                 if (older && older.length > 0) {
                   await supabase.from('saved_searches').delete().in('id', older.map((r) => r.id));
                 }
               }
             } catch (err) {
               console.error('[api/analyse] report save threw:', err);
+            }
+            // A report that could not be saved is lost to the member: it is
+            // not charged either.
+            if (!reportSaved) {
+              await refundAction(prepared.ctx.actionId, 'Report could not be saved');
+              send({ stage: 'error', progress: 0, message: 'Your report couldn’t be saved, so you haven’t been charged for it. Please try again.' });
+              return;
             }
           }
 
@@ -283,6 +313,8 @@ export async function POST(request: Request) {
             }
           }
         } catch (err) {
+          // Whatever a report that failed had already charged is refunded.
+          if (userId) await refundAction(prepared.ctx.actionId, 'Report failed');
           if (err instanceof GeocodeError) {
             send({ stage: 'error', progress: 0, message: err.message });
           } else {

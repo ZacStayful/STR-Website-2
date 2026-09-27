@@ -88,14 +88,16 @@ export function missesToList(misses: MissedPick[], lastPickSentAt: string | null
   return { list, superseded };
 }
 
-const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
-
+/**
+ * Area, size, type and price. No profit figure (Batch 10): a deal's profit is
+ * only ever shown as a range at the member's finance, and a missed pick keeps
+ * no revenue figure to range.
+ */
 export function missedPickLine(m: MissedPick): string {
   const type = m.kind === 'rent' ? 'Rent-to-rent' : 'Purchase';
   const size = m.bedrooms ? `${m.bedrooms}-bed` : null;
   const price = m.priceAmount !== null && m.pricePeriod ? formatListingPrice({ amount: m.priceAmount, period: m.pricePeriod }) : 'price not stated';
-  const profit = m.annualProfit !== null ? `est. profit ${gbp(m.annualProfit)}/yr` : 'profit not estimated';
-  return [m.areaName, [size, type].filter(Boolean).join(' '), price, profit].join(' · ');
+  return [m.areaName, [size, type].filter(Boolean).join(' '), price].join(' · ');
 }
 
 function dayWords(iso: string): string {
@@ -113,6 +115,8 @@ export interface PausedEmailInput {
    * so what that email would have carried rides here rather than being lost.
    */
   extra?: { text: string; html: string; subjectSuffix?: string | null } | null;
+  /** From billing_settings.new_pricing_from daily deals are charged by the day, not by the pick. */
+  perDay?: boolean;
 }
 
 /** The letter itself: plain, one button. */
@@ -121,7 +125,13 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
   const topUp = `${base}/account/billing`;
   const manage = manageNotificationsUrl(base);
   const n = input.misses.length;
-  const baseSubject = n === 1 ? 'Your daily picks have paused: 1 pick you missed' : `Your daily picks have paused: ${n} picks you missed`;
+  const what = input.perDay ? 'daily deals' : 'daily picks';
+  const baseSubject = n === 1 ? `Your ${what} have paused: 1 pick you missed` : `Your ${what} have paused: ${n} picks you missed`;
+  // The cost, said truly for how it is charged: never "a few pence" for a pick that can cost £1.
+  const why = input.perDay
+    ? 'Your daily deals have paused because your credit ran out. Daily deals are charged by the day, so rather than run your balance further down we stop sending them until you top up.'
+    : 'Your daily picks have paused because your credit ran out. Each pick is charged from your credit, so rather than run your balance further down we stop sending them until you top up.';
+  const again = input.perDay ? 'daily deals start' : 'picks start';
   const subject = input.extra?.subjectSuffix ? `${baseSubject} · ${input.extra.subjectSuffix}` : baseSubject;
   const hi = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
   const since = input.misses[0] ? dayWords(input.misses[0].missedAt) : '';
@@ -129,13 +139,13 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
   const text = [
     hi,
     '',
-    'Your daily picks have paused because your credit ran out. A pick costs a few pence, so rather than run your balance further down we stop sending them until you top up.',
+    why,
     '',
     n === 1 ? `Here is the pick we found for you${since ? ` on ${since}` : ''} and could not send:` : `Here are the picks we found for you${since ? ` since ${since}` : ''} and could not send:`,
     '',
     ...lines.map((l) => `• ${l}`),
     '',
-    `Top up and picks start again with tomorrow morning's run: ${topUp}`,
+    `Top up and ${again} again with tomorrow morning's run: ${topUp}`,
     '',
     'Figures are Stayful estimates for the area and size of property. The address and listing come with the pick itself.',
     '',
@@ -145,11 +155,11 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
   const html = `
     <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.6;color:#2e3d2b;max-width:560px">
       <p style="margin:0 0 14px">${esc(hi)}</p>
-      <p style="margin:0 0 14px">Your daily picks have paused because your credit ran out. A pick costs a few pence, so rather than run your balance further down we stop sending them until you top up.</p>
+      <p style="margin:0 0 14px">${esc(why)}</p>
       <p style="margin:0 0 6px">${esc(n === 1 ? `Here is the pick we found for you${since ? ` on ${since}` : ''} and could not send:` : `Here are the picks we found for you${since ? ` since ${since}` : ''} and could not send:`)}</p>
       <ul style="margin:0 0 18px;padding-left:18px">${lines.map((l) => `<li style="margin:4px 0">${esc(l)}</li>`).join('')}</ul>
       <p style="margin:0 0 18px"><a href="${esc(topUp)}" style="display:inline-block;background:#5d8156;color:#fff;text-decoration:none;padding:10px 20px;border-radius:999px;font-weight:600">Top up</a></p>
-      <p style="margin:0 0 14px;color:#5b6657;font-size:13px">Top up and picks start again with tomorrow morning&#8217;s run. Figures are Stayful estimates for the area and size of property; the address and listing come with the pick itself.</p>
+      <p style="margin:0 0 14px;color:#5b6657;font-size:13px">Top up and ${esc(again)} again with tomorrow morning&#8217;s run. Figures are Stayful estimates for the area and size of property; the address and listing come with the pick itself.</p>
       ${input.extra ? `<div style="margin:0 0 18px">${input.extra.html}</div>` : ''}
       <p style="margin:0;color:#7a8274;font-size:12px">Stayful Intelligence · <a href="${esc(manage)}" style="color:#7a8274">Manage notifications</a></p>
     </div>`.trim();

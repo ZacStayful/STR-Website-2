@@ -45,6 +45,12 @@ export function Footer() {
             <Link href="/login">Sign in</Link>
             <Link href="/signup">Start free trial</Link>
           </div>
+
+          <div className="v3-footer-col">
+            <div className="v3-footer-h">Legal</div>
+            <Link href="/terms">Terms of service</Link>
+            <Link href="/privacy">Privacy policy</Link>
+          </div>
         </div>
 
         <div className="v3-footer-bottom">

@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { newActionId, type MeterContext } from './context';
-import { InsufficientCreditError, release, reserve } from './ledger';
+import { InsufficientCreditError, refund, release, reserve } from './ledger';
 import { isEnforcing } from './http';
 import { round4 } from './pricing';
 import { payerFor } from '../team';
@@ -32,7 +32,7 @@ export interface StartedAction {
   finish: () => Promise<void>;
 }
 
-export async function startAction(opts: { userId: string | null; admin?: boolean; action: string; maxBasePence?: number; oncePerAction?: boolean; actionId?: string; markupOverride?: number; requireCredit?: boolean; funnelId?: string | null }): Promise<StartedAction> {
+export async function startAction(opts: { userId: string | null; admin?: boolean; action: string; maxBasePence?: number; oncePerAction?: boolean; actionId?: string; markupOverride?: number; requireCredit?: boolean; funnelId?: string | null; fixedPrice?: boolean }): Promise<StartedAction> {
   const actionId = opts.actionId ?? newActionId();
   // Team members spend their owner's credit. Resolved once, here, so every
   // metered door — the analyser, the API, MCP, quick views, narration —
@@ -45,7 +45,7 @@ export async function startAction(opts: { userId: string | null; admin?: boolean
     payerId = payer.payerId;
     memberId = payer.memberId;
   }
-  const ctx: MeterContext = { userId: payerId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit, funnelId: opts.funnelId ?? null, memberId };
+  const ctx: MeterContext = { userId: payerId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit, funnelId: opts.funnelId ?? null, memberId, ...(opts.fixedPrice ? { fixedPrice: true } : {}) };
   let reservationId: string | null = null;
   if (payerId && !opts.admin && (opts.maxBasePence ?? 0) > 0) {
     try {
@@ -69,15 +69,48 @@ export async function startAction(opts: { userId: string | null; admin?: boolean
   };
 }
 
-/** Base pence debited so far under one action id (for "this report used £X"). */
+/** Base pence debited so far under one action id, less anything refunded (for "this report used £X"). */
 export async function actionSpend(actionId: string): Promise<{ basePence: number; chargedPence: number }> {
   if (!hasServiceRole()) return { basePence: 0, chargedPence: 0 };
-  const { data } = await createAdminClient().from('credit_transactions').select('base_pence, amount_pence').eq('action_id', actionId).eq('kind', 'debit');
+  const { data } = await createAdminClient().from('credit_transactions').select('kind, base_pence, amount_pence').eq('action_id', actionId).in('kind', ['debit', 'refund']);
   let base = 0;
   let charged = 0;
   for (const r of data ?? []) {
-    base += Number(r.base_pence ?? 0) || 0;
-    charged += Math.abs(Number(r.amount_pence ?? 0) || 0);
+    const sign = r.kind === 'refund' ? -1 : 1;
+    base += sign * (Number(r.base_pence ?? 0) || 0);
+    charged += sign * Math.abs(Number(r.amount_pence ?? 0) || 0);
   }
-  return { basePence: round4(base), chargedPence: round4(charged) };
+  return { basePence: round4(Math.max(0, base)), chargedPence: round4(Math.max(0, charged)) };
+}
+
+/**
+ * Refunds what an action was charged when it did not deliver: a report that
+ * failed, or the part of one that did not run (`only`: one provider and
+ * unit, e.g. PMI's second opinion when it came back empty). Debits already
+ * refunded are skipped, so a retry never refunds twice. Never throws; returns
+ * the base pence refunded.
+ */
+export async function refundAction(actionId: string, reason: string, only?: { provider: string; unit: string }): Promise<number> {
+  if (!hasServiceRole()) return 0;
+  try {
+    const admin = createAdminClient();
+    let q = admin.from('credit_transactions').select('id, base_pence').eq('action_id', actionId).eq('kind', 'debit');
+    if (only) q = q.eq('provider', only.provider).eq('unit', only.unit);
+    const [{ data: debits }, { data: refunds }] = await Promise.all([q, admin.from('credit_transactions').select('metadata').eq('action_id', actionId).eq('kind', 'refund')]);
+    const done = new Set(((refunds ?? []) as { metadata: { refund_of?: unknown } | null }[]).map((r) => String(r.metadata?.refund_of ?? '')));
+    let back = 0;
+    for (const d of (debits ?? []) as { id: number; base_pence: number }[]) {
+      if (done.has(String(d.id))) continue;
+      try {
+        await refund(d.id, undefined, reason);
+        back += Number(d.base_pence) || 0;
+      } catch (err) {
+        console.error(`[credit] refund of debit ${d.id} failed:`, (err as Error)?.message ?? err);
+      }
+    }
+    return round4(back);
+  } catch (err) {
+    console.error('[credit] refundAction failed:', (err as Error)?.message ?? err);
+    return 0;
+  }
 }

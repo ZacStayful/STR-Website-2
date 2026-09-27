@@ -98,6 +98,8 @@ import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
 import { DueDiligencePanel } from "./_components/DueDiligencePanel";
 import { SecondOpinionCard } from "./_components/SecondOpinionCard";
+import { PmiAddonCard } from "@/components/report/PmiAddonCard";
+import type { PriceLabel } from "@/lib/credit/deal-pricing";
 import { EarningsRangeStrip } from "./_components/EarningsRangeStrip";
 import { beatTargets, earningsRangeOf, MIN_TOP_BADGE_LISTINGS, topQuarterThreshold } from "@/lib/comps/earnings";
 import { readLocalTrend } from "@/lib/comps/local-trend";
@@ -322,6 +324,21 @@ const TAB_SECTIONS = [
   { id: "faq", label: "FAQ", icon: HelpCircle, num: 10 },
 ] as const;
 
+/** The UK calendar date of an instant, as YYYY-MM-DD. */
+function ukDay(iso: string | Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(typeof iso === "string" ? new Date(iso) : iso);
+}
+
+/** A saved Full analysis says when its figures were found once that is not today (UK). */
+function analysedBeforeToday(iso: string): boolean {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) && ukDay(new Date(t)) < ukDay(new Date());
+}
+
+function ukLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" });
+}
+
 // ─── Main Component ─────────────────────────────────────────────
 
 // Optional `initialResult` lets a host route (e.g. the public /demo-report
@@ -345,6 +362,12 @@ type HomePageProps = {
   initialExpensesExpanded?: boolean;
   funnel?: FunnelMode;
   prefill?: FunnelPrefill;
+  /**
+   * A saved Full analysis of a feed deal (Batch 10, /reports/[id]): when its
+   * figures were found, shown as "Analysed on" if that was before today, and
+   * the PMI second opinion on offer when it has none (this member's price).
+   */
+  savedAnalysis?: { dealId: string; analysedAt: string | null; pmi: PriceLabel | null };
 };
 
 /**
@@ -383,7 +406,7 @@ function BrandMark({
   return <span className={`font-semibold tracking-tight ${className ?? ""}`}>{label}</span>;
 }
 
-export default function HomePage({ initialResult, initialExpensesExpanded, funnel, prefill }: HomePageProps = {}) {
+export default function HomePage({ initialResult, initialExpensesExpanded, funnel, prefill, savedAnalysis }: HomePageProps = {}) {
   const [address, setAddress] = useState("");
   const [postcode, setPostcode] = useState("");
   const [email, setEmail] = useState(prefill?.email ?? "");
@@ -1542,6 +1565,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     <ExternalLink className="h-3 w-3" aria-hidden="true" />
                   </a>
                 )}
+                {savedAnalysis?.analysedAt && analysedBeforeToday(savedAnalysis.analysedAt) && (
+                  <p className="mt-1 text-xs text-primary-foreground/80">Analysed on {ukLongDate(savedAnalysis.analysedAt)}</p>
+                )}
                 {r.reportId && (
                   <p className="mt-1 text-xs text-primary-foreground/70">
                     Saved to <Link href={listing?.checkedListingId ? `/my-deals?focus=l-${encodeURIComponent(listing.checkedListingId)}` : "/my-deals?tab=reports"} className="underline-offset-2 hover:underline">My deals</Link>
@@ -1950,7 +1976,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
           {/* ══════════════════════════════════════════════════════════
               Section 1b: The Deal (listing links)
               ══════════════════════════════════════════════════════════ */}
-          {(r.deal || r.secondOpinion || r.enhancedNotice) && (
+          {(r.deal || r.secondOpinion || r.enhancedNotice || (savedAnalysis?.pmi && r.reportId)) && (
             <section id="deal" ref={setSectionRef("deal")} className="mb-12">
               <SectionHeading
                 icon={Calculator}
@@ -1985,6 +2011,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     <p className="mt-1 text-sm text-muted-foreground">{r.enhancedNotice.message}</p>
                   </div>
                 )}
+                {/* A Full analysis without PMI's opinion can add it later, at the add-on price only. */}
+                {!r.secondOpinion && savedAnalysis?.pmi && r.reportId && <PmiAddonCard reportId={r.reportId} label={savedAnalysis.pmi} />}
               </div>
             </section>
           )}

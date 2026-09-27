@@ -2,7 +2,8 @@
  * Pure pricing maths. Two units run through the whole system:
  *   base pence  = raw cost × markup (the "×5" price every action is quoted in)
  *   grant pence = what a member paid; each grant spends at its own rate
- *                 (plan / welcome 1.0, top-up / adjustment 1.5)
+ *                 (plan / welcome 1.0, top-up / adjustment 1.3), frozen on
+ *                 the grant when it is made
  */
 
 import { unitKey, type UnitCostTable, DEFAULT_MARKUP } from './costs.ts';
@@ -43,7 +44,7 @@ export interface SpendRates {
   adjustment: number;
 }
 
-export const DEFAULT_SPEND_RATES: SpendRates = { plan: 1, welcome: 1, topup: 1.5, adjustment: 1.5 };
+export const DEFAULT_SPEND_RATES: SpendRates = { plan: 1, welcome: 1, topup: 1.3, adjustment: 1.3 };
 
 export interface Buckets {
   planPence: number;

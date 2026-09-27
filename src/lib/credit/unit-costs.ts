@@ -2,6 +2,7 @@ import { adminClient, hasServiceRole } from './db.ts';
 import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP, DEFAULT_FUNNEL_MARKUP } from './costs.ts';
 import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 import { parseLadder, DEFAULT_DEAL_OPEN_LADDER, type DealOpenLadder } from '../marketplace/ladder.ts';
+import { DEFAULT_DEAL_PRICING, effectivePricingDate, parseDateSetting, parseDays, parsePence, parsePlanCredit, parseRangePct, type DealPricing } from './deal-pricing.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -35,6 +36,12 @@ export interface BillingSettings {
    * paid (src/lib/marketplace/visibility.ts). 0 switches the window off.
    */
   freeDealDelayHours: number;
+  /**
+   * Batch 10's fixed prices and dates (src/lib/credit/deal-pricing.ts): the
+   * full analysis, the PMI add-on, daily deals, analysis reuse, 1:1 plan
+   * credit and the date it starts, and the profit range widths.
+   */
+  dealPricing: DealPricing;
 }
 
 export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
@@ -47,6 +54,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   referralPence: 1000,
   dealOpenLadder: DEFAULT_DEAL_OPEN_LADDER,
   freeDealDelayHours: 48,
+  dealPricing: DEFAULT_DEAL_PRICING,
 };
 
 export function invalidateCreditCaches(): void {
@@ -94,13 +102,25 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       spendRates: {
         plan: Number(rates.plan) || 1,
         welcome: Number(rates.welcome) || 1,
-        topup: Number(rates.topup) || 1.5,
-        adjustment: Number(rates.adjustment) || 1.5,
+        topup: Number(rates.topup) || 1.3,
+        adjustment: Number(rates.adjustment) || 1.3,
       },
       topupPresetsPence: Array.isArray(presets) && presets.length ? presets.map(Number).filter((n) => Number.isFinite(n) && n > 0) : [1000, 2500, 5000],
       referralPence: num('referral_pence', 1000),
       dealOpenLadder: parseLadder(kv.get('deal_open_ladder')),
       freeDealDelayHours: Math.max(0, num('free_deal_delay_hours', 48)),
+      dealPricing: {
+        fullAnalysisPence: parsePence(kv.get('full_analysis_pence'), DEFAULT_DEAL_PRICING.fullAnalysisPence),
+        pmiAddonPence: parsePence(kv.get('pmi_addon_pence'), DEFAULT_DEAL_PRICING.pmiAddonPence),
+        todays5DailyPence: parsePence(kv.get('todays_5_daily_pence'), DEFAULT_DEAL_PRICING.todays5DailyPence),
+        analysisReuseDays: parseDays(kv.get('analysis_reuse_days'), DEFAULT_DEAL_PRICING.analysisReuseDays),
+        planCreditPence: parsePlanCredit(kv.get('plan_credit_pence')),
+        // The saved date applies only once the members' notice has announced it.
+        newPricingFrom: effectivePricingDate(parseDateSetting(kv.get('new_pricing_from')), parseDateSetting(kv.get('pricing_notice_date'))),
+        newPricingPlanned: parseDateSetting(kv.get('new_pricing_from')),
+        pricingNoticeFor: parseDateSetting(kv.get('pricing_notice_date')),
+        profitRangePct: parseRangePct(kv.get('profit_range_pct')),
+      },
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

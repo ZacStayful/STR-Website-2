@@ -3398,3 +3398,202 @@ revoke all on function public.activity_retention(jsonb) from public, anon, authe
 grant execute on function public.activity_retention(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 10: analyser path + pricing
+-- =========================
+-- Fixed prices for deals in the feed, daily deals, 1:1 plan credit and a
+-- lower top-up rate (src/lib/credit/deal-pricing.ts reads every key below;
+-- /admin/billing edits them). All in base pence: what a member on a plan
+-- pays. Top-up credit pays base × its spend rate. Inserted only when
+-- missing, so an edit made on /admin/billing survives a re-run.
+--   full_analysis_pence   a Full analysis of a feed deal; a Quick look
+--                         already paid for that deal comes off it
+--   pmi_addon_pence       the optional PMI second opinion, on top
+--   todays_5_daily_pence  one day of daily deals (Today's 5), charged only
+--                         on a day it is delivered, from new_pricing_from
+--   analysis_reuse_days   a saved analysis of the same deal younger than
+--                         this is reused instead of paying the providers again
+--   plan_credit_pence     monthly plan credit from new_pricing_from, applied
+--                         at each subscriber's first renewal on or after it
+--                         (annual: the first ANNUAL renewal)
+--   new_pricing_from      the date plan credit and daily deals change. null
+--                         until it is set on /admin/billing, which only allows
+--                         a date at least 14 days after the members' notice
+--   profit_range_pct      the area-estimate profit range either side, by the
+--                         screening's confidence (capped at 25 in the code)
+-- None of this is in ACCESS_COLUMNS.
+insert into public.billing_settings (key, value) values
+  ('full_analysis_pence', '400'::jsonb),
+  ('pmi_addon_pence', '200'::jsonb),
+  ('todays_5_daily_pence', '33'::jsonb),
+  ('analysis_reuse_days', '30'::jsonb),
+  ('plan_credit_pence', '{"starter":1900,"pro":3999,"scale":9900,"pro_annual":3000}'::jsonb),
+  ('new_pricing_from', 'null'::jsonb),
+  ('profit_range_pct', '{"high":10,"medium":15,"low":25}'::jsonb)
+on conflict (key) do nothing;
+
+-- Top-up and adjustment (promo, referral, admin) credit spend at 1.3×, down
+-- from 1.5×. A grant's spend_rate is frozen when it is made, so balances
+-- bought before today are moved to 1.3 as well (decided 27 Sep 2026: one
+-- rate, in the member's favour). Past debits keep the rate they were taken
+-- at in credit_allocations. The overdraft grant (rate 1) is not touched.
+-- Runs ONCE, marked by the batch10_rates_applied_at row: re-running this file
+-- must never undo a later change of rate made on /admin/billing.
+do $$
+begin
+  if not exists (select 1 from public.billing_settings where key = 'batch10_rates_applied_at') then
+    update public.billing_settings
+       set value = value || '{"topup":1.3,"adjustment":1.3}'::jsonb, updated_at = now()
+     where key = 'spend_rates';
+    update public.credit_grants
+       set spend_rate = 1.3
+     where kind in ('topup', 'adjustment') and spend_rate = 1.5 and remaining_pence > 0;
+    insert into public.billing_settings (key, value) values ('batch10_rates_applied_at', to_jsonb(now()));
+  end if;
+end $$;
+
+-- ── Saved analyses (src/lib/analysis/reuse.ts) ──
+-- A Full analysis of a feed deal, kept so the next Full analysis of the same
+-- deal within analysis_reuse_days reuses it instead of paying the providers
+-- again. Only what the providers said about the PROPERTY is kept: never the
+-- member's deal maths, cash flow, finance, name, notes, stage or report id.
+-- Written only by the server from a fresh run (never copied from
+-- saved_searches, which its author can edit). Service role only.
+create table if not exists public.deal_analyses (
+  id uuid primary key default gen_random_uuid(),
+  deal_id uuid not null,
+  canonical_url text not null,
+  input_key text not null,                   -- the fixed inputs the providers were asked (deal-input.ts)
+  inputs jsonb not null,
+  result jsonb not null,                     -- { result, stampDuty, stampDutyPrice }: see SharedAnalysis
+  has_second_opinion boolean not null default false,
+  raw_cost_pence numeric(14,4) not null default 0,
+  action_id uuid,                            -- the purchase that ran it (provider_calls.action_id)
+  analysed_at timestamptz not null default now(),
+  second_opinion_at timestamptz
+);
+create index if not exists deal_analyses_lookup_idx on public.deal_analyses (deal_id, input_key, analysed_at desc);
+alter table public.deal_analyses enable row level security;  -- no policies: service role only
+revoke all on public.deal_analyses from anon, authenticated;
+
+-- ── Full analysis and PMI purchases (src/lib/analysis/deal-analysis.ts) ──
+-- One row per purchase; its id is the ledger action_id of its debits. The
+-- row is claimed (pending) BEFORE anything is charged, and one pending row per
+-- account and deal (or per report, for PMI) is the double-tap guard: a second
+-- tab gets "already running". A Full analysis is charged only once the
+-- analysis is complete and saved; a failed one is marked failed and costs
+-- nothing (a Quick look it charged on the way stays: the deal is open).
+--   user_id    the account that pays (a team member's owner)
+--   buyer_id   who pressed the button; the report is theirs
+--   quoted_base_pence       the total the member confirmed, Quick look included
+--   analysis_base_pence     the Full analysis debit: its price less open_credit
+--   pmi_base_pence          the PMI debit, taken only if PMI answered
+--   open_credit_base_pence  what the account paid to open the deal, off the price
+create table if not exists public.analysis_purchases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  buyer_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,                        -- full_analysis | pmi_addon
+  status text not null default 'pending',    -- pending | complete | failed
+  deal_id uuid,
+  canonical_url text,
+  report_id uuid,                            -- the report made (full_analysis) or added to (pmi_addon)
+  analysis_id uuid,                          -- the deal_analyses row used
+  with_pmi boolean not null default false,
+  input_key text,
+  inputs jsonb,
+  quoted_base_pence numeric(14,4),
+  analysis_base_pence numeric(14,4) not null default 0,
+  pmi_base_pence numeric(14,4) not null default 0,
+  open_credit_base_pence numeric(14,4) not null default 0,
+  opened_by_purchase boolean not null default false,
+  open_action_id uuid,                       -- the deal_opens row this purchase opened (its debit's action_id)
+  reservation_id uuid,
+  reused boolean,
+  second_opinion boolean,                    -- PMI answered (only then is pmi_addon charged)
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_ids bigint[] not null default '{}',
+  failure text,
+  ready_at timestamptz,
+  run_started_at timestamptz,
+  created_at timestamptz not null default now(),
+  completed_at timestamptz
+);
+create unique index if not exists analysis_purchases_running_uidx on public.analysis_purchases (user_id, deal_id) where kind = 'full_analysis' and status = 'pending';
+create unique index if not exists analysis_purchases_pmi_running_uidx on public.analysis_purchases (report_id) where kind = 'pmi_addon' and status = 'pending';
+create index if not exists analysis_purchases_user_idx on public.analysis_purchases (user_id, created_at desc);
+create index if not exists analysis_purchases_deal_idx on public.analysis_purchases (deal_id, user_id, created_at desc);
+alter table public.analysis_purchases enable row level security;  -- no policies: service role only
+revoke all on public.analysis_purchases from anon, authenticated;
+
+-- A report made by a Full analysis of a feed deal says which deal (the deal
+-- page finds it by this, pipeline row or not) and when its figures were
+-- found, which the report shows as "Analysed on" when that was before today.
+-- Such reports are never pruned by the 200-report limit: they were paid for.
+alter table public.saved_searches add column if not exists deal_id uuid;
+alter table public.saved_searches add column if not exists analysed_at timestamptz;
+create index if not exists saved_searches_deal_idx on public.saved_searches (owner_id, deal_id) where deal_id is not null;
+-- Only the server sets them (a Full analysis it ran and charged for): the
+-- cards, the deal page and the purchase itself trust them. Signed-in members
+-- can write their own saved_searches rows with the public key (the policy
+-- above is FOR ALL), so from them a value is dropped on insert and kept as it
+-- was on update. The service role (the server) and the SQL editor are not
+-- touched. A plain (invoker) function: current_user is the caller's role.
+create or replace function private.saved_searches_keep_analysis()
+returns trigger language plpgsql set search_path = public as $$
+begin
+  if current_user in ('anon', 'authenticated') then
+    if tg_op = 'INSERT' then
+      new.deal_id := null;
+      new.analysed_at := null;
+    else
+      new.deal_id := old.deal_id;
+      new.analysed_at := old.analysed_at;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function private.saved_searches_keep_analysis() from public;
+drop trigger if exists saved_searches_keep_analysis on public.saved_searches;
+create trigger saved_searches_keep_analysis
+  before insert or update on public.saved_searches
+  for each row execute function private.saved_searches_keep_analysis();
+
+-- ── Daily deals: one charge per member per day (src/lib/listing/daily-deals-server.ts) ──
+-- From new_pricing_from, a delivered Today's 5 costs todays_5_daily_pence,
+-- once per member per UTC day, charged to the account that pays (a team
+-- member's owner). The row is inserted BEFORE the debit: (user_id, day) is
+-- the guard that the 07:00 picks passes, the 08:10 digest and any retry can
+-- never charge one member twice for one day. charged_base_pence and
+-- transaction_id are written only once the debit has gone through.
+create table if not exists public.daily_deal_charges (
+  id uuid not null default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  payer_id uuid not null references public.profiles(id) on delete cascade,
+  run text not null,                         -- picks | digest
+  send_ref text,                             -- the sourcing_sent row, or the digest's send token
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_id bigint,
+  created_at timestamptz not null default now(),
+  primary key (user_id, day)
+);
+create unique index if not exists daily_deal_charges_id_uidx on public.daily_deal_charges (id);
+create index if not exists daily_deal_charges_payer_idx on public.daily_deal_charges (payer_id, day desc);
+alter table public.daily_deal_charges enable row level security;  -- no policies: service role only
+revoke all on public.daily_deal_charges from anon, authenticated;
+
+-- ── The members' notice of these prices (src/lib/credit/pricing-notice-run.ts) ──
+-- Sent by hand from /admin/billing after a dry run, at least 14 days before
+-- new_pricing_from. Stamped on each profile as it is sent, so a second press
+-- never mails anyone twice; the latest stamp also sets the earliest date the
+-- new pricing may start (/admin/billing). pricing_notice_date is the date the
+-- notice announced: the new pricing takes effect only once one has been
+-- announced, and never before the date announced (effectivePricingDate).
+alter table public.profiles add column if not exists pricing_notice_sent_at timestamptz;
+insert into public.billing_settings (key, value) values ('pricing_notice_date', 'null'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

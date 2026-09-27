@@ -339,13 +339,23 @@ async function teaserUncached(code: string, cutoffIso: string | null): Promise<A
   const card = (await getAreaCards().catch(() => [])).find((c) => c.code === code) ?? null;
   const { areaMetaForCode } = await import('../market/areas');
   const meta = areaMetaForCode(code);
+  // The top three carry their screening's revenue and confidence (two JSON
+  // paths, no address): the inputs of their profit range (Batch 10). Read for
+  // those three only, so the 2,000-row read above stays light.
+  const top = rows.slice(0, 3);
+  if (top.length > 0) {
+    const { data: extra, error: extraErr } = await admin.from('marketplace_deals').select('id, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence').in('id', top.map((r) => r.id));
+    if (extraErr) console.error('[marketplace] teaser ranges failed:', extraErr.message);
+    const byId = new Map(((extra ?? []) as { id: string; screening_gross: string | null; screening_confidence: string | null }[]).map((r) => [r.id, r]));
+    for (const r of top) Object.assign(r, { screening_gross: byId.get(r.id)?.screening_gross ?? null, screening_confidence: byId.get(r.id)?.screening_confidence ?? null });
+  }
   return {
     code,
     sale: rows.filter((r) => r.kind === 'sale').length,
     rent: rows.filter((r) => r.kind === 'rent').length,
     total: rows.length,
     medianProfit: median,
-    top: rows.slice(0, 3),
+    top,
     area: { name: meta.name, slug: meta.slug, score: card?.score?.score ?? null, occupancy: card?.headline.occupancy ?? null, adr: card?.headline.adr ?? null },
   };
 }
@@ -365,5 +375,7 @@ export async function marketDealsForArea(code: string, visibility: DealVisibilit
     return null;
   });
   if (!t) return null;
-  return { code: t.code, sale: t.sale, rent: t.rent, total: t.total, medianProfit: t.medianProfit, top: t.top.map((c) => areaDealView(c, photoUrlFor(c, now), now)) };
+  const { getBillingSettings } = await import('../credit/unit-costs');
+  const widths = (await getBillingSettings()).dealPricing.profitRangePct;
+  return { code: t.code, sale: t.sale, rent: t.rent, total: t.total, medianProfit: t.medianProfit, top: t.top.map((c) => areaDealView(c, photoUrlFor(c, now), now, widths)) };
 }

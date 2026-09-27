@@ -1,7 +1,7 @@
 import type { PipelineStatus } from "@/lib/listing/pipeline";
 import type { DealFacts } from "@/lib/pipeline/facts";
 import { nextStepFor } from "@/lib/pipeline/server";
-import { NextStepCard } from "@/components/pipeline/NextStepCard";
+import { NextStepCard, type NextStepLead } from "@/components/pipeline/NextStepCard";
 
 /**
  * The "next step" for a deal at its stage (Batch 7, src/lib/pipeline): what
@@ -26,6 +26,8 @@ export async function NextStepSlot(props: {
   /** What the slot shows about the deal (src/lib/pipeline/slot-facts.ts). */
   facts?: DealFacts;
   variant?: "compact" | "full";
+  /** Batch 10: a line above the step (at Kept, "Run the full analysis · £X"). Reminder content only. */
+  lead?: NextStepLead | null;
 }) {
   if (!props.opened || !props.mine || !props.facts) return null;
   const itemKey = props.itemKey ?? (props.dealId ? `d-${props.dealId}` : props.checkedListingId ? `l-${props.checkedListingId}` : null);
@@ -33,5 +35,5 @@ export async function NextStepSlot(props: {
   const view = await nextStepFor({ itemKey, stage: props.stage, facts: props.facts });
   if (!view) return null;
   // Keyed by stage: a move re-mounts it, so the new stage starts fresh (the offer amount pre-fills).
-  return <NextStepCard key={view.stage} view={view} variant={props.variant ?? "compact"} />;
+  return <NextStepCard key={view.stage} view={view} variant={props.variant ?? "compact"} lead={props.lead ?? null} />;
 }

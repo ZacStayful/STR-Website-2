@@ -15,7 +15,7 @@
  * Pure: the visibility rule is Batch 1's dealVisible, passed the public cutoff.
  */
 import { dealVisible } from './visibility.ts';
-import { describeType, headlineFigure, type DealCard } from './grid.ts';
+import { describeType, type DealCard } from './grid.ts';
 
 export type ShareState = 'gone' | 'members_only' | 'card';
 
@@ -45,12 +45,15 @@ export function joinPath(referralCode: string | null | undefined): string {
   return referralCode && REFERRAL_CODE.test(referralCode) ? `/signup?ref=${encodeURIComponent(referralCode.toUpperCase())}` : '/signup';
 }
 
-/** "+45% over a long let · 3 bed terraced · York" for a link preview: card facts only. */
-export function shareTitle(card: DealCard, where: string, state: ShareState): string {
+/**
+ * "£450–£700/mo area estimate · 3 bed terraced · York" for a link preview:
+ * card facts only, and the profit only as the page shows it, a range
+ * (`rangeLabel`, src/lib/marketplace/profit-range.ts; Batch 10).
+ */
+export function shareTitle(card: DealCard, where: string, state: ShareState, rangeLabel: string | null = null): string {
   if (state === 'gone') return 'This deal has gone — Stayful';
   const place = where || 'the UK';
   if (state === 'members_only') return `A new short-let deal in ${place} — available to members`;
-  const figure = headlineFigure(card);
   const type = describeType(card);
-  return [figure.big === '—' ? null : `${figure.big} ${figure.small}`, type || null, where || null].filter(Boolean).join(' · ') || 'A short-let deal on Stayful';
+  return [rangeLabel ? `${rangeLabel} area estimate` : null, type || null, where || null].filter(Boolean).join(' · ') || 'A short-let deal on Stayful';
 }

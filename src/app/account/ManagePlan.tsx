@@ -19,7 +19,7 @@ const SECONDARY =
   'rounded-full border border-[#e4e7dc] bg-white px-5 py-2 text-sm font-semibold text-[#2e3d2b] transition hover:bg-[#f1f3ec] disabled:opacity-60';
 const QUIET = 'text-sm text-[#7a8274] underline underline-offset-2 hover:text-[#2e3d2b]';
 
-export function ManagePlan({ view }: { view: PlanView }) {
+export function ManagePlan({ view, topupRate = 1.3 }: { view: PlanView; topupRate?: number }) {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
   const [notice, setNotice] = useState<BillingState>(IDLE);
@@ -38,7 +38,7 @@ export function ManagePlan({ view }: { view: PlanView }) {
   return (
     <section className={`mt-6 ${CARD}`}>
       <h2 className="text-base font-semibold">Your plan</h2>
-      <PlanSummary view={view} />
+      <PlanSummary view={view} topupRate={topupRate} />
 
       {notice.success && (
         <p className="mt-3 rounded-lg bg-[#eef3ea] px-3 py-2 text-sm text-[#3f5c3a]">{notice.success}</p>
@@ -72,7 +72,7 @@ export function ManagePlan({ view }: { view: PlanView }) {
   );
 }
 
-function PlanSummary({ view }: { view: PlanView }) {
+function PlanSummary({ view, topupRate }: { view: PlanView; topupRate: number }) {
   const line = (main: string, sub?: string | null) => (
     <>
       <p className="mt-2 text-sm">{main}</p>
@@ -116,7 +116,7 @@ function PlanSummary({ view }: { view: PlanView }) {
     case 'free':
       return line(
         'Pay as you go.',
-        "You're using welcome and top-up credit. Subscribe for monthly credit at the standard rate — top-up credit is spent at 1.5× that rate.",
+        `You're using welcome and top-up credit. Subscribe for monthly credit at the standard rate — top-up credit is spent at ${topupRate}× that rate.`,
       );
     case 'lapsed':
       return line('No active subscription.', 'Any credit you have left still works. Re-subscribe for monthly credit at the standard rate.');

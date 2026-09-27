@@ -56,7 +56,7 @@ export async function afterDebit(userId: string): Promise<void> {
       }
       if (email && !sentThisCycle(p.last_low_balance_email_at)) {
         await admin.from('profiles').update({ last_low_balance_email_at: now.toISOString() }).eq('id', userId);
-        void lowBalanceEmail(email, { remainingPence: summary.totalPence, planName: summary.cycle?.planName ?? null }).catch(() => {});
+        void lowBalanceEmail(email, { remainingPence: summary.totalPence, planName: summary.cycle?.planName ?? null, topupRate: summary.rates.topup }).catch(() => {});
       }
       return;
     }

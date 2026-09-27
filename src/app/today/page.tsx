@@ -15,6 +15,7 @@ import { displayOrder, greeting, matchLine } from "@/lib/today/day";
 import { todaySelection, todaysPick, type TodaysPick } from "@/lib/today/selection";
 import { syncChecklist } from "@/lib/today/checklist-server";
 import { DealCard } from "@/app/deals/_components/DealCard";
+import { cardViewsFor } from "@/lib/marketplace/card-state";
 import { EarlyAccessBanner } from "@/app/deals/_components/EarlyAccessBanner";
 import { ShareDealButton } from "@/app/deals/_components/ShareDealButton";
 import { Checklist, ChecklistProvider } from "./_components/Checklist";
@@ -71,7 +72,7 @@ export default async function TodayPage() {
   const answered = await reactionsFor(user.id, pickDealId ? [pickDealId, ...stored] : stored);
   const order = displayOrder(stored, pickDealId, new Set(answered.keys()));
   const cards = await dealCardsByIds(order, visibility);
-  const opened = await openedDealIds(payer.payerId, cards.map((c) => c.id));
+  const [opened, views] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null })]);
   const pickCard = pickDealId ? cards.find((c) => c.id === pickDealId) ?? null : null;
   const dayCards = cards.filter((c) => c.id !== pickDealId);
   const ids = cards.map((c) => c.id);
@@ -93,6 +94,7 @@ export default async function TodayPage() {
       reaction={answered.get(c.id) ?? null}
       earlyAccess={visibility.tier === "paid" ? earlyAccessFor(c.live_since, settings.freeDealDelayHours, now) : null}
       share={<ShareDealButton dealId={c.id} />}
+      view={views.get(c.id)}
     />
   );
 

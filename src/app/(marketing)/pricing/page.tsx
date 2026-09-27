@@ -16,7 +16,12 @@ const PAGE_TITLE = "Pricing — £20 free credit, then pay as you go or subscrib
 const PAGE_DESCRIPTION =
   "Stayful Intelligence pricing. Start with £20 of free credit, then subscribe from £19/month for monthly credit or top up as you go. No contract, cancel any time.";
 const PAGE_URL = siteUrl("/pricing");
-const LAST_UPDATED = "2026-05-08";
+const LAST_UPDATED = "2026-09-27";
+
+// The plan grid reads its prices and the new pricing date from billing_settings:
+// refreshed every five minutes, so a change on /admin/billing (or the date
+// itself arriving) shows without a redeploy.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: PAGE_TITLE,

@@ -102,3 +102,34 @@ export function estimateAction(table: UnitCostTable, action: CreditAction, opts:
   const max = round4(lines.reduce((s, l) => s + l.basePence, 0));
   return { action, typicalBasePence: typical, maxBasePence: max, lines };
 }
+
+/**
+ * The most one full analysis can cost US, in RAW pence, with every fallback
+ * and retry firing in the same run: all six long-let and five sale valuation
+ * attempts, the Airbtics markets fallback, and ten bounds calls (the markets
+ * fallback can make eight on top of the two the estimate reserves). No
+ * markup: this is what the fixed full-analysis price must always stay above,
+ * so the margin can never go negative however unlucky a report is. Checked
+ * by the tests against the seeded price, and by /admin/billing before a new
+ * price is saved.
+ */
+export function fullAnalysisRawCeiling(table: UnitCostTable, opts: { pmi?: boolean; priceLabs?: boolean } = {}): number {
+  const raw = (provider: string, unit: string, quantity: number) => priceFor(table, provider, unit, quantity).rawPence;
+  let total =
+    raw('google', 'geocode', 1) +
+    raw('propertydata', 'floor_areas', 1) +
+    raw('propertydata', 'valuation_rent', 6) +
+    raw('propertydata', 'valuation_sale', 5) +
+    PD_REPORT_UNITS.reduce((s, u) => s + raw('propertydata', u, 1), 0) +
+    raw('airbtics', 'report_all', 1) +
+    raw('airbtics', 'bounds', 10) +
+    raw('airbtics', 'market_search', 1) +
+    raw('airbtics', 'market_summary', 1) +
+    raw('airbtics', 'metric_revenue', 1) +
+    raw('airbtics', 'metric_occupancy', 1) +
+    raw('google', 'places_nearby', 6) +
+    raw('ticketmaster', 'event_search', 1);
+  if (opts.pmi) total += raw('pmi', 'str_estimate', 1);
+  if (opts.priceLabs) total += raw('pricelabs', 'revenue_estimate', 1);
+  return round4(total);
+}
