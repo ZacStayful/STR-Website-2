@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { teamOf } from '@/lib/team';
 import { createInvite, revokeInvite } from '@/lib/team/invites';
 import { removeMember } from '@/lib/team/remove';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Managing a team. Every action resolves the session and the person's role
@@ -34,6 +35,7 @@ export async function inviteAction(_prev: TeamState, formData: FormData): Promis
   if (who.role !== 'owner') return { error: 'Only the account owner can invite people.' };
   const error = await createInvite(who.id, formData.get('email'));
   if (error) return { error };
+  logActivity(who.id, 'team_invite');
   revalidatePath('/account/team');
   return { notice: 'Invite sent. It works for 7 days.' };
 }

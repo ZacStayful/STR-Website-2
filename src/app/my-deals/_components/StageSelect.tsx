@@ -70,7 +70,7 @@ export function StageSelect({
     const before = current;
     setCurrent(next);
     startTransition(async () => {
-      const res = await setDealStageAction(itemKey, next);
+      const res = await setDealStageAction(itemKey, next, before);
       if (res.ok) {
         router.refresh();
         return;

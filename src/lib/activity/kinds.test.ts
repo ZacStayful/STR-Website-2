@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ACTIVITY_KINDS, COUNTED_KINDS, QUALIFYING_KINDS, isActivityKind, isCounted, isQualifying, kindLabel } from './kinds.ts';
+import { ACTIVITY_KINDS, COUNTED_KINDS, QUALIFYING_KINDS, isActivityKind, isCounted, isQualifying, kindLabel, planActivityKind } from './kinds.ts';
 
 test('every kind has a label and a lower-case name', () => {
   for (const [kind, info] of Object.entries(ACTIVITY_KINDS)) {
@@ -40,4 +40,17 @@ test('unknown kinds are refused and read as themselves', () => {
   assert.equal(isQualifying('nope'), false);
   assert.equal(kindLabel('some_old_kind'), 'some old kind');
   assert.equal(kindLabel('keep'), 'Kept a deal');
+});
+
+test('subscription changes the member made become activity; the rest do not', () => {
+  assert.equal(planActivityKind('started', 'stripe'), 'plan_start');
+  assert.equal(planActivityKind('plan_changed', 'stripe'), 'plan_change');
+  assert.equal(planActivityKind('paused', 'self_serve'), 'plan_pause');
+  assert.equal(planActivityKind('cancel_scheduled', 'self_serve'), 'plan_cancel');
+  assert.equal(planActivityKind('cancel_reverted', 'stripe'), 'plan_cancel_undone');
+  assert.equal(planActivityKind('resumed', 'self_serve'), 'plan_resume');
+  assert.equal(planActivityKind('resumed', 'stripe'), null);
+  assert.equal(planActivityKind('ended', 'stripe'), null);
+  assert.equal(planActivityKind('past_due', 'stripe'), null);
+  assert.equal(planActivityKind('recovered', 'stripe'), null);
 });

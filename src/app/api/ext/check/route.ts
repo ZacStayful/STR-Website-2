@@ -5,6 +5,7 @@ import { checkListingForMember } from '@/lib/listing/server';
 import { isAdminEmail } from '@/lib/admin';
 import { insufficientCreditPayload } from '@/lib/credit/http';
 import { siteUrl } from '@/lib/url';
+import { logActivity } from '@/lib/activity/log';
 
 export const runtime = 'nodejs';
 // Same ceiling as /api/listing/resolve: the quick view budgets its own lookups.
@@ -49,6 +50,7 @@ export async function POST(request: Request) {
       const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
       return json(request, { error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
     }
+    logActivity(access.user.id, 'extension_check', { source: 'extension' });
     return json(request, outcome.body);
   } catch (err) {
     console.error('[ext] check failed:', err);

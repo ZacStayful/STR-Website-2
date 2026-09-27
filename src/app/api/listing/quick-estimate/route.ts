@@ -10,6 +10,7 @@ import { estimateAction } from '@/lib/credit/estimate';
 import { getUnitCostTable } from '@/lib/credit/unit-costs';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { insufficientCreditResponse } from '@/lib/credit/http';
+import { logActivity } from '@/lib/activity/log';
 
 // The quick view budgets its own lookups (see QUICK_BUDGET_MS); this is a backstop.
 export const maxDuration = 60;
@@ -68,6 +69,7 @@ export async function POST(request: Request) {
         { mode: 'quick', userId: member.id },
       ),
     );
+    logActivity(member.id, 'quick_estimate');
     return Response.json({ quick });
   } finally {
     await action.finish().catch(() => {});

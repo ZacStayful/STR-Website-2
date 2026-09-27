@@ -20,6 +20,8 @@ import { BRAND } from '@/lib/brand'
 import { recordSubscriptionEvent, type SubscriptionEventInput } from '@/lib/billing/subscription-events'
 import { CANCEL_REASONS, type BillingState, type CancelReason } from './plan-view'
 import type Stripe from 'stripe'
+import { logActivity } from '@/lib/activity/log'
+import { planActivityKind } from '@/lib/activity/kinds'
 
 const REASON_SLUGS: Set<string> = new Set(CANCEL_REASONS.map((r) => r.slug))
 
@@ -150,6 +152,8 @@ async function logSubscriptionEvent(
   sub: Stripe.Subscription | null,
   input: Omit<SubscriptionEventInput, 'userId' | 'source'> & { source?: SubscriptionEventInput['source'] },
 ): Promise<void> {
+  const activity = planActivityKind(input.kind, 'self_serve')
+  if (activity) logActivity(ctx.userId, activity, { extras: { plan: (ctx.profile.plan_code as string | null) ?? undefined } })
   await recordSubscriptionEvent(createAdminClient(), {
     source: 'self_serve',
     stripeSubscriptionId: ctx.subscriptionId,

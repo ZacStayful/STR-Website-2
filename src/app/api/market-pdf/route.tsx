@@ -6,6 +6,7 @@ import { getMarketAccess } from "@/lib/market/gate";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
 import { loadExplorerUser } from "@/app/markets/_lib/loadExplorerUser";
 import { AreaReport } from "@/lib/pdf/market/AreaReport";
+import { logActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,7 @@ export async function GET(request: Request) {
 
   const generatedAt = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
   const buffer = await renderToBuffer(<AreaReport card={card} personal={personal} generatedAt={generatedAt} />);
+  if (authUser) logActivity(authUser.id, "pdf_download", { extras: { what: "area" } });
   return new Response(new Uint8Array(buffer), {
     status: 200,
     headers: {

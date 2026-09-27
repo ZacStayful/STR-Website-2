@@ -1,6 +1,7 @@
 import { isPickToken } from '@/lib/listing/picks';
 import { pickByToken, setPicksEnabled } from '@/lib/listing/picks-server';
 import { siteUrl } from '@/lib/url';
+import { logActivity } from '@/lib/activity/log';
 
 export const runtime = 'nodejs';
 
@@ -16,6 +17,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ to
   const pick = await pickByToken(token);
   if (!pick) return new Response('Not found', { status: 404 });
   const ok = await setPicksEnabled(pick.userId, false);
+  if (ok) logActivity(pick.userId, 'email_settings', { source: 'email_link', extras: { key: 'daily_picks', on: false, via: 'one_click' } });
   return new Response(ok ? 'Unsubscribed' : 'Try again later', { status: ok ? 200 : 503, headers: { 'Content-Type': 'text/plain' } });
 }
 

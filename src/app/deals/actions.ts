@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { openDeal, saveOpenedDealToPipeline } from '@/lib/marketplace/open';
 import { dealVisibilityFor } from '@/lib/marketplace/tier';
-import { isDealReaction, type DealReaction } from '@/lib/marketplace/reactions';
+import { cleanPassReasons, isDealReaction, type DealReaction } from '@/lib/marketplace/reactions';
 import { setDealReaction, setPassReasons } from '@/lib/marketplace/reactions-server';
 import { createDealShare } from '@/lib/marketplace/share';
 import { ensureReferralCode } from '@/lib/credit/referral';
@@ -14,6 +14,7 @@ import { payerFor } from '@/lib/team';
 import { isPipelineStatus } from '@/lib/listing/pipeline';
 import { dealReturnPath, myDealsFocusPath, withParam } from '@/lib/listing/return-path';
 import { applyStageAfterOpen } from '@/lib/listing/stage-server';
+import { logActivity } from '@/lib/activity/log';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -54,8 +55,10 @@ export async function openDealAction(formData: FormData): Promise<void> {
     const extra = outcome.code === 'insufficient_credit' ? `&need=${outcome.requiredPence ?? 0}&have=${outcome.availablePence ?? 0}` : '';
     redirect(`/deals/${encodeURIComponent(id)}?msg=${outcome.code}${extra}`);
   }
+  if (!outcome.alreadyOpen) logActivity(user.id, 'deal_open', { dealId: id, dedupeKey: `deal_open:${id}` });
   const stage = formData.get('stage');
   const staged = isPipelineStatus(stage) ? await applyStageAfterOpen({ userId: user.id, adminUser, dealId: id, payerId: payer.payerId, stage }) : true;
+  if (isPipelineStatus(stage) && staged) logActivity(user.id, 'stage_move', { dealId: id, extras: { to: stage, via: 'open' } });
   const back = dealReturnPath(formData.get('back'));
   // The open went through either way; say so when the stage did not.
   if (!staged) redirect(withParam(back ?? `/deals/${encodeURIComponent(id)}`, 'msg', 'stage_failed'));
@@ -101,6 +104,7 @@ export async function setDealReactionAction(dealId: unknown, target: unknown): P
   // An account inside the early-access window cannot react to a deal it cannot see.
   const visibility = await dealVisibilityFor(me.user.id, me.adminUser);
   const outcome = await setDealReaction(me.user.id, dealId, target, visibility);
+  if (outcome.ok) logActivity(me.user.id, outcome.reaction ?? 'reaction_clear', { dealId });
   return outcome.ok ? { ok: true, reaction: outcome.reaction } : { ok: false, error: outcome.code };
 }
 
@@ -109,7 +113,9 @@ export async function savePassReasonsAction(dealId: unknown, reasons: unknown): 
   if (typeof dealId !== 'string' || !UUID.test(dealId) || !Array.isArray(reasons)) return { ok: false };
   const me = await signedIn();
   if (!me) return { ok: false };
-  return { ok: await setPassReasons(me.user.id, dealId, reasons.slice(0, 20)) };
+  const ok = await setPassReasons(me.user.id, dealId, reasons.slice(0, 20));
+  if (ok) logActivity(me.user.id, 'pass_reasons', { dealId, extras: { reasons: cleanPassReasons(reasons.slice(0, 20)) } });
+  return { ok };
 }
 
 export type ShareActionResult = { ok: true; url: string } | { ok: false; error: 'signed_out' | 'missing' | 'failed' };
@@ -126,6 +132,7 @@ export async function shareDealAction(dealId: unknown): Promise<ShareActionResul
   const visibility = await dealVisibilityFor(me.user.id, me.adminUser);
   const share = await createDealShare(me.user.id, dealId, visibility);
   if (!share.ok) return { ok: false, error: share.code };
+  logActivity(me.user.id, 'deal_share', { dealId });
   // The join button reads the sharer's code; make sure they have one. A
   // failure here must never cost them the link: the button falls back to a
   // plain sign-up.

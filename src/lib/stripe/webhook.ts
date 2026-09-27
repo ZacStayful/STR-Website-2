@@ -12,6 +12,7 @@ import type Stripe from 'stripe';
 import { planForPriceId, topupPenceForPriceId, type Env } from './prices.ts';
 import { subscriptionStateFromStripe } from '../subscription.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
+import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
 
 export interface WebhookUser {
   id: string;
@@ -58,7 +59,23 @@ export interface WebhookDeps {
   recordSubscriptionEvent?(input: SubscriptionEventInput): Promise<unknown>;
   paymentFailedEmail(email: string, planName: string | null): Promise<unknown>;
   cardNeedsUpdateEmail(email: string): Promise<unknown>;
+  /**
+   * The activity log (Batch 9, src/lib/activity): only what the member did,
+   * a plan started or changed, a pause or cancellation made in Stripe's
+   * portal, a top-up. Optional, like recordSubscriptionEvent; implementations
+   * must swallow their own errors.
+   */
+  logActivity?(input: WebhookActivity): Promise<unknown>;
   log?: (msg: string) => void;
+}
+
+export interface WebhookActivity {
+  userId: string;
+  kind: ActivityKind;
+  /** The same action from another delivery, or already logged by the app, is ignored. */
+  dedupeKey?: string;
+  source?: 'system';
+  extras?: Record<string, string | number | boolean | null>;
 }
 
 export interface HandleResult {
@@ -158,11 +175,40 @@ function cancellationFromStripe(sub: Stripe.Subscription): { reason: string | nu
  * no-op rather than a crash.
  */
 async function logEvent(deps: WebhookDeps, input: SubscriptionEventInput): Promise<void> {
+  await logPlanActivity(deps, input);
   if (!deps.recordSubscriptionEvent) return;
   try {
     await deps.recordSubscriptionEvent(input);
   } catch (err) {
     (deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`)))(`churn log failed: ${String(err)}`);
+  }
+}
+
+/**
+ * A subscription change the member made, for the activity log. A start is
+ * keyed by subscription, because Stripe reports a new one twice (checkout,
+ * then the subscription itself); a plan set up by hand is not the member's
+ * doing. Never throws.
+ */
+async function logPlanActivity(deps: WebhookDeps, input: SubscriptionEventInput): Promise<void> {
+  const kind = planActivityKind(input.kind, 'stripe');
+  if (!deps.logActivity || !kind || input.source === 'manual') return;
+  const dedupeKey =
+    kind === 'plan_start' && input.stripeSubscriptionId ? `plan_start:${input.stripeSubscriptionId}` : input.stripeEventId ? `sub:${input.stripeEventId}:${input.kind}` : undefined;
+  try {
+    await deps.logActivity({ userId: input.userId, kind, dedupeKey, extras: input.planCode ? { plan: input.planCode } : undefined });
+  } catch {
+    // The activity log never fails a delivery.
+  }
+}
+
+/** A top-up, for the activity log: the same key as the app's own, so it is only ever counted once. Never throws. */
+async function logTopupActivity(deps: WebhookDeps, userId: string, paymentIntentId: string, amountPence: number, auto: boolean): Promise<void> {
+  if (!deps.logActivity) return;
+  try {
+    await deps.logActivity({ userId, kind: auto ? 'auto_topup' : 'topup', dedupeKey: `topup:pi:${paymentIntentId}`, source: auto ? 'system' : undefined, extras: { amount_pence: amountPence } });
+  } catch {
+    // The activity log never fails a delivery.
   }
 }
 
@@ -230,6 +276,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         const amount = Number(pi?.metadata?.amount_pence ?? session.amount_total ?? 0) || Number(session.amount_total ?? 0);
         if (pi?.metadata?.kind === 'topup' || session.metadata?.kind === 'topup') {
           if (amount > 0) await deps.grantTopup(user.id, amount, `pi:${piId}`, user.email ?? email);
+          if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
         }
       }
       return { handled: true };
@@ -245,6 +292,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       if (pm) await deps.savePaymentMethod(user.id, id(pi.customer), pm);
       const amount = Number(pi.metadata.amount_pence ?? pi.amount_received ?? pi.amount) || pi.amount_received || pi.amount;
       const granted = await deps.grantTopup(user.id, amount, `pi:${pi.id}`, user.email);
+      await logTopupActivity(deps, user.id, pi.id, amount, pi.metadata?.auto === '1');
       return { handled: true, note: granted ? 'top-up granted' : 'already granted' };
     }
 

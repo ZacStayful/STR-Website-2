@@ -123,3 +123,29 @@ export function isCounted(kind: string): boolean {
 export function kindLabel(kind: string): string {
   return isActivityKind(kind) ? ACTIVITY_KINDS[kind].label : kind.replace(/_/g, ' ');
 }
+
+/**
+ * A subscription change (billing/subscription-events.ts kinds) as an
+ * activity, or null when it is not something the member did: a plan ending
+ * at the end of its term, a failed or recovered payment, or a resume Stripe
+ * reports on its own (that may be the pause simply running out). A resume
+ * the member asked for in the app is theirs.
+ */
+export function planActivityKind(subscriptionEvent: string, source: 'self_serve' | 'stripe'): ActivityKind | null {
+  switch (subscriptionEvent) {
+    case 'started':
+      return 'plan_start';
+    case 'plan_changed':
+      return 'plan_change';
+    case 'paused':
+      return 'plan_pause';
+    case 'cancel_scheduled':
+      return 'plan_cancel';
+    case 'cancel_reverted':
+      return 'plan_cancel_undone';
+    case 'resumed':
+      return source === 'self_serve' ? 'plan_resume' : null;
+    default:
+      return null;
+  }
+}

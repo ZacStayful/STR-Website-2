@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { checkCode, requestCode } from '@/lib/sms/verify-server';
 import { setContactEnabled } from '@/lib/sms/store';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Account → Notifications, texts: send a code, check it, and the member's own
@@ -54,6 +55,7 @@ export async function verifySmsCodeAction(prev: SmsFormState, formData: FormData
   const result = await checkCode(user.id, verificationId, formData.get('code'), consent);
   // Tied to the code it was about, so a newer code does not show an old error.
   if (!result.ok) return { step: 'code', verificationId, error: result.error };
+  logActivity(user.id, 'sms_verified');
   revalidatePath('/account/notifications');
   return { step: 'number', done: true, notice: result.firstNumber ? 'Your number is verified and texts are on.' : 'Your new number is verified.' };
 }
@@ -63,6 +65,7 @@ export async function setSmsEnabledAction(formData: FormData): Promise<void> {
   const user = await signedInUser();
   const on = formData.get('on') === '1';
   const ok = hasServiceRole() ? await setContactEnabled(createAdminClient(), user.id, on) : false;
+  if (ok) logActivity(user.id, 'notification_settings', { extras: { key: 'sms', on } });
   revalidatePath('/account/notifications');
   redirect(`/account/notifications?msg=${ok ? 'saved' : 'error'}`);
 }

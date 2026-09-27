@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
+import { logActivity } from "@/lib/activity/log";
 
 /**
  * Deletes a saved report. Its author may, and so may the account owner it
@@ -22,6 +23,7 @@ export async function deleteReportAction(formData: FormData): Promise<void> {
     const admin = createAdminClient();
     const { data } = await admin.from("saved_searches").delete().eq("id", id).or(`user_id.eq.${user.id},owner_id.eq.${user.id}`).select("id");
     if ((data ?? []).length > 0) {
+      logActivity(user.id, "report_deleted", { extras: { report: id } });
       const { error } = await admin.from("checked_listings").update({ analysed_report_id: null }).eq("analysed_report_id", id);
       if (error) console.error("[reports] unlink failed:", error.message);
     }

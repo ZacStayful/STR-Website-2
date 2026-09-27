@@ -4,9 +4,11 @@ import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { parseMarketGoals } from '@/lib/market/goals';
+import { cleanReasons } from '@/lib/listing/picks';
 import { checkListingForMember } from '@/lib/listing/server';
 import { pickForMember, recordReaction, markPickSaved } from '@/lib/listing/picks-server';
 import { myDealsFocusPath } from '@/lib/listing/return-path';
+import { logActivity } from '@/lib/activity/log';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -44,6 +46,7 @@ export async function savePickAction(formData: FormData): Promise<void> {
   const checkedId = outcome.body.checkedListingId;
   if (!checkedId) redirect('/picks?msg=failed');
   await markPickSaved(id, user.id, checkedId);
+  logActivity(user.id, 'pick_saved', { dealId: pick.dealId, extras: { item: `l-${checkedId}` } });
   // The deal's place on My deals (the Explorer's listings pane still takes old links).
   redirect(myDealsFocusPath(`l-${checkedId}`));
 }
@@ -54,6 +57,7 @@ export async function reactToPickAction(formData: FormData): Promise<void> {
   const { user } = await member();
   const reaction = formData.get('reaction') === 'yes' ? 'yes' : 'no';
   await recordReaction({ id, userId: user.id }, { reaction, source: 'form', reasons: formData.getAll('reasons').map(String), comment: formData.get('comment') });
+  logActivity(user.id, 'pick_feedback', { extras: { answer: reaction, reasons: reaction === 'no' ? cleanReasons(formData.getAll('reasons')) : undefined } });
   const tab = String(formData.get('tab') ?? '');
   redirect(tab ? `/picks?tab=${encodeURIComponent(tab)}` : '/picks');
 }

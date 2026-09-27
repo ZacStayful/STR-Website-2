@@ -6,6 +6,7 @@ import { funnelByToken } from "@/lib/funnels";
 import { leadByReportToken } from "@/lib/leads/report";
 import { touchLeadByReportToken } from "@/lib/leads/activity";
 import type { PdfBrand } from "@/lib/pdf/theme";
+import { logActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,8 @@ interface Caller {
    *  lead's report (`?r=`) the prospect it was prepared for — the same cover
    *  /r/<token>/pdf prints. A plain funnel download (`?f=`) stays anonymous. */
   email?: string;
+  /** The signed-in member, when it is one (not a funnel prospect or a lead's report). */
+  userId?: string;
 }
 
 async function authorised(request: Request): Promise<Caller> {
@@ -39,7 +42,7 @@ async function authorised(request: Request): Promise<Caller> {
   try {
     const supabase = await createSupabaseServerClient();
     const { data } = await supabase.auth.getUser();
-    return { ok: Boolean(data.user), email: data.user?.email ?? undefined };
+    return { ok: Boolean(data.user), email: data.user?.email ?? undefined, userId: data.user?.id };
   } catch {
     return { ok: false };
   }
@@ -111,6 +114,7 @@ export async function POST(request: Request) {
   // Downloading a lead's report is using it (retention.ts).
   const report = new URL(request.url).searchParams.get("r");
   if (report) await touchLeadByReportToken(report);
+  if (caller.userId) logActivity(caller.userId, "pdf_download", { extras: { what: "report" } });
 
   return new Response(new Uint8Array(buffer), {
     status: 200,

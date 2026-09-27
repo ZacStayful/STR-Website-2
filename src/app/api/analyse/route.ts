@@ -2,6 +2,7 @@ import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { payerFor } from '@/lib/team';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { recordActivity } from '@/lib/activity/log';
 import { isAdminEmail } from '@/lib/admin';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { insufficientCreditResponse } from '@/lib/credit/http';
@@ -241,6 +242,8 @@ export async function POST(request: Request) {
             data: result,
             credit: { actionId: prepared.ctx.actionId, basePence: spend.basePence, chargedPence: spend.chargedPence },
           });
+          // Batch 9: the report run, once the member has it (never before, never twice).
+          if (userId) await recordActivity(userId, 'report_run', { listingUrl: input.sourceListing?.url ?? null, dedupeKey: `report:${prepared.ctx.actionId}`, extras: { tier: prepared.reportKind === 'report_enhanced' ? 'enhanced' : 'standard', from: input.fromDeal ? 'deal' : input.sourceListing || input.checkedListingId ? 'listing' : 'address' } });
 
           // Generate the PDF report and upload it to the user's enquiry row
           // (Monday "Reports" file column), matched by email. Awaited before

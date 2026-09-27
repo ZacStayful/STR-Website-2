@@ -7,6 +7,8 @@ import 'server-only';
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import type { StepKind } from './types';
+import { logActivity } from '../activity/log';
+import { dealIdOfItemKey } from '../activity/event';
 
 export const EVENTS_TABLE = 'pipeline_step_events';
 
@@ -18,6 +20,7 @@ export function isStepAction(v: unknown): v is StepAction {
 }
 
 export async function recordStepEvent(e: { userId: string; itemKey: string; stage: string; kind: StepKind; action: StepAction; itemId?: string | null }): Promise<void> {
+  logActivity(e.userId, e.action === 'advance' ? 'stage_move' : 'next_step', { dealId: dealIdOfItemKey(e.itemKey), extras: e.action === 'advance' ? { from: e.stage, to: e.itemId ?? undefined, via: 'next_step', item: e.itemKey.startsWith('l-') ? e.itemKey : undefined } : { action: e.action, stage: e.stage, step: e.itemId ?? undefined, item: e.itemKey.startsWith('l-') ? e.itemKey : undefined } });
   if (!hasServiceRole()) return;
   try {
     const { error } = await createAdminClient()

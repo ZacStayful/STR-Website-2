@@ -9,6 +9,7 @@ import { grantTopup } from '@/lib/stripe/grants';
 import { createCheckoutSession, returnUrl } from '@/lib/stripe/checkout';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { cardNeedsUpdateEmail } from '@/lib/email/billing';
+import { logActivity } from '@/lib/activity/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
         if (pi.status === 'succeeded') {
           // The webhook will also arrive; grantTopup is idempotent on pi id.
           await grantTopup(member.id, amount, `pi:${pi.id}`, { email: member.email });
+          logActivity(member.id, 'topup', { dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
           const bal = await getBalance(member.id);
           return Response.json({ ok: true, balancePence: bal.totalPence, via: 'saved_card' });
         }

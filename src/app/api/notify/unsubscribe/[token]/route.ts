@@ -5,6 +5,7 @@ import { notificationType } from '@/lib/notifications/registry';
 import { setNotification } from '@/lib/notifications/server';
 import { escapeHtml as esc } from '@/lib/email/escape';
 import { manageNotificationsUrl } from '@/lib/url';
+import { logActivity } from '@/lib/activity/log';
 
 export const runtime = 'nodejs';
 
@@ -54,6 +55,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const keys = SWITCHES_BEHIND[send.kind];
   const results = await Promise.all(keys.map((k) => setNotification(send.userId, k, false)));
   const ok = results.every(Boolean);
+  if (ok) logActivity(send.userId, 'email_settings', { source: 'email_link', extras: { key: keys.join('+'), on: false, via: oneClick ? 'one_click' : 'page' } });
   if (oneClick) return new Response(ok ? 'Unsubscribed' : 'Try again later', { status: ok ? 200 : 503, headers: { 'Content-Type': 'text/plain' } });
   if (!ok) return page('Something went wrong', '<p>We could not save that just now. Please try again, or use your notifications page.</p>', 503);
   const labels = keys.map((k) => notificationType(k).label);
