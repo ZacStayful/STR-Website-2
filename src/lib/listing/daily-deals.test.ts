@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dailyDealsMode, dailyChargeDay, PayerPurse, dailyDealsLine } from './daily-deals.ts';
+import { dailyDealsMode, dailyChargeDay, PayerPurse, dailyDealsLine, dailyDealsLineFor } from './daily-deals.ts';
 
 test('per pick until the new pricing date, per day from that morning', () => {
   assert.equal(dailyDealsMode({ newPricingFrom: null }, new Date('2026-12-01T07:00:00Z')), 'per_pick');
@@ -46,4 +46,11 @@ test('a pricier stand-in takes the difference, or is not sent', () => {
 
 test('the daily price in words', () => {
   assert.equal(dailyDealsLine(33), 'Daily deals: 33p a day, about £10 a month, charged only on days we send them');
+});
+
+test('the daily price as this member pays it', () => {
+  assert.equal(dailyDealsLineFor({ state: 'ok', facePence: 33, basePence: 33 }, 33), 'Daily deals: 33p a day, about £10 a month, charged only on days we send them');
+  assert.equal(dailyDealsLineFor({ state: 'ok', facePence: 42.9, basePence: 33 }, 33), 'Daily deals: 43p a day (33p on a plan), about £13 a month, charged only on days we send them');
+  assert.equal(dailyDealsLineFor({ state: 'admin', facePence: 0, basePence: 33 }, 33), null);
+  assert.equal(dailyDealsLineFor({ state: 'short', facePence: 33, basePence: 33 }, 33), 'Daily deals: 33p a day, about £10 a month, charged only on days we send them');
 });

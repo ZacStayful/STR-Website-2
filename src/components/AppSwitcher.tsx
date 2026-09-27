@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { CreditBadge } from "@/components/credit/CreditBadge";
+import { UsageChip } from "@/components/credit/UsageChip";
 import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type ActiveNav } from "@/lib/nav";
 
 // Thin strip shown to signed-in members: Today, My deals and Account — the
 // three places the app now lives — plus Leads for anyone whose team owns a
 // funnel (existing funnel customers keep their door), Team for team members
 // (billing is the owner's, and lives under Account for everyone else), the
-// admin dashboard for admins, and the credit badge, which reads the balance
-// from the surrounding CreditProvider (see AppShell).
+// admin dashboard for admins, and the usage chip (Batch 10), which reads the
+// balance from the surrounding CreditProvider (see AppShell).
 //
 // Where each item points is decided in src/lib/nav.ts, one line per item. A
 // page that left the strip (the analyser, the Market Explorer, daily picks)
@@ -58,7 +58,8 @@ export function AppSwitcher({ active, admin, teamMember, leads }: { active: Sect
           Dashboard
         </Link>
       )}
-      <CreditBadge />
+      {/* Batch 12's Profile pill goes here, just before the usage chip. */}
+      <UsageChip />
     </nav>
   );
 }

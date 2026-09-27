@@ -20,6 +20,8 @@ export interface CreditSnapshot {
   autoTopup: { amountPence: number | null; thresholdPence: number };
   topupPresetsPence: number[];
   welcomeWithheldReason: string | null;
+  /** One day of daily deals, base pence (Batch 10's Usage chip). */
+  dailyDealsPence?: number;
   admin?: boolean;
   /**
    * Set for a team member: the balance above is the team's, the owner pays,

@@ -28,6 +28,8 @@ export interface CreditSummary {
   autoTopup: { amountPence: number | null; thresholdPence: number };
   topupPresetsPence: number[];
   welcomeWithheldReason: string | null;
+  /** One day of daily deals in base pence (billing_settings.todays_5_daily_pence), for the Usage chip. */
+  dailyDealsPence: number;
 }
 
 /** Every welcome-kind grant this account has had, in pence. 0 when it cannot be read: the setting then stands. */
@@ -120,5 +122,6 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     autoTopup: { amountPence: profile?.auto_topup_amount_pence ?? null, thresholdPence: profile?.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE },
     topupPresetsPence: settings.topupPresetsPence,
     welcomeWithheldReason: profile?.welcome_withheld_reason ?? null,
+    dailyDealsPence: settings.dealPricing.todays5DailyPence,
   };
 }

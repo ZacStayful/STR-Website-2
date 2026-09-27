@@ -44,7 +44,7 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = [
     key: 'daily_picks',
     column: 'sourcing_alerts',
     label: 'Daily picks',
-    description: 'Today’s 5 each morning: one pick that fits your filter (it uses a little of your credit) and the rest of your Today.',
+    description: 'Today’s 5 each morning: one pick that fits your filter and the rest of your Today. Charged from your credit: the price is below.',
     defaultOn: true,
     optOutStampColumn: 'sourcing_opted_out_at',
   },

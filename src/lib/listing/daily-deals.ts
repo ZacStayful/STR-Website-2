@@ -11,7 +11,7 @@
  * Pure: no server-only, relative `.ts` imports only.
  */
 
-import { dailyDealsMonthly, formatPence, newPricingActive, type DealPricing } from '../credit/deal-pricing.ts';
+import { dailyDealsMonthly, formatPence, newPricingActive, type DealPricing, type PriceLabel } from '../credit/deal-pricing.ts';
 
 export type DailyDealsMode = 'per_pick' | 'per_day';
 
@@ -74,4 +74,16 @@ export class PayerPurse {
 /** One member's day of daily deals, in the words of the Notifications panel and the pricing page. */
 export function dailyDealsLine(dailyPence: number): string {
   return `Daily deals: ${formatPence(dailyPence)} a day, ${dailyDealsMonthly(dailyPence)}, charged only on days we send them`;
+}
+
+/**
+ * The same line for one member, at what THEY pay (their quoter's label for
+ * the daily price): "Daily deals: 43p a day (33p on a plan), about £13 a
+ * month, charged only on days we send them". Null for an admin, who is never
+ * charged.
+ */
+export function dailyDealsLineFor(label: Pick<PriceLabel, 'state' | 'facePence' | 'basePence'>, dailyPence: number): string | null {
+  if (label.state === 'admin') return null;
+  if (label.state !== 'ok' || Math.round(label.facePence) === Math.round(dailyPence)) return dailyDealsLine(dailyPence);
+  return `Daily deals: ${formatPence(label.facePence)} a day (${formatPence(dailyPence)} on a plan), ${dailyDealsMonthly(label.facePence)}, charged only on days we send them`;
 }

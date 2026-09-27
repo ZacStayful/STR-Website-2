@@ -185,8 +185,9 @@ export default async function AccountPage({
             </div>
           </dl>
           <p className="mt-3 text-xs text-[#7a8274]">
-            Every report, quick view and narration is charged to your credit as you go.{' '}
-            <Link href="/account/billing" className="underline">Top up, see your usage history and manage billing</Link>.
+            Quick looks, Full analyses, daily deals and reports are charged to your credit.{' '}
+            <Link href="/account/usage" className="underline">See where it goes</Link>, or{' '}
+            <Link href="/account/billing" className="underline">top up, see every charge and manage billing</Link>.
             Reopening a saved report never costs anything.
           </p>
         </section>

@@ -342,7 +342,7 @@ function Usage({ initial }: { initial: { items: UsageItem[]; nextCursor: string 
     });
 
   return (
-    <section className="mt-8">
+    <section id="usage-history" className="mt-8 scroll-mt-20">
       <h2 className="mb-3 text-lg font-semibold text-foreground">Usage &amp; credit history</h2>
       {items.length === 0 ? (
         <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Nothing yet. Your welcome credit and every report will show here.</div>
