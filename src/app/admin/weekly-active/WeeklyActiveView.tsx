@@ -23,6 +23,7 @@ import {
 import { WeeklyActiveTrend } from "./TrendChart";
 import { BackfillPanel, RetentionCheck } from "./BackfillPanel";
 import { setExclusionAction } from "./actions";
+import { AnalysisTakeUp } from "./AnalysisTakeUp";
 
 const MESSAGES: Record<string, { text: string; ok: boolean }> = {
   excluded: { text: "Switched off: that account is left out of every figure from now on, past weeks included.", ok: true },
@@ -200,15 +201,8 @@ export function WeeklyActiveView({ status, message, report, msg, showAll }: { st
         Before live tracking: visits, actions per visit, visit time and the keep rate were not recorded (shown as —); weekly active is undercounted; reports per active member reads high, because every report was recorded but not every active member. A visit ends after 30 minutes with nothing happening; its time runs from the first page to the last sign of use.
       </p>
 
-      <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Coming with Batch 10</h2>
-      <div className="grid gap-4 sm:grid-cols-3">
-        {["Full analysis take-up", "PMI add-on take-up", "Reminder shown → acted on"].map((title) => (
-          <div key={title} className="rounded-xl border border-dashed border-border p-4">
-            <div className="text-sm font-medium text-foreground">{title}</div>
-            <div className="mt-1 text-xs text-muted-foreground">Not built yet. The events are registered; the figure arrives with Batch 10.</div>
-          </div>
-        ))}
-      </div>
+      <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Full analyses and reminders</h2>
+      <AnalysisTakeUp ready={status === "ok"} excluded={report.excluded.map((x) => x.id)} />
 
       <h2 id="members" className="mt-10 mb-1 text-lg font-semibold text-foreground">
         Members

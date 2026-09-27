@@ -30,6 +30,8 @@ export interface AnalysisPanelProps {
   sampleHref: string;
   /** Where the button sits: a full-width primary action, or an inline one. */
   variant?: "primary" | "inline";
+  /** The reminder the member came from (?from=), recorded when they start the analysis. */
+  from?: "stage" | "kept_step" | null;
 }
 
 const WHAT_YOU_GET = [
@@ -45,7 +47,7 @@ const WHAT_YOU_GET = [
 
 type Phase = { kind: "idle" } | { kind: "starting" } | { kind: "running"; progress: number; message: string } | { kind: "error"; message: string };
 
-export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensDeal, recommendPmi = false, sampleHref, variant = "primary" }: AnalysisPanelProps) {
+export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensDeal, recommendPmi = false, sampleHref, variant = "primary", from = null }: AnalysisPanelProps) {
   const [open, setOpen] = useState(initialOpen);
   const [withPmi, setWithPmi] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -60,7 +62,7 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
       const start = await creditFetch(`/api/deals/${encodeURIComponent(dealId)}/analysis`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ withPmi: withPmi && Boolean(pmi), quotedBasePence: label.state === "admin" ? 0 : label.basePence }),
+        body: JSON.stringify({ withPmi: withPmi && Boolean(pmi), quotedBasePence: label.state === "admin" ? 0 : label.basePence, ...(from ? { from } : {}) }),
       });
       const started = (await start.json().catch(() => ({}))) as { purchaseId?: string; error?: string; code?: string; reportId?: string };
       if (!start.ok || !started.purchaseId) {

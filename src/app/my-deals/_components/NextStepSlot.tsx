@@ -1,7 +1,7 @@
 import type { PipelineStatus } from "@/lib/listing/pipeline";
 import type { DealFacts } from "@/lib/pipeline/facts";
 import { nextStepFor } from "@/lib/pipeline/server";
-import { NextStepCard } from "@/components/pipeline/NextStepCard";
+import { NextStepCard, type NextStepLead } from "@/components/pipeline/NextStepCard";
 
 /**
  * The "next step" for a deal at its stage (Batch 7, src/lib/pipeline): what
@@ -27,7 +27,7 @@ export async function NextStepSlot(props: {
   facts?: DealFacts;
   variant?: "compact" | "full";
   /** Batch 10: a line above the step (at Kept, "Run the full analysis · £X"). Reminder content only. */
-  lead?: { text: string; href: string; note?: string } | null;
+  lead?: NextStepLead | null;
 }) {
   if (!props.opened || !props.mine || !props.facts) return null;
   const itemKey = props.itemKey ?? (props.dealId ? `d-${props.dealId}` : props.checkedListingId ? `l-${props.checkedListingId}` : null);

@@ -2,6 +2,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { useReminderSeen } from "./reminder-seen";
 
 function readDismissed(key: string): boolean {
   try {
@@ -23,13 +24,19 @@ function subscribe(onChange: () => void): () => void {
  * anything. A dismissal holds for that stage only, so the next stage move
  * brings it back; at Offer it recommends PMI's second opinion too (the box
  * on the analysis is still never ticked for the member).
+ *
+ * `dealId` (feed deals only) records the reminder as shown once it is on
+ * screen; its link carries ?from=stage, so starting the analysis from it is
+ * recorded as acted on (src/lib/analysis/take-up.ts).
  */
-export function StageReminder({ itemKey, stage, href, price, recommendPmi = false, metered = false }: { itemKey: string; stage: string; href: string; price: string; recommendPmi?: boolean; metered?: boolean }) {
+export function StageReminder({ itemKey, dealId = null, stage, href, price, recommendPmi = false, metered = false }: { itemKey: string; dealId?: string | null; stage: string; href: string; price: string; recommendPmi?: boolean; metered?: boolean }) {
   const key = `sf:analysis-reminder:${itemKey}:${stage}`;
   // Read from storage on the client; hidden on the server, so a dismissed reminder never flashes.
   const dismissed = useSyncExternalStore(subscribe, () => readDismissed(key), () => true);
   const [hidden, setHidden] = useState(false);
-  if (dismissed || hidden) return null;
+  const shown = !dismissed && !hidden;
+  useReminderSeen(shown && dealId && !metered ? { dealId, where: "stage", stage } : null);
+  if (!shown) return null;
   const dismiss = () => {
     try {
       window.localStorage.setItem(key, "1");

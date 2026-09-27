@@ -64,6 +64,8 @@ import { enhancedEnabled, fetchSecondOpinion, runAnalysis, type PreparedAnalysis
 import { noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
 import { dealAnalysisInput, dealListingPrice } from './deal-input';
 import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, type SharedAnalysis } from './reuse';
+import { logActivity, recordActivity } from '../activity/log';
+import { reminderEvent } from './take-up';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -210,7 +212,11 @@ async function settleIfAbandoned(admin: Admin, row: PurchaseRow, now: Date): Pro
 
 export type StartResult = { ok: true; purchaseId: string; openedNow: boolean } | AnalysisFailure;
 
-export async function startDealAnalysis(input: { supabase: ServerClient; userId: string; adminUser: boolean; dealId: string; withPmi: boolean; quotedBasePence: unknown }): Promise<StartResult> {
+/**
+ * `from`: 'stage' or 'kept_step' when the member came from a reminder's
+ * button (the deal page's ?from=), for the reminder_acted event.
+ */
+export async function startDealAnalysis(input: { supabase: ServerClient; userId: string; adminUser: boolean; dealId: string; withPmi: boolean; quotedBasePence: unknown; from?: unknown }): Promise<StartResult> {
   if (!hasServiceRole()) return fail('failed');
   const admin = createAdminClient();
   const now = new Date();
@@ -315,6 +321,8 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
     openCredit = Number(row?.charged_base_pence ?? outcome.chargedBasePence) || 0;
     openedNow = !outcome.alreadyOpen;
     openActionId = openedNow ? (row?.id ?? null) : null;
+    // The same event (and key) as a Quick look's, so the deal counts as opened once.
+    if (openedNow) logActivity(input.userId, 'deal_open', { dealId: deal.id, dedupeKey: `deal_open:${deal.id}`, extras: { via: 'full_analysis' } });
   }
   const due = analysisQuote({ admin: input.adminUser, pricing, opened: true, openPaidBasePence: openCredit, openPricePence: 0, withPmi }).due;
 
@@ -342,6 +350,8 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
     await failPurchase(admin, { id: purchaseId, reservation_id: reservationId }, 'ready');
     return fail('failed', { openedByPurchase: openedNow });
   }
+  const acted = reminderEvent('acted', { dealId: deal.id, where: input.from, stage: tracking.stage });
+  if (acted) logActivity(input.userId, 'reminder_acted', { dealId: deal.id, dedupeKey: acted.dedupeKey, extras: acted.extras });
   return { ok: true, purchaseId, openedNow };
 }
 
@@ -552,10 +562,18 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
     await release(purchase.reservation_id);
     if (txIds.length > 0) void afterDebit(purchase.user_id).catch(() => {});
 
-    const { error: doneErr } = await admin
-      .from('analysis_purchases')
-      .update({ status: 'complete', report_id: reportId, analysis_id: analysisId, reused, second_opinion: Boolean(result.secondOpinion), transaction_ids: txIds, charged_base_pence: charged, completed_at: new Date().toISOString() })
-      .eq('id', purchase.id);
+    const [{ error: doneErr }] = await Promise.all([
+      admin
+        .from('analysis_purchases')
+        .update({ status: 'complete', report_id: reportId, analysis_id: analysisId, reused, second_opinion: Boolean(result.secondOpinion), transaction_ids: txIds, charged_base_pence: charged, completed_at: new Date().toISOString() })
+        .eq('id', purchase.id),
+      // This runs after the response (the run route's after()), so it is awaited here.
+      recordActivity(purchase.buyer_id, 'full_analysis', {
+        dealId: purchase.deal_id,
+        dedupeKey: `full_analysis:${purchase.id}`,
+        extras: { via: purchase.opened_by_purchase ? 'one_tap' : 'upgrade', reused, pmi_ticked: purchase.with_pmi, pmi: pmiDelivered },
+      }),
+    ]);
     if (doneErr) console.error('[deal-analysis] complete update failed:', doneErr.message);
     return { ok: true, reportId, result, reused, chargedBasePence: charged };
   } catch (err) {

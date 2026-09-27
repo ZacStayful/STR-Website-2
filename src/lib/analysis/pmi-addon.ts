@@ -26,6 +26,7 @@ import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from './input';
 import { enhancedEnabled, fetchSecondOpinion } from './run';
 import { quoteMatches } from './deal-analysis-rules';
+import { logActivity } from '../activity/log';
 import type { SharedAnalysis } from './reuse';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -191,6 +192,8 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
     await release(reservationId);
     if (txId !== null) void afterDebit(payer.payerId).catch(() => {});
     await finish('complete', { second_opinion: true, transaction_ids: txId === null ? [] : [txId], charged_base_pence: txId === null ? 0 : price });
+    // At purchase, PMI is on the full_analysis event instead (one event per confirm).
+    logActivity(input.userId, 'pmi_addon', { dealId: String(report.deal_id), dedupeKey: `pmi_addon:${input.reportId}`, extras: { from: 'report' } });
     return { ok: true, chargedBasePence: txId === null ? 0 : price };
   } catch (err) {
     console.error('[pmi-addon] failed:', err);

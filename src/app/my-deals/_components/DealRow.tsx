@@ -158,7 +158,7 @@ export function DealRow({
       </div>
 
       {/* Batch 10: past Kept without an analysis, an advisory line (never a block). */}
-      {pastKept && canAnalyse && card && view?.fullAnalysis && <StageReminder itemKey={item.key} stage={item.stage} href={`/deals/${card.id}?analysis=1`} price={priceText(view.fullAnalysis)} recommendPmi={item.stage === "offer"} />}
+      {pastKept && canAnalyse && card && view?.fullAnalysis && <StageReminder itemKey={item.key} dealId={card.id} stage={item.stage} href={`/deals/${card.id}?analysis=1&from=stage`} price={priceText(view.fullAnalysis)} recommendPmi={item.stage === "offer"} />}
       {pastKept && !card && !item.reportId && item.canonicalUrl && <StageReminder itemKey={item.key} stage={item.stage} href={`/estimate?listing=${encodeURIComponent(item.canonicalUrl)}&back=${encodeURIComponent(back)}`} price="" recommendPmi={item.stage === "offer"} metered />}
 
       {/* Batch 7: the next step, for the viewer's own opened deals only. */}

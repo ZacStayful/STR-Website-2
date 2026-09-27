@@ -33,6 +33,7 @@ import { readableReportFor } from "@/lib/analysis/deal-analysis";
 import { analysisQuote } from "@/lib/analysis/deal-analysis-rules";
 import { dealAnalysisInput, dealListingPrice } from "@/lib/analysis/deal-input";
 import { enhancedEnabled } from "@/lib/analysis/run";
+import { reminderWhere } from "@/lib/analysis/take-up";
 import { StageSelect } from "@/app/my-deals/_components/StageSelect";
 import { NextStepSlot } from "@/app/my-deals/_components/NextStepSlot";
 import { factsFromCard } from "@/lib/pipeline/slot-facts";
@@ -64,9 +65,9 @@ const MESSAGES: Record<string, { text: string; tone: "ok" | "warn" }> = {
   stage_failed: { text: "Unlocked, but we couldn’t move it to that stage just now. Choose it again below.", tone: "warn" },
 };
 
-export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string; analysis?: string }> }) {
+export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string; analysis?: string; from?: string }> }) {
   const { id } = await params;
-  const { msg, analysis } = await searchParams;
+  const { msg, analysis, from } = await searchParams;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const supabase = await createSupabaseServerClient();
   const {
@@ -228,9 +229,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   )}
                 </div>
                 {/* Batch 10: past Kept without a Full analysis, an advisory line (never a block). */}
-                {stagePastKept && canBuy && !blocked && <StageReminder itemKey={`d-${deal.id}`} stage={tracking.stage} href={`${dealPath}?analysis=1`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
+                {stagePastKept && canBuy && !blocked && <StageReminder itemKey={`d-${deal.id}`} dealId={deal.id} stage={tracking.stage} href={`${dealPath}?analysis=1&from=stage`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
                 {/* Batch 7: the next step, for the member's own opened deal only. At Kept it leads with the Full analysis. */}
-                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1`, note: "The exact figures for this property before you contact the agent." } : null} />
+                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null} />
 
                 {priv ? (
                   <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -257,7 +258,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 )}
                 {canBuy && (
                   <div className="mt-3">
-                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} />
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
                   </div>
                 )}
                 {report && pmiLabel && <p className="mt-2 text-[11px] text-muted-foreground">No second opinion on it yet? Add one from PMI on the report · {priceText(pmiLabel) || "free"}.</p>}

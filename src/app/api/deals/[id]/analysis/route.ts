@@ -9,8 +9,9 @@ import { analysisHttpStatus } from '@/lib/analysis/deal-analysis-rules';
  * checks it can run, charges the Quick look when the deal is not open yet,
  * and holds the rest. The analysis itself runs from ./run.
  *
- * Body: { withPmi: boolean, quotedBasePence: number } — the price the member
- * confirmed. Any other price is refused (409 price_changed, with the new one).
+ * Body: { withPmi: boolean, quotedBasePence: number, from?: 'stage' |
+ * 'kept_step' } — the price the member confirmed (any other price is refused:
+ * 409 price_changed, with the new one), and the reminder they came from.
  */
 // Opening an unopened deal may read the listing page live before charging.
 export const maxDuration = 60;
@@ -23,13 +24,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return Response.json({ error: 'Sign in to run a Full analysis.', code: 'signed_out' }, { status: 401 });
-  let body: { withPmi?: unknown; quotedBasePence?: unknown };
+  let body: { withPmi?: unknown; quotedBasePence?: unknown; from?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return Response.json({ error: 'Invalid request body.', code: 'invalid' }, { status: 400 });
   }
-  const outcome = await startDealAnalysis({ supabase, userId: user.id, adminUser: isAdminEmail(user.email), dealId: id, withPmi: body.withPmi === true, quotedBasePence: body.quotedBasePence });
+  const outcome = await startDealAnalysis({ supabase, userId: user.id, adminUser: isAdminEmail(user.email), dealId: id, withPmi: body.withPmi === true, quotedBasePence: body.quotedBasePence, from: body.from });
   if (outcome.ok) return Response.json({ purchaseId: outcome.purchaseId, openedNow: outcome.openedNow });
   if (outcome.code === 'insufficient_credit' && outcome.requiredPence !== undefined) {
     const res = insufficientCreditResponse({ requiredPence: outcome.requiredPence, availablePence: outcome.availablePence ?? 0 }, 'full_analysis');
