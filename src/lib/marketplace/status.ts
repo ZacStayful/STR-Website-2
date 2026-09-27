@@ -63,6 +63,21 @@ export function hasRecentLiveCheck(lastCheckedLiveAt: string | null, now: Date =
   return t !== null && now.getTime() - t <= RECENT_LIVE_MS;
 }
 
+/**
+ * How long an uncharged `pending` open belongs to the request that made it:
+ * longer than any request can run (the longest route limit is 300 s). Within
+ * it, a second request for the same open (a second tab, a teammate) must not
+ * charge; after it, the row is a crash's leftover and is picked up.
+ */
+export const OPEN_IN_FLIGHT_MS = 5 * 60 * 1000;
+
+/** True while an uncharged pending open is still another request's to finish. */
+export function pendingOpenInFlight(openedAt: string | null, now: Date = new Date()): boolean {
+  const t = ms(openedAt);
+  // An unreadable time is treated as in flight: waiting is safer than charging twice.
+  return t === null || now.getTime() - t < OPEN_IN_FLIGHT_MS;
+}
+
 export function openDecision(input: OpenDecisionInput): OpenDecision {
   const { now } = input;
   if (input.fetch === 'ok_gone') return { kind: 'just_gone', reason: retiredReasonFor(input.status ?? null) ?? 'removed' };
