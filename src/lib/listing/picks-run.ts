@@ -612,14 +612,25 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // A pool deal the member's team has already unlocked is theirs: never their
   // pick, or they would pay for it twice. Unlocks belong to the account that
   // pays (a team member's owner); a row still being opened counts too.
-  {
+  // Read by payer (a handful of rows each) and matched to the pool here, so
+  // the read stays a few requests however large the pool is. The charge
+  // below checks again, so a read cut short costs nothing.
+  if (urlToDealId.size > 0) {
     const unlockedByPayer = new Map<string, Set<string>>();
     const payerIds = [...new Set(members.map((m) => payerIn(payers, m.id).payerId))];
-    for (const someUrls of chunk([...urlToDealId.keys()], URL_CHUNK)) {
-      for (const someIds of chunk(payerIds, ID_CHUNK)) {
-        const { data: opened, error: openedErr } = await admin.from("deal_opens").select("user_id, canonical_url").in("user_id", someIds).in("canonical_url", someUrls);
-        if (openedErr) console.error("[sourcing] unlocked-deal read failed:", openedErr.message);
-        for (const r of (opened ?? []) as { user_id: string; canonical_url: string }[]) unlockedByPayer.set(r.user_id, new Set([...(unlockedByPayer.get(r.user_id) ?? []), r.canonical_url]));
+    const PAGE = 1000;
+    reading: for (const someIds of chunk(payerIds, ID_CHUNK)) {
+      for (let from = 0; ; from += PAGE) {
+        if (elapsed() > QUERY_BUDGET_MS) break reading;
+        const { data: opened, error: openedErr } = await admin.from("deal_opens").select("user_id, canonical_url").in("user_id", someIds).order("id", { ascending: true }).range(from, from + PAGE - 1);
+        if (openedErr) {
+          console.error("[sourcing] unlocked-deal read failed:", openedErr.message);
+          break;
+        }
+        for (const r of (opened ?? []) as { user_id: string; canonical_url: string }[]) {
+          if (urlToDealId.has(r.canonical_url)) unlockedByPayer.set(r.user_id, new Set([...(unlockedByPayer.get(r.user_id) ?? []), r.canonical_url]));
+        }
+        if ((opened?.length ?? 0) < PAGE) break;
       }
     }
     addUnlocked(sentByUser, members.map((m) => m.id), (id) => payerIn(payers, id).payerId, unlockedByPayer);
@@ -1053,10 +1064,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const id = rowId;
     const pickDealId = urlToDealId.get(sending.listing.canonicalUrl) ?? null;
     // Unlocked by the team since the pool was read (a teammate's pick earlier
-    // in this run, or an open on /deals): it is already paid for, so it is
-    // sent but never charged twice.
+    // in this run, or an open on /deals, finished or still going through): it
+    // is paid for by that open, so it is sent but never charged twice.
     if (pickDealId && charge > 0) {
-      const { data: unlocked, error: unlockedErr } = await admin.from("deal_opens").select("id").eq("user_id", payerIn(payers, m.id).payerId).eq("canonical_url", sending.listing.canonicalUrl).eq("status", "open").limit(1);
+      const { data: unlocked, error: unlockedErr } = await admin.from("deal_opens").select("id").eq("user_id", payerIn(payers, m.id).payerId).eq("canonical_url", sending.listing.canonicalUrl).in("status", ["open", "pending"]).limit(1);
       if (unlockedErr) console.error("[sourcing] unlocked check failed:", unlockedErr.message);
       if ((unlocked ?? []).length > 0) {
         charge = 0;
