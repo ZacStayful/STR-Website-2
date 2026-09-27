@@ -28,8 +28,8 @@ injected, rather than inside the route handlers.
 
 ## Deploying
 
-Vercel deploys `main` automatically. Four things are **not** automated, and all
-four have to be done by hand.
+Vercel deploys `main` automatically. Five things are **not** automated, and all
+five have to be done by hand.
 
 ### 1. Run `supabase/schema.sql` after any merge that changes it
 
@@ -132,6 +132,25 @@ The UK price per text in `src/lib/credit/costs.ts` (`twilio:sms`) is an
 estimate: confirm it against the Twilio console and correct it on
 `/admin/billing`. Texts are free to members; the cost is house spend.
 
+### 5. Start activity tracking (Batch 9)
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 9: activity
+   tracking" section adds four tables and five functions, nothing else).
+   Previews use the live database, so the preview needs it too. Until it is
+   run, nothing is recorded (a warning a minute in the logs) and
+   `/admin/weekly-active` says the schema is missing; the site is unaffected.
+2. **On the preview:** `/admin/weekly-active#backfill` → **Dry run** only. The
+   real run is refused until something has been logged in production, so a
+   preview can never fix the history cutoff too early.
+3. **After the release, once a member has done something:** Dry run, then
+   **Copy the history**, then copy it again: the second run must add nothing.
+4. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/activity-retention` (02:35 UTC). It deletes events and
+   visits older than 24 months; `?dry=1` (with the internal secret) counts
+   only, and so does the button on the page.
+5. **Switch off test accounts** in the Members table ("Exclude"). Admins
+   (`ADMIN_EMAILS`) and `@stayful.co.uk` addresses are left out already.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -149,11 +168,13 @@ which are required, and what breaks without them.
 | `src/app/reports` | `/reports/[id]` reopens a saved report (linked from emails and PDFs); `/reports` itself redirects to My deals' Reports tab |
 | `src/app/picks` | Daily picks: every property the sourcing cron has emailed the member, with feedback and save-to-pipeline. `src/app/p/[token]` is where the email buttons land (public, token-keyed) |
 | `src/app/admin/picks` | Daily picks admin: the feedback report, the test-pick and dry-run buttons, and `responses` — every answer a member has given, with the pattern cuts and a CSV export |
+| `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |
 | `src/app/account` | Plan management (pause, cancel, sign out) and `/account/billing`: credit balance, top-ups, usage history |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
 | `src/lib/access.ts` | Billing state of an account: subscriber, paused, lapsed, pay-as-you-go |
 | `src/lib/credit/` | The credit ledger: unit costs, metering, reservations, estimates, plans, perks |
 | `src/lib/sms/` | Text alerts: Twilio sending and webhooks, verification codes, the renderer, the alerts run |
+| `src/lib/activity/` | The activity log: what members do, visits, and the weekly-active figures (below) |
 | `src/lib/stripe/` | Stripe: Checkout, one-click top-ups, portal, grants and the webhook handler (injected deps so it can be tested) |
 | `src/lib/billing/` | Webhook signature verification against every configured secret |
 | `supabase/schema.sql` | The entire schema, run by hand |
@@ -196,7 +217,8 @@ Account → Notifications (a 6-digit code, from the same number as the alerts).
   member first verifies. The content is Batch 6's `deal_alerts`, rendered by
   `render.ts` as one plain GSM-7 text of at most 160 characters. It never
   includes an address, postcode or listing link: bedrooms, type, town, prices
-  and a link to My deals.
+  and a link to My deals (`<site>/m`, which opens My deals marked as reached
+  from a text, so the click is counted).
 - **When:** 08:00–20:00 UK time, for changes recorded in the last 24 hours.
 - **How many:** one a day at most (Batch 6's `notification_sends`, channel
   `sms`), and `billing_settings.sms_monthly_cap` (8) a UK calendar month.
@@ -217,3 +239,42 @@ Account → Notifications (a 6-digit code, from the same number as the alerts).
   where direction = 'outbound' and outcome in ('accepted', 'unknown')
     and created_at >= date_trunc('month', now());
   ```
+
+## Activity tracking
+
+`src/lib/activity`: one log of what members do (`activity_events`), their
+visits (`activity_visits`), and the weekly-active figures on
+`/admin/weekly-active`, with a headline on `/admin`. Every table is service
+role only: members cannot read any row, their own included. Nothing is
+charged.
+
+- **Recording:** `logActivity(userId, kind, opts)` in a page, server action or
+  route handler (the write happens after the response and never blocks or
+  throws); `recordActivity(...)` in code that already runs after the response
+  (webhooks, crons, `after()` callbacks, the auto top-up). The kinds are in
+  `kinds.ts`, each marked as counting towards weekly active or recorded only.
+  A repeat with the same key (`dedupeKey`) is ignored, and so is an identical
+  event within 60 seconds.
+- **Never recorded:** an address, a postcode, a listing link, page content or
+  anything typed. Extras are short tokens, checked in `event.ts`; a listing
+  link given to the helper becomes a deal id and is not stored.
+- **Visits:** `VisitHeartbeat` (in `AppShell`) posts to `/api/presence`: on a
+  page load, once a minute while the tab is shown and in use (not after 5
+  minutes idle), and when Today, a deal page or a saved report is on screen.
+  A visit ends after 30 minutes with nothing happening.
+- **Email and text clicks:** our own links in emails carry `?via=email`; the
+  alert text links to `/m`, which redirects to `/my-deals?via=sms`. The
+  heartbeat records the click and takes the marker off the address.
+- **Weekly active:** a qualifying action in the week, Monday to Sunday UK
+  time. The base is every account from the week it joined, less `ADMIN_EMAILS`,
+  `@stayful.co.uk` and accounts switched off on the page. Billing groups
+  (Paying, Paused, Cancelled, Never paid) are judged at the end of each week,
+  and a team member is in their owner's group. Targets: 40% of all members, 60%
+  of Paying and of Active paying.
+- **History:** the backfill copies older tables (deal opens, Keep and Pass,
+  reports, shares, top-ups, pick-email answers, next steps, plan changes) up
+  to the first event logged live in production. Weeks before that undercount
+  and are labelled.
+- **Retention:** 24 months (`activity-retention`, nightly).
+- **Batch 10's kinds** are registered already: `full_analysis`, `pmi_addon`,
+  `reminder_shown` (recorded only) and `reminder_acted`.
