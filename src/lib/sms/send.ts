@@ -17,6 +17,7 @@
 // second attempt after a dropped connection could send the text twice; the
 // caller records such a send as "unknown" and treats it as sent.
 
+import { randomUUID } from 'node:crypto';
 import { meter } from '../credit/meter.ts';
 import { twilioConfig, isSmsDryRun } from './config.ts';
 import { gsmLength, MAX_SMS_LENGTH, OPT_OUT_LINE } from './gsm.ts';
@@ -74,7 +75,7 @@ export async function sendSms(params: {
   }
   const config = twilioConfig();
   if (!config) {
-    console.warn('[sms] not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_MESSAGING_SERVICE_SID) — skipping send');
+    console.warn('[sms] not configured (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_MESSAGING_SERVICE_SID or TWILIO_FROM_NUMBER) — skipping send');
     return { sent: false, reason: 'not_configured' };
   }
 
@@ -113,6 +114,6 @@ export async function sendSms(params: {
       return { sent: false, reason: outcome.optedOut ? 'opted_out' : outcome.invalidNumber ? 'invalid_number' : 'refused', errorCode: outcome.code };
     },
     // Texts are house spend: never charged to a member.
-    { userId: null, admin: false, action: `sms:${purpose}`, actionId: params.messageId ?? `sms-${Date.now()}` },
+    { userId: null, admin: false, action: `sms:${purpose}`, actionId: params.messageId ?? randomUUID() },
   );
 }
