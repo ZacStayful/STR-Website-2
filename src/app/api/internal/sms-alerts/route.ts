@@ -1,6 +1,6 @@
 import { runSmsAlerts } from "@/lib/sms/alerts-run";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { exactLike } from "@/lib/supabase/like";
+import { emailKey } from "@/lib/supabase/email-key";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Text alerts (Batch 8) ─────────────────────────────────────────────
@@ -37,7 +37,7 @@ export async function GET(request: Request) {
     } catch {
       return Response.json({ error: "Storage not configured" }, { status: 503 });
     }
-    const { data } = await admin.from("profiles").select("id").ilike("email", exactLike(only)).limit(1);
+    const { data } = await admin.from("profiles").select("id").eq("email", emailKey(only)).limit(1);
     const id = data?.[0]?.id as string | undefined;
     if (!id) return Response.json({ error: "No member with that email" }, { status: 404 });
     onlyUserIds = [id];
