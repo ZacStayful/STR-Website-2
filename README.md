@@ -202,9 +202,11 @@ estimate: confirm it against the Twilio console and correct it on
    member: the header pill shows their percentage and Today shows the
    reminder card. A team member is never sent to the quiz.
 3. **`/markets?goals=1`** (in emails already sent) now lands on `/profile`.
-4. **Terms:** the profile-completion credit line (legal drafts, section B2)
-   is not yet on `/terms`; add it before the £5 goes live, or set
-   `profile_complete_pence` to 0 on `/admin/billing` until it is.
+4. **Terms:** `/terms` states the profile-completion credit (amount and
+   the "real answers" share read from `billing_settings`, so it always says
+   what the site does; the clause disappears if `profile_complete_pence` is
+   set to 0). Check the wording against the legal drafts, section B2, and
+   replace it there if they differ.
 5. **Check the dry runs:** `/api/internal/daily-digest?dry=1` and
    `/api/internal/sourcing?dry=1` (with the internal secret) still report
    as before; the profile line is inside each email, never an email of its own.
