@@ -16,6 +16,11 @@ const PAGE_DESCRIPTION =
 const PAGE_URL = siteUrl("/income-calculator");
 const LAST_UPDATED = "2026-05-08";
 
+// The plan grid reads its prices and the new pricing date from billing_settings:
+// refreshed every five minutes, so a change on /admin/billing (or the date
+// itself arriving) shows without a redeploy.
+export const revalidate = 300;
+
 export const metadata: Metadata = {
   title: PAGE_TITLE,
   description: PAGE_DESCRIPTION,
