@@ -67,6 +67,31 @@ export function withoutVia(href: string): string | null {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+/**
+ * `url` marked as reached from our email or text (?via=), so the heartbeat
+ * can count the click. Only our own pages are marked: a link anywhere else
+ * (a listing on a portal), a pick answer (/p/…, which is its own record), an
+ * API address (unsubscribe), or a link already marked comes back unchanged.
+ * `site` is the site's base URL. The rest of the link is left exactly as it
+ * was.
+ */
+export function withVia(url: string, via: Via, site: string): string {
+  let target: URL;
+  let origin: string;
+  try {
+    target = new URL(url);
+    origin = new URL(site).origin;
+  } catch {
+    return url;
+  }
+  if (target.origin !== origin || /^\/(p|api)\//.test(target.pathname) || target.searchParams.has('via')) return url;
+  const cut = url.indexOf('#');
+  const head = cut === -1 ? url : url.slice(0, cut);
+  const hash = cut === -1 ? '' : url.slice(cut);
+  const joiner = head.endsWith('?') || head.endsWith('&') ? '' : head.includes('?') ? '&' : '?';
+  return `${head}${joiner}via=${via}${hash}`;
+}
+
 export function isIdle(lastInteraction: number, now: number): boolean {
   return now - lastInteraction >= IDLE_MS;
 }

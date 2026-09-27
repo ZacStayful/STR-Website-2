@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BEAT_MS, IDLE_MS, beatDue, hideWorthSending, isIdle, parsePing, pingBody, viaFrom, viewFor, withoutVia } from './heartbeat.ts';
+import { BEAT_MS, IDLE_MS, beatDue, hideWorthSending, isIdle, parsePing, pingBody, viaFrom, viewFor, withVia, withoutVia } from './heartbeat.ts';
 
 const ID = '9b2f3c1e-0000-4000-8000-00000000abcd';
 
@@ -25,6 +25,23 @@ test('the email or text marker is read and taken off the address', () => {
   assert.equal(withoutVia('https://intelligence.stayful.co.uk/today?via=email'), '/today');
   assert.equal(withoutVia('https://intelligence.stayful.co.uk/today'), null);
   assert.equal(withoutVia('not a url'), null);
+});
+
+test('only our own pages are marked, and nothing else about the link changes', () => {
+  const site = 'https://intelligence.stayful.co.uk';
+  assert.equal(withVia(`${site}/today`, 'email', site), `${site}/today?via=email`);
+  assert.equal(withVia(`${site}/my-deals?focus=d-1`, 'email', `${site}/`), `${site}/my-deals?focus=d-1&via=email`);
+  assert.equal(withVia(`${site}/deals?kind=sale&beds=4%2B#top`, 'email', site), `${site}/deals?kind=sale&beds=4%2B&via=email#top`);
+  assert.equal(withVia(`${site}/estimate?listing=https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F1`, 'email', site), `${site}/estimate?listing=https%3A%2F%2Fwww.rightmove.co.uk%2Fproperties%2F1&via=email`);
+  // Not ours, a pick answer, an unsubscribe, already marked, or not a link.
+  assert.equal(withVia('https://www.rightmove.co.uk/properties/1', 'email', site), 'https://www.rightmove.co.uk/properties/1');
+  assert.equal(withVia(`${site}/p/tok?a=yes`, 'email', site), `${site}/p/tok?a=yes`);
+  assert.equal(withVia(`${site}/api/notify/unsubscribe/tok`, 'email', site), `${site}/api/notify/unsubscribe/tok`);
+  assert.equal(withVia(`${site}/today?via=sms`, 'email', site), `${site}/today?via=sms`);
+  assert.equal(withVia('not a link', 'email', site), 'not a link');
+  assert.equal(withVia(`${site}/today`, 'email', 'nonsense'), `${site}/today`);
+  // What the heartbeat reads back.
+  assert.equal(viaFrom(new URL(withVia(`${site}/today`, 'email', site)).search), 'email');
 });
 
 test('beats only while the tab is shown and in use, once a minute', () => {

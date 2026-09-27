@@ -9,6 +9,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { escapeHtml as esc } from '../email/escape.ts';
+import { withVia } from '../activity/heartbeat.ts';
 import type { Block, Item, Link, Message, Section, Tone } from './message.ts';
 
 export interface RenderedEmail {
@@ -115,7 +116,22 @@ export function renderSections(sections: readonly Section[]): { text: string; ht
 
 // ── The email ──
 
-export function renderEmail(m: Message): RenderedEmail {
+/**
+ * Every link to one of our own pages carries ?via=email, so a click from the
+ * email is counted (src/lib/activity). The site is the one the "Manage
+ * notifications" link points at; listing links, pick answers and
+ * unsubscribes are left as they are (withVia).
+ */
+function markLinks(m: Message): Message {
+  const mark = (url: string) => withVia(url, 'email', m.manageUrl);
+  const link = (l: Link): Link => ({ ...l, url: mark(l.url) });
+  const block = (b: Block): Block =>
+    b.type === 'buttons' ? { ...b, links: b.links.map(link) } : b.type === 'items' ? { ...b, items: b.items.map((i) => (i.link ? { ...i, link: link(i.link) } : i)) } : b;
+  return { ...m, manageUrl: mark(m.manageUrl), sections: m.sections.map((s) => ({ ...s, blocks: s.blocks.map(block) })) };
+}
+
+export function renderEmail(message: Message): RenderedEmail {
+  const m = markLinks(message);
   const footerText = [
     m.reason,
     ...(m.unsubscribe ? [`${m.unsubscribe.label}: ${m.unsubscribe.url}`] : []),

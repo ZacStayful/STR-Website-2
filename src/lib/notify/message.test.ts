@@ -156,7 +156,10 @@ test('every rendered email carries Manage notifications, and one-click unsubscri
   })!;
   const e = renderEmail(built.message);
   assert.ok(e.text.includes(`${SITE}/account/notifications`));
-  assert.ok(e.html.includes(`href="${SITE}/account/notifications"`));
+  assert.ok(e.html.includes(`href="${SITE}/account/notifications?via=email"`));
+  // Our own pages say they were reached from the email; unsubscribing does not.
+  assert.ok(e.html.includes(`href="${SITE}/today?via=email"`));
+  assert.ok(e.html.includes(`href="${SITE}/api/notify/unsubscribe/tok?confirm=1"`));
   assert.equal(e.headers['List-Unsubscribe'], `<${SITE}/api/notify/unsubscribe/tok>, <${SITE}/api/notify/unsubscribe/tok?confirm=1>`);
   assert.equal(e.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
   assert.ok(e.text.includes('Open Today'));

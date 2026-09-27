@@ -13,6 +13,8 @@ export default function robots(): MetadataRoute.Robots {
           "/welcome",
           "/today",
           "/my-deals",
+          // The text-message short link only ("/m" alone would also block /markets).
+          "/m$",
           "/estimate",
           "/reports",
           "/deal/",
