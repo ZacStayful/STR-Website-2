@@ -6,6 +6,7 @@ import { getStripe, stripeConfigured } from './client';
 import { grantTopup } from './grants';
 import { cardNeedsUpdateEmail } from '../email/billing';
 import { DEFAULT_TOPUP_THRESHOLD_PENCE } from '../credit/topup-floor';
+import { recordActivity } from '../activity/log';
 
 /**
  * Opt-in auto top-up: when a debit leaves the balance below the member's
@@ -49,6 +50,7 @@ export async function maybeAutoTopup(userId: string): Promise<'charged' | 'skipp
     );
     if (pi.status !== 'succeeded') throw new Error(`payment intent ${pi.status}`);
     await grantTopup(userId, amount, `pi:${pi.id}`, { email: (p.email as string | null) ?? null });
+    await recordActivity(userId, 'auto_topup', { source: 'system', dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
     return 'charged';
   } catch (err) {
     console.warn('[auto-topup] charge failed; switching off:', (err as Error).message);

@@ -8,6 +8,9 @@ import { isAdminEmail } from "@/lib/admin";
 import { spendSummary } from "@/lib/broker/store";
 import { pmiAccount, pmiConfigured } from "@/lib/broker/providers/pmi";
 import { pdAccountCredits, propertyDataConfigured } from "@/lib/broker/providers/propertydata";
+import { loadWeeklyActive } from "@/lib/activity/admin-server";
+import { pct } from "@/lib/activity/metrics";
+import { HEADLINE_GROUPS, shareCell } from "@/lib/activity/view";
 
 export const metadata: Metadata = {
   title: "Admin — Stayful Intelligence",
@@ -90,11 +93,13 @@ export default async function AdminPage() {
   const recent = rows.slice(0, 15);
 
   const market = await getMarketHealth();
-  const [spend, pmi, pd] = await Promise.all([
+  const [spend, pmi, pd, weekly] = await Promise.all([
     spendSummary(7).catch(() => []),
     pmiConfigured() ? pmiAccount().catch(() => null) : Promise.resolve(null),
     propertyDataConfigured() ? pdAccountCredits().catch(() => null) : Promise.resolve(null),
+    loadWeeklyActive({ weeks: 2 }),
   ]);
+  const [lastWeek, thisWeek] = weekly.report.weeks;
   const todayKey = new Date().toISOString().slice(0, 10);
   const spendToday = spend.filter((r) => r.day === todayKey);
   const todayPence = spendToday.reduce((n, r) => n + r.pence, 0);
@@ -123,6 +128,9 @@ export default async function AdminPage() {
           </Link>
           <Link href="/admin/activity" className="text-sm font-medium text-primary hover:underline">
             High intent
+          </Link>
+          <Link href="/admin/weekly-active" className="text-sm font-medium text-primary hover:underline">
+            Weekly active
           </Link>
           <Link href="/admin/next-steps" className="text-sm font-medium text-primary hover:underline">
             Next steps
@@ -153,6 +161,33 @@ export default async function AdminPage() {
           sub={market ? `${market.samples} samples` : "endpoint unavailable"}
         />
       </div>
+
+      <div className="mt-10 mb-3 flex items-baseline justify-between">
+        <h2 className="text-lg font-semibold text-foreground">Weekly active</h2>
+        <Link href="/admin/weekly-active" className="text-sm font-medium text-primary hover:underline">
+          Trend, members and backfill →
+        </Link>
+      </div>
+      {weekly.status !== "ok" ? (
+        <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+          {weekly.status === "schema_missing" ? "Not tracking yet: run the Batch 9 section of supabase/schema.sql." : "Couldn’t load the weekly figures."}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {HEADLINE_GROUPS.map((g) => {
+            const last = lastWeek?.[g.key];
+            const now = thisWeek?.[g.key];
+            return (
+              <Stat
+                key={g.key}
+                label={`${g.title}, last week (target ${g.target}%)`}
+                value={last ? pct(last) : "—"}
+                sub={`${last && last.base > 0 ? `${last.active} of ${last.base}${lastWeek.tracked === "none" ? " (backfilled history)" : ""} · ` : ""}this week so far: ${now ? shareCell(now) : "—"}`}
+              />
+            );
+          })}
+        </div>
+      )}
 
       <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Data spend (last 7 days)</h2>
       <p className="mb-3 text-sm text-muted-foreground">

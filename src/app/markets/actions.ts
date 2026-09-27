@@ -13,6 +13,7 @@ import { isAdminEmail } from '@/lib/admin';
 import { startAction } from '@/lib/credit/action';
 import { runMetered } from '@/lib/credit/context';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
+import { logActivity } from '@/lib/activity/log';
 
 export type GoalsState = { error: string | null; warning: string | null; saved: boolean };
 
@@ -65,6 +66,7 @@ export async function saveMarketGoalsAction(_prev: GoalsState, formData: FormDat
     .eq('id', user.id);
   if (error) return { error: 'Could not save your goals. Please try again.', warning: null, saved: false };
 
+  logActivity(user.id, 'goals_saved');
   revalidatePath('/markets');
   return { error: null, warning, saved: true };
 }
@@ -74,6 +76,7 @@ export async function clearMarketGoalsAction(): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return;
   await supabase.from('profiles').update({ market_goals: null, market_goals_updated_at: new Date().toISOString() }).eq('id', user.id);
+  logActivity(user.id, 'goals_cleared');
   revalidatePath('/markets');
 }
 
@@ -93,10 +96,12 @@ export async function toggleSavedAreaAction(code: string): Promise<{ saved: bool
     .maybeSingle();
   if (existing) {
     await supabase.from('saved_areas').delete().eq('user_id', user.id).eq('postcode_area', area);
+    logActivity(user.id, 'area_removed');
     return { saved: false };
   }
   const { error } = await supabase.from('saved_areas').insert({ user_id: user.id, postcode_area: area });
   if (error) return { error: 'Could not save the area.' };
+  logActivity(user.id, 'area_saved');
   return { saved: true };
 }
 
@@ -155,6 +160,8 @@ export async function managementEnquiryAction(_prev: EnquiryState, formData: For
   ].filter(Boolean).join('\n');
   await mondayQuery(`mutation ($itemId: ID!, $body: String!) { create_update(item_id: $itemId, body: $body) { id } }`, { itemId, body });
 
+  // From My deals it is logged as a next step (src/lib/pipeline/events.ts), not twice.
+  if (!fromMyDeals) logActivity(user.id, 'management_enquiry');
   return { error: null, sent: true };
 }
 
@@ -176,6 +183,7 @@ export async function updateListingStatusAction(id: string, status: string): Pro
   const ctx = await ownListing(id);
   if (!ctx) return { error: 'Please sign in again.' };
   const { error } = await ctx.supabase.from('checked_listings').update({ status, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  if (!error) logActivity(ctx.userId, 'stage_move', { extras: { to: status, via: 'explorer', item: `l-${id}` } });
   return error ? { error: 'Could not update the listing.' } : { ok: true };
 }
 
@@ -184,6 +192,7 @@ export async function updateListingNotesAction(id: string, notes: string): Promi
   if (!ctx) return { error: 'Please sign in again.' };
   const clean = notes.slice(0, 2000);
   const { error } = await ctx.supabase.from('checked_listings').update({ notes: clean, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  if (!error) logActivity(ctx.userId, 'listing_notes', { extras: { item: `l-${id}` } });
   return error ? { error: 'Could not save your notes.' } : { ok: true };
 }
 
@@ -191,6 +200,7 @@ export async function removeCheckedListingAction(id: string): Promise<{ ok: true
   const ctx = await ownListing(id);
   if (!ctx) return { error: 'Please sign in again.' };
   const { error } = await ctx.supabase.from('checked_listings').delete().eq('id', id).eq('user_id', ctx.userId);
+  if (!error) logActivity(ctx.userId, 'listing_removed', { extras: { item: `l-${id}` } });
   return error ? { error: 'Could not remove the listing.' } : { ok: true };
 }
 
@@ -200,6 +210,7 @@ export async function shareListingAction(id: string): Promise<{ token: string } 
   if (!ctx) return { error: 'Please sign in again.' };
   const { data: existing } = await ctx.supabase.from('checked_listings').select('share_token').eq('id', id).eq('user_id', ctx.userId).maybeSingle();
   if (!existing) return { error: 'Listing not found.' };
+  logActivity(ctx.userId, 'listing_share', { extras: { on: true, item: `l-${id}` } });
   if (typeof existing.share_token === 'string' && existing.share_token) return { token: existing.share_token };
   const token = randomBytes(24).toString('base64url');
   const { error } = await ctx.supabase.from('checked_listings').update({ share_token: token, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
@@ -210,5 +221,6 @@ export async function unshareListingAction(id: string): Promise<{ ok: true } | {
   const ctx = await ownListing(id);
   if (!ctx) return { error: 'Please sign in again.' };
   const { error } = await ctx.supabase.from('checked_listings').update({ share_token: null, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', ctx.userId);
+  if (!error) logActivity(ctx.userId, 'listing_share', { extras: { on: false, item: `l-${id}` } });
   return error ? { error: 'Could not revoke the share link.' } : { ok: true };
 }

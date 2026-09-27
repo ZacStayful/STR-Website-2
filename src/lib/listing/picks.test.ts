@@ -191,10 +191,13 @@ test('pickEmail carries every button, the unsubscribe headers and the first-ever
   assert.match(m.subject, /^Today's pick to buy: 2-bed in Nottingham · 13\.3% yield$/);
   assert.equal(links.notifications, 'https://intelligence.stayful.co.uk/account/notifications');
   assert.equal(links.today, 'https://intelligence.stayful.co.uk/today');
-  for (const href of [links.yes, links.no, links.save, links.report, links.filter, links.listing, links.unsubscribe, links.notifications, links.today]) {
-    assert.ok(m.html.includes(`href="${href}"`), `html has ${href}`);
+  // Our own pages carry the email marker (src/lib/activity); the answers, the listing and unsubscribe do not.
+  const marked = (href: string) => `${href}${href.includes('?') ? '&' : '?'}via=email`;
+  for (const href of [...[links.save, links.report, links.filter, links.notifications, links.today].map(marked), links.yes, links.no, links.listing, links.unsubscribe]) {
+    assert.ok(m.html.includes(`href="${href.replace(/&/g, '&amp;')}"`), `html has ${href}`);
     assert.ok(m.text.includes(href), `text has ${href}`);
   }
+  for (const href of [links.yes, links.no, links.listing, links.unsubscribe]) assert.ok(!m.text.includes(marked(href)), `${href} is not marked`);
   assert.match(m.text, /one property a day/);
   assert.match(m.text, /10p of your credit/);
   assert.match(m.html, /house pick/);

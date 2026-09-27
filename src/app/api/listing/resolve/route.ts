@@ -5,6 +5,7 @@ import { parseMarketGoals } from '@/lib/market/goals';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { insufficientCreditResponse } from '@/lib/credit/http';
+import { logActivity } from '@/lib/activity/log';
 
 // Worst case is a slow portal fetch (12 s) + reverse geocode (6 s) + the
 // quick view's own budget (~26 s across its serial steps); everything inside
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
       const status = outcome.code === 'unsupported_url' ? 400 : outcome.code === 'cap' ? 429 : 200;
       return Response.json({ error: outcome.message, code: outcome.code, detected: outcome.detected }, { status });
     }
+    logActivity(access.user.id, 'listing_check');
     return Response.json(outcome.body);
   } catch (err) {
     console.error('[listing] resolve failed:', err);

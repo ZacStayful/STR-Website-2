@@ -19,6 +19,7 @@ import { grant } from '../credit/ledger';
 import { teamOf } from '../team';
 import { parseMarketGoals } from '../market/goals';
 import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibility, rewardLine, rewardRef, STEP_REWARD_PENCE, stepsDone, type Eligibility, type Evidence, type StepKey } from './checklist';
+import { logActivity } from '../activity/log';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -67,6 +68,7 @@ export async function syncChecklist(userId: string, opts: { markSeen?: boolean; 
         .from('checklist_steps')
         .upsert(fresh.map((step) => ({ user_id: userId, step, completed_at: now.toISOString(), skipped_reason: skip })), { onConflict: 'user_id,step', ignoreDuplicates: true });
       if (insErr) console.error('[checklist] step insert failed:', insErr.message);
+      else for (const step of fresh) logActivity(userId, 'checklist_step', { extras: { step }, dedupeKey: `checklist:${step}` });
     }
 
     // ── Pay what is owed ──

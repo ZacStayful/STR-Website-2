@@ -30,13 +30,13 @@ const valid = (body: string) => {
 };
 
 test('the link is My deals on our own site, without the scheme', () => {
-  assert.equal(LINK, 'intelligence.stayful.co.uk/my-deals');
-  assert.equal(myDealsLink('http://localhost:3000/'), 'localhost:3000/my-deals');
+  assert.equal(LINK, 'intelligence.stayful.co.uk/m');
+  assert.equal(myDealsLink('http://localhost:3000/'), 'localhost:3000/m');
 });
 
 test('one price drop: a sentence, the link, the opt-out', () => {
   const r = renderSmsText([change({})], LINK)!;
-  assert.equal(r.body, 'Stayful: price drop on the 2 bed flat you kept in Leeds: now £1,050 pcm (was £1,150).\nintelligence.stayful.co.uk/my-deals\nReply STOP to opt out');
+  assert.equal(r.body, 'Stayful: price drop on the 2 bed flat you kept in Leeds: now £1,050 pcm (was £1,150). Profit now £9.8k/yr.\nintelligence.stayful.co.uk/m\nReply STOP to opt out');
   valid(r.body);
   assert.deepEqual(r.counted.map((c) => c.id), ['a1']);
 });
@@ -74,7 +74,7 @@ test('several changes: the count, the link, a line each, most important first', 
     ],
     LINK,
   )!;
-  assert.equal(r.body, 'Stayful: 2 deal updates\nintelligence.stayful.co.uk/my-deals\nPrice drop: 2 bed flat, Leeds, now £1,050 pcm\nGone: 3 bed, York, under offer\nReply STOP to opt out');
+  assert.equal(r.body, 'Stayful: 2 deal updates\nintelligence.stayful.co.uk/m\nPrice drop: 2 bed flat, Leeds, now £1,050 pcm\nGone: 3 bed house, York, under offer\nReply STOP to opt out');
   valid(r.body);
   assert.deepEqual(r.described.map((c) => c.id), ['p', 'g']);
 });

@@ -3,6 +3,7 @@ import { getBillingSettings } from '@/lib/credit/unit-costs';
 import { loadBillingProfile } from '@/lib/stripe/customer';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { FUNNEL_TOPUP_FLOOR_PENCE, DEFAULT_TOPUP_THRESHOLD_PENCE, hasLiveFunnel } from '@/lib/credit/topup-floor';
+import { logActivity } from '@/lib/activity/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,5 +40,6 @@ export async function POST(request: Request) {
   if (amount !== null && !profile.stripe_default_payment_method_id) return Response.json({ error: 'Save a card first: make one top-up through checkout, then turn auto top-up on.' }, { status: 400 });
   const { error } = await createAdminClient().from('profiles').update({ auto_topup_amount_pence: amount, auto_topup_threshold_pence: Math.round(threshold) }).eq('id', member.id);
   if (error) return Response.json({ error: "Couldn't save that." }, { status: 500 });
+  logActivity(member.id, 'auto_topup_settings', { extras: { on: amount !== null } });
   return Response.json({ ok: true, amountPence: amount, thresholdPence: Math.round(threshold) });
 }

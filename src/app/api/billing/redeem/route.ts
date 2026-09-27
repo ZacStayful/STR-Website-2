@@ -1,5 +1,6 @@
 import { currentMember } from '@/lib/credit/auth';
 import { CodeError, redeemCode, getBalance } from '@/lib/credit/ledger';
+import { logActivity } from '@/lib/activity/log';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,7 @@ export async function POST(request: Request) {
   const code = typeof body.code === 'string' ? body.code.trim().slice(0, 40) : '';
   try {
     const r = await redeemCode(member.id, code);
+    logActivity(member.id, 'credit_code_redeemed');
     const bal = await getBalance(member.id);
     return Response.json({ ok: true, ...r, balancePence: bal.totalPence });
   } catch (err) {

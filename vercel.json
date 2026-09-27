@@ -76,6 +76,10 @@
 		{
 			"path": "/api/internal/marketplace-recheck",
 			"schedule": "30 * * * *"
+		},
+		{
+			"path": "/api/internal/activity-retention",
+			"schedule": "35 2 * * *"
 		}
 	]
 }

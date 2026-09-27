@@ -2708,3 +2708,693 @@ revoke all on public.sms_messages from anon, authenticated;
 -- without a deploy.
 insert into public.billing_settings (key, value) values ('sms_monthly_cap', '8'::jsonb)
 on conflict (key) do nothing;
+
+-- =========================
+-- Batch 9: activity tracking
+-- =========================
+-- One log of what members do in the app, and their visits
+-- (src/lib/activity). Weekly active members is worked out from these on
+-- /admin/weekly-active. src/lib/activity/kinds.ts lists the kinds and which
+-- of them count towards weekly active.
+--
+-- Service role only, like every table since Batch 3: RLS on, no policies,
+-- nothing granted to anon or authenticated. A member cannot read a row, their
+-- own included; every write goes through the functions below.
+--
+-- Nothing here touches profiles and nothing is in ACCESS_COLUMNS, so running
+-- this late breaks no page: until it runs, logging fails quietly with a
+-- warning and the admin page says the schema is missing.
+--
+-- Every function takes ONE jsonb argument, so adding a field never changes
+-- its signature. A changed signature would leave a second overload behind,
+-- and PostgREST refuses to choose between two (PGRST203), which would stop
+-- logging without a word.
+
+-- activity_events: one row per member action.
+--   user_id     who acted. For a team member, the member, never the owner who paid.
+--   occurred_at when they did it (taken when the action happens, not when the row is written)
+--   kind        see src/lib/activity/kinds.ts. Checked in code, not here, so a
+--               later batch can add one without a schema change.
+--   deal_id     marketplace_deals.id. No foreign key: the history outlives the deal.
+--   visit_id    activity_visits.id. No foreign key: retention prunes both by age,
+--               and a key would make every visit delete scan this table.
+--   source      web | email_link | sms_link | system | extension | api
+--               (how the member got there: an in-app action inherits how its
+--               visit started). Checked in code.
+--   extras      a few small facts: stage from/to, report tier, pass reasons.
+--               Never an address, a postcode or a link; the code refuses them.
+--               'env' is set on preview deployments.
+--   profile_id  saved profiles (Batch 13). Unused until then.
+--   dedupe_key  the action's own id where it has one ('report:<actionId>',
+--               'topup:pi:<id>'): a repeat of it is ignored. A plain unique
+--               index, not a partial one: nulls never collide, and ON CONFLICT
+--               cannot use a partial index without repeating its predicate.
+--   backfilled  written by activity_backfill from older tables, not live.
+create table if not exists public.activity_events (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  occurred_at timestamptz not null default now(),
+  kind text not null,
+  deal_id uuid,
+  visit_id uuid,
+  source text not null default 'web',
+  extras jsonb not null default '{}'::jsonb,
+  profile_id uuid,
+  dedupe_key text,
+  backfilled boolean not null default false
+);
+create unique index if not exists activity_events_dedupe_uidx on public.activity_events (user_id, dedupe_key);
+create index if not exists activity_events_key_idx on public.activity_events (dedupe_key) where dedupe_key is not null;
+create index if not exists activity_events_at_idx on public.activity_events (occurred_at);
+create index if not exists activity_events_user_idx on public.activity_events (user_id, occurred_at desc);
+create index if not exists activity_events_kind_idx on public.activity_events (kind, occurred_at);
+create index if not exists activity_events_deal_idx on public.activity_events (deal_id) where deal_id is not null;
+alter table public.activity_events enable row level security;  -- no policies: service role only
+revoke all on public.activity_events from anon, authenticated;
+
+-- activity_visits: one row per visit. A visit starts on the first
+-- members-only page, return to the tab, or in-app action after 30 minutes of
+-- nothing, and ends at its last heartbeat (last_seen_at). The heartbeat is
+-- src/components/activity/VisitHeartbeat.tsx.
+--   page_count    pages loaded or navigated to in the visit
+--   action_count  counted actions logged during it
+--   entry_source  web | email_link | sms_link: how the visit began
+create table if not exists public.activity_visits (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  started_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  page_count integer not null default 0,
+  action_count integer not null default 0,
+  entry_source text not null default 'web'
+);
+create index if not exists activity_visits_user_idx on public.activity_visits (user_id, last_seen_at desc);
+create index if not exists activity_visits_started_idx on public.activity_visits (started_at);
+alter table public.activity_visits enable row level security;  -- no policies: service role only
+revoke all on public.activity_visits from anon, authenticated;
+
+-- activity_meta: a few stored values. 'backfill_cutoff' is fixed by the
+-- first real backfill run: the time of the first event logged live in
+-- production. The backfill only ever copies history from before it, so a
+-- second run, or retention later deleting that first event, can never make it
+-- copy something that was also logged live.
+create table if not exists public.activity_meta (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.activity_meta enable row level security;  -- no policies: service role only
+revoke all on public.activity_meta from anon, authenticated;
+
+-- activity_excluded_accounts: test and team accounts switched out of every
+-- weekly-active figure on /admin/weekly-active. Admin emails (ADMIN_EMAILS)
+-- and @stayful.co.uk addresses are left out in code without a row here.
+create table if not exists public.activity_excluded_accounts (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  reason text,
+  added_by text,
+  added_at timestamptz not null default now()
+);
+alter table public.activity_excluded_accounts enable row level security;  -- no policies: service role only
+revoke all on public.activity_excluded_accounts from anon, authenticated;
+
+-- activity_log(p): records one event. Returns its id, or null when it was a
+-- repeat. The fields of p:
+--   user, kind            required
+--   at                    when it happened (default now)
+--   deal                  marketplace_deals.id
+--   listing_url           a listing's canonical URL, turned into the deal id
+--                         here and never stored
+--   source, extras, profile, dedupe_key
+--   window_seconds        double-submit guard (default 60; 0 turns it off):
+--                         an event the same as the member's latest one (kind,
+--                         deal and extras) within this many seconds is a
+--                         repeat. Only when there is no dedupe_key.
+--   visit                 'extend': attach to the member's open visit, starting
+--                         one when there is none (an in-app action);
+--                         'attach': attach only if one is open; 'none'
+--   counted               adds one to the visit's action_count
+-- A per-member advisory lock makes the checks and the insert one step, so
+-- two racing requests (a double click, two tabs) cannot both get through.
+create or replace function public.activity_log(p jsonb)
+returns bigint
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_kind text := nullif(p->>'kind', '');
+  v_at timestamptz := coalesce(nullif(p->>'at', '')::timestamptz, now());
+  v_deal uuid := nullif(p->>'deal', '')::uuid;
+  v_url text := nullif(p->>'listing_url', '');
+  v_source text := nullif(p->>'source', '');
+  v_extras jsonb := coalesce(p->'extras', '{}'::jsonb);
+  v_key text := nullif(p->>'dedupe_key', '');
+  v_window integer := coalesce(nullif(p->>'window_seconds', '')::integer, 60);
+  v_mode text := coalesce(nullif(p->>'visit', ''), 'attach');
+  v_counted boolean := coalesce(nullif(p->>'counted', '')::boolean, false);
+  v_profile uuid := nullif(p->>'profile', '')::uuid;
+  v_visit uuid;
+  v_visit_source text;
+  v_last record;
+  v_id bigint;
+begin
+  if v_user is null or v_kind is null then
+    return null;
+  end if;
+  if jsonb_typeof(v_extras) is distinct from 'object' then
+    v_extras := '{}'::jsonb;
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('activity:' || v_user::text, 0));
+
+  if v_deal is null and v_url is not null then
+    select d.id into v_deal from public.marketplace_deals d where d.canonical_url = v_url;
+  end if;
+
+  if v_key is null and v_window > 0 then
+    select e.kind, e.deal_id, e.extras, e.occurred_at into v_last
+      from public.activity_events e
+     where e.user_id = v_user and not e.backfilled
+     order by e.occurred_at desc, e.id desc
+     limit 1;
+    if found
+       and v_last.kind = v_kind
+       and v_last.deal_id is not distinct from v_deal
+       and v_last.extras = v_extras
+       and abs(extract(epoch from (v_at - v_last.occurred_at))) < v_window then
+      return null;
+    end if;
+  end if;
+
+  if v_mode in ('attach', 'extend') then
+    select v.id, v.entry_source into v_visit, v_visit_source
+      from public.activity_visits v
+     where v.user_id = v_user
+       and v.last_seen_at >= v_at - interval '30 minutes'
+       and v.started_at <= v_at + interval '1 minute'
+     order by v.last_seen_at desc
+     limit 1;
+    if v_visit is null and v_mode = 'extend' then
+      insert into public.activity_visits (user_id, started_at, last_seen_at, page_count, entry_source)
+      values (v_user, v_at, v_at, 0, coalesce(v_source, 'web'))
+      returning id, entry_source into v_visit, v_visit_source;
+    end if;
+  end if;
+
+  insert into public.activity_events (user_id, occurred_at, kind, deal_id, visit_id, source, extras, profile_id, dedupe_key)
+  values (v_user, v_at, v_kind, v_deal, v_visit, coalesce(v_source, v_visit_source, 'web'), v_extras, v_profile, v_key)
+  on conflict (user_id, dedupe_key) do nothing
+  returning id into v_id;
+
+  if v_id is not null and v_visit is not null and (v_counted or v_mode = 'extend') then
+    update public.activity_visits
+       set action_count = action_count + (case when v_counted then 1 else 0 end),
+           last_seen_at = case when v_mode = 'extend' then greatest(last_seen_at, v_at) else last_seen_at end
+     where id = v_visit;
+  end if;
+  return v_id;
+end;
+$$;
+revoke all on function public.activity_log(jsonb) from public, anon, authenticated;
+grant execute on function public.activity_log(jsonb) to service_role;
+
+-- activity_visit_touch(p): one heartbeat. Returns the visit's id (null for a
+-- closing beat when no visit is open). The fields of p:
+--   user     required
+--   kind     'load' (a page load), 'page' (a navigation), 'beat' (still here,
+--            every minute while the tab is shown and in use), 'resume' (the
+--            tab shown again), 'hide' (the tab hidden or closed)
+--   pages    navigations counted in the browser since the last write
+--   via      'email' | 'sms' when the page was reached from our email or text
+--   at       default now
+-- A visit seen in the last 30 minutes is extended; otherwise a new one
+-- starts, except on 'hide'. A bare beat within 20 seconds of the last write
+-- is dropped (two tabs); a page count or a closing beat never is.
+create or replace function public.activity_visit_touch(p jsonb)
+returns uuid
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_kind text := coalesce(nullif(p->>'kind', ''), 'beat');
+  v_now timestamptz := coalesce(nullif(p->>'at', '')::timestamptz, now());
+  v_pages integer := greatest(coalesce(nullif(p->>'pages', '')::integer, 0), 0)
+                     + case when v_kind in ('load', 'page') then 1 else 0 end;
+  v_source text := case p->>'via' when 'email' then 'email_link' when 'sms' then 'sms_link' else 'web' end;
+  v_id uuid;
+  v_last timestamptz;
+begin
+  if v_user is null then
+    return null;
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('activity:' || v_user::text, 0));
+
+  select v.id, v.last_seen_at into v_id, v_last
+    from public.activity_visits v
+   where v.user_id = v_user and v.last_seen_at >= v_now - interval '30 minutes'
+   order by v.last_seen_at desc
+   limit 1;
+
+  if v_id is not null then
+    if v_kind = 'beat' and v_pages = 0 and v_last >= v_now - interval '20 seconds' then
+      return v_id;
+    end if;
+    update public.activity_visits
+       set last_seen_at = greatest(last_seen_at, v_now),
+           page_count = page_count + v_pages
+     where id = v_id;
+    return v_id;
+  end if;
+
+  if v_kind = 'hide' then
+    return null;
+  end if;
+  insert into public.activity_visits (user_id, started_at, last_seen_at, page_count, entry_source)
+  values (v_user, v_now, v_now, greatest(v_pages, 1), v_source)
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+revoke all on function public.activity_visit_touch(jsonb) from public, anon, authenticated;
+grant execute on function public.activity_visit_touch(jsonb) to service_role;
+
+-- activity_weekly_facts(p): everything /admin/weekly-active needs, in one
+-- jsonb value, so no 1,000-row select limit applies. Weeks are Monday 00:00
+-- to Sunday 23:59, UK time. src/lib/activity/metrics.ts does the sums; this
+-- only groups. The fields of p:
+--   weeks       how many weeks, the current one included (default 12, max 52)
+--   now         default now
+--   qualifying  kinds that count towards weekly active
+--   counted     kinds that count as actions
+create or replace function public.activity_weekly_facts(p jsonb)
+returns jsonb
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  v_now timestamptz := coalesce(nullif(p->>'now', '')::timestamptz, now());
+  v_weeks integer := least(greatest(coalesce(nullif(p->>'weeks', '')::integer, 12), 1), 52);
+  v_qual text[] := array(select jsonb_array_elements_text(coalesce(p->'qualifying', '[]'::jsonb)));
+  v_counted text[] := array(select jsonb_array_elements_text(coalesce(p->'counted', '[]'::jsonb)));
+  v_this date := (date_trunc('week', v_now at time zone 'Europe/London'))::date;
+  v_first date := v_this - (v_weeks - 1) * 7;
+  v_t0 timestamptz := (v_first::timestamp) at time zone 'Europe/London';
+  v_t1 timestamptz := ((v_this + 7)::timestamp) at time zone 'Europe/London';
+begin
+  return jsonb_build_object(
+    'now', v_now,
+    'first_week', v_first,
+    'this_week', v_this,
+    'weeks', v_weeks,
+    -- Live tracking began with the first event logged in production (a
+    -- preview on the live database stamps extras.env), as for the backfill
+    -- cutoff; visits count from then too, so a preview's visits never make
+    -- the weeks before the release look tracked.
+    'tracking_since', (select min(e.occurred_at) from public.activity_events e where not e.backfilled and not (e.extras ? 'env')),
+    'visits_since', greatest(
+      (select min(v.started_at) from public.activity_visits v),
+      (select min(e.occurred_at) from public.activity_events e where not e.backfilled and not (e.extras ? 'env'))
+    ),
+    'members', (
+      select coalesce(jsonb_agg(jsonb_build_object(
+        'id', pr.id,
+        'email', lower(trim(pr.email)),
+        'name', nullif(trim(pr.full_name), ''),
+        'created_at', pr.created_at,
+        'plan', pr.plan,
+        'plan_code', pr.plan_code,
+        'plan_source', pr.plan_source,
+        'status', pr.stripe_subscription_status,
+        'sub_started', pr.subscription_started_at,
+        'sub_ended', pr.subscription_ended_at,
+        'paused_from', pr.subscription_paused_from,
+        'paused_until', pr.subscription_paused_until,
+        'owner', tm.owner_id
+      ) order by pr.created_at), '[]'::jsonb)
+      from public.profiles pr
+      left join public.team_members tm on tm.member_id = pr.id
+    ),
+    'excluded', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'reason', x.reason)), '[]'::jsonb)
+      from public.activity_excluded_accounts x
+    ),
+    -- Real money: card top-ups and paid subscription invoices, less any that
+    -- were refunded or disputed (a matching '<ref>:refunded' adjustment).
+    'payments', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', q.user_id, 'first', q.first_at, 'before', q.last_before, 'list', q.recent)), '[]'::jsonb)
+      from (
+        select g.user_id,
+               min(g.created_at) as first_at,
+               max(g.created_at) filter (where g.created_at < v_t0 - interval '90 days') as last_before,
+               coalesce(jsonb_agg(g.created_at order by g.created_at) filter (where g.created_at >= v_t0 - interval '90 days' and g.created_at < v_t1), '[]'::jsonb) as recent
+        from public.credit_grants g
+        where (g.kind = 'topup' or (g.kind = 'plan' and g.source_ref like 'inv:%'))
+          and not exists (
+            select 1 from public.credit_grants r
+            where r.user_id = g.user_id and r.kind = 'adjustment'
+              and r.source_ref in (g.source_ref || ':refunded', g.source_ref || ':disputed')
+          )
+        group by g.user_id
+      ) q
+    ),
+    'sub_events', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', se.user_id, 'k', se.kind, 'at', se.at) order by se.at), '[]'::jsonb)
+      from public.subscription_events se
+      where se.kind in ('started', 'ended', 'paused', 'resumed')
+    ),
+    'qdays', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', q.user_id, 'd', q.days)), '[]'::jsonb)
+      from (
+        select e.user_id, jsonb_agg(distinct (e.occurred_at at time zone 'Europe/London')::date) as days
+        from public.activity_events e
+        where e.occurred_at >= v_t0 - interval '31 days' and e.occurred_at < v_t1 and e.kind = any(v_qual)
+        group by e.user_id
+      ) q
+    ),
+    'weekly', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', w.user_id, 'w', w.wk, 'c', w.c, 'r', w.r)), '[]'::jsonb)
+      from (
+        select e.user_id,
+               (date_trunc('week', e.occurred_at at time zone 'Europe/London'))::date as wk,
+               count(*) filter (where e.kind = any(v_counted)) as c,
+               count(*) filter (where e.kind = 'report_run') as r
+        from public.activity_events e
+        where e.occurred_at >= v_t0 and e.occurred_at < v_t1
+        group by 1, 2
+      ) w
+    ),
+    'visits', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', v.user_id, 'w', v.wk, 'n', v.n, 'a', v.a, 's', v.secs)), '[]'::jsonb)
+      from (
+        select vi.user_id,
+               (date_trunc('week', vi.started_at at time zone 'Europe/London'))::date as wk,
+               count(*) as n,
+               sum(vi.action_count) as a,
+               jsonb_agg(greatest(round(extract(epoch from (vi.last_seen_at - vi.started_at)))::integer, 0)) as secs
+        from public.activity_visits vi
+        where vi.started_at >= v_t0 and vi.started_at < v_t1
+        group by 1, 2
+      ) v
+    ),
+    -- Opens and whether the same person ran a report on the same deal within
+    -- 14 days. matured: the 14 days are over.
+    'opens', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', o.user_id, 'w', o.wk, 'n', o.n, 'm', o.matured, 'cm', o.conv_matured, 'c', o.conv)), '[]'::jsonb)
+      from (
+        select op.user_id,
+               (date_trunc('week', op.occurred_at at time zone 'Europe/London'))::date as wk,
+               count(*) as n,
+               count(*) filter (where op.occurred_at <= v_now - interval '14 days') as matured,
+               count(*) filter (where op.reported) as conv,
+               count(*) filter (where op.reported and op.occurred_at <= v_now - interval '14 days') as conv_matured
+        from (
+          select e.user_id, e.occurred_at,
+                 exists (
+                   select 1 from public.activity_events r
+                   where r.user_id = e.user_id and r.kind = 'report_run' and r.deal_id = e.deal_id
+                     and r.occurred_at >= e.occurred_at and r.occurred_at < e.occurred_at + interval '14 days'
+                 ) as reported
+          from public.activity_events e
+          where e.kind = 'deal_open' and e.deal_id is not null and e.occurred_at >= v_t0 and e.occurred_at < v_t1
+        ) op
+        group by 1, 2
+      ) o
+    ),
+    -- Keep rate on Today's 5: for each Today list a member actually viewed
+    -- (a today_view event in that Today-day, which turns over at 07:00 UTC),
+    -- the deals it showed (the stored list and the morning pick, at most 5)
+    -- and how many of those they kept during that Today-day.
+    'today', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', t.user_id, 'w', t.wk, 'shown', t.shown, 'kept', t.kept)), '[]'::jsonb)
+      from (
+        select l.user_id,
+               (date_trunc('week', l.first_view at time zone 'Europe/London'))::date as wk,
+               sum(least(cardinality(l.ids), 5)) as shown,
+               sum(least(l.kept, 5)) as kept
+        from (
+          select tv.user_id, tv.first_view, tv.ids,
+                 (select count(distinct k.deal_id) from public.activity_events k
+                   where k.user_id = tv.user_id and k.kind = 'keep' and k.deal_id = any(tv.ids)
+                     and k.occurred_at >= tv.day_start and k.occurred_at < tv.day_start + interval '1 day') as kept
+          from (
+            select vw.user_id, vw.first_view, vw.day_start,
+                   array(select distinct x from unnest(coalesce(ts.deal_ids, '{}'::uuid[]) || coalesce(pk.ids, '{}'::uuid[])) x) as ids
+            from (
+              select e.user_id,
+                     ((e.occurred_at - interval '7 hours') at time zone 'UTC')::date as td,
+                     (((((e.occurred_at - interval '7 hours') at time zone 'UTC')::date)::timestamp + interval '7 hours') at time zone 'UTC') as day_start,
+                     min(e.occurred_at) as first_view
+              from public.activity_events e
+              where e.kind = 'today_view' and e.occurred_at >= v_t0 and e.occurred_at < v_t1
+              group by 1, 2, 3
+            ) vw
+            left join public.today_selections ts on ts.user_id = vw.user_id and ts.day = vw.td
+            left join lateral (
+              select array[s.deal_id] as ids
+              from public.sourcing_sent s
+              where s.user_id = vw.user_id and s.status = 'sent' and s.deal_id is not null
+                and s.sent_at >= vw.day_start and s.sent_at < vw.day_start + interval '1 day'
+              order by s.sent_at desc
+              limit 1
+            ) pk on true
+          ) tv
+        ) l
+        where cardinality(l.ids) > 0
+        group by 1, 2
+      ) t
+    ),
+    'last', (
+      select coalesce(jsonb_agg(jsonb_build_object('u', la.user_id, 'k', la.kind, 'at', la.occurred_at)), '[]'::jsonb)
+      from (
+        select distinct on (e.user_id) e.user_id, e.kind, e.occurred_at
+        from public.activity_events e
+        where e.kind = any(v_counted) or e.kind = any(v_qual)
+        order by e.user_id, e.occurred_at desc
+      ) la
+    )
+  );
+end;
+$$;
+revoke all on function public.activity_weekly_facts(jsonb) from public, anon, authenticated;
+grant execute on function public.activity_weekly_facts(jsonb) to service_role;
+
+-- activity_backfill(p): copies history from the tables that already record
+-- member actions into activity_events, marked backfilled. p.apply = false
+-- (the default) only counts. Safe to run any number of times:
+--   - only rows from before the cutoff (the first event logged live in
+--     production, fixed on the first real run) and inside the 24 months
+--     retention keeps
+--   - every copied row has a key ('bf:<table>:<id>', or the live key where
+--     one exists) and a key that is already there, for anyone, is skipped
+-- Not copied: today_selections (the morning cron makes most of those rows,
+-- so one is no sign the member looked at Today) and checklist_steps (each
+-- step repeats the open, keep, report or share that completed it).
+-- The real run is refused until something has been logged live in
+-- production: run on a preview before merging, it would fix the cutoff too
+-- early and leave a gap between the preview and the release.
+create or replace function public.activity_backfill(p jsonb)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_apply boolean := coalesce(nullif(p->>'apply', '')::boolean, false);
+  v_floor timestamptz := now() - interval '24 months';
+  v_stored timestamptz;
+  v_first_live timestamptz;
+  v_cutoff timestamptz;
+  v_sources jsonb;
+  v_inserted bigint;
+begin
+  select nullif(m.value->>'cutoff', '')::timestamptz into v_stored from public.activity_meta m where m.key = 'backfill_cutoff';
+  select min(e.occurred_at) into v_first_live from public.activity_events e where not e.backfilled and not (e.extras ? 'env');
+  v_cutoff := coalesce(v_stored, v_first_live);
+
+  if v_apply then
+    if v_cutoff is null then
+      return jsonb_build_object('dry', false, 'error', 'not_live');
+    end if;
+    if v_stored is null then
+      insert into public.activity_meta (key, value) values ('backfill_cutoff', jsonb_build_object('cutoff', v_cutoff))
+      on conflict (key) do nothing;
+      select nullif(m.value->>'cutoff', '')::timestamptz into v_cutoff from public.activity_meta m where m.key = 'backfill_cutoff';
+    end if;
+  end if;
+
+  with src (s, user_id, occurred_at, kind, deal_id, source, extras, dedupe_key) as (
+    -- Deals a member chose to open: not the daily pick's automatic open, not
+    -- an admin's free look. A team member's open is stored against the owner
+    -- who paid; the member who pressed the button is on the charge.
+    select 'deal_opens', coalesce(nullif(ct.metadata->>'member_id', '')::uuid, o.user_id), o.opened_at, 'deal_open', o.deal_id, 'web',
+           '{}'::jsonb, 'bf:deal_opens:' || o.id::text
+    from public.deal_opens o
+    left join public.credit_transactions ct on ct.id = o.transaction_id
+    where o.status = 'open' and coalesce(o.verified_via, '') not in ('pick', 'admin')
+    union all
+    -- Keep / Pass: only the current state is kept, so this is the latest one.
+    select 'deal_reactions', r.user_id, r.updated_at, case when r.reaction = 'keep' then 'keep' else 'pass' end, r.deal_id, 'web',
+           case when r.reaction = 'pass' and cardinality(r.reasons) > 0 then jsonb_build_object('reasons', to_jsonb(r.reasons)) else '{}'::jsonb end,
+           'bf:deal_reactions:' || r.user_id::text || ':' || r.deal_id::text
+    from public.deal_reactions r
+    union all
+    -- Reports (tier unknown). A report run on a marketplace deal's own listing
+    -- is tied to the deal.
+    select 'saved_searches', s.user_id, s.created_at, 'report_run', md.id, 'web',
+           jsonb_build_object('from', case when md.id is not null then 'deal' when s.checked_listing_id is not null then 'listing' else 'address' end),
+           'bf:saved_searches:' || s.id::text
+    from public.saved_searches s
+    left join public.checked_listings cl on cl.id = s.checked_listing_id
+    left join public.marketplace_deals md on md.canonical_url = cl.canonical_url
+    union all
+    -- A share: the first time only (sharing again reuses the link).
+    select 'deal_shares', sh.user_id, sh.created_at, 'deal_share', sh.deal_id, 'web',
+           '{}'::jsonb, 'bf:deal_shares:' || sh.user_id::text || ':' || sh.deal_id::text
+    from public.deal_shares sh
+    union all
+    -- Top-ups. Manual and automatic cannot be told apart here, so they are
+    -- kept as their own kind, which does not count towards weekly active.
+    -- Same key as a live top-up.
+    select 'credit_grants', g.user_id, g.created_at, 'topup_unknown', null::uuid, 'system',
+           jsonb_build_object('amount_pence', g.amount_pence), 'topup:' || g.source_ref
+    from public.credit_grants g
+    where g.kind = 'topup' and g.source_ref is not null
+      and not exists (
+        select 1 from public.credit_grants x
+        where x.user_id = g.user_id and x.kind = 'adjustment'
+          and x.source_ref in (g.source_ref || ':refunded', g.source_ref || ':disputed')
+      )
+    union all
+    -- Answers to the daily pick from the email or its page ("Yes, more like
+    -- this" / "Not for me"). The link can be clicked by a mail scanner, so
+    -- these never count towards weekly active.
+    select 'sourcing_sent', ss.user_id, ss.responded_at, 'email_feedback', ss.deal_id, 'email_link',
+           jsonb_strip_nulls(jsonb_build_object(
+             'answer', ss.reaction,
+             'via', ss.reaction_source,
+             'reasons', case when cardinality(ss.reasons) > 0 then to_jsonb(ss.reasons) end
+           )),
+           'bf:sourcing_sent:' || ss.id::text
+    from public.sourcing_sent ss
+    where ss.reaction is not null and ss.responded_at is not null
+    union all
+    -- Batch 7's next-step tools. The one-tap stage button is a stage move.
+    select 'pipeline_step_events', pe.user_id, pe.at,
+           case when pe.action = 'advance' then 'stage_move' else 'next_step' end,
+           case when pe.item_key ~ '^d-[0-9a-fA-F-]{36}$' then substr(pe.item_key, 3)::uuid end,
+           'web',
+           case when pe.action = 'advance'
+                then jsonb_strip_nulls(jsonb_build_object('from', pe.stage, 'to', pe.item_id, 'via', 'next_step',
+                       'item', case when pe.item_key like 'l-%' then pe.item_key end))
+                else jsonb_strip_nulls(jsonb_build_object('action', pe.action, 'stage', pe.stage, 'step', pe.item_id,
+                       'item', case when pe.item_key like 'l-%' then pe.item_key end))
+           end,
+           'bf:pipeline_step_events:' || pe.id::text
+    from public.pipeline_step_events pe
+    union all
+    -- Plan changes the member made. A start is keyed by subscription: the
+    -- Stripe webhook records it twice (checkout, then the subscription).
+    -- Resumes Stripe reports on its own may be the pause simply ending, so
+    -- only the member's own are copied.
+    select 'subscription_events', se.user_id, se.at,
+           case se.kind when 'started' then 'plan_start' when 'plan_changed' then 'plan_change' when 'paused' then 'plan_pause'
+             when 'resumed' then 'plan_resume' when 'cancel_scheduled' then 'plan_cancel' else 'plan_cancel_undone' end,
+           null::uuid,
+           case when se.source = 'self_serve' then 'web' else 'system' end,
+           jsonb_strip_nulls(jsonb_build_object('plan', se.plan_code)),
+           case when se.kind = 'started' and se.stripe_subscription_id is not null
+                then 'plan_start:' || se.stripe_subscription_id
+                else 'bf:subscription_events:' || se.id::text end
+    from public.subscription_events se
+    where se.kind in ('started', 'plan_changed', 'paused', 'cancel_scheduled', 'cancel_reverted')
+       or (se.kind = 'resumed' and se.source = 'self_serve')
+  ), cand as (
+    select distinct on (src.user_id, src.dedupe_key) src.*
+    from src
+    where src.occurred_at is not null
+      and src.occurred_at < coalesce(v_cutoff, now())
+      and src.occurred_at >= v_floor
+      and exists (select 1 from public.profiles pr where pr.id = src.user_id)
+    order by src.user_id, src.dedupe_key, src.occurred_at
+  ), fresh as (
+    select c.* from cand c
+    where not exists (select 1 from public.activity_events e where e.dedupe_key = c.dedupe_key)
+  ), ins as (
+    insert into public.activity_events (user_id, occurred_at, kind, deal_id, source, extras, dedupe_key, backfilled)
+    select f.user_id, f.occurred_at, f.kind, f.deal_id, f.source, f.extras, f.dedupe_key, true
+    from fresh f
+    where v_apply
+    on conflict (user_id, dedupe_key) do nothing
+    returning 1
+  )
+  select
+    (select coalesce(jsonb_object_agg(t.s, jsonb_build_object('found', t.found, 'new', t.fresh)), '{}'::jsonb)
+       from (select c.s, count(*) as found, count(f.dedupe_key) as fresh
+               from cand c left join fresh f on f.user_id = c.user_id and f.dedupe_key = c.dedupe_key
+              group by c.s) t),
+    (select count(*) from ins)
+  into v_sources, v_inserted;
+
+  return jsonb_build_object(
+    'dry', not v_apply,
+    'cutoff', v_cutoff,
+    'cutoff_fixed', v_stored is not null or v_apply,
+    'floor', v_floor,
+    'sources', v_sources,
+    'inserted', v_inserted
+  );
+end;
+$$;
+revoke all on function public.activity_backfill(jsonb) from public, anon, authenticated;
+grant execute on function public.activity_backfill(jsonb) to service_role;
+
+-- activity_retention(p): the daily cron's work. Deletes events and visits
+-- older than p.before, at most p.limit of each per run (default 50,000); with
+-- p.apply = false (the default) it only counts. Refuses a cutoff less than a
+-- year old, so a wrong date can never empty the log.
+create or replace function public.activity_retention(p jsonb)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_before timestamptz := nullif(p->>'before', '')::timestamptz;
+  v_apply boolean := coalesce(nullif(p->>'apply', '')::boolean, false);
+  v_limit integer := least(greatest(coalesce(nullif(p->>'limit', '')::integer, 50000), 1), 500000);
+  v_events bigint;
+  v_visits bigint;
+begin
+  if v_before is null or v_before > now() - interval '12 months' then
+    raise exception 'activity_retention: before must be at least 12 months ago';
+  end if;
+  if not v_apply then
+    select count(*) into v_events from public.activity_events e where e.occurred_at < v_before;
+    select count(*) into v_visits from public.activity_visits v where v.started_at < v_before;
+    return jsonb_build_object('dry', true, 'before', v_before, 'events', v_events, 'visits', v_visits);
+  end if;
+  with gone as (
+    delete from public.activity_events e
+    where e.id in (select x.id from public.activity_events x where x.occurred_at < v_before order by x.occurred_at limit v_limit)
+    returning 1
+  ) select count(*) into v_events from gone;
+  with gone as (
+    delete from public.activity_visits v
+    where v.id in (select x.id from public.activity_visits x where x.started_at < v_before order by x.started_at limit v_limit)
+    returning 1
+  ) select count(*) into v_visits from gone;
+  return jsonb_build_object(
+    'dry', false,
+    'before', v_before,
+    'events', v_events,
+    'visits', v_visits,
+    'more', exists (select 1 from public.activity_events e where e.occurred_at < v_before)
+         or exists (select 1 from public.activity_visits v where v.started_at < v_before)
+  );
+end;
+$$;
+revoke all on function public.activity_retention(jsonb) from public, anon, authenticated;
+grant execute on function public.activity_retention(jsonb) to service_role;
+
+notify pgrst, 'reload schema';

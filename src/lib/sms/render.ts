@@ -6,14 +6,14 @@
  * One change is one sentence:
  *
  *   Stayful: price drop on the 2 bed flat you kept in Leeds: now £1,050 pcm (was £1,150).
- *   intelligence.stayful.co.uk/my-deals
+ *   intelligence.stayful.co.uk/m
  *   Reply STOP to opt out
  *
  * Several are a count, the link to My deals, then a short line each, most
  * important first, and "+N more" for what does not fit:
  *
  *   Stayful: 3 deal updates
- *   intelligence.stayful.co.uk/my-deals
+ *   intelligence.stayful.co.uk/m
  *   Price drop: 2 bed flat, Leeds, now £1,050 pcm
  *   Gone: 3 bed, York, under offer
  *   +1 more
@@ -34,9 +34,13 @@ import type { ChangeInput } from '../notify/message.ts';
 import { formatListingPrice } from '../listing/format.ts';
 import { fitsOneSegment, gsmLength, isGsm, MAX_SMS_LENGTH, OPT_OUT_LINE, toGsm } from './gsm.ts';
 
-/** The link in every alert text: My deals on our own site, without the scheme (phones link it anyway, and it saves 8 characters). */
+/**
+ * The link in every alert text: /m on our own site, which opens My deals
+ * marked as reached from a text (src/app/m/route.ts), without the scheme
+ * (phones link it anyway, and it saves 8 characters).
+ */
 export function myDealsLink(siteUrl: string): string {
-  return `${siteUrl.replace(/\/+$/, '').replace(/^https?:\/\//, '')}/my-deals`;
+  return `${siteUrl.replace(/\/+$/, '').replace(/^https?:\/\//, '')}/m`;
 }
 
 /** Plain GSM-7 text, or null when the value cannot be made plain. */

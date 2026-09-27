@@ -11,6 +11,7 @@ import { syncChecklist } from "@/lib/today/checklist-server";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { CreditBanner } from "@/components/credit/CreditBanner";
+import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 
 /**
  * Server shell for every members-only surface: resolves the member, their
@@ -68,6 +69,7 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
     <CreditProvider initial={credit}>
       <AppSwitcher active={active} admin={admin} teamMember={Boolean(credit?.member)} leads={leads} />
       <CreditBanner />
+      <VisitHeartbeat />
       {children}
     </CreditProvider>
   );

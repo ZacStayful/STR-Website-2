@@ -14,6 +14,7 @@ import { areaCodeFrom } from '@/lib/market/lead-goals';
 import { parseWelcomeAnswers, WELCOME_FIELDS } from '@/lib/onboarding/answers';
 import { skipsFrom } from '@/lib/onboarding/status';
 import { HOME_PATH, welcomeReturnPath } from '@/lib/auth/landing';
+import { logActivity } from '@/lib/activity/log';
 
 export type WelcomeState = { error: string | null };
 
@@ -37,6 +38,7 @@ export async function skipWelcomeAction(formData: FormData): Promise<void> {
     const skips = skipsFrom((data as { onboarding_skips?: unknown } | null)?.onboarding_skips);
     const { error } = await supabase.from('profiles').update({ onboarding_skips: skips + 1 }).eq('id', user.id);
     if (error) console.error('[welcome] skip not recorded (schema behind?):', error.message);
+    logActivity(user.id, 'welcome_skipped');
   }
   redirect(next);
 }
@@ -108,6 +110,7 @@ export async function completeWelcomeAction(_prev: WelcomeState, formData: FormD
 
   revalidatePath('/markets');
   revalidatePath('/picks');
+  logActivity(user.id, 'welcome_completed');
   // Today opens on the count of deals these answers match, then the day's picks.
   redirect(HOME_PATH);
 }

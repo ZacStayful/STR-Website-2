@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type Stripe from 'stripe';
-import { handleStripeEvent, reasonFromStripeFeedback, type WebhookDeps } from './webhook.ts';
+import { handleStripeEvent, reasonFromStripeFeedback, type WebhookActivity, type WebhookDeps } from './webhook.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 
 const env = { STRIPE_PRICE_STARTER: 'price_starter', STRIPE_PRICE_PRO: 'price_pro', STRIPE_PRICE_PRO_ANNUAL: 'price_annual' };
@@ -25,13 +25,16 @@ function fakeDeps() {
     ({ id: 'sub_1', status, cancel_at_period_end: cancel, customer: 'cus_1', items: { data: [{ price: { id: priceId }, current_period_end: 1_800_000_000 }] } }) as unknown as Stripe.Subscription;
   let subscription: Stripe.Subscription | null = sub('price_starter');
   const events: SubscriptionEventInput[] = [];
+  const activity: WebhookActivity[] = [];
   const deps: WebhookDeps & {
     calls: typeof calls;
     setSub: (s: Stripe.Subscription | null) => void;
     events: SubscriptionEventInput[];
+    activity: WebhookActivity[];
     user: typeof user;
   } = {
     events,
+    activity,
     user,
     env,
     calls,
@@ -63,6 +66,9 @@ function fakeDeps() {
     cardNeedsUpdateEmail: async (...a) => rec('cardNeedsUpdateEmail')(...a),
     recordSubscriptionEvent: async (input) => {
       events.push(input);
+    },
+    logActivity: async (input) => {
+      activity.push(input);
     },
     log: () => {},
   };
@@ -422,4 +428,73 @@ test('reasonFromStripeFeedback maps every Stripe value to something we report', 
   assert.equal(reasonFromStripeFeedback('low_quality'), 'other');
   assert.equal(reasonFromStripeFeedback('something_new_stripe_added'), 'other');
   assert.equal(reasonFromStripeFeedback(null), null);
+});
+
+// ── Batch 9: the activity log ──
+
+test('a top-up is logged as the member topping up, keyed like the app logs it', async () => {
+  const deps = fakeDeps();
+  const pi = { id: 'pi_9', customer: 'cus_1', payment_method: 'pm_9', amount: 2500, amount_received: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } };
+  await handleStripeEvent(ev('payment_intent.succeeded', pi), deps);
+  assert.deepEqual(deps.activity, [{ userId: 'u1', kind: 'topup', dedupeKey: 'topup:pi:pi_9', source: undefined, extras: { amount_pence: 2500 } }]);
+});
+
+test('an automatic top-up is logged as automatic, never as the member', async () => {
+  const deps = fakeDeps();
+  const pi = { id: 'pi_a', customer: 'cus_1', payment_method: 'pm_9', amount: 2000, amount_received: 2000, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2000', auto: '1' } };
+  await handleStripeEvent(ev('payment_intent.succeeded', pi), deps);
+  assert.equal(deps.activity.length, 1);
+  assert.equal(deps.activity[0].kind, 'auto_topup');
+  assert.equal(deps.activity[0].source, 'system');
+  assert.equal(deps.activity[0].dedupeKey, 'topup:pi:pi_a');
+});
+
+test('a Checkout top-up is logged once, with the payment as its key', async () => {
+  const deps = fakeDeps();
+  await handleStripeEvent(ev('checkout.session.completed', { id: 'cs_1', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_7', amount_total: 2500, customer_details: { email: 'a@example.com' } }), deps);
+  assert.deepEqual(deps.activity.map((a) => [a.kind, a.dedupeKey]), [['topup', 'topup:pi:pi_7']]);
+});
+
+test('a new subscription reported twice is one plan start', async () => {
+  const deps = fakeDeps();
+  await handleStripeEvent(ev('checkout.session.completed', { id: 'cs_2', mode: 'subscription', client_reference_id: 'u1', customer: 'cus_1', subscription: 'sub_1', customer_details: { email: 'a@example.com' } }), deps);
+  await handleStripeEvent(ev('customer.subscription.created', subObj()), deps);
+  const starts = deps.activity.filter((a) => a.kind === 'plan_start');
+  assert.ok(starts.length >= 1);
+  assert.deepEqual([...new Set(starts.map((a) => a.dedupeKey))], ['plan_start:sub_1']);
+});
+
+test('a cancellation booked in the portal is logged; Stripe ending or resuming by itself is not', async () => {
+  const deps = fakeDeps();
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000 })), deps);
+  assert.deepEqual(deps.activity.map((a) => a.kind), ['plan_cancel']);
+  assert.match(deps.activity[0].dedupeKey ?? '', /^sub:evt_customer\.subscription\.updated:cancel_scheduled$/);
+
+  const resumed = fakeDeps();
+  resumed.user.subscription_paused_until = '2026-01-01T00:00:00.000Z';
+  await handleStripeEvent(ev('customer.subscription.updated', subObj()), resumed);
+  assert.equal(resumed.activity.some((a) => a.kind === 'plan_resume'), false);
+
+  const ended = fakeDeps();
+  await handleStripeEvent(ev('customer.subscription.deleted', subObj({ status: 'canceled' })), ended);
+  assert.equal(ended.activity.length, 0);
+});
+
+test('a subscription on a plan granted by hand is not the member starting a plan', async () => {
+  const deps = fakeDeps();
+  deps.findUserBySubscription = async () => ({ id: 'u1', email: 'a@example.com', plan_code: 'pro', plan_source: 'manual' });
+  await handleStripeEvent(ev('customer.subscription.created', subObj()), deps);
+  assert.equal(deps.events.find((e) => e.kind === 'started')?.source, 'manual');
+  assert.equal(deps.activity.filter((a) => a.kind === 'plan_start').length, 0);
+});
+
+test('an activity log that throws does not fail the delivery', async () => {
+  const deps = fakeDeps();
+  deps.logActivity = async () => {
+    throw new Error('down');
+  };
+  const pi = { id: 'pi_9', customer: 'cus_1', payment_method: 'pm_9', amount: 2500, amount_received: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } };
+  const r = await handleStripeEvent(ev('payment_intent.succeeded', pi), deps);
+  assert.equal(r.handled, true);
+  assert.equal(deps.calls.grantTopup!.length, 1);
 });

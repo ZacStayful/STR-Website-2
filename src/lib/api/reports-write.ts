@@ -5,6 +5,7 @@ import { payerFor } from '../team';
 import { postcodeAreaOf } from '../listing/normalise';
 import type { AnalysisInput } from '../analysis/input';
 import type { AnalysisResult } from '../types';
+import { logActivity } from '../activity/log';
 
 /**
  * Saving an analysis run through the API into the member's own history.
@@ -48,5 +49,6 @@ export async function saveApiReport(
     console.error('[api] report save failed:', error?.message);
     return null;
   }
+  logActivity(userId, 'api_report', { source: 'api', dedupeKey: `api_report:${data.id}` });
   return data.id as string;
 }
