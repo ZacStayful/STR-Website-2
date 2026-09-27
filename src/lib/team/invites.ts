@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createHash, randomBytes } from 'node:crypto';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { exactLike } from '../supabase/like';
 import { ACCESS_COLUMNS, isPaused, isSubscriber } from '../access';
 import { sendEmail } from '../email/send';
 import { inviteEmail, memberJoinedEmail, joinBlockedByCreditEmail } from '../email/team';
@@ -61,7 +62,7 @@ export async function createInvite(ownerId: string, rawEmail: unknown): Promise<
   if ((owner?.email as string | null)?.trim().toLowerCase() === email) return 'That is your own address.';
 
   // Already in this team? Then there is nothing to invite them to.
-  const { data: existing } = await admin.from('profiles').select('id').ilike('email', email.replace(/[%_\\]/g, '\\$&')).limit(1);
+  const { data: existing } = await admin.from('profiles').select('id').ilike('email', exactLike(email)).limit(1);
   const existingId = (existing?.[0] as { id: string } | undefined)?.id;
   if (existingId) {
     const { data: m } = await admin.from('team_members').select('owner_id').eq('member_id', existingId).maybeSingle();

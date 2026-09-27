@@ -1,4 +1,5 @@
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
+import { exactLike } from "@/lib/supabase/like";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 import { ensureWelcomeGrant } from "@/lib/credit/welcome";
 import { parseLeadGoals } from "@/lib/market/lead-goals";
@@ -88,7 +89,7 @@ export async function POST(request: Request) {
   // ── The member: existing by email, else created ──
   let userId: string | null = null;
   let created = false;
-  const { data: existing } = await admin.from("profiles").select("id, market_goals, mobile, lead_source, sourcing_opted_out_at").ilike("email", email).limit(1);
+  const { data: existing } = await admin.from("profiles").select("id, market_goals, mobile, lead_source, sourcing_opted_out_at").ilike("email", exactLike(email)).limit(1);
   const existingRow = (existing ?? [])[0] as { id: string; market_goals: unknown; mobile: string | null; lead_source: unknown; sourcing_opted_out_at: string | null } | undefined;
   if (existingRow) {
     userId = existingRow.id;
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
     const { data, error } = await admin.auth.admin.createUser({ email, email_confirm: true, user_metadata: { full_name: name ?? undefined, mobile: mobile ?? undefined, lead_source: source } });
     if (error || !data.user) {
       // A race, or an auth user without a profile row: look once more before giving up.
-      const { data: again } = await admin.from("profiles").select("id").ilike("email", email).limit(1);
+      const { data: again } = await admin.from("profiles").select("id").ilike("email", exactLike(email)).limit(1);
       const id = (again ?? [])[0]?.id as string | undefined;
       if (!id) return Response.json({ error: `Could not create the member: ${error?.message ?? "unknown"}` }, { status: 500 });
       userId = id;
