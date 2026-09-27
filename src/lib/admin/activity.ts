@@ -24,6 +24,10 @@ export interface MemberActivity {
   picks: number;
   /** Debits in the window, in base pence; a team owner's figure includes their members. */
   creditSpentPence: number;
+  /** Batch 7: deals at the Offer stage right now (the member's own pipeline rows; not windowed). */
+  atOffer: number;
+  /** Batch 7: deals at the Secured stage right now. */
+  atSecured: number;
   /** The latest of last_seen_at and every activity timestamp in the window. */
   lastActiveAt: string | null;
 }
@@ -34,6 +38,8 @@ export interface ActivityInput {
   reports: { user_id: string; created_at: string | null }[];
   picks: { user_id: string; sent_at: string | null }[];
   debits: { user_id: string; amount_pence: number | string | null; at: string | null }[];
+  /** Batch 7: pipeline rows at Offer or Secured (checked_listings.status), current state. */
+  stages?: { user_id: string; status: string | null }[];
 }
 
 function time(iso: string | null | undefined): number | null {
@@ -65,6 +71,12 @@ export function aggregateActivity(input: ActivityInput): MemberActivity[] {
   for (const r of input.opens) bump(opens, r.user_id, r.opened_at);
   for (const r of input.reports) bump(reports, r.user_id, r.created_at);
   for (const r of input.picks) bump(picks, r.user_id, r.sent_at);
+  const atOffer = new Map<string, number>();
+  const atSecured = new Map<string, number>();
+  for (const r of input.stages ?? []) {
+    const map = r.status === 'offer' ? atOffer : r.status === 'secured' ? atSecured : null;
+    if (map) map.set(r.user_id, (map.get(r.user_id) ?? 0) + 1);
+  }
   for (const r of input.debits) {
     const cur = spent.get(r.user_id) ?? { pence: 0, last: null };
     spent.set(r.user_id, { pence: cur.pence + Math.abs(Number(r.amount_pence) || 0), last: latestOf(cur.last, r.at) });
@@ -79,6 +91,8 @@ export function aggregateActivity(input: ActivityInput): MemberActivity[] {
     reports: reports.get(p.id)?.n ?? 0,
     picks: picks.get(p.id)?.n ?? 0,
     creditSpentPence: spent.get(p.id)?.pence ?? 0,
+    atOffer: atOffer.get(p.id) ?? 0,
+    atSecured: atSecured.get(p.id) ?? 0,
     // A pick received is not the member doing something; the rest are.
     lastActiveAt: latestOf(p.last_seen_at, opens.get(p.id)?.last, reports.get(p.id)?.last, spent.get(p.id)?.last),
   }));
@@ -93,7 +107,7 @@ export function activityScore(m: Pick<MemberActivity, 'dealOpens' | 'reports' | 
   return m.dealOpens * 3 + m.reports * 3 + m.picks;
 }
 
-export const SORT_KEYS = ['activity', 'name', 'email', 'mobile', 'plan', 'opens', 'reports', 'picks', 'spent', 'lastActive'] as const;
+export const SORT_KEYS = ['activity', 'name', 'email', 'mobile', 'plan', 'opens', 'reports', 'picks', 'spent', 'offer', 'secured', 'lastActive'] as const;
 export type SortKey = (typeof SORT_KEYS)[number];
 export type SortDir = 'asc' | 'desc';
 
@@ -130,6 +144,10 @@ function compare(a: MemberActivity, b: MemberActivity, key: SortKey): number {
       return a.picks - b.picks;
     case 'spent':
       return a.creditSpentPence - b.creditSpentPence;
+    case 'offer':
+      return a.atOffer - b.atOffer;
+    case 'secured':
+      return a.atSecured - b.atSecured;
     case 'lastActive':
       return (time(a.lastActiveAt) ?? -Infinity) - (time(b.lastActiveAt) ?? -Infinity);
   }

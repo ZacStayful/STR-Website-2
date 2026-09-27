@@ -32,6 +32,9 @@ const COLUMNS: { key: SortKey; label: string; right?: boolean }[] = [
   { key: "reports", label: "Reports", right: true },
   { key: "picks", label: "Picks", right: true },
   { key: "spent", label: "Credit spent", right: true },
+  // Batch 7: deals at these stages right now.
+  { key: "offer", label: "At Offer", right: true },
+  { key: "secured", label: "At Secured", right: true },
   { key: "lastActive", label: "Last active" },
 ];
 
@@ -58,14 +61,16 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
   const now = new Date();
   const since = new Date(now.getTime() - ACTIVITY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const admin = createAdminClient();
-  const [profiles, opens, reports, picks, debits] = await Promise.all([
+  const [profiles, opens, reports, picks, debits, stages] = await Promise.all([
     admin.from("profiles").select("id, email, full_name, mobile, plan_code, last_seen_at").limit(LIMIT),
     admin.from("deal_opens").select("user_id, opened_at").eq("status", "open").or("verified_via.is.null,verified_via.neq.pick").gte("opened_at", since).limit(LIMIT),
     admin.from("saved_searches").select("user_id, created_at").gte("created_at", since).limit(LIMIT),
     admin.from("sourcing_sent").select("user_id, sent_at").eq("status", "sent").gte("sent_at", since).limit(LIMIT),
     admin.from("credit_transactions").select("user_id, amount_pence, at").eq("kind", "debit").gte("at", since).limit(LIMIT),
+    // Batch 7: current stage, not windowed. Offer and Secured always have a pipeline row (Batch 5).
+    admin.from("checked_listings").select("user_id, status").in("status", ["offer", "secured"]).limit(LIMIT),
   ]);
-  const errors = [profiles.error, opens.error, reports.error, picks.error, debits.error].filter((e): e is NonNullable<typeof e> => Boolean(e));
+  const errors = [profiles.error, opens.error, reports.error, picks.error, debits.error, stages.error].filter((e): e is NonNullable<typeof e> => Boolean(e));
   for (const e of errors) console.error("[admin/activity] query failed:", e.message);
 
   const rows: MemberActivity[] = sortMembers(
@@ -75,12 +80,13 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
       reports: (reports.data ?? []) as never,
       picks: (picks.data ?? []) as never,
       debits: (debits.data ?? []) as never,
+      stages: (stages.data ?? []) as never,
     }),
     sort,
     dir,
   );
   const flagged = rows.filter(isHighIntent).length;
-  const truncated = [profiles, opens, reports, picks, debits].some((r) => (r.data?.length ?? 0) >= LIMIT);
+  const truncated = [profiles, opens, reports, picks, debits, stages].some((r) => (r.data?.length ?? 0) >= LIMIT);
 
   const href = (key: SortKey) => {
     const next: SortDir = key === sort ? (dir === "asc" ? "desc" : "asc") : key === "activity" ? "desc" : defaultDir(key);
@@ -94,7 +100,7 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
         <div>
           <h1 className="text-2xl font-semibold text-foreground">High intent</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every member by what they did in the last {ACTIVITY_WINDOW_DAYS} days. {flagged} flagged: {HIGH_INTENT_OPENS}+ deal opens or {HIGH_INTENT_REPORTS}+ reports. Deal opens exclude the automatic open a daily pick makes; credit spent is the paying account&#8217;s, so a team owner&#8217;s figure includes their members.
+            Every member by what they did in the last {ACTIVITY_WINDOW_DAYS} days. {flagged} flagged: {HIGH_INTENT_OPENS}+ deal opens or {HIGH_INTENT_REPORTS}+ reports. Deal opens exclude the automatic open a daily pick makes; credit spent is the paying account&#8217;s, so a team owner&#8217;s figure includes their members. At Offer and At Secured count the member&#8217;s deals at that stage now, not in the window.
           </p>
         </div>
         <Link href="/admin" className="text-sm font-medium text-primary hover:underline">← Dashboard</Link>
@@ -141,6 +147,8 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
                     <td className={`p-3 text-right tabular-nums ${r.reports >= HIGH_INTENT_REPORTS ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{r.reports}</td>
                     <td className="p-3 text-right tabular-nums text-muted-foreground">{r.picks}</td>
                     <td className="p-3 text-right tabular-nums text-muted-foreground">{gbp(r.creditSpentPence)}</td>
+                    <td className={`p-3 text-right tabular-nums ${r.atOffer > 0 ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{r.atOffer}</td>
+                    <td className={`p-3 text-right tabular-nums ${r.atSecured > 0 ? "font-semibold text-foreground" : "text-muted-foreground"}`}>{r.atSecured}</td>
                     <td className="p-3 text-muted-foreground">{fmtDate(r.lastActiveAt)}</td>
                   </tr>
                 );

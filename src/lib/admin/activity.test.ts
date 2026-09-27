@@ -39,7 +39,7 @@ test('latestOf ignores blanks and junk', () => {
   assert.equal(latestOf('2026-01-01T00:00:00Z', null, '2026-03-01T00:00:00Z', 'junk'), '2026-03-01T00:00:00Z');
 });
 
-const row = (id: string, over: Partial<MemberActivity> = {}): MemberActivity => ({ id, name: null, email: `${id}@x.test`, mobile: null, planCode: null, dealOpens: 0, reports: 0, picks: 0, creditSpentPence: 0, lastActiveAt: null, ...over });
+const row = (id: string, over: Partial<MemberActivity> = {}): MemberActivity => ({ id, name: null, email: `${id}@x.test`, mobile: null, planCode: null, dealOpens: 0, reports: 0, picks: 0, creditSpentPence: 0, atOffer: 0, atSecured: 0, lastActiveAt: null, ...over });
 
 test('high intent is 10+ deal opens OR 5+ reports in the window', () => {
   assert.equal(isHighIntent(row('a', { dealOpens: 10 })), true);
@@ -82,4 +82,30 @@ test('sort keys from the URL are validated and start in a sensible direction', (
   assert.equal(defaultDir('name'), 'asc');
   assert.equal(defaultDir('spent'), 'desc');
   assert.equal(defaultDir('lastActive'), 'desc');
+});
+
+test('Batch 7: deals at Offer and at Secured are counted per member, other stages ignored', () => {
+  const rows = aggregateActivity({
+    profiles: [profile('a'), profile('b')],
+    opens: [],
+    reports: [],
+    picks: [],
+    debits: [],
+    stages: [
+      { user_id: 'a', status: 'offer' },
+      { user_id: 'a', status: 'offer' },
+      { user_id: 'a', status: 'secured' },
+      { user_id: 'a', status: 'viewing' },
+      { user_id: 'zzz', status: 'offer' },
+    ],
+  });
+  const a = rows.find((r) => r.id === 'a')!;
+  const b = rows.find((r) => r.id === 'b')!;
+  assert.deepEqual([a.atOffer, a.atSecured, b.atOffer, b.atSecured], [2, 1, 0, 0]);
+  assert.ok(isSortKey('offer') && isSortKey('secured'));
+  assert.equal(defaultDir('offer'), 'desc');
+  assert.deepEqual(sortMembers(rows, 'secured', 'desc').map((r) => r.id), ['a', 'b']);
+  // Without stage rows (the list as Batch 1 built it) the counts are zero.
+  const bare = aggregateActivity({ profiles: [profile('a')], opens: [], reports: [], picks: [], debits: [] });
+  assert.deepEqual([bare[0].atOffer, bare[0].atSecured], [0, 0]);
 });

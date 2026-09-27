@@ -2519,3 +2519,55 @@ alter table public.profiles add column if not exists alert_missed boolean not nu
 -- what. Read separately, never in DEAL_COLUMNS.
 alter table public.marketplace_deals add column if not exists revived_at timestamptz;
 alter table public.marketplace_deals add column if not exists revived_from text;
+
+-- =========================
+-- Batch 7: pipeline actions
+-- =========================
+-- The next step shown on each My deals item and deal page
+-- (src/lib/pipeline, src/app/my-deals/_components/NextStepSlot.tsx).
+--
+-- billing_settings 'offer_discount_bands': the Offer stage's discount bands
+-- (src/lib/pipeline/offer-rules.ts), edited at /admin/next-steps.
+-- Deliberately NOT seeded. With no row, the offer range shows the member's
+-- target figure only and never a guessed discount. Shape:
+--   { "purchase":   [ { "minMonths": 6, "minReductions": 2, "discountPct": 8 }, ... ],
+--     "rentToRent": [ { "minWeeks": 4, "discountPct": 5 }, ... ] }
+--
+-- pipeline_checklist_ticks: ticks on the Viewing and Secured checklists, one
+-- row per ticked item, per person (like stages). item_key is the My deals
+-- key ('d-<dealId>' or 'l-<checkedListingId>'), which stays the same when a
+-- deal gains a pipeline row. item_id is the checklist item's id in
+-- src/lib/pipeline/next-steps.ts. Untick deletes the row. Written by the
+-- server actions after checking the deal is the member's
+-- (src/app/my-deals/next-step-actions.ts), so service role only.
+create table if not exists public.pipeline_checklist_ticks (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  item_key text not null,
+  item_id text not null,
+  ticked_at timestamptz not null default now(),
+  primary key (user_id, item_key, item_id)
+);
+alter table public.pipeline_checklist_ticks enable row level security;  -- no policies: service role only
+revoke all on public.pipeline_checklist_ticks from anon, authenticated;
+
+-- pipeline_step_events: which next-step tools members use, one row per use.
+-- Append-only, service role only (src/lib/pipeline/events.ts).
+--   action   'copy' | 'email' (a message), 'tick' | 'untick' (a checklist
+--            item), 'advance' (the one-tap stage button), 'enquiry' (the
+--            Secured stage's "Talk to us")
+--   stage    the stage the member was at (Batch 5's keys: 'watching' = Kept)
+--   item_id  the message id, checklist item id, or for 'advance' the stage moved to
+create table if not exists public.pipeline_step_events (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  item_key text not null,
+  stage text not null,
+  deal_kind text not null,
+  action text not null,
+  item_id text,
+  at timestamptz not null default now()
+);
+create index if not exists pipeline_step_events_user_idx on public.pipeline_step_events (user_id, at desc);
+create index if not exists pipeline_step_events_at_idx on public.pipeline_step_events (at desc);
+alter table public.pipeline_step_events enable row level security;  -- no policies: service role only
+revoke all on public.pipeline_step_events from anon, authenticated;
