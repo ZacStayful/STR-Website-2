@@ -26,6 +26,9 @@ export const ACTION_LABELS: Record<string, string> = {
   deal_open: 'Deal sheet',
   deal_open_verify: 'Deal sheet check',
   team_seat: 'Team seat',
+  full_analysis: 'Full analysis',
+  pmi_addon: 'Second opinion from PMI',
+  todays_5: 'Daily deals',
 };
 
 export function actionLabel(action: string | null): string {

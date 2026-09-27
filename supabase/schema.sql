@@ -3534,3 +3534,27 @@ revoke all on public.analysis_purchases from anon, authenticated;
 alter table public.saved_searches add column if not exists deal_id uuid;
 alter table public.saved_searches add column if not exists analysed_at timestamptz;
 create index if not exists saved_searches_deal_idx on public.saved_searches (owner_id, deal_id) where deal_id is not null;
+
+-- ── Daily deals: one charge per member per day (src/lib/listing/daily-deals-server.ts) ──
+-- From new_pricing_from, a delivered Today's 5 costs todays_5_daily_pence,
+-- once per member per UTC day, charged to the account that pays (a team
+-- member's owner). The row is inserted BEFORE the debit: (user_id, day) is
+-- the guard that the 07:00 picks passes, the 08:10 digest and any retry can
+-- never charge one member twice for one day. charged_base_pence and
+-- transaction_id are written only once the debit has gone through.
+create table if not exists public.daily_deal_charges (
+  id uuid not null default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  payer_id uuid not null references public.profiles(id) on delete cascade,
+  run text not null,                         -- picks | digest
+  send_ref text,                             -- the sourcing_sent row, or the digest's send token
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_id bigint,
+  created_at timestamptz not null default now(),
+  primary key (user_id, day)
+);
+create unique index if not exists daily_deal_charges_id_uidx on public.daily_deal_charges (id);
+create index if not exists daily_deal_charges_payer_idx on public.daily_deal_charges (payer_id, day desc);
+alter table public.daily_deal_charges enable row level security;  -- no policies: service role only
+revoke all on public.daily_deal_charges from anon, authenticated;

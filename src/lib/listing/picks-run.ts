@@ -8,7 +8,7 @@ import { areaCentroid } from "../market/area-centroids";
 import { ask, sourcingListings } from "../broker";
 import { runMetered, newActionId } from "../credit/context";
 import { getBalance, debit } from "../credit/ledger";
-import { payersFor, payerIn } from "../team";
+import { payerIn } from "../team";
 import { getUnitCostTable } from "../credit/unit-costs";
 import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
@@ -41,7 +41,9 @@ import { renderEmail } from "../notify/render-email";
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
 import { capDay, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
-import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
+import { payersForAll, teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
+import { dailyDealsMode, PayerPurse } from "./daily-deals";
+import { chargeDailyDeals } from "./daily-deals-server";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
 import { siteUrl } from "../url";
@@ -66,9 +68,13 @@ import { siteUrl } from "../url";
 // pick row is inserted BEFORE the send
 // (status pending → sent / failed): the (user, url) primary key plus the
 // "sent today" guard mean an overlapping run or a crash mid-send can never
-// produce two picks. After a successful send the member is debited one
-// daily_pick unit (2p raw × markup, 10p at the seed table); admins are never
-// charged.
+// produce two picks. After a successful send the member is charged: before
+// billing_settings.new_pricing_from, the pick (a pool deal's ladder price,
+// else one daily_pick unit); from that date, one day of daily deals
+// (todays_5_daily_pence) for the whole of Today's 5, with the pick included
+// (src/lib/listing/daily-deals.ts). Admins are never charged. A payer's
+// balance is spent in order across every member it pays for, so teammates
+// cannot between them overdraw their owner.
 //
 // Entry points: /api/internal/sourcing (the cron, secret-gated) and the
 // admin page's "send me a test pick" / "dry run" buttons (session-gated).
@@ -227,6 +233,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // sheet and is charged the deal's ladder price, not the flat pick price.
   const settings = await getBillingSettings();
   const ladder = settings.dealOpenLadder;
+  // Before the new pricing date the pick is charged; from it, the day is (33p on a plan).
+  const mode = dailyDealsMode(settings.dealPricing, new Date());
+  const dailyPence = settings.dealPricing.todays5DailyPence;
   const poolCutoffIso = new Date(Date.now() - NEW_WINDOW_MS).toISOString();
   // Early access: a pool deal inside its window is not a pick for an account
   // that has never paid, exactly as it is not on their grid.
@@ -364,7 +373,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // ── Who pays for whom, before any candidate is judged ──
   // A team member's picks are paid from their team owner's credit, and their
   // early-access tier is the owner's too: the owner is the account that paid.
-  const payers = await payersFor(members.map((m) => m.id));
+  // In chunks: one lookup for a whole audience is a request too long to send,
+  // and a failed lookup would bill members' own accounts.
+  const payers = await payersForAll(members.map((m) => m.id));
   {
     const audience = new Map(profiles.map((p) => [p.id, p as PaidTierAccount]));
     const ownersToRead = [...new Set([...payers.values()].map((p) => p.payerId))].filter((id) => !audience.has(id));
@@ -404,7 +415,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // a broken product: the log line has to show whether members got nothing
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
   // What Today's list needs to know about a member (src/lib/today/selection.ts).
   const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: savedByUser.get(m.id) ?? [], visibility: m.paid ? PAID_VISIBILITY : freeVisibility });
   if (dry) {
@@ -441,7 +452,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               today: plan ? teasersFrom(plan, null, m.paid ? PAID_VISIBILITY : freeVisibility).map((c) => c.id) : "chosen_at_send",
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
-              wouldCharge: "the pick only, exactly as before",
+              wouldCharge: m.admin
+                ? 0
+                : mode === "per_day"
+                  ? { pence: dailyPence, for: "the day's Today's 5, pick included", payer: payerIn(payers, m.id).payerId }
+                  : { pence: "the pick's price: a pool deal's ladder price, else the flat pick price", payer: payerIn(payers, m.id).payerId },
             },
           };
         }),
@@ -822,38 +837,60 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     return done({ status: 200, body: { ...summary, ms: elapsed(), skipped, members: perUser } });
   }
 
-  // What a candidate would cost this member: the ladder price for a pool deal, the flat pick price otherwise.
+  // What a candidate would cost this member. Before the new pricing date: the
+  // ladder price for a pool deal, the flat pick price otherwise. From it: the
+  // day's price, whichever listing is the pick.
   const priceOf = (m: Member, cand: Ranked | undefined): number => {
-    if (m.admin || !cand) return m.admin ? 0 : pickBasePence;
+    if (m.admin) return 0;
+    if (mode === "per_day") return dailyPence;
+    if (!cand) return pickBasePence;
     return urlToDealId.has(cand.listing.canonicalUrl) ? openPricePence(cand.screening?.surplus ?? null, ladder) : pickBasePence;
   };
 
-  // ── Credit: only members who have a candidate, in parallel chunks ──
+  // ── Credit: only members who have a candidate ──
   // A team member's picks are paid from their team owner's credit (`payers`,
-  // resolved above); a suspended seat has none to spend.
+  // resolved above); a suspended seat has none to spend. Each payer's balance
+  // is read once and spent in order across everyone it pays for (the purse),
+  // starved members first, so a team cannot between them overdraw its owner.
   const affordable: Member[] = [];
   const missedRows: Record<string, unknown>[] = [];
-  for (const some of chunk(withCandidates, 10)) {
-    const balances = await Promise.all(some.map((m) => (m.admin || priceOf(m, ranked.get(m.id)?.[0]) <= 0 ? Promise.resolve(null) : payerIn(payers, m.id).suspended ? Promise.resolve(null) : getBalance(payerIn(payers, m.id).payerId).catch(() => null))));
-    some.forEach((m, i) => {
-      const bal = balances[i];
-      const top = ranked.get(m.id)?.[0];
-      const need = priceOf(m, top);
-      if (!m.admin && need > 0 && (!bal || bal.spendableBasePence < need)) {
-        perUser.push({ user: m.id, basis: m.basis, candidates: candidateCount.get(m.id) ?? 0, sent: false, reason: "no_credit" });
-        // Remembered for the "your picks have paused" letter (picks-paused-run):
-        // the best candidate, figures only. Not for a seat the owner has let
-        // lapse (nothing for them to top up), not when the balance could not
-        // be read (that is not "out of credit"), and once a day across passes.
-        if (top && bal && !payerIn(payers, m.id).suspended && !missedToday.has(m.id)) {
-          missedToday.add(m.id);
-          missedRows.push({ user_id: m.id, missed_at: nowIso, need_pence: need, ...missedRowFor(top.listing, top.screening ?? null) });
-        }
-        return;
-      }
-      affordable.push(m);
-    });
+  const toRead = [...new Set(withCandidates.filter((m) => !m.admin && !payerIn(payers, m.id).suspended).map((m) => payerIn(payers, m.id).payerId))];
+  const spendable = new Map<string, number | null>();
+  for (const some of chunk(toRead, 10)) {
+    const balances = await Promise.all(some.map((id) => getBalance(id).catch(() => null)));
+    some.forEach((id, i) => spendable.set(id, balances[i]?.spendableBasePence ?? null));
   }
+  const purse = new PayerPurse(spendable);
+  // What each member's send has taken from their payer's purse so far.
+  const held = new Map<string, number>();
+  for (const m of withCandidates) {
+    const payer = payerIn(payers, m.id);
+    const top = ranked.get(m.id)?.[0];
+    const need = priceOf(m, top);
+    if (m.admin || need <= 0 || (!payer.suspended && purse.take(payer.payerId, need))) {
+      held.set(m.id, m.admin ? 0 : Math.max(0, need));
+      affordable.push(m);
+      continue;
+    }
+    perUser.push({ user: m.id, basis: m.basis, candidates: candidateCount.get(m.id) ?? 0, sent: false, reason: "no_credit" });
+    // Remembered for the "your picks have paused" letter (picks-paused-run):
+    // the best candidate, figures only. Not for a seat the owner has let
+    // lapse (nothing for them to top up), not when the balance could not
+    // be read (that is not "out of credit"), and once a day across passes.
+    if (top && !payer.suspended && purse.known(payer.payerId) && !missedToday.has(m.id)) {
+      missedToday.add(m.id);
+      missedRows.push({ user_id: m.id, missed_at: nowIso, need_pence: need, ...missedRowFor(top.listing, top.screening ?? null) });
+    }
+  }
+  // Can this member's payer cover this candidate instead of what is held for them?
+  const coverable = (m: Member, cand: Ranked): boolean => m.admin || priceOf(m, cand) <= (held.get(m.id) ?? 0) + purse.remaining(payerIn(payers, m.id).payerId) + 1e-9;
+  const holdFor = (m: Member, cand: Ranked): boolean => {
+    if (m.admin) return true;
+    const price = priceOf(m, cand);
+    if (!purse.adjust(payerIn(payers, m.id).payerId, held.get(m.id) ?? 0, price)) return false;
+    held.set(m.id, price);
+    return true;
+  };
   if (missedRows.length > 0) {
     const { error: missErr } = await admin.from("sourcing_missed").upsert(missedRows, { onConflict: "user_id,canonical_url", ignoreDuplicates: true });
     if (missErr) console.error("[sourcing] sourcing_missed insert failed (schema behind?):", missErr.message);
@@ -940,6 +977,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     let chosen: Ranked | null = null;
     let outOfTime = false;
     for (const p of order) {
+      // A pricier stand-in than the balance was checked for is never sent into overdraft.
+      if (!coverable(m, p)) continue;
       const { verdict, listing, snapshot, previousAgentHash } = await verify(p.listing);
       // A listing from the back catalogue has usually dropped out of the feed
       // long ago, so "we could not read the page" is not good enough: it may
@@ -979,7 +1018,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
       reject(verdict);
     }
-    if (!chosen) {
+    if (!chosen || !holdFor(m, chosen)) {
       if (outOfTime) summary.ranOutOfTime = true;
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: outOfTime ? "out_of_time" : "nothing_suitable" });
       continue;
@@ -992,7 +1031,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (alternates.length >= MAX_ALTERNATES) break;
       if (p.listing.canonicalUrl === chosen.listing.canonicalUrl) continue;
       const v = verdicts.get(p.listing.canonicalUrl);
-      if (v?.verdict === "ok") alternates.push({ ...p, listing: v.listing });
+      if (v?.verdict === "ok" && coverable(m, p)) alternates.push({ ...p, listing: v.listing });
     }
     picks.push({ member: m, pick: chosen, alternates, candidates, nearMiss: Boolean((list[0] as Ranked | undefined)?.nearMiss) });
   }
@@ -1006,8 +1045,14 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   if (plans === notReady) console.warn("[sourcing] today lists not ready; sending picks without teasers");
   const [alertsOn, pending] = await alertsReady;
   for (const { member: m, pick, alternates, candidates, nearMiss } of picks) {
+    // A member who is not sent anything gives their hold back to the rest of their team.
+    const unhold = () => {
+      purse.giveBack(payerIn(payers, m.id).payerId, held.get(m.id) ?? 0);
+      held.set(m.id, 0);
+    };
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
+      unhold();
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "out_of_time" });
       continue;
     }
@@ -1017,11 +1062,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // The admin's test send never touches the member's real slot.
     const claim = opts.ignoreToday ? null : await claimSlot(admin, m.id, "todays_5");
     if (claim && !claim.ok && claim.reason === "slot_used") {
+      unhold();
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "slot_used" });
       continue;
     }
     const claimId = claim?.ok ? claim.id : null;
-    let charge = priceOf(m, pick);
+    let charge = mode === "per_day" ? 0 : priceOf(m, pick);
     const relaxation = nearMiss ? relaxationFor.get(m.id) ?? null : null;
     // Persisted so the "change it" link has something to apply that the member
     // cannot alter in the request. It belongs to the pick the analysis was
@@ -1035,9 +1081,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     let token = "";
     let insErr: { code?: string; message: string } | null = null;
     for (const cand of [pick, ...alternates]) {
+      if (!holdFor(m, cand)) continue;
       const attempt = newPickToken();
       const cl = cand.listing;
-      charge = priceOf(m, cand);
+      // From the new pricing date the pick itself costs nothing: the day is charged, after the send.
+      charge = mode === "per_day" ? 0 : priceOf(m, cand);
       const { data: row, error } = await admin
         .from("sourcing_sent")
         .insert({ user_id: m.id, canonical_url: cl.canonicalUrl, sent_at: nowIso, status: "pending", token: attempt, kind: cl.kind, postcode_area: cl.postcodeArea, basis: m.basis, deal: cand.deal, fit: cand.fit, charged_base_pence: charge, relaxation: cand === pick ? relaxationRow : null, motivation: cand.motivation ?? null, screening: cand.screening ?? null, deal_id: urlToDealId.get(cl.canonicalUrl) ?? null })
@@ -1054,7 +1102,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (error?.code !== "23505") break;
     }
     if (!sending || !rowId) {
-      perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: insErr?.code === "23505" ? "already_sent" : "insert_failed" });
+      unhold();
+      perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: insErr?.code === "23505" ? "already_sent" : !insErr ? "no_credit" : "insert_failed" });
       if (insErr && insErr.code !== "23505") console.error("[sourcing] sourcing_sent insert failed:", insErr.message);
       // Nothing was sent: give the slot back for the 08:10 digest.
       if (claimId) await releaseClaim(admin, claimId);
@@ -1071,6 +1120,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (unlockedErr) console.error("[sourcing] unlocked check failed:", unlockedErr.message);
       if ((unlocked ?? []).length > 0) {
         charge = 0;
+        // Nothing to pay for it after all: what was held goes back for the rest of the team.
+        purse.giveBack(payerIn(payers, m.id).payerId, held.get(m.id) ?? 0);
+        held.set(m.id, 0);
         const { error: zeroErr } = await admin.from("sourcing_sent").update({ charged_base_pence: 0 }).eq("id", id);
         if (zeroErr) console.error("[sourcing] pick price reset failed:", zeroErr.message);
       }
@@ -1084,6 +1136,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       goalsChips: m.goals ? describeGoals(m.goals) : [],
       firstEver: m.firstEver,
       chargedBasePence: charge,
+      dailyPence: mode === "per_day" ? dailyPence : null,
       // A stand-in was only reached because the first choice collided, and it
       // is an ordinary candidate — the near-miss wording belongs to the pick
       // the analysis was actually about.
@@ -1118,6 +1171,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Unreachable with a pick in hand; kept so a future change cannot send nothing and charge.
       if (claimId) await releaseClaim(admin, claimId);
       await admin.from("sourcing_sent").update({ status: "failed" }).eq("id", id);
+      unhold();
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: "build_failed" });
       continue;
     }
@@ -1137,6 +1191,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     });
     if (!res.sent) {
       summary.emailFailures += 1;
+      unhold();
       perUser.push({ user: m.id, basis: m.basis, candidates, sent: false, reason: res.reason });
       // Kept as failed: Resend may have accepted the message even though we saw an error.
       const { error: failErr } = await admin.from("sourcing_sent").update({ status: "failed" }).eq("id", id);
@@ -1155,6 +1210,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (sentErr) console.error("[sourcing] sent-status update failed:", sentErr.message);
     const dealId = pickDealId;
     let transactionId: number | null = null;
+    // What was actually taken for the pick: the records below say this, never more.
+    let charged = 0;
     if (charge > 0) {
       try {
         // allowNegative only covers the race between the balance check above and this debit.
@@ -1166,18 +1223,35 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             ? { action: "cron:sourcing", action_id: id, provider: "marketplace", unit: "deal_open", quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily pick (deal sheet): ${sending.listing.address ?? sending.listing.title}`, ...memberMeta }
             : { action: "cron:sourcing", action_id: id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${sending.listing.address ?? sending.listing.title}`, ...memberMeta },
         });
+        charged = charge;
         summary.chargedBasePence += charge;
         void afterDebit(payer.payerId).catch(() => {});
       } catch (err) {
         console.error("[sourcing] pick debit failed:", (err as Error)?.message ?? err);
+        // The pick went uncharged: its row must not say otherwise.
+        const { error: zeroErr } = await admin.from("sourcing_sent").update({ charged_base_pence: 0 }).eq("id", id);
+        if (zeroErr) console.error("[sourcing] pick price reset failed:", zeroErr.message);
+      }
+    }
+    // From the new pricing date: one day of daily deals for the whole email,
+    // once per member per day, to the payer. Never on the admin's test send.
+    if (mode === "per_day" && !m.admin && !opts.ignoreToday) {
+      const payer = payerIn(payers, m.id);
+      const day = await chargeDailyDeals(admin, { userId: m.id, payerId: payer.payerId, memberId: payer.memberId, day: claim?.ok ? claim.day : capDay(), pence: dailyPence, run: "picks", sendRef: id });
+      if (day.charged) {
+        summary.chargedBasePence += dailyPence;
+        transactionId = day.transactionId;
       }
     }
     if (dealId) {
-      // The pick IS the open: the member has paid the deal's price and holds
-      // the page-verified listing, so the sheet on /deals is theirs from now on.
+      // The pick IS the open: the member holds the page-verified listing, so
+      // the sheet on /deals is theirs from now on. Before the new pricing it
+      // records the deal's price paid; from it, the pick is included in the
+      // day (recorded at 0, against the day's charge), so a Full analysis of
+      // it later is the full price.
       const { error: openErr } = await admin.from("deal_opens").upsert(
         // The team's open, like one pressed on /deals: the owner paid for it.
-        { user_id: payerIn(payers, m.id).payerId, canonical_url: sending.listing.canonicalUrl, deal_id: dealId, status: "open", charged_base_pence: charge, transaction_id: transactionId, verified_via: "pick", status_at_open: "available", band_at_open: sending.screening?.band ?? null, annual_profit_at_open: sending.screening?.surplus ?? null, fetched: false },
+        { user_id: payerIn(payers, m.id).payerId, canonical_url: sending.listing.canonicalUrl, deal_id: dealId, status: "open", charged_base_pence: charged, transaction_id: transactionId, verified_via: "pick", status_at_open: "available", band_at_open: sending.screening?.band ?? null, annual_profit_at_open: sending.screening?.surplus ?? null, fetched: false },
         { onConflict: "user_id,canonical_url", ignoreDuplicates: true },
       );
       if (openErr) console.error("[sourcing] auto-open insert failed:", openErr.message);

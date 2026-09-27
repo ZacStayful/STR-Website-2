@@ -454,8 +454,13 @@ export interface PickEmailInput {
   goalsChips: string[];
   /** The member's first ever pick: explain why they are getting it. */
   firstEver: boolean;
-  /** What the pick cost them, in base pence (0 for admins). */
+  /** What the pick cost them, in base pence (0 for admins, and from the new pricing date, when the day is charged instead). */
   chargedBasePence: number;
+  /**
+   * Set from billing_settings.new_pricing_from: Today's 5 is charged by the
+   * day (this, in base pence) and the pick itself costs nothing more.
+   */
+  dailyPence?: number | null;
   /** Nothing matched the filter exactly and this is the nearest thing we found. */
   nearMiss?: boolean;
   /** The one setting to change, from analyseRelaxation. Shown only on a near miss. */
@@ -546,10 +551,15 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   // lie that costs more trust than the empty day it was avoiding.
   const nearMissLine = input.nearMiss ? `Nothing matched your filter exactly today — this is the closest we found.` : null;
   const relaxLine = input.nearMiss ? input.relaxation ?? null : null;
+  // What it costs, said once and truly: by the day from the new pricing date
+  // (the member's own price is on their Notifications page), else this pick's own price.
+  const perDay = typeof input.dailyPence === 'number' && input.dailyPence > 0;
   const intro = firstEver
-    ? `Stayful Intelligence now finds you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. Each pick uses ${penceLabel(input.chargedBasePence || 10)} of your credit. Turn it off any time with the link at the bottom.`
+    ? perDay
+      ? `Stayful Intelligence now sends you Today's 5 each morning: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one, and more deals to look at. Daily deals are charged by the day, only on days we send them; the price is on your Notifications page. Turn them off any time with the link at the bottom.`
+      : `Stayful Intelligence now finds you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. ${input.chargedBasePence > 0 ? `Each pick is charged from your credit, and this one used ${penceLabel(input.chargedBasePence)}.` : 'This one cost you nothing.'} Turn it off any time with the link at the bottom.`
     : null;
-  const costNote = input.chargedBasePence > 0 ? ` This pick used ${penceLabel(input.chargedBasePence)} of your credit.` : '';
+  const costNote = !perDay && input.chargedBasePence > 0 ? ` This pick used ${penceLabel(input.chargedBasePence)} of your credit.` : '';
 
   const blocks: Block[] = [];
   if (intro) blocks.push({ type: 'text', text: intro, tone: 'small' });
