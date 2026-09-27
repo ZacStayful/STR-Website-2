@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { addDays, daysEnding, recentWeeks, ukDay, ukWeekRange, ukWeekStart, weekDays, weekLabel } from './week.ts';
+import { addDays, daysEnding, recentWeeks, retentionCutoff, RETENTION_MONTHS, ukDay, ukWeekRange, ukWeekStart, weekDays, weekLabel } from './week.ts';
 
 test('a week starts on Monday, UK time', () => {
   assert.equal(ukWeekStart(new Date('2026-09-28T09:00:00Z')), '2026-09-28'); // Monday
@@ -49,4 +49,13 @@ test('recent weeks end with the current one, oldest first', () => {
 
 test('a week is labelled by its Monday', () => {
   assert.equal(weekLabel('2026-09-28'), '28 Sept');
+});
+
+test('the log keeps 24 months', () => {
+  assert.equal(RETENTION_MONTHS, 24);
+  assert.equal(retentionCutoff(new Date('2026-09-27T02:35:00Z')).toISOString(), '2024-09-27T02:35:00.000Z');
+  assert.equal(retentionCutoff(new Date('2026-03-01T00:00:00Z'), 12).toISOString(), '2025-03-01T00:00:00.000Z');
+  // Never less than a year: the database refuses anything newer.
+  const now = new Date('2026-09-27T00:00:00Z');
+  assert.ok(now.getTime() - retentionCutoff(now).getTime() > 365 * 86_400_000);
 });

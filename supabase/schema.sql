@@ -3009,8 +3009,15 @@ begin
     'first_week', v_first,
     'this_week', v_this,
     'weeks', v_weeks,
-    'tracking_since', (select min(e.occurred_at) from public.activity_events e where not e.backfilled),
-    'visits_since', (select min(v.started_at) from public.activity_visits v),
+    -- Live tracking began with the first event logged in production (a
+    -- preview on the live database stamps extras.env), as for the backfill
+    -- cutoff; visits count from then too, so a preview's visits never make
+    -- the weeks before the release look tracked.
+    'tracking_since', (select min(e.occurred_at) from public.activity_events e where not e.backfilled and not (e.extras ? 'env')),
+    'visits_since', greatest(
+      (select min(v.started_at) from public.activity_visits v),
+      (select min(e.occurred_at) from public.activity_events e where not e.backfilled and not (e.extras ? 'env'))
+    ),
     'members', (
       select coalesce(jsonb_agg(jsonb_build_object(
         'id', pr.id,

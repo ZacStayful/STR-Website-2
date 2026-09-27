@@ -56,3 +56,18 @@ export function daysEnding(day: string, n: number): string[] {
 export function weekLabel(weekStart: string): string {
   return new Date(`${weekStart}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 }
+
+/** How long the activity log keeps events and visits. */
+export const RETENTION_MONTHS = 24;
+
+/**
+ * The oldest moment the log keeps: `months` calendar months before `now`
+ * (the 31st of a shorter month rolls into the next, a day's difference).
+ * The retention cron deletes what is older; the database refuses a cutoff
+ * less than a year old whatever this says.
+ */
+export function retentionCutoff(now: Date, months: number = RETENTION_MONTHS): Date {
+  const d = new Date(now.getTime());
+  d.setUTCMonth(d.getUTCMonth() - months);
+  return d;
+}
