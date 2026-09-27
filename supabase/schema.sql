@@ -3558,3 +3558,14 @@ create unique index if not exists daily_deal_charges_id_uidx on public.daily_dea
 create index if not exists daily_deal_charges_payer_idx on public.daily_deal_charges (payer_id, day desc);
 alter table public.daily_deal_charges enable row level security;  -- no policies: service role only
 revoke all on public.daily_deal_charges from anon, authenticated;
+
+-- ── The members' notice of these prices (src/lib/credit/pricing-notice-run.ts) ──
+-- Sent by hand from /admin/billing after a dry run, at least 14 days before
+-- new_pricing_from. Stamped on each profile as it is sent, so a second press
+-- never mails anyone twice; the latest stamp also sets the earliest date the
+-- new pricing may start (/admin/billing). pricing_notice_date is the date the
+-- notice announced: the new pricing takes effect only once one has been
+-- announced, and never before the date announced (effectivePricingDate).
+alter table public.profiles add column if not exists pricing_notice_sent_at timestamptz;
+insert into public.billing_settings (key, value) values ('pricing_notice_date', 'null'::jsonb)
+on conflict (key) do nothing;

@@ -77,6 +77,11 @@ export function SignupForm({ next = '' }: { next?: string }) {
       >
         {pending ? 'Creating account…' : 'Start free trial'}
       </button>
+      <p className="text-center text-xs text-muted-foreground">
+        By creating an account you agree to our{' '}
+        <a href="/terms" target="_blank" className="underline underline-offset-2">terms</a> and{' '}
+        <a href="/privacy" target="_blank" className="underline underline-offset-2">privacy policy</a>.
+      </p>
     </form>
   )
 }

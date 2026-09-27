@@ -168,7 +168,7 @@ export default async function AccountPage({
           </p>
         )}
 
-        <ManagePlan view={view} />
+        <ManagePlan view={view} topupRate={credit?.rates.topup} />
 
         <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5">
           <h2 className="text-base font-semibold">Credit and usage</h2>

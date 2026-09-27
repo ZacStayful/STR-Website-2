@@ -1,0 +1,89 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { siteUrl } from "@/lib/url";
+
+export const metadata: Metadata = {
+  title: "Privacy policy — Stayful Intelligence",
+  description: "What Stayful Intelligence collects about you, why, and what you can do about it.",
+  alternates: { canonical: siteUrl("/privacy") },
+};
+
+const LAST_UPDATED = "27 September 2026";
+
+/**
+ * The privacy policy, from the legal drafts of 27 September 2026 (section A),
+ * as decided for Batch 10: Twilio named for text messages, the referral
+ * cookie stated, and the two paragraphs about saved profiles for other people
+ * held back until those profiles exist (Batch 12).
+ */
+export default function PrivacyPage() {
+  return (
+    <section className="section">
+      <div className="wrap-narrow">
+        <div className="eyebrow">Legal</div>
+        <h1 className="upgrade-title">Privacy policy</h1>
+        <p className="lede">Last updated {LAST_UPDATED}. This explains what Stayful Intelligence collects about you, why, and what you can do about it.</p>
+
+        <h2 id="who">Who we are</h2>
+        <p>
+          Stayful Intelligence is run by Stayful Ltd, a company registered in England and Wales (company number 14791583), registered office 20-22 Wenlock Road, London, England, N1 7GU. We are registered with the Information Commissioner&apos;s Office (registration number ZA00016946040). We are the data controller for your information. Contact: <a href="mailto:hello@stayful.co.uk">hello@stayful.co.uk</a>.
+        </p>
+
+        <h2 id="collect">What we collect</h2>
+        <ul>
+          <li><strong>Account details:</strong> your name, email address and mobile number.</li>
+          <li><strong>Your profile:</strong> the answers you give about yourself and what you&apos;re looking for. This includes your experience, the properties you own or run, where you want to invest, your budget, cash available, how you plan to fund a purchase, your deposit and mortgage rate, your minimum profit and how much risk you&apos;re comfortable with.</li>
+          <li><strong>How you use the service:</strong> pages and deals you view, deals you keep or pass, reports you run, visits and time spent, and which emails or messages you open or click.</li>
+          <li><strong>Payments:</strong> your plan, credit balance and transaction history. Card details are handled by Stripe; we never see or store your full card number.</li>
+          <li><strong>Feedback</strong> you give on deals, including reasons.</li>
+          <li><strong>Technical data:</strong> IP address, browser and device type, used for security and to keep you signed in.</li>
+        </ul>
+
+        <h2 id="why">Why we use it</h2>
+        <ul>
+          <li>To run your account and provide the service you&apos;ve signed up for, including choosing deals for you, working out the numbers at your own deposit and mortgage rate, and sending the daily email and alerts you&apos;ve switched on. (Legal basis: contract.)</li>
+          <li>To improve which deals we show you and to improve the service overall, including measuring how often members use it. (Legal basis: legitimate interests.)</li>
+          <li>To take payment, keep financial records and prevent fraud and abuse of free credit. (Legal basis: contract, legal obligation and legitimate interests.)</li>
+          <li>To send occasional updates about Stayful Intelligence. You can turn these off at any time from Account → Notifications or the unsubscribe link. (Legal basis: legitimate interests / consent where required.)</li>
+        </ul>
+
+        <h2 id="profile">How your profile is used</h2>
+        <p>
+          Your answers are used to filter and rank the deals we show you and to calculate figures such as profit at your own finance terms. This is automated, but it only decides which deals appear and in what order. It never decides whether you can use the service, what you pay, or anything with a legal or similarly significant effect on you. It is not financial advice. You can view and change every answer at any time from <Link href="/markets?goals=1">your goals</Link>.
+        </p>
+
+        <h2 id="sharing">Who we share it with</h2>
+        <p>We don&apos;t sell your information. We share it only with companies that help us run the service, under contracts that protect it:</p>
+        <ul>
+          <li>Supabase (database hosting, EU), Vercel (website hosting)</li>
+          <li>Stripe (payments)</li>
+          <li>Resend (email) and Twilio (text messages)</li>
+          <li>Monday.com (our customer records)</li>
+          <li>Anthropic and ElevenLabs (AI written and spoken summaries, only when you use those features; property details only)</li>
+          <li>Google Maps (address and map lookups)</li>
+        </ul>
+        <p>
+          Our property data providers (for example PropertyData, Airbtics and PMI) receive property addresses and details, not your personal details. Some of these companies may process data outside the UK; where they do, we rely on approved safeguards such as the UK International Data Transfer Agreement or adequacy regulations.
+        </p>
+
+        <h2 id="retention">How long we keep it</h2>
+        <ul>
+          <li>Account and profile details: while your account is open, and deleted within 30 days of closing it.</li>
+          <li>Usage and activity records: up to 24 months.</li>
+          <li>Payment and billing records: 6 years, as required for tax.</li>
+        </ul>
+
+        <h2 id="rights">Your rights</h2>
+        <p>
+          You can ask to see, correct, delete or export your information, object to how we use it, or ask us to restrict it. Email <a href="mailto:hello@stayful.co.uk">hello@stayful.co.uk</a> and we&apos;ll respond within one month. You can also complain to the Information Commissioner&apos;s Office at <a href="https://ico.org.uk" target="_blank" rel="noopener noreferrer">ico.org.uk</a>.
+        </p>
+
+        <h2 id="cookies">Cookies</h2>
+        <p>We use essential cookies to keep you signed in and secure, and to credit referral links.</p>
+
+        <h2 id="changes">Changes</h2>
+        <p>We&apos;ll tell you by email before any significant change to this policy. See also our <Link href="/terms">terms of service</Link>.</p>
+      </div>
+    </section>
+  );
+}

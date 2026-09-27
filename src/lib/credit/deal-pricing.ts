@@ -34,11 +34,16 @@ export interface DealPricing {
   /** Monthly plan credit from the new pricing date on, by plan code (pence). */
   planCreditPence: Record<string, number>;
   /**
-   * When 1:1 plan credit and the daily deals charge start (ISO date). Null
-   * until it is set on /admin/billing: until then plans keep their old credit
-   * and picks are charged as they always were.
+   * When 1:1 plan credit and the daily deals charge start (ISO date): the
+   * EFFECTIVE date. Null until a date is set on /admin/billing AND the
+   * members' notice announcing it has gone out (effectivePricingDate): until
+   * then plans keep their old credit and picks are charged as they always were.
    */
   newPricingFrom: string | null;
+  /** The date saved on /admin/billing, announced or not (the admin page and the notice use it). */
+  newPricingPlanned: string | null;
+  /** The date the members' notice announced, once the first one is sent. */
+  pricingNoticeFor: string | null;
   /** Half-width of the area-estimate profit range, by screening confidence, in percent. */
   profitRangePct: { high: number; medium: number; low: number };
 }
@@ -50,6 +55,8 @@ export const DEFAULT_DEAL_PRICING: DealPricing = {
   analysisReuseDays: 30,
   planCreditPence: { starter: 1900, pro: 3999, scale: 9900, pro_annual: 3000 },
   newPricingFrom: null,
+  newPricingPlanned: null,
+  pricingNoticeFor: null,
   profitRangePct: { high: 10, medium: 15, low: 25 },
 };
 
@@ -84,6 +91,19 @@ export function parseDateSetting(raw: unknown): string | null {
   if (typeof raw !== 'string' || raw.trim() === '') return null;
   const t = Date.parse(raw);
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+/**
+ * The new pricing date as it applies: the planned date only once a notice
+ * has announced a date, and never earlier than the date announced (moving it
+ * later is fine; members were told no sooner). No notice, no new pricing.
+ */
+export function effectivePricingDate(planned: string | null, announced: string | null): string | null {
+  if (!planned || !announced) return null;
+  const p = Date.parse(planned);
+  const a = Date.parse(announced);
+  if (!Number.isFinite(p) || !Number.isFinite(a)) return null;
+  return p >= a ? planned : null;
 }
 
 /** Range half-widths, each clamped to 0–25%. A missing band takes the default. */

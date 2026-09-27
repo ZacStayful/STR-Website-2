@@ -23,6 +23,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/demo", priority: 0.6, changeFrequency: "monthly" as const },
     { path: "/extension", priority: 0.7, changeFrequency: "monthly" as const },
     { path: "/extension/privacy", priority: 0.3, changeFrequency: "yearly" as const },
+    { path: "/terms", priority: 0.3, changeFrequency: "yearly" as const },
+    { path: "/privacy", priority: 0.3, changeFrequency: "yearly" as const },
     { path: "/short-let-deals", priority: 0.8, changeFrequency: "daily" as const },
     ...deals.filter((d) => d.total > 0).map((d) => ({ path: `/short-let-deals/${areaMetaForCode(d.code).slug}`, priority: 0.7, changeFrequency: "daily" as const })),
   ];

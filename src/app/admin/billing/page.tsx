@@ -10,6 +10,7 @@ import { earliestPricingDate } from "@/lib/credit/pricing-date";
 import { formatGbp } from "@/lib/credit/pricing";
 import { isEnforcing } from "@/lib/credit/http";
 import { BillingAdminClient } from "./BillingAdminClient";
+import { PricingNoticePanel } from "./PricingNoticePanel";
 
 export const metadata: Metadata = { title: "Billing admin — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -96,6 +97,9 @@ export default async function BillingAdminPage() {
         A standard report is quoted at <strong>{formatGbp(report.typicalBasePence)}</strong> typical / {formatGbp(report.maxBasePence)} worst case at the plan rate ({formatGbp(report.typicalBasePence * settings.spendRates.topup)} from top-up credit); the enhanced report with the PMI second opinion is <strong>{formatGbp(enhanced.typicalBasePence)}</strong> / {formatGbp(enhanced.maxBasePence)}.
       </p>
 
+      <div className="mb-6">
+        <PricingNoticePanel planned={settings.dealPricing.newPricingPlanned} announced={settings.dealPricing.pricingNoticeFor} earliest={guards.earliestDate} />
+      </div>
       <BillingAdminClient rows={rows} settings={settings} guards={guards} codes={(codes.data ?? []).map((c) => ({ code: String(c.code), kind: String(c.kind), amountPence: Number(c.amount_pence), maxRedemptions: c.max_redemptions === null ? null : Number(c.max_redemptions), redeemedCount: Number(c.redeemed_count) || 0, expiresAt: (c.expires_at as string | null) ?? null, active: c.active !== false, createdBy: (c.created_by as string | null) ?? null, referral: Boolean(c.owner_user_id) }))} />
     </div>
   );

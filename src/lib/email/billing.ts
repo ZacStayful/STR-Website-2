@@ -29,10 +29,10 @@ async function send(to: string | null | undefined, subject: string, body: { html
   return res.sent;
 }
 
-export function lowBalanceEmail(to: string, opts: { remainingPence: number; planName: string | null }) {
+export function lowBalanceEmail(to: string, opts: { remainingPence: number; planName: string | null; topupRate?: number }) {
   return send(to, "You're running low on Stayful credit", layout("You're running low on credit", [
     `You have ${formatGbp(opts.remainingPence)} of credit left${opts.planName ? ` on your ${opts.planName} plan this month` : ''}. When it runs out, reports and listing checks pause until you top up or upgrade.`,
-    'Upgrading gives you monthly credit at the standard rate; top-up credit never expires but is spent at 1.5× the plan rate.',
+    `Upgrading gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${opts.topupRate ?? 1.3}× the plan rate.`,
   ], { label: 'Top up or upgrade', path: '/account/billing' }));
 }
 

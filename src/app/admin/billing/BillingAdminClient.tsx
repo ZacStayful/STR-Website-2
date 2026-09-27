@@ -105,7 +105,7 @@ function DealPricingForm({ settings, guards }: { settings: BillingSettings; guar
           {field("plan_pro_annual", "Pro annual credit a month (p)", p.planCreditPence.pro_annual ?? 3000)}
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             New plan credit and daily deals from
-            <Input name="new_pricing_from" type="date" defaultValue={p.newPricingFrom ? p.newPricingFrom.slice(0, 10) : ""} className="h-8 w-40" />
+            <Input name="new_pricing_from" type="date" defaultValue={p.newPricingPlanned ? p.newPricingPlanned.slice(0, 10) : ""} className="h-8 w-40" />
           </label>
         </div>
         <div className="flex flex-wrap items-end gap-3">

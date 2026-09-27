@@ -318,3 +318,14 @@ test('the new prices can only start 14 days after the last member was told', () 
   // The notice went out long ago: any date from now.
   assert.equal(earliestPricingDateFrom(new Date('2026-08-01T00:00:00Z'), now).toISOString(), now.toISOString());
 });
+
+test('the new pricing date applies only once a notice has announced it, and never sooner', async () => {
+  const { effectivePricingDate } = await import('./deal-pricing.ts');
+  assert.equal(effectivePricingDate('2026-10-15T00:00:00.000Z', null), null);
+  assert.equal(effectivePricingDate(null, '2026-10-15T00:00:00.000Z'), null);
+  assert.equal(effectivePricingDate('2026-10-15T00:00:00.000Z', '2026-10-15T00:00:00.000Z'), '2026-10-15T00:00:00.000Z');
+  // Moved later after the notice: fine.
+  assert.equal(effectivePricingDate('2026-10-22T00:00:00.000Z', '2026-10-15T00:00:00.000Z'), '2026-10-22T00:00:00.000Z');
+  // Brought forward after the notice: not until members are told.
+  assert.equal(effectivePricingDate('2026-10-10T00:00:00.000Z', '2026-10-15T00:00:00.000Z'), null);
+});

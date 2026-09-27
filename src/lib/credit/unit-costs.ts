@@ -2,7 +2,7 @@ import { adminClient, hasServiceRole } from './db.ts';
 import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, DEFAULT_MARKUP, DEFAULT_FUNNEL_MARKUP } from './costs.ts';
 import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 import { parseLadder, DEFAULT_DEAL_OPEN_LADDER, type DealOpenLadder } from '../marketplace/ladder.ts';
-import { DEFAULT_DEAL_PRICING, parseDateSetting, parseDays, parsePence, parsePlanCredit, parseRangePct, type DealPricing } from './deal-pricing.ts';
+import { DEFAULT_DEAL_PRICING, effectivePricingDate, parseDateSetting, parseDays, parsePence, parsePlanCredit, parseRangePct, type DealPricing } from './deal-pricing.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -115,7 +115,10 @@ export async function getBillingSettings(): Promise<BillingSettings> {
         todays5DailyPence: parsePence(kv.get('todays_5_daily_pence'), DEFAULT_DEAL_PRICING.todays5DailyPence),
         analysisReuseDays: parseDays(kv.get('analysis_reuse_days'), DEFAULT_DEAL_PRICING.analysisReuseDays),
         planCreditPence: parsePlanCredit(kv.get('plan_credit_pence')),
-        newPricingFrom: parseDateSetting(kv.get('new_pricing_from')),
+        // The saved date applies only once the members' notice has announced it.
+        newPricingFrom: effectivePricingDate(parseDateSetting(kv.get('new_pricing_from')), parseDateSetting(kv.get('pricing_notice_date'))),
+        newPricingPlanned: parseDateSetting(kv.get('new_pricing_from')),
+        pricingNoticeFor: parseDateSetting(kv.get('pricing_notice_date')),
         profitRangePct: parseRangePct(kv.get('profit_range_pct')),
       },
     };

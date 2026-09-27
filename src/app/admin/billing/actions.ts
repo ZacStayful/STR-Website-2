@@ -94,7 +94,7 @@ export async function updateDealPricingAction(_prev: ActionState, formData: Form
       if (!Number.isFinite(at)) return { ok: false, message: 'That date is not a date.' };
       // The date already saved stays as it is, even once it has passed: only
       // a new or moved date must give members their 14 days.
-      const current = (await getBillingSettings()).dealPricing.newPricingFrom;
+      const current = (await getBillingSettings()).dealPricing.newPricingPlanned;
       const unchanged = current !== null && current.slice(0, 10) === rawDate;
       if (!unchanged) {
         const earliest = await earliestPricingDate();
@@ -112,7 +112,7 @@ export async function updateDealPricingAction(_prev: ActionState, formData: Form
     // '' rather than null: the column is jsonb NOT NULL, and '' reads back as "not set".
     await updateBillingSetting('new_pricing_from', newPricingFrom ?? '');
     revalidatePath('/admin/billing');
-    return { ok: true, message: `Deal prices saved.${newPricingFrom ? ` New plan credit and daily deals from ${newPricingFrom.slice(0, 10)}.` : ' No new-pricing date set.'}` };
+    return { ok: true, message: `Deal prices saved.${newPricingFrom ? ` New plan credit and daily deals from ${newPricingFrom.slice(0, 10)}, once the members' notice announcing it has gone out.` : ' No new-pricing date set.'}` };
   } catch (err) {
     return { ok: false, message: (err as Error).message };
   }
@@ -173,5 +173,35 @@ export async function toggleCodeAction(code: string, active: boolean): Promise<A
     return { ok: true, message: `${code} ${active ? 'enabled' : 'disabled'}` };
   } catch (err) {
     return { ok: false, message: (err as Error).message };
+  }
+}
+
+// ── The members' notice of the new prices (src/lib/credit/pricing-notice-run.ts) ──
+
+export type NoticeActionResult = { ok: boolean; message: string; body: Record<string, unknown> | null };
+
+/** Who would get the notice, what it says and whether it may go now. Sends nothing. */
+export async function dryRunPricingNoticeAction(): Promise<NoticeActionResult> {
+  try {
+    await requireAdmin();
+    const { runPricingNotice } = await import('@/lib/credit/pricing-notice-run');
+    const res = await runPricingNotice({ dry: true });
+    return { ok: res.status === 200, message: res.status === 200 ? 'Dry run done: nothing was sent.' : String(res.body.error ?? 'Dry run failed.'), body: res.body };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message, body: null };
+  }
+}
+
+/** Sends as many as fit in one press; press again for the rest. Refuses unless the date is at least 14 days away. */
+export async function sendPricingNoticeAction(): Promise<NoticeActionResult> {
+  try {
+    await requireAdmin();
+    const { runPricingNotice } = await import('@/lib/credit/pricing-notice-run');
+    const res = await runPricingNotice({ dry: false });
+    revalidatePath('/admin/billing');
+    const b = res.body;
+    return { ok: res.status === 200 && !b.error, message: b.error ? String(b.error) : `Sent ${b.sent ?? 0}, failed ${b.failed ?? 0}, ${b.remaining ?? 0} left.`, body: b };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message, body: null };
   }
 }
