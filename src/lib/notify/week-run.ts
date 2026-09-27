@@ -228,6 +228,11 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       perUser.push({ user: p.id, sent: false, reason: 'out_of_time' });
       return;
     }
+    // A team seat the owner has not paid for gets no "Your week", as it gets no pick.
+    if (payers.get(p.id)?.suspended) {
+      perUser.push({ user: p.id, sent: false, reason: 'seat_suspended' });
+      return;
+    }
     const t = tracking.get(p.id);
     const recap = t
       ? recapItems(
