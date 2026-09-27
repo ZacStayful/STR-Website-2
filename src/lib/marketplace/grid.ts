@@ -12,7 +12,12 @@ import { profitRange, upliftTag } from './profit-range.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
 export type DealSort = 'profit' | 'uplift' | 'newest' | 'price';
-/** Which of the member's own reactions the grid shows: everything they have not passed, only kept, or only passed. */
+/**
+ * Which of the member's own reactions a query reads: everything they have
+ * not passed (the grid, Today), only kept, or only passed (the "you passed on
+ * every deal" count). Since Batch 11 the grid itself is always 'all': an old
+ * /deals?view=kept or ?view=passed link is parsed only to send it to My deals.
+ */
 export type DealView = 'all' | 'kept' | 'passed';
 
 export interface DealFilters {
@@ -38,7 +43,6 @@ export const DEFAULT_FILTERS: DealFilters = { kind: 'both', areas: [], beds: 'an
 
 export const SORT_LABELS: Record<DealSort, string> = { profit: 'Highest profit', uplift: 'Highest uplift', newest: 'Newest', price: 'Lowest price' };
 export const KIND_LABELS: Record<DealKindFilter, string> = { both: 'Buy or rent', sale: 'To buy', rent: 'Rent-to-rent' };
-export const VIEW_LABELS: Record<DealView, string> = { all: 'All', kept: 'Kept', passed: 'Passed' };
 
 const AREA_CODES = new Set(AREA_META.map((a) => a.code));
 

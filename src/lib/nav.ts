@@ -8,6 +8,9 @@
  * highlights the item it lives under. My deals (/my-deals) announces itself
  * as `reports`, the section it replaced.
  *
+ * Below the nav itself: the few other "where does this live" rules that more
+ * than one page needs, so each is decided once (Batch 11).
+ *
  * Pure, so the mapping is tested rather than trusted.
  */
 export const NAV_TARGETS = {
@@ -42,4 +45,25 @@ export const NAV_FOR_SECTION: Record<Section, ActiveNav> = {
 
 export function activeNavFor(section: Section): ActiveNav {
   return NAV_FOR_SECTION[section];
+}
+
+// ── One list of kept deals (Batch 11) ──
+
+/** My deals with its Passed group open. */
+export const MY_DEALS_PASSED_HREF = `${NAV_TARGETS.myDeals.href}?show=passed`;
+
+/**
+ * Where an old /deals?view= link goes now that My deals is the one list of
+ * kept and passed deals: kept → My deals, passed → its Passed group. Null for
+ * the grid's own view (anything else), which stays on /deals.
+ */
+export function dealsViewRedirect(view: string | null | undefined): string | null {
+  if (view === 'kept') return NAV_TARGETS.myDeals.href;
+  if (view === 'passed') return MY_DEALS_PASSED_HREF;
+  return null;
+}
+
+/** My deals' ?show=passed. The first value wins, as the /deals filters read theirs. */
+export function myDealsShowsPassed(show: string | string[] | null | undefined): boolean {
+  return (Array.isArray(show) ? show[0] : show) === 'passed';
 }

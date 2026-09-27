@@ -14,9 +14,10 @@ import 'server-only';
  *     stage creates the person's own row at that stage.
  *
  * Every stage change on a marketplace deal also sets the person's Keep / Pass
- * to match (Passed = pass, anything else = keep), so the Kept and Passed
- * filters on /deals agree with My deals. That pass carries no reasons, so it
- * hides the deal from the grid and the picks without training them.
+ * to match (Passed = pass, anything else = keep), so a deal passed here
+ * leaves the /deals grid and Today, and one moved back off Passed returns to
+ * them. That pass carries no reasons, so it hides the deal from the grid and
+ * the picks without training them.
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { payerFor } from '../team';
