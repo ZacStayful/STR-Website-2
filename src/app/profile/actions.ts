@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { parseMarketGoals, MIN_MONTHS_RANGE, MIN_WEEKS_RANGE, type Priority } from '@/lib/market/goals';
+import { parseMarketGoals, type Priority } from '@/lib/market/goals';
 import { profileSummaryFor } from '@/lib/profile/server';
 import { logActivity } from '@/lib/activity/log';
 import { GOALS_EDITOR_HREF } from '@/lib/nav';
@@ -47,8 +47,6 @@ export async function saveAdvancedAction(formData: FormData): Promise<void> {
     },
   });
   if (!next) redirect(`${GOALS_EDITOR_HREF}?saved=0`);
-  void MIN_MONTHS_RANGE;
-  void MIN_WEEKS_RANGE;
 
   const { error } = await supabase.from('profiles').update({ market_goals: next, market_goals_updated_at: new Date().toISOString() }).eq('id', user.id);
   if (error) {

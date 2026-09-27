@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { DISTANCE_MILES, MAX_RENT_PCM_RANGE, normalisePostcode, parseMaxRentPcm, sliderMiles } from "@/lib/market/goals";
+import { DISTANCE_MILES, MAX_RENT_PCM_RANGE, normalisePostcode, sliderMiles } from "@/lib/market/goals";
 import { MIN_PROFIT_RANGE, type Option, type WhereAnswer } from "@/lib/profile/questions";
 import type { QuizArea } from "@/lib/onboarding/server";
 import { QuizPhoto } from "./QuizPhoto";
@@ -291,4 +291,3 @@ export function WhereChoice({ options, value, areas, onSubmit, onPreview, busy }
   );
 }
 
-export { parseMaxRentPcm };
