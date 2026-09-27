@@ -48,6 +48,12 @@ test('rent-to-rent carries the ceiling as the price cap', () => {
   assert.deepEqual(dealFiltersForGoals(goals({ sourcingKind: 'rent', maxRentPcm: null }), []), { kind: 'rent', areas: [], maxPrice: null });
 });
 
+test('"near me + the best elsewhere" (Batch 12) drops the area filter but keeps the rest', () => {
+  const g = goals({ where: 'near_plus_best', home: { postcode: 'NG2 5GB', lat: nottingham.lat, lng: nottingham.lng }, maxDistanceMiles: 30, sourcingKind: 'sale', budget: 'u200' });
+  assert.deepEqual(dealFiltersForGoals(g, ['M']), { kind: 'sale', areas: [], minPrice: null, maxPrice: 200_000 });
+  assert.ok(dealFiltersForGoals({ ...g, where: 'near' }, ['M']).areas!.length > 1, 'plain "near me" still filters by area');
+});
+
 test('both carries no price cap at all', () => {
   assert.deepEqual(dealFiltersForGoals(goals({ sourcingKind: 'both', budget: 'u200', maxRentPcm: 1500 }), ['M']), { kind: 'both', areas: ['M'] });
 });

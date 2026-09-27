@@ -60,7 +60,9 @@ export function goalAreas(goals: MarketGoals, savedAreas: readonly string[]): st
 }
 
 export function dealFiltersForGoals(goals: MarketGoals, savedAreas: readonly string[]): Partial<DealFilters> {
-  const f: Partial<DealFilters> = { kind: goals.sourcingKind, areas: goalAreas(goals, savedAreas) };
+  // Batch 12: "near me + the best elsewhere" browses and counts the whole
+  // pool; the radius is for Batch 14's ranking, not a filter.
+  const f: Partial<DealFilters> = { kind: goals.sourcingKind, areas: goals.where === 'near_plus_best' ? [] : goalAreas(goals, savedAreas) };
   if (goals.sourcingKind === 'sale') {
     const b = budgetBounds(goals.budget);
     f.minPrice = b.min;

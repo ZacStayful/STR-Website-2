@@ -28,7 +28,7 @@ export const NAV_ORDER: readonly NavKey[] = ['today', 'myDeals', 'account'];
 export const LEADS_NAV = { label: 'Leads', href: '/leads' } as const;
 
 /** The section a members-only layout announces (AppShell's `active`). Unchanged from the seven-item nav. */
-export type Section = 'today' | 'estimate' | 'markets' | 'deals' | 'picks' | 'reports' | 'leads' | 'account';
+export type Section = 'today' | 'estimate' | 'markets' | 'deals' | 'picks' | 'reports' | 'leads' | 'account' | 'profile';
 
 export type ActiveNav = NavKey | 'leads';
 
@@ -41,6 +41,8 @@ export const NAV_FOR_SECTION: Record<Section, ActiveNav> = {
   reports: 'myDeals',
   leads: 'leads',
   account: 'account',
+  // The profile page (Batch 12) is a header shortcut, not a nav item: it lights up Account, where it is also linked from.
+  profile: 'account',
 };
 
 export function activeNavFor(section: Section): ActiveNav {
@@ -71,12 +73,14 @@ export function myDealsShowsPassed(show: string | string[] | null | undefined): 
 // ── Links that point to the right place (Batch 11) ──
 
 /**
- * "What you're looking for": the goals editor, still the Market Explorer's
- * goals panel. Batch 12 replaces it with the profile page; this is the line
- * to change (other copies of the URL are listed in the Batch 11 handover, and
- * emails already sent carry it, so the old URL must keep working).
+ * "What you're looking for": the profile page (Batch 12), where every quiz
+ * answer is shown and can be changed. The old goals editor's URL
+ * (/markets?goals=1) is in emails already sent, so /markets redirects it here.
  */
-export const GOALS_EDITOR_HREF = '/markets?goals=1';
+export const GOALS_EDITOR_HREF = '/profile';
+
+/** The profile quiz itself: the questions, one per screen. `?q=<id>` opens one question to change it. */
+export const PROFILE_QUIZ_HREF = '/welcome';
 
 /** Today's list of cards (and the empty-day box in their place): what the first-week checklist points at. */
 export const TODAY_LIST_ID = 'today-list';
