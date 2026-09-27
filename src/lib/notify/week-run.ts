@@ -202,7 +202,8 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
     return { p, since, missed, areas, rows, free };
   });
   // The recap only rides along, so only members with another section need their tracked deals read.
-  const needRecap = plans.filter((pl) => newSwitches && on(pl.p.alert_tracked) && ((pl.missed?.total ?? 0) > 0 || (pl.areas?.length ?? 0) > 0));
+  // Not for a suspended seat: the loop skips them, so reading their deals is wasted time.
+  const needRecap = plans.filter((pl) => newSwitches && on(pl.p.alert_tracked) && !payers.get(pl.p.id)?.suspended && ((pl.missed?.total ?? 0) > 0 || (pl.areas?.length ?? 0) > 0));
   const tracking = await trackingFor(admin, needRecap.map((pl) => ({ id: pl.p.id, admin: Boolean(pl.p.email && isAdminEmail(pl.p.email)) })));
 
   const base = siteUrl();

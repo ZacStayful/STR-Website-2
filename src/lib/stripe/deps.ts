@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createAdminClient } from '../supabase/admin';
-import { exactLike } from '../supabase/like';
+import { emailKey } from '../supabase/email-key';
 import { getStripe } from './client';
 import { savePaymentMethod } from './customer';
 import { grantPlanCycle, grantTopup, grantUpgradeDifference } from './grants';
@@ -40,7 +40,7 @@ export function liveWebhookDeps(): WebhookDeps {
   return {
     findUserBySubscription: (id) => one(admin.from('profiles').select(SELECT).eq('stripe_subscription_id', id).maybeSingle()),
     findUserByCustomer: (id) => one(admin.from('profiles').select(SELECT).eq('stripe_customer_id', id).maybeSingle()),
-    findUserByEmail: (email) => one(admin.from('profiles').select(SELECT).ilike('email', exactLike(email.trim())).limit(1).maybeSingle()),
+    findUserByEmail: (email) => one(admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(1).maybeSingle()),
     findUserById: (id) => one(admin.from('profiles').select(SELECT).eq('id', id).maybeSingle()),
     updateProfile: async (userId, patch) => {
       const { error } = await admin.from('profiles').update(patch).eq('id', userId);
