@@ -58,6 +58,8 @@ export const config = {
   // Run on everything except static assets, image optimisation, and the
   // analyser SSE endpoint (which we'll guard at the route level instead).
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|pdf)$).*)',
+    // /api/presence (the visit heartbeat) checks the session itself; skipping
+    // it here saves an auth call on every beat.
+    '/((?!_next/static|_next/image|favicon.ico|api/presence|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|pdf)$).*)',
   ],
 }
