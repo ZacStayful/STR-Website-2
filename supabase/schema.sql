@@ -160,6 +160,10 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+-- A trigger function only: never callable over the API (/rest/v1/rpc). The
+-- auth service, which inserts auth.users, and the service role keep it.
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
+grant execute on function public.handle_new_user() to supabase_auth_admin, service_role;
 
 -- =========================
 -- saved_searches
@@ -1354,6 +1358,7 @@ create or replace function public.funnel_alert_claim(
 )
 returns boolean
 language plpgsql
+set search_path = ''
 as $$
 begin
   insert into public.funnel_alerts (funnel_id, kind, day)
@@ -1388,6 +1393,7 @@ create or replace function public.funnel_hit(
 )
 returns integer
 language plpgsql
+set search_path = ''
 as $$
 declare
   v_hits integer;
@@ -1423,6 +1429,7 @@ create or replace function public.funnel_spend_reserve(
 )
 returns boolean
 language plpgsql
+set search_path = ''
 as $$
 declare
   v_spend numeric;
@@ -1458,6 +1465,7 @@ create or replace function public.funnel_spend_settle(
 )
 returns void
 language plpgsql
+set search_path = ''
 as $$
 begin
   update public.funnel_hits
@@ -1470,6 +1478,7 @@ $$;
 create or replace function public.funnel_hits_sweep(p_before timestamptz)
 returns integer
 language plpgsql
+set search_path = ''
 as $$
 declare
   v_deleted integer;
@@ -1929,7 +1938,7 @@ create trigger saved_searches_set_owner
 -- filters on this column.
 alter table public.marketplace_deals add column if not exists live_since timestamptz;
 create or replace function private.marketplace_deals_stamp_live()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   if new.status = 'live' and (tg_op = 'INSERT' or old.status is distinct from 'live') then
     new.live_since := now();
@@ -2115,7 +2124,10 @@ revoke all on public.checklist_steps from anon, authenticated;
 -- This app only reads analyser_reports (the market explorer, planning
 -- signals and the internal broker provider). The live project also has the
 -- `allotment`, `outreach` and `private` schemas, which belong to other tools
--- and are not tracked in this file.
+-- and are not tracked in this file. `outreach` (the n8n WhatsApp outreach
+-- tool) is service_role only: RLS on every table, its v_due_* views
+-- security_invoker, nothing granted to anon or authenticated (set live by the
+-- `security_advisor_fixes` migration).
 
 -- analyser_reports: one row per analyser run (source 'analyser' by default).
 create table if not exists public.analyser_reports (
@@ -2326,6 +2338,7 @@ grant execute on function public.claim_bulk_rows(integer, uuid, integer, integer
 create or replace function public.safe_numeric(t text)
 returns numeric
 language plpgsql
+set search_path = ''
 immutable
 as $$
 begin
@@ -2413,6 +2426,7 @@ create or replace function public.claim_notification_slot(
 )
 returns uuid
 language plpgsql
+set search_path = ''
 as $$
 declare
   v_id uuid;
@@ -2485,6 +2499,7 @@ create or replace function public.finish_notification_send(
 )
 returns void
 language plpgsql
+set search_path = ''
 as $$
 begin
   update public.notification_sends
@@ -2643,6 +2658,7 @@ revoke all on public.sms_verifications from anon, authenticated;
 create or replace function public.sms_verification_attempt(p_id uuid, p_user uuid)
 returns table (code_hash text, phone_e164 text, attempts int, created_at timestamptz)
 language sql
+set search_path = ''
 as $$
   update public.sms_verifications v
      set attempts = v.attempts + 1
