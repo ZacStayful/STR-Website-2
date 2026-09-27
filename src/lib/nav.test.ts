@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV_TARGETS, NAV_ORDER, NAV_FOR_SECTION, activeNavFor, LEADS_NAV, MY_DEALS_PASSED_HREF, dealsViewRedirect, myDealsShowsPassed, GOALS_EDITOR_HREF, TODAY_LIST_ID, TODAY_LIST_HREF, samePageAnchor, joinLandingPath, type Section } from './nav.ts';
+import { NAV_TARGETS, NAV_ORDER, NAV_FOR_SECTION, activeNavFor, LEADS_NAV, MY_DEALS_PASSED_HREF, dealsViewRedirect, myDealsShowsPassed, GOALS_EDITOR_HREF, TODAY_LIST_ID, TODAY_LIST_HREF, samePageAnchor, joinLandingPath, ACCOUNT_MORE, accountMoreLinks, type Section } from './nav.ts';
 import { parseDealFilters } from './marketplace/grid.ts';
 
 const SECTIONS: Section[] = ['today', 'estimate', 'markets', 'deals', 'picks', 'reports', 'leads', 'account'];
@@ -69,4 +69,16 @@ test('a link is followed in place only when it stays on this page', () => {
 test('joining a team lands on its Leads only when it has a funnel', () => {
   assert.equal(joinLandingPath(true), LEADS_NAV.href);
   assert.equal(joinLandingPath(false), NAV_TARGETS.today.href);
+});
+
+test('Account › More: Team for account owners only, Leads only for a team with a funnel', () => {
+  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: false }), ['team', 'extension', 'markets', 'picks']);
+  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: true }), ['team', 'leads', 'extension', 'markets', 'picks']);
+  assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: true }), ['leads', 'extension', 'markets', 'picks']);
+  assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: false }), ['extension', 'markets', 'picks']);
+  assert.equal(ACCOUNT_MORE.leads.href, LEADS_NAV.href, 'the same door as the nav');
+  for (const [key, link] of Object.entries(ACCOUNT_MORE)) {
+    assert.ok(link.href.startsWith('/') && !link.href.startsWith('//'), `${key} is internal`);
+    assert.notEqual(link.href, '/reports', 'reports are a tab on My deals, not an Account door');
+  }
 });

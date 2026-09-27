@@ -101,3 +101,32 @@ export function samePageAnchor(href: string, pathname: string): string | null {
 export function joinLandingPath(teamOwnsFunnel: boolean): string {
   return teamOwnsFunnel ? LEADS_NAV.href : NAV_TARGETS.today.href;
 }
+
+// ── Account's "More" (Batch 11) ──
+
+/**
+ * The quieter links at the foot of Account, in order: the doors only. What
+ * each one says beside it (and any price) is the page's.
+ */
+export const ACCOUNT_MORE = {
+  team: { label: 'Team', href: '/account/team' },
+  leads: LEADS_NAV,
+  extension: { label: 'Browser extension', href: '/extension/connect' },
+  markets: { label: 'Market Explorer', href: '/markets' },
+  picks: { label: 'Daily picks', href: '/picks' },
+} as const;
+
+export type AccountMoreKey = keyof typeof ACCOUNT_MORE;
+
+/**
+ * Which of them a person sees: Team only for someone who owns their account
+ * (a member's team is the owner's to manage), Leads only while their team owns
+ * a funnel (the nav's own rule), and the rest for everyone.
+ */
+export function accountMoreLinks(p: { teamMember: boolean; teamOwnsFunnel: boolean }): AccountMoreKey[] {
+  const keys: AccountMoreKey[] = [];
+  if (!p.teamMember) keys.push('team');
+  if (p.teamOwnsFunnel) keys.push('leads');
+  keys.push('extension', 'markets', 'picks');
+  return keys;
+}

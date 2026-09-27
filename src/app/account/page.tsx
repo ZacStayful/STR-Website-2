@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { teamOf } from '@/lib/team';
+import { teamName, teamOf } from '@/lib/team';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   ACCESS_COLUMNS,
@@ -11,7 +11,6 @@ import {
   isCancelScheduled,
   isPauseScheduled,
 } from '@/lib/access';
-import { signOutAction } from '../(auth)/actions';
 import {
   PAUSE_MONTHS,
   addMonths,
@@ -24,8 +23,12 @@ import { getCreditSummary } from '@/lib/credit/summary';
 import { formatGbp } from '@/lib/credit/pricing';
 import { BRAND } from '@/lib/brand';
 import { chromeStoreUrl } from '@/lib/extension/store';
+import { ownsAnyFunnel } from '@/lib/funnels/ownership';
+import { parseMarketGoals } from '@/lib/market/goals';
+import { accountMoreLinks } from '@/lib/nav';
 import { ManagePlan } from './ManagePlan';
 import type { PlanView } from './plan-view';
+import { AccountHeader, GoalsSection, MoreSection, NotificationsSection, SignOutForm, TeamMemberSection } from './AccountSections';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +37,14 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-const PROFILE_COLUMNS = `${ACCESS_COLUMNS}, email, full_name, created_at, reports_total, stripe_customer_id, subscription_current_period_end, subscription_started_at`;
+// market_goals is for "What you're looking for"; it is not, and must not become, one of ACCESS_COLUMNS.
+const PROFILE_COLUMNS = `${ACCESS_COLUMNS}, email, full_name, created_at, reports_total, stripe_customer_id, subscription_current_period_end, subscription_started_at, market_goals`;
+
+/**
+ * Account (Batch 11): the plan, billing, notifications and what the member is
+ * looking for, then the quieter "More" doors and signing out. A team member's
+ * plan and billing are the owner's, so theirs shows the team instead.
+ */
 
 export default async function AccountPage({
   searchParams,
@@ -52,14 +62,37 @@ export default async function AccountPage({
   } = await supabase.auth.getUser();
   // The layout already redirected; this is belt and braces.
   if (!user) redirect('/login?redirect=/account');
-  // A team member's plan and billing are the owner's to manage.
-  if ((await teamOf(user.id)).role === 'member') redirect('/account/team');
+  const team = await teamOf(user.id);
+  const storeUrl = chromeStoreUrl();
 
-  const { data: row } = await supabase
-    .from('profiles')
-    .select(PROFILE_COLUMNS)
-    .eq('id', user.id)
-    .single();
+  // A team member's plan and billing are the owner's to manage: their Account
+  // is the rest of it (and, unlike /account/team, has Sign out). Nothing
+  // below this, Stripe included, runs for them.
+  if (team.role === 'member') {
+    const [{ data: memberRow }, name, teamOwnsFunnel] = await Promise.all([
+      supabase.from('profiles').select('full_name, created_at, market_goals').eq('id', user.id).maybeSingle(),
+      teamName(team.ownerId),
+      ownsAnyFunnel(team.ownerId),
+    ]);
+    const member = (memberRow ?? {}) as { full_name?: string | null; created_at?: string | null; market_goals?: unknown };
+    return (
+      <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
+        <div className="mx-auto max-w-2xl px-5 py-10">
+          <AccountHeader name={member.full_name?.trim() || null} email={user.email} memberSince={formatPlanDate(member.created_at ?? null)} />
+          <TeamMemberSection teamName={name} suspended={team.suspended} />
+          <NotificationsSection />
+          <GoalsSection goals={parseMarketGoals(member.market_goals ?? null)} />
+          <MoreSection keys={accountMoreLinks({ teamMember: true, teamOwnsFunnel })} storeUrl={storeUrl} />
+          <SignOutForm />
+        </div>
+      </main>
+    );
+  }
+
+  const [{ data: row }, teamOwnsFunnel] = await Promise.all([
+    supabase.from('profiles').select(PROFILE_COLUMNS).eq('id', user.id).single(),
+    ownsAnyFunnel(team.ownerId),
+  ]);
 
   const profile = (row ?? {}) as Record<string, string | number | null>;
   const subscriptionId = (profile.stripe_subscription_id as string | null) ?? null;
@@ -148,17 +181,12 @@ export default async function AccountPage({
   const fullName = (profile.full_name as string | null)?.trim() || null;
   const memberSince = formatPlanDate(profile.created_at as string | null);
   const reportsTotal = Number(profile.reports_total ?? 0);
-  const storeUrl = chromeStoreUrl();
+  const goals = parseMarketGoals((row as { market_goals?: unknown } | null)?.market_goals ?? null);
 
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
       <div className="mx-auto max-w-2xl px-5 py-10">
-        <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Your account</p>
-        <h1 className="mt-1 text-2xl font-bold">{fullName ?? 'Account'}</h1>
-        <p className="mt-2 text-sm text-[#7a8274]">
-          {user.email}
-          {memberSince ? ` · member since ${memberSince}` : ''}
-        </p>
+        <AccountHeader name={fullName} email={user.email} memberSince={memberSince} />
 
         {resumeFailed && (
           <p className="mt-6 rounded-lg bg-[#fbeceb] px-3 py-2 text-sm text-[#b3261e]">
@@ -192,35 +220,10 @@ export default async function AccountPage({
           </p>
         </section>
 
-        <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5">
-          <h2 className="text-base font-semibold">Elsewhere</h2>
-          <ul className="mt-3 space-y-2 text-sm">
-            <li><Link href="/reports" className="underline">My reports</Link></li>
-            <li><Link href="/leads" className="underline">Leads</Link> · enquiries from your white-label funnels, kept apart from your own reports</li>
-            <li><Link href="/account/team" className="underline">Team</Link> · invite colleagues to work your leads (£10 a month each)</li>
-            <li><Link href="/account/notifications" className="underline">Notifications</Link> · daily picks, weekly area alerts and credit warnings, on or off</li>
-            <li><Link href="/picks" className="underline">Daily picks</Link> · every property we have sent you</li>
-            <li><Link href="/markets" className="underline">Market Explorer</Link></li>
-            <li>
-              <Link href="/extension/connect" className="underline">Browser extension</Link>
-              {storeUrl && (
-                <>
-                  {' · '}
-                  <a href={storeUrl} target="_blank" rel="noopener noreferrer" className="underline">Add to Chrome</a>
-                </>
-              )}
-            </li>
-          </ul>
-        </section>
-
-        <form action={signOutAction} className="mt-6">
-          <button
-            type="submit"
-            className="rounded-full border border-[#e4e7dc] bg-white px-5 py-2 text-sm font-semibold text-[#2e3d2b] transition hover:bg-[#f1f3ec]"
-          >
-            Sign out
-          </button>
-        </form>
+        <NotificationsSection />
+        <GoalsSection goals={goals} />
+        <MoreSection keys={accountMoreLinks({ teamMember: false, teamOwnsFunnel })} storeUrl={storeUrl} />
+        <SignOutForm />
 
         <p className="mt-8 text-xs text-[#7a8274]">
           Questions about billing? Email{' '}

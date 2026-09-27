@@ -67,7 +67,7 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
 
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} teamMember={Boolean(credit?.member)} leads={leads} />
+      <AppSwitcher active={active} admin={admin} leads={leads} />
       <CreditBanner />
       <VisitHeartbeat />
       {children}
