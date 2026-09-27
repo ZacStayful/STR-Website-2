@@ -24,7 +24,7 @@ import { runMetered } from '../credit/context';
 import { serverFetchEnabled } from '../listing/fetch';
 import { postcodeAreaOf } from '../listing/normalise';
 import { openPricePence } from './ladder';
-import { openDecision, hasRecentLiveCheck, type FetchOutcome } from './status';
+import { openDecision, hasRecentLiveCheck, pendingOpenInFlight, type FetchOutcome } from './status';
 import { retiredReasonFor } from './status';
 import { applyLiveResult, fetchDealPage, loadDealById, loadScreenContext, loadSourcedListings, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 import { snapshotFromDeal } from './record';
@@ -75,6 +75,10 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
       await flipToOpen(admin, existing, existing.transaction_id);
       return { ok: true, alreadyOpen: true, verifiedVia: existing.verified_via, chargedBasePence: Number(existing.charged_base_pence) };
     }
+    // Not charged yet and still fresh: another request (a second tab, a
+    // teammate) is opening this deal right now and will charge for it. Going
+    // on would charge the same open twice; the member tries again in a moment.
+    if (pendingOpenInFlight(existing.opened_at, now)) return { ok: false, code: 'failed' };
   }
   // Early access: an account that has never paid cannot open a deal inside
   // its window by any route. Checked after the "already theirs" branch so a

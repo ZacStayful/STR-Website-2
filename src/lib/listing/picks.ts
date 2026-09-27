@@ -43,6 +43,25 @@ export function startOfTodayUtc(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
+/**
+ * Adds to each member's "already had it" set the deals their team has
+ * unlocked: unlocks belong to the account that pays (a team member's owner),
+ * so a member is never picked, and charged again for, a deal they or a
+ * teammate already opened. Mutates `had`.
+ */
+export function addUnlocked(
+  had: Map<string, Set<string>>,
+  memberIds: readonly string[],
+  payerOf: (memberId: string) => string,
+  unlockedByPayer: ReadonlyMap<string, ReadonlySet<string>>,
+): void {
+  for (const id of memberIds) {
+    const unlocked = unlockedByPayer.get(payerOf(id));
+    if (!unlocked || unlocked.size === 0) continue;
+    had.set(id, new Set([...(had.get(id) ?? []), ...unlocked]));
+  }
+}
+
 // ── Price of a pick ──
 
 export const PICK_UNIT = { provider: 'pmi', unit: 'daily_pick' } as const;

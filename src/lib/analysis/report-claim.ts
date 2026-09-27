@@ -15,11 +15,15 @@ import 'server-only';
  * `fromDeal` (the Full report button on a deal) also refuses a second report
  * for a row that already has one, and hands back its id instead: the deal
  * shows "Open full report" from then on, so a stale tab cannot pay again.
+ * The same goes for a report a teammate already has on the deal: the deal
+ * page offers theirs rather than the button, and the server holds to it, in
+ * the same team scope (src/lib/listing/tracked-server.ts).
  *
  * If the column is missing (schema.sql not run yet) the claim is skipped and
  * the report runs exactly as before: reports never go down over this.
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
+import { beforeJoining, trackedScope } from '../listing/tracked-server';
 
 export const CLAIM_STALE_MS = 3 * 60 * 1000;
 
@@ -38,7 +42,7 @@ export type ClaimOutcome =
 export async function claimReportRun(userId: string, checkedListingId: string, opts: { fromDeal: boolean }, now: Date = new Date()): Promise<ClaimOutcome> {
   if (!hasServiceRole()) return { kind: 'unavailable' };
   const admin = createAdminClient();
-  const { data: row, error } = await admin.from('checked_listings').select('id, analysed_report_id').eq('id', checkedListingId).eq('user_id', userId).maybeSingle();
+  const { data: row, error } = await admin.from('checked_listings').select('id, canonical_url, analysed_report_id').eq('id', checkedListingId).eq('user_id', userId).maybeSingle();
   if (error) {
     console.warn('[report-claim] row read failed:', error.message);
     return { kind: 'unavailable' };
@@ -48,6 +52,10 @@ export async function claimReportRun(userId: string, checkedListingId: string, o
   if (opts.fromDeal && reportId) {
     const { data: report } = await admin.from('saved_searches').select('id').eq('id', reportId).maybeSingle();
     if (report) return { kind: 'reported', reportId };
+  }
+  if (opts.fromDeal && typeof row.canonical_url === 'string') {
+    const teamReportId = await teamReportFor(admin, userId, row.canonical_url);
+    if (teamReportId) return { kind: 'reported', reportId: teamReportId };
   }
   const stale = new Date(now.getTime() - CLAIM_STALE_MS).toISOString();
   const { data: claimed, error: claimErr } = await admin
@@ -62,6 +70,43 @@ export async function claimReportRun(userId: string, checkedListingId: string, o
     return { kind: 'unavailable' };
   }
   return (claimed ?? []).length > 0 ? { kind: 'claimed' } : { kind: 'running' };
+}
+
+/**
+ * A report a teammate already has on this deal, as the deal page shows it:
+ * the team scope of My deals (active members and the owner; a teammate's rows
+ * from before they joined stay theirs alone), newest first, and still saved.
+ * Null when there is none, or it cannot be read (the run then goes ahead as
+ * it did before).
+ */
+async function teamReportFor(admin: ReturnType<typeof createAdminClient>, userId: string, canonicalUrl: string): Promise<string | null> {
+  try {
+    const scope = await trackedScope(userId, 'team');
+    const others = scope.people.filter((id) => id !== userId);
+    if (others.length === 0) return null;
+    const { data: rows, error } = await admin
+      .from('checked_listings')
+      .select('user_id, analysed_report_id, created_at')
+      .in('user_id', others)
+      .eq('canonical_url', canonicalUrl)
+      .not('analysed_report_id', 'is', null)
+      .order('updated_at', { ascending: false })
+      .limit(20);
+    if (error) {
+      console.warn('[report-claim] team read failed:', error.message);
+      return null;
+    }
+    const ids = ((rows ?? []) as { user_id: string; analysed_report_id: string | null; created_at: string | null }[])
+      .filter((r) => typeof r.analysed_report_id === 'string' && !beforeJoining(scope, userId, r.user_id, r.created_at))
+      .map((r) => r.analysed_report_id as string);
+    if (ids.length === 0) return null;
+    const { data: saved } = await admin.from('saved_searches').select('id').in('id', ids);
+    const present = new Set(((saved ?? []) as { id: string }[]).map((r) => r.id));
+    return ids.find((id) => present.has(id)) ?? null;
+  } catch (err) {
+    console.warn('[report-claim] team report check failed:', err);
+    return null;
+  }
 }
 
 /** Ends a claim. Never throws. */

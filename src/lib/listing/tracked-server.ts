@@ -121,7 +121,7 @@ export async function trackedScope(userId: string, scope: 'own' | 'team'): Promi
 }
 
 /** A teammate's record from before they joined the team: theirs alone, as their pre-team reports are. */
-function beforeJoining(scope: TrackedScope, viewerId: string, userId: string, createdAt: unknown): boolean {
+export function beforeJoining(scope: TrackedScope, viewerId: string, userId: string, createdAt: unknown): boolean {
   if (userId === viewerId) return false;
   const joined = scope.joinedAt.get(userId);
   if (joined === undefined) return false;

@@ -125,11 +125,14 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     return hasEverPaid(byId.get(payerId) ?? owners.get(payerId) ?? null);
   };
 
+  // A team seat the owner has not paid for gets no daily email, as it gets no pick.
+  const seatSuspended = (p: ProfileRow) => payers.get(p.id)?.suspended === true;
   // Who gets teasers: picks on, signed in once, not paused, day not spent.
-  const open = [...byId.values()].filter((p) => p.email && !(slots?.has(p.id)));
+  const open = [...byId.values()].filter((p) => p.email && !(slots?.has(p.id)) && !seatSuspended(p));
   for (const p of byId.values()) {
     if (!p.email) perUser.push({ user: p.id, sent: false, reason: 'no_email' });
     else if (slots?.has(p.id)) perUser.push({ user: p.id, sent: false, reason: 'slot_used' });
+    else if (seatSuspended(p)) perUser.push({ user: p.id, sent: false, reason: 'seat_suspended' });
   }
   const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p);
   const contexts: MemberContext[] = open.filter(wantsTeasers).map((p) => {

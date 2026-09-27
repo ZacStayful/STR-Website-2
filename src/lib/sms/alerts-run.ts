@@ -23,6 +23,7 @@ import 'server-only';
  */
 import { createAdminClient } from '../supabase/admin';
 import { pendingChanges } from '../notify/alerts-server';
+import { payersForAll } from '../notify/daily-server';
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from '../notify/sends';
 import { siteUrl } from '../url';
 import { isSmsConfigured, isSmsDryRun, smsAlertsEnabled, twilioConfig } from './config';
@@ -81,13 +82,14 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
   const ids = contacts.map((c) => c.user_id);
 
   // ── Everything the decision needs, one query per table ──
-  const [switches, pending, texted, slots, monthly, cap] = await Promise.all([
+  const [switches, pending, texted, slots, monthly, cap, payers] = await Promise.all([
     smsSwitchesFor(admin, ids),
     pendingChanges(admin, ids, now),
     textedAlertIds(admin, ids, TEXTED_LOOKBACK_MS, now),
     slotsInUse(admin, ids, 'daily', now, 'sms'),
     textsThisMonth(admin, ids, londonMonthStart(now)),
     smsMonthlyCap(admin),
+    payersForAll(ids),
   ]);
   // Any of these unreadable means we cannot know it is safe to text: send nothing.
   if (!switches || !texted || !monthly || (!slots && !dry)) {
@@ -108,6 +110,11 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
       break;
     }
     const userId = contact.user_id;
+    // A team seat the owner has not paid for gets no texts, as it gets no pick.
+    if (payers.get(userId)?.suspended) {
+      members.push({ user: userId, sent: false, reason: 'seat_suspended' });
+      continue;
+    }
     const plan = planMemberText({
       contact,
       switches: switches.get(userId) ?? null,

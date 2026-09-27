@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { openDecision, retiredReasonFor, hasRecentLiveCheck, RETIRING_STATUSES } from './status.ts';
+import { openDecision, retiredReasonFor, hasRecentLiveCheck, pendingOpenInFlight, OPEN_IN_FLIGHT_MS, RETIRING_STATUSES } from './status.ts';
 
 const NOW = new Date('2026-09-25T12:00:00Z');
 const ago = (hours: number) => new Date(NOW.getTime() - hours * 60 * 60 * 1000).toISOString();
@@ -32,4 +32,13 @@ test('open decision: every row of the matrix', () => {
   assert.ok(hasRecentLiveCheck(ago(6), NOW));
   assert.ok(!hasRecentLiveCheck(ago(6.01), NOW));
   assert.ok(!hasRecentLiveCheck(null, NOW));
+});
+
+test('an uncharged pending open is another request\'s for five minutes, then a crash\'s leftover', () => {
+  const at = (msAgo: number) => new Date(NOW.getTime() - msAgo).toISOString();
+  assert.equal(pendingOpenInFlight(at(1_000), NOW), true); // a second tab, a teammate: do not charge again
+  assert.equal(pendingOpenInFlight(at(OPEN_IN_FLIGHT_MS - 1), NOW), true);
+  assert.equal(pendingOpenInFlight(at(OPEN_IN_FLIGHT_MS), NOW), false); // picked up and finished as before
+  assert.equal(pendingOpenInFlight(null, NOW), true); // unreadable: waiting beats charging twice
+  assert.equal(pendingOpenInFlight('not a date', NOW), true);
 });

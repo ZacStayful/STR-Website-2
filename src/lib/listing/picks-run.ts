@@ -21,7 +21,7 @@ import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, addUnlocked, type PickBasis, type PickFeedback } from "./picks";
 import { rankForMember, toPickFeedback, FEEDBACK_WINDOW_MS } from "./rank";
 import { missedRowFor } from "./picks-paused";
 import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
@@ -609,6 +609,22 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
   }
 
+  // A pool deal the member's team has already unlocked is theirs: never their
+  // pick, or they would pay for it twice. Unlocks belong to the account that
+  // pays (a team member's owner); a row still being opened counts too.
+  {
+    const unlockedByPayer = new Map<string, Set<string>>();
+    const payerIds = [...new Set(members.map((m) => payerIn(payers, m.id).payerId))];
+    for (const someUrls of chunk([...urlToDealId.keys()], URL_CHUNK)) {
+      for (const someIds of chunk(payerIds, ID_CHUNK)) {
+        const { data: opened, error: openedErr } = await admin.from("deal_opens").select("user_id, canonical_url").in("user_id", someIds).in("canonical_url", someUrls);
+        if (openedErr) console.error("[sourcing] unlocked-deal read failed:", openedErr.message);
+        for (const r of (opened ?? []) as { user_id: string; canonical_url: string }[]) unlockedByPayer.set(r.user_id, new Set([...(unlockedByPayer.get(r.user_id) ?? []), r.canonical_url]));
+      }
+    }
+    addUnlocked(sentByUser, members.map((m) => m.id), (id) => payerIn(payers, id).payerId, unlockedByPayer);
+  }
+
   // What "slow" means round here. Computed from the listings each query already
   // returned, so it costs nothing: no provider call, no extra read. Areas with
   // too thin a sample answer null, and the area test is then skipped rather than
@@ -1036,6 +1052,18 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (sending !== pick) assigned.set(sending.listing.canonicalUrl, (assigned.get(sending.listing.canonicalUrl) ?? 0) + 1);
     const id = rowId;
     const pickDealId = urlToDealId.get(sending.listing.canonicalUrl) ?? null;
+    // Unlocked by the team since the pool was read (a teammate's pick earlier
+    // in this run, or an open on /deals): it is already paid for, so it is
+    // sent but never charged twice.
+    if (pickDealId && charge > 0) {
+      const { data: unlocked, error: unlockedErr } = await admin.from("deal_opens").select("id").eq("user_id", payerIn(payers, m.id).payerId).eq("canonical_url", sending.listing.canonicalUrl).eq("status", "open").limit(1);
+      if (unlockedErr) console.error("[sourcing] unlocked check failed:", unlockedErr.message);
+      if ((unlocked ?? []).length > 0) {
+        charge = 0;
+        const { error: zeroErr } = await admin.from("sourcing_sent").update({ charged_base_pence: 0 }).eq("id", id);
+        if (zeroErr) console.error("[sourcing] pick price reset failed:", zeroErr.message);
+      }
+    }
     const section = pickSection({
       pick: sending,
       siteUrl: base,

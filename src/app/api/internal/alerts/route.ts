@@ -1,5 +1,6 @@
 import { runYourWeek } from "@/lib/notify/week-run";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { exactLike } from "@/lib/supabase/like";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── "Your week" (Batch 6), was the weekly area digest ────────────────
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
     } catch {
       return Response.json({ error: "Storage not configured" }, { status: 503 });
     }
-    const { data } = await admin.from("profiles").select("id").ilike("email", only).limit(1);
+    const { data } = await admin.from("profiles").select("id").ilike("email", exactLike(only)).limit(1);
     const id = data?.[0]?.id as string | undefined;
     if (!id) return Response.json({ error: "No member with that email" }, { status: 404 });
     onlyUserIds = [id];
