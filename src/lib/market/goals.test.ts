@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseMarketGoals, goalsFromForm, normalisePostcode, describeGoals, DEFAULT_GOALS, parseMotivationGoals, thresholdDaysFor, goalsFromWelcome } from './goals.ts';
+import { parseMarketGoals, normalisePostcode, describeGoals, DEFAULT_GOALS, parseMotivationGoals, thresholdDaysFor, parseMaxDistance, sliderMiles, sourcingKindFor, areaCodeList, GOAL_OPTIONS } from './goals.ts';
 
 test('normalisePostcode accepts UK shapes and rejects junk', () => {
   assert.equal(normalisePostcode('ng2 5gb'), 'NG2 5GB');
@@ -10,14 +10,15 @@ test('normalisePostcode accepts UK shapes and rejects junk', () => {
   assert.equal(normalisePostcode('12345'), null);
 });
 
-test('parse rejects the wrong version and non-objects', () => {
+test('parse rejects unknown versions and non-objects', () => {
   assert.equal(parseMarketGoals(null), null);
   assert.equal(parseMarketGoals('x'), null);
-  assert.equal(parseMarketGoals({ version: 2 }), null);
+  assert.equal(parseMarketGoals({ version: 3 }), null);
+  assert.equal(parseMarketGoals({}), null);
 });
 
 test('parse fills defaults for missing fields and drops invalid ones', () => {
-  const g = parseMarketGoals({ version: 1, budget: 'silly', bedrooms: 9, maxDistanceMiles: 30, priorities: { yield: '3' } })!;
+  const g = parseMarketGoals({ version: 1, budget: 'silly', bedrooms: 9, maxDistanceMiles: 33, priorities: { yield: '3' } })!;
   assert.equal(g.budget, null);
   assert.equal(g.bedrooms, null);
   assert.equal(g.maxDistanceMiles, null);
@@ -33,31 +34,12 @@ test('home keeps cached coordinates only when numeric', () => {
   assert.deepEqual(g.home, { postcode: 'NG2 5GB', lat: 52.9, lng: null });
 });
 
-test('goalsFromForm maps the questionnaire fields', () => {
-  const form: Record<string, string> = {
-    postcode: 'ng2 5gb', maxDistanceMiles: '50', budget: '200-350', bedrooms: '2',
-    p_yield: '3', p_revenue: '1', p_lowCompetition: '2', p_directBookings: '0',
-    management: 'self', riskAppetite: 'cautious',
-  };
-  const g = goalsFromForm((k) => form[k] ?? null);
-  assert.equal(g.home?.postcode, 'NG2 5GB');
-  assert.equal(g.maxDistanceMiles, 50);
-  assert.equal(g.budget, '200-350');
-  assert.equal(g.bedrooms, 2);
-  assert.deepEqual(g.priorities, { yield: 3, revenue: 1, lowCompetition: 2, directBookings: 0 });
-  assert.equal(g.management, 'self');
-  assert.equal(g.riskAppetite, 'cautious');
-});
-
 test('maxRentPcm parses a sane band and drops everything else', () => {
   assert.equal(parseMarketGoals({ version: 1, maxRentPcm: 1200 })!.maxRentPcm, 1200);
   assert.equal(parseMarketGoals({ version: 1, maxRentPcm: '£1,250' })!.maxRentPcm, 1250);
   assert.equal(parseMarketGoals({ version: 1, maxRentPcm: 50 })!.maxRentPcm, null);
   assert.equal(parseMarketGoals({ version: 1, maxRentPcm: 'lots' })!.maxRentPcm, null);
   assert.equal(parseMarketGoals({ version: 1 })!.maxRentPcm, null);
-  const g = goalsFromForm((k) => ({ sourcingKind: 'rent', maxRentPcm: '1500' } as Record<string, string>)[k] ?? null);
-  assert.equal(g.sourcingKind, 'rent');
-  assert.equal(g.maxRentPcm, 1500);
   const chips = describeGoals({ ...DEFAULT_GOALS, sourcingKind: 'both', maxRentPcm: 1500 });
   assert.ok(chips.includes('≤ £1,500 pcm'));
   // A rent ceiling on a buy-only filter is not shown.
@@ -100,18 +82,6 @@ test('months for a sale, weeks for a let', () => {
   assert.equal(thresholdDaysFor(g, 'rent'), 56);
 });
 
-test('the questionnaire round-trips the filter', () => {
-  const form: Record<string, string> = {
-    postcode: 'NG1 1AA', maxDistanceMiles: '25', budget: '200-350', bedrooms: '2',
-    sourcingKind: 'sale', m_mode: 'only', m_minMonths: '3', m_minWeeks: '6', m_areaRelative: '1',
-  };
-  const g = goalsFromForm((k) => form[k] ?? null);
-  assert.deepEqual(g.motivation, { mode: 'only', minMonthsOnMarket: 3, minWeeksOnMarket: 6, areaRelative: true });
-  // An unchecked box posts nothing at all, which must read as off.
-  const off = goalsFromForm((k) => (k === 'm_areaRelative' ? null : form[k] ?? null));
-  assert.equal(off.motivation.areaRelative, false);
-});
-
 test('the filter shows up in the summary chips only when it is on', () => {
   const base = parseMarketGoals({ version: 1, priorities: {}, sourcingKind: 'sale' })!;
   assert.ok(!describeGoals(base).some((c) => /motivated/i.test(c)));
@@ -121,27 +91,80 @@ test('the filter shows up in the summary chips only when it is on', () => {
   assert.ok(describeGoals(rent).includes('Prefer motivated · 8+ wk listed'));
 });
 
-test('goalsFromWelcome keeps the defaults for everything the screen does not ask', () => {
-  const g = goalsFromWelcome({ kind: 'sale', budget: '200-350', maxRentPcm: 1500, postcode: 'NG2 5GB', maxDistanceMiles: 50 });
-  assert.equal(g.version, 1);
-  assert.equal(g.sourcingKind, 'sale');
+// ── Batch 12: version 2 ──
+
+test('a version-1 profile reads as version 2 with the quiz fields empty, and nothing else changed', () => {
+  const stored = { version: 1, home: { postcode: 'NG2 5GB', lat: 52.9, lng: -1.1 }, maxDistanceMiles: 25, budget: '200-350', bedrooms: 2, management: 'self', riskAppetite: 'cautious', sourcingKind: 'sale', finance: { depositPct: 20, mortgageRatePct: 6 }, motivation: { mode: 'prefer' } };
+  const g = parseMarketGoals(stored)!;
+  assert.equal(g.version, 2);
+  assert.deepEqual(g.home, stored.home);
+  assert.equal(g.maxDistanceMiles, 25, 'the legacy radius still reads');
   assert.equal(g.budget, '200-350');
-  assert.equal(g.maxRentPcm, null, 'a rent ceiling is dropped for buy-only');
-  assert.deepEqual(g.home, { postcode: 'NG2 5GB', lat: null, lng: null });
-  assert.equal(g.maxDistanceMiles, 50);
-  assert.deepEqual(g.priorities, DEFAULT_GOALS.priorities);
-  assert.deepEqual(g.finance, DEFAULT_GOALS.finance);
-  assert.deepEqual(g.motivation, DEFAULT_GOALS.motivation);
-  assert.equal(g.bedrooms, null);
+  assert.equal(g.bedrooms, 2);
+  assert.equal(g.management, 'self');
+  assert.equal(g.riskAppetite, 'cautious');
+  assert.equal(g.finance.depositPct, 20);
+  assert.equal(g.finance.mortgageRatePct, 6);
+  assert.equal(g.motivation.mode, 'prefer');
+  assert.equal(g.path, null);
+  assert.equal(g.where, null);
+  assert.deepEqual(g.buyer, DEFAULT_GOALS.buyer);
+  assert.deepEqual(g.r2r, DEFAULT_GOALS.r2r);
+  assert.deepEqual(g.sourcer, DEFAULT_GOALS.sourcer);
+  assert.deepEqual(g.manager, DEFAULT_GOALS.manager);
+});
 
-  const rent = goalsFromWelcome({ kind: 'rent', budget: 'u200', maxRentPcm: 1500, postcode: null, maxDistanceMiles: 25 });
-  assert.equal(rent.budget, null, 'a budget band is dropped for rent-only');
-  assert.equal(rent.maxRentPcm, 1500);
-  assert.equal(rent.home, null);
-  assert.equal(rent.maxDistanceMiles, null, 'no radius without a home');
+test('version 2 round-trips every quiz field and drops values that are not allowed', () => {
+  const g: unknown = {
+    ...DEFAULT_GOALS,
+    path: 'r2r',
+    where: 'near_plus_best',
+    buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '60-100', funding: 'btl', entity: 'company', mainGoal: 'both', propertyType: 'house', condition: 'project', leaseholdOk: 'depends', restrictedAreas: 'warn' },
+    r2r: { setupBudget: '3-6k', dealStructure: 'company_let', breakEvenOccupancyPct: 60, paybackMonths: 12, furnished: 'furnished' },
+    sourcer: { sourceFor: 'both', sourcingFee: '2-4k', dealsPerMonth: '3-5' },
+    manager: { unitsManaged: '11-30', operatingAreas: ['ng', 'M', 'ZZ', 'ng'], lookingFor: 'landlords', growthTarget: 10 },
+  };
+  const parsed = parseMarketGoals(g)!;
+  assert.deepEqual(parseMarketGoals(JSON.parse(JSON.stringify(parsed))), parsed, 'stable through JSON');
+  assert.equal(parsed.path, 'r2r');
+  assert.equal(parsed.where, 'near_plus_best');
+  assert.equal(parsed.buyer.propertyType, 'house');
+  assert.equal(parsed.r2r.breakEvenOccupancyPct, 60);
+  assert.equal(parsed.r2r.paybackMonths, 12);
+  assert.deepEqual(parsed.manager.operatingAreas, ['NG', 'M'], 'validated, upper-cased, deduplicated');
+  assert.equal(parsed.manager.growthTarget, 10);
 
-  const both = goalsFromWelcome({ kind: 'both', budget: null, maxRentPcm: null, postcode: null, maxDistanceMiles: null });
-  assert.equal(both.sourcingKind, 'both');
-  assert.equal(both.budget, null);
-  assert.equal(both.maxRentPcm, null);
+  const bad = parseMarketGoals({ version: 2, path: 'sell', where: 'moon', buyer: { funding: 'gift' }, r2r: { breakEvenOccupancyPct: 65, paybackMonths: '12' }, manager: { growthTarget: 7, operatingAreas: 'NG' } })!;
+  assert.equal(bad.path, null);
+  assert.equal(bad.where, null);
+  assert.equal(bad.buyer.funding, null);
+  assert.equal(bad.r2r.breakEvenOccupancyPct, null);
+  assert.equal(bad.r2r.paybackMonths, 12, 'a numeric string is fine');
+  assert.equal(bad.manager.growthTarget, null);
+  assert.deepEqual(bad.manager.operatingAreas, []);
+});
+
+test('the radius is 10 to 100 in tens, plus the legacy 25', () => {
+  for (const ok of [10, 20, 50, 100, '30', 25]) assert.equal(parseMaxDistance(ok), Number(ok), String(ok));
+  for (const bad of [0, 5, 15, 110, 'far', null, undefined, 26]) assert.equal(parseMaxDistance(bad), null, String(bad));
+  assert.equal(sliderMiles(25), 30, 'a legacy 25 shows as the next step');
+  assert.equal(sliderMiles(50), 50);
+  assert.equal(sliderMiles(null), 50, 'a default position when there is none');
+  assert.equal(sliderMiles(100), 100);
+});
+
+test('the kind searched follows the path, and a sourcer’s follows their clients', () => {
+  assert.equal(sourcingKindFor('buy', null), 'sale');
+  assert.equal(sourcingKindFor('r2r', null), 'rent');
+  assert.equal(sourcingKindFor('manage', null), 'sale');
+  assert.equal(sourcingKindFor('source', null), 'both');
+  assert.equal(sourcingKindFor('source', 'buyers'), 'sale');
+  assert.equal(sourcingKindFor('source', 'r2r'), 'rent');
+  assert.equal(sourcingKindFor('source', 'both'), 'both');
+});
+
+test('area lists are validated and every option list is non-empty', () => {
+  assert.deepEqual(areaCodeList(['ng', ' m ', 'XX', 'NG', 3]), ['NG', 'M']);
+  assert.deepEqual(areaCodeList('NG'), []);
+  for (const [key, values] of Object.entries(GOAL_OPTIONS)) assert.ok(values.length >= 2, key);
 });

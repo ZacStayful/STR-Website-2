@@ -67,7 +67,7 @@ export function FilterBar({
         <ChipMenu label={filters.conf === "any" ? "Confidence" : CONF.find((c) => c[0] === filters.conf)?.[1] ?? "Confidence"} active={filters.conf !== "any"} ariaLabel="Data confidence">
           {(close) => <Options items={CONF} value={filters.conf} onPick={(v) => isConf(v) && set({ conf: v })} close={close} />}
         </ChipMenu>
-        <button type="button" className={"mx2-btn mx2-btn--secondary mx2-chip" + (goals ? "" : " is-dashed")} onClick={onEditGoals} aria-haspopup="dialog" title="Your goals">
+        <button type="button" className={"mx2-btn mx2-btn--secondary mx2-chip" + (goals ? "" : " is-dashed")} onClick={onEditGoals} title="Your profile">
           <Target size={14} aria-hidden />
           {goals ? <>Your goals · {goalChips.join(" · ")}</> : "Set your goals"}
         </button>

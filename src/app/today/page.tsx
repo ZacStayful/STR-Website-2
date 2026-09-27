@@ -22,6 +22,7 @@ import { ShareDealButton } from "@/app/deals/_components/ShareDealButton";
 import { Checklist, ChecklistProvider } from "./_components/Checklist";
 import { PasteLinkBox } from "./_components/PasteLinkBox";
 import { TodayCards } from "./_components/TodayCards";
+import { ProfileProgressCard } from "./_components/ProfileProgressCard";
 
 export const metadata: Metadata = {
   title: "Today — Stayful Intelligence",
@@ -102,6 +103,8 @@ export default async function TodayPage() {
       <ChecklistProvider initial={checklist}>
       <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:py-8">
         <Checklist />
+        {/* Batch 12: the profile reminder, until the profile is complete. */}
+        <ProfileProgressCard userId={user.id} now={now} />
 
         <header>
           <h1 className="text-2xl font-bold text-foreground">{greeting(now, profile?.full_name ?? null)}</h1>

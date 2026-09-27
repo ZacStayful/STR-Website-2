@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV_TARGETS, NAV_ORDER, NAV_FOR_SECTION, activeNavFor, LEADS_NAV, MY_DEALS_PASSED_HREF, dealsViewRedirect, myDealsShowsPassed, GOALS_EDITOR_HREF, TODAY_LIST_ID, TODAY_LIST_HREF, samePageAnchor, joinLandingPath, ACCOUNT_MORE, accountMoreLinks, type Section } from './nav.ts';
+import { NAV_TARGETS, NAV_ORDER, NAV_FOR_SECTION, activeNavFor, LEADS_NAV, MY_DEALS_PASSED_HREF, dealsViewRedirect, myDealsShowsPassed, GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF, TODAY_LIST_ID, TODAY_LIST_HREF, samePageAnchor, joinLandingPath, ACCOUNT_MORE, accountMoreLinks, type Section } from './nav.ts';
 import { parseDealFilters } from './marketplace/grid.ts';
 
-const SECTIONS: Section[] = ['today', 'estimate', 'markets', 'deals', 'picks', 'reports', 'leads', 'account'];
+const SECTIONS: Section[] = ['today', 'estimate', 'markets', 'deals', 'picks', 'reports', 'leads', 'account', 'profile'];
 
 test('the nav has exactly three items, each with a label and an internal href', () => {
   assert.deepEqual(NAV_ORDER, ['today', 'myDeals', 'account']);
@@ -28,6 +28,7 @@ test('every section highlights one of the nav items (or Leads)', () => {
   assert.equal(activeNavFor('reports'), 'myDeals');
   assert.equal(activeNavFor('account'), 'account');
   assert.equal(activeNavFor('leads'), 'leads');
+  assert.equal(activeNavFor('profile'), 'account', 'the profile page is a shortcut under Account, not a nav item');
 });
 
 test('old /deals?view= links go to My deals: kept to the list, passed to its Passed group', () => {
@@ -51,6 +52,8 @@ test('My deals opens its Passed group only for ?show=passed, and reads its own l
 
 test('the goals editor and Today’s list are internal links, the list one on Today itself', () => {
   assert.ok(GOALS_EDITOR_HREF.startsWith('/'));
+  assert.equal(GOALS_EDITOR_HREF, '/profile', 'Batch 12: the profile page is the goals editor');
+  assert.equal(PROFILE_QUIZ_HREF, '/welcome');
   assert.equal(TODAY_LIST_HREF, '/today#today-list');
   assert.match(TODAY_LIST_ID, /^[a-z][a-z-]*$/, 'a plain id, usable as an element id and a fragment');
 });

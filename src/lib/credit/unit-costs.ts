@@ -42,7 +42,14 @@ export interface BillingSettings {
    * credit and the date it starts, and the profit range widths.
    */
   dealPricing: DealPricing;
+  /** Batch 12: the one-off credit for a complete profile (src/lib/profile/credit.ts), in pence. */
+  profileCompletePence: number;
+  /** Batch 12: the share (%) of the non-mandatory questions that need a real answer, not "Not sure", before that credit is paid. */
+  profileCreditMinRealPct: number;
 }
+
+export const DEFAULT_PROFILE_COMPLETE_PENCE = 500;
+export const DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT = 75;
 
 export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   welcomeGrantPence: 2000,
@@ -55,6 +62,8 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   dealOpenLadder: DEFAULT_DEAL_OPEN_LADDER,
   freeDealDelayHours: 48,
   dealPricing: DEFAULT_DEAL_PRICING,
+  profileCompletePence: DEFAULT_PROFILE_COMPLETE_PENCE,
+  profileCreditMinRealPct: DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT,
 };
 
 export function invalidateCreditCaches(): void {
@@ -121,6 +130,8 @@ export async function getBillingSettings(): Promise<BillingSettings> {
         pricingNoticeFor: parseDateSetting(kv.get('pricing_notice_date')),
         profitRangePct: parseRangePct(kv.get('profit_range_pct')),
       },
+      profileCompletePence: Math.max(0, Math.round(num('profile_complete_pence', DEFAULT_PROFILE_COMPLETE_PENCE))),
+      profileCreditMinRealPct: Math.min(100, Math.max(0, num('profile_credit_min_real_pct', DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT))),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

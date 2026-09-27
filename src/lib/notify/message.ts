@@ -283,6 +283,28 @@ export interface DailyInput {
   reason?: string;
   /** Batch 10: each teaser's profit as the member's area-estimate range. */
   figureFor?: (card: DealCard) => string | null;
+  /** Batch 12: the profile line while the profile is incomplete (profileNudgeSection). Absent once complete. */
+  profileNudge?: ProfileNudge | null;
+}
+
+/** "Your profile is 60% done: finish it for better deals and £5 credit." */
+export interface ProfileNudge {
+  percent: number;
+  /** The profile page. renderEmail marks it ?via=email like every own-site link. */
+  url: string;
+  /** billing_settings.profile_complete_pence; 0 leaves the credit out of the line. */
+  pence: number;
+}
+
+export function profileNudgeLine(n: Pick<ProfileNudge, 'percent' | 'pence'>): string {
+  const pct = Math.max(0, Math.min(100, Math.round(n.percent)));
+  const credit = n.pence > 0 ? ` and £${(n.pence / 100).toFixed(n.pence % 100 === 0 ? 0 : 2)} credit` : '';
+  return `Your profile is ${pct}% done: finish it for better deals${credit}.`;
+}
+
+/** The one line, inside the one-a-day email: no email of its own. */
+export function profileNudgeSection(n: ProfileNudge): Section {
+  return { key: 'notice', title: null, blocks: [{ type: 'text', text: profileNudgeLine(n), tone: 'callout' }, { type: 'buttons', links: [{ label: 'Finish my profile', url: n.url }] }] };
 }
 
 export interface BuiltMessage {
@@ -322,6 +344,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     sections.push({ key: 'teasers', title: input.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
   }
   if (changes) sections.push(changes);
+  if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
 
   const phrase = changesPhrase(used);
   const kind: MessageKind = dealCount > 0 ? 'todays_5' : 'deal_changes';

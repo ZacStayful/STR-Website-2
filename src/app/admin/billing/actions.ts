@@ -46,12 +46,18 @@ export async function updateRatesAction(_prev: ActionState, formData: FormData):
     const welcome = Number(formData.get('welcome_grant_pence'));
     const lowRatio = Number(formData.get('low_balance_ratio'));
     const referral = Number(formData.get('referral_pence'));
-    if (![baseMarkup, welcome, lowRatio, referral, ...Object.values(rates)].every((n) => Number.isFinite(n) && n >= 0)) return { ok: false, message: 'Check the numbers.' };
+    // Batch 12: the profile completion credit and its "real answers" bar.
+    const profilePence = Number(formData.get('profile_complete_pence'));
+    const profileRealPct = Number(formData.get('profile_credit_min_real_pct'));
+    if (![baseMarkup, welcome, lowRatio, referral, profilePence, profileRealPct, ...Object.values(rates)].every((n) => Number.isFinite(n) && n >= 0)) return { ok: false, message: 'Check the numbers.' };
+    if (profileRealPct > 100) return { ok: false, message: 'The profile credit share is a percentage: 0 to 100.' };
     await updateBillingSetting('base_markup', baseMarkup);
     await updateBillingSetting('spend_rates', rates);
     await updateBillingSetting('welcome_grant_pence', Math.round(welcome));
     await updateBillingSetting('low_balance_ratio', lowRatio);
     await updateBillingSetting('referral_pence', Math.round(referral));
+    await updateBillingSetting('profile_complete_pence', Math.round(profilePence));
+    await updateBillingSetting('profile_credit_min_real_pct', Math.round(profileRealPct));
     revalidatePath('/admin/billing');
     return { ok: true, message: 'Rates saved. New grants use the new spend rates; existing grants keep the rate they were made at.' };
   } catch (err) {

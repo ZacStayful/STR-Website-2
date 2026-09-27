@@ -55,6 +55,11 @@ export default async function TermsPage() {
             {fromDate} Your Today&apos;s 5 email costs {formatPence(p.todays5DailyPence)} a day on a plan ({dailyDealsMonthly(p.todays5DailyPence)}), charged only on days we send it. You can switch it off any time in Account → Notifications.
           </li>
           <li><strong>Welcome credit</strong> is a one-off promotional grant for new accounts. It is not transferable, has no cash value and may be withheld or reversed where an account is created to abuse the offer (for example with temporary email addresses or a mobile number already used on another account).</li>
+          {settings.profileCompletePence > 0 && (
+            <li>
+              <strong>Profile completion credit.</strong> When you complete your profile we add a one-off promotional grant of {formatPence(settings.profileCompletePence)} to your account. It is paid once per account, needs at least {settings.profileCreditMinRealPct}% of the optional questions answered rather than &ldquo;Not sure&rdquo;, spends like welcome credit and is withheld on the same terms (including accounts created to abuse promotional credit, and team logins, which use their team&apos;s credit). It is not transferable and has no cash value. Changing your answers later does not earn it again.
+            </li>
+          )}
           <li>
             <strong>Plan credit</strong> is added at the start of each billing period of a subscription and expires, unused, at the end of that period. It does not roll over.
             {fromDate ? `${fromDate} each plan's monthly credit equals what you pay for it, £1 of credit for every £1, from your first renewal on or after that date (an annual plan: its first annual renewal on or after it).` : " Each plan's monthly credit equals what you pay for it: £1 of credit for every £1."}

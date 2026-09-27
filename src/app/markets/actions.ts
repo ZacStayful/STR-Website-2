@@ -1,84 +1,17 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { geocodePostcode } from '@/lib/apis/geocode';
-import { goalsFromForm, parseMarketGoals } from '@/lib/market/goals';
 import { areaMetaForCode } from '@/lib/market/areas';
 import { mondayQuery } from '@/lib/apis/monday';
 import { getMarketAccess } from '@/lib/market/gate';
 import { isPipelineStatus } from '@/lib/listing/pipeline';
 import { randomBytes } from 'node:crypto';
-import { isAdminEmail } from '@/lib/admin';
-import { startAction } from '@/lib/credit/action';
-import { runMetered } from '@/lib/credit/context';
-import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { logActivity } from '@/lib/activity/log';
 
-export type GoalsState = { error: string | null; warning: string | null; saved: boolean };
+// The goals editor (saveMarketGoalsAction, clearMarketGoalsAction) left with
+// Batch 12: every answer is made and changed on the profile page (/profile)
+// and its quiz (/welcome), through src/lib/profile/server.ts.
 
-/**
- * Save the goal profile. Geocodes the home postcode (once per change) so the
- * distance ranking needs no API calls at read time. A geocoding failure is a
- * warning, not an error — the profile still saves, without coordinates.
- */
-export async function saveMarketGoalsAction(_prev: GoalsState, formData: FormData): Promise<GoalsState> {
-  const supabase = await createSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Please sign in again.', warning: null, saved: false };
-
-  const goals = goalsFromForm((k) => {
-    const v = formData.get(k);
-    return typeof v === 'string' ? v : null;
-  });
-
-  let warning: string | null = null;
-  if (goals.home) {
-    const { data: row } = await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
-    const previous = parseMarketGoals(row?.market_goals);
-    if (previous?.home && previous.home.postcode === goals.home.postcode && previous.home.lat !== null) {
-      goals.home = previous.home; // unchanged postcode: keep the cached coordinates
-    } else {
-      try {
-        const action = await startAction({ userId: user.id, admin: isAdminEmail(user.email), action: 'geocode' });
-        try {
-          const { lat, lng } = await runMetered(action.ctx, () => geocodePostcode(goals.home!.postcode));
-          goals.home = { ...goals.home, lat, lng };
-        } finally {
-          await action.finish().catch(() => {});
-        }
-      } catch (err) {
-        if (err instanceof InsufficientCreditError) {
-          warning = `You're out of credit, so we couldn't place ${goals.home.postcode} on the map. Top up or upgrade and save again to turn distance ranking on.`;
-        } else {
-          console.warn('[markets/goals] geocode failed:', (err as Error)?.message ?? err);
-          warning = `We couldn't place ${goals.home.postcode} on the map, so distance ranking is off until you try again.`;
-        }
-      }
-    }
-  }
-
-  // The email switches (daily picks, weekly alerts) are not on this form any
-  // more: the Notifications panel is the only writer of those columns.
-  const { error } = await supabase
-    .from('profiles')
-    .update({ market_goals: goals, market_goals_updated_at: new Date().toISOString() })
-    .eq('id', user.id);
-  if (error) return { error: 'Could not save your goals. Please try again.', warning: null, saved: false };
-
-  logActivity(user.id, 'goals_saved');
-  revalidatePath('/markets');
-  return { error: null, warning, saved: true };
-}
-
-export async function clearMarketGoalsAction(): Promise<void> {
-  const supabase = await createSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
-  await supabase.from('profiles').update({ market_goals: null, market_goals_updated_at: new Date().toISOString() }).eq('id', user.id);
-  logActivity(user.id, 'goals_cleared');
-  revalidatePath('/markets');
-}
 
 /** Star / unstar an area. Returns the new saved state. */
 export async function toggleSavedAreaAction(code: string): Promise<{ saved: boolean } | { error: string }> {

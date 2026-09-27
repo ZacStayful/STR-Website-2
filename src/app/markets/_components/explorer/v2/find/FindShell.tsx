@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toggleSavedAreaAction } from "../../../../actions";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
@@ -16,11 +16,11 @@ import { VERDICT_CHIPS, VERDICT_COLOURS } from "@/lib/listing/verdict";
 import type { ResolvedListing } from "@/app/estimate/_components/listing-client-types";
 import { MAX_COMPARE } from "../../../CompareBar";
 import { MapPane } from "../../MapPane";
-import { GoalsModal } from "../../GoalsModal";
 import { ListingsPane } from "../../ListingsPane";
 import { ListingDrawer } from "../../ListingDrawer";
 import { ListingCompare } from "../../ListingCompare";
 import { listingVerdict } from "../../verdicts";
+import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { DEFAULT_FILTERS, type ExplorerRow, type Filters, type Level, type MapMetric, type MarketGoals, type RegionCardData, type SortKey } from "../../types";
 import { useListingSearch } from "../shared/useListingSearch";
 import { useCompareStore } from "../shared/useCompareStore";
@@ -30,8 +30,6 @@ import { FilterBar } from "./FilterBar";
 import { CardGrid } from "./CardGrid";
 import { MarketCard } from "./MarketCard";
 import { SubMarketCard } from "./SubMarketCard";
-
-const DISMISS_KEY = "mx_goals_dismissed";
 
 /** Districts sort by the figures they carry; keys that need a score fall back to revenue. */
 function districtSortValue(d: DistrictCardData, key: SortKey): number | null {
@@ -63,7 +61,6 @@ export function FindShell({
   initialLevel = "markets",
   initialActiveListing = null,
   initialCheckUrl = null,
-  initialGoalsOpen = false,
   initialSort = "stayful",
   initialQuery = "",
 }: {
@@ -79,8 +76,6 @@ export function FindShell({
   initialActiveListing?: string | null;
   /** A listing URL prefilled in the search box (from the sourcing email); the member still clicks Check. */
   initialCheckUrl?: string | null;
-  /** /markets?goals=1 (the "set my filter" button in the pick email) opens the goals modal straight away. */
-  initialGoalsOpen?: boolean;
   initialSort?: SortKey;
   initialQuery?: string;
 }) {
@@ -92,9 +87,6 @@ export function FindShell({
   const [metric, setMetric] = useState<MapMetric>("score");
   const [hover, setHover] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<"cards" | "map">(initialActiveListing ? "map" : "cards");
-  const [goalsOpen, setGoalsOpen] = useState(initialGoalsOpen);
-  const [mounted, setMounted] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
   const [saved, setSaved] = useState<Set<string>>(() => new Set(savedAreas));
   const [, startSave] = useTransition();
   const compare = useCompareStore();
@@ -106,16 +98,8 @@ export function FindShell({
   const [listingCompare, setListingCompare] = useState<string[]>([]);
   const [listingNotice, setListingNotice] = useState<string | null>(null);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-off mount flag for the auto-open
-    setMounted(true);
-  }, []);
-  const autoOpenGoals = mounted && !goals && !dismissed && (() => { try { return localStorage.getItem(DISMISS_KEY) !== "1"; } catch { return false; } })();
-  const closeGoals = useCallback(() => {
-    setGoalsOpen(false);
-    setDismissed(true);
-    try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* ignore */ }
-  }, []);
+  // "Your goals" and "set your goals" go to the profile page (Batch 12): the quiz is the one editor.
+  const openGoals = useCallback(() => router.push(GOALS_EDITOR_HREF), [router]);
 
   // ── URL: /markets?region=&level=sub&sort=&q= | ?pane=listings&listing= ──
   const syncUrl = useCallback((s: { level: Level; region: string | null; sort: SortKey; q: string; listing: string | null }) => {
@@ -246,7 +230,7 @@ export function FindShell({
   return (
     <div className={`mx2-find pane-${mobilePane}${activeListingRow ? " has-listing" : ""}`}>
       <FindHeader regions={regions} region={region} sort={effectiveSort} onRegion={changeRegion} mobilePane={mobilePane} onMobilePane={setMobilePane} />
-      <FilterBar search={search} filters={filters} onFilters={changeFilters} goals={goals} onEditGoals={() => setGoalsOpen(true)} sort={effectiveSort} onSort={changeSort} resultCount={visible.length} savedCount={saved.size} trendSortReady={trendSortReady} autoFocusSearch={Boolean(initialCheckUrl)} />
+      <FilterBar search={search} filters={filters} onFilters={changeFilters} goals={goals} onEditGoals={openGoals} sort={effectiveSort} onSort={changeSort} resultCount={visible.length} savedCount={saved.size} trendSortReady={trendSortReady} autoFocusSearch={Boolean(initialCheckUrl)} />
 
       <div className="mx2-find-body">
         <CardGrid level={level} onLevel={changeLevel} counts={{ markets: visible.length, sub: readyDistricts, deals: liveDeals }} shown={shown} sort={effectiveSort} onSort={changeSort} goals={goals} trendSortReady={trendSortReady} hideSort={level === "deals"}>
@@ -285,7 +269,7 @@ export function FindShell({
                   onOpen={() => openArea(row.card.code)}
                   onToggleSaved={() => toggleSaved(row.card.code)}
                   onToggleCompare={() => compare.toggle(row.card.code)}
-                  onSetGoals={() => setGoalsOpen(true)}
+                  onSetGoals={openGoals}
                 />
               ))}
             </div>
@@ -336,7 +320,6 @@ export function FindShell({
         compare.hydrated && <CompareDock rows={compareRows} bedroom={bedroom} onRemove={compare.remove} onClear={compare.clear} />
       )}
 
-      {(goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} onClose={closeGoals} />}
     </div>
   );
 }

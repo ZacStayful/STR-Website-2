@@ -143,6 +143,8 @@ export function BillingAdminClient({ rows, settings, guards, codes }: { rows: Ro
           ["welcome_grant_pence", "Welcome credit (p)", settings.welcomeGrantPence, "1"],
           ["low_balance_ratio", "Low-balance ratio", settings.lowBalanceRatio, "0.05"],
           ["referral_pence", "Referral reward (p)", settings.referralPence, "1"],
+          ["profile_complete_pence", "Profile credit (p)", settings.profileCompletePence, "1"],
+          ["profile_credit_min_real_pct", "Profile credit: real answers needed (%)", settings.profileCreditMinRealPct, "1"],
         ].map(([name, label, value, step]) => (
           <label key={String(name)} className="flex flex-col gap-1 text-xs text-muted-foreground">
             {label}

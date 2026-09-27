@@ -45,9 +45,10 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   const email = String(formData.get('email') ?? '').trim()
   const mobile = String(formData.get('mobile') ?? '').trim()
   const password = String(formData.get('password') ?? '')
-  // Where to land after email confirmation: the welcome questions, unless the
-  // signup started from somewhere specific (a team invite, the Market
-  // Explorer), which the callback's landing rule then honours.
+  // Where to land after email confirmation: Today (the profile quiz gates it
+  // until its first three questions are answered), unless the signup started
+  // from somewhere specific (a team invite, the Market Explorer), which the
+  // callback's landing rule then honours.
   const next = safeInternalPath(String(formData.get('next') ?? ''), '')
 
   if (!fullName || !email || !mobile || !password) {

@@ -3612,4 +3612,63 @@ alter table public.profiles add column if not exists pricing_notice_sent_at time
 insert into public.billing_settings (key, value) values ('pricing_notice_date', 'null'::jsonb)
 on conflict (key) do nothing;
 
+-- =========================
+-- Batch 12: profile quiz
+-- =========================
+-- The profile quiz (src/lib/profile): every member answers ~20 questions,
+-- one per screen. The search-criteria answers go into profiles.market_goals
+-- (bumped to version 2 in code; no SQL change), the "about you" answers into
+-- the column below, and the bookkeeping — which questions are answered,
+-- where they stopped, the £5 — into profile_quiz. None of this is in
+-- ACCESS_COLUMNS (src/lib/access.ts), and must not become so.
+
+-- ── profiles.about_you: Section A, the member's own answers (src/lib/profile/about.ts) ──
+-- Written by the member's own session, like market_goals, so it is granted
+-- to `authenticated` (the row policy limits them to their own row). Declared
+-- above the grant, because the grant names it.
+alter table public.profiles add column if not exists about_you jsonb;
+alter table public.profiles add column if not exists about_you_updated_at timestamptz;
+grant update (about_you, about_you_updated_at) on public.profiles to authenticated;
+
+-- ── profile_quiz: one row per member who has started (src/lib/profile/state.ts) ──
+--   answered               {question_id: {at, notSure}}: the questions answered,
+--                          a real answer or "Not sure". Stored, not derived, so
+--                          "Not sure" can be told from never asked
+--   last_question          where they were last: the admin drop-off table
+--   credit_grant_id        the £5 (credit_grants), once paid; unique on the
+--                          grant's source_ref 'profile_complete:<user>' so a
+--                          retry can never pay twice
+--   credit_skipped_reason  why it will never be paid (team_member,
+--                          welcome_withheld): the welcome check's own verdict
+--   reminder_collapsed_day the Today-day the reminder card was collapsed for;
+--                          it returns the next day and never stops until complete
+-- Service role only: a member can never mark their own quiz complete or paid.
+create table if not exists public.profile_quiz (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  last_question text,
+  answered jsonb not null default '{}'::jsonb,
+  finish_later_at timestamptz,
+  resumed_at timestamptz,
+  credit_grant_id uuid,
+  credit_skipped_reason text,
+  reminder_collapsed_day date,
+  updated_at timestamptz not null default now()
+);
+create index if not exists profile_quiz_completed_idx on public.profile_quiz (completed_at);
+alter table public.profile_quiz enable row level security;  -- no policies: service role only
+revoke all on public.profile_quiz from anon, authenticated;
+
+-- ── Settings (src/lib/credit/unit-costs.ts reads them; /admin/billing edits them) ──
+--   profile_complete_pence       the one-off credit for a complete profile
+--   profile_credit_min_real_pct  the share of the non-mandatory questions that
+--                                need a real answer (not "Not sure") before
+--                                it is paid, so answering everything "Not
+--                                sure" earns nothing
+insert into public.billing_settings (key, value) values
+  ('profile_complete_pence', '500'::jsonb),
+  ('profile_credit_min_real_pct', '75'::jsonb)
+on conflict (key) do nothing;
+
 notify pgrst, 'reload schema';

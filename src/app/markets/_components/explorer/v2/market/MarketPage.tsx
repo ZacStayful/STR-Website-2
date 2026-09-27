@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { toggleSavedAreaAction } from "../../../../actions";
@@ -13,8 +13,8 @@ import { districtLabel, marketTitle, subMarketTitle } from "@/lib/market/labels"
 import type { AreaCardData } from "@/lib/market/explorer";
 import type { CheckedListingRow } from "@/lib/listing/pipeline";
 import type { AreaDealsSummary } from "@/lib/marketplace/grid";
+import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import type { ExplorerRow, MarketGoals, SortKey } from "../../types";
-import { GoalsModal } from "../../GoalsModal";
 import { ManagedEnquiry } from "../../ManagedEnquiry";
 import { useCompareStore } from "../shared/useCompareStore";
 import { CompareDock } from "../shared/CompareDock";
@@ -23,8 +23,6 @@ import { MarketTabs } from "./MarketTabs";
 import { OverviewTab } from "./OverviewTab";
 import { GenericTab } from "./GenericTab";
 import { DealsTab } from "./DealsTab";
-
-const DISMISS_KEY = "mx_goals_dismissed";
 
 /**
  * The full-width market page (design screen 2): header, tabs, and the
@@ -66,21 +64,10 @@ export function MarketPage({
   const [, startSave] = useTransition();
   const [listings, setListings] = useState<CheckedListingRow[]>(initialListings);
   const [activeListing, setActiveListing] = useState<string | null>(null);
-  const [goalsOpen, setGoalsOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
   const compare = useCompareStore();
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-off mount flag for the auto-open
-    setMounted(true);
-  }, []);
-  const autoOpenGoals = mounted && !goals && !dismissed && (() => { try { return localStorage.getItem(DISMISS_KEY) !== "1"; } catch { return false; } })();
-  const closeGoals = useCallback(() => {
-    setGoalsOpen(false);
-    setDismissed(true);
-    try { localStorage.setItem(DISMISS_KEY, "1"); } catch { /* ignore */ }
-  }, []);
+  // "Set your goals" goes to the profile page (Batch 12): the quiz is the one editor.
+  const openGoals = useCallback(() => router.push(GOALS_EDITOR_HREF), [router]);
 
   const rowFor = useCallback((c: AreaCardData): ExplorerRow => ({ card: c, personal: goals ? personaliseScore(personalInputFor(c, goals), goals) : null, saved: saved.has(c.code), trend: areaTrend(c.series) }), [goals, saved]);
   const row = useMemo(() => (card ? rowFor(card) : null), [card, rowFor]);
@@ -111,7 +98,6 @@ export function MarketPage({
   if (card) backParams.set("region", card.region.slug);
   if (initialSort !== "stayful") backParams.set("sort", initialSort);
   const backHref = backParams.size ? `/markets?${backParams}` : "/markets";
-  const goalsModal = (goalsOpen || autoOpenGoals) && <GoalsModal goals={goals} onClose={closeGoals} />;
 
   if (!card || !row) {
     return (
@@ -124,7 +110,6 @@ export function MarketPage({
           <div className="mx-empty"><h2>Not enough data yet for {areaName}</h2><p>As more Stayful analyser reports come in for this area, it will appear in the explorer automatically.</p></div>
         </div>
         <CtaBand />
-        {goalsModal}
       </div>
     );
   }
@@ -154,7 +139,7 @@ export function MarketPage({
         onBedroom={setBedroom}
         onToggleSaved={() => toggleSaved(card.code)}
         onToggleCompare={() => compare.toggle(card.code)}
-        onSetGoals={() => setGoalsOpen(true)}
+        onSetGoals={openGoals}
       />
       <MarketTabs tab={tab} onTab={changeTab} dealsCount={dealsHere} />
 
@@ -169,7 +154,7 @@ export function MarketPage({
             </div>
           </div>
         ) : tab === "overview" ? (
-          <OverviewTab area={card} scope={scope} scopeName={scopeName} personal={row.personal} trend={trend} goals={goals} listings={listings} marketDeals={marketDeals} dataCodes={dataCodes} onTab={changeTab} onOpenDistrict={changeDistrict} onOpenListing={(id) => { setActiveListing(id); changeTab("deals"); }} onSetGoals={() => setGoalsOpen(true)} />
+          <OverviewTab area={card} scope={scope} scopeName={scopeName} personal={row.personal} trend={trend} goals={goals} listings={listings} marketDeals={marketDeals} dataCodes={dataCodes} onTab={changeTab} onOpenDistrict={changeDistrict} onOpenListing={(id) => { setActiveListing(id); changeTab("deals"); }} onSetGoals={openGoals} />
         ) : tab === "deals" ? (
           <DealsTab areaRow={row} goals={goals} listings={listings} marketDeals={marketDeals} onListings={setListings} activeListing={activeListing} onActiveListing={setActiveListing} onOpenArea={openArea} />
         ) : (
@@ -192,7 +177,6 @@ export function MarketPage({
       </p>
       <CtaBand />
       {compare.hydrated && <CompareDock rows={compareRows} bedroom={bedroom} onRemove={compare.remove} onClear={compare.clear} />}
-      {goalsModal}
     </div>
   );
 }

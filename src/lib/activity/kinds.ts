@@ -84,6 +84,21 @@ export const ACTIVITY_KINDS = {
   reminder_acted: inApp('Acted on a reminder'),
   reminder_shown: recordOnly('Was shown a reminder'),
 
+  // Batch 12: the profile quiz (src/lib/profile/activity.ts). Question ids
+  // only, never an answer.
+  profile_started: inApp('Started the profile quiz'),
+  profile_answered: inApp('Answered a profile question'),
+  profile_not_sure: inApp('Said "not sure" to a profile question'),
+  profile_finish_later: inApp('Left the profile quiz for later'),
+  profile_resumed: inApp('Came back to the profile quiz'),
+  profile_completed: inApp('Completed their profile'),
+  profile_viewed: inApp('Viewed their profile'),
+  profile_edited: inApp('Changed a profile answer'),
+  profile_reminder_collapsed: inApp('Collapsed the profile reminder'),
+  profile_reminder_tapped: inApp('Tapped the profile reminder'),
+  profile_reminder_shown: recordOnly('Was shown the profile reminder'),
+  profile_email_click: recordOnly('Opened their profile from the daily email'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),

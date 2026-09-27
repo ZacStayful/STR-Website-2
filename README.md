@@ -28,8 +28,8 @@ injected, rather than inside the route handlers.
 
 ## Deploying
 
-Vercel deploys `main` automatically. Six things are **not** automated, and all
-six have to be done by hand.
+Vercel deploys `main` automatically. Seven things are **not** automated, and all
+seven have to be done by hand.
 
 ### 1. Run `supabase/schema.sql` after any merge that changes it
 
@@ -187,6 +187,30 @@ estimate: confirm it against the Twilio console and correct it on
    the date they report `per_pick`. Monthly plans get the new credit at their first renewal on or
    after the date, annual plans at their first annual renewal after it.
 
+### 7. Switch on the profile quiz (Batch 12)
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 12: profile
+   quiz" section). It adds `profiles.about_you` (granted to `authenticated`
+   like `market_goals`), the service-role table `profile_quiz`, and two
+   `billing_settings` rows (`profile_complete_pence` = 500,
+   `profile_credit_min_real_pct` = 75; both editable on `/admin/billing`).
+   Nothing is added to `ACCESS_COLUMNS`. Until it is run, nothing is gated,
+   no pill or card is shown, and the quiz says it cannot save.
+2. **Straight after the deploy:** open `/today` as a member with no goals
+   (a fresh sign-up): it must land on `/welcome`, and Today must not load
+   until the first three questions are answered. Open it as an existing
+   member: the header pill shows their percentage and Today shows the
+   reminder card. A team member is never sent to the quiz.
+3. **`/markets?goals=1`** (in emails already sent) now lands on `/profile`.
+4. **Terms:** `/terms` states the profile-completion credit (amount and
+   the "real answers" share read from `billing_settings`, so it always says
+   what the site does; the clause disappears if `profile_complete_pence` is
+   set to 0). Check the wording against the legal drafts, section B2, and
+   replace it there if they differ.
+5. **Check the dry runs:** `/api/internal/daily-digest?dry=1` and
+   `/api/internal/sourcing?dry=1` (with the internal secret) still report
+   as before; the profile line is inside each email, never an email of its own.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -204,6 +228,8 @@ which are required, and what breaks without them.
 | `src/app/reports` | `/reports/[id]` reopens a saved report (linked from emails and PDFs); `/reports` itself redirects to My deals' Reports tab |
 | `src/app/picks` | Daily picks: every property the sourcing cron has emailed the member, with feedback and save-to-pipeline. `src/app/p/[token]` is where the email buttons land (public, token-keyed) |
 | `src/app/admin/picks` | Daily picks admin: the feedback report, the test-pick and dry-run buttons, and `responses` — every answer a member has given, with the pattern cuts and a CSV export |
+| `src/app/welcome` | The profile quiz (Batch 12): one question per screen, saved as it goes; `/profile` is the summary and editor. Rules in `src/lib/profile` (pure, tested), reads and writes in `src/lib/profile/server.ts`; the three mandatory questions gate every members-only page from `AppShell` |
+| `src/app/admin/profile` | Profile quiz completion rate, where members stop, and where "Not sure" is chosen most |
 | `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |

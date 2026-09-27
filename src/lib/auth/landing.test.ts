@@ -1,18 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { postAuthPath, welcomeReturnPath, HOME_PATH, WELCOME_PATH } from './landing.ts';
+import { postAuthPath, welcomeReturnPath, quizPathFor, HOME_PATH, WELCOME_PATH } from './landing.ts';
 
-test('no destination lands on the welcome screen', () => {
-  assert.equal(postAuthPath(null), WELCOME_PATH);
-  assert.equal(postAuthPath(undefined), WELCOME_PATH);
-  assert.equal(postAuthPath(''), WELCOME_PATH);
-  assert.equal(postAuthPath('   '), WELCOME_PATH);
+test('no destination lands on Today', () => {
+  assert.equal(postAuthPath(null), HOME_PATH);
+  assert.equal(postAuthPath(undefined), HOME_PATH);
+  assert.equal(postAuthPath(''), HOME_PATH);
+  assert.equal(postAuthPath('   '), HOME_PATH);
 });
 
-test('an explicit destination goes through the welcome screen', () => {
-  assert.equal(postAuthPath('/markets'), '/welcome?next=%2Fmarkets');
-  assert.equal(postAuthPath('/reports?q=ng2'), '/welcome?next=%2Freports%3Fq%3Dng2');
-  assert.equal(postAuthPath(HOME_PATH), '/welcome?next=%2Ftoday');
+test('an explicit destination is honoured: the quiz gates the page itself, not the sign-in', () => {
+  assert.equal(postAuthPath('/markets'), '/markets');
+  assert.equal(postAuthPath('/reports?q=ng2'), '/reports?q=ng2');
+  assert.equal(postAuthPath(HOME_PATH), HOME_PATH);
 });
 
 test('team invites and password resets are never interrupted', () => {
@@ -22,21 +22,22 @@ test('team invites and password resets are never interrupted', () => {
   assert.equal(postAuthPath('/reset-password?x=1'), '/reset-password?x=1');
 });
 
-test('auth pages and the welcome screen itself never double-wrap', () => {
-  assert.equal(postAuthPath('/welcome'), WELCOME_PATH);
-  assert.equal(postAuthPath('/welcome?next=%2Fdeals'), WELCOME_PATH);
-  assert.equal(postAuthPath('/login'), WELCOME_PATH);
-  assert.equal(postAuthPath('/signup?next=/markets'), WELCOME_PATH);
+test('auth pages and the quiz itself never loop', () => {
+  assert.equal(postAuthPath('/welcome'), HOME_PATH);
+  assert.equal(postAuthPath('/welcome?next=%2Fdeals'), HOME_PATH);
+  assert.equal(postAuthPath('/login'), HOME_PATH);
+  assert.equal(postAuthPath('/signup?next=/markets'), HOME_PATH);
 });
 
 test('open redirects are refused', () => {
   for (const bad of ['https://evil.example', '//evil.example', '/\\evil', 'javascript:alert(1)', 'deals']) {
-    assert.equal(postAuthPath(bad), WELCOME_PATH, bad);
+    assert.equal(postAuthPath(bad), HOME_PATH, bad);
     assert.equal(welcomeReturnPath(bad), HOME_PATH, bad);
+    assert.equal(quizPathFor(bad), WELCOME_PATH, bad);
   }
 });
 
-test('welcome returns the member to their destination, else home', () => {
+test('the quiz returns the member to their destination, else home', () => {
   assert.equal(HOME_PATH, '/today', 'home is the Today screen');
   assert.equal(welcomeReturnPath(null), HOME_PATH);
   assert.equal(welcomeReturnPath('/markets'), '/markets');
@@ -44,4 +45,13 @@ test('welcome returns the member to their destination, else home', () => {
   assert.equal(welcomeReturnPath('/welcome'), HOME_PATH);
   assert.equal(welcomeReturnPath('/login?redirect=/deals'), HOME_PATH);
   assert.equal(welcomeReturnPath('/signup'), HOME_PATH);
+});
+
+test('the gate sends a member to the quiz with the page they wanted as the way back', () => {
+  assert.equal(quizPathFor('/deals?kind=rent'), '/welcome?next=%2Fdeals%3Fkind%3Drent');
+  assert.equal(quizPathFor('/today'), '/welcome?next=%2Ftoday');
+  assert.equal(quizPathFor(null), WELCOME_PATH);
+  assert.equal(quizPathFor('/welcome'), WELCOME_PATH);
+  assert.equal(quizPathFor('/login'), WELCOME_PATH);
+  assert.equal(quizPathFor('/team/join?token=abc'), WELCOME_PATH, 'a join page is never a way back into the quiz');
 });

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { GOALS_EDITOR_HREF } from "@/lib/nav";
 
 /**
  * Under the Deals heading: the "N deals match" line when the member has just
@@ -17,7 +18,7 @@ export function GoalsStrip({ total, fromWelcome }: { total: number; fromWelcome:
         </p>
       )}
       <p className={`${fromWelcome ? "mt-1 " : ""}flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground`}>
-        <Link href="/markets?goals=1" className={link}>
+        <Link href={GOALS_EDITOR_HREF} className={link}>
           Edit what you’re looking for
         </Link>
         <span>

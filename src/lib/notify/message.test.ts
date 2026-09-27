@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { DealCard } from '../marketplace/grid.ts';
-import { buildDaily, changeItem, changesPhrase, teaserItem, visibleTeasers, type ChangeInput, type Section } from './message.ts';
+import { buildDaily, changeItem, changesPhrase, profileNudgeLine, teaserItem, visibleTeasers, type ChangeInput, type Section } from './message.ts';
 import { renderEmail } from './render-email.ts';
 
 const SITE = 'https://intelligence.stayful.co.uk';
@@ -180,4 +180,30 @@ test('changes the builder refuses are reported, so a sent email can close them',
   const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [], changes: [change(), change({ id: 'up', newAmount: 250_000, mergedIds: ['up2'] })], freeCutoffIso: null, unsubscribe: null })!;
   assert.deepEqual(built.changeIds, ['a1']);
   assert.deepEqual(built.refusedIds, ['up', 'up2']);
+});
+
+// ── Batch 12: the profile line ──
+
+test('the profile line rides the daily email while the profile is incomplete, and is left out once it is', () => {
+  const nudge = { percent: 60, url: `${SITE}/profile`, pence: 500 };
+  const withLine = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [], freeCutoffIso: null, unsubscribe: null, profileNudge: nudge })!;
+  const notice = withLine.message.sections.find((s) => s.key === 'notice');
+  assert.ok(notice, 'one notice section');
+  assert.equal(withLine.message.sections[withLine.message.sections.length - 1], notice, 'at the end, after the deals');
+  const textBlock = notice.blocks.find((b) => b.type === 'text');
+  assert.ok(textBlock && textBlock.type === 'text');
+  assert.equal(textBlock.text, 'Your profile is 60% done: finish it for better deals and £5 credit.');
+  const buttons = notice.blocks.find((b) => b.type === 'buttons');
+  assert.ok(buttons && buttons.type === 'buttons' && buttons.links[0].url === `${SITE}/profile`);
+  const rendered = renderEmail(withLine.message);
+  assert.match(rendered.html, /profile\?via=email/, 'the link is marked as an email click');
+  assert.match(rendered.text, /Your profile is 60% done/);
+  assert.equal(withLine.message.subject, buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [], freeCutoffIso: null, unsubscribe: null })!.message.subject, 'the subject is untouched');
+
+  const without = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [], freeCutoffIso: null, unsubscribe: null, profileNudge: null })!;
+  assert.ok(!without.message.sections.some((s) => s.key === 'notice'));
+  // The line alone never makes an email: nothing to say means no email, as before.
+  assert.equal(buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, profileNudge: nudge }), null);
+  assert.equal(profileNudgeLine({ percent: 33.4, pence: 0 }), 'Your profile is 33% done: finish it for better deals.');
+  assert.equal(profileNudgeLine({ percent: 100, pence: 750 }), 'Your profile is 100% done: finish it for better deals and £7.50 credit.');
 });

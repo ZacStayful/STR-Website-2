@@ -45,6 +45,7 @@ import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server"
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
 import { cardRangeLine, profitRange } from "../marketplace/profit-range";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
+import { profileNudgesFor } from "../profile/server";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
 import { siteUrl } from "../url";
@@ -966,6 +967,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
   };
 
+  // Batch 12: "Your profile is 60% done" for the email of anyone whose
+  // profile is not complete. One read for the whole audience; a team member
+  // is never asked, so never nudged.
+  const nudges = await profileNudgesFor(admin, affordable.filter((m) => payerIn(payers, m.id).payerId === m.id).map((m) => m.id));
+
   // ── One pick per member: the best candidate that passes, under the daily cap ──
   const picks: { member: Member; pick: Ranked; alternates: Ranked[]; candidates: number; nearMiss: boolean }[] = [];
   for (const m of affordable) {
@@ -1172,6 +1178,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       unsubscribe: section.unsubscribe,
       // Batch 10: each deal's profit as a range at the member's finance.
       figureFor: (c) => cardRangeLine(c, m.goals?.finance ?? null, settings.dealPricing.profitRangePct),
+      // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
+      profileNudge: nudges.has(m.id) ? { percent: nudges.get(m.id)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
     });
     const mail = built ? renderEmail(built.message) : null;
     if (!built || !mail) {
