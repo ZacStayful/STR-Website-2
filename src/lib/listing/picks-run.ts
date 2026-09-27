@@ -43,6 +43,7 @@ import { capDay, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { payersForAll, teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
+import { cardRangeLine, profitRange } from "../marketplace/profit-range";
 import { chargeDailyDeals } from "./daily-deals-server";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
@@ -1146,6 +1147,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // stand-in never inherits the first choice's figures.
       screening: sending.screening ?? null,
       dealId: pickDealId,
+      // Batch 10: the profit as a range at the member's finance, never one figure.
+      range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: m.goals?.finance ?? null, widths: settings.dealPricing.profitRangePct }),
     });
     // Today's 5: the pick, the rest of the member's Today in the order /today
     // draws it, and the changes on deals they track. Only the pick is charged
@@ -1165,6 +1168,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       changes: settled?.changes ?? [],
       freeCutoffIso: m.paid ? null : freeVisibility.cutoffIso,
       unsubscribe: section.unsubscribe,
+      // Batch 10: each deal's profit as a range at the member's finance.
+      figureFor: (c) => cardRangeLine(c, m.goals?.finance ?? null, settings.dealPricing.profitRangePct),
     });
     const mail = built ? renderEmail(built.message) : null;
     if (!built || !mail) {

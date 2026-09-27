@@ -5,8 +5,9 @@ import { parseMarketGoals, describeGoals } from "@/lib/market/goals";
 import { loadPicks, picksEnabled, type PickView } from "@/lib/listing/picks-server";
 import { reasonLabel } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
-import { describeDeal } from "@/lib/listing/sourcing";
-import { BAND_LABELS, screeningWorking } from "@/lib/listing/screen";
+import { BAND_LABELS } from "@/lib/listing/screen";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { profitRange, upliftTag, type ProfitRangeInput } from "@/lib/marketplace/profit-range";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
@@ -54,7 +55,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [picks, enabled, profileRes] = await Promise.all([loadPicks(user.id), picksEnabled(user.id), supabase.from("profiles").select("market_goals").eq("id", user.id).single()]);
+  const [picks, enabled, profileRes, settings] = await Promise.all([loadPicks(user.id), picksEnabled(user.id), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), getBillingSettings()]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
   const chips = goals ? describeGoals(goals) : [];
   const tab: Tab = TABS.some((t) => t.key === tabRaw) ? (tabRaw as Tab) : "all";
@@ -132,7 +133,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
         ) : (
           <ul className="space-y-3">
             {rows.map((p) => (
-              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} />
+              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={goals?.finance ?? null} widths={settings.dealPricing.profitRangePct} />
             ))}
           </ul>
         )}
@@ -141,9 +142,12 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
   );
 }
 
-function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; showReasons: boolean }) {
+function PickCard({ pick: p, tab, showReasons, finance, widths }: { pick: PickView; tab: Tab; showReasons: boolean; finance: ProfitRangeInput["finance"]; widths: ProfitRangeInput["widths"] }) {
   const l = p.listing;
   const price = l.price ? formatListingPrice(l.price) : null;
+  // Batch 10: the profit as an area-estimate range at the member's finance; the exact figure comes with a Full analysis.
+  const range = profitRange({ kind: p.kind === "rent" ? "rent" : "sale", priceAmount: l.price?.amount ?? null, pricePeriod: l.price?.period ?? null, bedrooms: l.bedrooms, grossRevenue: p.screening?.grossRevenue?.value ?? null, confidence: p.screening?.confidence ?? null, finance, widths });
+  const uplift = p.screening?.kind === "purchase" ? upliftTag(p.screening.upliftPct) : null;
   return (
     <li className="rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap gap-4">
@@ -153,15 +157,8 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
           <p className="mt-0.5 text-xs text-muted-foreground">
             {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
           </p>
-          {p.deal && <p className="mt-1 text-xs font-medium text-primary">{describeDeal(p.deal)}</p>}
-          {p.screening && p.screening.band !== "insufficient-data" && (
-            <div className="mt-1.5">
-              <p className="text-xs font-semibold text-foreground">{BAND_LABELS[p.screening.band]}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {screeningWorking(p.screening).map((w) => `${w.label} ${w.value}`).join(" · ")}
-              </p>
-            </div>
-          )}
+          {range && <p className="mt-1 text-xs font-medium text-primary">{range.label} · area estimate, {range.basis}{uplift ? ` · ${uplift}` : ""}</p>}
+          {p.screening && p.screening.band !== "insufficient-data" && <p className="mt-1.5 text-xs font-semibold text-foreground">{BAND_LABELS[p.screening.band]}</p>}
           {p.motivation && p.motivation.fired.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Why this one">
               {p.motivation.fired.slice(0, 4).map((k) => (
@@ -193,7 +190,12 @@ function PickCard({ pick: p, tab, showReasons }: { pick: PickView; tab: Tab; sho
           </form>
         )}
         {p.dealId && <Link href={`/deals/${p.dealId}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open deal sheet</Link>}
-        <Link href={`/estimate?listing=${encodeURIComponent(l.canonicalUrl)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full report</Link>
+        {/* A pick from the marketplace is analysed at the fixed price from its deal; any other stays a metered report. */}
+        {p.dealId ? (
+          <Link href={`/deals/${p.dealId}?analysis=1`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full analysis</Link>
+        ) : (
+          <Link href={`/estimate?listing=${encodeURIComponent(l.canonicalUrl)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full report</Link>
+        )}
         <a href={l.canonicalUrl} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">View on {SOURCE_LABELS[l.source]}</a>
         {p.reaction !== "yes" && (
           <form action={reactToPickAction}>

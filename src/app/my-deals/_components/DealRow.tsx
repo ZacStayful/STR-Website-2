@@ -13,6 +13,10 @@ import { photoUrlFor } from "@/lib/marketplace/queries";
 import { StageSelect } from "./StageSelect";
 import { NextStepSlot } from "./NextStepSlot";
 import { factsFromTracked } from "@/lib/pipeline/slot-facts";
+import { priceText } from "@/lib/credit/deal-pricing";
+import type { CardView } from "@/lib/marketplace/card-view";
+import { KEPT_STATUS } from "@/lib/listing/pipeline";
+import { StageReminder } from "@/components/pipeline/StageReminder";
 
 const KIND: Record<string, string> = { sale: "To buy", rent: "Rent-to-rent", str: "Short let" };
 
@@ -37,6 +41,7 @@ export function DealRow({
   focused,
   personName,
   reportAction,
+  view = null,
 }: {
   item: ViewerDeal;
   /** The marketplace deal's card facts, for a marketplace deal. */
@@ -51,6 +56,12 @@ export function DealRow({
   personName: (id: string) => string;
   /** The report button for this item (open or run), drawn by the page. */
   reportAction?: React.ReactNode;
+  /**
+   * Batch 10, marketplace deals: the profit range at the member's finance,
+   * Opened / Analysed, and prices at what this member pays
+   * (src/lib/marketplace/card-view.ts).
+   */
+  view?: CardView | null;
 }) {
   const stageInfo = pipelineStatusInfo(item.stage);
   const back = myDealsFocusPath(item.key);
@@ -70,8 +81,8 @@ export function DealRow({
     const figure = headlineFigure(card);
     href = `/deals/${card.id}`;
     photo = photoUrlFor(card, now) ?? (item.opened ? item.listing?.photo ?? null : null);
-    big = figure.big;
-    small = figure.small;
+    big = view ? (view.range?.label ?? "—") : figure.big;
+    small = view ? [`area estimate${view.range ? ` · ${view.range.basis}` : ""}`, view.uplift].filter(Boolean).join(" · ") : figure.small;
     price = priceLine(card);
     // The address rule: only for a deal the member may see the whole of.
     title = item.opened ? (item.listing?.address ?? address ?? where) : where;
@@ -87,6 +98,10 @@ export function DealRow({
   }
   const gone = card?.status === "retired";
   const openPence = card && !item.opened ? (adminUser ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder)) : null;
+  // What this member pays for the Quick look and the Full analysis (Batch 10).
+  const openLabel = view?.quickLook ? priceText(view.quickLook) : null;
+  const canAnalyse = Boolean(card && view && !view.analysed && (item.opened || card.status === "live"));
+  const pastKept = item.mine && item.stage !== KEPT_STATUS && item.stage !== "passed";
 
   return (
     <li id={item.key} className={"scroll-mt-24 rounded-xl border bg-card p-3 " + (focused ? "border-primary ring-2 ring-primary/40" : "border-border")}>
@@ -113,6 +128,8 @@ export function DealRow({
           <p className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">
             {gone && <span className="font-semibold text-destructive">Off the market</span>}
             {card && !item.opened && !gone && <span>Not opened yet</span>}
+            {view?.opened && <span className="font-semibold text-primary">Opened</span>}
+            {view?.analysed && <span className="font-semibold text-primary">Analysed</span>}
             {changed && <span>Updated {changed}</span>}
             {!item.mine && <span>· by {personName(item.userId)}</span>}
             {item.alsoTrackedBy.length > 0 && <span>· also tracked by {item.alsoTrackedBy.map(personName).join(", ")}</span>}
@@ -123,7 +140,7 @@ export function DealRow({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <div className="min-w-0 flex-1 basis-56">
           {item.mine ? (
-            <StageSelect itemKey={item.key} stage={item.stage} opened={item.opened} dealId={card?.id ?? null} dealLive={card?.status === "live"} openPence={openPence} back={back} compact />
+            <StageSelect itemKey={item.key} stage={item.stage} opened={item.opened} dealId={card?.id ?? null} dealLive={card?.status === "live"} openPence={openPence} openLabel={openLabel} back={back} compact />
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-foreground">
               <span className="h-2 w-2 rounded-full" style={{ background: stageInfo.colour }} aria-hidden="true" />
@@ -132,7 +149,17 @@ export function DealRow({
           )}
         </div>
         {reportAction}
+        {!reportAction && view?.analysed && view.reportId && card && (
+          <Link href={`/reports/${view.reportId}?back=${encodeURIComponent(back)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open full analysis</Link>
+        )}
+        {canAnalyse && card && view?.fullAnalysis && (
+          <Link href={`/deals/${card.id}?analysis=1`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Full analysis{priceText(view.fullAnalysis) ? ` · ${priceText(view.fullAnalysis)}` : ""}</Link>
+        )}
       </div>
+
+      {/* Batch 10: past Kept without an analysis, an advisory line (never a block). */}
+      {pastKept && canAnalyse && card && view?.fullAnalysis && <StageReminder itemKey={item.key} stage={item.stage} href={`/deals/${card.id}?analysis=1`} price={priceText(view.fullAnalysis)} recommendPmi={item.stage === "offer"} />}
+      {pastKept && !card && !item.reportId && item.canonicalUrl && <StageReminder itemKey={item.key} stage={item.stage} href={`/estimate?listing=${encodeURIComponent(item.canonicalUrl)}&back=${encodeURIComponent(back)}`} price="" recommendPmi={item.stage === "offer"} metered />}
 
       {/* Batch 7: the next step, for the viewer's own opened deals only. */}
       <NextStepSlot stage={item.stage} dealId={item.dealId} checkedListingId={item.checkedListingId} opened={item.opened} itemKey={item.key} mine={item.mine} facts={factsFromTracked(item, card, address)} />

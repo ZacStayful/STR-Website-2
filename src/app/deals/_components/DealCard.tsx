@@ -5,6 +5,9 @@ import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Ca
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { earlyAccessHint } from "@/lib/marketplace/early-access";
 import { PASS_REASON_GROUPS, type DealReaction } from "@/lib/marketplace/reactions";
+import { priceText } from "@/lib/credit/deal-pricing";
+import type { CardView } from "@/lib/marketplace/card-view";
+import { openDealAction } from "../actions";
 import { DealCardFrame } from "./DealCardFrame";
 
 // Re-exported for the pages that format a deal without rendering this card.
@@ -36,6 +39,13 @@ export interface DealCardProps {
   actions?: boolean;
   /** The share button for this deal, when sharing is on. */
   share?: React.ReactNode;
+  /**
+   * Batch 10: what this member sees (cardView, src/lib/marketplace/card-view.ts):
+   * the profit range at their finance, Opened / Analysed, and the Quick look
+   * and Full analysis buttons at their own price. Without it the card draws
+   * as it did before.
+   */
+  view?: CardView;
 }
 
 /**
@@ -44,7 +54,7 @@ export interface DealCardProps {
  * Never the address, the postcode or the listing link. Reused by the /deals
  * grid and, later, the Today screen and My deals.
  */
-export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction = null, earlyAccess = null, actions = true, share }: DealCardProps) {
+export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction = null, earlyAccess = null, actions = true, share, view }: DealCardProps) {
   const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
   const badges = badgesFor(card, now);
   const figure = headlineFigure(card);
@@ -71,25 +81,80 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
       </div>
       <div className="p-3">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="text-lg font-bold text-foreground">{figure.big}</p>
+          <p className="text-lg font-bold text-foreground">{view ? (view.range?.label ?? "—") : figure.big}</p>
           {price && <p className="text-sm font-semibold text-foreground">{price}</p>}
         </div>
-        <p className="text-xs text-muted-foreground">{figure.small}</p>
+        {view ? (
+          <p className="text-xs text-muted-foreground">
+            area estimate{view.range ? ` · ${view.range.basis}` : ""}
+            {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">{figure.small}</p>
+        )}
         <p className="mt-1.5 truncate text-sm font-medium text-foreground">{where || "Location on the sheet"}</p>
         {motivation.length > 0 && <p className="truncate text-xs font-medium text-primary">{motivation.join(" · ")}</p>}
         <p className="truncate text-xs text-muted-foreground">{describeType(card)}</p>
         {earlyAccess && <p className="mt-1 text-[11px] font-medium text-foreground">{earlyAccessHint(earlyAccess.freeAt, now)}</p>}
         <div className="mt-2 flex items-center justify-between gap-2">
           <span className={"text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}</span>
-          <span className={"rounded-md px-2 py-1 text-xs font-semibold " + (opened ? "bg-primary/10 text-primary" : "bg-primary text-primary-foreground")}>{open}</span>
+          {view ? (
+            <span className="flex gap-1">
+              {view.opened && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Opened</span>}
+              {view.analysed && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Analysed</span>}
+            </span>
+          ) : (
+            <span className={"rounded-md px-2 py-1 text-xs font-semibold " + (opened ? "bg-primary/10 text-primary" : "bg-primary text-primary-foreground")}>{open}</span>
+          )}
         </div>
       </div>
     </Link>
   );
-  if (!actions) return <li className="overflow-hidden rounded-xl border border-border bg-card">{body}</li>;
+  // The buttons sit outside the card's link: a button inside a link is not one.
+  const buyButtons = view ? <PriceButtons dealId={card.id} live={card.status === "live"} view={view} /> : null;
+  if (!actions)
+    return (
+      <li className="overflow-hidden rounded-xl border border-border bg-card">
+        {body}
+        {buyButtons}
+      </li>
+    );
   return (
     <DealCardFrame dealId={card.id} initialReaction={reaction} reasonGroups={PASS_REASON_GROUPS} share={share}>
       {body}
+      {buyButtons}
     </DealCardFrame>
+  );
+}
+
+/**
+ * Quick look and Full analysis, at this member's price. Unopened: Quick look
+ * is one tap (it opens and lands on the unlocked sheet); Full analysis goes
+ * to the sheet with its confirm panel open, where one confirm buys the look
+ * and the analysis together. Opened: the Full analysis at the difference.
+ * Analysed: the analysis itself.
+ */
+function PriceButtons({ dealId, live, view }: { dealId: string; live: boolean; view: CardView }) {
+  const btn = "rounded-md px-2.5 py-1.5 text-xs font-semibold";
+  if (view.analysed && view.reportId) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
+        <Link href={`/reports/${view.reportId}?back=${encodeURIComponent(`/deals/${dealId}`)}`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Open full analysis</Link>
+      </div>
+    );
+  }
+  const full = view.fullAnalysis ? priceText(view.fullAnalysis) : "";
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
+      {!view.opened && live && view.quickLook && (
+        <form action={openDealAction}>
+          <input type="hidden" name="id" value={dealId} />
+          <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
+        </form>
+      )}
+      {(view.opened || live) && (
+        <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}</Link>
+      )}
+    </div>
   );
 }

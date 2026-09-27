@@ -8,6 +8,7 @@ import type { Beds } from '../market/filters.ts';
 import type { ListingSource } from '../listing/types.ts';
 import type { SourcingKind } from '../listing/sourcing.ts';
 import type { ConfirmedVia, DealStatus } from './types.ts';
+import { profitRange, upliftTag } from './profit-range.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
 export type DealSort = 'profit' | 'uplift' | 'newest' | 'price';
@@ -129,12 +130,14 @@ export const PRIVATE_DEAL_COLUMNS: readonly string[] = ['canonical_url', 'addres
 
 /**
  * What a query that renders a DealCard selects: the public columns plus the
- * card's motivation line inputs and the early-access clock. None of the extra
- * three holds an address; the deal page already shows motivation to every
+ * card's motivation line inputs, the early-access clock, and the screening's
+ * short-let revenue and confidence (two JSON paths: the inputs of the profit
+ * range, src/lib/marketplace/profit-range.ts). None of these holds an
+ * address; the deal page already shows motivation and the screening to every
  * member. Kept separate from PUBLIC_DEAL_COLUMNS so the cached area teaser
  * (up to 2,000 rows) does not carry them.
  */
-export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since`;
+export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence`;
 
 export interface DealCard {
   id: string;
@@ -166,6 +169,10 @@ export interface DealCard {
   price_history?: unknown;
   /** CARD_COLUMNS only: when the deal went live, which starts the early-access window. */
   live_since?: string | null;
+  /** CARD_COLUMNS only: the screening's short-let revenue for the area and size (£/yr, as text from the JSON path). */
+  screening_gross?: string | number | null;
+  /** CARD_COLUMNS only: the screening's confidence: high | medium | low. */
+  screening_confidence?: string | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -212,7 +219,8 @@ export function describeType(card: Pick<DealCard, 'bedrooms' | 'raw_type' | 'ten
   return card.tenure ? (head ? `${head} · ${card.tenure}` : card.tenure) : head;
 }
 
-const gbpWhole = (n: number): string => `£${Math.round(n).toLocaleString('en-GB')}`;
+/** Sign-aware: "−£500", never "£-500". */
+const gbpWhole = (n: number): string => `${Math.round(n) < 0 ? '−' : ''}£${Math.abs(Math.round(n)).toLocaleString('en-GB')}`;
 
 /** "£250,000" or "£1,200 pcm". */
 export function priceLine(card: Pick<DealCard, 'price_amount' | 'price_period'>): string | null {
@@ -226,7 +234,7 @@ export function headlineFigure(card: Pick<DealCard, 'kind' | 'annual_profit' | '
   const profit = card.annual_profit === null ? null : Number(card.annual_profit);
   if (card.kind === 'rent') return { big: profit === null ? '—' : `${gbpWhole(profit)}/yr`, small: 'profit after rent' };
   const uplift = card.uplift_pct === null ? null : Number(card.uplift_pct);
-  return { big: uplift === null ? '—' : `+${Math.round(uplift)}%`, small: profit === null ? 'over a long let' : `${gbpWhole(profit)}/yr over a long let` };
+  return { big: uplift === null ? '—' : `${Math.round(uplift) < 0 ? '−' : '+'}${Math.abs(Math.round(uplift))}%`, small: profit === null ? 'over a long let' : `${gbpWhole(profit)}/yr over a long let` };
 }
 
 // ── The Market Explorer's "deals on the market here" block ──
@@ -257,9 +265,16 @@ export interface AreaDealsSummary {
   top: AreaDealView[];
 }
 
-export function areaDealView(card: DealCard, photoUrl: string | null, now: Date = new Date()): AreaDealView {
+/**
+ * `widths` (billing_settings.profit_range_pct) turns the figure into the
+ * profit range at the house finance (Batch 10): the area block and the
+ * public teaser show nobody's own finance. Without it, the old headline.
+ */
+export function areaDealView(card: DealCard, photoUrl: string | null, now: Date = new Date(), widths?: { high: number; medium: number; low: number }): AreaDealView {
   const badges = badgesFor(card, now);
-  const figure = headlineFigure(card);
+  const range = widths ? profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths }) : null;
+  const uplift = card.kind === 'sale' ? upliftTag(card.uplift_pct) : null;
+  const figure = widths ? { big: range?.label ?? '—', small: [`area estimate${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') } : headlineFigure(card);
   return {
     id: card.id,
     kind: card.kind,

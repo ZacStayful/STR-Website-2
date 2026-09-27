@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dealAnalysisInput, fullPostcode, inputKeyFor } from './deal-input.ts';
+import { dealAnalysisInput, dealListingPrice, fullPostcode, inputKeyFor } from './deal-input.ts';
 import type { ListingSnapshot } from '../listing/types.ts';
 
 function snap(over: Partial<ListingSnapshot> = {}): ListingSnapshot {
@@ -89,4 +89,12 @@ test('a rental needs its rent; a weekly rent becomes monthly', () => {
     assert.equal(weekly.input.rentPcm, 1300);
     assert.equal(weekly.input.askingPrice, null);
   }
+});
+
+test('a deal row price as a listing price', () => {
+  assert.deepEqual(dealListingPrice('185000', 'total'), { amount: 185_000, period: 'total' });
+  assert.deepEqual(dealListingPrice(1200, 'pcm'), { amount: 1200, period: 'pcm' });
+  assert.equal(dealListingPrice(null, 'total'), null);
+  assert.equal(dealListingPrice(100, 'night'), null);
+  assert.equal(dealListingPrice(0, 'total'), null);
 });

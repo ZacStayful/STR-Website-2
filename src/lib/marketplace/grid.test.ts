@@ -94,3 +94,9 @@ test('areaDealView carries nothing private and is fully formatted', () => {
   assert.equal(v.photoUrl, '/api/deals/photo?id=d1');
   for (const k of Object.keys(v)) assert.ok(!['canonical_url', 'address', 'postcode', 'photo', 'photos'].includes(k), `private key ${k} leaked`);
 });
+
+test('negative figures read with a proper minus, never "£-500" or "+-5%"', () => {
+  assert.deepEqual(headlineFigure({ kind: 'rent', annual_profit: -500, uplift_pct: null }), { big: '−£500/yr', small: 'profit after rent' });
+  assert.equal(headlineFigure({ kind: 'sale', annual_profit: -1200, uplift_pct: -5 }).big, '−5%');
+  assert.equal(headlineFigure({ kind: 'sale', annual_profit: -1200, uplift_pct: -5 }).small, '−£1,200/yr over a long let');
+});

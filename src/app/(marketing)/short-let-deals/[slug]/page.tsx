@@ -6,7 +6,11 @@ import { areaMetaForSlug } from "@/lib/market/areas";
 import { teaserForArea, photoUrlFor } from "@/lib/marketplace/queries";
 import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { describeType } from "@/lib/marketplace/grid";
-import { headlineFigure, priceLine } from "@/app/deals/_components/DealCard";
+import { priceLine } from "@/app/deals/_components/DealCard";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
+import { ladderRangeText } from "@/lib/marketplace/ladder";
+import { formatPence } from "@/lib/credit/deal-pricing";
 import { siteUrl } from "@/lib/url";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +41,8 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
   } = await supabase.auth.getUser();
   if (user) redirect(`/deals?areas=${encodeURIComponent(meta.code)}`);
   // Visitors see the delayed set: never more than a free member would.
-  const teaser = await teaserForArea(meta.code, (await publicDealVisibility()).hourCutoffIso);
+  const [teaser, settings] = await Promise.all([teaserForArea(meta.code, (await publicDealVisibility()).hourCutoffIso), getBillingSettings()]);
+  const widths = settings.dealPricing.profitRangePct;
   const now = new Date();
   const signup = `/signup?next=${encodeURIComponent(`/deals?areas=${meta.code}`)}`;
   return (
@@ -56,7 +61,9 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
       {teaser && teaser.top.length > 0 ? (
         <ul className="mt-8 grid gap-4 sm:grid-cols-3">
           {teaser.top.map((card) => {
-            const fig = headlineFigure(card);
+            // Batch 10: the profit as an area-estimate range at the house finance, never one figure.
+            const range = profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths });
+            const uplift = card.kind === "sale" ? upliftTag(card.uplift_pct) : null;
             const photo = photoUrlFor(card, now);
             return (
               <li key={card.id} className="overflow-hidden rounded-xl border border-[#e4e7dc] bg-white">
@@ -68,7 +75,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
                   <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
                 </div>
                 <div className="p-3">
-                  <p className="text-lg font-bold text-[#2e3d2b]">{fig.big} <span className="text-xs font-normal text-[#7a8274]">{fig.small}</span></p>
+                  <p className="text-lg font-bold text-[#2e3d2b]">{range?.label ?? "—"} <span className="text-xs font-normal text-[#7a8274]">area estimate{uplift ? ` · ${uplift}` : ""}</span></p>
                   <p className="mt-1 text-sm text-[#2e3d2b]">{[priceLine(card), describeType(card)].filter(Boolean).join(" · ")}</p>
                   <p className="text-xs text-[#7a8274]">{[card.town, card.outcode].filter(Boolean).join(" · ")}</p>
                 </div>
@@ -82,7 +89,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
 
       <section className="mt-10 rounded-2xl bg-[#2e3d2b] p-6 text-white">
         <h2 className="text-xl font-bold">See every deal in {meta.name}, with the working</h2>
-        <p className="mt-2 text-sm text-[#d7e0d0]">A free account shows the full grid with the income figures, the uplift over a long let and the profit after rent. Opening a deal for its address, photos and listing link costs a few pence of credit, and every new member starts with £20.</p>
+        <p className="mt-2 text-sm text-[#d7e0d0]">A free account shows the full grid with the income figures, the uplift over a long let and the profit after rent. A Quick look at a deal for its address, photos and listing link is {ladderRangeText(settings.dealOpenLadder)}, a Full analysis of the property {formatPence(settings.dealPricing.fullAnalysisPence)} on a plan, and every new member starts with £20.</p>
         <p className="mt-4 flex flex-wrap gap-2">
           <Link href={signup} className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-[#2e3d2b]">Start free</Link>
           <Link href={`/login?redirect=${encodeURIComponent(`/deals?areas=${meta.code}`)}`} className="rounded-md border border-white/40 px-4 py-2 text-sm font-medium text-white">Sign in</Link>

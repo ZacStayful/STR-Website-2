@@ -469,6 +469,12 @@ export interface PickEmailInput {
   screening?: Screening | null;
   /** The marketplace deal this pick was drawn from, when it came from the pool: the email links to its sheet. */
   dealId?: string | null;
+  /**
+   * Batch 10: the profit as an area-estimate range at the member's finance
+   * (src/lib/marketplace/profit-range.ts). When given, the email shows it in
+   * place of the single figures, and the Full analysis in place of the report.
+   */
+  range?: { label: string; basis: string } | null;
 }
 
 export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null } | null) {
@@ -537,15 +543,17 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   // The subject leads on the screening where there is one: "42% above a long let"
   // is the thing the member is deciding on, and it keeps the subject line and the
   // body telling one story rather than two.
-  const scHeadline = sc ? (sc.kind === 'purchase' ? `${sc.upliftPct}% above a long let` : `£${Math.round(sc.annualProfit!).toLocaleString('en-GB')}/yr profit`) : null;
-  const figure = scHeadline ?? (pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
+  const range = input.range ?? null;
+  const scHeadline = sc ? (sc.kind === 'purchase' ? `${sc.upliftPct}% above a long let` : range ? `${range.label} profit` : `£${Math.round(sc.annualProfit!).toLocaleString('en-GB')}/yr profit`) : null;
+  const figure = scHeadline ?? (range ? range.label : pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
   const what = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}`;
   const subject = `Today's pick ${kindWord}: ${what}${figure ? ` · ${figure}` : ''}`;
   const headline = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}${kindWord} in ${pick.areaName}${figure ? `, ${figure}` : ''}`;
-  const work = sc ? screeningWorking(sc) : [];
-  const scVerdict = sc ? `${BAND_LABELS[sc.band]} — ${sc.reason}` : null;
+  // With a range, the single figures stay for the Full analysis: the band, not its £ working.
+  const work = sc && !range ? screeningWorking(sc) : [];
+  const scVerdict = sc ? (range ? BAND_LABELS[sc.band] : `${BAND_LABELS[sc.band]} — ${sc.reason}`) : null;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
-  const dealLine = pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
+  const dealLine = range ? `${range.label} · area estimate, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
   const motivationLine = describeMotivation(pick.motivation ?? null);
   // Said first and said plainly. A near miss presented as a match is a small
   // lie that costs more trust than the empty day it was avoiding.
@@ -581,13 +589,14 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
     type: 'buttons',
     links: [
       { label: 'Save to my pipeline', url: links.save, primary: !links.deal },
-      { label: 'Full report', url: links.report },
+      // A pool pick is analysed at the fixed price from its deal; any other listing stays a metered report.
+      range && links.deal ? { label: 'Full analysis', url: `${links.deal}?analysis=1` } : { label: 'Full report', url: links.report },
       { label: 'View listing', url: links.listing },
       { label: basis === 'goals' ? 'Edit my filter' : 'Set my filter', url: links.filter },
       { label: 'See today’s 5', url: links.today },
     ],
   });
-  blocks.push({ type: 'text', text: `Figures are area averages for the size of property; run a full report before acting on one.${costNote}`, tone: 'muted' });
+  blocks.push({ type: 'text', text: range ? `Profit is an area estimate for the size of property, as a range; a Full analysis gives the exact figures for this property.${costNote}` : `Figures are area averages for the size of property; run a full report before acting on one.${costNote}`, tone: 'muted' });
   blocks.push({ type: 'buttons', links: [{ label: 'All your picks', url: links.picks }] });
 
   return {

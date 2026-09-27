@@ -49,3 +49,9 @@ test('prices and bands are described for people', () => {
   assert.equal(describeBand(DEFAULT_DEAL_OPEN_LADDER, 1), '£15k–£25k');
   assert.equal(describeBand(DEFAULT_DEAL_OPEN_LADDER, 4), '£60k+');
 });
+
+test('the Quick look price range in words', async () => {
+  const { ladderRangeText, DEFAULT_DEAL_OPEN_LADDER: ladder } = await import('./ladder.ts');
+  assert.equal(ladderRangeText(ladder), '25p to £1');
+  assert.equal(ladderRangeText([{ upTo: null, pence: 50 }]), '50p');
+});

@@ -34,7 +34,7 @@ export type WentReason = 'sold' | 'under_offer' | 'let_agreed';
 export const WENT_REASONS: readonly WentReason[] = ['sold', 'under_offer', 'let_agreed'];
 
 /** A deal that went: the grid's public columns plus when and how it went. Nothing private. */
-export type WentDeal = Pick<DealCard, 'id' | 'kind' | 'postcode_area' | 'town' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'annual_profit' | 'uplift_pct' | 'listed_date' | 'first_seen_at' | 'live_since'> & {
+export type WentDeal = Pick<DealCard, 'id' | 'kind' | 'postcode_area' | 'town' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'annual_profit' | 'uplift_pct' | 'listed_date' | 'first_seen_at' | 'live_since' | 'screening_gross' | 'screening_confidence'> & {
   retired_reason: WentReason;
   retired_at: string;
 };
@@ -125,9 +125,11 @@ export function speedLine(d: Pick<WentDeal, 'retired_reason' | 'retired_at' | 'l
   return `${word} within ${days} day${days === 1 ? '' : 's'} of ${listed !== null ? 'listing' : 'reaching Stayful'}`;
 }
 
-function missedItem(d: WentDeal): Item {
+function missedItem(d: WentDeal, figureFor?: (d: WentDeal) => string | null): Item {
   const f = headlineFigure({ kind: d.kind, annual_profit: num(d.annual_profit), uplift_pct: num(d.uplift_pct) });
-  const title = f.big === '—' ? (d.kind === 'rent' ? 'Rent-to-rent' : 'To buy') : `${f.big} · ${f.small}`;
+  // Batch 10: the profit as the member's area-estimate range when the run gives one.
+  const ranged = figureFor ? figureFor(d) : undefined;
+  const title = ranged !== undefined ? (ranged ?? (d.kind === 'rent' ? 'Rent-to-rent' : 'To buy')) : f.big === '—' ? (d.kind === 'rent' ? 'Rent-to-rent' : 'To buy') : `${f.big} · ${f.small}`;
   const where = [placeOf(d), describeType({ bedrooms: d.bedrooms, raw_type: d.raw_type, tenure: d.tenure })].filter(Boolean).join(' · ');
   return { title, lines: [where, speedLine(d)].filter((x) => x.length > 0), link: null };
 }
@@ -143,11 +145,11 @@ function delayWords(hours: number): string {
   return hours % 24 === 0 ? plural(hours / 24, 'day') : plural(hours, 'hour');
 }
 
-export function missedSection(m: Missed, opts: { siteUrl: string; since: string; now: Date; freeDelayHours: number | null }): Section | null {
+export function missedSection(m: Missed, opts: { siteUrl: string; since: string; now: Date; freeDelayHours: number | null; figureFor?: (d: WentDeal) => string | null }): Section | null {
   if (m.total === 0) return null;
   const base = opts.siteUrl.replace(/\/$/, '');
   const blocks: Section['blocks'] = [];
-  if (m.listed.length > 0) blocks.push({ type: 'items', items: m.listed.map(missedItem) });
+  if (m.listed.length > 0) blocks.push({ type: 'items', items: m.listed.map((d) => missedItem(d, opts.figureFor)) });
   blocks.push({ type: 'text', text: `${plural(m.total, 'deal')} matching you went ${windowWords(opts.since, opts.now)}.`, tone: 'strong' });
   if (opts.freeDelayHours !== null && m.earlyAccess > 0) {
     blocks.push({ type: 'text', text: `${m.earlyAccess} of these ${m.earlyAccess === 1 ? 'was' : 'were'} in early access — paid members saw ${m.earlyAccess === 1 ? 'it' : 'them'} ${delayWords(opts.freeDelayHours)} before you could.`, tone: 'callout' });
@@ -240,6 +242,8 @@ export interface WeekInput {
   /** Section 3, or null when "Weekly area alerts" is off. */
   areas: readonly AlertChange[] | null;
   unsubscribe: Unsubscribe | null;
+  /** Batch 10: a missed deal's profit as the member's area-estimate range. */
+  figureFor?: (d: WentDeal) => string | null;
 }
 
 export interface BuiltWeek {
@@ -248,7 +252,7 @@ export interface BuiltWeek {
 }
 
 export function buildYourWeek(input: WeekInput): BuiltWeek | null {
-  const missed = input.missed ? missedSection(input.missed, { siteUrl: input.siteUrl, since: input.since, now: input.now, freeDelayHours: input.freeDelayHours }) : null;
+  const missed = input.missed ? missedSection(input.missed, { siteUrl: input.siteUrl, since: input.since, now: input.now, freeDelayHours: input.freeDelayHours, figureFor: input.figureFor }) : null;
   const areas = input.areas ? areasSection(input.areas, input.siteUrl) : null;
   // The recap rides along; it never sends the email on its own.
   if (!missed && !areas) return null;

@@ -2,38 +2,53 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { payerFor, personName, profileNames } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { getCreditSummary } from "@/lib/credit/summary";
+import { quoterFor } from "@/lib/credit/quote-server";
+import { formatPence, priceText } from "@/lib/credit/deal-pricing";
 import { getAreaCards } from "@/lib/market/cached";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
-import { BAND_LABELS, parseScreening, screeningWorking } from "@/lib/listing/screen";
+import { BAND_LABELS, parseScreening } from "@/lib/listing/screen";
 import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type Deal } from "@/lib/listing/deal";
 import { areaRevenueFor } from "@/lib/listing/sourcing";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
-import { dealSheet } from "@/lib/marketplace/open";
+import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
-import { formatOpenPrice, openPricePence } from "@/lib/marketplace/ladder";
+import { openPricePence } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
-import { headlineFigure, priceLine } from "../_components/DealCard";
+import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
+import { priceLine } from "../_components/DealCard";
 import { openDealAction } from "../actions";
 import { dealTrackingFor } from "@/lib/listing/tracked-server";
 import { myDealsFocusPath } from "@/lib/listing/return-path";
-import { formatQuote, reportQuotePence } from "@/lib/credit/report-quote";
+import { KEPT_STATUS } from "@/lib/listing/pipeline";
+import { readableReportFor } from "@/lib/analysis/deal-analysis";
+import { analysisQuote } from "@/lib/analysis/deal-analysis-rules";
+import { dealAnalysisInput, dealListingPrice } from "@/lib/analysis/deal-input";
+import { enhancedEnabled } from "@/lib/analysis/run";
 import { StageSelect } from "@/app/my-deals/_components/StageSelect";
 import { NextStepSlot } from "@/app/my-deals/_components/NextStepSlot";
 import { factsFromCard } from "@/lib/pipeline/slot-facts";
+import { StageReminder } from "@/components/pipeline/StageReminder";
 import { ShareDealButton } from "../_components/ShareDealButton";
+import { AnalysisPanel } from "../_components/AnalysisPanel";
+import { AnalysisPreview } from "../_components/AnalysisPreview";
+import { BasicVsDetailed } from "../_components/BasicVsDetailed";
 
 export const metadata: Metadata = { title: "Deal — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 // An open may read the listing page live before charging.
 export const maxDuration = 60;
+
+/** The sample report behind "See a sample report" (decided 27 Sep 2026). */
+const SAMPLE_REPORT = "/demo-report?demo=manchester";
 
 const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 
@@ -49,9 +64,9 @@ const MESSAGES: Record<string, { text: string; tone: "ok" | "warn" }> = {
   stage_failed: { text: "Unlocked, but we couldn’t move it to that stage just now. Choose it again below.", tone: "warn" },
 };
 
-export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string }> }) {
+export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string; analysis?: string }> }) {
   const { id } = await params;
-  const { msg, need, have } = await searchParams;
+  const { msg, analysis } = await searchParams;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
   const supabase = await createSupabaseServerClient();
   const {
@@ -67,17 +82,17 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const sheet = await dealSheet(id, payerId, adminUser, visibility);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
-  const [settings, credit, cards, profileRes] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single()]);
+  const [settings, credit, cards, profileRes, quoter] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
+  const pricing = quoter.pricing;
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
   const badges = badgesFor(card, now);
-  const figure = headlineFigure(card);
   const price = priceLine(card);
   const area = deal.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
   const areaCard = deal.postcode_area ? cards.find((c) => c.code === deal.postcode_area) ?? null : null;
   const profit = deal.annual_profit === null ? null : Number(deal.annual_profit);
-  const pence = adminUser ? 0 : openPricePence(profit, settings.dealOpenLadder);
+  const ladderPence = openPricePence(profit, settings.dealOpenLadder);
   const screening = parseScreening(deal.screening);
   const motivation = parseMotivation(deal.motivation);
   const history = parseHistory(deal.price_history);
@@ -85,30 +100,62 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const insufficient = msg === "insufficient_credit";
   const where = [deal.town, area?.name && area.name !== deal.town ? area.name : null, deal.outcode].filter(Boolean).join(" · ");
 
-  // Batch 5 (My deals): this member's stage for the deal, and the full report
-  // to open instead of running (and paying for) another one. A report counts
-  // only if it still exists and this member may read it (Team reports' rule).
-  const tracking = await dealTrackingFor({ userId: user.id, deal });
-  let report: { id: string; userId: string } | null = null;
-  if (priv && tracking.reportCandidates.length > 0) {
-    // Ids come from pipeline rows in scope: a handful for one listing.
-    const { data: readable } = await supabase.from("saved_searches").select("id").in("id", tracking.reportCandidates.map((c) => c.id));
-    const ok = new Set(((readable ?? []) as { id: string }[]).map((r) => r.id));
-    report = tracking.reportCandidates.find((c) => ok.has(c.id)) ?? null;
-  }
-  const reportBy = report && report.userId !== user.id ? personName((await profileNames([report.userId])).get(report.userId)) : null;
-  const quote = priv && !report ? await reportQuotePence(payerId, adminUser) : null;
-  const dealPath = `/deals/${deal.id}`;
+  // The profit as an area-estimate range at the member's finance (Batch 10):
+  // the exact figure for the property is what a Full analysis is for.
+  const gross = screening?.grossRevenue?.value ?? null;
+  const range = profitRange({ kind: deal.kind, priceAmount: deal.price_amount, pricePeriod: deal.price_period, bedrooms: deal.bedrooms, grossRevenue: gross, confidence: screening?.confidence ?? null, finance: goals?.finance ?? null, widths: pricing.profitRangePct });
+  const pct = range?.pct ?? 25;
+  const uplift = deal.kind === "sale" ? upliftTag(deal.uplift_pct) : null;
 
-  // The purchase / rent-to-rent model at the member's own finance settings when they have set them.
+  // Batch 5 (My deals): this member's stage for the deal. The analysis to
+  // open instead of buying (or running) another: theirs first, then the
+  // team's, only if it still exists and they may read it.
+  const tracking = await dealTrackingFor({ userId: user.id, deal });
+  const report = priv ? await readableReportFor(supabase, user.id, deal.id, tracking.reportCandidates) : null;
+  const reportBy = report && report.userId !== user.id ? personName((await profileNames([report.userId])).get(report.userId)) : null;
+  const dealPath = `/deals/${deal.id}`;
+  const opened = Boolean(priv);
+  const openPaid = priv && priv.open.id !== "admin" ? Number(priv.open.charged_base_pence) || 0 : 0;
+
+  // Can a Full analysis run on this listing (a full postcode; a rental's
+  // rent)? Worked out exactly as the purchase does, before anything is shown
+  // as buyable. The private listing is read here only to decide; nothing of
+  // it reaches an unopened page.
+  let blocked: string | null = null;
+  if (!report) {
+    let snapshot = priv ? { ...priv.snapshot, postcode: priv.postcode ?? priv.snapshot.postcode, displayAddress: priv.address ?? priv.snapshot.displayAddress } : null;
+    if (!snapshot) {
+      const found = await dealListingFor(createAdminClient(), deal).catch(() => null);
+      if (found?.snapshot) snapshot = { ...found.snapshot, postcode: found.listing?.postcode ?? found.snapshot.postcode, displayAddress: found.listing?.address ?? found.snapshot.displayAddress };
+    }
+    const check = snapshot ? dealAnalysisInput(snapshot, { canonicalUrl: deal.canonical_url, kind: deal.kind, price: dealListingPrice(deal.price_amount, deal.price_period), withPmi: false, checkedListingId: null }) : null;
+    blocked = !check ? "We couldn’t read this listing well enough to analyse it. You can still take a Quick look." : check.ok ? null : check.message;
+  }
+  const quoteFor = (withPmi: boolean) => analysisQuote({ admin: adminUser, pricing, opened, openPaidBasePence: openPaid, openPricePence: ladderPence, withPmi }).due.purchaseBasePence;
+  const analysisPrice = { without: quoter.label(quoteFor(false)), withPmi: quoter.label(quoteFor(true)) };
+  const pmiLabel = enhancedEnabled(true) ? quoter.label(adminUser ? 0 : pricing.pmiAddonPence) : null;
+  const quickLook = quoter.label(adminUser ? 0 : ladderPence);
+  const canBuy = !report && (opened || deal.status === "live");
+  const stagePastKept = tracking.tracked && tracking.stage !== KEPT_STATUS && tracking.stage !== "passed";
+
+  // The purchase / rent-to-rent model at the member's own finance settings
+  // when they have set them, on the screening's revenue for the area and
+  // size (the same figure as the range above). Anything that rests on that
+  // income is shown as a range; the price, the cash needed, the mortgage and
+  // the stamp duty are the listing's and the member's own, so stay exact.
   let model: Deal | null = null;
-  if (deal.price_amount !== null && areaCard) {
-    const rev = areaRevenueFor({ byBedrooms: areaCard.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: areaCard.headline.grossRevenue, adr: areaCard.headline.adr } }, deal.bedrooms);
+  if (deal.price_amount !== null) {
+    const rev = gross !== null ? { grossRevenue: gross, adr: 0 } : areaCard ? areaRevenueFor({ byBedrooms: areaCard.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: areaCard.headline.grossRevenue, adr: areaCard.headline.adr } }, deal.bedrooms) : null;
     if (rev) {
       const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(goals?.finance ?? {}) } };
       model = deal.kind === "rent" ? rentToRentDeal(Number(deal.price_amount), base) : purchaseDeal(Number(deal.price_amount), base);
     }
   }
+  const pctRange = (v: number) => {
+    const [lo, hi] = spread(v, pct, 0.1);
+    return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
+  };
+  const gbpRange = (v: number, step = 10) => moneyRange(spread(v, pct, step));
 
   return (
     <main className="min-h-screen bg-background">
@@ -122,8 +169,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         {message && <p className={"mb-4 rounded-md border p-3 text-sm " + (message.tone === "ok" ? "border-primary/40 bg-primary/10 text-foreground" : "border-destructive/40 bg-destructive/10 text-destructive")}>{message.text}</p>}
         {insufficient && (
           <section className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
-            <p className="font-semibold text-destructive">Not enough credit to open this deal.</p>
-            <p className="mt-1 text-muted-foreground">Opening costs {formatOpenPrice(Number(need ?? pence))}; you have {formatOpenPrice(Number(have ?? 0))} of credit. Top up or upgrade and you’ll come straight back here.</p>
+            <p className="font-semibold text-destructive">Not enough credit for a Quick look.</p>
+            <p className="mt-1 text-muted-foreground">
+              A Quick look at this deal is {formatPence(ladderPence)} on a plan{credit ? `; your balance is ${formatPence(Math.max(0, credit.totalPence))}` : ""}. Top up or upgrade and you’ll come straight back here.
+            </p>
             <p className="mt-3 flex flex-wrap gap-2">
               <Link href={`/account/billing?redirect=${encodeURIComponent(`/deals/${id}`)}#topup`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Top up</Link>
               <Link href={`/upgrade?redirect=${encodeURIComponent(`/deals/${id}`)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See plans</Link>
@@ -154,60 +203,76 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               </div>
               <div className="p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-2xl font-bold text-foreground">{figure.big} <span className="text-sm font-normal text-muted-foreground">{figure.small}</span></p>
+                  <p className="text-2xl font-bold text-foreground">
+                    {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">area estimate{range ? ` · ${range.basis}` : ""}</span>
+                  </p>
                   {price && <p className="text-lg font-semibold text-foreground">{price}</p>}
                 </div>
+                {uplift && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
                 <p className="mt-2 text-sm font-medium text-foreground">{priv ? (priv.address ?? where) : where}</p>
                 <p className="text-xs text-muted-foreground">{describeType(card)}{priv?.postcode ? ` · ${priv.postcode}` : ""}</p>
                 <p className={"mt-1 text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}{deal.listed_date ? ` · listed ${new Date(deal.listed_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
+                {(opened || report) && (
+                  <p className="mt-2 flex flex-wrap gap-1">
+                    {opened && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Opened</span>}
+                    {report && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">Analysed</span>}
+                  </p>
+                )}
 
                 <div className="mt-4 flex flex-wrap items-end gap-2 border-t border-border pt-3">
                   <div className="min-w-0 flex-1 basis-56">
-                    <StageSelect key={tracking.stage} itemKey={`d-${deal.id}`} stage={tracking.stage} opened={Boolean(priv)} dealId={deal.id} dealLive={deal.status === "live"} openPence={pence} back={dealPath} untracked={!tracking.tracked} />
+                    <StageSelect key={tracking.stage} itemKey={`d-${deal.id}`} stage={tracking.stage} opened={Boolean(priv)} dealId={deal.id} dealLive={deal.status === "live"} openPence={adminUser ? 0 : ladderPence} openLabel={priceText(quickLook)} back={dealPath} untracked={!tracking.tracked} />
                   </div>
                   {tracking.onMyDeals && (
                     <Link href={myDealsFocusPath(`d-${deal.id}`)} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See in My deals</Link>
                   )}
                 </div>
-                {/* Batch 7: the next step, for the member's own opened deal only. */}
-                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" />
+                {/* Batch 10: past Kept without a Full analysis, an advisory line (never a block). */}
+                {stagePastKept && canBuy && !blocked && <StageReminder itemKey={`d-${deal.id}`} stage={tracking.stage} href={`${dealPath}?analysis=1`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
+                {/* Batch 7: the next step, for the member's own opened deal only. At Kept it leads with the Full analysis. */}
+                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1`, note: "The exact figures for this property before you contact the agent." } : null} />
 
                 {priv ? (
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <a href={priv.listingUrl} target="_blank" rel="noopener noreferrer" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">View on {SOURCE_LABELS[deal.source]}</a>
+                    <a href={priv.listingUrl} target="_blank" rel="noopener noreferrer" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">View on {SOURCE_LABELS[deal.source]}</a>
                     {report ? (
-                      <Link href={`/reports/${report.id}?back=${encodeURIComponent(dealPath)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open full report{reportBy ? ` · ${reportBy}’s` : ""}</Link>
-                    ) : (
-                      // The deal's own URL, so the report links back to this deal; `back` brings the member here after.
-                      <Link href={`/estimate?listing=${encodeURIComponent(deal.canonical_url)}&back=${encodeURIComponent(dealPath)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Full report{quote !== null ? ` · about ${formatQuote(quote)}` : ""}</Link>
-                    )}
+                      <Link href={`/reports/${report.id}?back=${encodeURIComponent(dealPath)}`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Open full analysis{reportBy ? ` · ${reportBy}’s` : ""}</Link>
+                    ) : null}
                     <Link href={`/deals?kind=${deal.kind}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
-                    {priv.open.id !== "admin" && <span className="text-[11px] text-muted-foreground">Opened {new Date(priv.open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}{Number(priv.open.charged_base_pence) > 0 ? ` for ${formatOpenPrice(Number(priv.open.charged_base_pence))}` : ""}</span>}
+                    {priv.open.id !== "admin" && <span className="text-[11px] text-muted-foreground">Opened {new Date(priv.open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
                   </div>
                 ) : deal.status === "live" ? (
-                  <form action={openDealAction} className="mt-4 rounded-lg border border-border bg-muted/40 p-3">
-                    <input type="hidden" name="id" value={deal.id} />
-                    <p className="text-sm font-semibold text-foreground">Open the deal sheet · {formatOpenPrice(pence)}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Address, postcode, photos and the {SOURCE_LABELS[deal.source]} link. We check the listing is still on the market before charging, and once opened it’s yours for good.{credit ? ` You have ${formatOpenPrice(Math.max(0, Math.round(credit.spendableBasePence)))} of credit.` : ""}</p>
-                    <button type="submit" className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Open for {formatOpenPrice(pence)}</button>
-                  </form>
+                  <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3">
+                    <p className="text-sm font-semibold text-foreground">Take a Quick look, or get the Full analysis</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      A Quick look opens the address, postcode, photos and the {SOURCE_LABELS[deal.source]} link. We check it is still on the market before charging, and once opened it’s yours for good. A Full analysis includes the Quick look.
+                    </p>
+                    <form action={openDealAction} className="mt-2">
+                      <input type="hidden" name="id" value={deal.id} />
+                      <button type="submit" className="rounded-md border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted">Quick look{priceText(quickLook) ? ` · ${priceText(quickLook)}` : ""}</button>
+                    </form>
+                  </div>
                 ) : (
                   <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : "This deal is off the market and cannot be opened."}</p>
                 )}
+                {canBuy && (
+                  <div className="mt-3">
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} />
+                  </div>
+                )}
+                {report && pmiLabel && <p className="mt-2 text-[11px] text-muted-foreground">No second opinion on it yet? Add one from PMI on the report · {priceText(pmiLabel) || "free"}.</p>}
               </div>
             </div>
 
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{BAND_LABELS[screening.band]}</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{screening.reason}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Our screening of the area and size, as ranges. A Full analysis works the figures out for this property.</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
-                  {screeningWorking(screening).map((w) => (
-                    <div key={w.label}>
-                      <dt className="text-muted-foreground">{w.label}</dt>
-                      <dd className="font-medium text-foreground">{w.value}</dd>
-                    </div>
-                  ))}
+                  {gross !== null && <Fig label="Short-let revenue, area" value={`${moneyRange(spread(gross, pct, 100))}/yr`} />}
+                  {range && <Fig label={range.kind === "purchase" ? "Cash flow / mo" : "Profit / mo"} value={range.label.replace(/\/mo$/, "")} />}
+                  {screening.kind === "purchase" && screening.upliftPct !== null && <Fig label="Against a long let" value={`${screening.upliftPct >= 0 ? "+" : "−"}${Math.abs(Math.round(screening.upliftPct))}%`} />}
+                  {screening.kind === "rent-to-rent" && screening.revenueMultiple !== null && <Fig label="Revenue multiple" value={`about ${screening.revenueMultiple.toFixed(1)}× the rent`} />}
                 </dl>
               </section>
             )}
@@ -215,30 +280,31 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {model && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{model.kind === "purchase" ? "If you bought it" : "If you rented it (rent-to-rent)"}</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{model.kind === "purchase" ? `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. Change these in your Market Explorer goals.` : `At ${gbp(model.advertisedRentPcm)} pcm rent and ${gbp(model.grossRevenue)} estimated gross revenue.`}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{model.kind === "purchase" ? `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. Change these in your Market Explorer goals. Figures that rest on the area’s short-let income are ranges.` : `At ${gbp(model.advertisedRentPcm)} pcm rent. Figures that rest on the area’s short-let income are ranges.`}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
                   {model.kind === "purchase" ? (
                     <>
-                      <Fig label="Gross yield" value={`${model.grossYieldPct.toFixed(1)}%`} />
-                      <Fig label="Cash flow / mo" value={gbp(model.cashflowMonthly)} />
-                      <Fig label="Cash on cash" value={`${model.cashOnCashPct.toFixed(1)}%`} />
+                      <Fig label="Gross yield" value={pctRange(model.grossYieldPct)} />
+                      <Fig label="Cash flow / mo" value={range?.kind === "purchase" ? range.label.replace(/\/mo$/, "") : gbpRange(model.cashflowMonthly)} />
+                      <Fig label="Cash on cash" value={pctRange(model.cashOnCashPct)} />
                       <Fig label="Cash needed" value={gbp(model.cashRequired)} sub={`incl. ${gbp(model.stampDuty)} stamp duty`} />
                       <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} />
-                      <Fig label="Net operating / yr" value={gbp(model.netOperating)} />
-                      <Fig label="Max price at target yield" value={gbp(model.maxPriceForTargetYield)} sub={`${model.targetYieldPct}% target`} />
+                      <Fig label="Net operating / yr" value={gbpRange(model.netOperating, 100)} />
+                      <Fig label="Max price at target yield" value={gbpRange(model.maxPriceForTargetYield, 1000)} sub={`${model.targetYieldPct}% target`} />
                     </>
                   ) : (
                     <>
-                      <Fig label="Margin / mo" value={gbp(model.monthlyMargin)} />
-                      <Fig label="Margin / yr" value={gbp(model.annualMargin)} />
-                      <Fig label="Breakeven occupancy" value={model.breakevenOccupancyPct === null ? "—" : `${Math.round(model.breakevenOccupancyPct)}%`} />
-                      <Fig label="Setup cost" value={gbp(model.setupCost)} sub={model.paybackMonths === null ? undefined : `paid back in ${Math.round(model.paybackMonths)} months`} />
-                      <Fig label="Max rent at target margin" value={`${gbp(model.maxRentForTargetMargin)} pcm`} sub={`${gbp(model.targetMarginPcm)} target`} />
+                      <Fig label="Margin / mo" value={range?.kind === "rent-to-rent" ? range.label.replace(/\/mo$/, "") : gbpRange(model.monthlyMargin)} />
+                      <Fig label="Margin / yr" value={gbpRange(model.annualMargin, 100)} />
+                      <Fig label="Setup cost" value={gbp(model.setupCost)} />
+                      <Fig label="Max rent at target margin" value={`${gbpRange(model.maxRentForTargetMargin)} pcm`} sub={`${gbp(model.targetMarginPcm)} target`} />
                     </>
                   )}
                 </dl>
               </section>
             )}
+
+            {canBuy && <AnalysisPreview />}
 
             {history.length > 0 && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
@@ -285,7 +351,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 </ul>
               </section>
             )}
-            <p className="text-[11px] text-muted-foreground">Short-let income is Stayful’s estimate for the area and size, not this property’s history. Long-let rent is the listing’s own for a rental, or our stored figure for the area where marked as an estimate.</p>
+            <BasicVsDetailed />
           </aside>
         </div>
       </div>

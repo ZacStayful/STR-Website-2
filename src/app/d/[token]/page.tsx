@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { areaMetaForCode } from "@/lib/market/areas";
-import { describeType, headlineFigure, priceLine } from "@/lib/marketplace/grid";
+import { describeType, priceLine } from "@/lib/marketplace/grid";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
+import { BasicVsDetailed } from "@/app/deals/_components/BasicVsDetailed";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { sharedDealByToken } from "@/lib/marketplace/share";
@@ -34,10 +37,14 @@ async function load(token: string) {
   const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
   const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ");
   const now = new Date();
+  // Batch 10: the profit as an area-estimate range at the house finance (a public page knows nobody's own).
+  const widths = (await getBillingSettings()).dealPricing.profitRangePct;
+  const range = state === "card" ? profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths }) : null;
   return {
     card,
     state,
     now,
+    range,
     join: joinPath(shared.referralCode),
     // In early access: the area and nothing narrower.
     place: state === "card" ? where : (area?.name ?? ""),
@@ -50,7 +57,7 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const v = await load(token);
   const robots = { index: false, follow: false };
   if (!v) return { title: "Stayful Intelligence", robots };
-  const title = shareTitle(v.card, v.place, v.state);
+  const title = shareTitle(v.card, v.place, v.state, v.range?.label ?? null);
   const description = DESCRIPTIONS[v.state];
   const images = v.photoUrl ? [siteUrl(v.photoUrl)] : undefined;
   return {
@@ -93,20 +100,20 @@ export default async function SharedDealPage({ params }: Params) {
             <p className="mt-2 text-sm text-[#7a8274]">A new short-let deal{v.place ? ` in ${v.place}` : ""}. Stayful members are seeing it now.</p>
           </section>
         ) : (
-          <SharedCard card={card} kind={kind} where={v.place} photoUrl={v.photoUrl} now={now} />
+          <SharedCard card={card} kind={kind} where={v.place} photoUrl={v.photoUrl} now={now} range={v.range} />
         )}
 
         <Link href={v.join} className="mt-6 block rounded-xl bg-[#2e3d2b] px-5 py-3 text-center text-base font-semibold text-white hover:opacity-90">
           Join free to see deals like this
         </Link>
-        <p className="mt-4 text-center text-[11px] text-[#7a8274]">Short-let income is Stayful’s estimate for the area and size, not this property’s history. Nothing here is a guarantee.</p>
+        <BasicVsDetailed className="mt-4" />
       </div>
     </main>
   );
 }
 
-function SharedCard({ card, kind, where, photoUrl, now }: { card: NonNullable<Awaited<ReturnType<typeof load>>>["card"]; kind: string; where: string; photoUrl: string | null; now: Date }) {
-  const figure = headlineFigure(card);
+function SharedCard({ card, kind, where, photoUrl, now, range }: { card: NonNullable<Awaited<ReturnType<typeof load>>>["card"]; kind: string; where: string; photoUrl: string | null; now: Date; range: ReturnType<typeof profitRange> }) {
+  const uplift = card.kind === "sale" ? upliftTag(card.uplift_pct) : null;
   const price = priceLine(card);
   const type = describeType(card);
   const motivation = motivationLine(card, now);
@@ -123,10 +130,10 @@ function SharedCard({ card, kind, where, photoUrl, now }: { card: NonNullable<Aw
       </div>
       <div className="p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-2xl font-bold">{figure.big}</p>
+          <p className="text-2xl font-bold">{range?.label ?? "—"}</p>
           {price && <p className="text-lg font-semibold">{price}</p>}
         </div>
-        <p className="text-sm text-[#7a8274]">{figure.small}</p>
+        <p className="text-sm text-[#7a8274]">area estimate{range ? ` · ${range.basis}` : ""}{uplift ? ` · ${uplift}` : ""}</p>
         {where && <p className="mt-2 text-base font-medium">{where}</p>}
         {motivation.length > 0 && <p className="text-sm font-medium text-[#5d8156]">{motivation.join(" · ")}</p>}
         {type && <p className="text-sm text-[#7a8274]">{type}</p>}

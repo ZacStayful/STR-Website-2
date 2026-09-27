@@ -58,13 +58,11 @@ import { loadDealById } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { dealVisible } from '../marketplace/visibility';
-import type { DealRow } from '../marketplace/types';
-import type { ListingPrice } from '../listing/types';
 import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from './input';
 import { enhancedEnabled, fetchSecondOpinion, runAnalysis, type PreparedAnalysis } from './run';
 import { noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
-import { dealAnalysisInput } from './deal-input';
+import { dealAnalysisInput, dealListingPrice } from './deal-input';
 import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, type SharedAnalysis } from './reuse';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
@@ -143,13 +141,6 @@ function toPurchase(r: Record<string, unknown>): PurchaseRow {
   };
 }
 
-/** The deal's current price as the listing states it, for the analysis inputs. */
-function dealPrice(deal: DealRow): ListingPrice | null {
-  if (deal.price_amount === null || deal.price_amount === undefined) return null;
-  const period = deal.price_period;
-  if (period !== 'total' && period !== 'pcm' && period !== 'pw') return null;
-  return { amount: Number(deal.price_amount), period };
-}
 
 /** Marks a purchase failed (only while pending) and lets its hold go. Never throws. */
 async function failPurchase(admin: Admin, row: Pick<PurchaseRow, 'id' | 'reservation_id'>, reason: string): Promise<void> {
@@ -260,7 +251,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   if (!snapshot) return fail('invalid');
   const inputs = dealAnalysisInput(
     { ...snapshot, postcode: listing?.postcode ?? snapshot.postcode, displayAddress: listing?.address ?? snapshot.displayAddress },
-    { canonicalUrl: deal.canonical_url, kind: deal.kind, price: dealPrice(deal), withPmi, checkedListingId: tracking.checkedListingId },
+    { canonicalUrl: deal.canonical_url, kind: deal.kind, price: dealListingPrice(deal.price_amount, deal.price_period), withPmi, checkedListingId: tracking.checkedListingId },
   );
   if (!inputs.ok) return fail(inputs.code, { message: inputs.message });
 

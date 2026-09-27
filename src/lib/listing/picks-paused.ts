@@ -88,14 +88,16 @@ export function missesToList(misses: MissedPick[], lastPickSentAt: string | null
   return { list, superseded };
 }
 
-const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
-
+/**
+ * Area, size, type and price. No profit figure (Batch 10): a deal's profit is
+ * only ever shown as a range at the member's finance, and a missed pick keeps
+ * no revenue figure to range.
+ */
 export function missedPickLine(m: MissedPick): string {
   const type = m.kind === 'rent' ? 'Rent-to-rent' : 'Purchase';
   const size = m.bedrooms ? `${m.bedrooms}-bed` : null;
   const price = m.priceAmount !== null && m.pricePeriod ? formatListingPrice({ amount: m.priceAmount, period: m.pricePeriod }) : 'price not stated';
-  const profit = m.annualProfit !== null ? `est. profit ${gbp(m.annualProfit)}/yr` : 'profit not estimated';
-  return [m.areaName, [size, type].filter(Boolean).join(' '), price, profit].join(' · ');
+  return [m.areaName, [size, type].filter(Boolean).join(' '), price].join(' · ');
 }
 
 function dayWords(iso: string): string {

@@ -61,7 +61,7 @@ export function MarketDealsHere({ summary, areaCode, areaName, max = 3 }: { summ
                 <div className="mx2-deal-foot">
                   <span className={d.freshnessKind === "live" ? "mx2-mdeal-live" : undefined}>{d.freshness}</span>
                   {d.tags.map((t) => <span key={t} className="mx2-tag mx2-tag--accent">{t}</span>)}
-                  <span className="mx2-deal-status">Open the sheet →</span>
+                  <span className="mx2-deal-status">See the deal →</span>
                 </div>
               </Link>
             ))}

@@ -15,7 +15,7 @@ import { MoveButton } from "./MoveButton";
  * the server (src/lib/pipeline/view.ts). On My deals it sits folded under
  * the deal ("Next step: Contact the agent"); on the deal page it is open.
  */
-export function NextStepCard({ view, variant }: { view: NextStepView; variant: "compact" | "full" }) {
+export function NextStepCard({ view, variant, lead = null }: { view: NextStepView; variant: "compact" | "full"; lead?: { text: string; href: string; note?: string } | null }) {
   const [amountText, setAmountText] = useState(view.offer?.initialAmount != null ? formatAmount(view.offer.initialAmount) : "");
   const amount = parseAmount(amountText);
   const move = view.move ? <MoveButton itemKey={view.itemKey} stage={view.stage} kind={view.kind} label={view.move.label} /> : null;
@@ -32,6 +32,13 @@ export function NextStepCard({ view, variant }: { view: NextStepView; variant: "
 
   const content = (
     <div className="space-y-3">
+      {/* Batch 10: at Kept, the Full analysis comes before contacting the agent. */}
+      {lead && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 p-2">
+          <Link href={lead.href} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">{lead.text}</Link>
+          {lead.note && <span className="text-xs text-muted-foreground">{lead.note}</span>}
+        </div>
+      )}
       <p className="text-sm text-muted-foreground">{view.intro}</p>
       {view.warning && <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-foreground">{view.warning}</p>}
       {view.offer && <OfferPanel offer={view.offer} amountText={amountText} onAmount={setAmountText} showAmount={Boolean(m?.withAmount)} />}

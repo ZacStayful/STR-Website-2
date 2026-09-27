@@ -32,6 +32,7 @@ export function StageSelect({
   dealId = null,
   dealLive = true,
   openPence = null,
+  openLabel = null,
   back,
   compact = false,
   untracked = false,
@@ -46,6 +47,8 @@ export function StageSelect({
   dealLive?: boolean;
   /** What opening costs this member, for an unopened deal. */
   openPence?: number | null;
+  /** The same as this member pays it ("78p · 60p on a plan"), from their own credit. Preferred over openPence. */
+  openLabel?: string | null;
   /** Where to land after opening (a My deals focus path, or the deal page). */
   back: string;
   compact?: boolean;
@@ -55,7 +58,7 @@ export function StageSelect({
   const router = useRouter();
   const [current, setCurrent] = useState<PipelineStatus | "">(untracked ? "" : stage);
   const [wanted, setWanted] = useState<PipelineStatus | null>(null);
-  const [price, setPrice] = useState<number | null>(openPence);
+  const [price, setPrice] = useState<string | null>(openLabel ?? (openPence === null ? null : formatOpenPrice(openPence)));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -77,7 +80,7 @@ export function StageSelect({
       }
       setCurrent(before);
       if (res.error === "needs_open") {
-        setPrice(res.openPence);
+        setPrice(res.openLabel || formatOpenPrice(res.openPence));
         setWanted(next);
       } else setError(ERRORS[res.error]);
     });
@@ -123,7 +126,7 @@ export function StageSelect({
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button type="submit" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">
-                  Open this deal to contact the agent{price !== null ? ` · ${formatOpenPrice(price)}` : ""}
+                  Open this deal to contact the agent{price ? ` · ${price}` : ""}
                 </button>
                 <button type="button" onClick={() => setWanted(null)} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">
                   Not now

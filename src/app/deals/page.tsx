@@ -11,6 +11,8 @@ import { earlyAccessBanner, earlyAccessFor, isFiltered } from "@/lib/marketplace
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
+import { cardViewsFor } from "@/lib/marketplace/card-state";
+import { parseMarketGoals } from "@/lib/market/goals";
 import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
@@ -54,7 +56,10 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
     visibility.tier === "free" && filters.view === "all" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
   ]);
   const ids = page.cards.map((c) => c.id);
-  const [opened, reactions] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids)]);
+  const adminUser = isAdminEmail(user.email);
+  const { data: profile } = await supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle();
+  // Batch 10: each card's profit range at this member's finance, and its buttons at their price.
+  const [opened, reactions, views] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids), cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: parseMarketGoals(profile?.market_goals)?.finance ?? null })]);
   // Nothing left in the default view: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 && filters.view === "all" ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
   const now = new Date();
@@ -75,7 +80,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
           <div>
             <h1 className="text-2xl font-bold text-foreground">Deals</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Every listing on the market in Stayful’s top areas that nets at least 40% more as a short let than a long let, or £8,000 a year after rent. Figures are free; open a deal for the address, photos and listing link.
+              Every listing on the market in Stayful’s top areas that nets at least 40% more as a short let than a long let, or £8,000 a year after rent. Profit is an area estimate at your finance: take a Quick look for the address, photos and listing link, or a Full analysis for the exact figures for the property.
             </p>
           </div>
           <Link href="/deals/opened" className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">My opened deals</Link>
@@ -120,7 +125,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {page.cards.map((card) => (
-                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} share={<ShareDealButton dealId={card.id} />} />
+                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} share={<ShareDealButton dealId={card.id} />} view={views.get(card.id)} />
                 ))}
               </ul>
             )}

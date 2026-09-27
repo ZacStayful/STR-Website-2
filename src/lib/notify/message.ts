@@ -98,9 +98,13 @@ export function figureLine(card: Pick<DealCard, 'kind' | 'annual_profit' | 'upli
   return `${f.big} · ${f.small}`;
 }
 
-/** One teaser: figure, price, town, type and motivation, linking to Today. Built from public columns only. */
-export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date()): Item {
-  const figure = figureLine(card);
+/**
+ * One teaser: figure, price, town, type and motivation, linking to Today.
+ * Built from public columns only. `figureFor` (Batch 10) gives the profit as
+ * the member's range ("£450–£700/mo · area estimate"); without it, the old line.
+ */
+export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null): Item {
+  const figure = figureFor ? figureFor(card) : figureLine(card);
   const first = [priceLine(card), placeOf(card)].filter((x): x is string => Boolean(x)).join(' · ');
   const type = describeType(card);
   const why = motivationLine({ kind: card.kind, motivation: card.motivation, price_history: card.price_history, listed_date: card.listed_date }, now);
@@ -205,6 +209,8 @@ export function changeItem(c: ChangeInput, siteUrl: string): Item | null {
       const from = money(c.oldAmount, c.period);
       const to = money(c.newAmount, c.period);
       if (!from || !to || !(Number(c.newAmount) < Number(c.oldAmount))) return null;
+      // A marketplace deal's figures are only ever an area range now (Batch 10): say they changed, and where the exact one is.
+      if (c.dealId && !c.figure) return { title: `Price drop: ${from} → ${to}`, lines: [place, 'The figures have changed. Get the exact figure with a Full analysis.'], link: { label: 'Full analysis', url: `${siteUrl.replace(/\/$/, '')}/deals/${encodeURIComponent(c.dealId)}?analysis=1` } };
       return { title: `Price drop: ${from} → ${to}`, lines: [place, c.figure ? `Now ${c.figure}` : null].filter((x): x is string => Boolean(x)), link };
     }
     case 'back_on_market': {
@@ -275,6 +281,8 @@ export interface DailyInput {
   unsubscribe: Unsubscribe | null;
   /** Why they get it. Defaults by kind. */
   reason?: string;
+  /** Batch 10: each teaser's profit as the member's area-estimate range. */
+  figureFor?: (card: DealCard) => string | null;
 }
 
 export interface BuiltMessage {
@@ -309,7 +317,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   if (kept.length > 0) {
     const blocks: Block[] = [];
     if (input.advice) blocks.push({ type: 'text', text: input.advice, tone: 'callout' });
-    blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now)) });
+    blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, input.figureFor)) });
     blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !input.pick }] });
     sections.push({ key: 'teasers', title: input.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
   }

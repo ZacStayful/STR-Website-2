@@ -35,6 +35,7 @@ import { newSendToken, sendKey, slotAllowed } from './cap';
 import { mapLimit, payersForAll } from './daily-server';
 import { trackedLink, trackedPlace, trackingFor } from './tracked-read';
 import { buildYourWeek, missedFor, recapItems, WENT_REASONS, type RecapSource, type WentDeal } from './week';
+import { cardRangeLine } from '../marketplace/profit-range';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_WINDOW_MS = 14 * DAY_MS;
@@ -136,7 +137,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
     for (let from = 0; ; from += PAGE) {
       const { data, error } = await admin
         .from('marketplace_deals')
-        .select('id, kind, postcode_area, town, bedrooms, price_amount, price_period, raw_type, tenure, annual_profit, uplift_pct, listed_date, first_seen_at, live_since, retired_reason, retired_at')
+        .select('id, kind, postcode_area, town, bedrooms, price_amount, price_period, raw_type, tenure, annual_profit, uplift_pct, listed_date, first_seen_at, live_since, retired_reason, retired_at, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence')
         .eq('status', 'retired')
         .in('retired_reason', [...WENT_REASONS])
         .gte('retired_at', earliest)
@@ -187,6 +188,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
     for (const r of (data ?? []) as unknown as (PaidTierAccount & { id: string })[]) owners.set(r.id, r);
   }
   const settings = await getBillingSettings();
+  const rangeWidths = settings.dealPricing.profitRangePct;
   const paidOf = (p: ProfileRow) => (p.email && isAdminEmail(p.email) ? true : hasEverPaid(byId.get(payers.get(p.id)?.payerId ?? p.id) ?? owners.get(payers.get(p.id)?.payerId ?? p.id) ?? null));
 
   // ── Per member: decide each section ──
@@ -254,7 +256,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       : null;
     const token = newSendToken();
     const unsubscribeUrl = `${base.replace(/\/$/, '')}/api/notify/unsubscribe/${token}`;
-    const built = buildYourWeek({ siteUrl: base, now, since: pl.since, missed: pl.missed, freeDelayHours: pl.free, recap, areas: pl.areas, unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl } });
+    const built = buildYourWeek({ siteUrl: base, now, since: pl.since, missed: pl.missed, freeDelayHours: pl.free, recap, areas: pl.areas, unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }, figureFor: (d) => cardRangeLine(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths) });
     const areaChanges = pl.areas?.length ?? 0;
     if (!built) {
       // Nothing to say. The areas' state is recorded (the baseline, on a first run).

@@ -27,6 +27,15 @@ export const DEAL_INPUT_MESSAGES = {
   no_price: 'A Full analysis of a rental needs its rent, and this listing doesn’t show one. You can still take a Quick look.',
 } as const;
 
+/** A marketplace deal's current price as a listing price, for the inputs: a sale's total, a rental's pcm or pw. */
+export function dealListingPrice(amount: number | string | null | undefined, period: string | null | undefined): ListingPrice | null {
+  if (amount === null || amount === undefined || amount === '') return null;
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (period !== 'total' && period !== 'pcm' && period !== 'pw') return null;
+  return { amount: n, period };
+}
+
 /**
  * The analysis input for one deal. `price` is the deal's CURRENT price (the
  * marketplace row, which the rechecks keep up to date); the snapshot's own

@@ -40,6 +40,7 @@ import { mapLimit, payersForAll, teasersFrom, todayPlans } from './daily-server'
 import { getBalance } from '../credit/ledger';
 import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals } from '../listing/daily-deals-server';
+import { cardRangeLine } from '../marketplace/profit-range';
 
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
@@ -203,6 +204,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       changes,
       freeCutoffIso: paid ? null : freeVisibility.cutoffIso,
       unsubscribe: { label: kind === 'todays_5' ? 'Stop daily picks' : 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
+      // Batch 10: each deal's profit as a range at the member's finance.
+      figureFor: (c) => cardRangeLine(c, parseMarketGoals(p.market_goals)?.finance ?? null, settings.dealPricing.profitRangePct),
     });
     if (!built) {
       perUser.push({ user: p.id, sent: false, reason: 'nothing_to_say' });

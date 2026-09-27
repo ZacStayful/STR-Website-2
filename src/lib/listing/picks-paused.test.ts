@@ -81,18 +81,19 @@ test('a miss row keeps the figures and drops everything that identifies the list
   assert.equal(sale.annual_profit, null);
 });
 
-test('each line says area, type, price and estimated profit', () => {
-  assert.equal(missedPickLine(miss()), 'Nottingham · 2-bed Purchase · £185,000 · est. profit £9,400/yr');
-  assert.equal(missedPickLine(miss({ kind: 'rent', bedrooms: null, priceAmount: 950, pricePeriod: 'pcm', annualProfit: 7_100 })), 'Nottingham · Rent-to-rent · £950 pcm · est. profit £7,100/yr');
-  assert.equal(missedPickLine(miss({ priceAmount: null, pricePeriod: null, annualProfit: null })), 'Nottingham · 2-bed Purchase · price not stated · profit not estimated');
+test('each line says area, type and price, never a single profit figure (Batch 10)', () => {
+  assert.equal(missedPickLine(miss()), 'Nottingham · 2-bed Purchase · £185,000');
+  assert.equal(missedPickLine(miss({ kind: 'rent', bedrooms: null, priceAmount: 950, pricePeriod: 'pcm', annualProfit: 7_100 })), 'Nottingham · Rent-to-rent · £950 pcm');
+  assert.equal(missedPickLine(miss({ priceAmount: null, pricePeriod: null, annualProfit: null })), 'Nottingham · 2-bed Purchase · price not stated');
 });
 
 test('the letter is plain, has one Top up button, the manage link, and never the address, postcode or listing link', () => {
   const m = pausedEmail({ misses: [miss(), miss({ kind: 'rent', areaName: 'Leeds', bedrooms: null, priceAmount: 950, pricePeriod: 'pcm', annualProfit: 7_100, missedAt: daysAgo(1) })], siteUrl: 'https://intelligence.stayful.co.uk/', firstName: 'Sam' });
   assert.equal(m.subject, 'Your daily picks have paused: 2 picks you missed');
   assert.ok(m.text.startsWith('Hi Sam,'));
-  assert.ok(m.text.includes('Nottingham · 2-bed Purchase · £185,000 · est. profit £9,400/yr'));
-  assert.ok(m.text.includes('Leeds · Rent-to-rent · £950 pcm · est. profit £7,100/yr'));
+  assert.ok(m.text.includes('Nottingham · 2-bed Purchase · £185,000'));
+  assert.ok(m.text.includes('Leeds · Rent-to-rent · £950 pcm'));
+  assert.ok(!m.text.includes('est. profit'));
   assert.ok(m.text.includes('https://intelligence.stayful.co.uk/account/billing'));
   assert.ok(m.text.includes('Manage notifications: https://intelligence.stayful.co.uk/account/notifications'));
   assert.equal((m.html.match(/<a /g) ?? []).length, 2, 'one button and one footer link');
