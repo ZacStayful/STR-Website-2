@@ -12,6 +12,7 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { CreditBanner } from "@/components/credit/CreditBanner";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
+import { requireProfileStart } from "@/lib/profile/server";
 
 /**
  * Server shell for every members-only surface: resolves the member, their
@@ -51,6 +52,16 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
   let credit: CreditSnapshot | null = null;
   try {
     await ensureWelcomeGrant(user.id, user.email ?? null);
+  } catch (err) {
+    console.error("[AppShell] welcome grant failed:", err);
+  }
+  // The profile quiz's gate (Batch 12): the three mandatory questions before
+  // anything else. A member who has not answered them is sent to /welcome
+  // with this page as the way back; team members are never gated. The same
+  // read feeds the Profile pill. It throws a redirect, so it sits outside
+  // the try below.
+  const profile = await requireProfileStart(user.id, redirectTo);
+  try {
     // For a team member this is the team's balance, which is what they spend.
     credit = await teamCreditSnapshot({ id: user.id, admin });
   } catch (err) {
@@ -67,7 +78,7 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
 
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} leads={leads} />
+      <AppSwitcher active={active} admin={admin} leads={leads} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
       <CreditBanner />
       <VisitHeartbeat />
       {children}
