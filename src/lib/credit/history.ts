@@ -175,10 +175,14 @@ async function describeMemberRows(items: UsageItem[]): Promise<void> {
   }
 }
 
-/** Median base pence of the last 50 completed actions of this kind, or null when too few. */
+/**
+ * Median base pence of the last 50 completed actions of this kind, or null
+ * when too few. A member's own actions only: funnel leads run the same
+ * actions at the ×2 funnel markup and would pull a member's "about £X" down.
+ */
 export async function typicalActionSpend(action: string, minSamples = 5): Promise<number | null> {
   if (!hasServiceRole()) return null;
-  const { data } = await createAdminClient().from('credit_transactions').select('action_id, base_pence').eq('kind', 'debit').eq('action', action).order('at', { ascending: false }).limit(600);
+  const { data } = await createAdminClient().from('credit_transactions').select('action_id, base_pence').eq('kind', 'debit').eq('action', action).is('metadata->>funnel_id', null).order('at', { ascending: false }).limit(600);
   const totals = new Map<string, number>();
   for (const r of data ?? []) {
     if (!r.action_id) continue;

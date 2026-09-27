@@ -3398,3 +3398,57 @@ revoke all on function public.activity_retention(jsonb) from public, anon, authe
 grant execute on function public.activity_retention(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 10: analyser path + pricing
+-- =========================
+-- Fixed prices for deals in the feed, daily deals, 1:1 plan credit and a
+-- lower top-up rate (src/lib/credit/deal-pricing.ts reads every key below;
+-- /admin/billing edits them). All in base pence: what a member on a plan
+-- pays. Top-up credit pays base × its spend rate. Inserted only when
+-- missing, so an edit made on /admin/billing survives a re-run.
+--   full_analysis_pence   a Full analysis of a feed deal; a Quick look
+--                         already paid for that deal comes off it
+--   pmi_addon_pence       the optional PMI second opinion, on top
+--   todays_5_daily_pence  one day of daily deals (Today's 5), charged only
+--                         on a day it is delivered, from new_pricing_from
+--   analysis_reuse_days   a saved analysis of the same deal younger than
+--                         this is reused instead of paying the providers again
+--   plan_credit_pence     monthly plan credit from new_pricing_from, applied
+--                         at each subscriber's first renewal on or after it
+--                         (annual: the first ANNUAL renewal)
+--   new_pricing_from      the date plan credit and daily deals change. null
+--                         until it is set on /admin/billing, which only allows
+--                         a date at least 14 days after the members' notice
+--   profit_range_pct      the area-estimate profit range either side, by the
+--                         screening's confidence (capped at 25 in the code)
+-- None of this is in ACCESS_COLUMNS.
+insert into public.billing_settings (key, value) values
+  ('full_analysis_pence', '400'::jsonb),
+  ('pmi_addon_pence', '200'::jsonb),
+  ('todays_5_daily_pence', '33'::jsonb),
+  ('analysis_reuse_days', '30'::jsonb),
+  ('plan_credit_pence', '{"starter":1900,"pro":3999,"scale":9900,"pro_annual":3000}'::jsonb),
+  ('new_pricing_from', 'null'::jsonb),
+  ('profit_range_pct', '{"high":10,"medium":15,"low":25}'::jsonb)
+on conflict (key) do nothing;
+
+-- Top-up and adjustment (promo, referral, admin) credit spend at 1.3×, down
+-- from 1.5×. A grant's spend_rate is frozen when it is made, so balances
+-- bought before today are moved to 1.3 as well (decided 27 Sep 2026: one
+-- rate, in the member's favour). Past debits keep the rate they were taken
+-- at in credit_allocations. The overdraft grant (rate 1) is not touched.
+-- Runs ONCE, marked by the batch10_rates_applied_at row: re-running this file
+-- must never undo a later change of rate made on /admin/billing.
+do $$
+begin
+  if not exists (select 1 from public.billing_settings where key = 'batch10_rates_applied_at') then
+    update public.billing_settings
+       set value = value || '{"topup":1.3,"adjustment":1.3}'::jsonb, updated_at = now()
+     where key = 'spend_rates';
+    update public.credit_grants
+       set spend_rate = 1.3
+     where kind in ('topup', 'adjustment') and spend_rate = 1.5 and remaining_pence > 0;
+    insert into public.billing_settings (key, value) values ('batch10_rates_applied_at', to_jsonb(now()));
+  end if;
+end $$;

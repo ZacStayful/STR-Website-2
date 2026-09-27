@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatGbp } from "@/lib/credit/client";
 import type { BillingSettings } from "@/lib/credit/unit-costs";
-import { createPromoCodeAction, grantAdjustmentAction, reseedUnitCostsAction, toggleCodeAction, updateRatesAction, updateUnitCostAction, type ActionState } from "./actions";
+import { createPromoCodeAction, grantAdjustmentAction, reseedUnitCostsAction, toggleCodeAction, updateDealPricingAction, updateRatesAction, updateUnitCostAction, type ActionState } from "./actions";
 
 interface Row {
   provider: string;
@@ -71,7 +71,59 @@ function CostRow({ r }: { r: Row }) {
   );
 }
 
-export function BillingAdminClient({ rows, settings, codes }: { rows: Row[]; settings: BillingSettings; codes: Code[] }) {
+export interface PricingGuards {
+  /** What a full analysis can cost us at worst, raw pence, at today's unit costs. */
+  ceilingRawPence: number;
+  ceilingRawPmiPence: number;
+  /** The earliest new-pricing date that gives every member 14 days' notice (YYYY-MM-DD). */
+  earliestDate: string;
+}
+
+function DealPricingForm({ settings, guards }: { settings: BillingSettings; guards: PricingGuards }) {
+  const [state, action, pending] = useActionState(updateDealPricingAction, idle);
+  const p = settings.dealPricing;
+  const field = (name: string, label: string, value: number, step = "1") => (
+    <label key={name} className="flex flex-col gap-1 text-xs text-muted-foreground">
+      {label}
+      <Input name={name} defaultValue={value} type="number" step={step} min={0} className="h-8 w-28" />
+    </label>
+  );
+  return (
+    <>
+      <h2 className="mt-8 mb-2 text-lg font-semibold text-foreground">Deal prices</h2>
+      <form action={action} className="space-y-3 rounded-xl border border-border bg-card p-4 text-sm">
+        <div className="flex flex-wrap items-end gap-3">
+          {field("full_analysis_pence", "Full analysis (p)", p.fullAnalysisPence)}
+          {field("pmi_addon_pence", "PMI add-on (p)", p.pmiAddonPence)}
+          {field("todays_5_daily_pence", "Daily deals a day (p)", p.todays5DailyPence)}
+          {field("analysis_reuse_days", "Reuse analyses (days)", p.analysisReuseDays)}
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          {field("plan_starter", "Starter credit (p)", p.planCreditPence.starter ?? 1900)}
+          {field("plan_pro", "Pro credit (p)", p.planCreditPence.pro ?? 3999)}
+          {field("plan_scale", "Scale credit (p)", p.planCreditPence.scale ?? 9900)}
+          {field("plan_pro_annual", "Pro annual credit a month (p)", p.planCreditPence.pro_annual ?? 3000)}
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            New plan credit and daily deals from
+            <Input name="new_pricing_from" type="date" defaultValue={p.newPricingFrom ? p.newPricingFrom.slice(0, 10) : ""} className="h-8 w-40" />
+          </label>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          {field("range_high", "Range ± high conf. %", p.profitRangePct.high, "0.5")}
+          {field("range_medium", "Range ± medium %", p.profitRangePct.medium, "0.5")}
+          {field("range_low", "Range ± low %", p.profitRangePct.low, "0.5")}
+          <Button type="submit" size="sm" disabled={pending}>Save deal prices</Button>
+        </div>
+        <Msg s={state} />
+      </form>
+      <p className="mt-2 text-xs text-muted-foreground">
+        All in base pence (what a member on a plan pays; top-up credit pays {settings.spendRates.topup}× that). A full analysis can cost us up to {guards.ceilingRawPence.toFixed(1)}p raw ({guards.ceilingRawPmiPence.toFixed(1)}p with the second opinion), so neither price can be set below that. Plan credit and daily deals change on the date above: plans at each subscriber&apos;s first renewal on or after it, annual plans at their next annual renewal. Leave it blank to keep today&apos;s plan credit and pick prices. Earliest allowed: {guards.earliestDate}, 14 days after the members&apos; notice.
+      </p>
+    </>
+  );
+}
+
+export function BillingAdminClient({ rows, settings, guards, codes }: { rows: Row[]; settings: BillingSettings; guards: PricingGuards; codes: Code[] }) {
   const [rates, ratesAction, ratesPending] = useActionState(updateRatesAction, idle);
   const [adj, adjAction, adjPending] = useActionState(grantAdjustmentAction, idle);
   const [promo, promoAction, promoPending] = useActionState(createPromoCodeAction, idle);
@@ -101,6 +153,8 @@ export function BillingAdminClient({ rows, settings, codes }: { rows: Row[]; set
         <Msg s={rates} />
       </form>
       <p className="mt-2 text-xs text-muted-foreground">Base markup is the default for new unit rows; each row&apos;s own multiplier below is what is charged. Spend rates apply to grants created after the change.</p>
+
+      <DealPricingForm settings={settings} guards={guards} />
 
       <div className="mt-8 mb-2 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Unit costs</h2>

@@ -32,7 +32,7 @@ export interface StartedAction {
   finish: () => Promise<void>;
 }
 
-export async function startAction(opts: { userId: string | null; admin?: boolean; action: string; maxBasePence?: number; oncePerAction?: boolean; actionId?: string; markupOverride?: number; requireCredit?: boolean; funnelId?: string | null }): Promise<StartedAction> {
+export async function startAction(opts: { userId: string | null; admin?: boolean; action: string; maxBasePence?: number; oncePerAction?: boolean; actionId?: string; markupOverride?: number; requireCredit?: boolean; funnelId?: string | null; fixedPrice?: boolean }): Promise<StartedAction> {
   const actionId = opts.actionId ?? newActionId();
   // Team members spend their owner's credit. Resolved once, here, so every
   // metered door — the analyser, the API, MCP, quick views, narration —
@@ -45,7 +45,7 @@ export async function startAction(opts: { userId: string | null; admin?: boolean
     payerId = payer.payerId;
     memberId = payer.memberId;
   }
-  const ctx: MeterContext = { userId: payerId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit, funnelId: opts.funnelId ?? null, memberId };
+  const ctx: MeterContext = { userId: payerId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit, funnelId: opts.funnelId ?? null, memberId, ...(opts.fixedPrice ? { fixedPrice: true } : {}) };
   let reservationId: string | null = null;
   if (payerId && !opts.admin && (opts.maxBasePence ?? 0) > 0) {
     try {

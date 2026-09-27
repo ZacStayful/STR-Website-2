@@ -54,6 +54,10 @@ export interface EstimateResponse {
   planCreditPence: number;
   topupCreditPence: number;
   maxTopupCreditPence: number;
+  /** What this member's balance moves by for a typical run, from their own grants (plan, welcome, top-up at its rate). */
+  typicalFacePence: number;
+  /** The same for the worst case. */
+  maxFacePence: number;
   spendableBasePence: number;
   availablePence: number;
   sufficient: boolean;

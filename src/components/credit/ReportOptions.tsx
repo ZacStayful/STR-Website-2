@@ -28,8 +28,10 @@ export function ReportOptions({ enhanced, onChange, disabled }: { enhanced: bool
   const est = enhanced ? plus : standard;
   const admin = standard?.admin ?? false;
   const fromTopup = est?.paidFrom === "topup";
-  const price = (e: EstimateResponse | null) => (e ? formatGbp(fromTopup ? e.topupCreditPence : e.planCreditPence) : null);
-  const extra = standard && plus ? (fromTopup ? plus.topupCreditPence - standard.topupCreditPence : plus.planCreditPence - standard.planCreditPence) : null;
+  const mixed = est?.paidFrom === "mixed";
+  // What this member's balance will move by: their own grants, each at its own rate.
+  const price = (e: EstimateResponse | null) => (e ? formatGbp(e.typicalFacePence) : null);
+  const extra = standard && plus ? plus.typicalFacePence - standard.typicalFacePence : null;
 
   return (
     <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
@@ -45,12 +47,12 @@ export function ReportOptions({ enhanced, onChange, disabled }: { enhanced: bool
         <p className="text-xs text-muted-foreground">Admin account: usage is logged, never charged.</p>
       ) : est ? (
         <p className="text-xs text-muted-foreground">
-          This {enhanced ? "enhanced" : "standard"} report will use about {price(est)} of {fromTopup ? "top-up" : est.paidFrom === "welcome" ? "welcome" : "plan"} credit
-          {est.maxBasePence > est.typicalBasePence * 1.15 ? ` (up to ${formatGbp(fromTopup ? est.maxTopupCreditPence : est.maxBasePence)} if extra data lookups are needed)` : ""}. You have {formatGbp(est.availablePence)}.
-          {fromTopup && (
+          This {enhanced ? "enhanced" : "standard"} report will use about {price(est)} of {fromTopup ? "top-up " : est.paidFrom === "welcome" ? "welcome " : mixed ? "" : "plan "}credit
+          {est.maxFacePence > est.typicalFacePence * 1.15 ? ` (up to ${formatGbp(est.maxFacePence)} if extra data lookups are needed)` : ""}. You have {formatGbp(est.availablePence)}.
+          {(fromTopup || mixed) && (
             <>
               {" "}
-              Top-up credit is spent at {est.rates.topup}× the plan rate — <Link href="/upgrade" className="underline">upgrade</Link> to pay {formatGbp(est.planCreditPence)}.
+              {mixed ? "Part comes from your plan credit and the rest from top-up credit, which" : "Top-up credit"} is spent at {est.rates.topup}× the plan rate — <Link href="/upgrade" className="underline">upgrade</Link> to pay {formatGbp(est.planCreditPence)}.
             </>
           )}
           {est.paidFrom === "none" && (

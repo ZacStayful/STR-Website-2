@@ -51,6 +51,14 @@ export interface MeterContext {
    * who spent what. Null or absent for someone paying for themselves.
    */
   memberId?: string | null;
+  /**
+   * The action is sold at a fixed price (a Full analysis of a feed deal,
+   * src/lib/analysis/deal-analysis.ts): every provider call is still logged
+   * in provider_calls with its raw cost and who it was for, but none is
+   * debited. The action charges its one price when it completes, so a run
+   * that fails partway costs the member nothing.
+   */
+  fixedPrice?: boolean;
 }
 
 const als = new AsyncLocalStorage<MeterContext>();

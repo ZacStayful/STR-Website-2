@@ -102,7 +102,9 @@ export async function meter<T>(charge: MeterCharge<T>, run: () => Promise<T>, ct
     console.warn(`[credit] no unit cost for ${charge.provider}:${charge.unit} — charging 0 until a row exists`);
   }
 
-  const billable = Boolean(ctx?.userId) && !ctx?.admin;
+  // A fixed-price action (ctx.fixedPrice) logs each call's cost but charges
+  // its own price once, at the end; no per-call preflight or debit.
+  const billable = Boolean(ctx?.userId) && !ctx?.admin && !ctx?.fixedPrice;
   const userId = ctx?.userId ?? null;
 
   // Preflight: a call with a known cost and no reservation must be affordable.
