@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { DealReactionListenerContext, type DealReactionListener } from "@/app/deals/_components/deal-reaction-listener";
 import { finishLine, isDone, tally } from "@/lib/today/day";
+import { NAV_TARGETS } from "@/lib/nav";
 import type { DealReaction } from "@/lib/marketplace/reaction-state";
 import { useChecklist } from "./Checklist";
 
@@ -69,11 +70,9 @@ export function TodayCards({
       <section className="rounded-xl border border-border bg-card p-6 text-center" aria-live="polite">
         <p className="text-lg font-bold text-foreground">{finishLine(t)}</p>
         <p className="mt-1 text-sm text-muted-foreground">New deals tomorrow morning.</p>
+        {/* My deals is the one list of kept deals; "Browse all deals" is in the footer just below. */}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          <Link href="/deals" className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
-            Browse all deals
-          </Link>
-          <Link href="/deals?view=kept" className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">
+          <Link href={NAV_TARGETS.myDeals.href} className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
             Your kept deals
           </Link>
         </div>

@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { filtersToSearch, parseDealFilters } from "@/lib/marketplace/grid";
+import { parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
+import { MY_DEALS_PASSED_HREF, NAV_TARGETS, dealsViewRedirect } from "@/lib/nav";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount } from "@/lib/marketplace/queries";
 import { earlyAccessBanner, earlyAccessFor, isFiltered } from "@/lib/marketplace/early-access";
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
@@ -35,10 +37,17 @@ const MESSAGES: Record<string, string> = {
  * The marketplace grid: every live deal that clears the income screening,
  * with the figures free to see and the address behind a paid open. Filters
  * live in the URL; the server re-queries on every change.
+ *
+ * The member's kept and passed deals live on My deals (Batch 11): an old
+ * ?view=kept or ?view=passed link goes there before anything is read.
  */
 export default async function DealsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const raw = await searchParams;
-  const filters = parseDealFilters(raw);
+  const parsed = parseDealFilters(raw);
+  const moved = dealsViewRedirect(parsed.view);
+  if (moved) redirect(moved);
+  // The grid is always the default view: every live deal except the ones they passed.
+  const filters: DealFilters = { ...parsed, view: "all" };
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -47,21 +56,21 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
   // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
   const visibility = await dealVisibilityFor(user.id, isAdminEmail(user.email));
-  // The member's own Keep / Pass shape the grid: passed deals leave it, and ?view= shows only kept or only passed.
+  // The member's own passes shape the grid: a passed deal leaves it (and is on My deals, under Passed).
   // Early access: a free member gets one line with the real count of deals they are waiting on (matching this search); a paying member gets a badge on each of those deals.
   const [page, counts, settings, waiting] = await Promise.all([
     listDeals(filters, visibility, { userId: user.id }),
     liveCountsByArea(visibility.hourCutoffIso),
     getBillingSettings(),
-    visibility.tier === "free" && filters.view === "all" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
+    visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
   ]);
   const ids = page.cards.map((c) => c.id);
   const adminUser = isAdminEmail(user.email);
   const { data: profile } = await supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle();
   // Batch 10: each card's profit range at this member's finance, and its buttons at their price.
   const [opened, reactions, views] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids), cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: parseMarketGoals(profile?.market_goals)?.finance ?? null })]);
-  // Nothing left in the default view: say so if it is because they passed on all of it.
-  const passedHere = page.total === 0 && filters.view === "all" ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
+  // Nothing left in the grid: say so if it is because they passed on all of it.
+  const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
   const now = new Date();
   const countMap: Record<string, number> = {};
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);
@@ -69,9 +78,8 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const banner = earlyAccessBanner(waiting, isFiltered(filters));
   const totalLive = counts.reduce((n, c) => n + c.total, 0);
 
-  // What this member was shown goes to the front of the recheck queue; deals
-  // they passed are not what they are looking at.
-  if (filters.view !== "passed") after(() => recordShown(ids));
+  // What this member was shown goes to the front of the recheck queue.
+  after(() => recordShown(ids));
 
   return (
     <main className="min-h-screen bg-background">
@@ -83,7 +91,10 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
               Every listing on the market in Stayful’s top areas that nets at least 40% more as a short let than a long let, or £8,000 a year after rent. Profit is an area estimate at your finance: take a Quick look for the address, photos and listing link, or a Full analysis for the exact figures for the property.
             </p>
           </div>
-          <Link href="/deals/opened" className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">My opened deals</Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href={NAV_TARGETS.myDeals.href} className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">Your kept deals</Link>
+            <Link href="/deals/opened" className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">My opened deals</Link>
+          </div>
         </div>
 
         {message && <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>}
@@ -96,21 +107,11 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
           <section>
             {page.cards.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center">
-                {filters.view === "kept" ? (
-                  <>
-                    <p className="text-sm font-medium text-foreground">No kept deals here yet.</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Tap Keep on any deal to put it on this list. Keeping is free.</p>
-                  </>
-                ) : filters.view === "passed" ? (
-                  <>
-                    <p className="text-sm font-medium text-foreground">No passed deals here.</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Deals you pass leave your grid and show up here, so you can undo.</p>
-                  </>
-                ) : passedHere ? (
+                {passedHere ? (
                   <>
                     <p className="text-sm font-medium text-foreground">You’ve passed on every deal that matches.</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      <Link href={`/deals${filtersToSearch({ ...filters, view: "passed", page: 1 })}`} className="font-medium text-foreground underline-offset-4 hover:underline">Show passed deals</Link> or widen the filter. New deals arrive every morning.
+                      <Link href={MY_DEALS_PASSED_HREF} className="font-medium text-foreground underline-offset-4 hover:underline">See your passed deals in My deals</Link> or widen the filter. New deals arrive every morning.
                     </p>
                   </>
                 ) : (

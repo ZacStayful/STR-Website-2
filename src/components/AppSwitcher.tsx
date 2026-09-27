@@ -4,16 +4,16 @@ import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type Act
 
 // Thin strip shown to signed-in members: Today, My deals and Account — the
 // three places the app now lives — plus Leads for anyone whose team owns a
-// funnel (existing funnel customers keep their door), Team for team members
-// (billing is the owner's, and lives under Account for everyone else), the
-// admin dashboard for admins, and the usage chip (Batch 10), which reads the
-// balance from the surrounding CreditProvider (see AppShell).
+// funnel (existing funnel customers keep their door), the admin dashboard for
+// admins, and the usage chip (Batch 10), which reads the balance from the
+// surrounding CreditProvider (see AppShell). A team member's team is on their
+// Account page (Batch 11), so it has no header item of its own.
 //
 // Where each item points is decided in src/lib/nav.ts, one line per item. A
 // page that left the strip (the analyser, the Market Explorer, daily picks)
 // still announces the section it always did, and NAV_FOR_SECTION says which
 // item that lights up.
-export function AppSwitcher({ active, admin, teamMember, leads }: { active: Section; admin?: boolean; teamMember?: boolean; leads?: boolean }) {
+export function AppSwitcher({ active, admin, leads }: { active: Section; admin?: boolean; leads?: boolean }) {
   const current = activeNavFor(active);
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
@@ -48,11 +48,6 @@ export function AppSwitcher({ active, admin, teamMember, leads }: { active: Sect
       {NAV_ORDER.filter((key) => key !== "account").map((key) => item(key, NAV_TARGETS[key].href, NAV_TARGETS[key].label))}
       {leads && item("leads", LEADS_NAV.href, LEADS_NAV.label)}
       {item("account", NAV_TARGETS.account.href, NAV_TARGETS.account.label)}
-      {teamMember && (
-        <Link href="/account/team" style={linkStyle(false)}>
-          Team
-        </Link>
-      )}
       {admin && (
         <Link href="/admin" style={linkStyle(false)}>
           Dashboard

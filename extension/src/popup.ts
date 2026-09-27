@@ -18,7 +18,7 @@ function connectedView(st: Extract<StatusResult, { connected: true }>): string {
     <p><strong>Connected</strong>${me.email ? ` as ${esc(me.email)}` : ''}</p>
     <p class="muted">${esc(plan)}${me.state !== 'ok' ? ' · your plan does not include listing checks' : ''}</p>
     <p class="muted">Open a Rightmove, Zoopla, OnTheMarket, Airbnb or Booking.com listing and click <em>Check</em> in the Stayful bar.</p>
-    <a class="cta" href="${esc(st.site)}/markets?pane=listings" target="_blank" rel="noopener">Open my pipeline</a>
+    <a class="cta" href="${esc(st.site)}/my-deals" target="_blank" rel="noopener">Open My deals</a>
     <button class="cta secondary" id="disconnect">Disconnect</button>`;
 }
 

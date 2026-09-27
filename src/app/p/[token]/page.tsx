@@ -81,7 +81,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
             {done ? (
               <>
                 <h1 className="text-2xl font-bold">Daily picks are off</h1>
-                <p className="mt-2 text-sm text-[#5b6657]">You will not be emailed another pick. Changed your mind? Turn them back on from <Link href="/picks" className="underline">your picks</Link> any time.</p>
+                <p className="mt-2 text-sm text-[#5b6657]">You will not be emailed another pick. Changed your mind? Turn them back on in <Link href="/account/notifications" className="underline">Notifications</Link> any time.</p>
               </>
             ) : (
               <>

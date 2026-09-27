@@ -140,7 +140,8 @@ export async function joinCheck(user: { id: string; email: string | null }, toke
   return { invite, blocker };
 }
 
-export type AcceptResult = { ok: true; teamName: string } | { ok: false; error: string };
+/** On success, whose team it is: where the member lands next depends on it (Batch 11). */
+export type AcceptResult = { ok: true; teamName: string; ownerId: string } | { ok: false; error: string };
 
 /**
  * Accepts an invite for the signed-in person.
@@ -207,5 +208,5 @@ export async function acceptInvite(user: { id: string; email: string | null }, t
     const mail = memberJoinedEmail({ memberName, nextChargeOn: retentionDate(periodEnd(now)) });
     await sendEmail({ to: ownerEmail, subject: mail.subject, html: mail.html, text: mail.text });
   }
-  return { ok: true, teamName: name };
+  return { ok: true, teamName: name, ownerId: invite.owner_id };
 }

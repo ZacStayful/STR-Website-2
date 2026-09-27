@@ -8,6 +8,7 @@ import { pipelineStatusInfo } from "@/lib/listing/pipeline";
 import { countsLine, groupByStage, matchesFocus, stageCounts, type ViewerDeal } from "@/lib/listing/tracked";
 import { loadTrackedDeals } from "@/lib/listing/tracked-server";
 import { myDealsFocusPath } from "@/lib/listing/return-path";
+import { myDealsShowsPassed } from "@/lib/nav";
 import { DealRow } from "./_components/DealRow";
 import { cardStatesFor } from "@/lib/marketplace/card-state";
 import { cardView, NOT_OPENED } from "@/lib/marketplace/card-view";
@@ -38,8 +39,8 @@ const MESSAGES: Record<string, string> = {
  * member see every deal anyone on the team tracks, labelled by person, and
  * change only their own. See src/lib/listing/tracked-server.ts.
  */
-export default async function MyDealsPage({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string; focus?: string; msg?: string }> }) {
-  const { tab, q, focus, msg } = await searchParams;
+export default async function MyDealsPage({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string; focus?: string; msg?: string; show?: string | string[] }> }) {
+  const { tab, q, focus, msg, show } = await searchParams;
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -87,6 +88,8 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
   const active = groups.filter((g) => g.stage !== "passed" && g.items.length > 0);
   const passed = groups.find((g) => g.stage === "passed")!;
   const focusItem = focus ? view.find((v) => matchesFocus(v, focus)) ?? null : null;
+  // ?show=passed (the old /deals?view=passed link, and the grid's "passed on every deal"): the Passed group open, and in view.
+  const showPassed = !reportsTab && myDealsShowsPassed(show) && passed.items.length > 0;
   const message = msg ? MESSAGES[msg] ?? null : null;
 
   const row = (item: ViewerDeal) => (
@@ -154,14 +157,14 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
             ))}
             {active.length === 0 && <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Everything here is passed. Keep deals from <Link href="/today" className="font-medium text-foreground underline-offset-4 hover:underline">Today</Link> to start again.</p>}
             {passed.items.length > 0 && (
-              <details className="group rounded-xl border border-border bg-card/50" open={focusItem?.stage === "passed" || undefined}>
+              <details id="stage-passed" className="group scroll-mt-24 rounded-xl border border-border bg-card/50" open={focusItem?.stage === "passed" || showPassed || undefined}>
                 <summary className="cursor-pointer select-none px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Passed · {passed.items.length}</summary>
                 <ul className="space-y-3 p-3 pt-0">{passed.items.map(row)}</ul>
               </details>
             )}
           </div>
         )}
-        <FocusScroll targetId={reportsTab ? null : focusItem?.key ?? null} />
+        <FocusScroll targetId={reportsTab ? null : (focusItem?.key ?? (showPassed ? "stage-passed" : null))} />
       </div>
     </main>
   );

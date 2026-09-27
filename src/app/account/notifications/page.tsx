@@ -14,6 +14,7 @@ import { payerFor } from '@/lib/team';
 import { quoterFor } from '@/lib/credit/quote-server';
 import { dailyDealsLineFor, dailyDealsMode } from '@/lib/listing/daily-deals';
 import { SmsSection } from './SmsSection';
+import { GOALS_EDITOR_HREF, NAV_TARGETS } from '@/lib/nav';
 
 export const dynamic = 'force-dynamic';
 
@@ -110,7 +111,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
         />
 
         <p className="mt-4 text-xs text-[#7a8274]">
-          Press a switch to change it. {ALWAYS_SENT_NOTE} Your picks are at <Link href="/picks" className="underline">Daily picks</Link>; your filter is in the <Link href="/markets?goals=1" className="underline">Market Explorer</Link>.
+          Press a switch to change it. {ALWAYS_SENT_NOTE} Today’s 5 are on <Link href={NAV_TARGETS.today.href} className="underline">Today</Link>; change what they’re picked for in <Link href={GOALS_EDITOR_HREF} className="underline">What you’re looking for</Link>.
         </p>
       </div>
     </main>

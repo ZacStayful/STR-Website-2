@@ -14,6 +14,7 @@ import { filtersForGoals } from "@/lib/today/candidates";
 import { displayOrder, greeting, matchLine } from "@/lib/today/day";
 import { todaySelection, todaysPick, type TodaysPick } from "@/lib/today/selection";
 import { syncChecklist } from "@/lib/today/checklist-server";
+import { GOALS_EDITOR_HREF, TODAY_LIST_ID } from "@/lib/nav";
 import { DealCard } from "@/app/deals/_components/DealCard";
 import { cardViewsFor } from "@/lib/marketplace/card-state";
 import { EarlyAccessBanner } from "@/app/deals/_components/EarlyAccessBanner";
@@ -26,8 +27,6 @@ export const metadata: Metadata = {
   title: "Today — Stayful Intelligence",
   robots: { index: false, follow: false },
 };
-
-const EDIT_GOALS = "/markets?goals=1";
 
 /**
  * The first screen a member sees each day: up to five deals picked for them,
@@ -109,7 +108,7 @@ export default async function TodayPage() {
           {line && <p className="mt-1 text-sm text-muted-foreground">{line}</p>}
           {!goals && (
             <p className="mt-2 text-sm text-foreground">
-              <Link href={EDIT_GOALS} className="font-semibold underline-offset-4 hover:underline">
+              <Link href={GOALS_EDITOR_HREF} className="font-semibold underline-offset-4 hover:underline">
                 Tell us what you’re looking for
               </Link>{" "}
               and today’s deals will be picked for you.
@@ -119,6 +118,8 @@ export default async function TodayPage() {
 
         <PasteLinkBox />
 
+        {/* The first-week checklist's steps scroll here (Batch 11): the cards, or the empty day in their place. */}
+        <div id={TODAY_LIST_ID} className="scroll-mt-4 space-y-5">
         {ids.length > 0 ? (
           <TodayCards ids={ids} initial={initial}>
             <div className="space-y-5">
@@ -138,7 +139,7 @@ export default async function TodayPage() {
                     <div className="mb-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
                       <p className="font-semibold text-foreground">Not an exact match</p>
                       {selection.advice && <p className="mt-0.5 text-foreground">{selection.advice}</p>}
-                      <Link href={EDIT_GOALS} className="mt-1 inline-block font-medium text-foreground underline-offset-4 hover:underline">
+                      <Link href={GOALS_EDITOR_HREF} className="mt-1 inline-block font-medium text-foreground underline-offset-4 hover:underline">
                         Edit what you’re looking for
                       </Link>
                     </div>
@@ -154,14 +155,13 @@ export default async function TodayPage() {
             <EmptyDay hasGoals={goals !== null} ready={selection !== null} />
           </>
         )}
+        </div>
 
         <EarlyAccessBanner text={banner} returnTo="/today" />
 
-        <nav aria-label="More" className="flex flex-wrap gap-x-5 gap-y-1 border-t border-border pt-4 text-sm">
+        <p className="border-t border-border pt-4 text-sm">
           <Link href="/deals" className="font-medium text-foreground underline-offset-4 hover:underline">Browse all deals</Link>
-          <Link href="/markets" className="font-medium text-foreground underline-offset-4 hover:underline">Area rankings &amp; map</Link>
-          <Link href="/picks" className="font-medium text-foreground underline-offset-4 hover:underline">Past picks</Link>
-        </nav>
+        </p>
       </div>
       </ChecklistProvider>
     </main>
@@ -191,7 +191,7 @@ function EmptyDay({ hasGoals, ready }: { hasGoals: boolean; ready: boolean }) {
         {hasGoals ? (
           <>
             New deals arrive every morning.{" "}
-            <Link href={EDIT_GOALS} className="font-medium text-foreground underline-offset-4 hover:underline">
+            <Link href={GOALS_EDITOR_HREF} className="font-medium text-foreground underline-offset-4 hover:underline">
               Widen what you’re looking for
             </Link>{" "}
             or browse every deal.
