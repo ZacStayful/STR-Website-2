@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checklistVisible, inWindow, isStepKey, rewardEligibility, rewardLine, rewardRef, stepsDone, STEP_KEYS, type Evidence } from './checklist.ts';
+import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibility, rewardLine, rewardRef, stepsDone, STEP_KEYS, type Evidence } from './checklist.ts';
+import { GOALS_EDITOR_HREF, TODAY_LIST_HREF } from '../nav.ts';
 
 const NOTHING: Evidence = { goals: false, keeps: 0, opened: false, reported: false, shared: false };
 const NOW = new Date('2026-09-26T12:00:00Z');
@@ -57,4 +58,10 @@ test('the card shows until everything is done, says so once, then disappears for
   assert.equal(checklistVisible({ createdAt: fresh, doneCount: 5, newlyPaid: 1, now: NOW }), true, 'the last step’s £1 is still shown');
   assert.equal(checklistVisible({ createdAt: fresh, doneCount: 5, newlyPaid: 0, now: NOW }), false);
   assert.equal(checklistVisible({ createdAt: daysAgo(8), doneCount: 1, newlyPaid: 0, now: NOW }), false, 'gone after the first week');
+});
+
+test('every step points at Today or the goals editor, never the old grid or the bare analyser', () => {
+  const href = Object.fromEntries(CHECKLIST_STEPS.map((s) => [s.key, s.href]));
+  assert.deepEqual(href, { goals: GOALS_EDITOR_HREF, keep3: TODAY_LIST_HREF, open: TODAY_LIST_HREF, report: TODAY_LIST_HREF, share: TODAY_LIST_HREF });
+  for (const s of CHECKLIST_STEPS) assert.doesNotMatch(s.href, /^\/(deals|estimate)(\b|$)/, s.key);
 });

@@ -122,7 +122,7 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
             <h1 className="text-2xl font-bold text-foreground">Leads</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Enquiries from your funnels. Your own analyser reports live separately, under{" "}
-              <Link href="/reports" className="underline underline-offset-2">My reports</Link>.
+              <Link href="/my-deals?tab=reports" className="underline underline-offset-2">My deals › Reports</Link>.
             </p>
           </div>
           {isOwner ? (

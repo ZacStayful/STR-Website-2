@@ -66,9 +66,6 @@ export async function ReportsList({ userId, showAuthors, q, shownOnDeals }: { us
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/picks" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">
-            Daily picks
-          </Link>
           <Link href="/estimate" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
             New analysis
           </Link>

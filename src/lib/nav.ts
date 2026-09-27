@@ -67,3 +67,37 @@ export function dealsViewRedirect(view: string | null | undefined): string | nul
 export function myDealsShowsPassed(show: string | string[] | null | undefined): boolean {
   return (Array.isArray(show) ? show[0] : show) === 'passed';
 }
+
+// ── Links that point to the right place (Batch 11) ──
+
+/**
+ * "What you're looking for": the goals editor, still the Market Explorer's
+ * goals panel. Batch 12 replaces it with the profile page; this is the line
+ * to change (other copies of the URL are listed in the Batch 11 handover, and
+ * emails already sent carry it, so the old URL must keep working).
+ */
+export const GOALS_EDITOR_HREF = '/markets?goals=1';
+
+/** Today's list of cards (and the empty-day box in their place): what the first-week checklist points at. */
+export const TODAY_LIST_ID = 'today-list';
+export const TODAY_LIST_HREF = `${NAV_TARGETS.today.href}#${TODAY_LIST_ID}`;
+
+/**
+ * The element id to scroll to when following `href` would stay on the page at
+ * `pathname` (`#id`, or `/today#id` while on /today); null when it is a real
+ * navigation or has no fragment. A query string on the link counts as the
+ * same page only when the path matches: the fragment is what is followed.
+ */
+export function samePageAnchor(href: string, pathname: string): string | null {
+  const at = href.indexOf('#');
+  if (at < 0) return null;
+  const id = href.slice(at + 1);
+  if (!id) return null;
+  const path = href.slice(0, at).split('?')[0];
+  return path === '' || path === pathname ? id : null;
+}
+
+/** Where a member lands after joining a team: its Leads, when the team has a funnel to work, else Today. */
+export function joinLandingPath(teamOwnsFunnel: boolean): string {
+  return teamOwnsFunnel ? LEADS_NAV.href : NAV_TARGETS.today.href;
+}

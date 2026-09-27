@@ -22,6 +22,7 @@ import { CANCEL_REASONS, type BillingState, type CancelReason } from './plan-vie
 import type Stripe from 'stripe'
 import { logActivity } from '@/lib/activity/log'
 import { planActivityKind } from '@/lib/activity/kinds'
+import { HOME_PATH } from '@/lib/auth/landing'
 
 const REASON_SLUGS: Set<string> = new Set(CANCEL_REASONS.map((r) => r.slug))
 
@@ -403,12 +404,13 @@ export async function keepSubscriptionAction(): Promise<BillingState> {
  *
  * A plain <form action> in a server component must resolve to void, so this
  * wraps the real action and navigates instead of returning state. Success
- * lands them back in the analyser; a failure lands on /account, which has the
- * same button plus a route to a human, and says what went wrong.
+ * lands them on Today, where every member's day starts (Batch 11; it used to
+ * be the analyser); a failure lands on /account, which has the same button
+ * plus a route to a human, and says what went wrong.
  */
 export async function resumeFromUpgradeAction(): Promise<void> {
   const result = await resumeSubscriptionAction()
-  redirect(result.error ? '/account?resume=failed' : '/estimate')
+  redirect(result.error ? '/account?resume=failed' : HOME_PATH)
 }
 
 /** Cancel a pause that has been booked but has not started yet. */

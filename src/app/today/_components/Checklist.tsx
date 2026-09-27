@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, u
 import Link from "next/link";
 import { CheckCircle2, ChevronDown, ChevronUp, Circle } from "lucide-react";
 import { notifyCreditChanged } from "@/lib/credit/client";
+import { samePageAnchor } from "@/lib/nav";
 import type { ChecklistView } from "@/lib/today/checklist-server";
 import { refreshChecklistAction } from "../actions";
 
@@ -59,6 +60,21 @@ function onStorage(changed: () => void): () => void {
 }
 
 /**
+ * A step whose place is on this page (Today's cards, from the checklist on
+ * Today) is scrolled to rather than navigated to, so following it never
+ * reloads Today. Anywhere else the link navigates as usual. A new-tab click
+ * never reaches here: Link only calls onNavigate for its own navigations.
+ */
+function stayOnPage(e: { preventDefault: () => void }, href: string) {
+  const id = samePageAnchor(href, window.location.pathname);
+  const target = id ? document.getElementById(id) : null;
+  if (!target) return;
+  e.preventDefault();
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+}
+
+/**
  * The first-week checklist card: five steps ticked from what the member
  * actually did, £1 each while they are new. Collapsible; the choice is kept
  * on this device only. Gone for good once every step is done or the first
@@ -107,7 +123,7 @@ export function Checklist() {
               {s.done ? (
                 <span className="text-muted-foreground line-through decoration-muted-foreground/50">{s.label}</span>
               ) : (
-                <Link href={s.href} className="font-medium text-foreground underline-offset-4 hover:underline">
+                <Link href={s.href} onNavigate={(e) => stayOnPage(e, s.href)} className="font-medium text-foreground underline-offset-4 hover:underline">
                   {s.label}
                 </Link>
               )}

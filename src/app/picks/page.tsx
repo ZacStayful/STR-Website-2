@@ -11,6 +11,8 @@ import { profitRange, upliftTag, type ProfitRangeInput } from "@/lib/marketplace
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
+import { myDealsFocusPath } from "@/lib/listing/return-path";
+import { NAV_TARGETS } from "@/lib/nav";
 import { savePickAction, reactToPickAction } from "./actions";
 
 export const metadata: Metadata = {
@@ -98,7 +100,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
           )}
           <p className="mt-3 flex flex-wrap gap-2 text-sm">
             <Link href="/markets?goals=1" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">{goals ? "Edit filter" : "Set my filter"}</Link>
-            <Link href="/markets?pane=listings" className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open my pipeline</Link>
+            <Link href={NAV_TARGETS.myDeals.href} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open My deals</Link>
           </p>
           {enabled === false && <p className="mt-3 text-xs text-muted-foreground">Daily picks are off. Turn them on above to get one a day again.</p>}
         </section>
@@ -182,7 +184,7 @@ function PickCard({ pick: p, tab, showReasons, finance, widths }: { pick: PickVi
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {p.checkedListingId ? (
-          <Link href={`/markets?pane=listings&listing=${encodeURIComponent(p.checkedListingId)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">Open in pipeline</Link>
+          <Link href={myDealsFocusPath(`l-${p.checkedListingId}`)} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See in My deals</Link>
         ) : (
           <form action={savePickAction}>
             <input type="hidden" name="id" value={p.id} />

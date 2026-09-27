@@ -12,7 +12,12 @@
  *
  * Pure, so the rules are tested rather than trusted. The reads, writes and
  * grants are in checklist-server.ts.
+ *
+ * Where each step points (Batch 11): the checklist sits on Today, and Today's
+ * cards carry Keep, Quick look (an open), Full analysis (a report) and Share,
+ * so those four scroll to the cards; the goals step opens the goals editor.
  */
+import { GOALS_EDITOR_HREF, TODAY_LIST_HREF } from '../nav.ts';
 
 export type StepKey = 'goals' | 'keep3' | 'open' | 'report' | 'share';
 
@@ -24,11 +29,11 @@ export interface ChecklistStep {
 }
 
 export const CHECKLIST_STEPS: readonly ChecklistStep[] = [
-  { key: 'goals', label: 'Tell us what you’re looking for', href: '/markets?goals=1' },
-  { key: 'keep3', label: 'Keep 3 deals', href: '/deals' },
-  { key: 'open', label: 'Open a deal', href: '/deals' },
-  { key: 'report', label: 'Run a full report', href: '/estimate' },
-  { key: 'share', label: 'Share a deal', href: '/deals' },
+  { key: 'goals', label: 'Tell us what you’re looking for', href: GOALS_EDITOR_HREF },
+  { key: 'keep3', label: 'Keep 3 deals', href: TODAY_LIST_HREF },
+  { key: 'open', label: 'Open a deal', href: TODAY_LIST_HREF },
+  { key: 'report', label: 'Run a full report', href: TODAY_LIST_HREF },
+  { key: 'share', label: 'Share a deal', href: TODAY_LIST_HREF },
 ];
 
 export const STEP_KEYS: readonly StepKey[] = CHECKLIST_STEPS.map((s) => s.key);

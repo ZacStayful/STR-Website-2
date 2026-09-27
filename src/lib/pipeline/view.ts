@@ -20,6 +20,7 @@ import { countWord, formatAge, gbp, messageFields, offMarketReason, priceIsStale
 import { OFFER_SLOT } from './offer-amount.ts';
 import type { OfferMissing, OfferRange } from './offer-range.ts';
 import { CONTENT_STAGE, type Fields, type NextStepsContent, type StageBlock, type StepKind } from './types.ts';
+import { GOALS_EDITOR_HREF } from '../nav.ts';
 
 /** The one move each stage's button makes. Secured is the end of the line. */
 export const NEXT_MOVE: Record<PipelineStatus, PipelineStatus | null> = {
@@ -31,8 +32,8 @@ export const NEXT_MOVE: Record<PipelineStatus, PipelineStatus | null> = {
   passed: 'watching',
 };
 
-/** Where members change their targets (the Market Explorer goals panel). */
-export const GOALS_HREF = '/markets?goals=1';
+/** Where members change their targets: the goals editor, one constant in src/lib/nav.ts (Batch 11). */
+export const GOALS_HREF = GOALS_EDITOR_HREF;
 
 export interface RenderedMessage {
   id: string;
