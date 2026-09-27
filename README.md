@@ -28,8 +28,8 @@ injected, rather than inside the route handlers.
 
 ## Deploying
 
-Vercel deploys `main` automatically. Five things are **not** automated, and all
-five have to be done by hand.
+Vercel deploys `main` automatically. Six things are **not** automated, and all
+six have to be done by hand.
 
 ### 1. Run `supabase/schema.sql` after any merge that changes it
 
@@ -150,6 +150,37 @@ estimate: confirm it against the Twilio console and correct it on
    only, and so does the button on the page.
 5. **Switch off test accounts** in the Members table ("Exclude"). Admins
    (`ADMIN_EMAILS`) and `@stayful.co.uk` addresses are left out already.
+
+### 6. Switch on the new prices (Batch 10)
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 10: analyser
+   path + pricing" section). It adds three service-role tables
+   (`deal_analyses`, `analysis_purchases`, `daily_deal_charges`), two columns
+   on `saved_searches` and one on `profiles`, the new `billing_settings` rows,
+   and, once only, moves top-up and adjustment credit from 1.5× to 1.3× (the
+   setting and existing balances). Nothing is added to `ACCESS_COLUMNS`. Until
+   it is run, a Full analysis says "Something went wrong" and charges nothing,
+   and top-ups still spend at 1.5×.
+2. **Live at merge:** Quick look (the ladder, 25p to £1), Full analysis of a
+   feed deal (£4 on a plan, less what the account paid to open it), PMI's
+   second opinion (+£2), saved analyses reused for 30 days, top-up credit at
+   1.3×, `/terms`, `/privacy`, the Usage chip and page.
+3. **Pick the date** for daily deals (33p a day) and 1:1 plan credit:
+   `/admin/billing` → Deal prices → *New pricing from*, at least 14 days away.
+   Saving it switches nothing on.
+4. **Send the notice:** `/admin/billing` → Pricing notice → **Dry run**
+   (audience per plan, a sample, the email itself), then **Send**. It is
+   refused unless the date is at least 14 days away, mails each account at
+   most once (`profiles.pricing_notice_sent_at`), and stops after about 45
+   seconds: press Send again until it says everyone has it. The first send
+   records the date announced (`billing_settings.pricing_notice_date`); the
+   new prices start on the saved date only once it has been announced, and
+   never before the date announced.
+5. **The morning it starts:** `/api/internal/sourcing?dry=1` and
+   `/api/internal/daily-digest?dry=1` (with the internal secret) report
+   `chargeMode: "per_day"` (the sourcing run also `dailyPence: 33`); before
+   the date they report `per_pick`. Monthly plans get the new credit at their first renewal on or
+   after the date, annual plans at their first annual renewal after it.
 
 ### Environment variables
 
@@ -276,5 +307,9 @@ charged.
   to the first event logged live in production. Weeks before that undercount
   and are labelled.
 - **Retention:** 24 months (`activity-retention`, nightly).
-- **Batch 10's kinds** are registered already: `full_analysis`, `pmi_addon`,
-  `reminder_shown` (recorded only) and `reminder_acted`.
+- **Batch 10's events:** `full_analysis` (once per purchase, when it
+  completes), `pmi_addon` (PMI added later from the report; at purchase it is
+  on the `full_analysis` event), `deal_open` for the open inside a one-tap Full
+  analysis, `reminder_shown` (recorded only, sent from the browser once a
+  reminder is on screen) and `reminder_acted` (a Full analysis started from the
+  reminder's button). Their take-up figures are on `/admin/weekly-active`.
