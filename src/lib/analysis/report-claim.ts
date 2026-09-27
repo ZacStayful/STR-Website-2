@@ -75,7 +75,10 @@ export async function claimReportRun(userId: string, checkedListingId: string, o
 /**
  * A report a teammate already has on this deal, as the deal page shows it:
  * the team scope of My deals (active members and the owner; a teammate's rows
- * from before they joined stay theirs alone), newest first, and still saved.
+ * from before they joined stay theirs alone), newest first, still saved, and
+ * one this person can open (saved_searches' RLS: the report's owner_id is
+ * them or their team's owner). A report they could not open is never offered
+ * in place of running their own.
  * Null when there is none, or it cannot be read (the run then goes ahead as
  * it did before).
  */
@@ -100,8 +103,9 @@ async function teamReportFor(admin: ReturnType<typeof createAdminClient>, userId
       .filter((r) => typeof r.analysed_report_id === 'string' && !beforeJoining(scope, userId, r.user_id, r.created_at))
       .map((r) => r.analysed_report_id as string);
     if (ids.length === 0) return null;
-    const { data: saved } = await admin.from('saved_searches').select('id').in('id', ids);
-    const present = new Set(((saved ?? []) as { id: string }[]).map((r) => r.id));
+    const readable = new Set([userId, scope.payerId]);
+    const { data: saved } = await admin.from('saved_searches').select('id, owner_id').in('id', ids);
+    const present = new Set(((saved ?? []) as { id: string; owner_id: string | null }[]).filter((r) => r.owner_id !== null && readable.has(r.owner_id)).map((r) => r.id));
     return ids.find((id) => present.has(id)) ?? null;
   } catch (err) {
     console.warn('[report-claim] team report check failed:', err);
