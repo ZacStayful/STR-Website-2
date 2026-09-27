@@ -22,6 +22,12 @@ import { HOME_PATH } from "@/lib/auth/landing";
 //   POST { email, phone?, name?, area?, postcode?, budget?, bedrooms?, kind?, maxRentPcm?, source?, leadId? }
 //   → { userId, created, welcomeGranted, magicLinkSent, magicLink, areaCode, goals }
 //
+// Only a NEW account gets the welcome email and a sign-in link. For an email
+// that already has an account (a repeat form, or someone who is already a
+// member, admins included) no email goes and `magicLink` is null: a sign-in
+// link to an existing account is never handed to the caller, and a member is
+// not told again that £20 of credit is waiting.
+//
 // `magicLink` is the same single-use sign-in link the email carries, returned
 // so n8n can put it in the WhatsApp welcome too. It is a token-hash link to
 // /auth/confirm (built from generateLink's hashed_token), so it works on any
@@ -148,20 +154,23 @@ export async function POST(request: Request) {
   // verifies the hash server-side.
   let magicLinkSent = false;
   let magicLink: string | null = null;
-  const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: "magiclink", email });
-  if (linkErr || !link?.properties?.hashed_token) {
-    console.error("[leads] magic link failed:", linkErr?.message);
-  } else {
-    // "Sign in and see today's deals": the link lands on Today, like every other sign-in.
-    magicLink = confirmLink(link.properties.hashed_token, HOME_PATH);
-    let areaName: string | null = null;
-    if (areaCode) {
-      const { areaMetaForCode } = await import("@/lib/market/areas");
-      areaName = areaMetaForCode(areaCode).name;
+  // Only for a new account (see the header): an existing one gets no email and no link.
+  if (created) {
+    const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: "magiclink", email });
+    if (linkErr || !link?.properties?.hashed_token) {
+      console.error("[leads] magic link failed:", linkErr?.message);
+    } else {
+      // "Sign in and see today's deals": the link lands on Today, like every other sign-in.
+      magicLink = confirmLink(link.properties.hashed_token, HOME_PATH);
+      let areaName: string | null = null;
+      if (areaCode) {
+        const { areaMetaForCode } = await import("@/lib/market/areas");
+        areaName = areaMetaForCode(areaCode).name;
+      }
+      const mail = welcomeEmail({ name, link: magicLink, areaName });
+      const res = await sendEmail({ to: email, subject: mail.subject, html: mail.html, text: mail.text });
+      magicLinkSent = res.sent;
     }
-    const mail = welcomeEmail({ name, link: magicLink, areaName });
-    const res = await sendEmail({ to: email, subject: mail.subject, html: mail.html, text: mail.text });
-    magicLinkSent = res.sent;
   }
 
   return Response.json({ userId, created, welcomeGranted, magicLinkSent, magicLink, areaCode, goals: { kind: goals.sourcingKind, budget: goals.budget, bedrooms: goals.bedrooms } });
