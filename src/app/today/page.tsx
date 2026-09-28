@@ -23,6 +23,9 @@ import { Checklist, ChecklistProvider } from "./_components/Checklist";
 import { PasteLinkBox } from "./_components/PasteLinkBox";
 import { TodayCards } from "./_components/TodayCards";
 import { ProfileProgressCard } from "./_components/ProfileProgressCard";
+import { profilePriceLineFor, profilesFor } from "@/lib/profiles/server";
+import { isRunning, labelsShown } from "@/lib/profiles/rules";
+import { pauseProfileAction } from "@/app/profiles/actions";
 
 export const metadata: Metadata = {
   title: "Today — Stayful Intelligence",
@@ -44,27 +47,35 @@ export default async function TodayPage() {
 
   const now = new Date();
   const adminUser = isAdminEmail(user.email);
-  const [payer, visibility, profileRes, savedRes, settings] = await Promise.all([
+  const [payer, visibility, profileRes, savedRes, settings, saved] = await Promise.all([
     payerFor(user.id),
     // An account that has never paid sees a deal only once its early-access window has passed.
     dealVisibilityFor(user.id, adminUser),
     supabase.from("profiles").select("full_name, market_goals").eq("id", user.id).maybeSingle(),
     supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id),
     getBillingSettings(),
+    // Saved profiles (Batch 13): Today is the active profile's own list and pick.
+    profilesFor(user.id),
   ]);
+  const active = saved.readable ? saved.active : null;
+  const profileId = active?.id ?? null;
+  const paused = active !== null && !isRunning(active);
+  const profileName = active && labelsShown(saved.all) ? active.name : null;
   const profile = profileRes.data as { full_name: string | null; market_goals: unknown } | null;
   const goals = parseMarketGoals(profile?.market_goals ?? null);
   const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
   // The search the member's goals point at: the same one /deals counts, so "N match" and the cards agree.
   const filters = filtersForGoals(goals, savedAreas);
 
-  const [selection, pick, count, waiting, checklist] = await Promise.all([
-    todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility }, now),
-    todaysPick(user.id, now),
+  const [selection, pick, count, waiting, checklist, priceLine] = await Promise.all([
+    // A paused profile has no daily deals: no list, no pick, until it is resumed.
+    paused ? Promise.resolve(null) : todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true }, now),
+    paused ? Promise.resolve(null) : todaysPick(user.id, now, profileId),
     countDeals(filters, visibility, { userId: user.id }),
     visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
     // The first-week checklist, brought up to date now: any "+£1" it shows is marked seen.
     syncChecklist(user.id, { markSeen: true, now }),
+    paused ? profilePriceLineFor(user.id, adminUser) : Promise.resolve(null),
   ]);
 
   const stored = selection?.dealIds ?? [];
@@ -108,6 +119,14 @@ export default async function TodayPage() {
 
         <header>
           <h1 className="text-2xl font-bold text-foreground">{greeting(now, profile?.full_name ?? null)}</h1>
+          {profileName && (
+            <p className="mt-1 text-sm font-medium text-foreground">
+              Today’s 5 for {profileName} ·{" "}
+              <Link href="/profiles" className="font-normal text-muted-foreground underline-offset-4 hover:underline">
+                switch profile
+              </Link>
+            </p>
+          )}
           {line && <p className="mt-1 text-sm text-muted-foreground">{line}</p>}
           {!goals && (
             <p className="mt-2 text-sm text-foreground">
@@ -123,7 +142,19 @@ export default async function TodayPage() {
 
         {/* The first-week checklist's steps scroll here (Batch 11): the cards, or the empty day in their place. */}
         <div id={TODAY_LIST_ID} className="scroll-mt-4 space-y-5">
-        {ids.length > 0 ? (
+        {paused && active ? (
+          <section className="rounded-xl border border-border bg-card p-5">
+            <p className="text-sm font-semibold text-foreground">Daily deals for {active.name} are paused.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Nothing is charged for this profile while it’s paused. {priceLine ? `${priceLine}.` : ""}</p>
+            <form action={pauseProfileAction} className="mt-3">
+              <input type="hidden" name="id" value={active.id} />
+              <input type="hidden" name="paused" value="0" />
+              <input type="hidden" name="next" value="/today" />
+              <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Resume daily deals</button>
+            </form>
+            <p className="mt-2 text-xs text-muted-foreground">They start again with the next morning’s email. You can still browse every deal meanwhile.</p>
+          </section>
+        ) : ids.length > 0 ? (
           <TodayCards ids={ids} initial={initial}>
             <div className="space-y-5">
               {pickCard && (

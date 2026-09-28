@@ -32,7 +32,7 @@ export type ReactionOutcome = { ok: true; reaction: DealReaction | null } | { ok
  * cannot see, even by posting its id. Clearing is always allowed, so a kept
  * deal that has since gone can still be taken off the list.
  */
-export async function setDealReaction(userId: string, dealId: string, target: DealReaction | null, visibility: DealVisibility): Promise<ReactionOutcome> {
+export async function setDealReaction(userId: string, dealId: string, target: DealReaction | null, visibility: DealVisibility, profileId: string | null = null): Promise<ReactionOutcome> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
@@ -58,6 +58,16 @@ export async function setDealReaction(userId: string, dealId: string, target: De
   // empty list either way.
   const row: Record<string, unknown> = { user_id: userId, deal_id: dealId, reaction: target, updated_at: nowIso };
   if (target === 'keep') row.reasons = [];
+  // Saved profiles (Batch 13): the answer belongs to the profile it was given
+  // under. Answering again under another profile moves it there, and the old
+  // profile's pass reasons go with the old answer: they must never train the
+  // new profile.
+  if (profileId) {
+    const { data: before } = await admin.from('deal_reactions').select('profile_id').eq('user_id', userId).eq('deal_id', dealId).maybeSingle();
+    const was = (before as { profile_id?: string | null } | null)?.profile_id ?? null;
+    if (was && was !== profileId) row.reasons = [];
+    row.profile_id = profileId;
+  }
   const { error } = await admin.from('deal_reactions').upsert(row, { onConflict: 'user_id,deal_id' });
   if (error) {
     console.error('[deal-reactions] set failed:', error.message);
@@ -119,7 +129,7 @@ export async function keptDealIds(userId: string): Promise<string[]> {
   return ids;
 }
 
-type ReactionRow = { user_id: string; deal_id: string; reaction: unknown; reasons: unknown; updated_at: string };
+type ReactionRow = { user_id: string; deal_id: string; reaction: unknown; reasons: unknown; updated_at: string; profile_id?: string | null };
 type FactsRow = DealFeedbackFacts & { id: string; canonical_url: string };
 
 /**
@@ -132,24 +142,34 @@ type FactsRow = DealFeedbackFacts & { id: string; canonical_url: string };
  * Paged throughout: grid reactions far outnumber pick answers and an
  * unpaged read would stop silently at the API's row cap.
  */
-export async function dealFeedbackFor(admin: Admin, userIds: string[], sinceIso: string): Promise<{ entries: Map<string, FeedbackEntry[]>; passedUrls: Map<string, Set<string>> }> {
+export async function dealFeedbackFor(
+  admin: Admin,
+  userIds: string[],
+  sinceIso: string,
+  opts: { byProfile?: boolean } = {},
+): Promise<{ entries: Map<string, FeedbackEntry[]>; passedUrls: Map<string, Set<string>>; byProfile: Map<string, FeedbackEntry[]> }> {
   const entries = new Map<string, FeedbackEntry[]>();
   const passedUrls = new Map<string, Set<string>>();
+  // Saved profiles (Batch 13): each answer also keyed by the profile it was
+  // given under, so its reasons shape only that profile. Hiding a passed deal
+  // (passedUrls) stays member-wide. The column is only named when asked for,
+  // so a database the schema has not caught up with reads exactly as before.
+  const byProfile = new Map<string, FeedbackEntry[]>();
   const rows: ReactionRow[] = [];
   for (let i = 0; i < userIds.length; i += ID_CHUNK) {
     const some = userIds.slice(i, i + ID_CHUNK);
     for (let from = 0; ; from += PAGE) {
-      const { data, error } = await admin.from('deal_reactions').select('user_id, deal_id, reaction, reasons, updated_at').in('user_id', some).order('user_id', { ascending: true }).order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
+      const { data, error } = await admin.from('deal_reactions').select(opts.byProfile ? 'user_id, deal_id, reaction, reasons, updated_at, profile_id' : 'user_id, deal_id, reaction, reasons, updated_at').in('user_id', some).order('user_id', { ascending: true }).order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
       if (error) {
         // Schema behind: picks run exactly as they did before this table existed.
         console.warn('[sourcing] deal_reactions select failed (schema behind?):', error.message);
-        return { entries, passedUrls };
+        return { entries, passedUrls, byProfile };
       }
-      rows.push(...((data ?? []) as ReactionRow[]));
+      rows.push(...((data ?? []) as unknown as ReactionRow[]));
       if ((data?.length ?? 0) < PAGE) break;
     }
   }
-  if (rows.length === 0) return { entries, passedUrls };
+  if (rows.length === 0) return { entries, passedUrls, byProfile };
 
   const facts = new Map<string, FactsRow>();
   const dealIds = [...new Set(rows.map((r) => r.deal_id))];
@@ -172,9 +192,9 @@ export async function dealFeedbackFor(admin: Admin, userIds: string[], sinceIso:
       passedUrls.set(r.user_id, set);
     }
     if (!(Date.parse(r.updated_at) >= since)) continue;
-    const list = entries.get(r.user_id) ?? [];
-    list.push({ url: d.canonical_url, at: r.updated_at, feedback: dealReactionToFeedback({ reaction: r.reaction, reasons: r.reasons }, d) });
-    entries.set(r.user_id, list);
+    const entry: FeedbackEntry = { url: d.canonical_url, at: r.updated_at, feedback: dealReactionToFeedback({ reaction: r.reaction, reasons: r.reasons }, d) };
+    entries.set(r.user_id, [...(entries.get(r.user_id) ?? []), entry]);
+    if (r.profile_id) byProfile.set(r.profile_id, [...(byProfile.get(r.profile_id) ?? []), entry]);
   }
-  return { entries, passedUrls };
+  return { entries, passedUrls, byProfile };
 }

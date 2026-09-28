@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_FILTERS, type DealFilters } from '../marketplace/grid.ts';
 import type { AlertChange } from '../market/alerts.ts';
-import { buildYourWeek, matchesFilters, missedFor, speedLine, wasVisibleToFree, type WentDeal } from './week.ts';
+import { buildYourWeek, matchesFilters, missedByProfile, missedFor, missedTotal, recapSection, speedLine, wasVisibleToFree, type WentDeal } from './week.ts';
 import { renderEmail } from './render-email.ts';
 
 const NOW = new Date('2026-09-28T08:00:00Z');
@@ -109,7 +109,7 @@ const areaChange: AlertChange = { code: 'LS', name: 'Leeds', direction: 'up', pr
 test('the recap never sends the email on its own; nothing to say means no email', () => {
   const recap = [{ place: 'York · 3 bed terraced', summary: 'price down from £250,000 to £240,000 (-4.0%)', link: { label: 'Open in My deals', url: `${SITE}/my-deals` } }];
   assert.equal(buildYourWeek({ siteUrl: SITE, now: NOW, since: SINCE, missed: null, freeDelayHours: null, recap, areas: null, unsubscribe: null }), null);
-  assert.equal(buildYourWeek({ siteUrl: SITE, now: NOW, since: SINCE, missed: { total: 0, listed: [], earlyAccess: 0 }, freeDelayHours: null, recap: [], areas: [], unsubscribe: null }), null);
+  assert.equal(buildYourWeek({ siteUrl: SITE, now: NOW, since: SINCE, missed: { total: 0, listed: [], earlyAccess: 0, matched: [] }, freeDelayHours: null, recap: [], areas: [], unsubscribe: null }), null);
   const withAreas = buildYourWeek({ siteUrl: SITE, now: NOW, since: SINCE, missed: null, freeDelayHours: null, recap, areas: [areaChange], unsubscribe: null })!;
   assert.deepEqual(withAreas.message.sections.map((s) => s.key), ['recap', 'areas']);
   assert.equal(withAreas.message.subject, 'Your week: Leeds changed · 1 of your deals moved');
@@ -144,4 +144,32 @@ test('the recap reads each tracked deal\'s own record since the last Your week, 
   assert.deepEqual(items.map((i) => i.place), ['York · 3 bed terraced', 'Leeds · 2 bed flat']);
   assert.match(items[0].summary, /^Price down from £250,000 to £240,000/);
   assert.equal(items[1].summary, 'Now under offer');
+});
+
+test('saved profiles: missed deals per profile, each deal counted once, under the first profile that matched', () => {
+  const deals = [went({ id: 'both' }), went({ id: 'leeds-only' }), went({ id: 'york', postcode_area: 'YO' })];
+  const york: DealFilters = { ...DEFAULT_FILTERS, kind: 'rent', areas: ['YO', 'LS'] };
+  const parts = missedByProfile(
+    [
+      { heading: 'My deals', filters: leedsRent },
+      { heading: 'Client: JS', filters: york },
+      { heading: 'Empty', filters: { ...leedsRent, areas: ['M'] } },
+    ],
+    { deals, seen: new Set(), since: SINCE, freeDelayHours: null },
+  );
+  assert.deepEqual(parts.map((p) => [p.heading, p.missed.matched]), [['My deals', ['both', 'leeds-only']], ['Client: JS', ['york']]]);
+  const total = missedTotal(parts)!;
+  assert.equal(total.total, 3);
+  const w = buildYourWeek({ siteUrl: SITE, now: NOW, since: SINCE, missed: total, missedByProfile: parts, freeDelayHours: null, recap: null, areas: null, unsubscribe: null, todayUrlFor: (h) => (h === 'Client: JS' ? `${SITE}/profiles/switch?to=x&next=%2Ftoday` : undefined) })!;
+  assert.deepEqual(w.message.sections.map((s) => s.title), ['Deals you missed for My deals', 'Deals you missed for Client: JS']);
+  assert.match(w.message.subject, /^Your week: 3 deals matching you went/);
+  assert.ok(renderEmail(w.message).text.includes('/profiles/switch?to=x'));
+  assert.equal(missedTotal([]), null);
+});
+
+test('saved profiles: a recap line names its profile only when given one', () => {
+  const link = { label: 'Open in My deals', url: `${SITE}/my-deals` };
+  const s = recapSection([{ place: 'York', summary: 'Now sold', link, profileName: 'Client: JS' }, { place: 'Leeds', summary: 'Now sold', link }])!;
+  const items = s.blocks[0].type === 'items' ? s.blocks[0].items : [];
+  assert.deepEqual(items.map((i) => i.lines), [['Now sold', 'For Client: JS'], ['Now sold']]);
 });

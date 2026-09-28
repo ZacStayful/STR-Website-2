@@ -1,0 +1,132 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { DEFAULT_GOALS } from '../market/goals.ts';
+import { chargeOrder, checkName, labelFor, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile } from './rules.ts';
+
+const p = (over: Partial<{ id: string; name: string; isActive: boolean; createdAt: string; pausedAt: string | null; deletedAt: string | null }> = {}) => ({
+  id: over.id ?? 'a',
+  name: over.name ?? 'My deals',
+  isActive: over.isActive ?? false,
+  createdAt: over.createdAt ?? '2026-09-01T00:00:00Z',
+  pausedAt: over.pausedAt ?? null,
+  deletedAt: over.deletedAt ?? null,
+});
+
+test('names: trimmed, required, 40 characters, unique among live profiles ignoring case', () => {
+  assert.deepEqual(checkName('  Client:   JS ', []), { ok: true, name: 'Client: JS' });
+  assert.equal(checkName('', []).ok, false);
+  assert.equal(checkName('x'.repeat(41), []).ok, false);
+  const others = [p({ id: 'a', name: 'Client: JS' }), p({ id: 'b', name: 'Old', deletedAt: '2026-09-02T00:00:00Z' })];
+  assert.equal(checkName('client: js', others).ok, false);
+  assert.equal(checkName('Client: JS', others, 'a').ok, true, 'renaming a profile to its own name is fine');
+  assert.equal(checkName('old', others).ok, true, 'a deleted profile frees its name');
+});
+
+test('limit: five for a member, one for a team member', () => {
+  assert.equal(maxProfilesFor(false, 5), 5);
+  assert.equal(maxProfilesFor(true, 5), 1);
+  assert.equal(limitReached(4, 5), false);
+  assert.equal(limitReached(5, 5), true);
+});
+
+test('running = neither paused nor deleted', () => {
+  assert.equal(isRunning(p()), true);
+  assert.equal(isRunning(p({ pausedAt: '2026-09-02T00:00:00Z' })), false);
+  assert.equal(isRunning(p({ deletedAt: '2026-09-02T00:00:00Z' })), false);
+});
+
+test('charge order: the active profile first, then oldest first; paused and deleted left out', () => {
+  const list = [
+    p({ id: 'old', createdAt: '2026-01-01T00:00:00Z' }),
+    p({ id: 'paused', createdAt: '2026-01-02T00:00:00Z', pausedAt: '2026-09-01T00:00:00Z' }),
+    p({ id: 'active', createdAt: '2026-06-01T00:00:00Z', isActive: true }),
+    p({ id: 'new', createdAt: '2026-08-01T00:00:00Z' }),
+    p({ id: 'gone', createdAt: '2026-01-03T00:00:00Z', deletedAt: '2026-09-01T00:00:00Z' }),
+  ];
+  assert.deepEqual(chargeOrder(list).map((x) => x.id), ['active', 'old', 'new']);
+});
+
+test('labels show from two live profiles, or once one was deleted', () => {
+  assert.equal(labelsShown([p()]), false);
+  assert.equal(labelsShown([p(), p({ id: 'b' })]), true);
+  assert.equal(labelsShown([p(), p({ id: 'b', deletedAt: '2026-09-01T00:00:00Z' })]), true);
+  assert.equal(profileLabel({ name: 'Client: JS', deletedAt: null }), 'Client: JS');
+  assert.equal(profileLabel({ name: 'Client: JS', deletedAt: '2026-09-01T00:00:00Z' }), 'Client: JS (deleted profile)');
+});
+
+test('a new profile copies the criteria and points them at the chosen path', () => {
+  const buy = { ...DEFAULT_GOALS, path: 'buy' as const, sourcingKind: 'sale' as const, budget: '200-350' as const };
+  assert.equal(criteriaForNewProfile(buy, 'buy'), buy);
+  const r2r = criteriaForNewProfile(buy, 'r2r')!;
+  assert.equal(r2r.path, 'r2r');
+  assert.equal(r2r.sourcingKind, 'rent');
+  assert.equal(r2r.budget, '200-350', 'everything else is copied');
+  assert.equal(criteriaForNewProfile(null, 'buy'), null);
+});
+
+test('the price line names the profile and keeps the member’s own price', () => {
+  assert.equal(profilePriceLine('Daily deals: 43p a day (33p on a plan), about £13 a month, charged only on days we send them'), 'Daily deals for this profile: 43p a day (33p on a plan), about £13 a month, charged only on days we send them');
+  assert.equal(profilePriceLine(null), null);
+});
+
+test('rows parse tolerantly and never carry a malformed profile', () => {
+  assert.equal(parseProfileRow(null), null);
+  assert.equal(parseProfileRow({ id: 'x' }), null);
+  const row = parseProfileRow({ id: 'x', user_id: 'u', name: 'My deals', criteria: null, areas: ['m', 7], answered: { where: { at: '2026-09-01T00:00:00Z', notSure: false }, junk: 1 }, is_active: true, created_at: '2026-09-01T00:00:00Z' })!;
+  assert.deepEqual(row.areas, ['M']);
+  assert.equal(row.goals, null);
+  assert.deepEqual(Object.keys(row.answered), ['where']);
+  assert.equal(row.isActive, true);
+});
+
+test('the shared (About you) questions are only about you', () => {
+  for (const id of ['where', 'budget', 'max_rent', 'min_profit']) assert.equal(SHARED_QUESTION_IDS.includes(id as never), false, id);
+});
+
+test('a My deals entry takes its profile from the row, then the Keep / Pass, the pick, the open', () => {
+  assert.equal(entryProfile({ pipeline: 'row', reaction: 'r', pick: 'p', open: 'o' }), 'row');
+  assert.equal(entryProfile({ reaction: 'r', pick: 'p', open: 'o' }), 'r');
+  assert.equal(entryProfile({ pick: 'p', open: 'o' }), 'p');
+  assert.equal(entryProfile({ open: 'o' }), 'o');
+  assert.equal(entryProfile({}), null);
+});
+
+const full = (over: Partial<SavedProfile> = {}): SavedProfile => ({ ...p(over), userId: 'u', goals: null, areas: [], answered: {}, forClient: false, copiedFrom: null, ...over });
+
+test('seats: one per running profile, active first; one unnamed seat without profiles; none when all are paused', () => {
+  const none = seatsFor('u', undefined);
+  assert.deepEqual(none.seats.map((s) => [s.key, s.profile, s.heading]), [['u', null, null]]);
+  assert.equal(none.allPaused, false);
+
+  const one = seatsFor('u', [full({ id: 'a', isActive: true })]);
+  assert.deepEqual(one.seats.map((s) => [s.key, s.heading]), [['u:a', null]], 'one profile: no heading');
+
+  const three = seatsFor('u', [
+    full({ id: 'old', name: 'Old', createdAt: '2026-01-01T00:00:00Z' }),
+    full({ id: 'act', name: 'Client: JS', isActive: true, createdAt: '2026-05-01T00:00:00Z' }),
+    full({ id: 'off', name: 'Paused', pausedAt: '2026-09-01T00:00:00Z' }),
+  ]);
+  assert.deepEqual(three.seats.map((s) => [s.key, s.heading]), [['u:act', 'Client: JS'], ['u:old', 'Old']]);
+
+  const paused = seatsFor('u', [full({ id: 'a', isActive: true, pausedAt: '2026-09-01T00:00:00Z' })]);
+  assert.deepEqual(paused.seats, []);
+  assert.equal(paused.allPaused, true);
+});
+
+test('profile links: the active profile goes straight there, another through the switch', () => {
+  assert.deepEqual(profileLinks('https://x.test/', { id: 'a', isActive: true }, '/profile'), { today: 'https://x.test/today', edit: 'https://x.test/profile' });
+  assert.deepEqual(profileLinks('https://x.test', null, '/profile'), { today: 'https://x.test/today', edit: 'https://x.test/profile' });
+  const other = profileLinks('https://x.test', { id: 'b-1', isActive: false }, '/profile');
+  assert.equal(other.today, 'https://x.test/profiles/switch?to=b-1&next=%2Ftoday');
+  assert.equal(other.edit, 'https://x.test/profiles/switch?to=b-1&next=%2Fprofile');
+});
+
+test('labelFor: a name only once labels show, deleted ones marked', () => {
+  const one = [full({ id: 'a', name: 'My deals' })];
+  assert.equal(labelFor(one, 'a'), null);
+  const two = [...one, full({ id: 'b', name: 'Client: JS', deletedAt: '2026-09-01T00:00:00Z' })];
+  assert.equal(labelFor(two, 'b'), 'Client: JS (deleted profile)');
+  assert.equal(labelFor(two, 'zzz'), null);
+  assert.equal(labelFor(undefined, 'a'), null);
+  assert.equal(labelFor(two, null), null);
+});

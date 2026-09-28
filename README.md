@@ -211,6 +211,40 @@ estimate: confirm it against the Twilio console and correct it on
    `/api/internal/sourcing?dry=1` (with the internal secret) still report
    as before; the profile line is inside each email, never an email of its own.
 
+### 8. Switch on saved profiles (Batch 13)
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 13: saved
+   profiles" section). It is additive and idempotent: new service-role
+   tables `search_profiles`, `profile_today_lists` and
+   `profile_daily_charges`; a nullable `profile_id` on `sourcing_sent`,
+   `deal_reactions`, `checked_listings`, `deal_opens` and `sourcing_missed`;
+   the triggers that keep the active profile and `market_goals` /
+   `saved_areas` / `profile_quiz.answered` in step; the
+   `create_search_profile` and `select_search_profile` functions; one
+   `billing_settings` row (`saved_profiles_max` = 5). It gives every member a
+   first profile called "My deals" holding their current answers and areas,
+   tags their history with it, and copies today's Today lists across.
+   Nothing is added to `ACCESS_COLUMNS`. Old code keeps working against it;
+   until it is run the new code behaves as before (one profile, no labels,
+   no switcher).
+2. **Straight after the deploy:** as an existing member, the header pill
+   opens the switcher and `/profiles` lists "My deals". Create a second
+   profile: the price line shows first; Today, the deal pages and the
+   Explorer follow whichever profile is active.
+3. **Check the dry runs:** `/api/internal/sourcing?dry=1` reports one
+   `wouldEmail` entry per running profile (`profile`), and
+   `/api/internal/daily-digest?dry=1` lists each member's `profiles` with
+   what each would be charged.
+4. **The deploy day:** a member charged for daily deals by the old code that
+   morning is not charged again for their active profile (the old
+   `daily_deal_charges` row counts as its charge).
+5. **Terms and privacy:** `/terms` sections 2A and 4A and the privacy
+   policy's "Information about other people" were drafted for this batch
+   (no legal draft existed for them). Have them checked before merging.
+6. **Admin:** `/admin/profiles` shows profiles per member, running profiles
+   per member, the share with two or more, and weekly active for one
+   profile against two or more.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -230,6 +264,8 @@ which are required, and what breaks without them.
 | `src/app/admin/picks` | Daily picks admin: the feedback report, the test-pick and dry-run buttons, and `responses` — every answer a member has given, with the pattern cuts and a CSV export |
 | `src/app/welcome` | The profile quiz (Batch 12): one question per screen, saved as it goes; `/profile` is the summary and editor. Rules in `src/lib/profile` (pure, tested), reads and writes in `src/lib/profile/server.ts`; the three mandatory questions gate every members-only page from `AppShell` |
 | `src/app/admin/profile` | Profile quiz completion rate, where members stop, and where "Not sure" is chosen most |
+| `src/app/profiles` | Saved profiles (Batch 13): up to five sets of search criteria per member (a sourcer keeps one per client). The active one is what the header shows and every page follows; each running (not paused) one gets its own Today's 5, section of the daily email and daily charge. Rules in `src/lib/profiles/rules.ts` (pure, tested), reads and writes in `src/lib/profiles/server.ts` (`activeProfileFor`, `runningProfilesFor` for later batches). The active profile's criteria are also the live `profiles.market_goals` / `saved_areas`, kept in step by triggers, so pages that follow the active profile read them unchanged. `/profiles/switch?to=<id>&next=…` is the email links' way in |
+| `src/app/admin/profiles` | Saved profiles per member, running per member, the share with two or more, and weekly active split by one profile against two or more |
 | `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
@@ -268,6 +304,13 @@ emails never go through the cap.
 | every 15 min, 07:00–19:45 | `sms-alerts` | At most one text a member a day (below) |
 
 Each one takes `?dry=1` and reports who would get what.
+
+Saved profiles (Batch 13): a member with several running profiles still gets
+one daily email, with a headed part for each profile (active first), each its
+own pick and Today and its own day's charge; no deal is told twice. When the
+credit runs out part-way the later profiles are left out and named. Once a
+member has two profiles, change lines, the out-of-credit letter and Your week
+name the profile each thing is for.
 
 ## Text alerts
 

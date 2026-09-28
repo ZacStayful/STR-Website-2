@@ -20,15 +20,22 @@ type Admin = ReturnType<typeof createAdminClient>;
 
 const URL_CHUNK = 150;
 
-export async function feedbackForMember(admin: Admin, userId: string, now: Date = new Date()): Promise<PickFeedback[]> {
+/**
+ * With `profileId` (saved profiles, Batch 13) only the answers given under
+ * that profile count: its picks, and the Keep / Pass given while it was
+ * active. Without it, every answer the member has given, as before.
+ */
+export async function feedbackForMember(admin: Admin, userId: string, now: Date = new Date(), profileId: string | null = null): Promise<PickFeedback[]> {
   const since = new Date(now.getTime() - FEEDBACK_WINDOW_MS).toISOString();
   type Row = { canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown; responded_at: unknown };
-  const { data, error } = await admin
+  let q = admin
     .from('sourcing_sent')
     .select('canonical_url, reaction, reaction_source, reasons, kind, postcode_area, responded_at')
     .eq('user_id', userId)
     .not('reaction', 'is', null)
     .gte('responded_at', since);
+  if (profileId) q = q.eq('profile_id', profileId);
+  const { data, error } = await q;
   if (error) console.warn('[today] pick feedback read failed:', error.message);
   const rows = (data ?? []) as Row[];
 
@@ -36,7 +43,9 @@ export async function feedbackForMember(admin: Admin, userId: string, now: Date 
   // only cost the "return too low" floor, never every rule.
   const screening = new Map<string, Screening | null>();
   if (rows.length > 0) {
-    const { data: sc, error: scErr } = await admin.from('sourcing_sent').select('canonical_url, screening').eq('user_id', userId).not('reaction', 'is', null).gte('responded_at', since);
+    let sq = admin.from('sourcing_sent').select('canonical_url, screening').eq('user_id', userId).not('reaction', 'is', null).gte('responded_at', since);
+    if (profileId) sq = sq.eq('profile_id', profileId);
+    const { data: sc, error: scErr } = await sq;
     if (scErr) console.warn('[today] screening feedback read failed:', scErr.message);
     for (const r of (sc ?? []) as { canonical_url: string; screening: unknown }[]) screening.set(r.canonical_url, parseScreening(r.screening));
   }
@@ -53,6 +62,6 @@ export async function feedbackForMember(admin: Admin, userId: string, now: Date 
     at: typeof r.responded_at === 'string' ? r.responded_at : null,
     feedback: toPickFeedback(r, listings.get(r.canonical_url) ?? null, screening.get(r.canonical_url) ?? null),
   }));
-  const grid = await dealFeedbackFor(admin, [userId], since);
-  return mergeFeedback(pickEntries, grid.entries.get(userId) ?? []);
+  const grid = await dealFeedbackFor(admin, [userId], since, { byProfile: Boolean(profileId) });
+  return mergeFeedback(pickEntries, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []);
 }

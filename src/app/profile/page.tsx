@@ -11,6 +11,8 @@ import { creditViewFor, matchCountFor, profileSummaryFor } from "@/lib/profile/s
 import { logActivity } from "@/lib/activity/log";
 import { todayKey } from "@/lib/today/day";
 import { saveAdvancedAction } from "./actions";
+import { profilesFor } from "@/lib/profiles/server";
+import { labelsShown } from "@/lib/profiles/rules";
 
 export const metadata: Metadata = {
   title: "Your profile — Stayful Intelligence",
@@ -27,7 +29,7 @@ const SECTION_ORDER: SectionId[] = ["about", "buy", "r2r", "source", "manage"];
  * count Today shows, so a change moves it at once; the day's deals follow
  * from the next Today's 5.
  */
-export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ via?: string | string[]; saved?: string | string[] }> }) {
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ via?: string | string[]; saved?: string | string[]; new?: string | string[] }> }) {
   const params = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   const supabase = await createSupabaseServerClient();
@@ -48,7 +50,9 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
       </main>
     );
   }
-  const [count, credit] = await Promise.all([matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers }), creditViewFor(summary)]);
+  const [count, credit, savedProfiles] = await Promise.all([matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers }), creditViewFor(summary), profilesFor(user.id)]);
+  // Saved profiles (Batch 13): these answers are the active profile's; "About you" is shared by all of them.
+  const profileName = savedProfiles.readable && savedProfiles.active && labelsShown(savedProfiles.all) ? savedProfiles.active.name : null;
 
   logActivity(user.id, "profile_viewed");
   if (first(params.via) === "email") logActivity(user.id, "profile_email_click", { source: "email_link", dedupeKey: `profile_email_click:${todayKey(now)}` });
@@ -67,8 +71,21 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
       <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:py-8">
         <header>
           <p className="text-xs font-semibold uppercase tracking-wider text-primary">{pillLabel(progress)}</p>
-          <h1 className="mt-1 text-2xl font-bold text-foreground">Your profile</h1>
+          <h1 className="mt-1 text-2xl font-bold text-foreground">{profileName ?? "Your profile"}</h1>
+          {savedProfiles.readable && !summary.teamMember && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              {profileName ? "These answers are this profile’s; “About you” is shared by all your profiles. " : ""}
+              <Link href="/profiles" className="font-medium text-foreground underline-offset-4 hover:underline">
+                {profileName ? "Switch or manage profiles" : "Add a profile for another search or a client"}
+              </Link>
+            </p>
+          )}
           <p className="mt-1 text-sm text-muted-foreground">{progress.path ? `${PATH_LABELS[progress.path]}. ` : ""}Every answer here shapes the deals we show you. Tap one to change it{progress.complete ? "" : ", or carry on where you left off"}.</p>
+          {first(params.new) === "1" && (
+            <p role="status" className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
+              New profile created as a copy. Change whatever’s different: tap any answer below.
+            </p>
+          )}
           {line && <p className="mt-2 text-sm font-medium text-foreground">{line}. Changes count from your next Today’s 5.</p>}
           {!progress.complete && (
             <div className="mt-3 rounded-xl border border-primary/30 bg-primary/5 p-4">

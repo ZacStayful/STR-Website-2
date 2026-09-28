@@ -42,6 +42,7 @@ export function DealRow({
   personName,
   reportAction,
   view = null,
+  profileName = null,
 }: {
   item: ViewerDeal;
   /** The marketplace deal's card facts, for a marketplace deal. */
@@ -62,6 +63,8 @@ export function DealRow({
    * (src/lib/marketplace/card-view.ts).
    */
   view?: CardView | null;
+  /** Saved profiles (Batch 13): which of the member's profiles this deal is for, once they have two. */
+  profileName?: string | null;
 }) {
   const stageInfo = pipelineStatusInfo(item.stage);
   const back = myDealsFocusPath(item.key);
@@ -130,6 +133,7 @@ export function DealRow({
             {card && !item.opened && !gone && <span>Not opened yet</span>}
             {view?.opened && <span className="font-semibold text-primary">Opened</span>}
             {view?.analysed && <span className="font-semibold text-primary">Analysed</span>}
+            {profileName && <span className="font-medium text-foreground">For {profileName}</span>}
             {changed && <span>Updated {changed}</span>}
             {!item.mine && <span>· by {personName(item.userId)}</span>}
             {item.alsoTrackedBy.length > 0 && <span>· also tracked by {item.alsoTrackedBy.map(personName).join(", ")}</span>}

@@ -207,3 +207,41 @@ test('the profile line rides the daily email while the profile is incomplete, an
   assert.equal(profileNudgeLine({ percent: 33.4, pence: 0 }), 'Your profile is 33% done: finish it for better deals.');
   assert.equal(profileNudgeLine({ percent: 100, pence: 750 }), 'Your profile is 100% done: finish it for better deals and £7.50 credit.');
 });
+
+test('saved profiles: one headed part per profile, no deal twice, counts from every part, one unsubscribe', () => {
+  const pickB: { section: Section; headline: string } = { section: { key: 'pick', title: null, blocks: [{ type: 'heading', text: '2 Other Road, Leeds' }] }, headline: '3-bed rent-to-rent in Leeds' };
+  const built = buildDaily({
+    siteUrl: SITE,
+    now: NOW,
+    pick: null,
+    teasers: [],
+    changes: [],
+    freeCutoffIso: null,
+    unsubscribe: { label: 'Stop daily picks', url: `${SITE}/u`, oneClickUrl: `${SITE}/u` },
+    profiles: [
+      { heading: 'My deals', pick, pickDealId: 'p1', teasers: [card({ id: 'a' }), card({ id: 'shared' })], todayUrl: `${SITE}/today` },
+      { heading: 'Client: JS', pick: pickB, pickDealId: 'p2', teasers: [card({ id: 'shared' }), card({ id: 'p1' }), card({ id: 'b' })], todayUrl: `${SITE}/profiles/switch?to=x&next=%2Ftoday` },
+    ],
+    unfunded: ['Old'],
+  })!;
+  assert.deepEqual(built.teasersByPart, [['a', 'shared'], ['b']], 'a deal already told, or another profile’s pick, is left out');
+  assert.equal(built.message.subject, '5 deals today · top pick: 2-bed to buy in Nottingham, 42% above a long let');
+  const titles = built.message.sections.map((s) => s.title);
+  assert.ok(titles.includes('For My deals') && titles.includes('For Client: JS'));
+  assert.ok(titles.indexOf('For My deals') < titles.indexOf('For Client: JS'), 'the active profile first');
+  const mail = renderEmail(built.message);
+  assert.ok(mail.text.includes('/profiles/switch?to=x'), 'the second profile’s Today goes through the switch');
+  assert.ok(mail.text.includes('Not sent today, because your credit ran out: Old.'));
+  assert.equal(built.message.unsubscribe?.label, 'Stop daily picks', 'one unsubscribe for the whole email');
+});
+
+test('saved profiles: one profile needs no heading, and a profile with nothing today has no part', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, profiles: [{ heading: null, pick, teasers: [card()] }, { heading: 'Empty', pick: null, teasers: [] }] })!;
+  assert.ok(!built.message.sections.some((s) => s.key === 'profile'));
+  assert.equal(buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, profiles: [{ heading: 'A', pick: null, teasers: [] }], unfunded: ['B'] }), null, 'an unfunded line alone is no email');
+});
+
+test('saved profiles: a change names its profile only when the sender gives a name', () => {
+  assert.deepEqual(changeItem(change({ profileName: 'Client: JS' }), SITE)!.lines.slice(-1), ['For Client: JS']);
+  assert.ok(!changeItem(change({ profileId: 'p1' }), SITE)!.lines.some((l) => l.startsWith('For ')));
+});

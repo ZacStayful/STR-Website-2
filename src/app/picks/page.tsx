@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { profilesFor } from "@/lib/profiles/server";
+import { pickProfileTags } from "@/lib/profiles/deal-tags";
+import { labelsShown, profileLabel } from "@/lib/profiles/rules";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { parseMarketGoals, describeGoals } from "@/lib/market/goals";
 import { loadPicks, picksEnabled, type PickView } from "@/lib/listing/picks-server";
@@ -59,6 +62,11 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
 
   const [picks, enabled, profileRes, settings] = await Promise.all([loadPicks(user.id), picksEnabled(user.id), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), getBillingSettings()]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
+  // Saved profiles (Batch 13): each pick says which profile it was for, once the member has two.
+  const [saved, pickTags] = await Promise.all([profilesFor(user.id), pickProfileTags(user.id, picks.map((p) => p.id))]);
+  const showProfiles = saved.readable && labelsShown(saved.all);
+  const savedById = new Map(saved.all.map((p) => [p.id, p]));
+  const profileOf = (pickId: string) => savedById.get(pickTags.get(pickId) ?? "") ?? null;
   const chips = goals ? describeGoals(goals) : [];
   const tab: Tab = TABS.some((t) => t.key === tabRaw) ? (tabRaw as Tab) : "all";
   const rows = picks.filter((p) => inTab(p, tab));
@@ -135,7 +143,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
         ) : (
           <ul className="space-y-3">
             {rows.map((p) => (
-              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={goals?.finance ?? null} widths={settings.dealPricing.profitRangePct} />
+              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={(profileOf(p.id)?.goals ?? goals)?.finance ?? null} widths={settings.dealPricing.profitRangePct} profileName={showProfiles && profileOf(p.id) ? profileLabel(profileOf(p.id)!) : null} />
             ))}
           </ul>
         )}
@@ -144,7 +152,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
   );
 }
 
-function PickCard({ pick: p, tab, showReasons, finance, widths }: { pick: PickView; tab: Tab; showReasons: boolean; finance: ProfitRangeInput["finance"]; widths: ProfitRangeInput["widths"] }) {
+function PickCard({ pick: p, tab, showReasons, finance, widths, profileName = null }: { pick: PickView; tab: Tab; showReasons: boolean; finance: ProfitRangeInput["finance"]; widths: ProfitRangeInput["widths"]; profileName?: string | null }) {
   const l = p.listing;
   const price = l.price ? formatListingPrice(l.price) : null;
   // Batch 10: the profit as an area-estimate range at the member's finance; the exact figure comes with a Full analysis.
@@ -157,7 +165,7 @@ function PickCard({ pick: p, tab, showReasons, finance, widths }: { pick: PickVi
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">{l.address ?? l.title}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
+            {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), profileName ? `For ${profileName}` : null, p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
           </p>
           {range && <p className="mt-1 text-xs font-medium text-primary">{range.label} · area estimate, {range.basis}{uplift ? ` · ${uplift}` : ""}</p>}
           {p.screening && p.screening.band !== "insufficient-data" && <p className="mt-1.5 text-xs font-semibold text-foreground">{BAND_LABELS[p.screening.band]}</p>}

@@ -9,13 +9,14 @@ export const metadata: Metadata = {
   alternates: { canonical: siteUrl("/privacy") },
 };
 
-const LAST_UPDATED = "27 September 2026";
+const LAST_UPDATED = "28 September 2026";
 
 /**
  * The privacy policy, from the legal drafts of 27 September 2026 (section A),
- * as decided for Batch 10: Twilio named for text messages, the referral
- * cookie stated, and the two paragraphs about saved profiles for other people
- * held back until those profiles exist (Batch 12).
+ * as decided for Batch 10: Twilio named for text messages and the referral
+ * cookie stated. "Information about other people" was added with saved
+ * profiles (Batch 13), drafted for this page since the held-back drafts were
+ * not in the repository; the profiles page links to it (#other-people).
  */
 export default function PrivacyPage() {
   return (
@@ -51,6 +52,11 @@ export default function PrivacyPage() {
         <h2 id="profile">How your profile is used</h2>
         <p>
           Your answers are used to filter and rank the deals we show you and to calculate figures such as profit at your own finance terms. This is automated, but it only decides which deals appear and in what order. It never decides whether you can use the service, what you pay, or anything with a legal or similarly significant effect on you. It is not financial advice. You can view and change every answer at any time from <Link href={GOALS_EDITOR_HREF}>your profile</Link>.
+        </p>
+
+        <h2 id="other-people">Information about other people</h2>
+        <p>
+          If you set up a profile for someone else, for example a client you source deals for, only add their details with their permission, and use a nickname or initials rather than their name. We use that information only to find and rank deals for that profile. You can change or delete it at any time, and it&apos;s deleted with your account.
         </p>
 
         <h2 id="sharing">Who we share it with</h2>

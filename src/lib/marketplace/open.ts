@@ -60,7 +60,7 @@ async function flipToOpen(admin: Admin, row: DealOpenRow, transactionId: number 
  * removed. `memberId` is the team member who pressed the button, recorded on
  * the debit for the owner's usage history.
  */
-export async function openDeal(input: { userId: string; adminUser: boolean; dealId: string; memberId?: string | null; visibility: DealVisibility }): Promise<OpenOutcome> {
+export async function openDeal(input: { userId: string; adminUser: boolean; dealId: string; memberId?: string | null; visibility: DealVisibility; profileId?: string | null }): Promise<OpenOutcome> {
   if (!hasServiceRole()) return { ok: false, code: 'failed' };
   const admin = createAdminClient();
   const now = new Date();
@@ -159,6 +159,8 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
       band_at_open: verifiedDeal.band,
       annual_profit_at_open: verifiedDeal.annual_profit,
       fetched,
+      // Saved profiles (Batch 13): the opener's active profile, only when they pay for themselves.
+      ...(input.profileId && !input.memberId ? { profile_id: input.profileId } : {}),
     };
     const { data, error } = await admin.from('deal_opens').insert(insert).select(OPEN_COLUMNS).single();
     if (error) {
@@ -182,7 +184,7 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
     try {
       transactionId = await debit(input.userId, pence, {
         allowNegative: true,
-        meta: { action: 'deal_open', action_id: row.id, provider: 'marketplace', unit: 'deal_open', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Deal sheet: ${[verifiedDeal.town, verifiedDeal.postcode_area].filter(Boolean).join(', ')} (${verifiedDeal.kind === 'rent' ? 'rent-to-rent' : 'to buy'})`, ...(input.memberId ? { member_id: input.memberId } : {}) },
+        meta: { action: 'deal_open', action_id: row.id, provider: 'marketplace', unit: 'deal_open', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Deal sheet: ${[verifiedDeal.town, verifiedDeal.postcode_area].filter(Boolean).join(', ')} (${verifiedDeal.kind === 'rent' ? 'rent-to-rent' : 'to buy'})`, ...(input.memberId ? { member_id: input.memberId } : {}), ...(input.profileId && !input.memberId ? { profile_id: input.profileId } : {}) },
       });
     } catch (err) {
       if (err instanceof InsufficientCreditError) {

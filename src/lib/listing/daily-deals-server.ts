@@ -12,6 +12,13 @@ import 'server-only';
  * charged_base_pence and transaction_id are written only after the debit has
  * gone through, so the record never claims a charge the ledger does not have.
  * Admins are never charged; the caller does not call for them.
+ *
+ * Saved profiles (Batch 13): each running profile is charged its own day,
+ * guarded by profile_daily_charges (profile_id, day) instead, with the
+ * profile's id in the debit's metadata (the Usage split). A
+ * daily_deal_charges row for the member's day, written by the code before
+ * this batch on the day it deploys, is that day's charge for the active
+ * profile, so the active profile is never charged twice across the deploy.
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { debit } from '../credit/ledger';
@@ -53,11 +60,24 @@ export interface DailyCharge {
   reason?: 'already_charged' | 'guard_failed' | 'debit_failed';
 }
 
-export async function chargeDailyDeals(admin: Admin, input: { userId: string; payerId: string; memberId: string | null; day: string; pence: number; run: 'picks' | 'digest'; sendRef: string | null }): Promise<DailyCharge> {
+export async function chargeDailyDeals(
+  admin: Admin,
+  input: { userId: string; payerId: string; memberId: string | null; day: string; pence: number; run: 'picks' | 'digest'; sendRef: string | null; profile?: { id: string; active: boolean } | null },
+): Promise<DailyCharge> {
   if (input.pence <= 0) return { charged: false, transactionId: null };
+  const profile = input.profile ?? null;
+  const table = profile ? 'profile_daily_charges' : 'daily_deal_charges';
+  if (profile?.active) {
+    const { data: legacy, error: legacyErr } = await admin.from('daily_deal_charges').select('id').eq('user_id', input.userId).eq('day', input.day).limit(1);
+    if (legacyErr) {
+      console.error('[daily-deals] legacy charge read failed; not charged:', legacyErr.message);
+      return { charged: false, transactionId: null, reason: 'guard_failed' };
+    }
+    if ((legacy ?? []).length > 0) return { charged: false, transactionId: null, reason: 'already_charged' };
+  }
   const { data: row, error } = await admin
-    .from('daily_deal_charges')
-    .insert({ user_id: input.userId, day: input.day, payer_id: input.payerId, run: input.run, send_ref: input.sendRef })
+    .from(table)
+    .insert({ user_id: input.userId, day: input.day, payer_id: input.payerId, run: input.run, send_ref: input.sendRef, ...(profile ? { profile_id: profile.id } : {}) })
     .select('id')
     .single();
   if (error?.code === '23505') return { charged: false, transactionId: null, reason: 'already_charged' };
@@ -72,13 +92,13 @@ export async function chargeDailyDeals(admin: Admin, input: { userId: string; pa
     // balance check before the send and this debit.
     transactionId = await debit(input.payerId, input.pence, {
       allowNegative: true,
-      meta: { action: 'todays_5', action_id: String(row.id), provider: 'marketplace', unit: 'todays_5', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily deals: Today's 5, ${dayLabel}`, ...(input.memberId ? { member_id: input.memberId } : {}) },
+      meta: { action: 'todays_5', action_id: String(row.id), provider: 'marketplace', unit: 'todays_5', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily deals: Today's 5, ${dayLabel}`, ...(input.memberId ? { member_id: input.memberId } : {}), ...(profile ? { profile_id: profile.id } : {}) },
     });
   } catch (err) {
     console.error('[daily-deals] debit failed; the day stays uncharged:', (err as Error)?.message ?? err);
     return { charged: false, transactionId: null, reason: 'debit_failed' };
   }
-  const { error: upErr } = await admin.from('daily_deal_charges').update({ charged_base_pence: input.pence, transaction_id: transactionId }).eq('id', row.id);
+  const { error: upErr } = await admin.from(table).update({ charged_base_pence: input.pence, transaction_id: transactionId }).eq('id', row.id);
   if (upErr) console.error('[daily-deals] charge record update failed:', upErr.message);
   void afterDebit(input.payerId).catch(() => {});
   return { charged: true, transactionId };

@@ -33,6 +33,8 @@ export interface MissedPick {
   /** The screening's annual surplus over a long let (purchase) or after rent (rent-to-rent), £/yr. */
   annualProfit: number | null;
   emailedAt?: string | null;
+  /** The saved profile it was found for, named only once the member has two (Batch 13). */
+  profileName?: string | null;
 }
 
 /** The sourcing_missed row for a candidate the run could not send. Only figures; nothing that identifies the listing. */
@@ -97,7 +99,7 @@ export function missedPickLine(m: MissedPick): string {
   const type = m.kind === 'rent' ? 'Rent-to-rent' : 'Purchase';
   const size = m.bedrooms ? `${m.bedrooms}-bed` : null;
   const price = m.priceAmount !== null && m.pricePeriod ? formatListingPrice({ amount: m.priceAmount, period: m.pricePeriod }) : 'price not stated';
-  return [m.areaName, [size, type].filter(Boolean).join(' '), price].join(' · ');
+  return [m.areaName, [size, type].filter(Boolean).join(' '), price, ...(m.profileName ? [`for ${m.profileName}`] : [])].join(' · ');
 }
 
 function dayWords(iso: string): string {

@@ -14,6 +14,7 @@ import { payerFor } from '@/lib/team';
 import { isPipelineStatus } from '@/lib/listing/pipeline';
 import { dealReturnPath, myDealsFocusPath, withParam } from '@/lib/listing/return-path';
 import { applyStageAfterOpen } from '@/lib/listing/stage-server';
+import { activeProfileFor } from '@/lib/profiles/server';
 import { logActivity } from '@/lib/activity/log';
 
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -45,7 +46,8 @@ export async function openDealAction(formData: FormData): Promise<void> {
   let outcome;
   try {
     const visibility = await dealVisibilityFor(user.id, adminUser);
-    outcome = await openDeal({ userId: payer.payerId, adminUser, dealId: id, memberId: payer.memberId, visibility });
+    const profileId = payer.memberId ? null : (await activeProfileFor(user.id))?.id ?? null;
+    outcome = await openDeal({ userId: payer.payerId, adminUser, dealId: id, memberId: payer.memberId, visibility, profileId });
   } catch (err) {
     console.error('[deals] open failed:', err);
     redirect(`/deals/${encodeURIComponent(id)}?msg=failed`);
@@ -103,8 +105,9 @@ export async function setDealReactionAction(dealId: unknown, target: unknown): P
   if (!me) return { ok: false, error: 'signed_out' };
   // An account inside the early-access window cannot react to a deal it cannot see.
   const visibility = await dealVisibilityFor(me.user.id, me.adminUser);
-  const outcome = await setDealReaction(me.user.id, dealId, target, visibility);
-  if (outcome.ok) logActivity(me.user.id, outcome.reaction ?? 'reaction_clear', { dealId });
+  const profileId = (await activeProfileFor(me.user.id))?.id ?? null;
+  const outcome = await setDealReaction(me.user.id, dealId, target, visibility, profileId);
+  if (outcome.ok) logActivity(me.user.id, outcome.reaction ?? 'reaction_clear', { dealId, profileId });
   return outcome.ok ? { ok: true, reaction: outcome.reaction } : { ok: false, error: outcome.code };
 }
 
@@ -114,7 +117,7 @@ export async function savePassReasonsAction(dealId: unknown, reasons: unknown): 
   const me = await signedIn();
   if (!me) return { ok: false };
   const ok = await setPassReasons(me.user.id, dealId, reasons.slice(0, 20));
-  if (ok) logActivity(me.user.id, 'pass_reasons', { dealId, extras: { reasons: cleanPassReasons(reasons.slice(0, 20)) } });
+  if (ok) logActivity(me.user.id, 'pass_reasons', { dealId, profileId: (await activeProfileFor(me.user.id))?.id ?? null, extras: { reasons: cleanPassReasons(reasons.slice(0, 20)) } });
   return { ok };
 }
 

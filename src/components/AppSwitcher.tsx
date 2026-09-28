@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { UsageChip } from "@/components/credit/UsageChip";
-import { ProfilePill } from "@/components/ProfilePill";
+import { ProfilePill, type PillProfiles } from "@/components/ProfilePill";
 import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type ActiveNav } from "@/lib/nav";
 
 // Thin strip shown to signed-in members: Today, My deals and Account — the
@@ -14,7 +14,7 @@ import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type Act
 // page that left the strip (the analyser, the Market Explorer, daily picks)
 // still announces the section it always did, and NAV_FOR_SECTION says which
 // item that lights up.
-export function AppSwitcher({ active, admin, leads, profile = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null }) {
+export function AppSwitcher({ active, admin, leads, profile = null, saved = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null }) {
   const current = activeNavFor(active);
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
@@ -54,7 +54,7 @@ export function AppSwitcher({ active, admin, leads, profile = null }: { active: 
           Dashboard
         </Link>
       )}
-      <ProfilePill profile={profile} />
+      <ProfilePill profile={profile} saved={saved} />
       <UsageChip />
     </nav>
   );
