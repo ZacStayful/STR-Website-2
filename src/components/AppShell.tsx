@@ -13,6 +13,9 @@ import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditP
 import { CreditBanner } from "@/components/credit/CreditBanner";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 import { requireProfileStart } from "@/lib/profile/server";
+import { profilesFor } from "@/lib/profiles/server";
+import { isRunning, labelsShown } from "@/lib/profiles/rules";
+import type { PillProfiles } from "@/components/ProfilePill";
 
 /**
  * Server shell for every members-only surface: resolves the member, their
@@ -76,9 +79,28 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
     console.error("[AppShell] funnel check failed:", err);
   }
 
+  // Saved profiles (Batch 13): the pill names the active profile once there
+  // are two, and opens the switcher. Nothing for a team member, whose pill is
+  // not drawn, or before the Batch 13 schema has been run.
+  let saved: PillProfiles | null = null;
+  if (profile && !profile.teamMember) {
+    try {
+      const view = await profilesFor(user.id);
+      if (view.readable && view.live.length > 0) {
+        saved = {
+          activeName: labelsShown(view.all) ? view.active?.name ?? null : null,
+          items: view.live.map((p) => ({ id: p.id, name: p.name, active: p.isActive, paused: !isRunning(p) })),
+          returnTo: redirectTo,
+        };
+      }
+    } catch (err) {
+      console.error("[AppShell] profiles read failed:", err);
+    }
+  }
+
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} leads={leads} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
+      <AppSwitcher active={active} admin={admin} leads={leads} saved={saved} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
       <CreditBanner />
       <VisitHeartbeat />
       {children}
