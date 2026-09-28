@@ -195,3 +195,180 @@ export async function sweepDemandScores(now: Date = new Date()): Promise<Map<str
     return new Map();
   }
 }
+
+// ── Claims, the month's spend and the search log (supabase/schema.sql, "Batch 15") ──
+
+export interface MonthFigures {
+  spentPence: number;
+  openPence: number;
+  searches: number;
+  answered: number;
+  newDeals: number;
+}
+
+const num = (v: unknown): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+/** The month's figures, summed in SQL. Null when unreadable, which is also how a missing schema shows. */
+export async function monthFigures(admin: Admin, month: string): Promise<MonthFigures | null> {
+  const { data, error } = await admin.rpc('demand_sourcing_month', { p: { month } });
+  if (error || !data || typeof data !== 'object') {
+    if (error) console.warn('[demand-sourcing] month figures unreadable (schema behind?):', error.message);
+    return null;
+  }
+  const d = data as Record<string, unknown>;
+  return { spentPence: num(d.spent_pence), openPence: num(d.open_pence), searches: num(d.searches), answered: num(d.answered), newDeals: num(d.new_deals) };
+}
+
+/** Query keys already reserved or answered on this UK day. Null when unreadable. */
+export async function searchedTodayKeys(admin: Admin, day: string): Promise<Set<string> | null> {
+  const { data, error } = await admin.from('demand_searches').select('query_key').eq('day', day).in('status', ['reserved', 'answered']);
+  if (error) {
+    console.warn('[demand-sourcing] today’s searches unreadable (schema behind?):', error.message);
+    return null;
+  }
+  return new Set(((data ?? []) as { query_key: string }[]).map((r) => r.query_key));
+}
+
+/** Marketplace answers still fresh in the broker's cache: asking again costs nothing. Keys only, never the listings. */
+export async function cachedAnswerKeys(admin: Admin, now: Date = new Date()): Promise<Set<string>> {
+  const { data, error } = await admin.from('broker_cache').select('key').eq('question', 'marketplaceListings').gt('expires_at', now.toISOString());
+  if (error) {
+    console.warn('[demand-sourcing] broker cache unreadable:', error.message);
+    return new Set();
+  }
+  return new Set(((data ?? []) as { key: string }[]).map((r) => r.key));
+}
+
+export interface ClaimInput {
+  month: string;
+  day: string;
+  area: string;
+  kind: string;
+  key: string;
+  reservePence: number;
+  capPence: number;
+  actionId: string;
+  runId: string;
+  triggeredBy: string;
+  members: number;
+  payingMembers: number;
+}
+
+export type ClaimResult = { id: string; refused: null; spentPence: number } | { id: null; refused: 'cap' | 'duplicate' | 'error'; spentPence: number | null };
+
+/**
+ * Claims one search against the cap (demand_search_reserve). Fails closed:
+ * any error — the schema not run yet, a bad row — is 'error', and the
+ * caller searches nothing.
+ */
+export async function claimSearch(admin: Admin, c: ClaimInput): Promise<ClaimResult> {
+  const { data, error } = await admin.rpc('demand_search_reserve', {
+    p: {
+      month: c.month,
+      day: c.day,
+      area: c.area,
+      kind: c.kind,
+      key: c.key,
+      reserve_pence: c.reservePence,
+      cap_pence: c.capPence,
+      action_id: c.actionId,
+      run_id: c.runId,
+      triggered_by: c.triggeredBy,
+      members: c.members,
+      paying_members: c.payingMembers,
+    },
+  });
+  if (error || !data || typeof data !== 'object') {
+    console.error('[demand-sourcing] claim failed, searching nothing:', error?.message ?? 'no answer');
+    return { id: null, refused: 'error', spentPence: null };
+  }
+  const d = data as { id?: unknown; refused?: unknown; spent_pence?: unknown };
+  if (d.refused === 'cap' || d.refused === 'duplicate') return { id: null, refused: d.refused, spentPence: num(d.spent_pence) };
+  if (typeof d.id === 'string' && d.id) return { id: d.id, refused: null, spentPence: num(d.spent_pence) };
+  return { id: null, refused: 'error', spentPence: null };
+}
+
+export interface Settlement {
+  status: 'answered' | 'unavailable' | 'failed';
+  costPence: number;
+  provider: string | null;
+  cached: boolean | null;
+  listings: number | null;
+  newDeals: number | null;
+}
+
+/** Settles a claim to what the search did and cost. A claim is settled once. */
+export async function settleSearch(admin: Admin, id: string, s: Settlement): Promise<void> {
+  const { error } = await admin
+    .from('demand_searches')
+    .update({ status: s.status, cost_pence: s.costPence, provider: s.provider, cached: s.cached, listings: s.listings, new_deals: s.newDeals, settled_at: new Date().toISOString() })
+    .eq('id', id)
+    .is('settled_at', null);
+  // Left open, the claim keeps counting at its reserve and the next pass closes it: the safe side.
+  if (error) console.error('[demand-sourcing] settle failed (the claim stays at its reserve):', error.message);
+}
+
+/** Claims a dead pass left open: closed as failed, at their reserve. Returns how many. */
+export async function closeStaleClaims(admin: Admin, olderThanMs: number, now: Date = new Date()): Promise<number> {
+  const { data: open, error: readErr } = await admin
+    .from('demand_searches')
+    .select('id, reserve_pence')
+    .is('settled_at', null)
+    .lt('reserved_at', new Date(now.getTime() - olderThanMs).toISOString());
+  if (readErr) return 0;
+  let closed = 0;
+  for (const r of (open ?? []) as { id: string; reserve_pence: unknown }[]) {
+    const { error } = await admin.from('demand_searches').update({ status: 'failed', cost_pence: num(r.reserve_pence), settled_at: now.toISOString() }).eq('id', r.id).is('settled_at', null);
+    if (!error) closed += 1;
+  }
+  return closed;
+}
+
+/** The provider calls the meter recorded for one search. Null when unreadable (the caller then settles at the reserve). */
+export async function callRowsFor(admin: Admin, actionId: string): Promise<{ provider: string; unit: string | null; quantity: number | null; ok: boolean | null; cache_hit: boolean | null }[] | null> {
+  const { data, error } = await admin.from('provider_calls').select('provider, unit, quantity, ok, cache_hit').eq('action_id', actionId);
+  if (error) {
+    console.warn('[demand-sourcing] provider calls unreadable:', error.message);
+    return null;
+  }
+  return (data ?? []) as { provider: string; unit: string | null; quantity: number | null; ok: boolean | null; cache_hit: boolean | null }[];
+}
+
+/** One live pool row, as far as supply goes: never an address, a postcode, a link or a photo. */
+export interface PoolRow {
+  postcode_area: string | null;
+  kind: string;
+  raw_type: string | null;
+  created_at: string;
+}
+
+/** Live deals (status live), paged past PostgREST's 1,000-row limit. Null when unreadable. */
+export async function livePool(admin: Admin): Promise<PoolRow[] | null> {
+  return poolRows(admin, (q) => q.eq('status', 'live'));
+}
+
+/** Every deal added to the pool since `sinceIso`, whatever its status now. Null when unreadable. */
+export async function addedSince(admin: Admin, sinceIso: string): Promise<PoolRow[] | null> {
+  return poolRows(admin, (q) => q.gte('created_at', sinceIso));
+}
+
+type PoolQuery = ReturnType<ReturnType<Admin['from']>['select']>;
+
+async function poolRows(admin: Admin, where: (q: PoolQuery) => PoolQuery): Promise<PoolRow[] | null> {
+  const out: PoolRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await where(admin.from('marketplace_deals').select('postcode_area, kind, raw_type, created_at'))
+      .order('created_at', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.error('[demand-sourcing] pool unreadable:', error.message);
+      return null;
+    }
+    out.push(...((data ?? []) as PoolRow[]));
+    if ((data?.length ?? 0) < PAGE) break;
+  }
+  return out;
+}
