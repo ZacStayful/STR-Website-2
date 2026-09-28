@@ -116,8 +116,8 @@ test('what a profile leans towards comes from its answers, only where they are a
   assert.equal(leaningsFor(r2r).mainGoal, null);
   const card = { code: 'NG', byBedrooms: [{ bedrooms: 3, propertyValueMid: 210_000 }, { bedrooms: 5, propertyValueMid: 400_000 }], keyStats: { growth5y: 12 } } as unknown as AreaCardData;
   const look = areaLookup([card]);
-  assert.deepEqual(look('NG', 3), { growth5y: 12, typicalValue: 210_000 });
-  assert.deepEqual(look('NG', 4), { growth5y: 12, typicalValue: 400_000 }, '"4 or more" reads the nearest bigger group');
+  assert.deepEqual(look('NG', 3), { growth5y: 12, typicalValue: 210_000, competition: null, occupancy: null });
+  assert.deepEqual(look('NG', 4), { growth5y: 12, typicalValue: 400_000, competition: null, occupancy: null }, '"4 or more" reads the nearest bigger group');
   assert.deepEqual(look('M', 3), { growth5y: null, typicalValue: null });
   assert.deepEqual(areaLookup(null)('NG', 3), { growth5y: null, typicalValue: null });
 });

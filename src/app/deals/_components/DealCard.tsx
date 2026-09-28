@@ -81,6 +81,29 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         </div>
       </div>
       <div className="p-3">
+        {view?.numbers && view.numbers.length > 0 ? (
+          <>
+            {/* Batch 14: three numbers for this member's role and goal (src/lib/tailoring/numbers.ts). */}
+            <dl className="grid grid-cols-3 gap-2">
+              {view.numbers.map((n) => (
+                <div key={n.key} className="min-w-0">
+                  <dd className="truncate text-sm font-bold text-foreground">{n.value}</dd>
+                  <dt className="truncate text-[11px] text-muted-foreground">{n.label}</dt>
+                  {n.help && <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{n.help}</p>}
+                </div>
+              ))}
+            </dl>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              area estimate
+              {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
+            </p>
+            <p className="mt-0.5 text-xs font-medium text-foreground">
+              {price ? `Asking ${price}` : ""}
+              {view.pay ? `${price ? " · " : ""}${payLine(view.pay)}` : ""}
+            </p>
+          </>
+        ) : (
+          <>
         <div className="flex items-baseline justify-between gap-2">
           <p className="text-lg font-bold text-foreground">{view ? (view.range?.label ?? "—") : figure.big}</p>
           {price && <p className="text-sm font-semibold text-foreground">{price}</p>}
@@ -96,6 +119,8 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           </>
         ) : (
           <p className="text-xs text-muted-foreground">{figure.small}</p>
+        )}
+          </>
         )}
         <p className="mt-1.5 truncate text-sm font-medium text-foreground">{where || "Location on the sheet"}</p>
         {motivation.length > 0 && <p className="truncate text-xs font-medium text-primary">{motivation.join(" · ")}</p>}

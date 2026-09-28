@@ -245,6 +245,19 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
   };
 }
 
+/**
+ * A rental's stored figures as the card carries them (CARD_COLUMNS' JSON
+ * paths): enough of the deal for its setup, break-even and payback checks.
+ * Null for a sale, or a rental whose row has none.
+ */
+export function rentalFromCard(card: Pick<DealCard, 'kind' | 'deal_setup' | 'deal_breakeven' | 'deal_payback' | 'deal_margin'>): Deal | null {
+  if (card.kind !== 'rent') return null;
+  const setup = num(card.deal_setup);
+  const margin = num(card.deal_margin);
+  if (setup === null && margin === null) return null;
+  return { kind: 'rent-to-rent', setupCost: setup ?? 0, breakevenOccupancyPct: num(card.deal_breakeven), paybackMonths: num(card.deal_payback), monthlyMargin: margin ?? 0 } as Deal;
+}
+
 /** A listing the daily picks run found (a search result or a pool deal) as facts. */
 export function factsFromListing(l: SourcedListing, deal: Deal | null, screening: Screening | null | undefined, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }): DealFacts {
   const amount = l.price ? (l.kind === 'rent' ? rentPcm(l.price) : l.price.period === 'total' ? l.price.amount : null) : null;

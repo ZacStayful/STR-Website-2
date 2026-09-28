@@ -141,7 +141,7 @@ export const PRIVATE_DEAL_COLUMNS: readonly string[] = ['canonical_url', 'addres
  * member. Kept separate from PUBLIC_DEAL_COLUMNS so the cached area teaser
  * (up to 2,000 rows) does not carry them.
  */
-export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence`;
+export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, deal_setup:deal->>setupCost, deal_breakeven:deal->>breakevenOccupancyPct, deal_payback:deal->>paybackMonths, deal_margin:deal->>monthlyMargin`;
 
 export interface DealCard {
   id: string;
@@ -177,6 +177,11 @@ export interface DealCard {
   screening_gross?: string | number | null;
   /** CARD_COLUMNS only: the screening's confidence: high | medium | low. */
   screening_confidence?: string | null;
+  /** CARD_COLUMNS only (Batch 14): a rental's stored setup cost (£), break-even occupancy (%), payback (months) and monthly margin (£), as text from the JSON paths. */
+  deal_setup?: string | number | null;
+  deal_breakeven?: string | number | null;
+  deal_payback?: string | number | null;
+  deal_margin?: string | number | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;

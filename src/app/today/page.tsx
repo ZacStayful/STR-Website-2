@@ -30,10 +30,15 @@ import { pauseProfileAction } from "@/app/profiles/actions";
 import { markPromptShown, promptStatesFor, tailoringForMember } from "@/lib/tailoring/server";
 import { sharesWithInvestors, usesTailoring, wantsLandlordLeads } from "@/lib/tailoring/profile";
 import { promptToShow } from "@/lib/tailoring/behaviour";
+import { withNumbers } from "@/lib/tailoring/numbers";
+import { getAreaCardsWithin } from "@/lib/market/cached";
 import { ownsAnyFunnel } from "@/lib/funnels/ownership";
 import { logActivity } from "@/lib/activity/log";
 import { BehaviourPrompt } from "./_components/BehaviourPrompt";
 import { LeadsUpsell } from "./_components/LeadsUpsell";
+
+/** How long the page waits for the market snapshot for the cards' area figures; without it they fall back. */
+const AREA_WAIT_MS = 2_000;
 
 export const metadata: Metadata = {
   title: "Today — Stayful Intelligence",
@@ -110,7 +115,9 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const answered = await reactionsFor(user.id, pickDealId ? [pickDealId, ...stored] : stored);
   const order = displayOrder(stored, pickDealId, new Set(answered.keys()));
   const cards = await dealCardsByIds(order, visibility);
-  const [opened, views] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) })]);
+  const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }), getAreaCardsWithin(AREA_WAIT_MS)]);
+  // Batch 14: the three numbers for this member's role and goal.
+  const views = withNumbers(baseViews, cards, tailoring, snapshot, now);
   const pickCard = pickDealId ? cards.find((c) => c.id === pickDealId) ?? null : null;
   const dayCards = cards.filter((c) => c.id !== pickDealId);
   const ids = cards.map((c) => c.id);

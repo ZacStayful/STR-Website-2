@@ -52,6 +52,9 @@ export interface AreaFacts {
   growth5y: number | null;
   /** The area's typical value for this many bedrooms. */
   typicalValue: number | null;
+  /** The area's competition band ("Opportunity"), and how often its short lets are booked (%). */
+  competition?: string | null;
+  occupancy?: number | null;
 }
 
 export type AreaLookup = (code: string | null, bedrooms: number | null) => AreaFacts;
@@ -66,7 +69,7 @@ export function areaLookup(cards: readonly AreaCardData[] | null): AreaLookup {
     if (!card) return NO_AREA;
     const groups = card.byBedrooms ?? [];
     const group = bedrooms === null ? null : groups.find((b) => b.bedrooms === bedrooms) ?? (bedrooms >= 4 ? [...groups].filter((b) => b.bedrooms >= 4).sort((a, b) => a.bedrooms - b.bedrooms)[0] ?? null : null);
-    return { growth5y: card.keyStats?.growth5y ?? null, typicalValue: group?.propertyValueMid ?? null };
+    return { growth5y: card.keyStats?.growth5y ?? null, typicalValue: group?.propertyValueMid ?? null, competition: card.competition?.label ?? null, occupancy: card.headline?.occupancy ?? null };
   };
 }
 

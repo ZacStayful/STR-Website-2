@@ -11,6 +11,7 @@
 import { openPricePence, type DealOpenLadder } from './ladder.ts';
 import { profitRange, upliftTag, widthFor, type ProfitRange } from './profit-range.ts';
 import { mostYouCanPay, type PayCeiling } from './most-you-can-pay.ts';
+import type { CardNumber } from '../tailoring/numbers.ts';
 import { analysisQuote } from '../analysis/deal-analysis-rules.ts';
 import type { DealPricing, PriceLabel } from '../credit/deal-pricing.ts';
 import type { FinanceDefaults } from '../listing/deal.ts';
@@ -35,6 +36,12 @@ export interface CardView {
    * Null without the screening's income.
    */
   pay: PayCeiling | null;
+  /**
+   * Batch 14, Part C: the three numbers for this member's role and goal
+   * (src/lib/tailoring/numbers.ts), added by the page once it knows their
+   * profile. Absent or null: the card draws exactly as before.
+   */
+  numbers?: CardNumber[] | null;
   /** "+45% vs a long let", purchases only. */
   uplift: string | null;
   opened: boolean;

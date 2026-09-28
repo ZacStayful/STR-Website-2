@@ -25,6 +25,10 @@ import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplac
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
 import { basisLine, cashBuyerOf, gapLine, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
+import { profilesFor } from "@/lib/profiles/server";
+import { tailoringForMember } from "@/lib/tailoring/server";
+import { numbersForCard } from "@/lib/tailoring/numbers";
+import { areaLookup } from "@/lib/tailoring/order";
 import { priceLine } from "../_components/DealCard";
 import { openDealAction } from "../actions";
 import { dealTrackingFor } from "@/lib/listing/tracked-server";
@@ -84,8 +88,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const sheet = await dealSheet(id, payerId, adminUser, visibility);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
-  const [settings, credit, cards, profileRes, quoter] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser)]);
+  const [settings, credit, cards, profileRes, quoter, savedRes, savedProfiles] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
+  // Batch 14: the member's tailoring (their active profile), for the numbers that lead the sheet.
+  const tailoring = await tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, goals, ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area));
   const pricing = quoter.pricing;
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
@@ -159,6 +165,17 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), widthPct: pct });
   const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
   const payGap = pay ? gapLine(askingFigure, pay) : null;
+  // Batch 14, Part C: the same three numbers as the member's card, from the same function.
+  const sheetCard: Card = {
+    ...card,
+    screening_gross: gross,
+    screening_confidence: screening?.confidence ?? null,
+    deal_setup: model?.kind === "rent-to-rent" ? model.setupCost : null,
+    deal_breakeven: model?.kind === "rent-to-rent" ? model.breakevenOccupancyPct : null,
+    deal_payback: model?.kind === "rent-to-rent" ? model.paybackMonths : null,
+    deal_margin: model?.kind === "rent-to-rent" ? model.monthlyMargin : null,
+  };
+  const numbers = numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
   const pctRange = (v: number) => {
     const [lo, hi] = spread(v, pct, 0.1);
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
@@ -273,6 +290,31 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               </div>
             </div>
 
+            {/* Batch 14: a tailored member's own numbers lead; everything else is under "More numbers". */}
+            {numbers && (
+              <section className="mt-4 rounded-xl border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Your numbers</h2>
+                <dl className="mt-3 grid grid-cols-3 gap-3">
+                  {numbers.map((n) => (
+                    <div key={n.key} className="min-w-0">
+                      <dd className="text-base font-bold text-foreground">{n.value}</dd>
+                      <dt className="text-xs text-muted-foreground">{n.label}</dt>
+                      {n.help && <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{n.help}</p>}
+                    </div>
+                  ))}
+                </dl>
+                {pay && !numbers && (
+                  <div className="mt-3 rounded-lg bg-muted/50 p-3">
+                    <p className="text-base font-bold text-foreground">{payLine(pay)}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{basisLine(pay)}</p>
+                    {payGap && <p className={"mt-1 text-xs font-semibold " + (payGap.startsWith("Within") ? "text-primary" : "text-destructive")}>{payGap}</p>}
+                  </div>
+                )}
+                <p className="mt-2 text-[11px] text-muted-foreground">Area estimates at your figures. A Full analysis works them out exactly for this property.</p>
+              </section>
+            )}
+
+            <MoreNumbers folded={Boolean(numbers)}>
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{BAND_LABELS[screening.band]}</h2>
@@ -320,6 +362,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 </dl>
               </section>
             )}
+
+            </MoreNumbers>
 
             {canBuy && <AnalysisPreview />}
 
@@ -391,5 +435,16 @@ function Row({ k, v }: { k: string; v: string }) {
       <dt className="text-muted-foreground">{k}</dt>
       <dd className="font-medium text-foreground">{v}</dd>
     </div>
+  );
+}
+
+/** Batch 14: for a member with their own numbers, the rest of the figures fold away under "More numbers". */
+function MoreNumbers({ folded, children }: { folded: boolean; children: React.ReactNode }) {
+  if (!folded) return <>{children}</>;
+  return (
+    <details className="mt-4 rounded-xl border border-border bg-card p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-foreground">More numbers</summary>
+      {children}
+    </details>
   );
 }

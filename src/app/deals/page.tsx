@@ -16,6 +16,10 @@ import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { cardViewsFor } from "@/lib/marketplace/card-state";
 import { cashBuyerOf } from "@/lib/marketplace/most-you-can-pay";
 import { parseMarketGoals } from "@/lib/market/goals";
+import { getAreaCardsWithin } from "@/lib/market/cached";
+import { profilesFor } from "@/lib/profiles/server";
+import { tailoringForMember } from "@/lib/tailoring/server";
+import { withNumbers } from "@/lib/tailoring/numbers";
 import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
@@ -23,6 +27,9 @@ import { EarlyAccessBanner } from "./_components/EarlyAccessBanner";
 import { ShareDealButton } from "./_components/ShareDealButton";
 import { DealsMap } from "./_components/DealsMap";
 import { Pagination } from "./_components/Pagination";
+
+/** How long the page waits for the market snapshot for the cards' area figures; without it they fall back. */
+const AREA_WAIT_MS = 2_000;
 
 export const metadata: Metadata = {
   title: "Deals — Stayful Intelligence",
@@ -67,12 +74,22 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   ]);
   const ids = page.cards.map((c) => c.id);
   const adminUser = isAdminEmail(user.email);
-  const { data: profile } = await supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle();
+  const [{ data: profile }, savedRes, savedProfiles] = await Promise.all([supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
+  const goals = parseMarketGoals(profile?.market_goals);
+  const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
+  const now = new Date();
   // Batch 10: each card's profit range at this member's finance, and its buttons at their price.
-  const [opened, reactions, views] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids), cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: parseMarketGoals(profile?.market_goals)?.finance ?? null, cashBuyer: cashBuyerOf(parseMarketGoals(profile?.market_goals)) })]);
+  // Batch 14: the member's tailoring (the active profile) for the three numbers.
+  const [opened, reactions, baseViews, tailoring, snapshot] = await Promise.all([
+    openedDealIds((await payerFor(user.id)).payerId, ids),
+    reactionsFor(user.id, ids),
+    cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
+    tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, goals, savedAreas, now),
+    getAreaCardsWithin(AREA_WAIT_MS),
+  ]);
+  const views = withNumbers(baseViews, page.cards, tailoring, snapshot, now);
   // Nothing left in the grid: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
-  const now = new Date();
   const countMap: Record<string, number> = {};
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);
   const message = typeof raw.msg === "string" ? MESSAGES[raw.msg] ?? null : null;
