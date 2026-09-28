@@ -22,33 +22,18 @@ import 'server-only';
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { getAreaCardsWithin } from '../market/cached';
-import { personaliseScore, personalInputFor } from '../market/personalise';
-import { areaMetaForCode } from '../market/areas';
 import type { MarketGoals } from '../market/goals';
-import { applyCandidateFeedback, feedbackRules, type AppliedRules, type PickFeedback } from '../listing/picks';
-import { rankForMember } from '../listing/rank';
-import { rankPicks, type SourcedListing } from '../listing/sourcing';
-import { isSendable } from '../listing/screen';
+import type { SourcedListing } from '../listing/sourcing';
 import { formatListingPrice } from '../listing/format';
-import { analyseRelaxation, closestMatch, describeRelaxation } from '../listing/relax';
 import { loadPicks } from '../listing/picks-server';
-import type { DealFilters } from '../marketplace/grid';
-import { rankingPool, type RankingRow } from '../marketplace/queries';
+import { rankingPool } from '../marketplace/queries';
 import type { DealVisibility } from '../marketplace/visibility';
-import { applyKindFeedback, buildCandidate, CLOSEST_ADVICE, dealKey, filtersForGoals, nearestAreas, nearestOutside, orderForToday, referencePoint, WIDEN_AREA_ADVICE, type Built, type CandidateContext, type TodayCandidate } from './candidates';
+import { chooseTodayFrom, type TodayChoice } from './choose';
 import { feedbackForMember } from './feedback';
-import { todayKey, todayStart, TODAY_SIZE } from './day';
+import { todayKey, todayStart } from './day';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
-/** Rows of the pool read for ranking: the best-profit end of what matches. */
-const POOL_LIMIT = 1000;
-/** How deep the ranking reaches, as the picks run's SPREAD_DEPTH. */
-const DEPTH = 40;
-/** Rows read when looking for the nearest thing to a search that matched nothing. */
-const NEAR_LIMIT = 400;
-/** Areas searched outside the member's own when theirs hold nothing. */
-const NEARBY_AREAS = 12;
 /** How long the page waits for the market snapshot (area fit); without it the deal's own figures carry the fit. */
 const AREA_WAIT_MS = 4_000;
 const PAGE = 1000;
@@ -209,122 +194,33 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
   return out;
 }
 
-async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date): Promise<Omit<TodaySelection, 'day'>> {
-  const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
-  const rules = feedbackRules(feedback);
-  const filters = applyKindFeedback(filtersForGoals(member.goals, member.savedAreas), rules);
-  const mode = member.goals?.motivation.mode ?? 'off';
-  const ctx = await candidateContext(member.goals, filters, now);
-  const usable = (rows: RankingRow[]): Built[] => {
-    const out: Built[] = [];
-    for (const row of rows) {
-      if (exclude.has(row.id)) continue;
-      // "Wrong area" answers: the picks run stops searching there, Today stops showing it.
-      if (row.postcode_area && rules.badAreas.has(row.postcode_area.toUpperCase())) continue;
-      const built = buildCandidate(row, ctx);
-      if (built) out.push(built);
-    }
-    return out;
-  };
-
-  // ── The day's list ──
-  const pool = usable(await rankingPool(filters, member.visibility, { userId: member.userId }, POOL_LIMIT));
-  const exact = pool.filter((b) => b.fails.length === 0).map((b) => b.candidate);
-  const ranked = rankForMember(exact, feedback, rules, { depth: DEPTH, mode }).ranked;
-  const top = await withFullListings(admin, orderForToday(ranked), feedback, rules);
-  if (top.length > 0) return { dealIds: top.slice(0, TODAY_SIZE).map((c) => c.dealId), nearMiss: false, advice: null };
-
-  // ── Nothing matched: the closest thing, and what to change ──
-  // First inside their own areas, with the budget lifted: a row failing only
-  // on price (or on time on market) is what tells relax.ts which setting is
-  // costing them the most.
-  const loose = usable(await rankingPool({ ...filters, minPrice: null, maxPrice: null }, member.visibility, { userId: member.userId }, NEAR_LIMIT));
-  const misses = viableMisses(loose.filter((b) => b.fails.length > 0), feedback, rules);
-  let closest: Built | null = null;
-  if (misses.length > 0) {
-    // Fewest failed settings first, then the seller most ready to deal (relax.ts).
-    const best = closestMatch(
-      misses.map((m) => m.near),
-      (l) => misses.find((m) => m.near.listing === l)?.candidate.motivation?.score ?? 0,
-    );
-    const chosen = best ? misses.find((m) => m.near === best) ?? null : null;
-    closest = chosen;
-    const motiv = member.goals?.motivation ?? null;
-    const kind = chosen?.candidate.listing.kind ?? 'sale';
-    const relaxation = analyseRelaxation(
-      misses.map((m) => m.near),
-      { kind, thresholdUnits: motiv ? (kind === 'rent' ? motiv.minWeeksOnMarket : motiv.minMonthsOnMarket) : 0, maxPrice: filters.maxPrice, minBedrooms: null },
-    );
-    const advice = describeRelaxation(relaxation);
-    if (chosen && advice) return { dealIds: [chosen.candidate.dealId], nearMiss: true, advice };
-  }
-  // Their areas hold nothing that works: the nearest deal just outside them.
-  if (filters.areas.length > 0) {
-    const own = new Set(filters.areas);
-    const from = referencePoint(member.goals, filters.areas);
-    const nearby = nearestAreas(from, own, NEARBY_AREAS);
-    if (nearby.length > 0) {
-      const wide = usable(await rankingPool({ ...filters, areas: nearby }, member.visibility, { userId: member.userId }, NEAR_LIMIT));
-      const around = rankForMember(wide.filter((b) => b.fails.length === 0).map((b) => b.candidate), feedback, rules, { depth: NEAR_LIMIT, mode }).ranked;
-      const checked = await withFullListings(admin, around, feedback, rules, around.length);
-      const nearest = nearestOutside(checked, from, own);
-      if (nearest) return { dealIds: [nearest.dealId], nearMiss: true, advice: WIDEN_AREA_ADVICE };
-    }
-  }
-  // Something close, but no single setting would have admitted it.
-  if (closest) return { dealIds: [closest.candidate.dealId], nearMiss: true, advice: CLOSEST_ADVICE };
-  return { dealIds: [], nearMiss: false, advice: null };
-}
-
 /**
- * Near misses that could still be offered: past the member's feedback rules,
- * a deal that works (the money test the ranking applies), clearing the income
- * bar, and card-cleared if they asked for that. "Closest" never means a deal
- * the member already ruled out or one that loses money.
+ * Choosing itself is pure (choose.ts); this wires its reads to the database.
+ * Feedback and the market snapshot are read first, in that order, as before.
  */
-function viableMisses(misses: Built[], feedback: PickFeedback[], rules: AppliedRules): Built[] {
-  const survivors = new Set(applyCandidateFeedback(misses.map((m) => m.candidate), feedback, rules).map((c) => c.dealId));
-  const pass = misses.filter((m) => survivors.has(m.candidate.dealId));
-  const works = new Set(rankPicks(pass.map((m) => m.candidate), pass.length, 'off').map((c) => c.dealId));
-  return pass.filter((m) => works.has(m.candidate.dealId) && (!m.candidate.screening || isSendable(m.candidate.screening)) && (m.candidate.precheck === 'ok' || !rules.strictSuitability));
-}
-
-async function candidateContext(goals: MarketGoals | null, filters: DealFilters, now: Date): Promise<CandidateContext> {
+async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date): Promise<TodayChoice> {
+  const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
   // The market snapshot scores areas for fit. On a cold cache the page does
   // not wait for a rebuild: without it the deal's own figures carry the fit.
-  const cards = (await getAreaCardsWithin(AREA_WAIT_MS)) ?? [];
-  const byCode = new Map(cards.map((c) => [c.code, c]));
-  const fits = new Map<string, number | null>();
-  return {
-    goals,
-    areaFit: (code) => {
-      if (!code) return null;
-      if (fits.has(code)) return fits.get(code)!;
-      const card = byCode.get(code);
-      const fit = !card ? null : goals ? personaliseScore(personalInputFor(card, goals), goals)?.score ?? card.score?.score ?? null : card.score?.score ?? null;
-      fits.set(code, fit);
-      return fit;
+  const cards = await getAreaCardsWithin(AREA_WAIT_MS);
+  return chooseTodayFrom(
+    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now },
+    {
+      pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit),
+      fullListings: (dealIds) => fullListingsFor(admin, dealIds),
     },
-    areaName: (code) => (code ? byCode.get(code)?.name ?? areaMetaForCode(code).name : 'the UK'),
-    minPrice: filters.minPrice,
-    maxPrice: filters.maxPrice,
-    now,
-  };
+  );
 }
 
 /**
- * The last pass of the feedback rules, on the full stored listing of each
- * ranked deal. The card's columns carry no title, features or price
- * qualifier, and "needs too much work" (and a title-only flat or house)
- * reads those. The full listing is read here, server-side, and never leaves:
- * what comes back is the same candidate, with its public listing.
+ * The full stored listing of each deal, by deal id, for the last pass of the
+ * feedback rules (choose.ts withFullListings). Read here, server-side, and
+ * never returned to a page.
  */
-async function withFullListings<C extends TodayCandidate>(admin: Admin, ranked: C[], feedback: PickFeedback[], rules: AppliedRules, limit = DEPTH): Promise<C[]> {
-  const head = ranked.slice(0, limit);
-  if (head.length === 0) return [];
+async function fullListingsFor(admin: Admin, dealIds: string[]): Promise<Map<string, SourcedListing>> {
   const urlById = new Map<string, string>();
-  for (let i = 0; i < head.length; i += ID_CHUNK) {
-    const { data, error } = await admin.from('marketplace_deals').select('id, canonical_url').in('id', head.slice(i, i + ID_CHUNK).map((c) => c.dealId));
+  for (let i = 0; i < dealIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('marketplace_deals').select('id, canonical_url').in('id', dealIds.slice(i, i + ID_CHUNK));
     if (error) console.warn('[today] deal urls read failed:', error.message);
     for (const r of (data ?? []) as { id: string; canonical_url: string }[]) urlById.set(r.id, r.canonical_url);
   }
@@ -335,14 +231,12 @@ async function withFullListings<C extends TodayCandidate>(admin: Admin, ranked: 
     if (error) console.warn('[today] listings read failed:', error.message);
     for (const r of (data ?? []) as { canonical_url: string; snapshot: SourcedListing }[]) if (r.snapshot && typeof r.snapshot === 'object') snapshots.set(r.canonical_url, r.snapshot);
   }
-  const full = head.map((c) => {
-    const url = urlById.get(c.dealId);
-    const snap = url ? snapshots.get(url) : undefined;
-    // The stand-in URL is kept, so nothing downstream is keyed on the real one.
-    return snap ? { ...c, listing: { ...snap, canonicalUrl: dealKey(c.dealId) } } : c;
-  });
-  const kept = new Set(applyCandidateFeedback(full, feedback, rules).map((c) => c.dealId));
-  return head.filter((c) => kept.has(c.dealId));
+  const out = new Map<string, SourcedListing>();
+  for (const [id, url] of urlById) {
+    const snap = snapshots.get(url);
+    if (snap) out.set(id, snap);
+  }
+  return out;
 }
 
 /** This morning's pick, when there is one: already paid for, so already opened. */
