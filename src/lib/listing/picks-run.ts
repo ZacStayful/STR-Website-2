@@ -51,6 +51,8 @@ import { labelFor, profileLinks, seatKey, seatsFor, type SavedProfile } from "..
 import { GOALS_EDITOR_HREF } from "../nav";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
+import { tailoringForSeats } from "../tailoring/server";
+import type { TailoringProfile } from "../tailoring/profile";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -467,8 +469,15 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
   const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
+  // Each seat's tailoring (Batch 14): the same loader the Today page uses, so
+  // a list stored here is the one the page would have chosen. A failed read
+  // leaves every seat untailored: chosen exactly as before.
+  const tailoringBySeat = await tailoringForSeats(admin, members.map((m) => ({ userId: m.id, profile: m.profile, goals: m.goals, savedAreas: m.areas }))).catch((err) => {
+    console.error("[sourcing] tailoring read failed:", (err as Error)?.message ?? err);
+    return new Map<string, TailoringProfile>();
+  });
   // What Today's list needs to know about a member (src/lib/today/selection.ts).
-  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null, profileActive: m.profile?.isActive ?? false });
+  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null, profileActive: m.profile?.isActive ?? false, tailoring: tailoringBySeat.get(m.key) ?? null });
   if (dry) {
     // What each member's daily email would carry besides the pick, read
     // without writing anything: a Today list only if one is stored already

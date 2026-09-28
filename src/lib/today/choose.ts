@@ -28,6 +28,7 @@ import { analyseRelaxation, closestMatch, describeRelaxation } from '../listing/
 import type { DealFilters } from '../marketplace/grid.ts';
 import { applyKindFeedback, buildCandidate, CLOSEST_ADVICE, dealKey, filtersForGoals, nearestAreas, nearestOutside, orderForToday, referencePoint, WIDEN_AREA_ADVICE, type Built, type CandidateContext, type PoolRow, type TodayCandidate } from './candidates.ts';
 import { TODAY_SIZE } from './day.ts';
+import type { TailoringProfile } from '../tailoring/profile.ts';
 
 /** Rows of the pool read for ranking: the best-profit end of what matches. */
 export const POOL_LIMIT = 1000;
@@ -62,6 +63,8 @@ export interface ChooseInput {
   /** The market snapshot's area cards; null or empty on a cold cache, when the deal's own figures carry the fit. */
   cards: readonly AreaCardData[] | null;
   now: Date;
+  /** The profile's tailoring (Batch 14); absent or untailored: chosen exactly as before. */
+  tailoring?: TailoringProfile | null;
 }
 
 export async function chooseTodayFrom(input: ChooseInput, reads: ChooseReads): Promise<TodayChoice> {

@@ -33,6 +33,8 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { parseMarketGoals } from '../market/goals';
 import { dealVisibility, PAID_VISIBILITY } from '../marketplace/visibility';
 import type { MemberContext } from '../today/selection';
+import { tailoringForSeats } from '../tailoring/server';
+import type { TailoringProfile } from '../tailoring/profile';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { buildDaily } from './message';
@@ -179,6 +181,17 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       }),
     );
   }
+  // Each seat's tailoring (Batch 14), from the loader the Today page uses. A
+  // failed read leaves every seat untailored: chosen exactly as before.
+  const tailoringBySeat = await tailoringForSeats(
+    admin,
+    [...seatsOf.values()].flatMap((list) => list.map((x) => ({ userId: x.userId, profile: x.profile, goals: x.goals, savedAreas: x.context.savedAreas }))),
+    now,
+  ).catch((err) => {
+    console.error('[digest] tailoring read failed:', (err as Error)?.message ?? err);
+    return new Map<string, TailoringProfile>();
+  });
+  for (const list of seatsOf.values()) for (const x of list) x.context.tailoring = tailoringBySeat.get(x.key) ?? null;
   const contexts: MemberContext[] = [...seatsOf.values()].flatMap((list) => list.map((x) => x.context));
   const plans = await todayPlans(admin, contexts, now, { create: !opts.dry, concurrency: 6 });
   const base = siteUrl();

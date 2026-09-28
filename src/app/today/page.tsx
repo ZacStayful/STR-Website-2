@@ -26,6 +26,7 @@ import { ProfileProgressCard } from "./_components/ProfileProgressCard";
 import { profilePriceLineFor, profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import { pauseProfileAction } from "@/app/profiles/actions";
+import { tailoringForMember } from "@/lib/tailoring/server";
 
 export const metadata: Metadata = {
   title: "Today — Stayful Intelligence",
@@ -67,9 +68,12 @@ export default async function TodayPage() {
   // The search the member's goals point at: the same one /deals counts, so "N match" and the cards agree.
   const filters = filtersForGoals(goals, savedAreas);
 
+  // Batch 14: the profile's tailoring, read by the same loader as the daily runs.
+  const tailoringReady = paused ? Promise.resolve(null) : tailoringForMember(user.id, active, goals, savedAreas, now);
+
   const [selection, pick, count, waiting, checklist, priceLine] = await Promise.all([
     // A paused profile has no daily deals: no list, no pick, until it is resumed.
-    paused ? Promise.resolve(null) : todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true }, now),
+    paused ? Promise.resolve(null) : tailoringReady.then((tailoring) => todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, now)),
     paused ? Promise.resolve(null) : todaysPick(user.id, now, profileId),
     countDeals(filters, visibility, { userId: user.id }),
     visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),

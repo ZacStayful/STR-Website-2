@@ -28,6 +28,7 @@ import { formatListingPrice } from '../listing/format';
 import { loadPicks } from '../listing/picks-server';
 import { rankingPool } from '../marketplace/queries';
 import type { DealVisibility } from '../marketplace/visibility';
+import type { TailoringProfile } from '../tailoring/profile';
 import { chooseTodayFrom, type TodayChoice } from './choose';
 import { feedbackForMember } from './feedback';
 import { todayKey, todayStart } from './day';
@@ -65,6 +66,12 @@ export interface MemberContext {
    * choose a second one that differs from the morning's email.
    */
   profileActive?: boolean;
+  /**
+   * The profile's tailoring (Batch 14, src/lib/tailoring): its answers,
+   * must-have / nice-to-have switches and what the member liked. Absent or
+   * not tailored (usesTailoring): the list is chosen exactly as before.
+   */
+  tailoring?: TailoringProfile | null;
 }
 
 /** The day's list: the stored one, or a new one chosen and stored now. Null when it cannot be read (schema not run). */
@@ -204,7 +211,7 @@ async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<str
   // not wait for a rebuild: without it the deal's own figures carry the fit.
   const cards = await getAreaCardsWithin(AREA_WAIT_MS);
   return chooseTodayFrom(
-    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now },
+    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null },
     {
       pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit),
       fullListings: (dealIds) => fullListingsFor(admin, dealIds),
