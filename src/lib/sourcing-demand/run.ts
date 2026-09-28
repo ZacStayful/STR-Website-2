@@ -209,18 +209,19 @@ export async function runDemandSourcing(opts: DemandRunOptions): Promise<DemandR
         summary.unavailable += 1;
         failuresInARow += 1;
       } else {
-        settle.status = 'answered';
-        summary.answered += 1;
-        if (res.cached) summary.cached += 1;
-        failuresInARow = 0;
         settle.listings = res.value.length;
-        summary.listings += res.value.length;
         const before = summary.newDeals;
         if (res.value.length > 0) {
           await cohorts.loadFor(s.area);
           await absorbListings(admin, ctx.cardByCode, ctx.rentTable, cohorts.index, query, res.value, summary, 'demand-sourcing');
         }
         settle.newDeals = summary.newDeals - before;
+        // Answered only once screened: a search that throws part-way stays 'failed', so a later pass can retry it from the cache for free.
+        settle.status = 'answered';
+        summary.answered += 1;
+        if (res.cached) summary.cached += 1;
+        summary.listings += res.value.length;
+        failuresInARow = 0;
       }
     } catch (err) {
       console.error('[demand-sourcing] search failed:', s.key, (err as Error)?.message ?? err);
