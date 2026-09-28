@@ -26,6 +26,19 @@ export interface CardFacts {
   retired_reason?: string | null;
   last_confirmed_at?: string | null;
   postcode_area: string | null;
+  /** Batch 14: the card's income (CARD_COLUMNS' JSON path), or the whole screening where a page holds that instead. */
+  screening_gross?: number | string | null;
+  screening_confidence?: string | null;
+  screening?: unknown;
+}
+
+/** The screening's income and confidence, from the card's JSON path or the stored screening itself. */
+function screeningIncome(card: CardFacts): { gross: number | null; confidence: string | null } {
+  const whole = card.screening && typeof card.screening === 'object' ? (card.screening as { grossRevenue?: { value?: unknown } | null; confidence?: unknown }) : null;
+  const raw = card.screening_gross ?? (whole?.grossRevenue?.value as number | string | null | undefined) ?? null;
+  const n = raw === null || raw === '' ? NaN : Number(raw);
+  const confidence = card.screening_confidence ?? (typeof whole?.confidence === 'string' ? whole.confidence : null);
+  return { gross: Number.isFinite(n) && n > 0 ? n : null, confidence };
 }
 
 function price(amount: number | string | null, period: string | null): DealFacts['price'] {
@@ -50,6 +63,8 @@ export function factsFromCard(card: CardFacts, opened: boolean, address: string 
     lastConfirmedAt: card.last_confirmed_at ?? null,
     postcodeArea: card.postcode_area,
     marketplace: true,
+    screeningGross: screeningIncome(card).gross,
+    screeningConfidence: screeningIncome(card).confidence,
   };
 }
 

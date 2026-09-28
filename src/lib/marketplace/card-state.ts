@@ -71,8 +71,8 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
 }
 
 /** Every card's view for this member, from one read of each kind (cardView, src/lib/marketplace/card-view.ts). */
-export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null }): Promise<Map<string, CardView>> {
+export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean }): Promise<Map<string, CardView>> {
   const { payerId } = await payerFor(input.userId);
   const [settings, quoter, states] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, input.cards.map((c) => c.id))]);
-  return new Map(input.cards.map((c) => [c.id, cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance: input.finance ?? null, label: quoter.label })]));
+  return new Map(input.cards.map((c) => [c.id, cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, label: quoter.label })]));
 }

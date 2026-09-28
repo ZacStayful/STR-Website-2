@@ -171,6 +171,12 @@ export interface ChangeInput {
   profileId?: string | null;
   /** That profile's name, set by the sender only once the member has two profiles: "For Client: JS". */
   profileName?: string | null;
+  /**
+   * Batch 14, a price drop: where the new price sits against the most the
+   * member can pay for their own monthly profit, at that profile's finance:
+   * "Now £6,000 above what you can pay" / "Now within what you can pay".
+   */
+  payGap?: string | null;
 }
 
 const GONE_WORDS: Record<string, string> = {
@@ -221,8 +227,8 @@ function changeItemOf(c: ChangeInput, siteUrl: string): Item | null {
       const to = money(c.newAmount, c.period);
       if (!from || !to || !(Number(c.newAmount) < Number(c.oldAmount))) return null;
       // A marketplace deal's figures are only ever an area range now (Batch 10): say they changed, and where the exact one is.
-      if (c.dealId && !c.figure) return { title: `Price drop: ${from} → ${to}`, lines: [place, 'The figures have changed. Get the exact figure with a Full analysis.'], link: { label: 'Full analysis', url: `${siteUrl.replace(/\/$/, '')}/deals/${encodeURIComponent(c.dealId)}?analysis=1` } };
-      return { title: `Price drop: ${from} → ${to}`, lines: [place, c.figure ? `Now ${c.figure}` : null].filter((x): x is string => Boolean(x)), link };
+      if (c.dealId && !c.figure) return { title: `Price drop: ${from} → ${to}`, lines: [place, c.payGap ?? null, 'The figures have changed. Get the exact figure with a Full analysis.'].filter((x): x is string => Boolean(x)), link: { label: 'Full analysis', url: `${siteUrl.replace(/\/$/, '')}/deals/${encodeURIComponent(c.dealId)}?analysis=1` } };
+      return { title: `Price drop: ${from} → ${to}`, lines: [place, c.figure ? `Now ${c.figure}` : null, c.payGap ?? null].filter((x): x is string => Boolean(x)), link };
     }
     case 'back_on_market': {
       const was = c.previousStatus ? PREVIOUS_WORDS[c.previousStatus] : null;

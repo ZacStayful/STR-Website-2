@@ -12,6 +12,10 @@ import 'server-only';
  */
 import type { createAdminClient } from '../supabase/admin';
 import { ALERT_MAX_AGE_MS, settleChanges, type AlertRow, type CurrentState, type Settled } from './alerts';
+import { parseMarketGoals, type MarketGoals } from '../market/goals';
+import { alertGapLine, cashBuyerOf, mostYouCanPay } from '../marketplace/most-you-can-pay';
+import { widthFor } from '../marketplace/profit-range';
+import { getBillingSettings } from '../credit/unit-costs';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -67,6 +71,8 @@ export async function pendingChanges(admin: Admin, userIds: readonly string[], n
   const dealIds = [...new Set(rows.map((r) => r.deal_id).filter((x): x is string => Boolean(x)))];
   const rowIds = [...new Set(rows.map((r) => r.checked_listing_id).filter((x): x is string => Boolean(x)))];
   const deals = new Map<string, { status: string; priceAmount: number | null; pricePeriod: string | null }>();
+  // Batch 14: each deal's income for "most you can pay" (the card's own figures, never an address).
+  const incomes = new Map<string, { kind: 'sale' | 'rent'; grossRevenue: string | number | null; confidence: string | null; bedrooms: number | null }>();
   const pipeline = new Map<string, { stage: string | null; listingStatus: string | null }>();
   const passed = new Set<string>();
   for (const some of chunks(dealIds)) {
@@ -75,6 +81,12 @@ export async function pendingChanges(admin: Admin, userIds: readonly string[], n
     for (const d of (data ?? []) as { id: string; status: string; price_amount: number | string | null; price_period: string | null }[]) {
       const amount = d.price_amount === null ? null : Number(d.price_amount);
       deals.set(d.id, { status: d.status, priceAmount: Number.isFinite(amount) ? amount : null, pricePeriod: d.price_period });
+    }
+    // Its own read, so a failure costs only the "most you can pay" line.
+    const inc = await admin.from('marketplace_deals').select('id, kind, bedrooms, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence').in('id', some);
+    if (inc.error) console.warn('[notify] deal income read failed:', inc.error.message);
+    for (const d of (inc.data ?? []) as unknown as { id: string; kind: string; bedrooms: number | null; screening_gross: string | null; screening_confidence: string | null }[]) {
+      if (d.kind === 'sale' || d.kind === 'rent') incomes.set(d.id, { kind: d.kind, grossRevenue: d.screening_gross, confidence: d.screening_confidence, bedrooms: d.bedrooms });
     }
     for (const users of chunks([...new Set(rows.filter((r) => r.deal_id && some.includes(r.deal_id)).map((r) => r.user_id))])) {
       const { data: pass, error: passErr } = await admin.from('deal_reactions').select('user_id, deal_id').in('deal_id', some).in('user_id', users).eq('reaction', 'pass');
@@ -92,5 +104,37 @@ export async function pendingChanges(admin: Admin, userIds: readonly string[], n
   const byUser = new Map<string, AlertRow[]>();
   for (const r of rows) byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), r]);
   for (const [userId, list] of byUser) out.set(userId, settleChanges(list, current, now));
+  await attachPayGaps(admin, out, incomes).catch((err) => console.warn('[notify] pay gaps skipped:', (err as Error)?.message ?? err));
   return out;
+}
+
+/**
+ * Batch 14: a price drop says where the new price sits against the most the
+ * member can pay for their own monthly profit, at the finance of the profile
+ * the deal is tracked under (the member's live answers when it is untagged).
+ * Best effort: without it the email is exactly as before.
+ */
+async function attachPayGaps(admin: Admin, out: Map<string, Settled>, incomes: ReadonlyMap<string, { kind: 'sale' | 'rent'; grossRevenue: string | number | null; confidence: string | null; bedrooms: number | null }>): Promise<void> {
+  const drops = [...out.entries()].flatMap(([userId, s]) => s.changes.filter((c) => c.alertType === 'price_drop' && c.dealId && incomes.has(c.dealId)).map((c) => ({ userId, c })));
+  if (drops.length === 0) return;
+  const profileIds = [...new Set(drops.map((d) => d.c.profileId).filter((x): x is string => Boolean(x)))];
+  const userIds = [...new Set(drops.filter((d) => !d.c.profileId).map((d) => d.userId))];
+  const goalsByProfile = new Map<string, MarketGoals | null>();
+  const goalsByUser = new Map<string, MarketGoals | null>();
+  for (const some of chunks(profileIds)) {
+    const { data } = await admin.from('search_profiles').select('id, criteria').in('id', some);
+    for (const r of (data ?? []) as { id: string; criteria: unknown }[]) goalsByProfile.set(r.id, parseMarketGoals(r.criteria));
+  }
+  for (const some of chunks(userIds)) {
+    const { data } = await admin.from('profiles').select('id, market_goals').in('id', some);
+    for (const r of (data ?? []) as { id: string; market_goals: unknown }[]) goalsByUser.set(r.id, parseMarketGoals(r.market_goals));
+  }
+  const { dealPricing } = await getBillingSettings();
+  for (const { userId, c } of drops) {
+    const income = incomes.get(c.dealId!)!;
+    const goals = c.profileId ? goalsByProfile.get(c.profileId) ?? null : goalsByUser.get(userId) ?? null;
+    const pay = mostYouCanPay({ kind: income.kind, grossRevenue: income.grossRevenue, bedrooms: income.bedrooms, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), widthPct: widthFor(income.confidence, dealPricing.profitRangePct) });
+    const amount = c.newAmount === null || c.newAmount === undefined ? null : Number(c.newAmount);
+    c.payGap = pay ? alertGapLine(amount, pay) : null;
+  }
 }

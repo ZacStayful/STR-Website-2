@@ -24,6 +24,7 @@ import { openPricePence } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
+import { basisLine, cashBuyerOf, gapLine, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { priceLine } from "../_components/DealCard";
 import { openDealAction } from "../actions";
 import { dealTrackingFor } from "@/lib/listing/tracked-server";
@@ -152,6 +153,12 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       model = deal.kind === "rent" ? rentToRentDeal(Number(deal.price_amount), base) : purchaseDeal(Number(deal.price_amount), base);
     }
   }
+  // Batch 14: the most they can pay to hit their own monthly profit, on the
+  // same income and at the same finance as the range above (the member's
+  // active profile; the house figures and £500 without answers).
+  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), widthPct: pct });
+  const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
+  const payGap = pay ? gapLine(askingFigure, pay) : null;
   const pctRange = (v: number) => {
     const [lo, hi] = spread(v, pct, 0.1);
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
@@ -164,7 +171,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         <div className="mb-3 flex items-center justify-between gap-2 text-xs">
           <Link href="/deals" className="text-muted-foreground hover:underline">← All deals</Link>
           {/* Batch 3: a public link showing only what the card shows (never the address), on the member's referral code. */}
-          <ShareDealButton dealId={deal.id} />
+          {/* Batch 14: a deal sourcer's share leads, as "Share with an investor". */}
+          {goals?.path === "source" ? <ShareDealButton dealId={deal.id} label="Share with an investor" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" /> : <ShareDealButton dealId={deal.id} />}
         </div>
 
         {message && <p className={"mb-4 rounded-md border p-3 text-sm " + (message.tone === "ok" ? "border-primary/40 bg-primary/10 text-foreground" : "border-destructive/40 bg-destructive/10 text-destructive")}>{message.text}</p>}
@@ -281,7 +289,17 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {model && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{model.kind === "purchase" ? "If you bought it" : "If you rented it (rent-to-rent)"}</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{model.kind === "purchase" ? `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. Change these in your Market Explorer goals. Figures that rest on the area’s short-let income are ranges.` : `At ${gbp(model.advertisedRentPcm)} pcm rent. Figures that rest on the area’s short-let income are ranges.`}</p>
+                {pay && (
+                  <div className="mt-3 rounded-lg bg-muted/50 p-3">
+                    <p className="text-base font-bold text-foreground">{payLine(pay)}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{basisLine(pay)}</p>
+                    {payGap && <p className={"mt-1 text-xs font-semibold " + (payGap.startsWith("Within") ? "text-primary" : "text-destructive")}>{payGap}</p>}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {model.kind === "purchase" ? `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. ` : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
+                  <Link href="/profile" className="underline-offset-4 hover:underline">Change your figures on your profile</Link>. Figures that rest on the area’s short-let income are ranges.
+                </p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
                   {model.kind === "purchase" ? (
                     <>
@@ -291,14 +309,12 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                       <Fig label="Cash needed" value={gbp(model.cashRequired)} sub={`incl. ${gbp(model.stampDuty)} stamp duty`} />
                       <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} />
                       <Fig label="Net operating / yr" value={gbpRange(model.netOperating, 100)} />
-                      <Fig label="Max price at target yield" value={gbpRange(model.maxPriceForTargetYield, 1000)} sub={`${model.targetYieldPct}% target`} />
                     </>
                   ) : (
                     <>
                       <Fig label="Margin / mo" value={range?.kind === "rent-to-rent" ? range.label.replace(/\/mo$/, "") : gbpRange(model.monthlyMargin)} />
                       <Fig label="Margin / yr" value={gbpRange(model.annualMargin, 100)} />
                       <Fig label="Setup cost" value={gbp(model.setupCost)} />
-                      <Fig label="Max rent at target margin" value={`${gbpRange(model.maxRentForTargetMargin)} pcm`} sub={`${gbp(model.targetMarginPcm)} target`} />
                     </>
                   )}
                 </dl>

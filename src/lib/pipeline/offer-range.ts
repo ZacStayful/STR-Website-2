@@ -1,11 +1,12 @@
 /**
  * The suggested offer at the Offer stage, from real figures only.
  *
- *   T  the target ceiling: the highest price that still hits the member's
- *      target gross yield (purchase), or the highest rent that still leaves
- *      their target monthly margin (rent-to-rent). The same deal maths as the
- *      deal page's "If you bought it" panel (lib/listing/deal.ts), so the two
- *      never disagree.
+ *   T  the target ceiling: the most the member can pay (or the most rent)
+ *      and still keep their own minimum monthly profit, at their deposit,
+ *      rate and term (Batch 14, marketplace/most-you-can-pay.ts), on the same
+ *      income as the deal's card and sheet, so the three never disagree.
+ *      pipeline/server.ts works it out and passes it in; targetCeiling()
+ *      below is the yield-based figure it replaced, kept for reference.
  *   M  the asking figure less a discount for how long the listing has been
  *      on the market (and, for a purchase, how often it has been cut), from
  *      the admin-set bands (offer-rules.ts).
@@ -29,7 +30,7 @@ export const TOO_FAR_BELOW_RATIO = 0.75;
 /** Figures round down to these, so a rounded target ceiling still hits the target. */
 export const ROUND_TO: Record<StepKind, number> = { purchase: 1000, 'rent-to-rent': 10 };
 
-export type OfferMissing = 'notMarketplace' | 'noAsking' | 'noRevenue' | 'studio' | 'noMargin' | 'tooFarBelow' | 'bandsNotSet' | 'noHistory';
+export type OfferMissing = 'notMarketplace' | 'noAsking' | 'noRevenue' | 'studio' | 'noMargin' | 'noPrice' | 'tooFarBelow' | 'bandsNotSet' | 'noHistory';
 
 export interface OfferInput {
   kind: StepKind;
@@ -39,8 +40,8 @@ export interface OfferInput {
   asking: number | null;
   /** The raw target ceiling from targetCeiling(); null when it could not be worked out. */
   target: number | null;
-  /** Why there is no target ceiling, when there is none. */
-  targetMissing?: 'noRevenue' | 'studio' | null;
+  /** Why there is no target ceiling, when there is none. 'noPrice': a purchase no price makes the member's profit on (Batch 14). */
+  targetMissing?: 'noRevenue' | 'studio' | 'noPrice' | null;
   /** Days on the market (portal date, else our first sighting). */
   ageDays: number | null;
   reductions: number;
@@ -95,6 +96,8 @@ export function computeOfferRange(input: OfferInput): OfferRange {
   // ── T: the target ceiling ──
   let target: OfferRange['target'] = null;
   const t = input.target;
+  // No price at all leaves the member's profit: nothing to suggest (as a rent that leaves no margin).
+  if ((t === null || !Number.isFinite(t)) && input.targetMissing === 'noPrice') return hidden(kind, ['noPrice']);
   if (t === null || !Number.isFinite(t)) {
     missing.push(input.targetMissing ?? 'noRevenue');
   } else if (t <= 0) {

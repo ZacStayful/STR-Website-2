@@ -245,3 +245,12 @@ test('saved profiles: a change names its profile only when the sender gives a na
   assert.deepEqual(changeItem(change({ profileName: 'Client: JS' }), SITE)!.lines.slice(-1), ['For Client: JS']);
   assert.ok(!changeItem(change({ profileId: 'p1' }), SITE)!.lines.some((l) => l.startsWith('For ')));
 });
+
+test('Batch 14: a price drop says where the new price sits against the most they can pay', () => {
+  const above = changeItem(change({ payGap: 'Now £6,000 above what you can pay' }), SITE)!;
+  assert.ok(above.lines.includes('Now £6,000 above what you can pay'));
+  const within = changeItem(change({ payGap: 'Now within what you can pay', figure: null }), SITE)!;
+  assert.ok(within.lines.includes('Now within what you can pay'));
+  // Without one the email is exactly as before.
+  assert.ok(!changeItem(change(), SITE)!.lines.some((l) => /what you can pay/.test(l)));
+});

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { SOURCE_LABELS } from '@/lib/listing/detect';
 import type { ListingSnapshot } from '@/lib/listing/types';
 import type { QuickEstimate } from '@/lib/listing/quick-types';
+import { mostYouCanPayForDeal, payLine } from '@/lib/marketplace/most-you-can-pay';
 import { gbp, pct0 } from './format';
 import { formatListingPrice } from '@/lib/listing/format';
 
@@ -96,8 +97,7 @@ export function SourceListingCard({ snapshot, quick, warnings, onChange, compact
           <div>
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{deal?.kind === 'rent-to-rent' ? 'Rent-to-rent margin' : 'Yield on asking'}</p>
             <p className="text-base font-bold text-foreground">{deal?.kind === 'rent-to-rent' ? `${deal.monthlyMargin < 0 ? '−' : ''}${gbp(Math.abs(deal.monthlyMargin))} / mo` : deal?.kind === 'purchase' ? `${deal.grossYieldPct}%` : '—'}</p>
-            {deal?.kind === 'purchase' && <p className="text-[10px] text-muted-foreground">Max price for {deal.targetYieldPct}%: {gbp(deal.maxPriceForTargetYield)}</p>}
-            {deal?.kind === 'rent-to-rent' && <p className="text-[10px] text-muted-foreground">Max rent for {gbp(deal.targetMarginPcm)} margin: {gbp(deal.maxRentForTargetMargin)}</p>}
+            {deal && <p className="text-[10px] text-muted-foreground">{payLine(mostYouCanPayForDeal(deal, { minProfitPcm: deal.minProfitPcm, basis: 'listing' }))}</p>}
           </div>
         </div>
       )}

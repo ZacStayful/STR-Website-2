@@ -12,6 +12,7 @@ import { futureValueSentence } from '@/lib/listing/growth';
 import type { FutureValueRange } from '@/lib/types';
 import type { DealResult } from '@/lib/types';
 import { gbp, gbpSigned } from './format';
+import { basisLine, gapLine, mostYouCanPayForDeal } from '@/lib/marketplace/most-you-can-pay';
 
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'good' | 'bad' }) {
   return (
@@ -44,10 +45,11 @@ function Field({ id, label, value, onChange, suffix, step, min, max, hint }: { i
  */
 export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, futureValue }: { deal: DealResult; grossRevenue: number; adr: number; bedrooms: number; setupCost?: number; futureValue?: FutureValueRange | null }) {
   // Start from the inputs the server used, so the first render matches the saved report and PDF.
+  // Batch 14: the member's minimum monthly profit the report was worked at (older reports: the £500 default).
   const initialFinance: FinanceDefaults =
     deal.kind === 'purchase'
-      ? { depositPct: deal.depositPct, mortgageRatePct: deal.mortgageRatePct, termYears: deal.termYears, targetYieldPct: deal.targetYieldPct, targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm }
-      : { ...DEFAULT_FINANCE, targetMarginPcm: deal.targetMarginPcm };
+      ? { depositPct: deal.depositPct, mortgageRatePct: deal.mortgageRatePct, termYears: deal.termYears, targetYieldPct: deal.targetYieldPct, targetMarginPcm: deal.minProfitPcm ?? DEFAULT_FINANCE.targetMarginPcm }
+      : { ...DEFAULT_FINANCE, targetMarginPcm: deal.minProfitPcm ?? deal.targetMarginPcm };
   const [finance, setFinance] = useState<FinanceDefaults>(initialFinance);
   const [price, setPrice] = useState(deal.kind === 'purchase' ? deal.askingPrice : deal.advertisedRentPcm);
   const [bills, setBills] = useState(deal.billsPcm ?? 250);
@@ -79,6 +81,13 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, future
     };
     return deal.kind === 'purchase' ? purchaseDeal(Math.max(0, price), base) : rentToRentDeal(Math.max(0, price), base);
   }, [deal.kind, grossRevenue, adr, bedrooms, finance, setup, bills, price, taxCountry, askingPrice, savedStampDuty]);
+
+  // The most you can pay to hit your targets, on this report's own income: exact for this property.
+  const pay = mostYouCanPayForDeal(live, { minProfitPcm: finance.targetMarginPcm, basis: 'exact' });
+  const payValue = pay.state === 'price' ? gbp(pay.amount!) : pay.state === 'any' ? 'Any price' : 'None';
+  const payAsking = live.kind === 'purchase' ? live.askingPrice : live.advertisedRentPcm;
+  const payTone: 'good' | 'bad' = pay.state === 'any' || (pay.state === 'price' && payAsking <= pay.amount!) ? 'good' : 'bad';
+  const paySub = gapLine(payAsking, pay) ?? (pay.kind === 'rent' ? 'no rent leaves your profit' : 'no price reaches your profit');
 
   const councilTax = deal.councilTax ?? null;
   const billsHint = councilTax
@@ -117,16 +126,17 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, future
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Stamp duty" value={gbp(live.stampDuty)} sub={`${live.stampDutyName ?? 'SDLT'}, additional-property rate${live.stampDutySource === 'propertydata' ? ' (live)' : ''}`} />
               <Stat label="Setup budget" value={gbp(live.setupCost)} sub="furnishing & kit" />
-              <Stat label={`Max price for ${finance.targetYieldPct}% yield`} value={gbp(live.maxPriceForTargetYield)} sub={live.maxPriceForTargetYield >= live.askingPrice ? 'above asking' : `${gbp(live.askingPrice - live.maxPriceForTargetYield)} below asking`} tone={live.maxPriceForTargetYield >= live.askingPrice ? 'good' : 'bad'} />
+              <Stat label="Most you can pay" value={payValue} sub={paySub} tone={payTone} />
               <Stat label="Net operating / yr" value={gbp(live.netOperating)} sub="before mortgage" />
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
               <Field id="deal-price" label="Purchase price" value={price} onChange={setPrice} suffix="£" step={1000} min={0} />
               <Field id="deal-deposit" label="Deposit" value={finance.depositPct} onChange={(v) => setFinance({ ...finance, depositPct: v })} suffix="%" step={5} min={0} max={100} />
               <Field id="deal-rate" label="Mortgage rate" value={finance.mortgageRatePct} onChange={(v) => setFinance({ ...finance, mortgageRatePct: v })} suffix="%" step={0.25} min={0} max={25} hint={rateHint} />
-              <Field id="deal-target" label="Target yield" value={finance.targetYieldPct} onChange={(v) => setFinance({ ...finance, targetYieldPct: v })} suffix="%" step={0.5} min={1} max={50} />
+              <Field id="deal-target" label="Minimum profit / month" value={finance.targetMarginPcm} onChange={(v) => setFinance({ ...finance, targetMarginPcm: v })} suffix="£" step={50} min={0} />
               <Field id="deal-bills" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} hint={billsHint} />
             </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">Most you can pay: {basisLine(pay).replace(/^For/, 'for')}.</p>
             {futureValue && (
               <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{futureValueSentence(futureValue)}</p>
             )}
@@ -143,11 +153,11 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, future
               <Stat label="Monthly gross" value={gbp(live.monthlyGross)} />
               <Stat label="Running costs" value={gbp(live.monthlyOperating)} sub="platform, management, cleaning, bills" />
               <Stat label="Net before rent" value={gbp(live.monthlyNetBeforeRent)} />
-              <Stat label={`Max rent for ${gbp(finance.targetMarginPcm)} margin`} value={gbp(live.maxRentForTargetMargin)} sub={live.maxRentForTargetMargin >= live.advertisedRentPcm ? 'above advertised' : `${gbp(live.advertisedRentPcm - live.maxRentForTargetMargin)} below advertised`} tone={live.maxRentForTargetMargin >= live.advertisedRentPcm ? 'good' : 'bad'} />
+              <Stat label="Most rent you can pay" value={payValue} sub={paySub} tone={payTone} />
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field id="deal-rent" label="Rent you would pay" value={price} onChange={setPrice} suffix="£ pcm" step={25} min={0} />
-              <Field id="deal-margin" label="Target margin" value={finance.targetMarginPcm} onChange={(v) => setFinance({ ...finance, targetMarginPcm: v })} suffix="£ pcm" step={50} min={0} />
+              <Field id="deal-margin" label="Minimum profit / month" value={finance.targetMarginPcm} onChange={(v) => setFinance({ ...finance, targetMarginPcm: v })} suffix="£ pcm" step={50} min={0} />
               <Field id="deal-bills-r2r" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} hint={billsHint} />
             </div>
             <div className="mt-4 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-xs text-muted-foreground">

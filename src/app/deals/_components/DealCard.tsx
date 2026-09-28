@@ -2,6 +2,7 @@ import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
+import { payLine } from "@/lib/marketplace/most-you-can-pay";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { earlyAccessHint } from "@/lib/marketplace/early-access";
 import { PASS_REASON_GROUPS, type DealReaction } from "@/lib/marketplace/reactions";
@@ -85,10 +86,14 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           {price && <p className="text-sm font-semibold text-foreground">{price}</p>}
         </div>
         {view ? (
-          <p className="text-xs text-muted-foreground">
-            area estimate{view.range ? ` · ${view.range.basis}` : ""}
-            {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
-          </p>
+          <>
+            <p className="text-xs text-muted-foreground">
+              area estimate{view.range ? ` · ${view.range.basis}` : ""}
+              {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
+            </p>
+            {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure. */}
+            {view.pay && <p className="mt-0.5 text-xs font-medium text-foreground">{price ? `Asking ${price} · ` : ""}{payLine(view.pay)}</p>}
+          </>
         ) : (
           <p className="text-xs text-muted-foreground">{figure.small}</p>
         )}

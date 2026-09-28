@@ -40,6 +40,13 @@ export interface DealFacts {
   postcodeArea: string | null;
   /** A marketplace deal (key `d-…`), not a listing the member added (`l-…`). */
   marketplace: boolean;
+  /**
+   * Batch 14: the screening's short-let income (£/yr) and its confidence:
+   * the deal's own income on its card and sheet, which the Offer stage's
+   * ceiling now uses too.
+   */
+  screeningGross?: number | null;
+  screeningConfidence?: string | null;
 }
 
 export function stepKindOf(kind: string): StepKind | null {

@@ -364,13 +364,13 @@ Thanks,
     },
     targetPart: {
       // DRAFT — Zac to rewrite
-      purchase: `Hits your {targetYield} target up to {targetCeiling}`,
+      purchase: `The most you can pay to make {minProfit} a month is {targetCeiling}`,
       // DRAFT — Zac to rewrite
       rentToRent: `Leaves your {targetMargin} monthly margin up to {targetCeiling} a month`,
     },
     targetPartAtAsking: {
       // DRAFT — Zac to rewrite
-      purchase: `The asking price already hits your {targetYield} target`,
+      purchase: `The asking price already leaves your {minProfit} a month`,
       // DRAFT — Zac to rewrite
       rentToRent: `The asking rent already leaves your {targetMargin} monthly margin`,
     },
@@ -390,7 +390,7 @@ Thanks,
     },
     targetNote: {
       // DRAFT — Zac to rewrite
-      purchase: `Based on your {targetYield} target gross yield.`,
+      purchase: `Based on {minProfit} a month profit at your {depositPct} deposit, {mortgageRate} over {termYears} years (area estimate).`,
       // DRAFT — Zac to rewrite
       rentToRent: `Based on your {targetMargin} target monthly margin.`,
     },
@@ -405,9 +405,11 @@ Thanks,
       studio: `We don't have separate short-let income figures for studios, so we can't check it against your target.`,
       // DRAFT — Zac to rewrite
       noMargin: `At your {targetMargin} target monthly margin, this doesn't work at any rent, so we haven't suggested an offer.`,
+      // DRAFT — Zac to rewrite (Batch 14: a purchase that no price makes the member's monthly profit on)
+      noPrice: `At your {minProfit} a month, no price works with your deposit and rate, so we haven't suggested an offer.`,
       tooFarBelow: {
         // DRAFT — Zac to rewrite
-        purchase: `To hit your {targetYield} target you'd need to pay no more than {targetCeiling}. That's more than a quarter below the asking price, so we haven't suggested an offer.`,
+        purchase: `To make {minProfit} a month you'd need to pay no more than {targetCeiling}. That's more than a quarter below the asking price, so we haven't suggested an offer.`,
         // DRAFT — Zac to rewrite
         rentToRent: `To leave your {targetMargin} monthly margin the rent would need to be {targetCeiling} a month or less. That's more than a quarter below the asking rent, so we haven't suggested an offer.`,
       },

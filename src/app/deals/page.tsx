@@ -14,6 +14,7 @@ import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { cardViewsFor } from "@/lib/marketplace/card-state";
+import { cashBuyerOf } from "@/lib/marketplace/most-you-can-pay";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
@@ -68,7 +69,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const adminUser = isAdminEmail(user.email);
   const { data: profile } = await supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle();
   // Batch 10: each card's profit range at this member's finance, and its buttons at their price.
-  const [opened, reactions, views] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids), cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: parseMarketGoals(profile?.market_goals)?.finance ?? null })]);
+  const [opened, reactions, views] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids), cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: parseMarketGoals(profile?.market_goals)?.finance ?? null, cashBuyer: cashBuyerOf(parseMarketGoals(profile?.market_goals)) })]);
   // Nothing left in the grid: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
   const now = new Date();

@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     estimate: est ? { revenue: est.grossRevenue, adr: est.adr, occupancy: est.occupancy, note: est.note } : null,
     area: area ? { name: area.name, score: area.score, grade: area.grade, competition: area.competition?.label ?? null, directBooking: area.directBooking?.label ?? null, licensing: area.licensing.headline } : null,
     tracked: l.quick?.tracked ? { revenue: l.quick.tracked.annualRevenue, adr: l.quick.tracked.adr, occupancy: l.quick.tracked.occupancy, reviews: l.quick.tracked.reviewCount } : null,
-    deal: l.deal ? pdfDealFrom({ ...l.deal, basis: l.kind === "rent" ? "advertised-rent" : "asking-price" }, l.canonicalUrl, []) : null,
+    deal: l.deal ? pdfDealFrom({ ...l.deal, basis: l.kind === "rent" ? "advertised-rent" : "asking-price" }, l.canonicalUrl, [], { house: true }) : null,
     generatedAt: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
   };
   const buffer = await renderToBuffer(<DealSheet data={data} />);

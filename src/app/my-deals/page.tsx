@@ -12,6 +12,7 @@ import { myDealsShowsPassed } from "@/lib/nav";
 import { DealRow } from "./_components/DealRow";
 import { cardStatesFor } from "@/lib/marketplace/card-state";
 import { cardView, NOT_OPENED } from "@/lib/marketplace/card-view";
+import { cashBuyerOf } from "@/lib/marketplace/most-you-can-pay";
 import { quoterFor } from "@/lib/credit/quote-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { dealVisible } from "@/lib/marketplace/visibility";
@@ -88,16 +89,18 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
   // badges, and its prices at what they pay.
   const dealIds = [...new Set(view.map((v) => v.dealId).filter((id): id is string => Boolean(id)))];
   const [states, quoter, profileRes, visibility] = await Promise.all([cardStatesFor(supabase, user.id, load.payerId, dealIds), quoterFor(load.payerId, adminUser), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), dealVisibilityFor(user.id, adminUser)]);
-  const activeFinance = parseMarketGoals(profileRes.data?.market_goals)?.finance ?? null;
+  const activeGoals = parseMarketGoals(profileRes.data?.market_goals);
+  const activeFinance = activeGoals?.finance ?? null;
   const viewFor = (item: ViewerDeal) => {
     const c = item.dealId ? load.cards.get(item.dealId) ?? null : null;
     if (!c) return null;
     // A deal kept for a profile is priced at that profile's finance; untagged ones at the active profile's.
     const own = byId.get(tags.get(item.key) ?? "");
     const finance = own && !own.isActive ? own.goals?.finance ?? activeFinance : activeFinance;
+    const cashBuyer = cashBuyerOf(own && !own.isActive ? own.goals ?? activeGoals : activeGoals);
     const state = states.get(c.id) ?? NOT_OPENED;
     const opened = state.opened || item.opened;
-    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, label: quoter.label });
+    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, cashBuyer, label: quoter.label });
     // Still in its early-access window for this member (a free member's list
     // can hold one, e.g. after a plan ends): nothing on it can be bought yet.
     return !opened && !dealVisible(c.live_since, visibility.cutoffIso) ? { ...v, quickLook: null, fullAnalysis: null } : v;

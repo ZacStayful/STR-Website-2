@@ -15,6 +15,7 @@ import { NextStepSlot } from "./NextStepSlot";
 import { factsFromTracked } from "@/lib/pipeline/slot-facts";
 import { priceText } from "@/lib/credit/deal-pricing";
 import type { CardView } from "@/lib/marketplace/card-view";
+import { gapLine } from "@/lib/marketplace/most-you-can-pay";
 import { KEPT_STATUS } from "@/lib/listing/pipeline";
 import { StageReminder } from "@/components/pipeline/StageReminder";
 
@@ -102,6 +103,7 @@ export function DealRow({
   const gone = card?.status === "retired";
   const openPence = card && !item.opened ? (adminUser ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder)) : null;
   // What this member pays for the Quick look and the Full analysis (Batch 10).
+  const payGap = card && view?.pay ? gapLine(card.price_amount === null ? null : Number(card.price_amount), view.pay) : null;
   const openLabel = view?.quickLook ? priceText(view.quickLook) : null;
   const canAnalyse = Boolean(card && view && !view.analysed && (item.opened || card.status === "live"));
   const pastKept = item.mine && item.stage !== KEPT_STATUS && item.stage !== "passed";
@@ -123,6 +125,8 @@ export function DealRow({
             {price && <p className="shrink-0 text-sm font-semibold text-foreground">{price}</p>}
           </div>
           {small && <p className="truncate text-xs text-muted-foreground">{small}</p>}
+          {/* Batch 14: how the asking figure sits against the most they can pay for their own monthly profit. */}
+          {payGap && <p className={"truncate text-xs font-medium " + (payGap.startsWith("Within") ? "text-primary" : "text-destructive")}>{payGap}</p>}
           <Link href={href} className="block truncate text-sm font-medium text-foreground hover:underline">
             {title}
           </Link>

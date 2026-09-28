@@ -13,6 +13,7 @@
  *
  * Pure: no network, no database, no `server-only`.
  */
+import { DEFAULT_FINANCE } from '../listing/deal.ts';
 import type { PipelineStatus } from '../listing/pipeline.ts';
 import { NEXT_STEPS } from './next-steps.ts';
 import { fillTemplate } from './render.ts';
@@ -101,7 +102,8 @@ export interface ViewInput {
   ticks: ReadonlySet<string>;
   /** The computed offer range, at the Offer stage. */
   offer: OfferRange | null;
-  finance: { targetYieldPct: number; targetMarginPcm: number };
+  /** The member's targets. Batch 14: the deposit, rate and term say what "most you can pay" was worked at (house figures when absent). */
+  finance: { targetYieldPct: number; targetMarginPcm: number; depositPct?: number; mortgageRatePct?: number; termYears?: number };
   now: Date;
   content?: NextStepsContent;
 }
@@ -133,6 +135,11 @@ function offerView(c: NextStepsContent, kind: StepKind, range: OfferRange, input
     motivated: range.history ? gbp(range.history.motivated) : null,
     timeOnMarket: formatAge(age, kind),
     reductions: range.history ? countWord(range.history.reductions) : null,
+    minProfit: gbp(input.finance.targetMarginPcm),
+    depositPct: pct(input.finance.depositPct ?? DEFAULT_FINANCE.depositPct),
+    // A rate reads to the hundredth: 4.75%, not 4.8%.
+    mortgageRate: `${Math.round((input.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct) * 100) / 100}%`,
+    termYears: String(input.finance.termYears ?? DEFAULT_FINANCE.termYears),
   };
 
   const missingLine: Record<OfferMissing, string> = {
@@ -141,6 +148,7 @@ function offerView(c: NextStepsContent, kind: StepKind, range: OfferRange, input
     noRevenue: o.missing.noRevenue,
     studio: o.missing.studio,
     noMargin: o.missing.noMargin,
+    noPrice: o.missing.noPrice,
     tooFarBelow: o.missing.tooFarBelow[k],
     bandsNotSet: o.missing.bandsNotSet,
     noHistory: o.missing.noHistory,
@@ -162,7 +170,7 @@ function offerView(c: NextStepsContent, kind: StepKind, range: OfferRange, input
     working = line ? capitalise(line) : null;
     if (priceIsStale(input.facts, input.now)) notes.push(fillTemplate(o.staleAsking, fields));
   }
-  const usesTarget = range.target !== null || range.missing.includes('tooFarBelow') || range.missing.includes('noMargin');
+  const usesTarget = range.target !== null || range.missing.includes('tooFarBelow') || range.missing.includes('noMargin') || range.missing.includes('noPrice');
   // Which target the figure used (the reasons for no figure already say it).
   if (range.show && range.target) notes.unshift(fillTemplate(o.targetNote[k], fields));
 
