@@ -68,6 +68,12 @@ export interface MemberContext {
   goals: MarketGoals | null;
   savedAreas: string[];
   visibility: DealVisibility;
+  /**
+   * The saved profile this list is for (Batch 13): its own list, its own
+   * feedback, and nothing already on another of the member's lists today.
+   * Null before the Batch 13 schema: one list a member, as before.
+   */
+  profileId?: string | null;
 }
 
 /** The day's list: the stored one, or a new one chosen and stored now. Null when it cannot be read (schema not run). */
@@ -75,7 +81,11 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
   const day = todayKey(now);
-  const read = () => admin.from('today_selections').select('day, deal_ids, near_miss, advice').eq('user_id', member.userId).eq('day', day).maybeSingle();
+  const profileId = member.profileId ?? null;
+  const read = () =>
+    profileId
+      ? admin.from('profile_today_lists').select('day, deal_ids, near_miss, advice').eq('profile_id', profileId).eq('day', day).maybeSingle()
+      : admin.from('today_selections').select('day, deal_ids, near_miss, advice').eq('user_id', member.userId).eq('day', day).maybeSingle();
   const first = await read();
   if (first.error) {
     console.error('[today] selection read failed (schema behind?):', first.error.message);
@@ -96,9 +106,13 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   // may find something (a deal leaving the early-access window, a read that
   // failed this time).
   if (chosen.dealIds.length === 0) return { day, ...chosen };
-  const { error } = await admin
-    .from('today_selections')
-    .upsert({ user_id: member.userId, day, deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice }, { onConflict: 'user_id,day', ignoreDuplicates: true });
+  const { error } = profileId
+    ? await admin
+        .from('profile_today_lists')
+        .upsert({ profile_id: profileId, user_id: member.userId, day, deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice }, { onConflict: 'profile_id,day', ignoreDuplicates: true })
+    : await admin
+        .from('today_selections')
+        .upsert({ user_id: member.userId, day, deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice }, { onConflict: 'user_id,day', ignoreDuplicates: true });
   if (error) console.error('[today] selection insert failed:', error.message);
   // Read back: when two devices chose at once, both show the one stored first.
   const again = await read();
@@ -117,7 +131,10 @@ function fromRow(r: { day: unknown; deal_ids: unknown; near_miss: unknown; advic
 /**
  * Everything that can never be on this member's Today again: kept or passed
  * (read here directly, so a pass stays out even when the pool's own pass
- * filter has to fall back), opened, or shown on an earlier day.
+ * filter has to fall back), opened, or shown on an earlier day. With saved
+ * profiles (Batch 13) that is member-wide, across every profile, and a deal
+ * already on another of their profiles' lists today is left out too: each
+ * profile's daily charge buys different deals.
  */
 async function excludedFor(admin: Admin, member: MemberContext, day: string): Promise<Set<string>> {
   const out = new Set<string>();
@@ -155,12 +172,27 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
         if ((data?.length ?? 0) < PAGE) break;
       }
     })(),
+    (async () => {
+      if (!member.profileId) return;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await admin.from('profile_today_lists').select('profile_id, day, deal_ids').eq('user_id', member.userId).lte('day', day).order('day', { ascending: true }).order('profile_id', { ascending: true }).range(from, from + PAGE - 1);
+        if (error) {
+          console.warn('[today] profile lists read failed:', error.message);
+          break;
+        }
+        for (const r of (data ?? []) as { profile_id: string; day: string; deal_ids: unknown }[]) {
+          if (String(r.day) === day && r.profile_id === member.profileId) continue;
+          if (Array.isArray(r.deal_ids)) for (const id of r.deal_ids) if (typeof id === 'string') out.add(id);
+        }
+        if ((data?.length ?? 0) < PAGE) break;
+      }
+    })(),
   ]);
   return out;
 }
 
 async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date): Promise<Omit<TodaySelection, 'day'>> {
-  const feedback = await feedbackForMember(admin, member.userId, now);
+  const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
   const rules = feedbackRules(feedback);
   const filters = applyKindFeedback(filtersForGoals(member.goals, member.savedAreas), rules);
   const mode = member.goals?.motivation.mode ?? 'off';
@@ -306,9 +338,15 @@ export interface TodaysPick {
   price: string;
 }
 
-export async function todaysPick(userId: string, now: Date = new Date()): Promise<TodaysPick | null> {
+/** With `profileId` (Batch 13), that profile's pick: a member with several profiles gets one pick for each. */
+export async function todaysPick(userId: string, now: Date = new Date(), profileId: string | null = null): Promise<TodaysPick | null> {
   const since = todayStart(now).getTime();
-  const pick = (await loadPicks(userId, 3)).find((p) => Date.parse(p.sentAt) >= since) ?? null;
+  let mine: Set<string> | null = null;
+  if (profileId && hasServiceRole()) {
+    const { data, error } = await createAdminClient().from('sourcing_sent').select('id').eq('user_id', userId).eq('profile_id', profileId).gte('sent_at', new Date(since).toISOString());
+    if (!error) mine = new Set(((data ?? []) as { id: string }[]).map((r) => r.id));
+  }
+  const pick = (await loadPicks(userId, mine ? 12 : 3)).find((p) => Date.parse(p.sentAt) >= since && (!mine || mine.has(p.id))) ?? null;
   if (!pick) return null;
   return {
     id: pick.id,

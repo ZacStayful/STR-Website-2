@@ -6,7 +6,8 @@ import { isAdminEmail } from '@/lib/admin';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { cleanReasons } from '@/lib/listing/picks';
 import { checkListingForMember } from '@/lib/listing/server';
-import { pickForMember, recordReaction, markPickSaved } from '@/lib/listing/picks-server';
+import { pickForMember, recordReaction, markPickSaved, pickProfileRow } from '@/lib/listing/picks-server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { myDealsFocusPath } from '@/lib/listing/return-path';
 import { logActivity } from '@/lib/activity/log';
 
@@ -33,8 +34,10 @@ export async function savePickAction(formData: FormData): Promise<void> {
   if (!pick) redirect('/picks?msg=missing');
   if (pick.checkedListingId) redirect(myDealsFocusPath(`l-${pick.checkedListingId}`));
 
-  const { data: profile } = await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
-  const goals = parseMarketGoals(profile?.market_goals);
+  // The pick's own profile's finance (Batch 13), else the active profile's.
+  const own = await pickProfileRow(createAdminClient(), id, user.id).catch(() => null);
+  const { data: profile } = own ? { data: null } : await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
+  const goals = parseMarketGoals(own ? own.criteria : profile?.market_goals);
   let outcome;
   try {
     outcome = await checkListingForMember(pick.listing.canonicalUrl, { userId: user.id, goals, save: true, adminUser: isAdminEmail(user.email) });
@@ -46,7 +49,7 @@ export async function savePickAction(formData: FormData): Promise<void> {
   const checkedId = outcome.body.checkedListingId;
   if (!checkedId) redirect('/picks?msg=failed');
   await markPickSaved(id, user.id, checkedId);
-  logActivity(user.id, 'pick_saved', { dealId: pick.dealId, extras: { item: `l-${checkedId}` } });
+  logActivity(user.id, 'pick_saved', { dealId: pick.dealId, profileId: own?.id ?? null, extras: { item: `l-${checkedId}` } });
   // The deal's place on My deals (the Explorer's listings pane still takes old links).
   redirect(myDealsFocusPath(`l-${checkedId}`));
 }

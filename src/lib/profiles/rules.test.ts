@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { chargeOrder, checkName, criteriaForNewProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profilePriceLine, SHARED_QUESTION_IDS } from './rules.ts';
+import { chargeOrder, checkName, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profilePriceLine, SHARED_QUESTION_IDS } from './rules.ts';
 
 const p = (over: Partial<{ id: string; name: string; isActive: boolean; createdAt: string; pausedAt: string | null; deletedAt: string | null }> = {}) => ({
   id: over.id ?? 'a',
@@ -81,4 +81,12 @@ test('rows parse tolerantly and never carry a malformed profile', () => {
 
 test('the shared (About you) questions are only about you', () => {
   for (const id of ['where', 'budget', 'max_rent', 'min_profit']) assert.equal(SHARED_QUESTION_IDS.includes(id as never), false, id);
+});
+
+test('a My deals entry takes its profile from the row, then the Keep / Pass, the pick, the open', () => {
+  assert.equal(entryProfile({ pipeline: 'row', reaction: 'r', pick: 'p', open: 'o' }), 'row');
+  assert.equal(entryProfile({ reaction: 'r', pick: 'p', open: 'o' }), 'r');
+  assert.equal(entryProfile({ pick: 'p', open: 'o' }), 'p');
+  assert.equal(entryProfile({ open: 'o' }), 'o');
+  assert.equal(entryProfile({}), null);
 });

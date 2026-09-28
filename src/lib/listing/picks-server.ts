@@ -277,8 +277,12 @@ export async function applyPickRelaxation(token: string): Promise<{ field: strin
   if (!pick || !offer?.applyField || offer.value === null) return null;
 
   const admin = createAdminClient();
-  const { data } = await admin.from('profiles').select('market_goals').eq('id', pick.userId).single();
-  const goals = parseMarketGoals(data?.market_goals);
+  // Saved profiles (Batch 13): the offer was about one profile's filter. When
+  // that profile is not the active one, its own row is changed; the active
+  // one's lives in market_goals (and the trigger copies it into its row).
+  const own = await pickProfileRow(admin, pick.id, pick.userId);
+  const { data } = own && !own.isActive ? { data: null } : await admin.from('profiles').select('market_goals').eq('id', pick.userId).single();
+  const goals = own && !own.isActive ? parseMarketGoals(own.criteria) : parseMarketGoals(data?.market_goals);
   if (!goals) return null;
 
   // Re-parsed after the change, so an out-of-band value can never be stored
@@ -289,10 +293,10 @@ export async function applyPickRelaxation(token: string): Promise<{ field: strin
   // was applied rather than report success on a silent fallback to the default.
   if (next.motivation[offer.applyField] !== offer.value) return null;
 
-  const { error } = await admin
-    .from('profiles')
-    .update({ market_goals: next, market_goals_updated_at: new Date().toISOString() })
-    .eq('id', pick.userId);
+  const nowIso = new Date().toISOString();
+  const { error } = own && !own.isActive
+    ? await admin.from('search_profiles').update({ criteria: next, updated_at: nowIso }).eq('id', own.id).eq('user_id', pick.userId)
+    : await admin.from('profiles').update({ market_goals: next, market_goals_updated_at: nowIso }).eq('id', pick.userId);
   if (error) {
     console.error('[picks] relaxation apply failed:', error.message);
     return null;
@@ -300,11 +304,39 @@ export async function applyPickRelaxation(token: string): Promise<{ field: strin
   return { field: offer.applyField, value: offer.value };
 }
 
+/**
+ * The saved profile a pick was made for (Batch 13), read on its own so the
+ * fixed PICK_COLUMNS select never names a column the schema may not have
+ * yet. Null for an untagged pick, a deleted profile, or before the schema.
+ */
+export async function pickProfileRow(admin: ReturnType<typeof createAdminClient>, pickId: string, userId: string): Promise<{ id: string; isActive: boolean; criteria: unknown } | null> {
+  const { data, error } = await admin.from('sourcing_sent').select('profile_id').eq('id', pickId).eq('user_id', userId).maybeSingle();
+  const profileId = error ? null : ((data as { profile_id?: string | null } | null)?.profile_id ?? null);
+  if (!profileId) return null;
+  const { data: row } = await admin.from('search_profiles').select('id, is_active, criteria').eq('id', profileId).eq('user_id', userId).is('deleted_at', null).maybeSingle();
+  const r = row as { id: string; is_active: boolean; criteria: unknown } | null;
+  return r ? { id: r.id, isActive: r.is_active === true, criteria: r.criteria } : null;
+}
+
 /** Links a pick to the pipeline row the member saved it as. */
 export async function markPickSaved(id: string, userId: string, checkedListingId: string): Promise<void> {
   if (!hasServiceRole()) return;
-  const { error } = await createAdminClient().from('sourcing_sent').update({ checked_listing_id: checkedListingId, saved_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId);
+  const admin = createAdminClient();
+  const { error } = await admin.from('sourcing_sent').update({ checked_listing_id: checkedListingId, saved_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId);
   if (error) console.error('[picks] saved update failed:', error.message);
+  // The pipeline row belongs to the profile the pick was made for, not
+  // whichever one is active now (Batch 13). Only a row made in the last few
+  // minutes (this save) moves: an existing row keeps the profile it has.
+  const own = await pickProfileRow(admin, id, userId);
+  if (own) {
+    const { error: tagErr } = await admin
+      .from('checked_listings')
+      .update({ profile_id: own.id })
+      .eq('id', checkedListingId)
+      .eq('user_id', userId)
+      .gte('created_at', new Date(Date.now() - 5 * 60 * 1000).toISOString());
+    if (tagErr) console.warn('[picks] pipeline profile tag failed:', tagErr.message);
+  }
 }
 
 /** Whether a member has picks on (null when the profile cannot be read). */

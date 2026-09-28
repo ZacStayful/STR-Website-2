@@ -154,3 +154,12 @@ export function profilePriceLine(dailyLine: string | null): string | null {
   if (!dailyLine) return null;
   return dailyLine.replace(/^Daily deals:/, 'Daily deals for this profile:');
 }
+
+/**
+ * Which profile a My deals entry belongs to: the same precedence the merge
+ * uses for its stage (src/lib/listing/tracked.ts): the pipeline row, else the
+ * Keep / Pass, else the pick, else the open. Null when none is tagged.
+ */
+export function entryProfile(tags: { pipeline?: string | null; reaction?: string | null; pick?: string | null; open?: string | null }): string | null {
+  return tags.pipeline ?? tags.reaction ?? tags.pick ?? tags.open ?? null;
+}
