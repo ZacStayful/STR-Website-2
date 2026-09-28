@@ -14,7 +14,7 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { adminEmails } from '../admin';
 import { ACCESS_COLUMNS, isPaid, type AccessProfile } from '../access';
-import { payersFor } from '../team';
+import { payersForCharging } from '../listing/daily-deals-server';
 import { allProfilesFor } from '../profiles/server';
 import { seatsFor } from '../profiles/rules';
 import { parseMarketGoals } from '../market/goals';
@@ -120,14 +120,19 @@ export interface DemandInputs {
 /**
  * Everyone seen in the app within the active window, with their running
  * profiles. Staff and switched-off accounts are still returned (flagged):
- * buildDemand leaves them out and counts them. Null when the members cannot
- * be read at all.
+ * buildDemand leaves them out and counts them. Null when the members, or who
+ * pays for whom, cannot be read.
  */
 export async function loadDemandInputs(admin: Admin, settings: Pick<DemandSettings, 'activeDays'>, now: Date = new Date()): Promise<DemandInputs | null> {
   const rows = await recentMembers(admin, new Date(now.getTime() - settings.activeDays * DAY_MS).toISOString());
   if (rows === null) return null;
   const ids = rows.map((r) => r.id);
-  const [off, payers, profileRows] = await Promise.all([switchedOff(admin), payersFor(ids), allProfilesFor(admin, ids)]);
+  // Chunked, and null rather than "everyone pays for themselves" when the lookup fails: that would count a team's seats separately.
+  const [off, payers, profileRows] = await Promise.all([switchedOff(admin), payersForCharging(ids), allProfilesFor(admin, ids)]);
+  if (payers === null) {
+    console.error('[demand-sourcing] team lookup failed: no demand this run');
+    return null;
+  }
   const members: DemandMember[] = [];
   const kept: MemberRow[] = [];
   for (const r of rows) {
