@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checksFor, factsFromRow, judge, judgeDeal, memberFigures, modeOf, tenureOf, wantsFor, type DealFacts } from './criteria.ts';
+import { activeCriteria, checksFor, criterionForQuestion, factsFromRow, judge, judgeDeal, memberFigures, modeOf, mustHaveTest, tenureOf, wantsFor, type DealFacts } from './criteria.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import { profitRange } from '../marketplace/profit-range.ts';
@@ -168,4 +168,19 @@ test('a marketplace row as facts: rent a week in pcm, the area upper-cased, tenu
   assert.equal(f.tenure, 'unknown');
   assert.equal(f.grossRevenue, 24_000);
   assert.equal(factsFromRow({ kind: 'sale', postcode_area: null, bedrooms: null, price_amount: null, price_period: null, raw_type: null, tenure: 'Freehold', screening_gross: null, screening_confidence: null }, null, { qualifies: undefined, score: 0 }).tenure, 'freehold');
+});
+
+test('the switches the profile page offers are the checks the answers make', () => {
+  const p = profile({ path: 'buy', budget: 'u200', where: 'areas', bedrooms: 2, buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'either', leaseholdOk: 'no', restrictedAreas: 'warn' } }, {}, ['NG']);
+  assert.deepEqual([...activeCriteria(wantsFor(p))].sort(), ['bedrooms', 'budget', 'leasehold', 'location']);
+  assert.equal(criterionForQuestion('client_rent'), 'rent');
+  assert.equal(criterionForQuestion('condition'), null);
+});
+
+test('the daily pick meets a tailored profile’s must-haves; an untailored one is not tested', () => {
+  assert.equal(mustHaveTest(plainProfile(goals({ budget: 'u200' }), [], WIDTHS)), null);
+  const test = mustHaveTest(profile({ budget: 'u200' }, { answered: { deals_done: real } }))!;
+  const listing = (amount: number) => ({ source: 'rightmove' as const, id: 'l', canonicalUrl: 'https://x/l', kind: 'sale' as const, title: 'House', address: null, postcode: null, outcode: 'NG7', postcodeArea: 'NG', lat: null, lng: null, bedrooms: 3, bathrooms: null, price: { amount, period: 'total' as const }, rawType: 'Terraced house', photo: null });
+  assert.equal(test({ listing: listing(150_000), deal: null }), true);
+  assert.equal(test({ listing: listing(250_000), deal: null }), false);
 });

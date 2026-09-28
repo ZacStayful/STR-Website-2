@@ -107,6 +107,14 @@ export const ACTIVITY_KINDS = {
   saved_profile_resumed: inApp('Resumed a saved profile'),
   saved_profile_deleted: inApp('Deleted a saved profile'),
 
+  // Batch 14: tailoring (src/lib/tailoring). Criterion keys and steps only, never an answer.
+  tailoring_mode: inApp('Switched a must-have or nice-to-have'),
+  tailoring_widen: inApp('Widened their search from Today'),
+  tailoring_widen_shown: recordOnly('Was shown ways to widen their search'),
+  tailoring_prompt: inApp('Answered a profile check on Today'),
+  tailoring_prompt_shown: recordOnly('Was shown a profile check on Today'),
+  leads_upsell_clicked: inApp('Tapped the Leads card on Today'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),

@@ -5,6 +5,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { chooseTodayFrom, type ChooseInput, type ChooseReads, type TodayChoice } from './choose.ts';
+import { chooseDay } from './choose-day.ts';
+import { plainProfile, usesTailoring } from '../tailoring/profile.ts';
 import { applyKindFeedback, buildCandidate, CLOSEST_ADVICE, dealKey, filtersForGoals, nearestAreas, nearestOutside, orderForToday, referencePoint, WIDEN_AREA_ADVICE, type Built, type CandidateContext, type PoolRow, type TodayCandidate } from './candidates.ts';
 import { TODAY_SIZE } from './day.ts';
 import { applyCandidateFeedback, feedbackRules, PICK_REASONS, type AppliedRules, type PickFeedback, type PickReason } from '../listing/picks.ts';
@@ -385,7 +387,7 @@ function goldenCase(seed: number, choice: TodayChoice, trace: string[]): GoldenC
 // ─── Today is unchanged for a member with no tailoring answers ─────────
 
 test('choosing Today from injected reads gives exactly what selection.ts chose, read for read', async () => {
-  const seen = { exact: 0, relaxAdvice: 0, widenArea: 0, closestOnly: 0, empty: 0, fullListingDrop: 0, strictSuitability: 0, kindFlip: 0, wrongArea: 0, coldCache: 0, motivatedOnly: 0, noGoals: 0, depthCut: 0 };
+  const seen = { exact: 0, relaxAdvice: 0, widenArea: 0, closestOnly: 0, empty: 0, fullListingDrop: 0, strictSuitability: 0, kindFlip: 0, wrongArea: 0, coldCache: 0, motivatedOnly: 0, noGoals: 0, depthCut: 0, throughDispatch: 0 };
   const cases: GoldenCase[] = [];
   for (let seed = 1; seed <= SEEDS; seed += 1) {
     const s = scenarioFor(seed);
@@ -397,6 +399,18 @@ test('choosing Today from injected reads gives exactly what selection.ts chose, 
     assert.deepStrictEqual(now, legacy, `choice differs: ${where}`);
     assert.deepStrictEqual(after.trace, before.trace, `reads differ: ${where}`);
     cases.push(goldenCase(seed, legacy, before.trace));
+
+    // Batch 14: a profile with no new answers (the welcome's and the quiz's
+    // mandatory ones only) goes through the dispatcher to exactly this.
+    const plain = plainProfile(s.input.goals, s.input.savedAreas, { high: 10, medium: 15, low: 25 }, { answered: { roles: { at: '2026-09-01T00:00:00Z', notSure: false }, where: { at: '2026-09-01T00:00:00Z', notSure: false }, budget: { at: '2026-09-01T00:00:00Z', notSure: false } } });
+    if (!usesTailoring(plain)) {
+      const third = readsFor(s);
+      const viaDay = await chooseDay({ ...s.input, tailoring: plain }, third.reads);
+      assert.deepStrictEqual({ dealIds: viaDay.dealIds, nearMiss: viaDay.nearMiss, advice: viaDay.advice }, legacy, `dispatch differs: ${where}`);
+      assert.equal(viaDay.mustMatches, null);
+      assert.deepStrictEqual(third.trace, before.trace, `dispatch reads differ: ${where}`);
+      seen.throughDispatch += 1;
+    }
 
     const rules = feedbackRules(s.input.feedback);
     const base = filtersForGoals(s.input.goals, s.input.savedAreas);

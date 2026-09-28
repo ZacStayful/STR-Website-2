@@ -3979,3 +3979,31 @@ insert into public.billing_settings (key, value) values ('saved_profiles_max', '
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 14: tailoring
+-- =========================
+-- What a member's answers do to their Today (src/lib/tailoring). Run AFTER
+-- Batch 13's section: it adds to that section's tables. Everything is
+-- additive and idempotent, service role only, and nothing here is in
+-- ACCESS_COLUMNS (src/lib/access.ts), nor may it become so. The code reads
+-- every column below in a query of its own, so this section can be run
+-- before or after the code is deployed: until it is, members simply get no
+-- must-have switches and no "never shown twice" record for replaced cards.
+
+-- ── A profile's must-have / nice-to-have switches (src/lib/tailoring/profile.ts) ──
+-- {criterion: 'must' | 'nice'}, only what the member set; anything absent is
+-- the default. Its own column, outside criteria, so the goal writers (the
+-- quiz, the Advanced form, the relaxation link) can never overwrite it.
+alter table public.search_profiles add column if not exists filter_modes jsonb not null default '{}'::jsonb;
+
+-- ── What a re-choose took off today's list, and the day's must-have count ──
+-- shown_ids: deals shown on the list and then replaced (a switch, a widen, an
+-- accepted prompt), so "never shown twice" still holds for them. deal_ids
+-- keeps what is on the list now.
+-- tailoring: {mustMatches, capped}, the deals meeting every must-have when
+-- the list was chosen, for "N deals match you" on Today.
+alter table public.profile_today_lists add column if not exists shown_ids uuid[] not null default '{}';
+alter table public.profile_today_lists add column if not exists tailoring jsonb;
+
+notify pgrst, 'reload schema';

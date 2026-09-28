@@ -36,6 +36,7 @@ import { purchaseDeal, type Deal } from '../listing/deal.ts';
 import { budgetBounds, rentPcm, type SourcedListing } from '../listing/sourcing.ts';
 import { propertyKind } from '../listing/suitability.ts';
 import type { Screening } from '../listing/screen.ts';
+import type { Motivation } from '../listing/motivation.ts';
 import { getLicensing, type LicensingStatus } from '../data/str-licensing.ts';
 import { goalAreas } from '../onboarding/deal-filters.ts';
 import { placedForPreview } from '../profile/matching.ts';
@@ -43,7 +44,7 @@ import type { QuestionId } from '../profile/questions.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
 import type { DealCard } from '../marketplace/grid.ts';
 import { TAILORING } from './config.ts';
-import { asked, realAnswer, type CriterionKey, type Mode, type TailoringProfile } from './profile.ts';
+import { asked, realAnswer, usesTailoring, type CriterionKey, type Mode, type TailoringProfile } from './profile.ts';
 
 export type Verdict = 'pass' | 'fail' | 'unknown';
 
@@ -158,6 +159,29 @@ export function wantsFor(p: TailoringProfile): Wants {
     motivation: g.motivation.mode === 'off' ? null : g.motivation.mode,
   };
 }
+
+/** The checks this profile's answers make at all: the ones its profile page offers a switch for. */
+export function activeCriteria(w: Wants): Set<CriterionKey> {
+  const on: [CriterionKey, boolean][] = [
+    ['location', w.areas !== null],
+    ['budget', w.budget !== null],
+    ['cash', w.cashTop !== null],
+    ['rent', w.rentMax !== null],
+    ['profit', w.minProfit !== null],
+    ['bedrooms', w.bedrooms !== null],
+    ['type', w.propertyType !== null],
+    ['leasehold', w.noLeasehold],
+    ['restricted', w.restricted === 'avoid'],
+    ['setup', w.setupTop !== null],
+    ['breakeven', w.breakEvenMax !== null],
+    ['payback', w.paybackMax !== null],
+    ['motivation', w.motivation !== null],
+  ];
+  return new Set(on.filter(([, active]) => active).map(([k]) => k));
+}
+
+/** Answers the quiz keeps that no deal carries yet: stored, shown, and judged on nothing. */
+export const NOT_APPLIED: readonly QuestionId[] = ['condition', 'furnished', 'deal_structure'];
 
 /** A deal as the checks read it: public columns and stored figures only, nothing a member pays to see. */
 export interface DealFacts {
@@ -341,4 +365,25 @@ export function judge(checks: Check[]): Judgement {
 export function judgeDeal(f: DealFacts, p: TailoringProfile, w: Wants = wantsFor(p)): { judgement: Judgement; figures: MemberFigures } {
   const figures = memberFigures(f, p);
   return { judgement: judge(checksFor(f, figures, w, (key) => modeOf(key, p))), figures };
+}
+
+/** A listing the daily picks run is weighing, as far as the must-haves read it. */
+export interface PickCandidateLike {
+  listing: SourcedListing;
+  deal: Deal | null;
+  screening?: Screening | null;
+  motivation?: Motivation | null;
+  motivationQualifies?: boolean;
+}
+
+/**
+ * For the daily picks run: whether a candidate meets every must-have of a
+ * tailored profile, so a member is never charged for a deal their Today
+ * would not show. Null when the profile is not tailored: nothing to test,
+ * the run is exactly as before.
+ */
+export function mustHaveTest(p: TailoringProfile | null | undefined): ((c: PickCandidateLike) => boolean) | null {
+  if (!usesTailoring(p)) return null;
+  const w = wantsFor(p);
+  return (c) => judgeDeal(factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0 }), p, w).judgement.mustFails.length === 0;
 }

@@ -97,7 +97,8 @@ export default async function TodayPage() {
   if (ids.length > 0) after(() => recordShown(ids));
 
   const banner = earlyAccessBanner(waiting, false);
-  const line = matchLine(count, goals !== null);
+  // Batch 14: a tailored list counts the deals meeting every must-have, as chosen.
+  const line = selection?.mustMatches != null ? matchLine(selection.mustMatches, true, true) : matchLine(count, goals !== null);
   const card = (c: (typeof cards)[number]) => (
     <DealCard
       key={c.id}

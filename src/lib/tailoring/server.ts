@@ -30,7 +30,17 @@ import type { MarketGoals } from '../market/goals';
 import { seatKey, type SavedProfile } from '../profiles/rules';
 import { propertyKind } from '../listing/suitability';
 import { rentPcm } from '../listing/sourcing';
-import { mergeMarks, parseFilterModes, signalSince, type FilterModes, type Signal, type TailoringProfile } from './profile';
+import { mergeMarks, signalSince, usesTailoring, type CriterionKey, type FilterModes, type Mode, type Signal, type TailoringProfile } from './profile';
+import { modesFor } from './modes-server';
+import { isAdminEmail } from '../admin';
+import { payerFor } from '../team';
+import { dealVisibilityFor } from '../marketplace/tier';
+import { rankingPool } from '../marketplace/queries';
+import { DEFAULT_FILTERS } from '../marketplace/grid';
+import { profilesFor } from '../profiles/server';
+import { rechooseToday, type TodaySelection } from '../today/selection';
+import { TAILORING } from './config';
+import { mustMatchCount } from './today';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -67,20 +77,6 @@ interface RawSignal {
   dealId: string;
   source: Signal['source'];
   at: string;
-}
-
-/** The overrides of each profile. Empty for all of them when the column is not there yet. */
-async function modesFor(admin: Admin, profileIds: readonly string[]): Promise<Map<string, FilterModes>> {
-  const out = new Map<string, FilterModes>();
-  for (const some of chunks(profileIds)) {
-    const { data, error } = await admin.from('search_profiles').select('id, filter_modes').in('id', some);
-    if (error) {
-      warn(`filter_modes unreadable (Batch 14 schema not run?): ${error.message}`);
-      return out;
-    }
-    for (const r of (data ?? []) as { id: string; filter_modes: unknown }[]) out.set(r.id, parseFilterModes(r.filter_modes));
-  }
-  return out;
 }
 
 async function signalsFor(admin: Admin, userIds: readonly string[], since: Date): Promise<RawSignal[]> {
@@ -191,14 +187,95 @@ export async function tailoringForSeats(admin: Admin, seats: readonly SeatInput[
   return out;
 }
 
-/** One member's tailoring for the profile they are on (the Today page). Null without the service role. */
-export async function tailoringForMember(userId: string, profile: SeatInput['profile'], goals: MarketGoals | null, savedAreas: readonly string[], now: Date = new Date()): Promise<TailoringProfile | null> {
+/**
+ * One member's tailoring for the profile they are on (the Today page, the
+ * profile page). `fresh`: answers saved in this same request, which a
+ * cached read of the profile could miss (for the active profile, the live
+ * quiz marks are its marks). Null without the service role.
+ */
+export async function tailoringForMember(userId: string, profile: SeatInput['profile'], goals: MarketGoals | null, savedAreas: readonly string[], now: Date = new Date(), fresh: { answered?: AnsweredMap; about?: AboutYou } = {}): Promise<TailoringProfile | null> {
   if (!hasServiceRole()) return null;
   try {
     const map = await tailoringForSeats(createAdminClient(), [{ userId, profile, goals, savedAreas }], now);
-    return map.get(seatKey(userId, profile?.id ?? null)) ?? null;
+    const t = map.get(seatKey(userId, profile?.id ?? null)) ?? null;
+    if (!t) return null;
+    return { ...t, ...(fresh.answered ? { answered: fresh.answered } : {}), ...(fresh.about ? { about: fresh.about } : {}) };
   } catch (err) {
     warn(`tailoring failed: ${(err as Error)?.message ?? err}`);
     return null;
   }
+}
+
+/** The active profile's tailoring for answers the quiz holds right now: its live count. */
+export async function tailoringPreview(userId: string, answers: { goals: MarketGoals; about: AboutYou; savedAreas: readonly string[] }, answered?: AnsweredMap): Promise<TailoringProfile | null> {
+  const view = await profilesFor(userId);
+  return tailoringForMember(userId, view.readable ? view.active : null, answers.goals, answers.savedAreas, new Date(), { answered, about: answers.about });
+}
+
+// ── Writes ──
+
+export type ModeOutcome = { ok: true; profileId: string } | { ok: false; error: string };
+
+/**
+ * One must-have / nice-to-have switch on the member's active profile. The
+ * mode is stored even when it is the default, so a profile a member has
+ * set stays tailored and flipping a switch back and forth settles on the
+ * same list. The caller has checked the session; `key` is checked here.
+ */
+export async function saveFilterMode(userId: string, key: CriterionKey, mode: Mode): Promise<ModeOutcome> {
+  if (!hasServiceRole()) return { ok: false, error: 'Your settings can’t be saved right now.' };
+  const view = await profilesFor(userId);
+  const profile = view.readable ? view.active : null;
+  if (!profile) return { ok: false, error: 'Your settings can’t be saved right now.' };
+  const admin = createAdminClient();
+  const current = await modesFor(admin, [profile.id]);
+  if (!current.has(profile.id)) return { ok: false, error: 'Must-have switches aren’t available yet. Please try again later.' };
+  const next: FilterModes = { ...current.get(profile.id), [key]: mode };
+  const { error } = await admin.from('search_profiles').update({ filter_modes: next, updated_at: new Date().toISOString() }).eq('id', profile.id).eq('user_id', userId);
+  if (error) {
+    console.error('[tailoring] filter mode save failed:', error.message);
+    return { ok: false, error: 'Could not save that. Please try again.' };
+  }
+  return { ok: true, profileId: profile.id };
+}
+
+/**
+ * Today's list for the member's active profile, chosen again with what they
+ * want now (selection.ts rechooseToday). `goals` / `savedAreas`: answers
+ * saved in this same request, which a cached read could miss. Never charges.
+ * Null when there is nothing to re-choose (no list yet today, not tailored).
+ */
+export async function rechooseForMember(input: { userId: string; email: string | null; goals?: MarketGoals | null; savedAreas?: readonly string[]; answered?: AnsweredMap; now?: Date }): Promise<TodaySelection | null> {
+  if (!hasServiceRole()) return null;
+  try {
+    const now = input.now ?? new Date();
+    const view = await profilesFor(input.userId);
+    const active = view.readable ? view.active : null;
+    if (!active) return null;
+    const goals = input.goals !== undefined ? input.goals : active.goals;
+    const savedAreas = [...(input.savedAreas ?? active.areas)];
+    const [payer, visibility, tailoring] = await Promise.all([
+      payerFor(input.userId),
+      dealVisibilityFor(input.userId, isAdminEmail(input.email)),
+      tailoringForMember(input.userId, active, goals, savedAreas, now, { answered: input.answered }),
+    ]);
+    if (!usesTailoring(tailoring)) return null;
+    return await rechooseToday({ userId: input.userId, payerId: payer.payerId, goals, savedAreas, visibility, profileId: active.id, profileActive: true, tailoring }, now);
+  } catch (err) {
+    console.error('[tailoring] re-choose failed:', (err as Error)?.message ?? err);
+    return null;
+  }
+}
+
+/**
+ * "N deals match you" for a tailored profile: the member's visible pool
+ * (passes left out, the grid's own visibility rule) that meets every
+ * must-have. Null when the profile is not tailored (the caller keeps the
+ * grid's head count) or the pool cannot be read.
+ */
+export async function mustHaveCountFor(input: { userId: string; email: string | null; tailoring: TailoringProfile | null; now?: Date }): Promise<number | null> {
+  if (!hasServiceRole() || !usesTailoring(input.tailoring)) return null;
+  const visibility = await dealVisibilityFor(input.userId, isAdminEmail(input.email));
+  const rows = await rankingPool({ ...DEFAULT_FILTERS, kind: input.tailoring.goals?.sourcingKind ?? 'both' }, visibility, { userId: input.userId }, TAILORING.poolLimit);
+  return mustMatchCount(rows, input.tailoring, input.now ?? new Date());
 }

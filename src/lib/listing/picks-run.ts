@@ -52,6 +52,7 @@ import { GOALS_EDITOR_HREF } from "../nav";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
 import { tailoringForSeats } from "../tailoring/server";
+import { mustHaveTest } from "../tailoring/criteria";
 import type { TailoringProfile } from "../tailoring/profile";
 import { siteUrl } from "../url";
 
@@ -799,6 +800,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // House picks have no filter, so no motivation read: there is no member
     // threshold to judge them against.
     const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
+    // Batch 14: a tailored seat's must-haves hold for the charged pick too, so
+    // nobody is charged for a deal their Today would not show. Null: untailored.
+    const meetsMustHaves = mustHaveTest(tailoringBySeat.get(m.key) ?? null);
     const seen = new Set<string>();
     const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
     // Listings that failed the filter rather than the property tests. Kept only
@@ -867,6 +871,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         motivationQualifies: qualifies,
         screening,
       };
+      if (meetsMustHaves && !meetsMustHaves(candidate)) return;
       if (fails.length === 0) {
         candidates.push(candidate);
         return;
