@@ -4025,3 +4025,147 @@ alter table public.tailoring_prompts enable row level security;  -- no policies:
 revoke all on public.tailoring_prompts from anon, authenticated;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 15: demand-led sourcing
+-- =========================
+-- Members' running saved profiles steer which extra areas get searched
+-- (src/lib/sourcing-demand). An area × kind that at least
+-- billing_settings.demand_min_members members want, and that the
+-- marketplace sweep does not already cover, is searched by the
+-- /api/internal/demand-sourcing cron, within a provider-spend cap per UK
+-- calendar month (billing_settings.demand_monthly_cap_pence). The sweep's
+-- own list is never shortened by any of this. Service role only. Nothing
+-- here is in ACCESS_COLUMNS (src/lib/access.ts), and must not become so.
+-- Everything is additive: this section can be run before the code is merged,
+-- and until it is run the demand cron searches nothing (it fails closed).
+
+-- demand_searches: one row per demand-led search. A search claims its
+-- worst-case cost first (demand_search_reserve) and is settled to what its
+-- metered provider calls actually cost. The month's spend is the settled
+-- costs plus any open claims at their reserve, so a pass that dies
+-- mid-search errs on the safe side. status: reserved → answered (the broker
+-- gave listings) | unavailable (it gave none) | failed (an error, or a claim
+-- left open and closed at its reserve). At most one reserved or answered
+-- search per area × kind per UK day, so a scheduled pass and an admin's
+-- "run a pass" can never both search the same area.
+create table if not exists public.demand_searches (
+  id uuid primary key default gen_random_uuid(),
+  month date not null,                         -- first day of the UK calendar month the spend counts against
+  day date not null,                           -- the UK day, for "searched today"
+  postcode_area text not null,
+  kind text not null,                          -- sale | rent
+  query_key text not null,
+  status text not null default 'reserved',
+  reserve_pence numeric(14,4) not null default 0,
+  cost_pence numeric(14,4),                    -- raw provider cost, once settled
+  provider text,                               -- the broker rung that answered: pmi | onthemarket
+  cached boolean,
+  listings int,
+  new_deals int,
+  members int not null default 0,              -- the demand when it was searched
+  paying_members int not null default 0,
+  action_id uuid not null,                     -- provider_calls.action_id of this search's calls
+  run_id uuid,
+  triggered_by text not null default 'cron',   -- cron, or the admin's email for "run a pass"
+  reserved_at timestamptz not null default now(),
+  settled_at timestamptz
+);
+create index if not exists demand_searches_month_idx on public.demand_searches (month);
+create index if not exists demand_searches_reserved_idx on public.demand_searches (reserved_at desc);
+create unique index if not exists demand_searches_daily_uidx on public.demand_searches (day, postcode_area, kind) where status in ('reserved', 'answered');
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.demand_searches'::regclass and conname = 'demand_searches_kind_check') then
+    alter table public.demand_searches add constraint demand_searches_kind_check check (kind in ('sale', 'rent'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.demand_searches'::regclass and conname = 'demand_searches_status_check') then
+    alter table public.demand_searches add constraint demand_searches_status_check check (status in ('reserved', 'answered', 'unavailable', 'failed'));
+  end if;
+end $$;
+alter table public.demand_searches enable row level security;  -- no policies: service role only
+revoke all on public.demand_searches from anon, authenticated;
+
+-- Claims one search. p: {month, day, area, kind, key, reserve_pence,
+-- cap_pence, action_id, run_id, triggered_by, members, paying_members}.
+-- Returns {id, refused, spent_pence}. refused is null (go ahead), 'cap' (the
+-- month's spend plus this reserve would pass the cap; a cap of 0 refuses
+-- everything) or 'duplicate' (already reserved or answered today). The claim
+-- has to be the write: one transaction-scoped lock serialises claims, so
+-- parallel passes can never both slip under the cap on the same figure.
+create or replace function public.demand_search_reserve(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_month date := (p->>'month')::date;
+  v_reserve numeric := greatest(0, coalesce((p->>'reserve_pence')::numeric, 0));
+  v_cap numeric := coalesce((p->>'cap_pence')::numeric, 0);
+  v_spent numeric;
+  v_id uuid;
+begin
+  perform pg_advisory_xact_lock(hashtext('public.demand_searches'));
+  select coalesce(sum(case when s.settled_at is null then s.reserve_pence else coalesce(s.cost_pence, 0) end), 0)
+    into v_spent
+    from public.demand_searches s
+   where s.month = v_month;
+  if v_cap <= 0 or v_spent + v_reserve > v_cap then
+    return jsonb_build_object('id', null, 'refused', 'cap', 'spent_pence', v_spent);
+  end if;
+  insert into public.demand_searches (month, day, postcode_area, kind, query_key, reserve_pence, members, paying_members, action_id, run_id, triggered_by)
+  values (
+    v_month,
+    (p->>'day')::date,
+    p->>'area',
+    p->>'kind',
+    p->>'key',
+    v_reserve,
+    coalesce((p->>'members')::int, 0),
+    coalesce((p->>'paying_members')::int, 0),
+    (p->>'action_id')::uuid,
+    nullif(p->>'run_id', '')::uuid,
+    coalesce(nullif(p->>'triggered_by', ''), 'cron')
+  )
+  on conflict (day, postcode_area, kind) where status in ('reserved', 'answered') do nothing
+  returning id into v_id;
+  if v_id is null then
+    return jsonb_build_object('id', null, 'refused', 'duplicate', 'spent_pence', v_spent);
+  end if;
+  return jsonb_build_object('id', v_id, 'refused', null, 'spent_pence', v_spent + v_reserve);
+end;
+$$;
+revoke all on function public.demand_search_reserve(jsonb) from public, anon, authenticated;
+grant execute on function public.demand_search_reserve(jsonb) to service_role;
+
+-- The month's figures for the cap check and /admin/demand. p: {month}.
+-- Summed here so no caller ever has to page through the rows.
+create or replace function public.demand_sourcing_month(p jsonb)
+returns jsonb language sql stable set search_path = '' as $$
+  select jsonb_build_object(
+    'spent_pence', coalesce(sum(case when s.settled_at is null then s.reserve_pence else coalesce(s.cost_pence, 0) end), 0),
+    'open_pence', coalesce(sum(case when s.settled_at is null then s.reserve_pence else 0 end), 0),
+    'searches', count(*),
+    'answered', count(*) filter (where s.status = 'answered'),
+    'new_deals', coalesce(sum(s.new_deals), 0)
+  )
+  from public.demand_searches s
+  where s.month = (p->>'month')::date;
+$$;
+revoke all on function public.demand_sourcing_month(jsonb) from public, anon, authenticated;
+grant execute on function public.demand_sourcing_month(jsonb) to service_role;
+
+-- ── Settings (src/lib/sourcing-demand/settings.ts has the defaults and bounds; /admin/demand edits them) ──
+--   demand_min_members            members whose running profiles must want an area × kind before it is searched
+--   demand_monthly_cap_pence      provider spend on demand-led searches per UK calendar month (10000 = £100)
+--   demand_paying_weight          how much a paying member counts in the search order (not in the threshold)
+--   demand_radius_areas           a "near me" radius adds the home area plus up to this many nearest areas inside it
+--   demand_active_days            a member counts only if seen in the app within this many days
+--   demand_max_areas_per_profile  the most areas one profile adds
+insert into public.billing_settings (key, value) values
+  ('demand_min_members', '2'::jsonb),
+  ('demand_monthly_cap_pence', '10000'::jsonb),
+  ('demand_paying_weight', '2'::jsonb),
+  ('demand_radius_areas', '5'::jsonb),
+  ('demand_active_days', '30'::jsonb),
+  ('demand_max_areas_per_profile', '10'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
