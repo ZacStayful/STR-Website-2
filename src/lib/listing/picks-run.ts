@@ -53,6 +53,7 @@ import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
 import { tailoringForSeats } from "../tailoring/server";
 import { mustHaveTest } from "../tailoring/criteria";
+import { orderPicks } from "../tailoring/pick-order";
 import type { TailoringProfile } from "../tailoring/profile";
 import { siteUrl } from "../url";
 
@@ -896,7 +897,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // Today page (see rank.ts), so the email and the page rank alike.
     const result = rankForMember(candidates, feedbackBySeat.get(m.key) ?? [], m.rules, { depth: SPREAD_DEPTH, mode: motiv?.mode ?? "off" });
     for (const [band, n] of Object.entries(result.screened) as [Band, number][]) screened[band] = (screened[band] ?? 0) + n;
-    const list: Ranked[] = result.ranked;
+    // Batch 14: a tailored seat's pick comes in its Today's order (untailored: unchanged).
+    const list: Ranked[] = orderPicks(result.ranked, tailoringBySeat.get(m.key) ?? null, cards);
     if (list.length === 0) {
       // Nothing matched. A strict filter reads as a broken product when it just
       // goes quiet, so send the nearest thing and say which setting stopped the

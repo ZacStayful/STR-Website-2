@@ -26,6 +26,7 @@ const sale = (over: Partial<DealFacts> = {}): DealFacts => ({
   deal: null,
   motivationQualifies: undefined,
   motivationScore: 0,
+  needsWork: false,
   ...over,
 });
 const rental = (over: Partial<DealFacts> = {}): DealFacts =>

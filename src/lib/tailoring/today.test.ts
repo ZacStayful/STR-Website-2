@@ -7,6 +7,7 @@ import type { PoolRow } from '../today/candidates.ts';
 import type { PickFeedback } from '../listing/picks.ts';
 import type { SourcedListing } from '../listing/sourcing.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
+import { DEFAULT_ABOUT } from '../profile/about.ts';
 import type { Judgement } from './criteria.ts';
 
 const NOW = new Date('2026-09-28T09:00:00Z');
@@ -169,4 +170,27 @@ test('the tailored order is stable and never depends on the order rows arrive in
 test('the must-have count is the whole visible pool, shown deals included', () => {
   const p = profile({ budget: 'u200' });
   assert.equal(mustMatchCount([row('a'), row('b', { price_amount: 300_000 }), row('c', { price_amount: null })], p, NOW), 2);
+});
+
+test('near me + the best elsewhere: three local, two from anywhere, each filling from the other', async () => {
+  const home = { postcode: 'NG1 1AA', lat: 52.9536, lng: -1.1505 };
+  const p = profile({ where: 'near_plus_best', home, maxDistanceMiles: 10 });
+  const local = ['l1', 'l2', 'l3', 'l4'].map((id, i) => row(id, { postcode_area: 'NG', annual_profit: 1_000 - i }));
+  const far = ['n1', 'n2', 'n3'].map((id, i) => row(id, { postcode_area: 'M', annual_profit: 20_000 - i }));
+  const w = world({ rows: [...local, ...far] });
+  const r = await chooseTailored(w.input(p), p, w.reads);
+  assert.deepEqual([...r.dealIds].sort(), ['l1', 'l2', 'l3', 'n1', 'n2']);
+  // Only one national deal: the local group fills the gap.
+  const thin = world({ rows: [...local, far[0]] });
+  assert.deepEqual([...(await chooseTailored(thin.input(p), p, thin.reads)).dealIds].sort(), ['l1', 'l2', 'l3', 'l4', 'n1']);
+});
+
+test('a beginner’s day keeps projects back unless nothing else fills it', async () => {
+  const rows = ['a', 'b', 'c'].map((id, i) => row(id, { annual_profit: 3_000 - i }));
+  const snap = (id: string, title: string): SourcedListing => ({ source: 'rightmove', id, canonicalUrl: 'x', kind: 'sale', title, address: null, postcode: null, outcode: 'NG7', postcodeArea: 'NG', lat: null, lng: null, bedrooms: 3, bathrooms: null, price: { amount: 150_000, period: 'total' }, rawType: 'Terraced house', photo: null });
+  const w = world({ rows, snapshots: new Map([['a', snap('a', 'Renovation project')], ['b', snap('b', 'Lovely home')], ['c', snap('c', 'Lovely home')]]) });
+  const beginner = profile({}, { about: { ...DEFAULT_ABOUT, dealsDone: '0' } });
+  assert.deepEqual((await chooseTailored(w.input(beginner), beginner, w.reads)).dealIds, ['b', 'c', 'a']);
+  const bold = profile({}, { about: { ...DEFAULT_ABOUT, dealsDone: '0', risk: 'go' } });
+  assert.deepEqual((await chooseTailored(w.input(bold), bold, w.reads)).dealIds, ['a', 'b', 'c']);
 });

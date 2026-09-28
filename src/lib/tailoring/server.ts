@@ -26,7 +26,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
 import { DEFAULT_ABOUT, parseAboutYou, type AboutYou } from '../profile/about';
 import { parseAnswered, type AnsweredMap } from '../profile/state';
-import type { MarketGoals } from '../market/goals';
+import { parseMarketGoals, type MarketGoals } from '../market/goals';
 import { seatKey, type SavedProfile } from '../profiles/rules';
 import { propertyKind } from '../listing/suitability';
 import { rentPcm } from '../listing/sourcing';
@@ -41,6 +41,7 @@ import { profilesFor } from '../profiles/server';
 import { rechooseToday, type TodaySelection } from '../today/selection';
 import { TAILORING } from './config';
 import { mustMatchCount } from './today';
+import { isPromptQuestion, type PromptQuestion, type PromptState } from './behaviour';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -278,4 +279,63 @@ export async function mustHaveCountFor(input: { userId: string; email: string | 
   const visibility = await dealVisibilityFor(input.userId, isAdminEmail(input.email));
   const rows = await rankingPool({ ...DEFAULT_FILTERS, kind: input.tailoring.goals?.sourcingKind ?? 'both' }, visibility, { userId: input.userId }, TAILORING.poolLimit);
   return mustMatchCount(rows, input.tailoring, input.now ?? new Date());
+}
+
+// ── Behaviour prompts (behaviour.ts) ──
+
+const scopeOf = (profileId: string | null) => profileId ?? 'member';
+
+/**
+ * When each prompt was last shown and answered for this profile. Null when
+ * the table cannot be read (Batch 14's schema not run): then no prompt is
+ * shown at all, since how often it has been asked cannot be kept.
+ */
+export async function promptStatesFor(userId: string, profileId: string | null): Promise<PromptState[] | null> {
+  if (!hasServiceRole()) return null;
+  const { data, error } = await createAdminClient().from('tailoring_prompts').select('question, last_shown_at, answered_at, answer').eq('user_id', userId).eq('scope', scopeOf(profileId));
+  if (error) {
+    warn(`prompts unreadable (Batch 14 schema not run?): ${error.message}`);
+    return null;
+  }
+  return ((data ?? []) as { question: string; last_shown_at: string | null; answered_at: string | null; answer: string | null }[])
+    .filter((r) => isPromptQuestion(r.question))
+    .map((r) => ({ question: r.question as PromptQuestion, lastShownAt: r.last_shown_at, answeredAt: r.answered_at, answer: r.answer === 'accepted' || r.answer === 'dismissed' ? r.answer : null }));
+}
+
+/** A prompt was put in front of the member: the first showing of the day starts its week. */
+export async function markPromptShown(userId: string, profileId: string | null, question: PromptQuestion, shownAt: Date, alreadyShownToday: boolean): Promise<void> {
+  if (!hasServiceRole() || alreadyShownToday) return;
+  const { error } = await createAdminClient()
+    .from('tailoring_prompts')
+    .upsert({ user_id: userId, scope: scopeOf(profileId), question, last_shown_at: shownAt.toISOString(), updated_at: shownAt.toISOString() }, { onConflict: 'user_id,scope,question' });
+  if (error) warn(`prompt shown not recorded: ${error.message}`);
+}
+
+export async function answerPrompt(userId: string, profileId: string | null, question: PromptQuestion, answer: 'accepted' | 'dismissed', at: Date = new Date()): Promise<void> {
+  if (!hasServiceRole()) return;
+  const { error } = await createAdminClient()
+    .from('tailoring_prompts')
+    .upsert({ user_id: userId, scope: scopeOf(profileId), question, answered_at: at.toISOString(), answer, updated_at: at.toISOString() }, { onConflict: 'user_id,scope,question' });
+  if (error) warn(`prompt answer not recorded: ${error.message}`);
+}
+
+/**
+ * The member's tailoring for the profile they are on, read fresh (an action
+ * that is about to change it). The active profile's answers are the live
+ * copies; a member with no profile row yet is read from those directly.
+ */
+export async function currentTailoring(userId: string, now: Date = new Date()): Promise<{ tailoring: TailoringProfile; profileId: string | null } | null> {
+  if (!hasServiceRole()) return null;
+  const view = await profilesFor(userId);
+  const active = view.readable ? view.active : null;
+  if (active) {
+    const t = await tailoringForMember(userId, active, active.goals, active.areas, now);
+    return t ? { tailoring: t, profileId: active.id } : null;
+  }
+  const admin = createAdminClient();
+  const [goalsRes, areasRes] = await Promise.all([admin.from('profiles').select('market_goals').eq('id', userId).maybeSingle(), admin.from('saved_areas').select('postcode_area').eq('user_id', userId)]);
+  const goals = parseMarketGoals((goalsRes.data as { market_goals?: unknown } | null)?.market_goals ?? null);
+  const areas = ((areasRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area.toUpperCase());
+  const t = await tailoringForMember(userId, null, goals, areas, now);
+  return t ? { tailoring: t, profileId: null } : null;
 }

@@ -11,7 +11,7 @@ import { earlyAccessBanner, earlyAccessFor } from "@/lib/marketplace/early-acces
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { filtersForGoals } from "@/lib/today/candidates";
-import { displayOrder, greeting, matchLine } from "@/lib/today/day";
+import { displayOrder, greeting, matchLine, todayKey, todayStart } from "@/lib/today/day";
 import { todaySelection, todaysPick, type TodaysPick } from "@/lib/today/selection";
 import { syncChecklist } from "@/lib/today/checklist-server";
 import { GOALS_EDITOR_HREF, TODAY_LIST_ID } from "@/lib/nav";
@@ -26,7 +26,13 @@ import { ProfileProgressCard } from "./_components/ProfileProgressCard";
 import { profilePriceLineFor, profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import { pauseProfileAction } from "@/app/profiles/actions";
-import { tailoringForMember } from "@/lib/tailoring/server";
+import { markPromptShown, promptStatesFor, tailoringForMember } from "@/lib/tailoring/server";
+import { sharesWithInvestors, usesTailoring, wantsLandlordLeads } from "@/lib/tailoring/profile";
+import { promptToShow } from "@/lib/tailoring/behaviour";
+import { ownsAnyFunnel } from "@/lib/funnels/ownership";
+import { logActivity } from "@/lib/activity/log";
+import { BehaviourPrompt } from "./_components/BehaviourPrompt";
+import { LeadsUpsell } from "./_components/LeadsUpsell";
 
 export const metadata: Metadata = {
   title: "Today — Stayful Intelligence",
@@ -39,7 +45,9 @@ export const metadata: Metadata = {
  * for the day. The list is chosen once a day and stored, so it does not move
  * under them between visits or devices.
  */
-export default async function TodayPage() {
+export default async function TodayPage({ searchParams }: { searchParams: Promise<{ check?: string | string[] }> }) {
+  const params = await searchParams;
+  const searchParam = Array.isArray(params.check) ? params.check[0] : params.check;
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -71,7 +79,7 @@ export default async function TodayPage() {
   // Batch 14: the profile's tailoring, read by the same loader as the daily runs.
   const tailoringReady = paused ? Promise.resolve(null) : tailoringForMember(user.id, active, goals, savedAreas, now);
 
-  const [selection, pick, count, waiting, checklist, priceLine] = await Promise.all([
+  const [selection, pick, count, waiting, checklist, priceLine, tailoring, promptStates, ownsLeads] = await Promise.all([
     // A paused profile has no daily deals: no list, no pick, until it is resumed.
     paused ? Promise.resolve(null) : tailoringReady.then((tailoring) => todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, now)),
     paused ? Promise.resolve(null) : todaysPick(user.id, now, profileId),
@@ -80,7 +88,21 @@ export default async function TodayPage() {
     // The first-week checklist, brought up to date now: any "+£1" it shows is marked seen.
     syncChecklist(user.id, { markSeen: true, now }),
     paused ? profilePriceLineFor(user.id, adminUser) : Promise.resolve(null),
+    tailoringReady,
+    tailoringReady.then((t) => (usesTailoring(t) ? promptStatesFor(user.id, profileId) : null)),
+    tailoringReady.then((t) => (wantsLandlordLeads(t) ? ownsAnyFunnel(payer.payerId) : true)),
   ]);
+
+  // Batch 14: one profile check a visit ("You've kept 4 houses but said flats only"), when the Keeps call for one.
+  const prompt = promptStates ? promptToShow(tailoring, promptStates, now, todayStart(now)) : null;
+  if (prompt) {
+    const state = promptStates?.find((x) => x.question === prompt.question);
+    const shownToday = Boolean(state?.lastShownAt && Date.parse(state.lastShownAt) >= todayStart(now).getTime());
+    after(() => markPromptShown(user.id, profileId, prompt.question, now, shownToday));
+    if (!shownToday) logActivity(user.id, "tailoring_prompt_shown", { profileId, extras: { question: prompt.question, step: "shown" }, dedupeKey: `tailoring_prompt_shown:${profileId ?? "member"}:${prompt.question}:${todayKey(now)}` });
+  }
+  const leadsCard = !ownsLeads;
+  const investorShare = sharesWithInvestors(tailoring);
 
   const stored = selection?.dealIds ?? [];
   const pickDealId = pick?.dealId ?? null;
@@ -109,7 +131,7 @@ export default async function TodayPage() {
       opened={opened.has(c.id)}
       reaction={answered.get(c.id) ?? null}
       earlyAccess={visibility.tier === "paid" ? earlyAccessFor(c.live_since, settings.freeDealDelayHours, now) : null}
-      share={<ShareDealButton dealId={c.id} />}
+      share={investorShare ? <ShareDealButton dealId={c.id} label="Share with an investor" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" /> : <ShareDealButton dealId={c.id} />}
       view={views.get(c.id)}
     />
   );
@@ -142,6 +164,19 @@ export default async function TodayPage() {
             </p>
           )}
         </header>
+
+        {searchParam === "1" && (
+          <p role="status" className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
+            Updated. Today’s deals now follow it.
+          </p>
+        )}
+        {searchParam === "0" && (
+          <p role="status" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            Could not update your profile. Please try again shortly.
+          </p>
+        )}
+        {prompt && <BehaviourPrompt prompt={prompt} />}
+        {leadsCard && <LeadsUpsell />}
 
         <PasteLinkBox />
 

@@ -33,6 +33,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { purchaseDeal, type Deal } from '../listing/deal.ts';
+import { NEEDS_WORK } from '../listing/picks.ts';
 import { budgetBounds, rentPcm, type SourcedListing } from '../listing/sourcing.ts';
 import { propertyKind } from '../listing/suitability.ts';
 import type { Screening } from '../listing/screen.ts';
@@ -202,6 +203,8 @@ export interface DealFacts {
   motivationQualifies: boolean | undefined;
   /** 0–100, every motivation signal that fired. */
   motivationScore: number;
+  /** Renovation or auction wording in what the deal says about itself (its type, title, features, or an auction signal). */
+  needsWork: boolean;
 }
 
 const num = (v: unknown): number | null => {
@@ -220,7 +223,7 @@ export function tenureOf(raw: string | null | undefined): DealFacts['tenure'] {
 type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'screening_gross' | 'screening_confidence'>;
 
 /** A marketplace row (Today's pool, the grid) as facts. */
-export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { qualifies: boolean | undefined; score: number }): DealFacts {
+export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }): DealFacts {
   const price = num(row.price_amount);
   const period = row.price_period === 'pw' || row.price_period === 'pcm' || row.price_period === 'total' ? row.price_period : row.kind === 'rent' ? 'pcm' : 'total';
   const amount = price === null || price <= 0 ? null : row.kind === 'rent' ? rentPcm({ amount: price, period }) : period === 'total' ? price : null;
@@ -238,11 +241,12 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
     deal,
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,
+    needsWork: NEEDS_WORK.test(row.raw_type ?? '') || (motivation.fired ?? []).includes('auction'),
   };
 }
 
 /** A listing the daily picks run found (a search result or a pool deal) as facts. */
-export function factsFromListing(l: SourcedListing, deal: Deal | null, screening: Screening | null | undefined, motivation: { qualifies: boolean | undefined; score: number }): DealFacts {
+export function factsFromListing(l: SourcedListing, deal: Deal | null, screening: Screening | null | undefined, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }): DealFacts {
   const amount = l.price ? (l.kind === 'rent' ? rentPcm(l.price) : l.price.period === 'total' ? l.price.amount : null) : null;
   const area = l.postcodeArea ? l.postcodeArea.toUpperCase() : null;
   return {
@@ -258,6 +262,7 @@ export function factsFromListing(l: SourcedListing, deal: Deal | null, screening
     deal,
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,
+    needsWork: NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | ')) || (motivation.fired ?? []).includes('auction'),
   };
 }
 
@@ -385,5 +390,5 @@ export interface PickCandidateLike {
 export function mustHaveTest(p: TailoringProfile | null | undefined): ((c: PickCandidateLike) => boolean) | null {
   if (!usesTailoring(p)) return null;
   const w = wantsFor(p);
-  return (c) => judgeDeal(factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0 }), p, w).judgement.mustFails.length === 0;
+  return (c) => judgeDeal(factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0, fired: c.motivation?.fired }), p, w).judgement.mustFails.length === 0;
 }

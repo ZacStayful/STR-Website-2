@@ -1,5 +1,6 @@
 /**
- * Today for a tailored profile (Part A: must-haves and nice-to-haves).
+ * Today for a tailored profile (Part A: must-haves and nice-to-haves; Part
+ * B: the order, "fit for you" and near me + the best elsewhere, order.ts).
  *
  *   1. Read the member's visible pool narrowed only by kind (and their
  *      passes): every other answer is judged here, in memory, so a
@@ -11,13 +12,17 @@
  *      feedback rules, the income bar, the money test, the short-let check),
  *      the whole pool and not just the best 40 by fit, so the order below
  *      is not decided by a cut made before it.
- *   4. Order: the short-let check on the card, the income band, fewest
- *      nice-to-haves missed, most checks met, fit, profit, and the deal id
+ *   4. Order (order.ts): the short-let check on the card, the income band,
+ *      fewest nice-to-haves missed, most checks met, fit for you (the shared
+ *      fit plus the profile's named adjustments), profit, and the deal id
  *      so the order never depends on how the rows came back. Counting
  *      misses and meets rather than a ratio means a deal is never lifted
  *      for the data it lacks.
  *   5. The last pass of the feedback rules on the full stored listing, a
- *      batch at a time until the day is full.
+ *      batch at a time until the day is full. A cautious member's or a
+ *      beginner's day keeps projects back unless nothing else fills it.
+ *      "Near me + the best elsewhere" takes 3 local deals and 2 from
+ *      anywhere, each group filling from the other when short.
  *
  * Nothing meets the must-haves: the closest deal (fewest must-haves missed),
  * named as a near miss with what it misses. Nothing at all: an empty day,
@@ -33,16 +38,16 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import { feedbackRules } from '../listing/picks.ts';
+import { applyCandidateFeedback, feedbackRules, NEEDS_WORK } from '../listing/picks.ts';
 import { rankForMember } from '../listing/rank.ts';
-import { bandRank } from '../listing/screen.ts';
 import { parseMotivation } from '../listing/motivation.ts';
 import { DEFAULT_FILTERS } from '../marketplace/grid.ts';
-import { applyKindFeedback, buildCandidate, motivationFor, parseStoredDeal, type Built, type PoolRow, type TodayCandidate } from '../today/candidates.ts';
+import { applyKindFeedback, buildCandidate, dealKey, motivationFor, parseStoredDeal, type Built, type PoolRow, type TodayCandidate } from '../today/candidates.ts';
 import { candidateContext, viableMisses, withFullListings, type ChooseInput, type ChooseReads, type TodayChoice } from '../today/choose.ts';
 import { TODAY_SIZE } from '../today/day.ts';
 import { TAILORING } from './config.ts';
-import { factsFromRow, judgeDeal, wantsFor, type Judgement, type Wants } from './criteria.ts';
+import { factsFromRow, judgeDeal, wantsFor, type DealFacts, type Judgement, type MemberFigures, type Wants } from './criteria.ts';
+import { adjustmentsFor, areaLookup, bonusOf, compareKeys, leaningsFor, orderKey } from './order.ts';
 import type { CriterionKey, TailoringProfile } from './profile.ts';
 
 export interface TailoredOptions {
@@ -86,48 +91,80 @@ export function mustMissAdvice(keys: readonly CriterionKey[]): string {
 const byId = (a: { dealId: string }, b: { dealId: string }) => (a.dealId < b.dealId ? -1 : a.dealId > b.dealId ? 1 : 0);
 
 /**
- * The tailored order (Part A). `bonus` is Part B's "fit for you" on top of
- * the shared fit; missing entries are 0.
+ * The tailored order (order.ts). `bonus` is "fit for you" on top of the
+ * shared fit; missing entries are 0.
  */
 export function tailoredOrder<C extends TodayCandidate & { fit: number }>(ranked: readonly C[], judged: ReadonlyMap<string, Judgement>, bonus: ReadonlyMap<string, number> = new Map()): C[] {
-  const missed = (c: C) => judged.get(c.dealId)?.niceMissed ?? 0;
-  const met = (c: C) => judged.get(c.dealId)?.met ?? 0;
-  const fit = (c: C) => c.fit + (bonus.get(c.dealId) ?? 0);
-  const band = (c: C) => bandRank(c.screening?.band ?? 'qualified');
-  return [...ranked].sort(
-    (a, b) =>
-      Number(a.precheck !== 'ok') - Number(b.precheck !== 'ok') ||
-      band(a) - band(b) ||
-      missed(a) - missed(b) ||
-      met(b) - met(a) ||
-      fit(b) - fit(a) ||
-      (b.profit ?? -Infinity) - (a.profit ?? -Infinity) ||
-      byId(a, b),
-  );
+  const keys = new Map(ranked.map((c) => [c, orderKey(c, judged.get(c.dealId), bonus.get(c.dealId) ?? 0, c.profit, c.dealId)]));
+  return [...ranked].sort((a, b) => compareKeys(keys.get(a)!, keys.get(b)!));
 }
 
-/** Up to `need` of `ordered` that pass the full-listing check, read a batch at a time. */
-async function checkedHead<C extends TodayCandidate>(reads: ChooseReads, ordered: readonly C[], input: ChooseInput, need: number): Promise<C[]> {
+/**
+ * Up to `need` of `ordered` that pass the full-listing check (the last pass
+ * of the feedback rules on the full stored listing, as the untailored path
+ * makes it), read a batch at a time. `holdBackWork`: a deal whose full
+ * listing reads as a project is kept back, used only if the day cannot be
+ * filled without it (cautious members and beginners). The full listing is
+ * read server-side and never leaves.
+ */
+async function checkedHead<C extends TodayCandidate>(reads: ChooseReads, ordered: readonly C[], input: ChooseInput, need: number, holdBackWork = false): Promise<C[]> {
   const out: C[] = [];
+  const later: C[] = [];
   const rules = feedbackRules(input.feedback);
   for (let i = 0; i < ordered.length && out.length < need; i += TAILORING.fullListingBatch) {
     const batch = ordered.slice(i, i + TAILORING.fullListingBatch);
-    out.push(...(await withFullListings(reads, batch, input.feedback, rules, batch.length)));
+    if (!holdBackWork) {
+      out.push(...(await withFullListings(reads, batch, input.feedback, rules, batch.length)));
+      continue;
+    }
+    const snapshots = await reads.fullListings(batch.map((c) => c.dealId));
+    const full = batch.map((c) => {
+      const snap = snapshots.get(c.dealId);
+      return snap ? { ...c, listing: { ...snap, canonicalUrl: dealKey(c.dealId) } } : c;
+    });
+    const kept = new Set(applyCandidateFeedback(full, input.feedback, rules).map((c) => c.dealId));
+    for (const c of batch) {
+      if (!kept.has(c.dealId)) continue;
+      const snap = snapshots.get(c.dealId);
+      const words = snap ? [snap.title, snap.rawType ?? '', snap.priceQualifier ?? '', ...(snap.features ?? [])].join(' | ') : '';
+      (NEEDS_WORK.test(words) ? later : out).push(c);
+    }
   }
-  return out.slice(0, need);
+  return [...out, ...later].slice(0, need);
 }
 
-/** One pool row judged for one profile. */
-export function judgeRow(row: PoolRow, p: TailoringProfile, wants: Wants, now: Date): Judgement {
+/** One pool row judged for one profile, with the facts and figures behind the judgement. */
+export interface JudgedRow {
+  judgement: Judgement;
+  facts: DealFacts;
+  figures: MemberFigures;
+}
+
+export function judgeRow(row: PoolRow, p: TailoringProfile, wants: Wants, now: Date): JudgedRow {
   const { qualifies } = motivationFor(row, p.goals, now);
-  const facts = factsFromRow(row, parseStoredDeal(row.deal), { qualifies, score: parseMotivation(row.motivation)?.score ?? 0 });
-  return judgeDeal(facts, p, wants).judgement;
+  const m = parseMotivation(row.motivation);
+  const facts = factsFromRow(row, parseStoredDeal(row.deal), { qualifies, score: m?.score ?? 0, fired: m?.fired });
+  const { judgement, figures } = judgeDeal(facts, p, wants);
+  return { judgement, facts, figures };
 }
 
 /** "N deals match you" for a tailored profile: the rows meeting every must-have. */
 export function mustMatchCount(rows: readonly PoolRow[], p: TailoringProfile, now: Date): number {
   const wants = wantsFor(p);
-  return rows.filter((row) => judgeRow(row, p, wants, now).mustFails.length === 0).length;
+  return rows.filter((row) => judgeRow(row, p, wants, now).judgement.mustFails.length === 0).length;
+}
+
+/**
+ * "Near me + the best elsewhere": the local deals first, up to the local
+ * slots, then the national ones, each group filling from the other when it
+ * is short, in the tailored order throughout.
+ */
+function slotted<C extends TodayCandidate>(local: readonly C[], national: readonly C[], order: ReadonlyMap<string, number>): C[] {
+  const { local: nLocal, national: nNational } = TAILORING.nearPlusBest;
+  const chosen = [...local.slice(0, nLocal), ...national.slice(0, nNational)];
+  const rest = [...local.slice(nLocal), ...national.slice(nNational)].sort((a, b) => (order.get(a.dealId) ?? 0) - (order.get(b.dealId) ?? 0));
+  chosen.push(...rest.slice(0, Math.max(0, TODAY_SIZE - chosen.length)));
+  return chosen.sort((a, b) => (order.get(a.dealId) ?? 0) - (order.get(b.dealId) ?? 0));
 }
 
 export async function chooseTailored(input: ChooseInput, p: TailoringProfile, reads: ChooseReads, opts: TailoredOptions = {}): Promise<TailoredChoice> {
@@ -142,15 +179,20 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
   const onList = new Set(current);
   const pinned = opts.pinned ?? new Set<string>();
 
+  const leanings = leaningsFor(p);
+  const area = areaLookup(input.cards);
+
   const rows = await reads.pool(filters, TAILORING.poolLimit);
   const judged = new Map<string, Judgement>();
+  const bonus = new Map<string, number>();
   const meetsMusts = new Set<string>();
   const exact: TodayCandidate[] = [];
   const misses: Built[] = [];
   let mustMatches = 0;
   for (const row of rows) {
-    const judgement = judgeRow(row, p, wants, now);
+    const { judgement, facts, figures } = judgeRow(row, p, wants, now);
     judged.set(row.id, judgement);
+    bonus.set(row.id, bonusOf(adjustmentsFor(facts, figures, leanings, area(facts.area, facts.bedrooms))));
     if (judgement.mustFails.length === 0) {
       mustMatches += 1;
       meetsMusts.add(row.id);
@@ -171,7 +213,16 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
 
   // ── The day's list ──
   const ranked = rankForMember(exact, feedback, rules, { depth: Math.max(1, exact.length), mode }).ranked;
-  const fresh = need > 0 ? await checkedHead(reads, tailoredOrder(ranked, judged), input, need) : [];
+  const ordered = tailoredOrder(ranked, judged, bonus);
+  const holdBack = leanings.steady && !leanings.bold;
+  let fresh: TodayCandidate[] = [];
+  if (need > 0 && wants.localAreas && current.length === 0) {
+    const local = wants.localAreas;
+    const isLocal = (c: TodayCandidate) => c.listing.postcodeArea !== null && local.has(c.listing.postcodeArea.toUpperCase());
+    const position = new Map(ordered.map((c, i) => [c.dealId, i]));
+    const [near, far] = await Promise.all([checkedHead(reads, ordered.filter(isLocal), input, TODAY_SIZE, holdBack), checkedHead(reads, ordered.filter((c) => !isLocal(c)), input, TODAY_SIZE, holdBack)]);
+    fresh = slotted(near, far, position).slice(0, need);
+  } else if (need > 0) fresh = await checkedHead(reads, ordered, input, need, holdBack);
   if (stays.length > 0 || fresh.length > 0) {
     // Survivors keep their places; new deals take the freed ones, then the end.
     const queue = fresh.map((c) => c.dealId);
@@ -196,7 +247,7 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
       (b.candidate.profit ?? -Infinity) - (a.candidate.profit ?? -Infinity) ||
       byId(a.candidate, b.candidate),
   );
-  const [nearest] = await checkedHead(reads, closest.map((b) => b.candidate), input, 1);
+  const [nearest] = await checkedHead(reads, closest.map((b) => b.candidate), input, 1, holdBack);
   if (nearest) return { dealIds: [nearest.dealId], nearMiss: true, advice: mustMissAdvice(judged.get(nearest.dealId)?.mustFails ?? []), mustMatches, capped: rows.length >= TAILORING.poolLimit };
   return { dealIds: [], nearMiss: false, advice: null, mustMatches, capped: rows.length >= TAILORING.poolLimit };
 }

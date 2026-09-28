@@ -4006,4 +4006,22 @@ alter table public.search_profiles add column if not exists filter_modes jsonb n
 alter table public.profile_today_lists add column if not exists shown_ids uuid[] not null default '{}';
 alter table public.profile_today_lists add column if not exists tailoring jsonb;
 
+-- ── When each behaviour prompt was shown and answered (src/lib/tailoring/behaviour.ts) ──
+-- "You've kept 4 houses but said flats only." One row per member, profile and
+-- question: asked at most once a week, and not for 30 days after "keep my
+-- answer". scope is the profile's id, or 'member' for a member with no
+-- profile row yet.
+create table if not exists public.tailoring_prompts (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  scope text not null,
+  question text not null,
+  last_shown_at timestamptz,
+  answered_at timestamptz,
+  answer text check (answer in ('accepted', 'dismissed')),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, scope, question)
+);
+alter table public.tailoring_prompts enable row level security;  -- no policies: service role only
+revoke all on public.tailoring_prompts from anon, authenticated;
+
 notify pgrst, 'reload schema';

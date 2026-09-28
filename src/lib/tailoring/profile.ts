@@ -154,3 +154,19 @@ export function signalSince(now: Date): Date {
 export function plainProfile(goals: MarketGoals | null, savedAreas: readonly string[], widths: RangeWidths, over: Partial<TailoringProfile> = {}): TailoringProfile {
   return { profileId: null, goals, savedAreas: [...savedAreas], about: DEFAULT_ABOUT, answered: {}, modes: {}, signals: [], widths, ...over };
 }
+
+/**
+ * A management company looking for landlords (Q15): Today offers them a
+ * Leads page, unless whoever pays for them already owns one (the caller
+ * checks that).
+ */
+export function wantsLandlordLeads(p: TailoringProfile | null | undefined): boolean {
+  const g = p?.goals;
+  if (!p || !g || g.path !== 'manage' || !asked(p, 'looking_for')) return false;
+  return g.manager.lookingFor === 'landlords' || g.manager.lookingFor === 'both';
+}
+
+/** A deal sourcer (Q14): their share button leads, as "Share with an investor". */
+export function sharesWithInvestors(p: TailoringProfile | null | undefined): boolean {
+  return p?.goals?.path === 'source';
+}
