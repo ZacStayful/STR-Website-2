@@ -39,7 +39,7 @@ import { sendEmail, isEmailConfigured } from "../email/send";
 import { buildDaily, type ProfileDeals, type Unsubscribe } from "../notify/message";
 import { renderEmail } from "../notify/render-email";
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
-import { capDay, sendKey, testSendKey } from "../notify/cap";
+import { capDay, newSendToken, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
@@ -56,6 +56,7 @@ import { mustHaveTest } from "../tailoring/criteria";
 import { orderPicks } from "../tailoring/pick-order";
 import type { TailoringProfile } from "../tailoring/profile";
 import { wantsActFast } from "../tailoring/about-prompts";
+import { sendParts } from "../tailoring/email-answers";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -515,8 +516,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               slot: slots === null ? "unreadable" : slots.get(m.id)?.status ?? "free",
               tier: m.paid ? "paid" : "free",
               today: plan ? teasersFrom(plan, null, m.paid ? PAID_VISIBILITY : freeVisibility).map((c) => c.id) : "chosen_at_send",
-              // Batch 14: the day's advice line (a near miss, or "only N met your must-haves"), and "Act fast".
+              // Batch 14: the day's advice line (a near miss, or "only N met your must-haves"), the teasers'
+              // "Yes, more like this" / "Not for me" (on the send's own token; none on a test send), and "Act fast".
               advice: plan?.advice ?? null,
+              answerLinks: true,
               actFast: wantsActFast(tailoringBySeat.get(m.key) ?? null),
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
@@ -1366,6 +1369,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // email rather than be told twice. The admin's test send shows them without
     // marking anything.
     const settled = alertsOn.has(userId) && (claimId || opts.ignoreToday) ? pending.get(userId) ?? null : null;
+    // Batch 14, Part F: this send's own token, stored with its slot, for the teasers' "Yes, more like this" /
+    // "Not for me". A send with no slot row (the admin's test send) gets no links: they could answer nothing.
+    const answerToken = claimId ? newSendToken() : null;
     const built = buildDaily({
       siteUrl: base,
       pick: null,
@@ -1378,7 +1384,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       unsubscribe,
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
       profileNudge: nudges.has(userId) ? { percent: nudges.get(userId)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
-      // Batch 14, Part E: About you is the member's own, so any seat's answer is theirs.
+      answerToken,
+      // Part E: About you is the member's own, so any seat's answer is theirs.
       actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
     });
     const mail = built ? renderEmail(built.message) : null;
@@ -1398,11 +1405,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       continue;
     }
     if (built.droppedTeasers.length > 0) console.error("[sourcing] early-access backstop dropped teasers", JSON.stringify({ user: userId, dropped: built.droppedTeasers }));
-    const sendSummary = { pickId: sentRows[0].id, pickIds: sentRows.map((r) => r.id), pickDealId: sentRows[0].dealId, teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, todayReady: parts.every((p) => plans.get(p.member.key) != null), profiles: parts.length, subject: mail.subject };
+    // `parts` (Batch 14): which profile each teaser was sent for, so an answer from the email lands on it.
+    const sendSummary = { pickId: sentRows[0].id, pickIds: sentRows.map((r) => r.id), pickDealId: sentRows[0].dealId, teasers: built.teaserIds, parts: sendParts(parts.map((p) => p.member.profile?.id ?? null), built.teasersByPart), alerts: built.changeIds, droppedTeasers: built.droppedTeasers, todayReady: parts.every((p) => plans.get(p.member.key) != null), profiles: parts.length, subject: mail.subject };
     // A failed write here leaves the row "claimed", which a later run could take
     // over after five minutes; the send below still carries the slot's
     // idempotency key, so Resend refuses any second, different daily email.
-    if (claimId && !(await markSending(admin, claimId, sendSummary, null))) console.error("[sourcing] mark sending failed; relying on the idempotency key", JSON.stringify({ user: userId }));
+    if (claimId && !(await markSending(admin, claimId, sendSummary, answerToken))) console.error("[sourcing] mark sending failed; relying on the idempotency key", JSON.stringify({ user: userId }));
     const res = await sendEmail({
       to: who.email,
       subject: mail.subject,

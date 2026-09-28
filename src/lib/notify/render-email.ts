@@ -27,7 +27,7 @@ export function listUnsubscribeHeaders(u: { url: string; oneClickUrl: string }):
 // ── Text ──
 
 function textOfItem(i: Item): string[] {
-  return [`• ${i.title}`, ...i.lines.map((l) => `  ${l}`), ...(i.link ? [`  ${i.link.label}: ${i.link.url}`] : [])];
+  return [`• ${i.title}`, ...i.lines.map((l) => `  ${l}`), ...(i.link ? [`  ${i.link.label}: ${i.link.url}`] : []), ...(i.links ?? []).map((l) => `  ${l.label}: ${l.url}`)];
 }
 
 function textOfBlock(b: Block): string[] {
@@ -78,7 +78,8 @@ function button(l: Link): string {
 function htmlOfItem(i: Item): string {
   const lines = i.lines.map((l) => `<br><span style="color:#5b6657;font-size:14px">${esc(l)}</span>`).join('');
   const link = i.link ? `<br><a href="${esc(i.link.url)}" style="color:#5d8156;font-size:14px;font-weight:600">${esc(i.link.label)}</a>` : '';
-  return `<li style="margin:0 0 14px"><strong>${esc(i.title)}</strong>${lines}${link}</li>`;
+  const answers = i.links && i.links.length > 0 ? `<br><span style="font-size:13px;color:#7a8274">${i.links.map((l) => `<a href="${esc(l.url)}" style="color:#2e3d2b">${esc(l.label)}</a>`).join(' · ')}</span>` : '';
+  return `<li style="margin:0 0 14px"><strong>${esc(i.title)}</strong>${lines}${link}${answers}</li>`;
 }
 
 function htmlOfBlock(b: Block): string {
@@ -126,7 +127,7 @@ function markLinks(m: Message): Message {
   const mark = (url: string) => withVia(url, 'email', m.manageUrl);
   const link = (l: Link): Link => ({ ...l, url: mark(l.url) });
   const block = (b: Block): Block =>
-    b.type === 'buttons' ? { ...b, links: b.links.map(link) } : b.type === 'items' ? { ...b, items: b.items.map((i) => (i.link ? { ...i, link: link(i.link) } : i)) } : b;
+    b.type === 'buttons' ? { ...b, links: b.links.map(link) } : b.type === 'items' ? { ...b, items: b.items.map((i) => ({ ...i, link: i.link ? link(i.link) : null, ...(i.links ? { links: i.links.map(link) } : {}) })) } : b;
   return { ...m, manageUrl: mark(m.manageUrl), sections: m.sections.map((s) => ({ ...s, blocks: s.blocks.map(block) })) };
 }
 

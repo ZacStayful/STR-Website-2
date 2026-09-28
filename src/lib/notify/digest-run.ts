@@ -36,6 +36,7 @@ import type { MemberContext } from '../today/selection';
 import { tailoringForSeats } from '../tailoring/server';
 import type { TailoringProfile } from '../tailoring/profile';
 import { wantsActFast } from '../tailoring/about-prompts';
+import { sendParts } from '../tailoring/email-answers';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { buildDaily } from './message';
@@ -289,7 +290,9 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       // The label is settled below, from what the email turned out to be.
       unsubscribe: { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
-      // Batch 14: "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
+      // Batch 14: "Yes, more like this" / "Not for me" under each teaser, on this send's own token (Part F),
+      // and "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
+      answerToken: token,
       actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
     });
     // Named for what the email IS, after the early-access backstop has had its
@@ -302,7 +305,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       perUser.push({ user: p.id, sent: false, reason: 'nothing_to_say' });
       return;
     }
-    const sendSummary = { teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, subject: built.message.subject };
+    // `parts` (Batch 14): which profile each teaser was sent for, so an answer from the email lands on it.
+    const sendSummary = { teasers: built.teaserIds, parts: sendParts(parts.map((x) => x.seat.profile?.id ?? null), built.teasersByPart), alerts: built.changeIds, droppedTeasers: built.droppedTeasers, subject: built.message.subject };
     if (opts.dry) {
       wouldEmail.push({
         user: p.id,
@@ -312,7 +316,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         ...sendSummary,
         today: !wantsTeasers(p) ? 'not_wanted' : seats.length === 0 ? 'profiles_paused' : parts.length > 0 ? 'stored' : unfunded.length > 0 ? 'no_credit' : 'chosen_at_send',
         profiles: parts.map((x, i) => ({ profile: x.seat.profile?.id ?? null, teasers: built.teasersByPart[i]?.length ?? 0, advice: x.deals.advice ?? null, wouldCharge: chargeFor(i) ? dailyPence : 0 })),
-        // Batch 14: "Act fast · new today" titles for a member whose next deal is this month.
+        // Batch 14: every teaser carries "Yes, more like this" / "Not for me" on this send's token; "Act fast" titles.
+        answerLinks: built.teaserIds.length,
         actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
         unfunded: unfunded.length,
         payer: payers.get(p.id)?.payerId ?? p.id,

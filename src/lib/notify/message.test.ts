@@ -255,6 +255,24 @@ test('Batch 14: a price drop says where the new price sits against the most they
   assert.ok(!changeItem(change(), SITE)!.lines.some((l) => /what you can pay/.test(l)));
 });
 
+test('Batch 14: each teaser carries "Yes, more like this" / "Not for me" on the send token and deal id only', () => {
+  const leaky = { ...card({ id: '0b7c2b1e-5a1f-4c7e-9d7a-2f1e3c4b5a6d' }), canonical_url: 'https://www.rightmove.co.uk/properties/123', address: '12 High Street, York', postcode: 'YO24 1AB', photo: 'https://media.rightmove/x.jpg' } as DealCard;
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [leaky], changes: [], freeCutoffIso: null, unsubscribe: null, answerToken: 'SendTok_1234567890abcdefghij' })!;
+  const items = built.message.sections.flatMap((s) => s.blocks).flatMap((b) => (b.type === 'items' ? b.items : []));
+  assert.deepEqual(items[0].links?.map((l) => l.label), ['Yes, more like this', 'Not for me']);
+  assert.deepEqual(items[0].links?.map((l) => l.url), [
+    `${SITE}/p/d/SendTok_1234567890abcdefghij/0b7c2b1e-5a1f-4c7e-9d7a-2f1e3c4b5a6d?a=yes`,
+    `${SITE}/p/d/SendTok_1234567890abcdefghij/0b7c2b1e-5a1f-4c7e-9d7a-2f1e3c4b5a6d?a=no`,
+  ]);
+  const mail = renderEmail(built.message);
+  for (const out of [mail.html, mail.text]) {
+    assert.ok(out.includes('/p/d/SendTok_1234567890abcdefghij/0b7c2b1e-5a1f-4c7e-9d7a-2f1e3c4b5a6d?a=no'), 'drawn, and not marked ?via=email');
+    for (const secret of ['High Street', 'YO24 1AB', 'rightmove.co.uk/properties', 'media.rightmove']) assert.ok(!out.includes(secret), `leaked ${secret}`);
+  }
+  const none = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [card()], changes: [], freeCutoffIso: null, unsubscribe: null })!;
+  assert.equal(none.message.sections.flatMap((s) => s.blocks).flatMap((b) => (b.type === 'items' ? b.items : []))[0].links, undefined, 'no token: no links');
+});
+
 test('Batch 14: "Act fast · new today" on a deal first seen in the last day, for a member whose next deal is this month', () => {
   const fresh = card({ id: 'new', first_seen_at: '2026-09-28T03:00:00Z' });
   const older = card({ id: 'old', first_seen_at: '2026-09-25T03:00:00Z' });
