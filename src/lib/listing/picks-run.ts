@@ -55,6 +55,7 @@ import { tailoringForSeats } from "../tailoring/server";
 import { mustHaveTest } from "../tailoring/criteria";
 import { orderPicks } from "../tailoring/pick-order";
 import type { TailoringProfile } from "../tailoring/profile";
+import { wantsActFast } from "../tailoring/about-prompts";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -514,6 +515,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               slot: slots === null ? "unreadable" : slots.get(m.id)?.status ?? "free",
               tier: m.paid ? "paid" : "free",
               today: plan ? teasersFrom(plan, null, m.paid ? PAID_VISIBILITY : freeVisibility).map((c) => c.id) : "chosen_at_send",
+              // Batch 14: the day's advice line (a near miss, or "only N met your must-haves"), and "Act fast".
+              advice: plan?.advice ?? null,
+              actFast: wantsActFast(tailoringBySeat.get(m.key) ?? null),
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
               wouldCharge: m.admin
@@ -1374,6 +1378,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       unsubscribe,
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
       profileNudge: nudges.has(userId) ? { percent: nudges.get(userId)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
+      // Batch 14, Part E: About you is the member's own, so any seat's answer is theirs.
+      actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
     });
     const mail = built ? renderEmail(built.message) : null;
     const failRows = async () => {

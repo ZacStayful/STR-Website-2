@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { numbersForCard, priceCutPct, roleFor, withTailoring } from './numbers.ts';
+import { numbersForCard, priceCutPct, roleFor, withTailoring, type CardNumber } from './numbers.ts';
+import type { Explanation } from './why.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
 import { areaLookup } from './order.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
@@ -94,7 +95,7 @@ test('nothing private reaches a number', () => {
 });
 
 test('withTailoring: Today gives an untailored member the plain why-line only; "Best elsewhere" is Today’s alone', () => {
-  const views = new Map([['d1', { numbers: null, explanation: null }]]);
+  const views = new Map<string, { numbers: CardNumber[] | null; explanation: Explanation | null }>([['d1', { numbers: null, explanation: null }]]);
   const plain = withTailoring(views, [card()], plainProfile(DEFAULT_GOALS, [], WIDTHS), null, NOW, { why: true }).get('d1')!;
   assert.equal(plain.numbers, null, 'no new answers: no numbers');
   assert.equal(plain.explanation?.why, 'Picked for: +40% on a long let');

@@ -28,6 +28,7 @@ import { dealVisible } from '../marketplace/visibility.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { formatListingPrice } from '../listing/format.ts';
 import { manageNotificationsUrl } from '../url.ts';
+import { actFastTitle } from '../tailoring/about-prompts.ts';
 
 // ── The data ──
 
@@ -99,19 +100,26 @@ export function figureLine(card: Pick<DealCard, 'kind' | 'annual_profit' | 'upli
   return `${f.big} · ${f.small}`;
 }
 
+/** Batch 14: what the member's answers add to a teaser. */
+export interface TeaserExtras {
+  /** Part E: their next deal is this month, so a deal first seen in the last day says "Act fast · new today". */
+  actFast?: boolean;
+}
+
 /**
  * One teaser: figure, price, town, type and motivation, linking to Today.
  * Built from public columns only. `figureFor` (Batch 10) gives the profit as
  * the member's range ("£450–£700/mo · area estimate"); without it, the old line.
  */
-export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null): Item {
+export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null, extras: TeaserExtras = {}): Item {
   const figure = figureFor ? figureFor(card) : figureLine(card);
   const first = [priceLine(card), placeOf(card)].filter((x): x is string => Boolean(x)).join(' · ');
   const type = describeType(card);
   const why = motivationLine({ kind: card.kind, motivation: card.motivation, price_history: card.price_history, listed_date: card.listed_date }, now);
   const kindWord = card.kind === 'rent' ? 'Rent-to-rent' : 'To buy';
+  const title = figure ?? kindWord;
   return {
-    title: figure ?? kindWord,
+    title: extras.actFast ? actFastTitle(title, card.first_seen_at, now) : title,
     lines: [first, type ? `${kindWord} · ${type}` : kindWord, why.length > 0 ? why.join(' · ') : null].filter((x): x is string => Boolean(x)),
     link: { label: 'See it on Today', url: todayUrl },
   };
@@ -313,6 +321,8 @@ export interface DailyInput {
    * (named only when the member has two or more; the letter covers the rest).
    */
   unfunded?: string[];
+  /** Batch 14, Part E: their next deal is this month: "Act fast · new today" on a teaser first seen in the last day. */
+  actFast?: boolean;
 }
 
 /** One saved profile's part of the daily email. */
@@ -399,7 +409,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     if (kept.length > 0) {
       const blocks: Block[] = [];
       if (part.advice) blocks.push({ type: 'text', text: part.advice, tone: 'callout' });
-      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor)) });
+      const extras: TeaserExtras = { actFast: input.actFast };
+      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor, extras)) });
       blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !part.pick }] });
       sections.push({ key: 'teasers', title: part.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
     }

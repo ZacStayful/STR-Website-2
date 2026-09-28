@@ -254,3 +254,14 @@ test('Batch 14: a price drop says where the new price sits against the most they
   // Without one the email is exactly as before.
   assert.ok(!changeItem(change(), SITE)!.lines.some((l) => /what you can pay/.test(l)));
 });
+
+test('Batch 14: "Act fast · new today" on a deal first seen in the last day, for a member whose next deal is this month', () => {
+  const fresh = card({ id: 'new', first_seen_at: '2026-09-28T03:00:00Z' });
+  const older = card({ id: 'old', first_seen_at: '2026-09-25T03:00:00Z' });
+  const titles = (actFast: boolean) =>
+    buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [fresh, older], changes: [], freeCutoffIso: null, unsubscribe: null, actFast })!
+      .message.sections.flatMap((s) => s.blocks)
+      .flatMap((b) => (b.type === 'items' ? b.items.map((i) => i.title) : []));
+  assert.deepEqual(titles(true), ['Act fast · new today · +42% · £8,400/yr over a long let', '+42% · £8,400/yr over a long let']);
+  assert.deepEqual(titles(false), ['+42% · £8,400/yr over a long let', '+42% · £8,400/yr over a long let']);
+});

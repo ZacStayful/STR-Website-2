@@ -13,6 +13,7 @@ import { profitRange, upliftTag, widthFor, type ProfitRange } from './profit-ran
 import { mostYouCanPay, type PayCeiling } from './most-you-can-pay.ts';
 import type { CardNumber } from '../tailoring/numbers.ts';
 import type { Explanation } from '../tailoring/why.ts';
+import type { Lead } from '../tailoring/about-prompts.ts';
 import { analysisQuote } from '../analysis/deal-analysis-rules.ts';
 import type { DealPricing, PriceLabel } from '../credit/deal-pricing.ts';
 import type { FinanceDefaults } from '../listing/deal.ts';
@@ -45,6 +46,8 @@ export interface CardView {
   numbers?: CardNumber[] | null;
   /** Batch 14, Part D: why it is on their list, and how well it matches (src/lib/tailoring/why.ts). */
   explanation?: Explanation | null;
+  /** Batch 14, Part E: "Knowing the numbers" holds them back, so the Full analysis leads (src/lib/tailoring/about-prompts.ts). */
+  lead?: Lead;
   /** "+45% vs a long let", purchases only. */
   uplift: string | null;
   opened: boolean;

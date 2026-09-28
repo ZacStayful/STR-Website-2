@@ -8,6 +8,7 @@ import { earlyAccessHint } from "@/lib/marketplace/early-access";
 import { PASS_REASON_GROUPS, type DealReaction } from "@/lib/marketplace/reactions";
 import { priceText } from "@/lib/credit/deal-pricing";
 import type { CardView } from "@/lib/marketplace/card-view";
+import { ANALYSIS_LEAD_LINE } from "@/lib/tailoring/about-prompts";
 import { openDealAction } from "../actions";
 import { DealCardFrame } from "./DealCardFrame";
 
@@ -185,17 +186,29 @@ function PriceButtons({ dealId, live, view }: { dealId: string; live: boolean; v
     );
   }
   const full = view.fullAnalysis ? priceText(view.fullAnalysis) : "";
+  const quick = !view.opened && live && view.quickLook ? (
+    <form action={openDealAction}>
+      <input type="hidden" name="id" value={dealId} />
+      <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
+    </form>
+  ) : null;
+  const analysis = view.opened || live ? <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}</Link> : null;
+  // Batch 14, Part E: "Knowing the numbers" holds them back, so the Full analysis comes first, with one line.
+  if (view.lead === "analysis" && analysis) {
+    return (
+      <div className="border-t border-border px-3 py-2">
+        <p className="mb-1.5 text-[11px] text-muted-foreground">{ANALYSIS_LEAD_LINE}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          {analysis}
+          {quick}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
-      {!view.opened && live && view.quickLook && (
-        <form action={openDealAction}>
-          <input type="hidden" name="id" value={dealId} />
-          <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
-        </form>
-      )}
-      {(view.opened || live) && (
-        <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}</Link>
-      )}
+      {quick}
+      {analysis}
     </div>
   );
 }

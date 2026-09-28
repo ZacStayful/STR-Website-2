@@ -29,6 +29,7 @@ import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
 import { numbersForCard } from "@/lib/tailoring/numbers";
 import { explainCard } from "@/lib/tailoring/why";
+import { ANALYSIS_LEAD_LINE, consentOpening, leadFor } from "@/lib/tailoring/about-prompts";
 import { areaLookup } from "@/lib/tailoring/order";
 import { priceLine } from "../_components/DealCard";
 import { openDealAction } from "../actions";
@@ -179,6 +180,16 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const numbers = numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
   // Part D: why it fits them, and how well, in the same words as their card.
   const explanation = numbers ? explainCard(sheetCard, tailoring, areaLookup(cards), now) : null;
+  // Part E: what holds them back leads the sheet. "Knowing the numbers": the
+  // Full analysis first. "Landlord or agent consent": Batch 7's first message
+  // first, as the next-step card on a deal on their My deals, else its
+  // opening lines (never the address).
+  const lead = leadFor(tailoring);
+  const analysisFirst = lead === "analysis" && canBuy;
+  const consentStep = lead === "consent" && Boolean(priv) && tracking.tracked;
+  const consentLines = lead === "consent" && !consentStep ? consentOpening(factsFromCard(deal, false, null), now) : null;
+  // Batch 10: at Kept the next step leads with the Full analysis.
+  const stepLead = tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null;
   const pctRange = (v: number) => {
     const [lo, hi] = spread(v, pct, 0.1);
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
@@ -211,6 +222,24 @@ export default async function DealPage({ params, searchParams }: { params: Promi
 
         <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_280px]">
           <section>
+            {/* Batch 14, Part E: "Landlord or agent consent" leads with the first message. */}
+            {consentStep && (
+              <div className="mb-4">
+                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={stepLead} />
+              </div>
+            )}
+            {consentLines && (
+              <section aria-labelledby="consent-opening" className="mb-4 rounded-xl border border-border bg-card p-4">
+                <h2 id="consent-opening" className="text-sm font-semibold text-foreground">{consentLines.heading}</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">{consentLines.intro}</p>
+                <blockquote className="mt-2 space-y-1.5 border-l-2 border-primary/40 pl-3 text-sm text-foreground">
+                  {consentLines.lines.map((l, i) => (
+                    <p key={i} className="whitespace-pre-line">{l}</p>
+                  ))}
+                </blockquote>
+                <p className="mt-2 text-[11px] text-muted-foreground">Open the deal and keep it, and the whole message, with the address filled in, is ready to send from My deals.</p>
+              </section>
+            )}
             <div className="overflow-hidden rounded-xl border border-border bg-card">
               <div className="relative aspect-[16/10] w-full bg-muted">
                 {priv && priv.photos.length > 0 ? (
@@ -259,7 +288,15 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 {/* Batch 10: past Kept without a Full analysis, an advisory line (never a block). */}
                 {stagePastKept && canBuy && !blocked && <StageReminder itemKey={`d-${deal.id}`} dealId={deal.id} stage={tracking.stage} href={`${dealPath}?analysis=1&from=stage`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
                 {/* Batch 7: the next step, for the member's own opened deal only. At Kept it leads with the Full analysis. */}
-                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null} />
+                {!consentStep && <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={stepLead} />}
+
+                {/* Batch 14, Part E: "Knowing the numbers" puts the Full analysis first. */}
+                {analysisFirst && (
+                  <div className="mt-4">
+                    <p className="mb-1.5 text-xs text-muted-foreground">{ANALYSIS_LEAD_LINE}</p>
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
+                  </div>
+                )}
 
                 {priv ? (
                   <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -284,7 +321,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 ) : (
                   <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : "This deal is off the market and cannot be opened."}</p>
                 )}
-                {canBuy && (
+                {canBuy && !analysisFirst && (
                   <div className="mt-3">
                     <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
                   </div>

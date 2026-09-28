@@ -35,6 +35,7 @@ import { dealVisibility, PAID_VISIBILITY } from '../marketplace/visibility';
 import type { MemberContext } from '../today/selection';
 import { tailoringForSeats } from '../tailoring/server';
 import type { TailoringProfile } from '../tailoring/profile';
+import { wantsActFast } from '../tailoring/about-prompts';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { buildDaily } from './message';
@@ -288,6 +289,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       // The label is settled below, from what the email turned out to be.
       unsubscribe: { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
+      // Batch 14: "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
+      actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
     });
     // Named for what the email IS, after the early-access backstop has had its
     // say: a Today's 5 whose teasers were all dropped is a changes email, and
@@ -308,7 +311,9 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         tier: paid ? 'paid' : 'free',
         ...sendSummary,
         today: !wantsTeasers(p) ? 'not_wanted' : seats.length === 0 ? 'profiles_paused' : parts.length > 0 ? 'stored' : unfunded.length > 0 ? 'no_credit' : 'chosen_at_send',
-        profiles: parts.map((x, i) => ({ profile: x.seat.profile?.id ?? null, teasers: built.teasersByPart[i]?.length ?? 0, wouldCharge: chargeFor(i) ? dailyPence : 0 })),
+        profiles: parts.map((x, i) => ({ profile: x.seat.profile?.id ?? null, teasers: built.teasersByPart[i]?.length ?? 0, advice: x.deals.advice ?? null, wouldCharge: chargeFor(i) ? dailyPence : 0 })),
+        // Batch 14: "Act fast · new today" titles for a member whose next deal is this month.
+        actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
         unfunded: unfunded.length,
         payer: payers.get(p.id)?.payerId ?? p.id,
       });
