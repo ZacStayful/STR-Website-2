@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PD_FIXTURES } from '../apis/__fixtures__/propertydata.ts';
 import { parseKeyStats, type KeyStatsRow } from '../apis/propertydata-parse.ts';
-import { aggregateKeyStats, areaKeyStats, keyStatsForOutcode, outcodeGrowth, pdRegionForArea, pdRegionForOutcode, warmRegionKeyStats, PD_REGIONS, type KeyStatsRead, type PdRegion } from './key-stats.ts';
+import { aggregateKeyStats, areaKeyStats, keyStatsForOutcode, outcodeGrowth, pdRegionForArea, pdRegionForOutcode, warmRegionKeyStats, planRegionKeyStats, PD_REGIONS, type KeyStatsRead, type PdRegion } from './key-stats.ts';
 
 const rows = parseKeyStats(PD_FIXTURES.keyStats) as KeyStatsRow[];
 
@@ -98,4 +98,19 @@ test('the warm-up buys only what is missing or stale, a few regions a run, in a 
   assert.deepEqual(r2.warmed, ['north_west']);
   assert.deepEqual(r2.failed, ['scotland']);
   assert.deepEqual(r2.deferred, []);
+});
+
+test('the market-warm dry run plans what the warm-up would buy, reading the cache only', async () => {
+  const fresh = new Set<PdRegion>(['north_east', 'west_midlands', 'south_east', 'south_west', 'wales', 'northern_ireland']);
+  let bought = 0;
+  const read = async (region: PdRegion, mode: 'cache' | 'buy'): Promise<KeyStatsRead> => {
+    if (mode === 'buy') bought += 1;
+    return fresh.has(region) ? { value: [], cached: true, stale: false, unavailable: false, updatedAt: null } : { value: null, cached: false, stale: false, unavailable: true, updatedAt: null };
+  };
+  const plan = await planRegionKeyStats(read, 3);
+  assert.equal(bought, 0, 'a dry run never buys');
+  assert.equal(plan.wouldBuy.length, 3);
+  assert.equal(plan.fresh.length, fresh.size);
+  assert.equal(plan.wouldBuy.length + plan.fresh.length + plan.deferred.length, PD_REGIONS.length);
+  assert.ok(plan.wouldBuy.every((r) => !fresh.has(r)));
 });

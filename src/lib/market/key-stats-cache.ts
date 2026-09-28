@@ -2,7 +2,7 @@ import 'server-only';
 
 import { ask, pdRegionKeyStats } from '../broker';
 import type { KeyStatsRow } from '../apis/propertydata-parse';
-import { PD_REGIONS, warmRegionKeyStats, type KeyStatsReader, type PdRegion, type WarmResult } from './key-stats';
+import { PD_REGIONS, planRegionKeyStats, warmRegionKeyStats, type KeyStatsReader, type PdRegion, type WarmResult } from './key-stats';
 
 /**
  * The region key stats as the explorer and the report read them: from the
@@ -39,4 +39,9 @@ const reader: KeyStatsReader = async (region, mode) => {
 /** The daily warm-up: house spend, a few regions a run. */
 export function warmAllRegionKeyStats(max?: number): Promise<WarmResult> {
   return warmRegionKeyStats(reader, max);
+}
+
+/** What the warm-up would buy now (cache reads only), for the cron's dry run. */
+export function planAllRegionKeyStats(max?: number): ReturnType<typeof planRegionKeyStats> {
+  return planRegionKeyStats(reader, max);
 }

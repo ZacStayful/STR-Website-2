@@ -49,7 +49,15 @@ export interface BillingSettings {
   profileCreditMinRealPct: number;
   /** Batch 16: the rent-to-rent bar, £ a year of profit after rent (src/lib/listing/screen.ts parseR2rBar). */
   r2rQualifiedProfit: number;
+  /**
+   * Batch 16: the most PropertyData long-let lookups the market snapshot may
+   * make for its areas in a UTC day, failed attempts included
+   * (src/lib/market/area-longlet.ts). 0 stops them.
+   */
+  areaRentDailyAttempts: number;
 }
+
+export const DEFAULT_AREA_RENT_DAILY_ATTEMPTS = 40;
 
 export const DEFAULT_PROFILE_COMPLETE_PENCE = 500;
 export const DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT = 75;
@@ -68,7 +76,14 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   profileCompletePence: DEFAULT_PROFILE_COMPLETE_PENCE,
   profileCreditMinRealPct: DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT,
   r2rQualifiedProfit: R2R_QUALIFIED_PROFIT,
+  areaRentDailyAttempts: DEFAULT_AREA_RENT_DAILY_ATTEMPTS,
 };
+
+/** Whole attempts from 0 to 1,000; anything else is the default. */
+function parseAttempts(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+  return Number.isInteger(n) && n >= 0 && n <= 1000 ? n : DEFAULT_AREA_RENT_DAILY_ATTEMPTS;
+}
 
 export function invalidateCreditCaches(): void {
   tableCache = null;
@@ -137,6 +152,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       profileCompletePence: Math.max(0, Math.round(num('profile_complete_pence', DEFAULT_PROFILE_COMPLETE_PENCE))),
       profileCreditMinRealPct: Math.min(100, Math.max(0, num('profile_credit_min_real_pct', DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT))),
       r2rQualifiedProfit: parseR2rBar(kv.get('r2r_qualified_profit')),
+      areaRentDailyAttempts: parseAttempts(kv.get('area_rent_daily_attempts')),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

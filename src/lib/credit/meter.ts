@@ -59,30 +59,42 @@ interface CallLog {
   bypass: boolean;
 }
 
+/**
+ * Whether provider_calls has the exact-cost column (Batch 16). Cleared for
+ * the life of the instance the first time the database says it is missing,
+ * so the meter keeps logging if the code ships before the schema.
+ */
+let rawPenceColumn = true;
+
 async function logCall(c: CallLog): Promise<number | null> {
   if (!hasServiceRole()) return null;
   try {
-    const { data, error } = await (await adminClient())
-      .from('provider_calls')
-      .insert({
-        provider: c.provider,
-        question: c.question,
-        key: c.key,
-        cost_pence: Math.round(c.rawPence),
-        cache_hit: c.cacheHit,
-        user_id: c.actorUserId ?? c.billedUserId,
-        ok: c.ok,
-        ms: c.ms,
-        unit: c.unit,
-        quantity: c.quantity,
-        base_pence: c.basePence,
-        charged_pence: c.chargedPence,
-        billed_user_id: c.billedUserId,
-        action_id: c.actionId,
-        bypass: c.bypass,
-      })
-      .select('id')
-      .single();
+    const row: Record<string, unknown> = {
+      provider: c.provider,
+      question: c.question,
+      key: c.key,
+      // Whole pence (2.5p logs as 3p); raw_pence keeps the exact figure.
+      cost_pence: Math.round(c.rawPence),
+      cache_hit: c.cacheHit,
+      user_id: c.actorUserId ?? c.billedUserId,
+      ok: c.ok,
+      ms: c.ms,
+      unit: c.unit,
+      quantity: c.quantity,
+      base_pence: c.basePence,
+      charged_pence: c.chargedPence,
+      billed_user_id: c.billedUserId,
+      action_id: c.actionId,
+      bypass: c.bypass,
+    };
+    if (rawPenceColumn) row.raw_pence = round4(c.rawPence);
+    const admin = await adminClient();
+    let { data, error } = await admin.from('provider_calls').insert(row).select('id').single();
+    if (error && rawPenceColumn && /raw_pence/.test(error.message)) {
+      rawPenceColumn = false;
+      delete row.raw_pence;
+      ({ data, error } = await admin.from('provider_calls').insert(row).select('id').single());
+    }
     if (error) throw new Error(error.message);
     return (data?.id as number | undefined) ?? null;
   } catch (err) {

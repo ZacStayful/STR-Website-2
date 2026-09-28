@@ -2,6 +2,8 @@ import 'server-only';
 
 import { ask, pdLongLetRent } from '../broker';
 import { brokerStore } from '../broker/store';
+import { createAdminClient } from '../supabase/admin';
+import { getBillingSettings } from '../credit/unit-costs';
 import { areaRentCacheKey, cachedAreaRent, type CachedRent } from '../apis/propertydata-guard';
 import type { MarketArea } from './types';
 import { AREA_REPRESENTATIVE_POSTCODE } from './area-postcodes';
@@ -40,6 +42,30 @@ export function modalBedrooms(area: MarketArea): number | null {
   return best;
 }
 
+/**
+ * House long-let lookups made today (UTC), failed ones included: the
+ * snapshot's area rents are the only house `pdLongLetRent` calls (a
+ * member's report is billed to the member). Null when it cannot be read.
+ */
+async function areaRentAttemptsToday(): Promise<number | null> {
+  try {
+    const start = new Date();
+    start.setUTCHours(0, 0, 0, 0);
+    const { count, error } = await createAdminClient()
+      .from('provider_calls')
+      .select('id', { count: 'exact', head: true })
+      .eq('provider', 'propertydata')
+      .eq('question', 'pdLongLetRent')
+      // The broker logs its cache hits too; only real attempts count.
+      .eq('cache_hit', false)
+      .is('billed_user_id', null)
+      .gte('at', start.toISOString());
+    return error ? null : (count ?? 0);
+  } catch {
+    return null;
+  }
+}
+
 export async function getAreaLongLetRent(area: MarketArea): Promise<number | null> {
   const postcode = AREA_REPRESENTATIVE_POSTCODE[area.postcode_area.toUpperCase()];
   if (!postcode) return null;
@@ -59,6 +85,14 @@ export async function getAreaLongLetRent(area: MarketArea): Promise<number | nul
       });
     },
     fetchRent: async () => {
+      // A hard daily ceiling, failed attempts included, so a cache that cannot
+      // be written or a snapshot rebuilt on every request can never loop as
+      // it did in September. Unreadable counts as reached.
+      const [done, { areaRentDailyAttempts }] = await Promise.all([areaRentAttemptsToday(), getBillingSettings()]);
+      if (done === null || done >= areaRentDailyAttempts) {
+        console.warn(`[market] area rent skipped for ${postcode}: ${done ?? '?'} of ${areaRentDailyAttempts} lookups used today`);
+        return null;
+      }
       // A rent a member's report already bought for this postcode and size is
       // served from the broker's cache without a call.
       const r = await ask(pdLongLetRent, { postcode, bedrooms, maxAttempts: 1, timeoutMs: AREA_RENT_TIMEOUT_MS }, { mode: 'cron' });

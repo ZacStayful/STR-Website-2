@@ -4187,4 +4187,75 @@ insert into public.billing_settings (key, value) values
   ('r2r_qualified_profit', '6000'::jsonb)
 on conflict (key) do nothing;
 
+-- ── Spend safety (Part H) ──
+--   area_rent_daily_attempts   the most PropertyData long-let lookups the market snapshot may
+--                              make for its areas in a UTC day, failed attempts included
+--                              (src/lib/market/area-longlet.ts). 0 stops them.
+insert into public.billing_settings (key, value) values
+  ('area_rent_daily_attempts', '40'::jsonb)
+on conflict (key) do nothing;
+
+-- provider_calls.cost_pence is a whole number, so a 2.5p PropertyData credit
+-- logged as 3p and a 0.395p geocode as 0. raw_pence keeps the exact cost the
+-- meter priced (null on rows written before this column); spend reads use
+-- coalesce(raw_pence, cost_pence).
+alter table public.provider_calls add column if not exists raw_pence numeric(14,4);
+
+-- Spend reads that see every row. PostgREST returns at most 1,000 rows a
+-- query, so the admin spend views and the broker's daily budget summed only
+-- the first 1,000 calls of a day or week: during the 12–25 Sep valuation-rent
+-- loop the budgets could not bind and the views showed a fraction of it.
+-- Service role only.
+
+-- A provider's spend since p_since by the broker's own lookups (questions not
+-- named '<provider>.<unit>'), all payers or one: the broker's daily budget.
+create or replace function public.provider_spend_since(p_provider text, p_since timestamptz, p_user uuid default null)
+returns numeric
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(sum(coalesce(c.raw_pence, c.cost_pence)), 0)::numeric
+  from public.provider_calls c
+  where c.provider = p_provider
+    and c.ok
+    and c.at >= p_since
+    and c.question not like p_provider || '.%'
+    and (p_user is null or c.user_id = p_user);
+$$;
+revoke all on function public.provider_spend_since(text, timestamptz, uuid) from public, anon, authenticated;
+
+-- Calls and spend per UTC day and provider since p_since: the admin dashboard.
+create or replace function public.provider_spend_daily(p_since timestamptz)
+returns table (day text, provider text, calls bigint, cache_hits bigint, failed bigint, pence numeric)
+language sql
+stable
+set search_path = ''
+as $$
+  select to_char(c.at at time zone 'UTC', 'YYYY-MM-DD'), c.provider, count(*), count(*) filter (where c.cache_hit), count(*) filter (where not c.ok),
+         coalesce(sum(coalesce(c.raw_pence, c.cost_pence)), 0)::numeric
+  from public.provider_calls c
+  where c.at >= p_since
+  group by 1, 2;
+$$;
+revoke all on function public.provider_spend_daily(timestamptz) from public, anon, authenticated;
+
+-- Paid calls per provider × unit since p_since, with what was charged and
+-- what was house spend: /admin/billing.
+create or replace function public.provider_spend_by_unit(p_since timestamptz)
+returns table (provider text, unit text, calls bigint, raw_pence numeric, charged_pence numeric, house_pence numeric)
+language sql
+stable
+set search_path = ''
+as $$
+  select c.provider, coalesce(c.unit, ''), count(*),
+         coalesce(sum(coalesce(c.raw_pence, c.cost_pence)), 0)::numeric,
+         coalesce(sum(c.charged_pence), 0)::numeric,
+         coalesce(sum(coalesce(c.raw_pence, c.cost_pence)) filter (where not coalesce(c.charged_pence, 0) > 0), 0)::numeric
+  from public.provider_calls c
+  where c.at >= p_since and c.ok and not c.cache_hit
+  group by 1, 2;
+$$;
+revoke all on function public.provider_spend_by_unit(timestamptz) from public, anon, authenticated;
+
 notify pgrst, 'reload schema';
