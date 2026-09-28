@@ -36,6 +36,16 @@ export function countFrom(raw: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+/** The sweep cron's kill switch: on unless MARKETPLACE_SWEEP_ENABLED is 'false'. */
+export function sweepEnabled(): boolean {
+  return process.env.MARKETPLACE_SWEEP_ENABLED !== 'false';
+}
+
+/** How many top scored areas the sweep covers (MARKETPLACE_SWEEP_AREAS, default 60). */
+export function sweepAreaLimit(): number {
+  return countFrom(process.env.MARKETPLACE_SWEEP_AREAS, DEFAULT_SWEEP_AREAS);
+}
+
 /** The postcode areas the sweep covers, best scored first. */
 export function sweepAreaCodes(cards: HouseAreaCard[], limit: number): string[] {
   return topScoredAreas(cards, limit).map((c) => c.code.toUpperCase());

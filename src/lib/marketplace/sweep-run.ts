@@ -25,21 +25,17 @@ import { pmiAccount, pmiConfigured } from '../broker/providers/pmi';
 import { COST_PENCE } from '../broker/config';
 import { absorbListings, cohortLoader, emptyAbsorbCounters, type AbsorbCounters } from './absorb';
 import { loadScreenContext, recordRun, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
-import { countFrom, DEFAULT_SWEEP_AREAS, DEFAULT_SWEEP_MAX_QUERIES, HISTORY_DAYS, planPass, sweepHistory, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
+import { countFrom, DEFAULT_SWEEP_MAX_QUERIES, HISTORY_DAYS, planPass, sweepAreaLimit, sweepEnabled, sweepHistory, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
+import { sweepDemandScores } from '../sourcing-demand/server';
 
 const TIME_BUDGET_MS = 50_000;
 const SNAPSHOT_WAIT_MS = 20_000;
 const QUERY_BUDGET_MS = 44_000;
 const COHORT_AREAS_PER_PASS = 4;
 
-export function sweepEnabled(): boolean {
-  return process.env.MARKETPLACE_SWEEP_ENABLED !== 'false';
-}
-
-/** How many top scored areas the sweep covers (MARKETPLACE_SWEEP_AREAS, default 60). */
-export function sweepAreaLimit(): number {
-  return countFrom(process.env.MARKETPLACE_SWEEP_AREAS, DEFAULT_SWEEP_AREAS);
-}
+// The kill switch and the area limit live in sweep-plan.ts, so the demand-led
+// searches can read them without importing this file.
+export { sweepAreaLimit, sweepEnabled };
 
 export interface SweepOptions {
   dry: boolean;
@@ -62,6 +58,8 @@ export interface SweepSummary extends AbsorbCounters {
   doneToday: number;
   /** Came back empty twice today: left until tomorrow. */
   leftForTomorrow: number;
+  /** Of the searches left, how many are in areas members want (they go first). */
+  wanted: number;
   /** The searches this pass finished, and the ones that came back empty (read by later passes). */
   doneKeys: string[];
   emptyKeys: string[];
@@ -118,7 +116,9 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
   const areas = opts.areas ?? sweepAreaLimit();
   const maxQueries = opts.maxQueries ?? countFrom(process.env.MARKETPLACE_SWEEP_MAX_QUERIES, DEFAULT_SWEEP_MAX_QUERIES);
   const queries = sweepQueries(ctx.cards, areas, maxQueries);
-  const plan = planPass(queries, await loadHistory(admin, startedAt));
+  // Members' wanted areas go first (Batch 15); no demand, or any failure reading it, keeps the score order.
+  const [history, demandScore] = await Promise.all([loadHistory(admin, startedAt), sweepDemandScores(startedAt)]);
+  const plan = planPass(queries, history, demandScore);
 
   const summary: SweepSummary = {
     dry: opts.dry,
@@ -132,6 +132,7 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     pending: plan.pending.length,
     doneToday: plan.doneToday,
     leftForTomorrow: plan.leftForTomorrow,
+    wanted: plan.pending.filter((q) => (demandScore.get(q.area.toUpperCase()) ?? 0) > 0).length,
     doneKeys: [],
     emptyKeys: [],
     ...emptyAbsorbCounters(),
