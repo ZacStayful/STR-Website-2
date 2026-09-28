@@ -12,8 +12,8 @@ import 'server-only';
  * (demand_search_reserve, which also refuses an area × kind already searched
  * today), asks the broker as house spend under its own action id, and is
  * then settled to what the meter recorded for that id. A pass stops at the
- * cap, after two searches in a row come back with nothing, at eight searches
- * or when its time is up. It never buys PropertyData cohorts: it reads the
+ * cap, after two searches in a row get no answer, at eight searches or when
+ * its time is up. It never buys PropertyData cohorts: it reads the
  * sweep's weekly cache.
  *
  * Entry points: /api/internal/demand-sourcing (cron, secret-gated; off until

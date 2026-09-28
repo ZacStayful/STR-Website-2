@@ -473,12 +473,13 @@ areas get searched, within a monthly spend cap.
   `demand_monthly_cap_pence` for the UK month before it asks, and is settled
   to what the meter recorded for it. When the cap is spent, demand-led
   searches stop until the 1st; the sweep, daily picks and the recheck never
-  read it. A pass stops at the cap, after two empty answers in a row, at
-  eight searches or after 44 s.
+  read it. A pass stops at the cap, after two searches in a row get no
+  answer, at eight searches or after 44 s.
 - **Cost:** a search is one PMI listings credit (2p) or one OnTheMarket page
   (0.2p nominal) while PMI is down. This month's spend:
 
   ```sql
-  select public.demand_sourcing_month('{"month": "2026-10-01"}');
+  select public.demand_sourcing_month(jsonb_build_object('month',
+    to_char(date_trunc('month', now() at time zone 'Europe/London'), 'YYYY-MM-DD')));
   ```
 
