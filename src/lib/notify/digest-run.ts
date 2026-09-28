@@ -37,6 +37,7 @@ import { tailoringForSeats } from '../tailoring/server';
 import type { TailoringProfile } from '../tailoring/profile';
 import { wantsActFast } from '../tailoring/about-prompts';
 import { sendParts } from '../tailoring/email-answers';
+import { memberFinance } from '../marketplace/most-you-can-pay';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { buildDaily } from './message';
@@ -270,7 +271,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           advice: plan?.advice ?? null,
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, seat.goals?.finance ?? null, settings.dealPricing.profitRangePct),
+          figureFor: (c) => cardRangeLine(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct),
         },
       });
     }

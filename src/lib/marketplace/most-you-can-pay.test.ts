@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alertGapLine, basisLine, cashBuyerOf, gapLine, mostYouCanPay, mostYouCanPayForDeal, payLine, profitNeeded } from './most-you-can-pay.ts';
+import { alertGapLine, basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, mostYouCanPayForDeal, payLine, profitNeeded } from './most-you-can-pay.ts';
 import { profitRange } from './profit-range.ts';
 import { DEFAULT_FINANCE, purchaseDeal, rentToRentDeal } from '../listing/deal.ts';
 import { DEFAULT_GOALS } from '../market/goals.ts';
@@ -104,4 +104,12 @@ test('from a deal already worked out: a Full analysis exactly, a shared listing 
   assert.equal(cashBuyerOf({ ...DEFAULT_GOALS, path: 'buy', buyer: { ...DEFAULT_GOALS.buyer, funding: 'cash' } }), true);
   assert.equal(cashBuyerOf({ ...DEFAULT_GOALS, path: 'r2r', buyer: { ...DEFAULT_GOALS.buyer, funding: 'cash' } }), false);
   assert.equal(cashBuyerOf(null), false);
+});
+
+test('memberFinance: a cash buyer borrows nothing; everyone else keeps their own deposit', () => {
+  const g = { ...DEFAULT_GOALS, path: 'buy' as const, finance: { ...DEFAULT_GOALS.finance, depositPct: 25 } };
+  assert.equal(memberFinance({ ...g, buyer: { ...g.buyer, funding: 'cash' } })?.depositPct, 100);
+  assert.equal(memberFinance({ ...g, buyer: { ...g.buyer, funding: 'btl' } })?.depositPct, 25);
+  assert.equal(memberFinance({ ...g, path: 'r2r', buyer: { ...g.buyer, funding: 'cash' } })?.depositPct, 25, 'only on the buying path');
+  assert.equal(memberFinance(null), null);
 });

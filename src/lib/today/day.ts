@@ -78,11 +78,11 @@ export function greeting(now: Date, name: string | null): string {
 }
 
 /** "342 deals match what you’re looking for" — the real count, never a guess. */
-export function matchLine(count: number | null, hasGoals: boolean, mustHaves = false): string | null {
+export function matchLine(count: number | null, hasGoals: boolean, mustHaves = false, atLeast = false): string | null {
   if (count === null || !Number.isFinite(count)) return null;
   const n = Math.max(0, Math.floor(count));
-  const deals = `${n.toLocaleString('en-GB')} deal${n === 1 ? '' : 's'}`;
-  if (mustHaves) return `${deals} meet${n === 1 ? 's' : ''} your must-haves`;
+  const deals = `${n.toLocaleString('en-GB')}${atLeast ? '+' : ''} deal${n === 1 && !atLeast ? '' : 's'}`;
+  if (mustHaves) return `${deals} meet${n === 1 && !atLeast ? 's' : ''} your must-haves`;
   if (!hasGoals) return `${deals} on the market in Stayful’s top areas`;
   return `${deals} match${n === 1 ? 'es' : ''} what you’re looking for`;
 }

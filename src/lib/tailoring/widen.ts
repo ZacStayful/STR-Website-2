@@ -27,7 +27,7 @@ import type { ChooseInput, ChooseReads } from '../today/choose.ts';
 import { TAILORING } from './config.ts';
 import { activeCriteria, CRITERIA, modeOf, wantsFor } from './criteria.ts';
 import { isSwitchable, type CriterionKey, type TailoringProfile } from './profile.ts';
-import { admissible, passFullListing, tailoredFilters } from './today.ts';
+import { admissible, passFullListing, tailoredFilters, tailoredRows } from './today.ts';
 
 export type WidenKey = 'miles' | 'rent' | 'profit' | 'cash' | `nice-${CriterionKey}`;
 
@@ -92,14 +92,20 @@ export function widenChanges(p: TailoringProfile): WidenCandidate[] {
 export async function widenOptions(input: ChooseInput, p: TailoringProfile, reads: ChooseReads, current: readonly string[]): Promise<WidenOption[]> {
   const changes = widenChanges(p);
   if (changes.length === 0) return [];
-  const rows = await reads.pool(tailoredFilters(p, input.feedback), TAILORING.poolLimit);
+  // The areas any change would look in are read in full too (a wider radius reaches past the country's top rows).
+  const { rows } = await tailoredRows(reads, p, tailoredFilters(p, input.feedback), changes.flatMap((c) => [...(wantsFor(c.profile).areas ?? [])]));
   const already = new Set([...current, ...admissible(rows, input, p).map((c) => c.dealId)]);
   const deltas = changes.map((c) => ({ c, added: admissible(rows, input, c.profile).filter((x) => !already.has(x.dealId)) }));
-  // One read of the full listings for every deal any change would add.
+  // One read of the full listings for the deals any change would add: only
+  // when the member's own "Not for me" answers could drop one on its full
+  // text, and for at most checkLimit of them (the rest are counted), so a
+  // Today view never reads hundreds of listings.
   const union = [...new Map(deltas.flatMap((d) => d.added.map((x) => [x.dealId, x] as const))).values()];
-  const passing = new Set((await passFullListing(reads, union, input)).map((x) => x.dealId));
+  const checked = input.feedback.length > 0 ? union.slice(0, TAILORING.widen.checkLimit) : [];
+  const dropped = new Set(checked.map((x) => x.dealId));
+  for (const x of await passFullListing(reads, checked, input)) dropped.delete(x.dealId);
   return deltas
-    .map(({ c, added }) => ({ key: c.key, label: c.label, adds: added.filter((x) => passing.has(x.dealId)).length }))
+    .map(({ c, added }) => ({ key: c.key, label: c.label, adds: added.filter((x) => !dropped.has(x.dealId)).length }))
     .filter((o) => o.adds > 0)
     .sort((a, b) => b.adds - a.adds || (a.key < b.key ? -1 : 1))
     .slice(0, TAILORING.widen.maxSuggestions);

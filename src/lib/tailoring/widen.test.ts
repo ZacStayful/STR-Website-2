@@ -82,3 +82,14 @@ test('the changes themselves: worked out from the member’s own answers, never 
   assert.equal(isWidenKey('miles'), true);
   assert.equal(isWidenKey('drop-table'), false);
 });
+
+test('a member with no "Not for me" answers costs no full-listing reads to count', async () => {
+  const rows = [row('ng1'), row('de1', { postcode_area: 'DE' }), row('de2', { postcode_area: 'DE' })];
+  const p = profile({});
+  const w = world(rows);
+  let reads = 0;
+  const counted = { ...w.reads, fullListings: async (ids: string[]) => { reads += ids.length; return w.reads.fullListings(ids); } };
+  const options = await widenOptions(w.input(p), p, counted, ['ng1']);
+  assert.deepEqual(options.find((o) => o.key === 'miles'), { key: 'miles', label: '+10 miles', adds: 2 });
+  assert.equal(reads, 0);
+});

@@ -50,8 +50,13 @@ export const TAILORING = {
   /** Behaviour prompts: Keeps against an answer before asking, how often one question may be asked, and the quiet spell after "keep my answer". */
   prompts: { minContradictions: 3, repeatDays: 7, afterKeepDays: 30 },
 
-  /** Widen and see: suggestions shown at most, and the size of each step offered. */
-  widen: { maxSuggestions: 3, milesStep: 10, maxMiles: 100, rentStepPcm: 250, profitStepPcm: 100, cashStep: 'next band' as const },
+  /**
+   * Widen and see: suggestions shown at most, and the size of each step
+   * offered. `checkLimit`: the most deals whose full listing a Today view
+   * reads to count them (the member's own "Not for me" rules read it);
+   * past that, and for a member with no such answers, a deal is counted.
+   */
+  widen: { maxSuggestions: 3, milesStep: 10, maxMiles: 100, rentStepPcm: 250, profitStepPcm: 100, cashStep: 'next band' as const, checkLimit: 120 },
 
   /** "Landlord or agent consent": how many paragraphs of Batch 7's first message the deal sheet shows before the deal is on My deals. */
   consentOpeningParagraphs: 3,

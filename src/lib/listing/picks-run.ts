@@ -57,6 +57,7 @@ import { orderPicks } from "../tailoring/pick-order";
 import type { TailoringProfile } from "../tailoring/profile";
 import { wantsActFast } from "../tailoring/about-prompts";
 import { sendParts } from "../tailoring/email-answers";
+import { memberFinance } from "../marketplace/most-you-can-pay";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -871,7 +872,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const { screening, figures } = screenSourced(l, card ?? null, rentTable);
       const candidate = {
         listing: l,
-        deal: dealForSourced(l, figures, m.goals?.finance ?? null),
+        deal: dealForSourced(l, figures, memberFinance(m.goals)),
         areaFit,
         areaName: card?.name ?? q.areaName,
         precheck,
@@ -1312,7 +1313,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             screening: sending.screening ?? null,
             dealId: pickDealId,
             // Batch 10: the profit as a range at the profile's finance, never one figure.
-            range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: m.goals?.finance ?? null, widths: settings.dealPricing.profitRangePct }),
+            range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: memberFinance(m.goals), widths: settings.dealPricing.profitRangePct }),
             profileLinks: links,
           });
           unsubscribe ??= section.unsubscribe;
@@ -1353,7 +1354,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           advice: plan?.advice ?? null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, m.goals?.finance ?? null, settings.dealPricing.profitRangePct),
+          figureFor: (c) => cardRangeLine(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
         },
       });
     }

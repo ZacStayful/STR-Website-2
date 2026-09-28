@@ -24,7 +24,7 @@ import { openPricePence } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
-import { basisLine, cashBuyerOf, gapLine, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
+import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
 import { numbersForCard } from "@/lib/tailoring/numbers";
@@ -92,6 +92,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const { deal, priv } = sheet;
   const [settings, credit, cards, profileRes, quoter, savedRes, savedProfiles] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
+  // Batch 14: the member's finance as their figures use it (a cash buyer borrows nothing).
+  const finance = memberFinance(goals);
   // Batch 14: the member's tailoring (their active profile), for the numbers that lead the sheet.
   const tailoring = await tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, goals, ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area));
   const pricing = quoter.pricing;
@@ -113,7 +115,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // The profit as an area-estimate range at the member's finance (Batch 10):
   // the exact figure for the property is what a Full analysis is for.
   const gross = screening?.grossRevenue?.value ?? null;
-  const range = profitRange({ kind: deal.kind, priceAmount: deal.price_amount, pricePeriod: deal.price_period, bedrooms: deal.bedrooms, grossRevenue: gross, confidence: screening?.confidence ?? null, finance: goals?.finance ?? null, widths: pricing.profitRangePct });
+  const range = profitRange({ kind: deal.kind, priceAmount: deal.price_amount, pricePeriod: deal.price_period, bedrooms: deal.bedrooms, grossRevenue: gross, confidence: screening?.confidence ?? null, finance, widths: pricing.profitRangePct });
   const pct = range?.pct ?? 25;
   const uplift = deal.kind === "sale" ? upliftTag(deal.uplift_pct) : null;
 
@@ -157,14 +159,14 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   if (deal.price_amount !== null) {
     const rev = gross !== null ? { grossRevenue: gross, adr: 0 } : areaCard ? areaRevenueFor({ byBedrooms: areaCard.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: areaCard.headline.grossRevenue, adr: areaCard.headline.adr } }, deal.bedrooms) : null;
     if (rev) {
-      const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(goals?.finance ?? {}) } };
+      const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(finance ?? {}) } };
       model = deal.kind === "rent" ? rentToRentDeal(Number(deal.price_amount), base) : purchaseDeal(Number(deal.price_amount), base);
     }
   }
   // Batch 14: the most they can pay to hit their own monthly profit, on the
   // same income and at the same finance as the range above (the member's
   // active profile; the house figures and £500 without answers).
-  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), widthPct: pct });
+  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct });
   const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
   const payGap = pay ? gapLine(askingFigure, pay) : null;
   // Batch 14, Part C: the same three numbers as the member's card, from the same function.
@@ -388,7 +390,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   </div>
                 )}
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {model.kind === "purchase" ? `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. ` : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
+                  {model.kind === "purchase" ? (cashBuyerOf(goals) ? `At ${gbp(model.askingPrice)}, bought with cash. ` : `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `) : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
                   <Link href="/profile" className="underline-offset-4 hover:underline">Change your figures on your profile</Link>. Figures that rest on the area’s short-let income are ranges.
                 </p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">

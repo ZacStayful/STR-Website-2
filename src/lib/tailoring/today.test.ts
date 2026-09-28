@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseTailored, mustMatchCount, mustMissAdvice, shortListAdvice, tailoredOrder } from './today.ts';
+import { chooseTailored, mustMatchCount, mustMissAdvice, shortListAdvice, tailoredOrder, tailoredRows } from './today.ts';
+import { DEFAULT_FILTERS, type DealFilters } from '../marketplace/grid.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
 import type { PoolRow } from '../today/candidates.ts';
@@ -205,4 +206,36 @@ test('a day the must-haves leave short says so, for the email; a full day says n
   assert.equal(shortListAdvice(1), 'Only 1 deal met all your must-haves today. Widen your search on Today to see more.');
   assert.equal(shortListAdvice(5), null);
   assert.equal(shortListAdvice(0), null, 'an empty day is the near miss or the empty state, not this line');
+});
+
+test('the tailored pool reads the member’s own areas in full beside the country’s top rows, once each', async () => {
+  const asked: string[][] = [];
+  const reads = {
+    pool: async (f: DealFilters) => {
+      asked.push(f.areas);
+      return f.areas.length > 0 ? [row('local', { postcode_area: 'NE' }), row('both')] : [row('both'), row('national', { postcode_area: 'LS' })];
+    },
+  };
+  const p = profile({ where: 'areas' }, { savedAreas: ['NE'] });
+  const { rows, capped } = await tailoredRows(reads, p, { ...DEFAULT_FILTERS, kind: 'sale' });
+  assert.deepEqual(rows.map((r) => r.id).sort(), ['both', 'local', 'national']);
+  assert.deepEqual(asked.map((a) => a.join(',')).sort(), ['', 'NE']);
+  assert.equal(capped, false);
+  asked.length = 0;
+  await tailoredRows(reads, profile({ where: 'anywhere' }), { ...DEFAULT_FILTERS, kind: 'sale' });
+  assert.deepEqual(asked, [[]], 'anywhere: the country’s rows only');
+});
+
+test('re-choosing: a list left with only kept misses is still "the closest"; a mixed one counts only the matches', async () => {
+  const w = world({ rows: [row('kept-miss', { price_amount: 400_000 }), row('other-miss', { price_amount: 450_000 })] });
+  const p = profile({ budget: 'u200' });
+  const only = await chooseTailored(w.input(p), p, w.reads, { current: ['kept-miss'], pinned: new Set(['kept-miss']) });
+  assert.deepEqual(only.dealIds, ['kept-miss']);
+  assert.equal(only.nearMiss, true);
+  assert.match(only.advice ?? '', /Nothing met all your must-haves today/);
+  const w2 = world({ rows: [row('kept-miss', { price_amount: 400_000 }), row('fits', { price_amount: 150_000 })] });
+  const mixed = await chooseTailored(w2.input(p), p, w2.reads, { current: ['kept-miss'], pinned: new Set(['kept-miss']) });
+  assert.deepEqual(mixed.dealIds, ['kept-miss', 'fits']);
+  assert.equal(mixed.nearMiss, false);
+  assert.equal(mixed.advice, 'Only 1 deal met all your must-haves today. Widen your search on Today to see more.');
 });

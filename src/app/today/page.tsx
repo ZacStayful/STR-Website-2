@@ -140,7 +140,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
 
   const banner = earlyAccessBanner(waiting, false);
   // Batch 14: a tailored list counts the deals meeting every must-have, as chosen.
-  const line = selection?.mustMatches != null ? matchLine(selection.mustMatches, true, true) : matchLine(count, goals !== null);
+  const line = selection?.mustMatches != null ? matchLine(selection.mustMatches, true, true, selection.mustCapped) : matchLine(count, goals !== null);
   const card = (c: (typeof cards)[number]) => (
     <DealCard
       key={c.id}

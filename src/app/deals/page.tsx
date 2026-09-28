@@ -100,6 +100,8 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
     cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
   ]);
   const capped = "capped" in page && page.capped;
+  // "Best for you" orders at most TAILORING.poolLimit deals; the counts still say how many match.
+  const matching = capped ? (await countDeals(filters, visibility, { userId: user.id })) ?? page.total : page.total;
   const views = withTailoring(baseViews, page.cards, tailoring, snapshot, now);
   // Nothing left in the grid: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
@@ -130,9 +132,9 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
         {message && <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>}
 
-        <GoalsStrip total={page.total} fromWelcome={cameFromWelcome(raw.from)} />
+        <GoalsStrip total={matching} fromWelcome={cameFromWelcome(raw.from)} />
         <EarlyAccessBanner text={banner} />
-        <DealsFilterBar filters={filters} counts={counts} total={page.total} />
+        <DealsFilterBar filters={filters} counts={counts} total={matching} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <section>

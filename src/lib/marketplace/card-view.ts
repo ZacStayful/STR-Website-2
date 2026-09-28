@@ -72,6 +72,8 @@ export function cardView(input: {
   label: (basePence: number) => PriceLabel;
 }): CardView {
   const { card, state } = input;
+  // Batch 14: a cash buyer's range has no mortgage in it either, as "Most you can pay" has none (memberFinance).
+  const finance = input.cashBuyer ? { ...(input.finance ?? {}), depositPct: 100 } : input.finance ?? null;
   const range = profitRange({
     kind: card.kind,
     priceAmount: card.price_amount,
@@ -79,7 +81,7 @@ export function cardView(input: {
     bedrooms: card.bedrooms,
     grossRevenue: card.screening_gross ?? null,
     confidence: card.screening_confidence ?? null,
-    finance: input.finance ?? null,
+    finance,
     widths: input.pricing.profitRangePct,
   });
   const analysed = state.reportId !== null;

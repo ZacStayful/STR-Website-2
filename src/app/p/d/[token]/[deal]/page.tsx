@@ -5,6 +5,7 @@ import { teaserAnswerContext } from "@/lib/tailoring/email-answers-server";
 import { EMAIL_ANSWER_LABELS } from "@/lib/tailoring/email-answers";
 import { teaserItem } from "@/lib/notify/message";
 import { cardRangeLine } from "@/lib/marketplace/profit-range";
+import { memberFinance } from "@/lib/marketplace/most-you-can-pay";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { ReasonChips } from "@/components/PickReasonChips";
 import { NAV_TARGETS } from "@/lib/nav";
@@ -36,7 +37,7 @@ export default async function TeaserAnswerPage({ params, searchParams }: { param
   if (!ctx) notFound();
   const now = new Date();
   const widths = (await getBillingSettings()).dealPricing.profitRangePct;
-  const item = ctx.card ? teaserItem(ctx.card, "/today", now, (c) => cardRangeLine(c, ctx.goals?.finance ?? null, widths)) : null;
+  const item = ctx.card ? teaserItem(ctx.card, "/today", now, (c) => cardRangeLine(c, memberFinance(ctx.goals), widths)) : null;
   const answer = done === "yes" || done === "no" ? null : a === "no" ? "no" : "yes";
   const problem = error ? ERRORS[error] ?? ERRORS.failed : null;
 

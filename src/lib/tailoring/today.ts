@@ -41,7 +41,7 @@
 import { applyCandidateFeedback, feedbackRules, NEEDS_WORK } from '../listing/picks.ts';
 import { rankForMember } from '../listing/rank.ts';
 import { parseMotivation } from '../listing/motivation.ts';
-import { DEFAULT_FILTERS } from '../marketplace/grid.ts';
+import { DEFAULT_FILTERS, type DealFilters } from '../marketplace/grid.ts';
 import { applyKindFeedback, buildCandidate, dealKey, motivationFor, parseStoredDeal, type Built, type PoolRow, type TodayCandidate } from '../today/candidates.ts';
 import { candidateContext, viableMisses, withFullListings, type ChooseInput, type ChooseReads, type TodayChoice } from '../today/choose.ts';
 import { TODAY_SIZE } from '../today/day.ts';
@@ -199,6 +199,28 @@ export function admissible(rows: readonly PoolRow[], input: Pick<ChooseInput, 'f
   return rankForMember(exact, input.feedback, rules, { depth: Math.max(1, exact.length), mode: p.goals?.motivation.mode ?? 'off' }).ranked;
 }
 
+/**
+ * The rows the tailored path judges: the member's kind, best profit first,
+ * up to the pool limit; and, where they look in set areas, every deal in
+ * those areas too (up to the limit again), so a local deal is never lost
+ * below the country's top rows. `extraAreas`: more areas to read in full
+ * (the ones widen-and-see would add). No duplicates; `capped` when either
+ * read hit the limit.
+ */
+export async function tailoredRows(reads: Pick<ChooseReads, 'pool'>, p: TailoringProfile, filters: DealFilters, extraAreas: Iterable<string> = []): Promise<{ rows: PoolRow[]; capped: boolean }> {
+  const w = wantsFor(p);
+  const areas = [...new Set([...(w.areas ?? []), ...(w.localAreas ?? []), ...extraAreas])].sort();
+  const [national, local] = await Promise.all([reads.pool(filters, TAILORING.poolLimit), areas.length > 0 ? reads.pool({ ...filters, areas }, TAILORING.poolLimit) : Promise.resolve([] as PoolRow[])]);
+  const seen = new Set<string>();
+  const rows: PoolRow[] = [];
+  for (const r of [...local, ...national]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    rows.push(r);
+  }
+  return { rows, capped: national.length >= TAILORING.poolLimit || local.length >= TAILORING.poolLimit };
+}
+
 /** The kind the tailored path reads, after a "rent-to-rent, not buying" answer and the like. */
 export function tailoredFilters(p: TailoringProfile, feedback: ChooseInput['feedback']) {
   return applyKindFeedback({ ...DEFAULT_FILTERS, kind: p.goals?.sourcingKind ?? 'both' }, feedbackRules(feedback));
@@ -225,7 +247,7 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
   const leanings = leaningsFor(p);
   const area = areaLookup(input.cards);
 
-  const rows = await reads.pool(filters, TAILORING.poolLimit);
+  const { rows, capped } = await tailoredRows(reads, p, filters);
   const judged = new Map<string, Judgement>();
   const bonus = new Map<string, number>();
   const meetsMusts = new Set<string>();
@@ -276,7 +298,15 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
     }
     list.push(...queue);
     const dealIds = list.slice(0, TODAY_SIZE);
-    return { dealIds, nearMiss: false, advice: shortListAdvice(dealIds.length), mustMatches, capped: rows.length >= TAILORING.poolLimit };
+    // Only an answered or opened card stays without meeting the must-haves
+    // (re-choosing). A list of nothing else is still the closest match, and
+    // says so; otherwise the short-day line counts only the ones that meet them.
+    const meeting = dealIds.filter((id) => meetsMusts.has(id)).length;
+    if (meeting === 0) {
+      const misses = judged.get(dealIds[0])?.mustFails ?? [];
+      return { dealIds, nearMiss: true, advice: misses.length > 0 ? mustMissAdvice(misses) : null, mustMatches, capped };
+    }
+    return { dealIds, nearMiss: false, advice: shortListAdvice(meeting), mustMatches, capped };
   }
 
   // ── Nothing meets the must-haves: the closest, and what it misses ──
@@ -292,6 +322,6 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
       byId(a.candidate, b.candidate),
   );
   const [nearest] = await checkedHead(reads, closest.map((b) => b.candidate), input, 1, holdBack);
-  if (nearest) return { dealIds: [nearest.dealId], nearMiss: true, advice: mustMissAdvice(judged.get(nearest.dealId)?.mustFails ?? []), mustMatches, capped: rows.length >= TAILORING.poolLimit };
-  return { dealIds: [], nearMiss: false, advice: null, mustMatches, capped: rows.length >= TAILORING.poolLimit };
+  if (nearest) return { dealIds: [nearest.dealId], nearMiss: true, advice: mustMissAdvice(judged.get(nearest.dealId)?.mustFails ?? []), mustMatches, capped };
+  return { dealIds: [], nearMiss: false, advice: null, mustMatches, capped };
 }

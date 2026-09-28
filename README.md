@@ -257,9 +257,13 @@ estimate: confirm it against the Twilio console and correct it on
    query of its own, so until it is run members get no must-have switches,
    no profile checks and no "never shown twice" record for replaced cards;
    Today itself still works.
-2. **Straight after the deploy:** a member with no new quiz answers sees
-   exactly the Today they saw before (the golden test in
-   `src/lib/today/choose.test.ts` pins it). Answer a few quiz questions on a
+2. **Straight after the deploy:** a member with no new answers sees exactly
+   the Today they saw before (the golden test in
+   `src/lib/today/choose.test.ts` pins it). "No new answers" means no real
+   quiz answer beyond the goal fields Today already read, no must-have
+   switch, no bedrooms preference, and no Keep, own open or Full analysis in
+   the last 60 days (`usesTailoring` in `src/lib/tailoring/profile.ts`): any
+   of those puts them on the tailored path. Answer a few quiz questions on a
    test account, then flip a must-have on `/profile` and watch Today change.
 3. **Check the dry runs:** `/api/internal/sourcing?dry=1` and
    `/api/internal/daily-digest?dry=1` show each member's advice line,

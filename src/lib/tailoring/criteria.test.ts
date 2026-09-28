@@ -101,6 +101,18 @@ test('minimum profit: only a real answer sets it, and it is judged on the low en
   assert.equal(wantsFor(profile({ path: 'r2r', finance }, { answered: { min_profit: real } })).minProfit, null, 'the buying question is not asked there');
 });
 
+test('a cash buyer: no mortgage in their range or their cash needed, so the must-have agrees with "Most you can pay"', () => {
+  const finance = { ...DEFAULT_GOALS.finance, depositPct: 25, targetMarginPcm: 1_500 };
+  const buyer = (funding: 'cash' | 'btl') => profile({ path: 'buy', finance, buyer: { ...DEFAULT_GOALS.buyer, funding } }, { answered: { min_profit: real } });
+  const f = sale({ amount: 150_000, grossRevenue: 40_000 });
+  const cash = memberFigures(f, buyer('cash'));
+  const noMortgage = profitRange({ kind: 'sale', priceAmount: 150_000, pricePeriod: 'total', bedrooms: 3, grossRevenue: 40_000, confidence: 'medium', finance: { ...finance, depositPct: 100 }, widths: WIDTHS })!;
+  assert.deepEqual(cash.range, noMortgage);
+  assert.ok(cash.range!.lowPcm > memberFigures(f, buyer('btl')).range!.lowPcm, 'a mortgage buyer pays a mortgage out of it');
+  assert.equal(cash.cashRequired, purchaseDeal(150_000, { grossRevenue: 40_000, adr: 0, bedrooms: 3, finance: { ...finance, depositPct: 100 } }).cashRequired, 'the whole price');
+  assert.equal(keys(buyer('cash'), f).profit, noMortgage.lowPcm >= 1_500 ? 'must:pass' : 'must:fail');
+});
+
 test('cash available: the top of the band against deposit, stamp duty and setup at their deposit', () => {
   const finance = { ...DEFAULT_GOALS.finance, depositPct: 25 };
   const p = profile({ path: 'buy', finance, buyer: { ...DEFAULT_GOALS.buyer, cashAvailable: '30-60' } });

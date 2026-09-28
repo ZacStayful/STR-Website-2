@@ -53,6 +53,8 @@ export interface TodaySelection {
    * untailored list, or before Batch 14's schema section has been run.
    */
   mustMatches: number | null;
+  /** The pool read hit its limit when the count was taken: it is "at least". */
+  mustCapped?: boolean;
 }
 
 export interface MemberContext {
@@ -120,7 +122,7 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   // An empty day is not stored: nothing to keep steady, and the next visit
   // may find something (a deal leaving the early-access window, a read that
   // failed this time).
-  if (chosen.dealIds.length === 0) return { day, dealIds: [], nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches };
+  if (chosen.dealIds.length === 0) return { day, dealIds: [], nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
   const { error } = profileId
     ? await admin
         .from('profile_today_lists')
@@ -132,7 +134,7 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   if (!error && profileId && chosen.mustMatches !== null) await storeTailoring(admin, profileId, day, chosen, []);
   // Read back: when two devices chose at once, both show the one stored first.
   const again = await read();
-  return again.data ? fromRow(again.data) : { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches };
+  return again.data ? fromRow(again.data) : { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
 }
 
 interface ListRow {
@@ -155,6 +157,7 @@ function fromRow(r: ListRow): TodaySelection {
     nearMiss: r.near_miss === true,
     advice: typeof r.advice === 'string' && r.advice.trim() ? r.advice : null,
     mustMatches: n,
+    mustCapped: t?.capped === true,
   };
 }
 
@@ -247,13 +250,18 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
       }
     })(),
     (async () => {
-      // Cards a re-choose took off a list (Batch 14): shown once, never again.
+      // Cards a re-choose took off a list (Batch 14): never shown again on a
+      // later day, nor on another profile's list today. This profile's own
+      // today can take them back: a switch flipped back restores the list.
       // Its own query, so a schema without the column costs only this.
       if (!member.profileId) return;
       for (let from = 0; ; from += PAGE) {
         const { data, error } = await admin.from('profile_today_lists').select('profile_id, day, shown_ids').eq('user_id', member.userId).lte('day', day).order('day', { ascending: true }).order('profile_id', { ascending: true }).range(from, from + PAGE - 1);
         if (error) break;
-        for (const r of (data ?? []) as { shown_ids: unknown }[]) for (const id of ids(r.shown_ids)) out.add(id);
+        for (const r of (data ?? []) as { profile_id: string; day: string; shown_ids: unknown }[]) {
+          if (String(r.day) === day && r.profile_id === member.profileId) continue;
+          for (const id of ids(r.shown_ids)) out.add(id);
+        }
         if ((data?.length ?? 0) < PAGE) break;
       }
     })(),
@@ -327,7 +335,7 @@ export async function rechooseToday(member: MemberContext, now: Date = new Date(
     const same = chosen.dealIds.length === current.length && chosen.dealIds.every((id, i) => id === current[i]);
     if (same && chosen.nearMiss === stored.nearMiss && chosen.advice === stored.advice) {
       await storeTailoring(admin, profileId, day, chosen, []);
-      return { ...stored, mustMatches: chosen.mustMatches };
+      return { ...stored, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
     }
     const { data: updated, error: updErr } = await admin
       .from('profile_today_lists')
@@ -344,7 +352,7 @@ export async function rechooseToday(member: MemberContext, now: Date = new Date(
     if (!updated || updated.length === 0) continue;
     const replaced = current.filter((id) => !chosen.dealIds.includes(id));
     await storeTailoring(admin, profileId, day, chosen, [...ids(data.shown_ids), ...replaced]);
-    return { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches };
+    return { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
   }
   return null;
 }

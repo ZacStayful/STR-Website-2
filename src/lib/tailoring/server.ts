@@ -39,15 +39,16 @@ import { rankingPool } from '../marketplace/queries';
 import { DEFAULT_FILTERS } from '../marketplace/grid';
 import { profilesFor } from '../profiles/server';
 import { rechooseToday, type TodaySelection } from '../today/selection';
-import { TAILORING } from './config';
-import { mustMatchCount } from './today';
+import { mustMatchCount, tailoredRows } from './today';
 import { isPromptQuestion, type PromptQuestion, type PromptState } from './behaviour';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
 const ID_CHUNK = 150;
-/** Signal rows read per chunk of members, newest first: far more than any member makes in 60 days. */
-const SIGNAL_ROWS = 1000;
+/** Signal rows read a page at a time, every page, for each chunk of members. */
+const SIGNAL_PAGE = 1000;
+/** A backstop only: 20,000 Keeps or opens by 150 members in 60 days is far beyond any real use. */
+const SIGNAL_MAX_PAGES = 20;
 
 export interface SeatInput {
   userId: string;
@@ -80,30 +81,48 @@ interface RawSignal {
   at: string;
 }
 
+/** Every row a read returns, a page at a time, up to the backstop. The error, if any, and what was read before it. */
+async function allPages<T>(read: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<{ rows: T[]; error: string | null }> {
+  const rows: T[] = [];
+  for (let page = 0; page < SIGNAL_MAX_PAGES; page += 1) {
+    const { data, error } = await read(page * SIGNAL_PAGE, page * SIGNAL_PAGE + SIGNAL_PAGE - 1);
+    if (error) return { rows, error: error.message };
+    const got = (data ?? []) as T[];
+    rows.push(...got);
+    if (got.length < SIGNAL_PAGE) break;
+  }
+  return { rows, error: null };
+}
+
 async function signalsFor(admin: Admin, userIds: readonly string[], since: Date): Promise<RawSignal[]> {
   const out: RawSignal[] = [];
   const sinceIso = since.toISOString();
   for (const some of chunks(userIds)) {
-    const readKeeps = (columns: string) => admin.from('deal_reactions').select(columns).in('user_id', some).eq('reaction', 'keep').gte('updated_at', sinceIso).order('updated_at', { ascending: false }).limit(SIGNAL_ROWS);
+    // Every page, in a stable order: one member who opens a great deal can never crowd the rest of the chunk out.
+    const readKeeps = (columns: string) =>
+      allPages<{ user_id: string; deal_id: string; profile_id?: string | null; updated_at: string }>((from, to) =>
+        admin.from('deal_reactions').select(columns).in('user_id', some).eq('reaction', 'keep').gte('updated_at', sinceIso).order('updated_at', { ascending: false }).order('user_id', { ascending: true }).order('deal_id', { ascending: true }).range(from, to),
+      );
     let keeps = await readKeeps('user_id, deal_id, profile_id, updated_at');
     // Before Batch 13's schema: every Keep is the member's one profile's.
     if (keeps.error) keeps = await readKeeps('user_id, deal_id, updated_at');
-    if (keeps.error) warn(`keeps unreadable: ${keeps.error.message}`);
-    for (const r of (keeps.data ?? []) as unknown as { user_id: string; deal_id: string; profile_id?: string | null; updated_at: string }[]) out.push({ userId: r.user_id, profileId: r.profile_id ?? null, dealId: r.deal_id, source: 'keep', at: r.updated_at });
+    if (keeps.error) warn(`keeps unreadable: ${keeps.error}`);
+    for (const r of keeps.rows) out.push({ userId: r.user_id, profileId: r.profile_id ?? null, dealId: r.deal_id, source: 'keep', at: r.updated_at });
 
-    const acts = await admin
-      .from('activity_events')
-      .select('user_id, kind, deal_id, profile_id, occurred_at')
-      .in('user_id', some)
-      .in('kind', ['deal_open', 'full_analysis'])
-      .not('deal_id', 'is', null)
-      .gte('occurred_at', sinceIso)
-      .order('occurred_at', { ascending: false })
-      .limit(SIGNAL_ROWS);
-    if (acts.error) warn(`activity unreadable: ${acts.error.message}`);
-    for (const r of (acts.data ?? []) as { user_id: string; kind: string; deal_id: string; profile_id: string | null; occurred_at: string }[]) {
-      out.push({ userId: r.user_id, profileId: r.profile_id ?? null, dealId: r.deal_id, source: r.kind === 'full_analysis' ? 'analysis' : 'open', at: r.occurred_at });
-    }
+    const acts = await allPages<{ user_id: string; kind: string; deal_id: string; profile_id: string | null; occurred_at: string }>((from, to) =>
+      admin
+        .from('activity_events')
+        .select('user_id, kind, deal_id, profile_id, occurred_at')
+        .in('user_id', some)
+        .in('kind', ['deal_open', 'full_analysis'])
+        .not('deal_id', 'is', null)
+        .gte('occurred_at', sinceIso)
+        .order('occurred_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to),
+    );
+    if (acts.error) warn(`activity unreadable: ${acts.error}`);
+    for (const r of acts.rows) out.push({ userId: r.user_id, profileId: r.profile_id ?? null, dealId: r.deal_id, source: r.kind === 'full_analysis' ? 'analysis' : 'open', at: r.occurred_at });
   }
   return out;
 }
@@ -277,7 +296,7 @@ export async function rechooseForMember(input: { userId: string; email: string |
 export async function mustHaveCountFor(input: { userId: string; email: string | null; tailoring: TailoringProfile | null; now?: Date }): Promise<number | null> {
   if (!hasServiceRole() || !usesTailoring(input.tailoring)) return null;
   const visibility = await dealVisibilityFor(input.userId, isAdminEmail(input.email));
-  const rows = await rankingPool({ ...DEFAULT_FILTERS, kind: input.tailoring.goals?.sourcingKind ?? 'both' }, visibility, { userId: input.userId }, TAILORING.poolLimit);
+  const { rows } = await tailoredRows({ pool: (f, limit) => rankingPool(f, visibility, { userId: input.userId }, limit) }, input.tailoring, { ...DEFAULT_FILTERS, kind: input.tailoring.goals?.sourcingKind ?? 'both' });
   return mustMatchCount(rows, input.tailoring, input.now ?? new Date());
 }
 

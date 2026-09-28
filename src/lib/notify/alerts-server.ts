@@ -13,7 +13,7 @@ import 'server-only';
 import type { createAdminClient } from '../supabase/admin';
 import { ALERT_MAX_AGE_MS, settleChanges, type AlertRow, type CurrentState, type Settled } from './alerts';
 import { parseMarketGoals, type MarketGoals } from '../market/goals';
-import { alertGapLine, cashBuyerOf, mostYouCanPay } from '../marketplace/most-you-can-pay';
+import { alertGapLine, cashBuyerOf, memberFinance, mostYouCanPay } from '../marketplace/most-you-can-pay';
 import { widthFor } from '../marketplace/profit-range';
 import { getBillingSettings } from '../credit/unit-costs';
 
@@ -133,7 +133,7 @@ async function attachPayGaps(admin: Admin, out: Map<string, Settled>, incomes: R
   for (const { userId, c } of drops) {
     const income = incomes.get(c.dealId!)!;
     const goals = c.profileId ? goalsByProfile.get(c.profileId) ?? null : goalsByUser.get(userId) ?? null;
-    const pay = mostYouCanPay({ kind: income.kind, grossRevenue: income.grossRevenue, bedrooms: income.bedrooms, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), widthPct: widthFor(income.confidence, dealPricing.profitRangePct) });
+    const pay = mostYouCanPay({ kind: income.kind, grossRevenue: income.grossRevenue, bedrooms: income.bedrooms, finance: memberFinance(goals), cashBuyer: cashBuyerOf(goals), widthPct: widthFor(income.confidence, dealPricing.profitRangePct) });
     const amount = c.newAmount === null || c.newAmount === undefined ? null : Number(c.newAmount);
     c.payGap = pay ? alertGapLine(amount, pay) : null;
   }

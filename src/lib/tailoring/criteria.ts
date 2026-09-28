@@ -43,6 +43,7 @@ import { goalAreas } from '../onboarding/deal-filters.ts';
 import { placedForPreview } from '../profile/matching.ts';
 import type { QuestionId } from '../profile/questions.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
+import { memberFinance } from '../marketplace/most-you-can-pay.ts';
 import type { DealCard } from '../marketplace/grid.ts';
 import { TAILORING } from './config.ts';
 import { asked, realAnswer, usesTailoring, type CriterionKey, type Mode, type TailoringProfile } from './profile.ts';
@@ -293,7 +294,8 @@ export interface MemberFigures {
 }
 
 export function memberFigures(f: DealFacts, p: Pick<TailoringProfile, 'goals' | 'widths'>): MemberFigures {
-  const finance = p.goals?.finance ?? null;
+  // A cash buyer's figures carry no mortgage, as "Most you can pay" carries none.
+  const finance = memberFinance(p.goals);
   const range =
     f.amount === null
       ? null

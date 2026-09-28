@@ -139,6 +139,18 @@ export function cashBuyerOf(goals: MarketGoals | null | undefined): boolean {
 }
 
 /**
+ * The member's finance as their own figures use it: a cash buyer borrows
+ * nothing (a 100% deposit), so no mortgage comes off their profit and their
+ * cash needed is the whole price. The profit range, the minimum-profit
+ * must-have and "Most you can pay" all read it, so they can never disagree.
+ * Null without goals: the house figures.
+ */
+export function memberFinance(goals: MarketGoals | null | undefined): MarketGoals['finance'] | null {
+  if (!goals) return null;
+  return cashBuyerOf(goals) ? { ...goals.finance, depositPct: 100 } : goals.finance;
+}
+
+/**
  * From a deal already worked out (a Full analysis, a report's PDF, a
  * checked or shared listing): on that deal's own income. `finance`: whose
  * deposit, rate and term (the deal's own when absent, the house figures for
