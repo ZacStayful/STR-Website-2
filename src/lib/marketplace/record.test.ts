@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDealRecord, qualifiesForMarketplace, townFrom, feedStatusOf, mergeSnapshotIntoListing, snapshotFromDeal, areaRentKey, type AreaCardLike } from './record.ts';
 import type { SourcedListing } from '../listing/sourcing.ts';
+import { R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
 import type { ListingSnapshot } from '../listing/types.ts';
 
 const listing = (over: Partial<SourcedListing> = {}): SourcedListing => ({
@@ -35,7 +36,7 @@ const rents = new Map([[areaRentKey('YO', 3), { monthlyRent: 1_200, samples: 5 }
 const NOW = new Date('2026-09-25T12:00:00Z');
 
 test('a purchase that clears 40% over a long let qualifies, and the record carries the grid columns', () => {
-  const rec = buildDealRecord(listing(), { card, rentTable: rents, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW });
+  const rec = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW });
   // 48,000 × 0.44 = 21,120 net; long-let net 1,200 × 12 × 0.9 = 12,960; costs 5,304 → surplus 2,856 → 22% uplift: medium.
   assert.equal(rec.band, 'medium');
   assert.equal(rec.annualProfit, 2_856);
@@ -47,7 +48,7 @@ test('a purchase that clears 40% over a long let qualifies, and the record carri
   assert.ok(rec.deal && rec.deal.kind === 'purchase');
   assert.ok(!qualifiesForMarketplace(rec));
 
-  const strong = buildDealRecord(listing(), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, firstSeenAt: null, now: NOW });
+  const strong = buildDealRecord(listing(), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   // 60,000 × 0.44 = 26,400 − 5,304 − 12,960 = 8,136 → 62.8%: qualified.
   assert.equal(strong.band, 'qualified');
   assert.equal(strong.annualProfit, 8_136);
@@ -55,7 +56,7 @@ test('a purchase that clears 40% over a long let qualifies, and the record carri
 });
 
 test('a rental is judged on its advertised rent and normalised to pcm', () => {
-  const rec = buildDealRecord(listing({ kind: 'rent', price: { amount: 300, period: 'pw' } }), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, firstSeenAt: null, now: NOW });
+  const rec = buildDealRecord(listing({ kind: 'rent', price: { amount: 300, period: 'pw' } }), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   assert.equal(rec.pricePeriod, 'pcm');
   assert.equal(rec.priceAmount, 1_300);
   assert.equal(rec.screening.kind, 'rent-to-rent');

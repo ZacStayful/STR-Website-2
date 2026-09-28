@@ -49,7 +49,7 @@ export function figuresFor(card: AreaCardLike | null): AreaFigures | null {
  * The income screening for a sourced listing against its area's figures and
  * the stored rent for its size. Lifted verbatim from the picks run.
  */
-export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rentTable: ReadonlyMap<string, StoredRent>): { screening: Screening; figures: AreaFigures | null } {
+export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rentTable: ReadonlyMap<string, StoredRent>, r2rBar: number): { screening: Screening; figures: AreaFigures | null } {
   const figures = figuresFor(card);
   const rev = figures ? areaRevenueFor(figures, l.bedrooms) : null;
   const exactBeds = l.bedrooms !== null && (card?.byBedrooms.some((b) => b.bedrooms === l.bedrooms && b.grossRevenue) ?? false);
@@ -59,11 +59,15 @@ export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rent
     advertisedRentPcm: l.kind === 'rent' ? rentPcm(l.price) : null,
     storedRent: l.postcodeArea && l.bedrooms !== null ? (rentTable.get(areaRentKey(l.postcodeArea, l.bedrooms)) ?? null) : null,
   });
-  const screening = screen(l.kind, {
-    bedrooms: l.bedrooms,
-    grossRevenue: grossRevenueFor(rev?.grossRevenue ?? null, exactBeds),
-    marketRent: rent?.figure ?? null,
-  });
+  const screening = screen(
+    l.kind,
+    {
+      bedrooms: l.bedrooms,
+      grossRevenue: grossRevenueFor(rev?.grossRevenue ?? null, exactBeds),
+      marketRent: rent?.figure ?? null,
+    },
+    { r2rQualifiedProfit: r2rBar },
+  );
   return { screening, figures };
 }
 
@@ -86,6 +90,8 @@ export interface DealRecord {
 export interface BuildOptions {
   card: AreaCardLike | null;
   rentTable: ReadonlyMap<string, StoredRent>;
+  /** billing_settings.r2r_qualified_profit (ScreenContext.r2rBar). */
+  r2rBar: number;
   firstSeenAt: string | null;
   cohort?: MotivationContext['cohort'];
   areaMedianDays?: number | null;
@@ -93,7 +99,7 @@ export interface BuildOptions {
 }
 
 export function buildDealRecord(l: SourcedListing, opts: BuildOptions): DealRecord {
-  const { screening, figures } = screenSourced(l, opts.card, opts.rentTable);
+  const { screening, figures } = screenSourced(l, opts.card, opts.rentTable, opts.r2rBar);
   const motivation = motivationFromListing(l, {
     thresholdDays: thresholdDaysFor(DEFAULT_GOALS.motivation, l.kind),
     areaMedianDays: opts.areaMedianDays ?? null,

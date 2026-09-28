@@ -11,7 +11,8 @@ import { describeBand, formatOpenPrice, ladderBandIndex } from "@/lib/marketplac
 import { sweepEnabled } from "@/lib/marketplace/sweep-run";
 import { recheckEnabled } from "@/lib/marketplace/recheck-run";
 import { SOURCE_HOURLY_CAPS } from "@/lib/marketplace/cadence";
-import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction } from "./actions";
+import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction } from "./actions";
+import { R2R_MEDIUM_PROFIT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 
 const RUN_COOKIE = "sf_deals_run";
 
@@ -41,6 +42,8 @@ const MESSAGES: Record<string, string> = {
   restored: "Deal restored.",
   ladder_saved: "Ladder saved. New opens use it from now.",
   bad_ladder: "That ladder did not parse: prices must be numbers, bands ascending, and the last band's ceiling blank.",
+  r2r_saved: "Rent-to-rent bar saved. New screenings use it within a minute.",
+  bad_r2r_bar: "The rent-to-rent bar must be whole pounds from £4,000 (the medium bar) to £20,000 (the cash bar).",
   bad_url: "That is not a listing URL.",
   failed: "That did not work.",
 };
@@ -106,7 +109,7 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
   const [lastRun, settings, runsRes, liveRes, pendingRes, retiredRes, opensRes, activeRes, checkingRes, byAreaRes] = await Promise.all([
     readLastRun(),
     getBillingSettings(),
-    admin.from("marketplace_runs").select("id, kind, dry, started_at, finished_at, summary").order("started_at", { ascending: false }).limit(40),
+    admin.from("marketplace_runs").select("id, kind, dry, started_at, finished_at, summary").in("kind", ["sweep", "recheck"]).order("started_at", { ascending: false }).limit(40),
     admin.from("marketplace_deals").select("kind", { count: "exact", head: true }).eq("status", "live"),
     admin.from("marketplace_deals").select("kind", { count: "exact", head: true }).eq("status", "pending_verify"),
     admin.from("marketplace_deals").select("retired_reason").eq("status", "retired").gte("retired_at", weekAgo).limit(5000),
@@ -211,6 +214,17 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
           </table>
           <p className="mt-2 text-xs text-muted-foreground">Bands must ascend; leave the last ceiling blank. Daily picks drawn from the pool are charged the same ladder.</p>
           <button type="submit" className="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Save ladder</button>
+        </form>
+      </section>
+
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Rent-to-rent bar</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          A rent-to-rent listing qualifies on this much profit a year after rent and running costs (medium from £{R2R_MEDIUM_PROFIT.toLocaleString("en-GB")}). Decided default £{R2R_QUALIFIED_PROFIT.toLocaleString("en-GB")}. New screenings use it within a minute; a live deal is re-screened when its price changes, and one retired as unqualified can come back when the sweep next sees it.
+        </p>
+        <form action={updateR2rBarAction} className="mt-3 flex flex-wrap items-center gap-3">
+          <label className="text-sm">£ a year <input name="r2rBar" type="text" inputMode="numeric" defaultValue={settings.r2rQualifiedProfit} className="ml-2 w-28 rounded-md border border-border bg-background px-2 py-1" /></label>
+          <button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Save bar</button>
         </form>
       </section>
 

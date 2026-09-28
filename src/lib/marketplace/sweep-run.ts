@@ -186,7 +186,7 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     if (listings.length > 0) {
       await cohorts.loadFor(query.area);
       summary.cohortAreas = cohorts.bought();
-      await absorbListings(admin, ctx.cardByCode, ctx.rentTable, cohorts.index, query, listings, summary);
+      await absorbListings(admin, ctx.cardByCode, ctx.rentTable, ctx.r2rBar, cohorts.index, query, listings, summary);
     }
     // A stale answer counts as empty, so a later pass asks again (up to MAX_EMPTY_PER_DAY).
     (res.stale ? summary.emptyKeys : summary.doneKeys).push(query.key);

@@ -3,6 +3,7 @@ import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, 
 import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 import { parseLadder, DEFAULT_DEAL_OPEN_LADDER, type DealOpenLadder } from '../marketplace/ladder.ts';
 import { DEFAULT_DEAL_PRICING, effectivePricingDate, parseDateSetting, parseDays, parsePence, parsePlanCredit, parseRangePct, type DealPricing } from './deal-pricing.ts';
+import { parseR2rBar, R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -46,6 +47,8 @@ export interface BillingSettings {
   profileCompletePence: number;
   /** Batch 12: the share (%) of the non-mandatory questions that need a real answer, not "Not sure", before that credit is paid. */
   profileCreditMinRealPct: number;
+  /** Batch 16: the rent-to-rent bar, £ a year of profit after rent (src/lib/listing/screen.ts parseR2rBar). */
+  r2rQualifiedProfit: number;
 }
 
 export const DEFAULT_PROFILE_COMPLETE_PENCE = 500;
@@ -64,6 +67,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   dealPricing: DEFAULT_DEAL_PRICING,
   profileCompletePence: DEFAULT_PROFILE_COMPLETE_PENCE,
   profileCreditMinRealPct: DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT,
+  r2rQualifiedProfit: R2R_QUALIFIED_PROFIT,
 };
 
 export function invalidateCreditCaches(): void {
@@ -132,6 +136,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       },
       profileCompletePence: Math.max(0, Math.round(num('profile_complete_pence', DEFAULT_PROFILE_COMPLETE_PENCE))),
       profileCreditMinRealPct: Math.min(100, Math.max(0, num('profile_credit_min_real_pct', DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT))),
+      r2rQualifiedProfit: parseR2rBar(kv.get('r2r_qualified_profit')),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

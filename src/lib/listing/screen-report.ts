@@ -66,6 +66,7 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { getAreaCards, getAreaCardsWithin } from '../market/cached';
 import { storedAreaRentTable, areaRentKey } from '../broker/providers/internal';
+import { getBillingSettings } from '../credit/unit-costs';
 import { csvRow } from '../api/csv';
 import { areaRevenueFor, rentPcm, type AreaFigures, type SourcedListing, type SourcingKind } from './sourcing';
 import { screen, bandRank, marketRentFor, grossRevenueFor, type Figure, type RentTier, type Screening } from './screen';
@@ -119,6 +120,8 @@ export interface ScreenReportSummary {
 
 export interface ScreenReport {
   generatedAt: string;
+  /** The rent-to-rent bar the report screened at, £ a year (billing_settings.r2r_qualified_profit). */
+  r2rBar: number;
   /** True when the market snapshot was already cached, so this run triggered no provider calls at all. */
   snapshotWasWarm: boolean;
   note: string;
@@ -171,7 +174,8 @@ export async function buildScreenReport(options: { limit?: number } = {}): Promi
   // report can say honestly whether it triggered any provider calls.
   const warm = await getAreaCardsWithin(SNAPSHOT_WARM_PROBE_MS);
   const snapshotWasWarm = warm !== null && warm.length > 0;
-  const [cards, rentTable] = await Promise.all([snapshotWasWarm ? warm : getAreaCards(), storedAreaRentTable()]);
+  const [cards, rentTable, settings] = await Promise.all([snapshotWasWarm ? warm : getAreaCards(), storedAreaRentTable(), getBillingSettings()]);
+  const r2rBar = settings.r2rQualifiedProfit;
   const cardByCode = new Map(cards.map((c) => [c.code, c]));
 
   const rows: ScreenReportRow[] = [];
@@ -225,7 +229,7 @@ export async function buildScreenReport(options: { limit?: number } = {}): Promi
       if (!marketRent) missing.noRent += 1;
       if (rentTier) rentTiers[rentTier] += 1;
 
-      const screening = screen(kind, { bedrooms, grossRevenue, marketRent });
+      const screening = screen(kind, { bedrooms, grossRevenue, marketRent }, { r2rQualifiedProfit: r2rBar });
       rows.push({
         canonicalUrl: r.canonical_url,
         source: r.source,
@@ -308,6 +312,7 @@ export async function buildScreenReport(options: { limit?: number } = {}): Promi
 
   return {
     generatedAt: new Date().toISOString(),
+    r2rBar,
     snapshotWasWarm,
     note: snapshotWasWarm
       ? 'Measurement only: no provider calls, no writes, no sends, no charges. Screened every stored listing against the cached market snapshot.'

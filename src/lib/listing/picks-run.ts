@@ -869,7 +869,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // recommending, against what the same property would make on a long let?
       // One helper shared with the marketplace and the screening report, so
       // the gate, the pool and the report can never disagree.
-      const { screening, figures } = screenSourced(l, card ?? null, rentTable);
+      const { screening, figures } = screenSourced(l, card ?? null, rentTable, settings.r2rQualifiedProfit);
       const candidate = {
         listing: l,
         deal: dealForSourced(l, figures, memberFinance(m.goals)),

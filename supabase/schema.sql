@@ -4169,3 +4169,22 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 16: deal quality
+-- =========================
+-- Each marketplace deal is checked on its own Airbnb comparables before it is
+-- shown; cheaper-entry deal streams; past reports cleaned up; spend safety
+-- (src/lib/deal-quality). Every statement is idempotent: re-running this
+-- section changes nothing. Service role only. Nothing here is in
+-- ACCESS_COLUMNS (src/lib/access.ts), and must not become so.
+
+-- ── Settings (defaults and bounds in code; a missing or bad row takes the default) ──
+--   r2r_qualified_profit   the rent-to-rent bar: £ a year of profit after rent and running
+--                          costs (src/lib/listing/screen.ts parseR2rBar: whole pounds from
+--                          £4,000, the medium bar, to £20,000; was £8,000). Edited on /admin/deals.
+insert into public.billing_settings (key, value) values
+  ('r2r_qualified_profit', '6000'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

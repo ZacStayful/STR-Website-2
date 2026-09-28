@@ -219,7 +219,7 @@ export async function runDemandSourcing(opts: DemandRunOptions): Promise<DemandR
         const before = summary.newDeals;
         if (res.value.length > 0) {
           await cohorts.loadFor(s.area);
-          await absorbListings(admin, ctx.cardByCode, ctx.rentTable, cohorts.index, query, res.value, summary, 'demand-sourcing');
+          await absorbListings(admin, ctx.cardByCode, ctx.rentTable, ctx.r2rBar, cohorts.index, query, res.value, summary, 'demand-sourcing');
         }
         settle.newDeals = summary.newDeals - before;
         // Answered only once screened: a search that throws part-way stays 'failed', so a later pass can retry it from the cache for free.

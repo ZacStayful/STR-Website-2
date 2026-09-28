@@ -99,6 +99,7 @@ export async function absorbListings(
   admin: Admin,
   cardByCode: Map<string, AreaCardLike>,
   rentTable: ReadonlyMap<string, StoredRent>,
+  r2rBar: number,
   cohortIndex: Map<string, CohortMember>,
   query: SourcingQuery,
   listings: SourcedListing[],
@@ -127,7 +128,7 @@ export async function absorbListings(
   for (const l of listings) {
     const deal = existing.get(l.canonicalUrl);
     const listingCard = (l.postcodeArea ? cardByCode.get(l.postcodeArea) : null) ?? card;
-    const rec = buildDealRecord(l, { card: listingCard, rentTable, firstSeenAt: firstSeen.get(l.canonicalUrl) ?? stamp, cohort: lookupCohorts(cohortIndex, { uprn: l.uprn, postcode: l.postcode, address: l.address }), now });
+    const rec = buildDealRecord(l, { card: listingCard, rentTable, r2rBar, firstSeenAt: firstSeen.get(l.canonicalUrl) ?? stamp, cohort: lookupCohorts(cohortIndex, { uprn: l.uprn, postcode: l.postcode, address: l.address }), now });
     const feedGone = retiredReasonFor(feedStatusOf(l));
     if (!deal) {
       counters.screened[rec.band] = (counters.screened[rec.band] ?? 0) + 1;

@@ -17,6 +17,7 @@ import type { ListingSnapshot } from '../listing/types';
 import { getAreaCardsWithin } from '../market/cached';
 import type { AreaCardData } from '../market/explorer';
 import { storedAreaRentTable } from '../broker/providers/internal';
+import { getBillingSettings } from '../credit/unit-costs';
 import { buildDealRecord, mergeSnapshotIntoListing, qualifiesForMarketplace, type AreaCardLike, type DealRecord, type StoredRent } from './record';
 import { retiredReasonFor } from './status';
 import { nextCheckDueAt, FAILED_CHECK_RETRY_MS, MAX_ENTRY_FAILURES } from './cadence';
@@ -41,6 +42,8 @@ export interface ScreenContext {
   cards: AreaCardData[];
   cardByCode: Map<string, AreaCardLike>;
   rentTable: Map<string, StoredRent>;
+  /** The rent-to-rent bar, £ a year (billing_settings.r2r_qualified_profit). */
+  r2rBar: number;
 }
 
 export async function loadScreenContext(snapshotWaitMs = 20_000): Promise<ScreenContext | null> {
@@ -50,7 +53,8 @@ export async function loadScreenContext(snapshotWaitMs = 20_000): Promise<Screen
     console.warn('[marketplace] stored rent table failed:', (err as Error)?.message ?? err);
     return new Map<string, StoredRent>();
   });
-  return { cards, cardByCode: new Map(cards.map((c) => [c.code, c as AreaCardLike])), rentTable };
+  const r2rBar = (await getBillingSettings()).r2rQualifiedProfit;
+  return { cards, cardByCode: new Map(cards.map((c) => [c.code, c as AreaCardLike])), rentTable, r2rBar };
 }
 
 export function revalidateDeals(): void {
@@ -194,7 +198,7 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
     return { kind: 'retired', reason: 'unsuitable' };
   }
   const card = (merged.postcodeArea ? ctx.cardByCode.get(merged.postcodeArea) : null) ?? (deal.postcode_area ? ctx.cardByCode.get(deal.postcode_area) : null) ?? null;
-  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, firstSeenAt: deal.first_seen_at, now });
+  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, firstSeenAt: deal.first_seen_at, now });
   if (!qualifiesForMarketplace(rec)) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
     return { kind: 'retired', reason: 'unqualified' };

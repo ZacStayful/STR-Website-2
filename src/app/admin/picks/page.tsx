@@ -10,7 +10,8 @@ import { summarisePicks, cleanReasons, reasonLabel, type PickRow } from "@/lib/l
 import { sendingEnabled } from "@/lib/listing/picks-run";
 import { sendTestPickAction, dryRunPicksAction, dryRunPausedAction, dryRunDailyNoticeAction, sendDailyNoticeAction } from "./actions";
 import { buildScreenReport, type ScreenReport } from "@/lib/listing/screen-report";
-import { BAND_LABELS, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
+import { BAND_LABELS } from "@/lib/listing/screen";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { SUITABILITY_REASONS, isUnsuitableReason, type UnsuitableReason } from "@/lib/listing/suitability";
 
 const RUN_COOKIE = "sf_picks_run";
@@ -104,7 +105,7 @@ export default async function PicksAdminPage({ searchParams }: { searchParams: P
 
   const admin = createAdminClient();
   const since = sinceIso(DAYS);
-  const lastRun = await readLastRun();
+  const [lastRun, { r2rQualifiedProfit: r2rBar }] = await Promise.all([readLastRun(), getBillingSettings()]);
   const [{ data, error }, { count: enrolled }, { count: optedOut }] = await Promise.all([
     admin
       .from("sourcing_sent")
@@ -164,7 +165,7 @@ export default async function PicksAdminPage({ searchParams }: { searchParams: P
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           <strong>Paused letter dry run</strong> lists who would get the &#8220;your picks have paused&#8221; email right now (members whose credit ran out, with the picks they missed) and sends nothing; the real send is the 08:00 cron at /api/internal/picks-paused.{" "}
-          <strong>Income screening</strong> runs the 40% uplift test (buy) and the £{R2R_QUALIFIED_PROFIT.toLocaleString("en-GB")} profit test (rent-to-rent) over every listing the finder has stored, and reports how many clear them. It sends nothing, writes nothing and changes nobody&#8217;s picks. It makes no provider calls of its own, though reading a cold market snapshot rebuilds it.
+          <strong>Income screening</strong> runs the 40% uplift test (buy) and the £{r2rBar.toLocaleString("en-GB")} profit test (rent-to-rent, a setting) over every listing the finder has stored, and reports how many clear them. It sends nothing, writes nothing and changes nobody&#8217;s picks. It makes no provider calls of its own, though reading a cold market snapshot rebuilds it.
         </p>
         {lastRun && lastRun.kind !== "notice-dry" && lastRun.kind !== "notice" && <RunResult run={lastRun} />}
         {screeningError && <div className="mt-4 rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">Screening failed: {screeningError}</div>}
@@ -360,7 +361,8 @@ function gbp(n: number | null): string {
 
 /**
  * The income screening distribution: how many stored listings clear the 40%
- * uplift test (buy) and the £8,000 profit test (rent-to-rent), and what is
+ * uplift test (buy) and the rent-to-rent profit test (the bar is a setting,
+ * billing_settings.r2r_qualified_profit), and what is
  * stopping the rest. Read the missing-input counts alongside the pass rates —
  * the funnel is already thin before either test applies.
  */

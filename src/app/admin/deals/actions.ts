@@ -9,6 +9,7 @@ import { runSweep } from '@/lib/marketplace/sweep-run';
 import { runMarketplaceRecheck } from '@/lib/marketplace/recheck-run';
 import { parseLadder, DEFAULT_DEAL_OPEN_LADDER } from '@/lib/marketplace/ladder';
 import { updateBillingSetting } from '@/lib/credit/unit-costs';
+import { parseR2rBar } from '@/lib/listing/screen';
 import { retireDeal, revalidateDeals } from '@/lib/marketplace/server';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
@@ -90,4 +91,18 @@ export async function updateLadderAction(formData: FormData): Promise<void> {
   if (parsed === DEFAULT_DEAL_OPEN_LADDER && JSON.stringify(bands) !== JSON.stringify(DEFAULT_DEAL_OPEN_LADDER)) redirect('/admin/deals?msg=bad_ladder');
   await updateBillingSetting('deal_open_ladder', parsed);
   redirect('/admin/deals?msg=ladder_saved');
+}
+
+/**
+ * The rent-to-rent bar (billing_settings.r2r_qualified_profit): whole pounds
+ * a year of profit after rent and running costs, between the £4,000 medium
+ * bar and the £20,000 cash bar. New screenings read it within a minute.
+ */
+export async function updateR2rBarAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const raw = String(formData.get('r2rBar') ?? '').replace(/[£,\s]/g, '');
+  const pounds = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (parseR2rBar(pounds) !== pounds) redirect('/admin/deals?msg=bad_r2r_bar');
+  await updateBillingSetting('r2r_qualified_profit', pounds);
+  redirect('/admin/deals?msg=r2r_saved');
 }
