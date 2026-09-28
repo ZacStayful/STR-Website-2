@@ -17,7 +17,7 @@ import { reservePence } from "@/lib/sourcing-demand/cost";
 import { cellKey, planSearches, type DemandPlan, type SkipReason } from "@/lib/sourcing-demand/demand";
 import { DEFAULT_DEMAND_SETTINGS } from "@/lib/sourcing-demand/settings";
 import { demandSourcingEnabled } from "@/lib/sourcing-demand/run";
-import { addedSince, areaDataFrom, cachedAnswerKeys, lastSearches, livePool, loadDemand, monthFigures, readDemandSettings, searchedTodayKeys, sweepAreaSet, sweepDoneToday } from "@/lib/sourcing-demand/server";
+import { addedSince, areaDataFrom, cachedAnswerKeys, lastSearches, livePool, loadDemand, monthFigures, readDemandSettings, sweepAreaSet, sweepDoneToday, todaysSearches } from "@/lib/sourcing-demand/server";
 import { defaultDir, demandRows, isSortKey, planView, sortRows, STATUS_LABELS, supplyFrom, type SortDir, type SortKey } from "@/lib/sourcing-demand/table";
 import { runDemandPassAction, updateDemandSettingsAction } from "./actions";
 import { oneOf } from "../picks/responses/windows";
@@ -59,7 +59,7 @@ function nextMonthLabel(month: string): string {
 
 const KIND_LABEL: Record<string, string> = { sale: "Buy", rent: "R2R" };
 const TYPE_LABEL: Record<string, string> = { house: "House", flat: "Flat" };
-const SKIP_LABEL: Record<SkipReason, string> = { below_threshold: "below the threshold", in_sweep: "in the sweep", no_data: "no screening data", searched_today: "searched today" };
+const SKIP_LABEL: Record<SkipReason, string> = { below_threshold: "below the threshold", in_sweep: "in the sweep", no_data: "no screening data", searched_today: "searched today", no_answer_today: "no answer twice today, tried again tomorrow" };
 
 const COLUMNS: { key: SortKey; label: string; right?: boolean; title?: string }[] = [
   { key: "area", label: "Area" },
@@ -114,11 +114,11 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
   const month = londonMonthStart(now);
   const settings = await readDemandSettings(admin);
   const since = new Date(now.getTime() - NEW_DEALS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const [ctx, demand, figures, searchedToday, live, added, doneToday, searches, cached, table, pmi, flash] = await Promise.all([
+  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash] = await Promise.all([
     loadScreenContext(SNAPSHOT_WAIT_MS),
     loadDemand(admin, settings, now),
     monthFigures(admin, month),
-    searchedTodayKeys(admin, londonDay(now)),
+    todaysSearches(admin, londonDay(now)),
     livePool(admin),
     addedSince(admin, since),
     sweepDoneToday(admin, now),
@@ -138,7 +138,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
   for (const [key, c] of liveSupply.byCell) liveDeals.set(key, c.house + c.flat);
   for (const [key, n] of liveSupply.unknown) liveDeals.set(key, (liveDeals.get(key) ?? 0) + n);
   const sweepAreas = ctx ? sweepAreaSet(ctx.cards) : new Set<string>();
-  const plan: DemandPlan = demand && ctx ? planSearches(demand, { minMembers: settings.minMembers, payingWeight: settings.payingWeight, sweepAreas, areaData: areaDataFrom(ctx.cards), searchedToday: searchedToday ?? new Set(), liveDeals }) : { searches: [], skipped: [] };
+  const plan: DemandPlan = demand && ctx ? planSearches(demand, { minMembers: settings.minMembers, payingWeight: settings.payingWeight, sweepAreas, areaData: areaDataFrom(ctx.cards), searchedToday: today?.searched ?? new Set(), gaveUpToday: today?.gaveUp ?? new Set(), liveDeals }) : { searches: [], skipped: [] };
   const view = planView(plan, reserve, cached, MAX_SEARCHES_PER_PASS);
   const rows = demand ? sortRows(demandRows({ demand, plan, sweepAreas, sweepDoneToday: doneToday, live: liveSupply, added: supplyFrom(added ?? []), capReached, includeUnwanted: showAll }).filter((r) => !kindFilter || r.kind === kindFilter), sort, dir) : [];
   const unknownTypes = [...liveSupply.unknown.entries()].sort((a, b) => b[1] - a[1]);

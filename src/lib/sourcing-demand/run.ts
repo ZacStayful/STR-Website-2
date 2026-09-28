@@ -13,8 +13,9 @@ import 'server-only';
  * today), asks the broker as house spend under its own action id, and is
  * then settled to what the meter recorded for that id. A pass stops at the
  * cap, after two searches in a row get no answer, at eight searches or when
- * its time is up. It never buys PropertyData cohorts: it reads the
- * sweep's weekly cache.
+ * its time is up; an area × kind with no answer twice today waits until
+ * tomorrow. It never buys PropertyData cohorts: it reads the sweep's weekly
+ * cache.
  *
  * Entry points: /api/internal/demand-sourcing (cron, secret-gated; off until
  * DEMAND_SOURCING_ENABLED=true) and /admin/demand ("Run a pass now" and the
@@ -36,7 +37,7 @@ import { actualPence, effectiveCap, reservePence, type UnitCostOf } from './cost
 import { cellKey, planSearches } from './demand';
 import { planView } from './table';
 import type { DemandSettings } from './settings';
-import { areaDataFrom, cachedAnswerKeys, callRowsFor, claimSearch, closeStaleClaims, livePool, loadDemand, monthFigures, readDemandSettings, searchedTodayKeys, settleSearch, sweepAreaSet, type Admin } from './server';
+import { areaDataFrom, cachedAnswerKeys, callRowsFor, claimSearch, closeStaleClaims, livePool, loadDemand, monthFigures, readDemandSettings, settleSearch, sweepAreaSet, todaysSearches, type Admin } from './server';
 
 /** The cron's switch: off unless DEMAND_SOURCING_ENABLED is 'true', like the text alerts. */
 export function demandSourcingEnabled(): boolean {
@@ -76,6 +77,8 @@ export interface DemandRunSummary extends AbsorbCounters {
   searched: number;
   answered: number;
   unavailable: number;
+  /** Of those unavailable, how many got only the broker's expired copy (every source failed). */
+  stale: number;
   cached: number;
   failed: number;
   duplicates: number;
@@ -124,15 +127,15 @@ export async function runDemandSourcing(opts: DemandRunOptions): Promise<DemandR
 
   const month = londonMonthStart(startedAt);
   const day = londonDay(startedAt);
-  const [figures, searchedToday, pool, unitCostOf] = await Promise.all([monthFigures(admin, month), searchedTodayKeys(admin, day), livePool(admin), unitCostLookup()]);
-  const schemaReady = figures !== null && searchedToday !== null;
+  const [figures, today, pool, unitCostOf] = await Promise.all([monthFigures(admin, month), todaysSearches(admin, day), livePool(admin), unitCostLookup()]);
+  const schemaReady = figures !== null && today !== null;
   const liveDeals = new Map<string, number>();
   for (const r of pool ?? []) {
     if (!r.postcode_area || (r.kind !== 'sale' && r.kind !== 'rent')) continue;
     const k = cellKey(r.postcode_area.toUpperCase(), r.kind);
     liveDeals.set(k, (liveDeals.get(k) ?? 0) + 1);
   }
-  const plan = planSearches(demand, { minMembers: settings.minMembers, payingWeight: settings.payingWeight, sweepAreas: sweepAreaSet(ctx.cards), areaData: areaDataFrom(ctx.cards), searchedToday: searchedToday ?? new Set(), liveDeals });
+  const plan = planSearches(demand, { minMembers: settings.minMembers, payingWeight: settings.payingWeight, sweepAreas: sweepAreaSet(ctx.cards), areaData: areaDataFrom(ctx.cards), searchedToday: today?.searched ?? new Set(), gaveUpToday: today?.gaveUp ?? new Set(), liveDeals });
   const reserve = reservePence(unitCostOf, COST_PENCE.pmiListings);
 
   const summary: DemandRunSummary = {
@@ -154,6 +157,7 @@ export async function runDemandSourcing(opts: DemandRunOptions): Promise<DemandR
     searched: 0,
     answered: 0,
     unavailable: 0,
+    stale: 0,
     cached: 0,
     failed: 0,
     duplicates: 0,
@@ -204,9 +208,11 @@ export async function runDemandSourcing(opts: DemandRunOptions): Promise<DemandR
       const res = await runMetered({ userId: null, admin: false, action: DEMAND_ACTION, actionId }, () => ask(marketplaceListings, query, { mode: 'cron' }));
       settle.provider = res.provider;
       settle.cached = res.cached;
-      if (!res.value) {
+      if (!res.value || res.stale) {
+        // No answer, or only the broker's expired copy because every source failed: not today's search, so a later pass may try again.
         settle.status = 'unavailable';
         summary.unavailable += 1;
+        if (res.stale) summary.stale += 1;
         failuresInARow += 1;
       } else {
         settle.listings = res.value.length;

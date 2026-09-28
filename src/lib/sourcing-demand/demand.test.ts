@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
-import { areaScores, buildDemand, cellKey, demandScore, kindsOf, leftOut, nearAreas, planSearches, profileAreas, typeOf, type AreaData, type DemandMember, type DemandProfile, type PlanOptions } from './demand.ts';
+import { areaScores, buildDemand, cellKey, demandScore, kindsOf, leftOut, nearAreas, planSearches, profileAreas, summariseToday, typeOf, type AreaData, type DemandMember, type DemandProfile, type PlanOptions } from './demand.ts';
 
 const NOW = new Date('2026-09-28T09:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -176,6 +176,7 @@ const planOpts = (over: Partial<PlanOptions> = {}): PlanOptions => ({
     ['HG', { screenable: true, early: false }],
   ]),
   searchedToday: new Set(),
+  gaveUpToday: new Set(),
   liveDeals: new Map(),
   ...over,
 });
@@ -207,6 +208,35 @@ test('planSearches: added at the threshold, skipped below it, in the sweep, with
   assert.equal(plan.searches[0].early, true, 'IV is searched, flagged as thin data');
   const why = Object.fromEntries(plan.skipped.map((s) => [`${s.area}|${s.kind}`, s.reason]));
   assert.deepEqual(why, { 'HG|sale': 'below_threshold', 'BA|sale': 'in_sweep', 'ZE|sale': 'no_data', 'LE|rent': 'searched_today' });
+});
+
+test('planSearches: a cell with no answer too often today waits until tomorrow', () => {
+  const d = demandOf([
+    ['LE', 'sale', ['a', 'b']],
+    ['IV', 'sale', ['a', 'b']],
+  ]);
+  const plan = planSearches(d, planOpts({ gaveUpToday: new Set(['sale|LE|||']) }));
+  assert.deepEqual(plan.searches.map((s) => s.key), ['sale|IV|||']);
+  assert.deepEqual(plan.skipped.map((s) => [s.area, s.reason]), [['LE', 'no_answer_today']]);
+});
+
+test('summariseToday: reserved or answered is done for the day; no answer twice is left until tomorrow', () => {
+  const t = summariseToday(
+    [
+      { query_key: 'sale|LE|||', status: 'answered' },
+      { query_key: 'rent|LE|||', status: 'reserved' },
+      { query_key: 'sale|IV|||', status: 'unavailable' },
+      { query_key: 'sale|IV|||', status: 'failed' },
+      { query_key: 'rent|IV|||', status: 'unavailable' },
+      { query_key: 'sale|HG|||', status: 'unavailable' },
+      { query_key: 'sale|HG|||', status: 'unavailable' },
+      { query_key: 'sale|HG|||', status: 'answered' },
+    ],
+    2,
+  );
+  assert.deepEqual([...t.searched].sort(), ['rent|LE|||', 'sale|HG|||', 'sale|LE|||']);
+  assert.deepEqual([...t.gaveUp], ['sale|IV|||'], 'one miss is tried again; a key answered in the end is simply done');
+  assert.deepEqual(summariseToday([], 2), { searched: new Set(), gaveUp: new Set() });
 });
 
 test('planSearches: paying members, then profiles, then fewer live deals, then the code decide the order', () => {

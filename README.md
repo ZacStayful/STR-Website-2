@@ -474,7 +474,8 @@ areas get searched, within a monthly spend cap.
   to what the meter recorded for it. When the cap is spent, demand-led
   searches stop until the 1st; the sweep, daily picks and the recheck never
   read it. A pass stops at the cap, after two searches in a row get no
-  answer, at eight searches or after 44 s.
+  answer, at eight searches or after 44 s; an area × kind with no answer
+  twice in a day waits until tomorrow.
 - **Cost:** a search is one PMI listings credit (2p) or one OnTheMarket page
   (0.2p nominal) while PMI is down. This month's spend:
 

@@ -21,7 +21,8 @@ export const ROW_TYPES: readonly RowType[] = ['house', 'flat'];
 /**
  * Where an area × kind stands:
  *   sweep_today / sweep_missed  on the sweep's list, searched today or not yet
- *   demand                      added by the demand-led searches (searched, or to be)
+ *   demand                      added by the demand-led searches (searched today, still to
+ *                               search, or waiting until tomorrow after no answer twice)
  *   cap_reached                 would be added, but this month's cap is spent
  *   below_threshold             wanted, by fewer members than the threshold
  *   no_data                     wanted, but the area cannot be screened
@@ -150,7 +151,7 @@ export function demandRows(input: RowInputs): DemandRow[] {
     else if (planned.has(key)) status = input.capReached ? 'cap_reached' : 'demand';
     else {
       const why = skipped.get(key)?.reason;
-      status = why === 'searched_today' ? 'demand' : why === 'below_threshold' ? 'below_threshold' : why === 'no_data' ? 'no_data' : 'none';
+      status = why === 'searched_today' || why === 'no_answer_today' ? 'demand' : why === 'below_threshold' ? 'below_threshold' : why === 'no_data' ? 'no_data' : 'none';
     }
     for (const type of ROW_TYPES) {
       const wanted = cell ? [cell.byType[type], cell.byType.any] : [];

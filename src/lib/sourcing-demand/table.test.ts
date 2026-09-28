@@ -13,7 +13,7 @@ const profile = (memberId: string, g: MarketGoals, areas: string[]): DemandProfi
 
 const EMPTY = { byCell: new Map(), unknown: new Map() };
 
-function inputs(over: Partial<RowInputs> & Pick<RowInputs, 'demand'>): RowInputs {
+function inputs({ gaveUpToday, ...over }: Partial<RowInputs> & Pick<RowInputs, 'demand'> & { gaveUpToday?: Set<string> }): RowInputs {
   const planOpts: PlanOptions = {
     minMembers: 2,
     payingWeight: 2,
@@ -25,6 +25,7 @@ function inputs(over: Partial<RowInputs> & Pick<RowInputs, 'demand'>): RowInputs
       ['BA', { screenable: true, early: false }],
     ]),
     searchedToday: new Set(),
+    gaveUpToday: gaveUpToday ?? new Set(),
     liveDeals: new Map(),
   };
   return { plan: planSearches(over.demand, planOpts), sweepAreas: new Set(), sweepDoneToday: new Set(), live: EMPTY, added: EMPTY, capReached: false, includeUnwanted: false, ...over };
@@ -85,6 +86,7 @@ test('demandRows: every status an area × kind can be in', () => {
   assert.equal(status(demandRows(inputs({ ...base, capReached: true }))).LE, 'cap_reached');
   const single = buildDemand([member('a')], [profile('a', buyer(null), ['LE'])], OPTS);
   assert.equal(status(demandRows(inputs({ demand: single }))).LE, 'below_threshold');
+  assert.equal(status(demandRows(inputs({ ...base, gaveUpToday: new Set(['sale|LE|||']) }))).LE, 'demand', 'no answer twice today is still a demand area');
 });
 
 test('demandRows: areas nobody wants appear only when asked for, and empty rows never', () => {

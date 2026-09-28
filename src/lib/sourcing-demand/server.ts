@@ -21,7 +21,8 @@ import { parseMarketGoals } from '../market/goals';
 import { parseAboutYou } from '../profile/about';
 import type { AreaCardData } from '../market/explorer';
 import { sweepAreaCodes, sweepAreaLimit, sweepEnabled, sweepHistory, type SweepRunRecord } from '../marketplace/sweep-plan';
-import { areaScores, buildDemand, type AreaData, type Demand, type DemandMember, type DemandProfile } from './demand';
+import { areaScores, buildDemand, summariseToday, type AreaData, type Demand, type DemandMember, type DemandProfile, type TodayKeys, type TodayRow } from './demand';
+import { MAX_NO_ANSWER_PER_DAY } from './config';
 import { DEMAND_SETTING_KEYS, parseDemandSettings, type DemandSettings } from './settings';
 
 export type Admin = ReturnType<typeof createAdminClient>;
@@ -222,14 +223,14 @@ export async function monthFigures(admin: Admin, month: string): Promise<MonthFi
   return { spentPence: num(d.spent_pence), openPence: num(d.open_pence), searches: num(d.searches), answered: num(d.answered), newDeals: num(d.new_deals) };
 }
 
-/** Query keys already reserved or answered on this UK day. Null when unreadable. */
-export async function searchedTodayKeys(admin: Admin, day: string): Promise<Set<string> | null> {
-  const { data, error } = await admin.from('demand_searches').select('query_key').eq('day', day).in('status', ['reserved', 'answered']);
+/** What this UK day's searches rule out until tomorrow: keys reserved or answered, and keys with no answer too often. Null when unreadable. */
+export async function todaysSearches(admin: Admin, day: string): Promise<TodayKeys | null> {
+  const { data, error } = await admin.from('demand_searches').select('query_key, status').eq('day', day);
   if (error) {
     console.warn('[demand-sourcing] today’s searches unreadable (schema behind?):', error.message);
     return null;
   }
-  return new Set(((data ?? []) as { query_key: string }[]).map((r) => r.query_key));
+  return summariseToday((data ?? []) as TodayRow[], MAX_NO_ANSWER_PER_DAY);
 }
 
 /** Marketplace answers still fresh in the broker's cache: asking again costs nothing. Keys only, never the listings. */

@@ -245,7 +245,7 @@ export interface AreaData {
   early: boolean;
 }
 
-export type SkipReason = 'below_threshold' | 'in_sweep' | 'no_data' | 'searched_today';
+export type SkipReason = 'below_threshold' | 'in_sweep' | 'no_data' | 'searched_today' | 'no_answer_today';
 
 export interface PlannedSearch {
   area: string;
@@ -265,6 +265,31 @@ export interface Skipped {
   members: number;
 }
 
+/** One of today's demand_searches rows. */
+export interface TodayRow {
+  query_key: string;
+  status: string;
+}
+
+export interface TodayKeys {
+  /** Reserved or answered today: not searched again until tomorrow. */
+  searched: Set<string>;
+  /** No answer (unavailable, or failed) `maxNoAnswer` times today and never answered: left until tomorrow. */
+  gaveUp: Set<string>;
+}
+
+/** What today's searches rule out for the rest of the day. */
+export function summariseToday(rows: readonly TodayRow[], maxNoAnswer: number): TodayKeys {
+  const searched = new Set<string>();
+  const noAnswer = new Map<string, number>();
+  for (const r of rows) {
+    if (r.status === 'reserved' || r.status === 'answered') searched.add(r.query_key);
+    else if (r.status === 'unavailable' || r.status === 'failed') noAnswer.set(r.query_key, (noAnswer.get(r.query_key) ?? 0) + 1);
+  }
+  const gaveUp = new Set([...noAnswer].filter(([key, n]) => n >= maxNoAnswer && !searched.has(key)).map(([key]) => key));
+  return { searched, gaveUp };
+}
+
 export interface PlanOptions {
   minMembers: number;
   payingWeight: number;
@@ -273,6 +298,8 @@ export interface PlanOptions {
   areaData: ReadonlyMap<string, AreaData>;
   /** Query keys already reserved or answered today. */
   searchedToday: ReadonlySet<string>;
+  /** Query keys that got no answer too often today (summariseToday): left until tomorrow. */
+  gaveUpToday: ReadonlySet<string>;
   /** Live deals per cellKey, the tie-break. */
   liveDeals: ReadonlyMap<string, number>;
 }
@@ -294,6 +321,7 @@ export function planSearches(demand: Demand, opts: PlanOptions): DemandPlan {
     else if (opts.sweepAreas.has(c.area)) skip('in_sweep');
     else if (!opts.areaData.get(c.area)?.screenable) skip('no_data');
     else if (opts.searchedToday.has(key)) skip('searched_today');
+    else if (opts.gaveUpToday.has(key)) skip('no_answer_today');
     else searches.push({ area: c.area, kind: c.kind, key, members, paying: c.paying.size, profiles: c.profiles, score: demandScore(c, opts.payingWeight), early: opts.areaData.get(c.area)?.early ?? false });
   }
   const live = (s: PlannedSearch) => opts.liveDeals.get(cellKey(s.area, s.kind)) ?? 0;

@@ -51,6 +51,8 @@ export interface SweepSummary extends AbsorbCounters {
   answered: number;
   cached: number;
   unavailable: number;
+  /** Of those unavailable, how many got only the broker's expired copy (every source failed): screened, but asked again later. */
+  stale: number;
   listings: number;
   /** Searches left to ask for when the pass started (the list minus what is done). */
   pending: number;
@@ -128,6 +130,7 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     answered: 0,
     cached: 0,
     unavailable: 0,
+    stale: 0,
     listings: 0,
     pending: plan.pending.length,
     doneToday: plan.doneToday,
@@ -169,8 +172,14 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
       summary.emptyKeys.push(query.key);
       continue;
     }
-    summary.answered += 1;
-    if (res.cached) summary.cached += 1;
+    if (res.stale) {
+      // Only the broker's expired copy, because every source failed: screened as before, but it is not today's search.
+      summary.unavailable += 1;
+      summary.stale += 1;
+    } else {
+      summary.answered += 1;
+      if (res.cached) summary.cached += 1;
+    }
     summary.rawCostPence += res.costPence ?? 0;
     const listings = res.value;
     summary.listings += listings.length;
@@ -179,7 +188,8 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
       summary.cohortAreas = cohorts.bought();
       await absorbListings(admin, ctx.cardByCode, ctx.rentTable, cohorts.index, query, listings, summary);
     }
-    summary.doneKeys.push(query.key);
+    // A stale answer counts as empty, so a later pass asks again (up to MAX_EMPTY_PER_DAY).
+    (res.stale ? summary.emptyKeys : summary.doneKeys).push(query.key);
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       break;
