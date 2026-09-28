@@ -49,6 +49,15 @@ export function isAuctionLot(e: AuctionEvidence): boolean {
   return AUCTION_WORDING.test(e.text ?? '');
 }
 
+/**
+ * The evidence a sourced listing carries: the page's flag once it has been
+ * read, and the feed's title, price qualifier and feature lines (a page
+ * read merges its description into the features the record sees).
+ */
+export function auctionEvidenceFor(l: { auction?: boolean | null; title?: string | null; priceQualifier?: string | null; features?: string[] | null }): AuctionEvidence {
+  return { flag: l.auction ?? null, text: [l.title, l.priceQualifier, ...(l.features ?? [])].filter((s): s is string => typeof s === 'string' && s.length > 0).join(' | ') };
+}
+
 export function auctionMethod(text: string | null | undefined): AuctionMethod {
   return MODERN_METHOD.test(text ?? '') ? 'modern' : 'traditional';
 }

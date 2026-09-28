@@ -18,6 +18,9 @@ export const TTL = {
   // Shorter than the daily sourcing cron so cron jitter can never land on a
   // still-fresh answer from yesterday's run.
   sourcing: 20 * 60 * 60 * 1000,
+  // The nationwide low-entry search (Batch 16) comes round to an area about
+  // weekly; shorter than that, so its next visit asks afresh.
+  lowEntry: 3 * DAY,
   // PropertyData: designations, EPC and council tax bands barely move;
   // valuations and stamp duty monthly; demand weekly; the national mortgage
   // averages and the region key stats are bought by the market-warm cron.

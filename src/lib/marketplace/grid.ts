@@ -142,7 +142,7 @@ export const PRIVATE_DEAL_COLUMNS: readonly string[] = ['canonical_url', 'addres
  * member. Kept separate from PUBLIC_DEAL_COLUMNS so the cached area teaser
  * (up to 2,000 rows) does not carry them.
  */
-export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, deal_setup:deal->>setupCost, deal_breakeven:deal->>breakevenOccupancyPct, deal_payback:deal->>paybackMonths, deal_margin:deal->>monthlyMargin`;
+export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, deal_setup:deal->>setupCost, deal_breakeven:deal->>breakevenOccupancyPct, deal_payback:deal->>paybackMonths, deal_margin:deal->>monthlyMargin, deal_cash:deal->>cashRequired, deal_auction:deal->auction->>method`;
 
 export interface DealCard {
   id: string;
@@ -183,6 +183,10 @@ export interface DealCard {
   deal_breakeven?: string | number | null;
   deal_payback?: string | number | null;
   deal_margin?: string | number | null;
+  /** CARD_COLUMNS only (Batch 16): a purchase's cash in at the house finance (£): deposit, tax and setup, or the bridging cash for an auction lot. */
+  deal_cash?: string | number | null;
+  /** CARD_COLUMNS only (Batch 16): 'traditional' | 'modern' when the stored deal is an auction lot, else null. */
+  deal_auction?: string | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;

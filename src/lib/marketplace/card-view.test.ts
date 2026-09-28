@@ -48,3 +48,30 @@ test('a purchase keeps its long-let uplift as a tag', () => {
   const v = cardView({ card: { ...CARD, kind: 'sale', price_amount: 200_000, price_period: 'total', uplift_pct: 45 }, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly) });
   assert.equal(v.uplift, '+45% vs a long let');
 });
+
+test('Batch 16: the cash in / to start line, at the member’s own deposit for a purchase; an auction lot keeps its bridging cash', () => {
+  const common = { state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly) };
+  const rental = cardView({ ...common, card: { ...CARD, deal_setup: '13000' } });
+  assert.equal(rental.cash, '£13k to start');
+  assert.equal(rental.lowEntry, false);
+
+  const sale = { ...CARD, kind: 'sale' as const, price_amount: 120_000, price_period: 'total', uplift_pct: 45, outcode: 'CW1', deal_cash: '49000', deal_auction: null };
+  const house = cardView({ ...common, card: sale });
+  assert.equal(house.cash, '£49k cash in', 'the stored house figure without the member’s finance');
+  assert.equal(house.lowEntry, true);
+  // A 10% deposit: £12,000 + SDLT £6,000 + setup £13,000.
+  const own = cardView({ ...common, card: sale, finance: { depositPct: 10 } });
+  assert.equal(own.cash, '£31k cash in');
+  assert.equal(own.lowEntry, true, 'the stream is judged at the house figure');
+  // A cash buyer puts the whole price in.
+  assert.equal(cardView({ ...common, card: sale, finance: { depositPct: 10 }, cashBuyer: true }).cash, '£139k cash in');
+  // An auction lot: the bridging cash whoever looks.
+  const lot = cardView({ ...common, card: { ...sale, price_amount: 130_000, deal_cash: '85000', deal_auction: 'modern' }, finance: { depositPct: 10 } });
+  assert.equal(lot.cash, '£85k cash in');
+  assert.equal(lot.lowEntry, false);
+  // A row read without the Batch 16 columns has no line and no stream badge.
+  const bare = cardView({ ...common, card: { ...CARD, kind: 'sale' as const, price_amount: 120_000, price_period: 'total', uplift_pct: 45 } });
+  assert.equal(bare.cash, null);
+  assert.equal(bare.lowEntry, false);
+  assert.equal(cardView({ ...common, card: sale, lowEntryMaxCashIn: 40_000 }).lowEntry, false, 'the bar is the setting');
+});

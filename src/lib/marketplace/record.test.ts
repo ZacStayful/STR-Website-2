@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDealRecord, qualifiesForMarketplace, townFrom, feedStatusOf, mergeSnapshotIntoListing, snapshotFromDeal, areaRentKey, type AreaCardLike } from './record.ts';
+import { buildDealRecord, qualifiesForMarketplace, townFrom, feedStatusOf, mergeSnapshotIntoListing, snapshotFromDeal, areaRentKey, parseStoredDeal, type AreaCardLike } from './record.ts';
 import type { SourcedListing } from '../listing/sourcing.ts';
 import { R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
 import type { ListingSnapshot } from '../listing/types.ts';
@@ -131,4 +131,67 @@ test('snapshotFromDeal returns the live snapshot when there is one, else a minim
   assert.equal(minimal.displayAddress, '12 High Street, Fulford, York, YO10 4AB');
   assert.equal(minimal.fetchedAt, NOW.toISOString());
   assert.equal(minimal.parserVersion, 0);
+});
+
+// ── Batch 16 ──
+
+test('every record carries its stream: a cheap sale is low entry at the house cash in, a rental is rent-to-rent, the bar is a rule', () => {
+  const cheap = listing({ price: { amount: 120_000, period: 'total' }, bedrooms: 2 });
+  const rec = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  // 25% deposit £30,000 + SDLT £6,000 + setup £13,000 = £49,000.
+  assert.ok(rec.deal && rec.deal.kind === 'purchase');
+  assert.equal(rec.deal.cashRequired, 49_000);
+  assert.equal(rec.deal.taxCountry, 'england');
+  assert.equal(rec.stream, 'low_entry');
+  const strict = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { lowEntry: { maxCashIn: 40_000 } } });
+  assert.equal(strict.stream, 'top60');
+  assert.equal(buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'top60', '£250,000 needs £84,000');
+  assert.equal(buildDealRecord(listing({ kind: 'rent', price: { amount: 1_200, period: 'pcm' } }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'r2r');
+});
+
+test('an auction lot is priced as one (guide plus uplift, on a bridge) and its stream follows the bridging cash', () => {
+  const lot = listing({ price: { amount: 130_000, period: 'total' }, bedrooms: 4, auction: true });
+  const rec = buildDealRecord(lot, { card: { ...card, byBedrooms: [{ bedrooms: 4, grossRevenue: 60_000, adr: 220 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.ok(rec.deal && rec.deal.kind === 'purchase' && rec.deal.auction, 'modelled as an auction');
+  assert.equal(rec.deal.askingPrice, 149_500, 'the guide plus the usual 15%');
+  assert.equal(rec.deal.auction.guide, 130_000);
+  assert.equal(rec.deal.auction.method, 'traditional', 'no modern-method wording');
+  // Bridging deposit £44,850 + SDLT £7,965 + premium £1,500 + fees £4,093 + setup £20,000.
+  assert.equal(rec.deal.cashRequired, 78_408);
+  assert.equal(rec.stream, 'top60');
+  const online = buildDealRecord(listing({ ...lot, features: ['Scheduled for online auction', 'Legal pack available'] }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(online.deal?.kind === 'purchase' ? online.deal.auction?.method : null, 'modern');
+  const noUplift = buildDealRecord(lot, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { auctionTerms: { upliftPct: 0, traditionalPremium: 1_500, modernPremiumPct: 4.5, vatPct: 20, modernPremiumMin: 6_000, bridgingLtvPct: 70, bridgingMonthlyPct: 0.85, arrangementPct: 2, legalAndValuation: 2_000, termMonths: 12 } } });
+  assert.equal(noUplift.deal?.kind === 'purchase' ? noUplift.deal.askingPrice : null, 130_000, 'the terms are a rule');
+  assert.equal(buildDealRecord(listing({ price: { amount: 130_000, period: 'total' } }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).deal?.kind === 'purchase' ? 'plain' : 'x', 'plain', 'no auction evidence: an ordinary purchase');
+});
+
+test('a listing pays its own nation’s transaction tax', () => {
+  const scottish = listing({ address: '1 Royal Mile, Edinburgh, EH1 1AA', postcode: 'EH1 1AA', outcode: 'EH1', postcodeArea: 'EH' });
+  const rec = buildDealRecord(scottish, { card: { ...card, code: 'EH' }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.ok(rec.deal && rec.deal.kind === 'purchase');
+  assert.equal(rec.deal.taxCountry, 'scotland');
+  // LBTT on £250,000: 2% of £105,000 = £2,100, plus the 8% ADS £20,000.
+  assert.equal(rec.deal.stampDuty, 22_100);
+});
+
+test('a region’s figures standing in for an area screen at low confidence whatever the bedroom match', () => {
+  const strong = { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] };
+  const own = buildDealRecord(listing(), { card: strong, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(own.screening.grossRevenue?.confidence, 'medium');
+  assert.equal(own.screening.confidence, 'medium');
+  const region = buildDealRecord(listing(), { card: { ...strong, fallback: true }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(region.screening.grossRevenue?.confidence, 'low');
+  assert.equal(region.screening.confidence, 'low');
+  assert.equal(region.band, own.band, 'the figure is the same; only the trust in it drops');
+});
+
+test('parseStoredDeal reads a stored deal back defensively', () => {
+  const rec = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  const stored = JSON.parse(JSON.stringify(rec.deal)); // as the row holds it: no undefined fields
+  assert.deepEqual(parseStoredDeal(stored), stored);
+  assert.equal(parseStoredDeal(null), null);
+  assert.equal(parseStoredDeal({ kind: 'purchase' }), null);
+  assert.equal(parseStoredDeal({ kind: 'rent-to-rent', advertisedRentPcm: 900 }), null);
+  assert.equal(parseStoredDeal('{"kind":"purchase"}'), null);
 });

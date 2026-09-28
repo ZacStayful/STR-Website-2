@@ -15,11 +15,11 @@ import { areaCentroid } from '../market/area-centroids';
 import type { SourcedListing, SourcingQuery } from '../listing/sourcing';
 import { fetchCohorts, sourcedPropertiesConfigured } from '../apis/propertydata-sourced';
 import { indexCohorts, lookupCohorts, type CohortMember } from '../listing/cohorts';
-import { buildDealRecord, feedStatusOf, qualifiesForMarketplace, type AreaCardLike, type StoredRent } from './record';
+import { buildDealRecord, feedStatusOf, qualifiesForMarketplace, type AreaCardLike, type DealRules, type StoredRent } from './record';
 import { retiredReasonFor } from './status';
 import { nextCheckDueAt } from './cadence';
 import { REACTIVATABLE_REASONS, RETURNING_REASONS, type DealRow } from './types';
-import { chunk, loadDealsByUrls, priceChangeColumns, recordColumns, retireDeal, type Admin } from './server';
+import { chunk, loadDealsByUrls, priceChangeColumns, recordColumns, retireDeal, writeWithoutMissing, type Admin } from './server';
 import { serverFetchEnabled } from '../listing/fetch';
 import type { Band } from '../listing/screen';
 import type { UnsuitableReason } from '../listing/suitability';
@@ -105,6 +105,7 @@ export async function absorbListings(
   listings: SourcedListing[],
   counters: AbsorbCounters,
   tag = 'marketplace-sweep',
+  rules: DealRules = {},
 ): Promise<void> {
   const now = new Date();
   const stamp = now.toISOString();
@@ -128,7 +129,7 @@ export async function absorbListings(
   for (const l of listings) {
     const deal = existing.get(l.canonicalUrl);
     const listingCard = (l.postcodeArea ? cardByCode.get(l.postcodeArea) : null) ?? card;
-    const rec = buildDealRecord(l, { card: listingCard, rentTable, r2rBar, firstSeenAt: firstSeen.get(l.canonicalUrl) ?? stamp, cohort: lookupCohorts(cohortIndex, { uprn: l.uprn, postcode: l.postcode, address: l.address }), now });
+    const rec = buildDealRecord(l, { card: listingCard, rentTable, r2rBar, rules, firstSeenAt: firstSeen.get(l.canonicalUrl) ?? stamp, cohort: lookupCohorts(cohortIndex, { uprn: l.uprn, postcode: l.postcode, address: l.address }), now });
     const feedGone = retiredReasonFor(feedStatusOf(l));
     if (!deal) {
       counters.screened[rec.band] = (counters.screened[rec.band] ?? 0) + 1;
@@ -155,7 +156,7 @@ export async function absorbListings(
   }
   if (inserts.length > 0) {
     // ignoreDuplicates: a row that appeared between the read and the write keeps its state.
-    const { error, data } = await admin.from('marketplace_deals').upsert(inserts, { onConflict: 'canonical_url', ignoreDuplicates: true }).select('canonical_url');
+    const { error, data } = await writeWithoutMissing(inserts, (rows) => admin.from('marketplace_deals').upsert(rows, { onConflict: 'canonical_url', ignoreDuplicates: true }).select('canonical_url'), tag);
     if (error) console.error(`[${tag}] deals insert failed:`, error.message);
     else counters.newDeals += data?.length ?? inserts.length;
   }
@@ -178,13 +179,8 @@ async function reconcileDeal(admin: Admin, deal: DealRow, l: SourcedListing, rec
       // The price may have moved while it was off the market: record it, as any reprice is.
       const { columns: priceCols } = priceChangeColumns(deal, rec, stamp);
       const revive = { ...recordColumns(l, rec), ...priceCols, status: fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: stamp, check_failures: 0, updated_at: stamp };
-      const run = (columns: Record<string, unknown>) => admin.from('marketplace_deals').update(columns).eq('canonical_url', deal.canonical_url);
-      let { error } = await run(returning ? { ...revive, revived_at: stamp, revived_from: reason } : revive);
-      if (error && returning) {
-        // A database without the Batch 6 columns still revives the deal; it just cannot say it came back.
-        console.warn(`[${tag}] revival stamp failed (schema behind?):`, error.message);
-        ({ error } = await run(revive));
-      }
+      // A database without the Batch 6 columns (revived_at, revived_from) or Batch 16's (stream) still revives the deal: writeWithoutMissing drops what it lacks.
+      const { error } = await writeWithoutMissing(returning ? { ...revive, revived_at: stamp, revived_from: reason } : revive, (columns) => admin.from('marketplace_deals').update(columns).eq('canonical_url', deal.canonical_url), tag);
       if (error) console.error(`[${tag}] reactivate failed:`, error.message);
       else counters.reactivated += 1;
     }

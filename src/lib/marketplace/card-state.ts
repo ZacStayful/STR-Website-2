@@ -74,5 +74,5 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
 export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean }): Promise<Map<string, CardView>> {
   const { payerId } = await payerFor(input.userId);
   const [settings, quoter, states] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, input.cards.map((c) => c.id))]);
-  return new Map(input.cards.map((c) => [c.id, cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, label: quoter.label })]));
+  return new Map(input.cards.map((c) => [c.id, cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntryMaxCashIn: settings.lowEntry.maxCashIn, label: quoter.label })]));
 }

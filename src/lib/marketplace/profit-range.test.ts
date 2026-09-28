@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { profitRange, formatRange, widthFor, upliftTag } from './profit-range.ts';
+import { profitRange, formatRange, widthFor, upliftTag, cardRangeLine } from './profit-range.ts';
 import { purchaseDeal, rentToRentDeal } from '../listing/deal.ts';
 
 const WIDTHS = { high: 10, medium: 15, low: 25 };
@@ -69,4 +69,15 @@ test('other income-dependent figures get the same width', async () => {
   assert.deepEqual(spread(20_000, 60, 100), [15_000, 25_000]);
   assert.equal(moneyRange([17_000, 23_000]), '£17,000–£23,000');
   assert.equal(moneyRange([-1_200, 300]), '−£1,200 to £300');
+});
+
+test('the email line carries the cash in / to start when the card row has it (Batch 16)', () => {
+  const sale = { kind: 'sale' as const, price_amount: 120_000, price_period: 'total', bedrooms: 2, screening_gross: 30_000, screening_confidence: 'medium' };
+  const plain = cardRangeLine(sale, null, WIDTHS);
+  assert.ok(plain && plain.endsWith('/mo · area estimate'), plain ?? 'null');
+  assert.equal(cardRangeLine({ ...sale, deal_cash: '49000' }, null, WIDTHS), `${plain} · £49k cash in`);
+  const rent = { kind: 'rent' as const, price_amount: 1_200, price_period: 'pcm', bedrooms: 2, screening_gross: 40_000, screening_confidence: 'medium', deal_setup: 13_000 };
+  const line = cardRangeLine(rent, null, WIDTHS);
+  assert.ok(line && line.endsWith('/mo · area estimate · £13k to start'), line ?? 'null');
+  assert.equal(cardRangeLine({ ...sale, screening_gross: null, deal_cash: '49000' }, null, WIDTHS), null, 'no range, no line');
 });

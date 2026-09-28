@@ -11,6 +11,8 @@ import { parseLadder, DEFAULT_DEAL_OPEN_LADDER } from '@/lib/marketplace/ladder'
 import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { parseR2rBar } from '@/lib/listing/screen';
 import { retireDeal, revalidateDeals } from '@/lib/marketplace/server';
+import { runLowEntrySearch } from '@/lib/deal-quality/low-entry-run';
+import { LOW_ENTRY_KEY, parseLowEntry, type LowEntrySettings } from '@/lib/deal-quality/config';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -55,6 +57,43 @@ export async function runRecheckPassAction(): Promise<void> {
   await requireAdmin();
   const result = await runMarketplaceRecheck({ dry: false });
   await finish('recheck', result.body as Record<string, unknown>);
+}
+
+// ── Batch 16, Part F: the nationwide low-entry search ──
+
+/** The dry run keeps its area list (the cookie drops arrays) as one line. */
+function withAreaList(body: Record<string, unknown>): Record<string, unknown> {
+  return { ...body, ...(Array.isArray(body.wouldQuery) ? { wouldQuery: (body.wouldQuery as string[]).join(', ') } : {}) };
+}
+
+export async function dryRunLowEntryAction(): Promise<void> {
+  const user = await requireAdmin();
+  const result = await runLowEntrySearch({ dry: true, triggeredBy: user.email ?? 'admin' });
+  await finish('low-entry-dry', withAreaList(result.body as Record<string, unknown>));
+}
+
+export async function runLowEntryPassAction(): Promise<void> {
+  const user = await requireAdmin();
+  const result = await runLowEntrySearch({ dry: false, triggeredBy: user.email ?? 'admin' });
+  await finish('low-entry', result.body as Record<string, unknown>);
+}
+
+/**
+ * billing_settings.low_entry from the form: whole numbers within the bounds
+ * in src/lib/deal-quality/config.ts. A value the bounds refuse is reported,
+ * never quietly replaced by the default.
+ */
+export async function updateLowEntryAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const whole = (name: string) => {
+    const raw = String(formData.get(name) ?? '').replace(/[£,\s]/g, '');
+    return /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  };
+  const next: LowEntrySettings = { maxCashIn: whole('maxCashIn'), searchMaxPrice: whole('searchMaxPrice'), minBedrooms: whole('minBedrooms'), weeklyCapPence: whole('weeklyCapPence'), areasPerPass: whole('areasPerPass') };
+  const parsed = parseLowEntry(next);
+  if ((Object.keys(next) as (keyof LowEntrySettings)[]).some((k) => parsed[k] !== next[k])) redirect('/admin/deals?msg=bad_low_entry');
+  await updateBillingSetting(LOW_ENTRY_KEY, parsed);
+  redirect('/admin/deals?msg=low_entry_saved');
 }
 
 export async function retireDealAction(formData: FormData): Promise<void> {

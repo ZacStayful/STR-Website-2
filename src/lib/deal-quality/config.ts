@@ -12,6 +12,7 @@
 export const DEAL_COMPS_KEY = 'deal_comps';
 export const DEAL_CONFIDENCE_KEY = 'deal_confidence';
 export const DEAL_CHECKS_KEY = 'deal_checks';
+export const LOW_ENTRY_KEY = 'low_entry';
 
 export interface SettingFilter {
   /** Only a search that had to reach at least this far is filtered. */
@@ -84,6 +85,37 @@ export const DEFAULT_DEAL_CHECKS: DealChecksSettings = {
   validDays: 180,
   shortlistExpiryDays: 7,
   recheckCeilingPence: 1200,
+};
+
+/**
+ * The low-entry stream (Part F): a sale the house deal model (25% deposit,
+ * the nation's additional-property tax, £6,000 + £3,500 a bedroom of
+ * setup) gets into for at most `maxCashIn`, and the nationwide search that
+ * feeds it. £135,000 is the widest asking price any size clears £50,000 in
+ * England (a 1-bed: 25% deposit £33,750 + SDLT £6,950 + setup £9,500); a
+ * 4-bed clears it up to £100,000, a Scottish 1-bed up to £122,000 (the 8%
+ * ADS). The search cap is only the provider-side sieve: the deal model makes
+ * the exact test on every listing, auction lots at their auction price.
+ */
+export interface LowEntrySettings {
+  /** A sale is low entry when the house deal model needs at most this much cash in, £. */
+  maxCashIn: number;
+  /** The nationwide search asks for sale listings up to this asking price, £. */
+  searchMaxPrice: number;
+  /** …with at least this many bedrooms (a studio has no comparables search). */
+  minBedrooms: number;
+  /** Provider spend on the nationwide search a UK week (Monday to Sunday), raw pence. */
+  weeklyCapPence: number;
+  /** Areas one cron pass searches: PMI paces listings calls ~5 s apart and a pass has ~44 s. */
+  areasPerPass: number;
+}
+
+export const DEFAULT_LOW_ENTRY: LowEntrySettings = {
+  maxCashIn: 50_000,
+  searchMaxPrice: 135_000,
+  minBedrooms: 1,
+  weeklyCapPence: 400,
+  areasPerPass: 8,
 };
 
 interface Bound {
@@ -173,4 +205,14 @@ export function parseDealChecks(raw: unknown): DealChecksSettings {
     r2r: { min: 0, max: 500, whole: true },
   });
   return { ...base, split };
+}
+
+export function parseLowEntry(raw: unknown): LowEntrySettings {
+  return pick(DEFAULT_LOW_ENTRY, asObject(raw), {
+    maxCashIn: { min: 0, max: 1_000_000, whole: true },
+    searchMaxPrice: { min: 10_000, max: 2_000_000, whole: true },
+    minBedrooms: { min: 0, max: 6, whole: true },
+    weeklyCapPence: { min: 0, max: 100_000, whole: true },
+    areasPerPass: { min: 1, max: 30, whole: true },
+  });
 }

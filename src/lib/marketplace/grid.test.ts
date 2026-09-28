@@ -118,3 +118,9 @@ test('an auction lot is read off its stored motivation verdict; a bare guide pri
   assert.equal(isAuctionCard({ motivation: null }), false);
   assert.equal(isAuctionCard({}), false);
 });
+
+test('a card row carries the house cash in and the auction method as JSON paths, never a private column (Batch 16)', () => {
+  assert.ok(CARD_COLUMNS.includes('deal_cash:deal->>cashRequired'));
+  assert.ok(CARD_COLUMNS.includes('deal_auction:deal->auction->>method'));
+  for (const col of PRIVATE_DEAL_COLUMNS) assert.ok(!CARD_COLUMNS.split(', ').includes(col), col);
+});

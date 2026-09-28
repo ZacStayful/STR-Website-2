@@ -100,7 +100,7 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
     const cashBuyer = cashBuyerOf(own && !own.isActive ? own.goals ?? activeGoals : activeGoals);
     const state = states.get(c.id) ?? NOT_OPENED;
     const opened = state.opened || item.opened;
-    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, cashBuyer, label: quoter.label });
+    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, cashBuyer, lowEntryMaxCashIn: settings.lowEntry.maxCashIn, label: quoter.label });
     // Still in its early-access window for this member (a free member's list
     // can hold one, e.g. after a plan ends): nothing on it can be bought yet.
     return !opened && !dealVisible(c.live_since, visibility.cutoffIso) ? { ...v, quickLook: null, fullAnalysis: null } : v;

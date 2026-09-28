@@ -4284,4 +4284,37 @@ as $$
 $$;
 revoke all on function public.provider_spend_by_unit(timestamptz) from public, anon, authenticated;
 
+-- ── The three streams and the nationwide low-entry search (Part F; src/lib/deal-quality/streams.ts) ──
+--   low_entry        the low-entry stream's bar (a sale the house deal model gets into for at most
+--                    maxCashIn, £), and the nationwide search's price cap (£), bedroom floor, weekly
+--                    spend cap (raw pence, Monday to Sunday UK time) and areas a pass. Bounds in
+--                    src/lib/deal-quality/config.ts; edited on /admin/deals.
+--   deal_comps       the deal check's comparables search (Step 0, Part B): target count, radius
+--   deal_confidence  steps, minimum, setting check; the confidence bands; the daily checks' limits.
+--   deal_checks      Defaults and bounds in src/lib/deal-quality/config.ts.
+insert into public.billing_settings (key, value) values
+  ('low_entry', '{"maxCashIn": 50000, "searchMaxPrice": 135000, "minBedrooms": 1, "weeklyCapPence": 400, "areasPerPass": 8}'::jsonb),
+  ('deal_comps', '{"targetCount": 12, "radiiKm": [0.8, 2, 5, 12, 25], "maxRadiusKm": 25, "minComps": 5, "setting": {"minRadiusKm": 5, "neighbourKm": 1.5, "ratio": 3, "minCluster": 3}}'::jsonb),
+  ('deal_confidence', '{"highPct": 20, "mediumPct": 40, "mediumMaxComps": 7}'::jsonb),
+  ('deal_checks', '{"perDay": 20, "dailyCapPence": 100, "split": {"top60": 6, "low_entry": 8, "r2r": 6}, "maxCallsPerCheck": 3, "validDays": 180, "shortlistExpiryDays": 7, "recheckCeilingPence": 1200}'::jsonb)
+on conflict (key) do nothing;
+
+-- marketplace_deals.stream: which stream a deal is in — top60 (a sale in the
+-- sweep's areas), low_entry (a sale the house finance gets into for at most
+-- the low-entry cash; an auction lot at its auction price) or r2r (a rental).
+-- Set when the record is built (src/lib/marketplace/record.ts); the code
+-- writes it through writeWithoutMissing, so a database without the column
+-- still takes the row. Rows from before the column are filled in once, from
+-- the house-finance deal they carry, at the seeded £50,000 bar.
+alter table public.marketplace_deals add column if not exists stream text;
+create index if not exists marketplace_deals_live_stream_idx on public.marketplace_deals (stream, kind) where status = 'live';
+update public.marketplace_deals
+set stream = case
+  when kind = 'rent' then 'r2r'
+  when deal->>'kind' = 'purchase' and (deal->>'cashRequired')::numeric > 0 and (deal->>'cashRequired')::numeric <= 50000 then 'low_entry'
+  else 'top60'
+end
+where stream is null;
+-- marketplace_runs.kind also takes 'low_entry_search' (src/lib/deal-quality/low-entry-run.ts).
+
 notify pgrst, 'reload schema';

@@ -19,6 +19,7 @@
 import { purchaseDeal, rentToRentDeal, type FinanceDefaults } from '../listing/deal.ts';
 import { MAX_RANGE_PCT } from '../credit/deal-pricing.ts';
 import { parseScreening } from '../listing/screen.ts';
+import { cashLine } from '../deal-quality/streams.ts';
 
 export type RangeConfidence = 'high' | 'medium' | 'low';
 
@@ -133,8 +134,15 @@ export function rangeFromScreening(deal: { kind: 'sale' | 'rent'; price_amount: 
   return profitRange({ kind: deal.kind, priceAmount: deal.price_amount, pricePeriod: deal.price_period, bedrooms: deal.bedrooms, grossRevenue: s?.grossRevenue?.value ?? null, confidence: s?.confidence ?? null, finance, widths });
 }
 
-/** A card's range as an email line: "£450–£700/mo · area estimate", or null when there is none to show. */
-export function cardRangeLine(card: { kind: 'sale' | 'rent'; price_amount: number | string | null; price_period: string | null; bedrooms: number | null; screening_gross?: number | string | null; screening_confidence?: string | null }, finance: ProfitRangeInput['finance'], widths: ProfitRangeInput['widths']): string | null {
+/**
+ * A card's range as an email line: "£450–£700/mo · area estimate · £38k
+ * cash in", or null when there is none to show. The cash in (Batch 16) is
+ * the house-finance figure the card row carries (deal_cash / deal_setup);
+ * a card read without those columns has no cash line.
+ */
+export function cardRangeLine(card: { kind: 'sale' | 'rent'; price_amount: number | string | null; price_period: string | null; bedrooms: number | null; screening_gross?: number | string | null; screening_confidence?: string | null; deal_cash?: number | string | null; deal_setup?: number | string | null }, finance: ProfitRangeInput['finance'], widths: ProfitRangeInput['widths']): string | null {
   const r = profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance, widths });
-  return r ? `${r.label} · area estimate` : null;
+  if (!r) return null;
+  const cash = cashLine(card.kind, card.kind === 'rent' ? card.deal_setup : card.deal_cash);
+  return `${r.label} · area estimate${cash ? ` · ${cash}` : ''}`;
 }

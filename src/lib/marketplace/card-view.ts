@@ -16,7 +16,10 @@ import type { Explanation } from '../tailoring/why.ts';
 import type { Lead } from '../tailoring/about-prompts.ts';
 import { analysisQuote } from '../analysis/deal-analysis-rules.ts';
 import type { DealPricing, PriceLabel } from '../credit/deal-pricing.ts';
-import type { FinanceDefaults } from '../listing/deal.ts';
+import { purchaseDeal, type FinanceDefaults } from '../listing/deal.ts';
+import { countryForPostcode } from '../listing/stamp-duty.ts';
+import { cashLine } from '../deal-quality/streams.ts';
+import { DEFAULT_LOW_ENTRY } from '../deal-quality/config.ts';
 import type { DealCard } from './grid.ts';
 
 export interface CardState {
@@ -29,6 +32,28 @@ export interface CardState {
 }
 
 export const NOT_OPENED: CardState = { opened: false, openPaidBasePence: 0, reportId: null };
+
+function num(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The cash in this member sees (CardView.cash). A purchase at their own
+ * deposit when they have set one (the stored figure is at the house 25%),
+ * on the listing's price and its nation's tax; the stored figure otherwise,
+ * and always for an auction lot, whose cash is the bridging cash. A rental:
+ * its setup cost.
+ */
+function cashInFor(card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'screening_gross'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup'>>, finance: Partial<FinanceDefaults> | null): number | null {
+  if (card.kind === 'rent') return num(card.deal_setup);
+  const stored = num(card.deal_cash);
+  const price = num(card.price_amount);
+  if (card.deal_auction || !finance || finance.depositPct === undefined || finance.depositPct === null || price === null || price <= 0 || (card.price_period !== null && card.price_period !== 'total')) return stored;
+  const own = purchaseDeal(price, { grossRevenue: num(card.screening_gross) ?? 0, adr: 0, bedrooms: card.bedrooms ?? 2, finance, country: countryForPostcode(card.outcode ?? null) });
+  return own.cashRequired;
+}
 
 export interface CardView {
   range: ProfitRange | null;
@@ -50,6 +75,16 @@ export interface CardView {
   lead?: Lead;
   /** "+45% vs a long let", purchases only. */
   uplift: string | null;
+  /**
+   * Batch 16, Part F: what the deal takes to get into. A purchase's cash in
+   * (deposit, tax, setup) at this member's finance when they have set it,
+   * else the house figure the row carries; an auction lot's bridging cash
+   * whoever looks (no deposit choice on a bridge); a rental's setup cost
+   * ("£12k to start"). Null when the row has no figure.
+   */
+  cash: string | null;
+  /** Batch 16, Part F: in the low-entry stream (the house figure within the low-entry bar). */
+  lowEntry: boolean;
   opened: boolean;
   analysed: boolean;
   reportId: string | null;
@@ -61,7 +96,7 @@ export interface CardView {
 }
 
 export function cardView(input: {
-  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'>;
+  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup'>>;
   state: CardState;
   admin: boolean;
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
@@ -69,11 +104,15 @@ export function cardView(input: {
   finance?: Partial<FinanceDefaults> | null;
   /** They buy with cash: nothing is borrowed, so no price is too high for the profit. */
   cashBuyer?: boolean;
+  /** billing_settings.low_entry maxCashIn (getBillingSettings().lowEntry); the decided default without it. */
+  lowEntryMaxCashIn?: number;
   label: (basePence: number) => PriceLabel;
 }): CardView {
   const { card, state } = input;
   // Batch 14: a cash buyer's range has no mortgage in it either, as "Most you can pay" has none (memberFinance).
   const finance = input.cashBuyer ? { ...(input.finance ?? {}), depositPct: 100 } : input.finance ?? null;
+  const cash = cashInFor(card, finance);
+  const houseCash = num(card.deal_cash);
   const range = profitRange({
     kind: card.kind,
     priceAmount: card.price_amount,
@@ -92,6 +131,8 @@ export function cardView(input: {
     range,
     pay,
     uplift: card.kind === 'sale' ? upliftTag(card.uplift_pct) : null,
+    cash: cashLine(card.kind, cash),
+    lowEntry: card.kind === 'sale' && houseCash !== null && houseCash > 0 && houseCash <= (input.lowEntryMaxCashIn ?? DEFAULT_LOW_ENTRY.maxCashIn),
     opened: state.opened,
     analysed,
     reportId: state.reportId,

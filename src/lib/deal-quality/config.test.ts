@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_DEAL_CHECKS, DEFAULT_DEAL_COMPS, DEFAULT_DEAL_CONFIDENCE, parseDealChecks, parseDealComps, parseDealConfidence } from './config.ts';
+import { DEFAULT_DEAL_CHECKS, DEFAULT_DEAL_COMPS, DEFAULT_DEAL_CONFIDENCE, DEFAULT_LOW_ENTRY, parseDealChecks, parseDealComps, parseDealConfidence, parseLowEntry } from './config.ts';
 
 test('no row at all: the decided defaults (20 checks, £1 a day, 6/8/6, 12 comps, 0.8–25 km, high ≤20%, medium ≤40%)', () => {
   assert.deepEqual(parseDealChecks(undefined), DEFAULT_DEAL_CHECKS);
@@ -51,4 +51,20 @@ test('the minimum comparables can never exceed the target', () => {
 
 test('medium is never tighter than high', () => {
   assert.equal(parseDealConfidence({ highPct: 30, mediumPct: 25 }).mediumPct, 30);
+});
+
+test('low entry: £50,000 cash in, a £135,000 search cap, 1+ bedrooms, £4 a week, 8 areas a pass; a bad field keeps its default', () => {
+  assert.deepEqual(parseLowEntry(undefined), DEFAULT_LOW_ENTRY);
+  assert.equal(DEFAULT_LOW_ENTRY.maxCashIn, 50_000);
+  assert.equal(DEFAULT_LOW_ENTRY.searchMaxPrice, 135_000);
+  assert.equal(DEFAULT_LOW_ENTRY.minBedrooms, 1);
+  assert.equal(DEFAULT_LOW_ENTRY.weeklyCapPence, 400);
+  assert.equal(DEFAULT_LOW_ENTRY.areasPerPass, 8);
+  const s = parseLowEntry({ maxCashIn: 75_000, searchMaxPrice: '190000', weeklyCapPence: 600 });
+  assert.equal(s.maxCashIn, 75_000);
+  assert.equal(s.searchMaxPrice, 190_000);
+  assert.equal(s.weeklyCapPence, 600);
+  assert.equal(s.areasPerPass, 8);
+  assert.deepEqual(parseLowEntry({ maxCashIn: -5, searchMaxPrice: 5_000, minBedrooms: 9, weeklyCapPence: 'lots', areasPerPass: 0 }), DEFAULT_LOW_ENTRY);
+  assert.equal(parseLowEntry({ weeklyCapPence: 0 }).weeklyCapPence, 0, 'a zero cap stops the search');
 });
