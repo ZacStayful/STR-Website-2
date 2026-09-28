@@ -138,6 +138,19 @@ export async function activeProfileFor(userId: string): Promise<SavedProfile | n
 }
 
 /**
+ * The id of the member's active profile, read-only (never creates one): what
+ * a charge made outside a page names in its metadata for the Usage split.
+ * Null when there is none or it cannot be read.
+ */
+export async function activeProfileIdOf(userId: string): Promise<string | null> {
+  if (!hasServiceRole()) return null;
+  const { data, error } = await createAdminClient().from('search_profiles').select('id').eq('user_id', userId).eq('is_active', true).is('deleted_at', null).limit(1);
+  if (error) return null;
+  const id = (data ?? [])[0]?.id;
+  return typeof id === 'string' ? id : null;
+}
+
+/**
  * Every running profile of these members, oldest first. Null when the table
  * cannot be read; a member missing from the map has no profile row yet (the
  * run then serves them as one profile, exactly as before this batch).

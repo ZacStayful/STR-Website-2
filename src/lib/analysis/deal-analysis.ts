@@ -67,6 +67,7 @@ import { noticeForEmptyResult, type EnhancedNotice } from './enhanced-notice';
 import { dealAnalysisInput, dealListingPrice } from './deal-input';
 import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, type SharedAnalysis } from './reuse';
 import { logActivity, recordActivity } from '../activity/log';
+import { activeProfileIdOf } from '../profiles/server';
 import { reminderEvent } from './take-up';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
@@ -347,7 +348,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   if (!quote.opened && visibility) {
     let outcome;
     try {
-      outcome = await openDeal({ userId: accountId, adminUser: false, dealId: deal.id, memberId: payer.memberId, visibility });
+      outcome = await openDeal({ userId: accountId, adminUser: false, dealId: deal.id, memberId: payer.memberId, visibility, profileId: payer.memberId ? null : await activeProfileIdOf(accountId) });
     } catch (err) {
       console.error('[deal-analysis] open threw:', err);
       outcome = { ok: false as const, code: 'failed' as const };
@@ -584,10 +585,12 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
     const txIds: number[] = [];
     let charged = 0;
     const memberId = purchase.buyer_id !== purchase.user_id ? purchase.buyer_id : null;
+    // Batch 13: the Usage split names the profile the member was on (their own spend only).
+    const profileId = memberId || opts.adminUser ? null : await activeProfileIdOf(purchase.user_id);
     const charge = async (basePence: number, meta: Record<string, unknown>) => {
       if (opts.adminUser || basePence <= 0) return;
       try {
-        const tx = await debit(purchase.user_id, basePence, { reservationId: purchase.reservation_id, allowNegative: true, meta: { action_id: purchase.id, quantity: 1, unit_cost_pence: 0, markup: 1, deal_id: purchase.deal_id, ...(memberId ? { member_id: memberId } : {}), ...meta } });
+        const tx = await debit(purchase.user_id, basePence, { reservationId: purchase.reservation_id, allowNegative: true, meta: { action_id: purchase.id, quantity: 1, unit_cost_pence: 0, markup: 1, deal_id: purchase.deal_id, ...(memberId ? { member_id: memberId } : {}), ...(profileId ? { profile_id: profileId } : {}), ...meta } });
         if (tx !== null) txIds.push(tx);
         charged += basePence;
       } catch (err) {

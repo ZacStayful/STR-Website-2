@@ -4,6 +4,9 @@ import { siteUrl } from "@/lib/url";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { dailyDealsMonthly, formatPence, newPricingActive } from "@/lib/credit/deal-pricing";
 import { ladderRangeText } from "@/lib/marketplace/ladder";
+import { maxProfilesSetting } from "@/lib/profiles/server";
+import { DEFAULT_MAX_PROFILES } from "@/lib/profiles/rules";
+import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = {
   title: "Terms of service — Stayful Intelligence",
@@ -13,15 +16,19 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-const LAST_UPDATED = "27 September 2026";
+const LAST_UPDATED = "28 September 2026";
+
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
 
 /**
  * Sections 1, 2 and 4 follow the legal drafts of 27 September 2026 (Batch
  * 10). The prices in section 2 are read from billing_settings, so the terms
- * always state what the buttons charge.
+ * always state what the buttons charge. Sections 2A (your profiles) and 4A
+ * (deal sourcers) were added with saved profiles (Batch 13); the number of
+ * profiles is read from billing_settings.saved_profiles_max.
  */
 export default async function TermsPage() {
-  const settings = await getBillingSettings();
+  const [settings, maxProfiles] = await Promise.all([getBillingSettings(), hasServiceRole() ? maxProfilesSetting(createAdminClient()).catch(() => DEFAULT_MAX_PROFILES) : Promise.resolve(DEFAULT_MAX_PROFILES)]);
   const p = settings.dealPricing;
   const topup = settings.spendRates.topup;
   const date = p.newPricingFrom ? new Date(p.newPricingFrom) : null;
@@ -70,12 +77,22 @@ export default async function TermsPage() {
           <li><strong>Prices.</strong> Reports on an address you enter are priced from our data providers&apos; costs. Deal prices and daily deals are set by us. Prices are in plan credit (top-up credit is spent at {topup}×), are shown before you pay (daily deals in Account → Notifications), and may change. All prices are ex VAT unless stated.</li>
         </ul>
 
+        <h2 id="profiles">2A. Your profiles</h2>
+        <p>
+          You can keep up to {NUMBER_WORDS[maxProfiles] ?? maxProfiles} saved profiles, each describing one kind of property you&apos;re looking for. Each profile that isn&apos;t paused gets its own daily deals, charged at the daily deals price in section 2 for each profile, each day. You can rename, pause or delete a profile at any time; pausing or deleting stops its charge from the next day. Deals you kept under a deleted profile stay in My deals.
+        </p>
+
         <h2 id="subscriptions">3. Subscriptions</h2>
         <p>Subscriptions renew automatically each month or year until cancelled. You can cancel any time from your billing page; access and plan credit continue until the end of the period already paid for. Upgrades take effect immediately and are prorated; downgrades take effect at the next renewal.</p>
 
         <h2 id="acceptable-use">4. Acceptable use</h2>
         <p>
           One account per person. Don&apos;t share your account, scrape the service, use automated tools against it beyond the browser extension we provide, or resell, republish or bulk-copy the data or deal lists. You may share individual deals with your own clients, colleagues or advisers using the share feature. We may suspend accounts that breach these terms or that we reasonably believe are being used to abuse promotional credit.
+        </p>
+
+        <h2 id="sourcers">4A. Deal sourcers and professional users</h2>
+        <p>
+          If you use Stayful to find deals for clients, you&apos;re responsible for your relationship with them and for having their permission to record their requirements. Use a nickname or initials rather than a client&apos;s name. Stayful&apos;s figures are estimates to help you screen deals, not advice to you or your clients. Your account is for you (and your team members); don&apos;t share your login or resell access.
         </p>
 
         <h2 id="contact">5. Contact</h2>

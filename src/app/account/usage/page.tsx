@@ -11,6 +11,9 @@ import { usageBreakdown, type UsageCategory } from "@/lib/credit/usage-breakdown
 import { usageLinesSince, usagePeriodFor } from "@/lib/credit/usage-server";
 import { dailyDealsLineFor } from "@/lib/listing/daily-deals";
 import { TopupButtons } from "@/components/credit/TopupButtons";
+import { profilesFor } from "@/lib/profiles/server";
+import { labelsShown } from "@/lib/profiles/rules";
+import { usageByProfile } from "@/lib/profiles/usage";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +56,9 @@ export default async function UsagePage() {
   const period = await usagePeriodFor(payerId, onPlan);
   const { lines, truncated, failed } = await usageLinesSince(payerId, period.start);
   const breakdown = usageBreakdown(lines);
+  // Batch 13: the split by saved profile, for someone with two or more of their own.
+  const saved = credit.member ? null : await profilesFor(user.id);
+  const byProfile = saved?.readable && labelsShown(saved.all) && !failed ? usageByProfile(lines, saved.all) : [];
   const daily = dailyDealsLineFor(quoter.label(admin ? 0 : quoter.pricing.todays5DailyPence), quoter.pricing.todays5DailyPence);
   const member = credit.member;
   const allowance = credit.cycle?.allowancePence ?? 0;
@@ -115,7 +121,24 @@ export default async function UsagePage() {
           {daily && <p className="mt-4 rounded-md bg-muted/60 px-3 py-2 text-xs text-foreground">{daily}. Switch them off any time in <Link href="/account/notifications" className="underline">Notifications</Link>.</p>}
         </section>
 
-        {/* Batch 13: the split by saved profile goes here once profiles exist. */}
+        {byProfile.length > 0 && (
+          <section className="rounded-xl border border-border bg-card p-5" aria-labelledby="usage-by-profile">
+            <h2 id="usage-by-profile" className="text-base font-semibold text-foreground">By profile</h2>
+            <p className="mt-1 text-xs text-muted-foreground">Each profile’s daily deals, and what you opened or analysed while you were on it.</p>
+            <ul className="mt-3 divide-y divide-border">
+              {byProfile.map((r) => (
+                <li key={r.key} className="flex items-baseline justify-between gap-3 py-2.5 text-sm">
+                  <span className="min-w-0 truncate font-medium text-foreground">{r.label}</span>
+                  <span className="shrink-0 text-right">
+                    <span className="font-semibold text-foreground">{r.pct}%</span>
+                    <span className="ml-2 text-xs text-muted-foreground">{formatPence(r.facePence)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs"><Link href="/profiles" className="underline-offset-4 hover:underline">Manage profiles</Link></p>
+          </section>
+        )}
 
         {!admin && (
           <section className="rounded-xl border border-border bg-card p-5">

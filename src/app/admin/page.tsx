@@ -135,6 +135,9 @@ export default async function AdminPage() {
           <Link href="/admin/profile" className="text-sm font-medium text-primary hover:underline">
             Profile quiz
           </Link>
+          <Link href="/admin/profiles" className="text-sm font-medium text-primary hover:underline">
+            Saved profiles
+          </Link>
           <Link href="/admin/next-steps" className="text-sm font-medium text-primary hover:underline">
             Next steps
           </Link>

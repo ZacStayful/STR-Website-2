@@ -21,6 +21,7 @@ import { debit, getBalance, release, reserve, InsufficientCreditError } from '..
 import { isEnforcing } from '../credit/http';
 import { afterDebit } from '../credit/after-debit';
 import { startAction } from '../credit/action';
+import { activeProfileIdOf } from '../profiles/server';
 import { runMetered } from '../credit/context';
 import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from './input';
@@ -196,12 +197,14 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
     const { data: calls } = await admin.from('provider_calls').select('cost_pence').eq('action_id', purchaseId);
     const rawCost = ((calls ?? []) as { cost_pence: number | null }[]).reduce((sum, r) => sum + (Number(r.cost_pence) || 0), 0);
     let txId: number | null = null;
+    // Batch 13: the Usage split names the profile the member was on (their own spend only).
+    const profileId = price > 0 && !payer.memberId ? await activeProfileIdOf(payer.payerId) : null;
     if (price > 0) {
       try {
         txId = await debit(payer.payerId, price, {
           reservationId,
           allowNegative: true,
-          meta: { action: 'pmi_addon', action_id: purchaseId, provider: 'pmi', unit: 'pmi_addon', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: rawCost, description: 'Second opinion from PMI', deal_id: report.deal_id, report_id: input.reportId, ...(payer.memberId ? { member_id: payer.memberId } : {}) },
+          meta: { action: 'pmi_addon', action_id: purchaseId, provider: 'pmi', unit: 'pmi_addon', quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: rawCost, description: 'Second opinion from PMI', deal_id: report.deal_id, report_id: input.reportId, ...(payer.memberId ? { member_id: payer.memberId } : {}), ...(profileId ? { profile_id: profileId } : {}) },
         });
       } catch (err) {
         console.error(`[pmi-addon] debit failed for purchase ${purchaseId}:`, err);
