@@ -468,7 +468,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const screened: Partial<Record<Band, number>> = {};
   const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
   // What Today's list needs to know about a member (src/lib/today/selection.ts).
-  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null });
+  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null, profileActive: m.profile?.isActive ?? false });
   if (dry) {
     // What each member's daily email would carry besides the pick, read
     // without writing anything: a Today list only if one is stored already
@@ -938,8 +938,19 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // in charge order (a member's active profile first), so when the credit
   // runs out part-way it is the later profiles that miss the day.
   const held = new Map<string, number>();
-  for (const m of withCandidates) {
+  // A member with a candidate is emailed, and every one of their profiles
+  // with a Today goes in it and is charged its day: so from the new pricing
+  // date every seat of theirs holds its day here, in charge order, whether it
+  // has a candidate or not. A profile with no candidate never goes ahead of
+  // the active one for want of a hold.
+  const candidateUsers = new Set(withCandidates.map((m) => m.id));
+  for (const m of members.filter((x) => candidateUsers.has(x.id))) {
     const payer = payerIn(payers, m.id);
+    if (!ranked.has(m.key)) {
+      // Its Today alone: held now if the purse covers it; the send loop tries again, and names it if not.
+      if (mode === "per_day" && !m.admin && !payer.suspended && purse.take(payer.payerId, dailyPence)) held.set(m.key, dailyPence);
+      continue;
+    }
     const top = ranked.get(m.key)?.[0];
     const need = priceOf(m, top);
     if (m.admin || need <= 0 || (!payer.suspended && purse.take(payer.payerId, need))) {
@@ -1130,6 +1141,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       if (v?.verdict === "ok" && coverable(m, p)) alternates.push({ ...p, listing: v.listing });
     }
     picks.push({ member: m, pick: chosen, alternates, candidates, nearMiss: Boolean((list[0] as Ranked | undefined)?.nearMiss) });
+  }
+  // A member none of whose profiles has a pick is not emailed by this run
+  // (the 08:10 digest has them): everything their seats hold goes back, so
+  // the rest of the payer's members can use it.
+  {
+    const withPick = new Set(picks.map((x) => x.member.id));
+    for (const m of members) if (!withPick.has(m.id) && (held.get(m.key) ?? 0) > 0) unholdSeat(m);
   }
 
   // ── Send: the day's slot, the pending rows, the email, then the charges ──
@@ -1423,13 +1441,18 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // email carried deals for, once per profile per day, to the payer. Never
       // on the admin's test send.
       const told = row !== null || (built.teasersByPart[i]?.length ?? 0) > 0;
+      let dayCharged = false;
       if (mode === "per_day" && !m.admin && !opts.ignoreToday && told) {
         const dayCharge = await chargeDailyDeals(admin, { userId, payerId: payer.payerId, memberId: payer.memberId, day, pence: dailyPence, run: "picks", sendRef: row?.id ?? null, profile: m.profile ? { id: m.profile.id, active: m.profile.isActive } : null });
         if (dayCharge.charged) {
           summary.chargedBasePence += dailyPence;
           transactionId = dayCharge.transactionId;
+          dayCharged = true;
         }
       }
+      // What this profile held and was not taken (already charged today, a
+      // failed debit, nothing told after all) goes back for the rest of the team.
+      if (!dayCharged && charged <= 0) unholdSeat(m);
       if (row?.dealId) {
         // The pick IS the open: the member holds the page-verified listing, so
         // the sheet on /deals is theirs from now on. Before the new pricing it

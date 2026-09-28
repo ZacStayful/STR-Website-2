@@ -69,7 +69,7 @@ export default async function TodayPage() {
 
   const [selection, pick, count, waiting, checklist, priceLine] = await Promise.all([
     // A paused profile has no daily deals: no list, no pick, until it is resumed.
-    paused ? Promise.resolve(null) : todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId }, now),
+    paused ? Promise.resolve(null) : todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true }, now),
     paused ? Promise.resolve(null) : todaysPick(user.id, now, profileId),
     countDeals(filters, visibility, { userId: user.id }),
     visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),

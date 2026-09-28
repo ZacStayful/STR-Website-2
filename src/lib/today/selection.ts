@@ -74,6 +74,12 @@ export interface MemberContext {
    * Null before the Batch 13 schema: one list a member, as before.
    */
   profileId?: string | null;
+  /**
+   * The profile is the active one: a list chosen today for the member as one
+   * (before their first profile row existed) is its list, not a reason to
+   * choose a second one that differs from the morning's email.
+   */
+  profileActive?: boolean;
 }
 
 /** The day's list: the stored one, or a new one chosen and stored now. Null when it cannot be read (schema not run). */
@@ -92,6 +98,18 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
     return null;
   }
   if (first.data) return fromRow(first.data);
+  if (profileId && member.profileActive) {
+    const legacy = await admin.from('today_selections').select('day, deal_ids, near_miss, advice').eq('user_id', member.userId).eq('day', day).maybeSingle();
+    if (!legacy.error && legacy.data) {
+      const kept = fromRow(legacy.data);
+      const { error: copyErr } = await admin
+        .from('profile_today_lists')
+        .upsert({ profile_id: profileId, user_id: member.userId, day, deal_ids: kept.dealIds, near_miss: kept.nearMiss, advice: kept.advice }, { onConflict: 'profile_id,day', ignoreDuplicates: true });
+      if (copyErr) console.error('[today] adopting the morning list failed:', copyErr.message);
+      const again = await read();
+      return again.data ? fromRow(again.data) : kept;
+    }
+  }
 
   let chosen: Omit<TodaySelection, 'day'>;
   try {
@@ -338,12 +356,17 @@ export interface TodaysPick {
   price: string;
 }
 
-/** With `profileId` (Batch 13), that profile's pick: a member with several profiles gets one pick for each. */
+/**
+ * With `profileId` (Batch 13), that profile's pick: a member with several
+ * profiles gets one pick for each. Pass the ACTIVE profile only: a pick made
+ * for the member as one (untagged: sent before their first profile row
+ * existed) counts as its.
+ */
 export async function todaysPick(userId: string, now: Date = new Date(), profileId: string | null = null): Promise<TodaysPick | null> {
   const since = todayStart(now).getTime();
   let mine: Set<string> | null = null;
   if (profileId && hasServiceRole()) {
-    const { data, error } = await createAdminClient().from('sourcing_sent').select('id').eq('user_id', userId).eq('profile_id', profileId).gte('sent_at', new Date(since).toISOString());
+    const { data, error } = await createAdminClient().from('sourcing_sent').select('id').eq('user_id', userId).or(`profile_id.eq.${profileId},profile_id.is.null`).gte('sent_at', new Date(since).toISOString());
     if (!error) mine = new Set(((data ?? []) as { id: string }[]).map((r) => r.id));
   }
   const pick = (await loadPicks(userId, mine ? 12 : 3)).find((p) => Date.parse(p.sentAt) >= since && (!mine || mine.has(p.id))) ?? null;

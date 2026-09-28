@@ -175,7 +175,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       p.id,
       seatsFor(p.id, profileRows?.get(p.id)).seats.map((seat) => {
         const goals = seat.profile ? seat.profile.goals : parseMarketGoals(p.market_goals);
-        return { ...seat, goals, context: { userId: p.id, payerId, goals, savedAreas: seat.profile ? seat.profile.areas : savedAreas.get(p.id) ?? [], visibility, profileId: seat.profile?.id ?? null } };
+        return { ...seat, goals, context: { userId: p.id, payerId, goals, savedAreas: seat.profile ? seat.profile.areas : savedAreas.get(p.id) ?? [], visibility, profileId: seat.profile?.id ?? null, profileActive: seat.profile?.isActive ?? false } };
       }),
     );
   }

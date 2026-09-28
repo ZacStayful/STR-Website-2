@@ -280,7 +280,10 @@ export async function applyPickRelaxation(token: string): Promise<{ field: strin
   // Saved profiles (Batch 13): the offer was about one profile's filter. When
   // that profile is not the active one, its own row is changed; the active
   // one's lives in market_goals (and the trigger copies it into its row).
-  const own = await pickProfileRow(admin, pick.id, pick.userId);
+  const found = await pickProfileRow(admin, pick.id, pick.userId);
+  // A pick made for a profile since deleted changes nothing: never the active profile instead.
+  if (found === 'gone') return null;
+  const own = found;
   const { data } = own && !own.isActive ? { data: null } : await admin.from('profiles').select('market_goals').eq('id', pick.userId).single();
   const goals = own && !own.isActive ? parseMarketGoals(own.criteria) : parseMarketGoals(data?.market_goals);
   if (!goals) return null;
@@ -309,13 +312,17 @@ export async function applyPickRelaxation(token: string): Promise<{ field: strin
  * fixed PICK_COLUMNS select never names a column the schema may not have
  * yet. Null for an untagged pick, a deleted profile, or before the schema.
  */
-export async function pickProfileRow(admin: ReturnType<typeof createAdminClient>, pickId: string, userId: string): Promise<{ id: string; isActive: boolean; criteria: unknown } | null> {
+/**
+ * The saved profile a pick was made for: its row, 'gone' when the pick names
+ * a profile that has since been deleted, or null when the pick is untagged.
+ */
+export async function pickProfileRow(admin: ReturnType<typeof createAdminClient>, pickId: string, userId: string): Promise<{ id: string; isActive: boolean; criteria: unknown } | 'gone' | null> {
   const { data, error } = await admin.from('sourcing_sent').select('profile_id').eq('id', pickId).eq('user_id', userId).maybeSingle();
   const profileId = error ? null : ((data as { profile_id?: string | null } | null)?.profile_id ?? null);
   if (!profileId) return null;
   const { data: row } = await admin.from('search_profiles').select('id, is_active, criteria').eq('id', profileId).eq('user_id', userId).is('deleted_at', null).maybeSingle();
   const r = row as { id: string; is_active: boolean; criteria: unknown } | null;
-  return r ? { id: r.id, isActive: r.is_active === true, criteria: r.criteria } : null;
+  return r ? { id: r.id, isActive: r.is_active === true, criteria: r.criteria } : 'gone';
 }
 
 /** Links a pick to the pipeline row the member saved it as. */
@@ -328,7 +335,7 @@ export async function markPickSaved(id: string, userId: string, checkedListingId
   // whichever one is active now (Batch 13). Only a row made in the last few
   // minutes (this save) moves: an existing row keeps the profile it has.
   const own = await pickProfileRow(admin, id, userId);
-  if (own) {
+  if (own && own !== 'gone') {
     const { error: tagErr } = await admin
       .from('checked_listings')
       .update({ profile_id: own.id })

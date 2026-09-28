@@ -34,8 +34,9 @@ export async function savePickAction(formData: FormData): Promise<void> {
   if (!pick) redirect('/picks?msg=missing');
   if (pick.checkedListingId) redirect(myDealsFocusPath(`l-${pick.checkedListingId}`));
 
-  // The pick's own profile's finance (Batch 13), else the active profile's.
-  const own = await pickProfileRow(createAdminClient(), id, user.id).catch(() => null);
+  // The pick's own profile's finance (Batch 13), else (untagged, or its profile deleted) the active profile's.
+  const found = await pickProfileRow(createAdminClient(), id, user.id).catch(() => null);
+  const own = found === 'gone' ? null : found;
   const { data: profile } = own ? { data: null } : await supabase.from('profiles').select('market_goals').eq('id', user.id).single();
   const goals = parseMarketGoals(own ? own.criteria : profile?.market_goals);
   let outcome;
