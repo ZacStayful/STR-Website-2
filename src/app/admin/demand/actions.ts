@@ -9,6 +9,7 @@ import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { runDemandSourcing } from '@/lib/sourcing-demand/run';
 import { DEMAND_SETTING_KEYS, validateSettingsForm, type DemandSettings } from '@/lib/sourcing-demand/settings';
 import { runDealCalibration } from '@/lib/deal-quality/calibrate-run';
+import { runReportBackfill } from '@/lib/deal-quality/backfill-run';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const FLASH_COOKIE = 'sf_demand_flash';
@@ -65,4 +66,16 @@ export async function runDealCalibrationAction(formData: FormData): Promise<void
   const dry = formData.get('mode') !== 'run';
   const result = await runDealCalibration({ dry, triggeredBy: user.email ?? 'admin' });
   await flash(dry ? 'calibration-dry' : 'calibration', { status: result.status, ...(result.body as Record<string, unknown>) });
+}
+
+/**
+ * Part D: the Monday backfill clean-up. "Dry run" counts what it would
+ * remove, fill and geocode, and the cost; "Run" does it (duplicates archived
+ * before they are deleted) and carries on where the last run stopped.
+ */
+export async function runReportBackfillAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runReportBackfill({ dry, triggeredBy: user.email ?? 'admin' });
+  await flash(dry ? 'backfill-dry' : 'backfill', { status: result.status, ...(result.body as Record<string, unknown>) });
 }

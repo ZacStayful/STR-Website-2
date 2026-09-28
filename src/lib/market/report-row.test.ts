@@ -39,3 +39,12 @@ test('the analyser quality verdict is carried through, and absent means null', (
   assert.equal(missing.comparables_found, null);
   assert.equal(missing.quality_level, null);
 });
+
+test('occupancy is read into one unit whatever each source wrote (Batch 16 pins them)', () => {
+  // The live analyser writes a 0–1 fraction; the Monday backfill wrote the
+  // PDF's percentage; a deal check's comparables row follows the analyser.
+  assert.equal(toReportRow({ id: 'a', source: 'analyser', occupancy: 0.61 }).occupancy, 61);
+  assert.equal(toReportRow({ id: 'b', source: 'monday_backfill', occupancy: 62 }).occupancy, 62);
+  assert.equal(toReportRow({ id: 'c', source: 'deal_comps', occupancy: 0.58 }).occupancy, 58);
+  assert.equal(toReportRow({ id: 'd', source: 'monday_backfill', occupancy: '48' }).occupancy, 48);
+});

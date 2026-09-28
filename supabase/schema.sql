@@ -4197,6 +4197,22 @@ insert into public.billing_settings (key, value) values
   ('auction_model', '{"upliftPct": 15, "traditionalPremium": 1500, "modernPremiumPct": 4.5, "vatPct": 20, "modernPremiumMin": 6000, "bridgingLtvPct": 70, "bridgingMonthlyPct": 0.85, "arrangementPct": 2, "legalAndValuation": 2000, "termMonths": 12}'::jsonb)
 on conflict (key) do nothing;
 
+-- ── Past reports: the Monday backfill clean-up (Part D; src/lib/deal-quality/backfill.ts) ──
+-- analyser_reports_removed: every analyser_reports row the clean-up removes,
+-- archived whole before it is deleted (an exact duplicate of another row, or
+-- an earlier analysis of the same file), with the row it gave way to. Nothing
+-- is deleted unless its archive row was written. Service role only.
+create table if not exists public.analyser_reports_removed (
+  id uuid primary key,                 -- the removed row's own id
+  removed_at timestamptz not null default now(),
+  reason text not null,                -- exact_duplicate | reanalysed
+  kept_id uuid,                        -- the row that stays in its place
+  removed_by text,                     -- the admin's email, or 'internal'
+  row jsonb not null                   -- the whole row as it was
+);
+alter table public.analyser_reports_removed enable row level security;  -- no policies: service role only
+revoke all on public.analyser_reports_removed from anon, authenticated;
+
 -- ── Spend safety (Part H) ──
 --   area_rent_daily_attempts   the most PropertyData long-let lookups the market snapshot may
 --                              make for its areas in a UTC day, failed attempts included

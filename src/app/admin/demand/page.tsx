@@ -20,8 +20,9 @@ import { demandSourcingEnabled } from "@/lib/sourcing-demand/run";
 import { addedSince, areaDataFrom, cachedAnswerKeys, lastSearches, livePool, loadDemand, monthFigures, readDemandSettings, sweepAreaSet, sweepDoneToday, todaysSearches } from "@/lib/sourcing-demand/server";
 import { defaultDir, demandRows, isSortKey, planView, sortRows, STATUS_LABELS, supplyFrom, type SortDir, type SortKey } from "@/lib/sourcing-demand/table";
 import { calibrationView } from "@/lib/deal-quality/calibrate-run";
+import { latestBackfillRuns } from "@/lib/deal-quality/backfill-run";
 import { CALIBRATION_GATE_PCT, CALIBRATION_MAX_CALLS, VARIANTS, VARIANT_LABELS } from "@/lib/deal-quality/calibration";
-import { runDealCalibrationAction, runDemandPassAction, updateDemandSettingsAction } from "./actions";
+import { runDealCalibrationAction, runDemandPassAction, runReportBackfillAction, updateDemandSettingsAction } from "./actions";
 import { oneOf } from "../picks/responses/windows";
 
 // Mirrored in actions.ts: a 'use server' module may only export async functions.
@@ -116,7 +117,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
   const month = londonMonthStart(now);
   const settings = await readDemandSettings(admin);
   const since = new Date(now.getTime() - NEW_DEALS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash, calibration] = await Promise.all([
+  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash, calibration, backfill] = await Promise.all([
     loadScreenContext(SNAPSHOT_WAIT_MS),
     loadDemand(admin, settings, now),
     monthFigures(admin, month),
@@ -130,6 +131,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
     pmiConfigured() ? pmiAccount().catch(() => null) : Promise.resolve(null),
     readFlash(),
     calibrationView(admin, now),
+    latestBackfillRuns(admin),
   ]);
 
   const schemaReady = figures !== null && searches !== null;
@@ -184,9 +186,9 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
       {flash && (
         <div className="mb-4 rounded-lg border border-border bg-card p-4 text-sm">
           <p className="font-medium text-foreground">
-            {flash.kind === "settings" ? (flash.body.error ? String(flash.body.error) : "Settings saved. The job reads them within a minute.") : flash.kind === "calibration-dry" ? "Comparison dry run (nothing spent)" : flash.kind === "calibration" ? "Comparison run" : "Pass run"} · {new Date(flash.at).toLocaleString("en-GB")}
+            {flash.kind === "settings" ? (flash.body.error ? String(flash.body.error) : "Settings saved. The job reads them within a minute.") : flash.kind === "calibration-dry" ? "Comparison dry run (nothing spent)" : flash.kind === "calibration" ? "Comparison run" : flash.kind === "backfill-dry" ? "Clean-up dry run (nothing changed)" : flash.kind === "backfill" ? "Clean-up run" : "Pass run"} · {new Date(flash.at).toLocaleString("en-GB")}
           </p>
-          {(flash.kind === "pass" || flash.kind === "calibration" || flash.kind === "calibration-dry") && <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(flash.body, null, 1)}</pre>}
+          {(flash.kind === "pass" || flash.kind === "calibration" || flash.kind === "calibration-dry" || flash.kind === "backfill" || flash.kind === "backfill-dry") && <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(flash.body, null, 1)}</pre>}
         </div>
       )}
 
@@ -301,6 +303,28 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
           <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run</button>
           <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run</button>
           <span className="text-xs text-muted-foreground">Dry run spends nothing. Run makes real Airbtics calls within the comparison’s ceiling and takes up to a minute.</span>
+        </form>
+      </section>
+
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Past reports · Monday backfill clean-up</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          The 409 reports read out of past analysis PDFs get their postcode, location and comparables’ figures back. The postcode comes from the lead’s Monday address; where a lead has several PDFs, only a PDF whose name matches that address takes it. Exact duplicates (same lead, same figures) and earlier analyses of the same PDF are archived whole, then deleted; different properties stay. Google geocoding, about 0.4p a postcode, house spend. Each Run carries on where the last one stopped.
+        </p>
+        {backfill?.lastDry && (
+          <p className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">
+            Dry run {new Date(String(backfill.lastDry.at)).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}: {JSON.stringify(backfill.lastDry.remove)} to remove, {String(backfill.lastDry.fillCompFigures ?? 0)} to fill, {String(backfill.lastDry.toLocate ?? 0)} rows to locate from {String(backfill.lastDry.postcodesToGeocode ?? 0)} postcodes (about {money(Number(backfill.lastDry.estimatedCostPence ?? 0))}); not located: {JSON.stringify(backfill.lastDry.notLocated)}.
+          </p>
+        )}
+        {backfill?.lastRun && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Last run {new Date(String(backfill.lastRun.at)).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}: removed {String(backfill.lastRun.removed ?? 0)}, filled {String(backfill.lastRun.filled ?? 0)}, located {String(backfill.lastRun.located ?? 0)} ({String(backfill.lastRun.geocoded ?? 0)} postcodes){backfill.lastRun.outOfTime ? " · ran out of time: press Run again" : ""}.
+          </p>
+        )}
+        <form action={runReportBackfillAction} className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run</button>
+          <span className="text-xs text-muted-foreground">Needs the “Batch 16” schema section (the archive table); without it nothing is removed.</span>
         </form>
       </section>
 
