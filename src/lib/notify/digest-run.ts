@@ -33,6 +33,11 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { parseMarketGoals } from '../market/goals';
 import { dealVisibility, PAID_VISIBILITY } from '../marketplace/visibility';
 import type { MemberContext } from '../today/selection';
+import { tailoringForSeats } from '../tailoring/server';
+import type { TailoringProfile } from '../tailoring/profile';
+import { wantsActFast } from '../tailoring/about-prompts';
+import { sendParts } from '../tailoring/email-answers';
+import { memberFinance } from '../marketplace/most-you-can-pay';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { buildDaily } from './message';
@@ -179,6 +184,17 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       }),
     );
   }
+  // Each seat's tailoring (Batch 14), from the loader the Today page uses. A
+  // failed read leaves every seat untailored: chosen exactly as before.
+  const tailoringBySeat = await tailoringForSeats(
+    admin,
+    [...seatsOf.values()].flatMap((list) => list.map((x) => ({ userId: x.userId, profile: x.profile, goals: x.goals, savedAreas: x.context.savedAreas }))),
+    now,
+  ).catch((err) => {
+    console.error('[digest] tailoring read failed:', (err as Error)?.message ?? err);
+    return new Map<string, TailoringProfile>();
+  });
+  for (const list of seatsOf.values()) for (const x of list) x.context.tailoring = tailoringBySeat.get(x.key) ?? null;
   const contexts: MemberContext[] = [...seatsOf.values()].flatMap((list) => list.map((x) => x.context));
   const plans = await todayPlans(admin, contexts, now, { create: !opts.dry, concurrency: 6 });
   const base = siteUrl();
@@ -251,10 +267,11 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           heading: seat.heading,
           pick: null,
           teasers,
-          advice: plan?.nearMiss ? plan.advice : null,
+          // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
+          advice: plan?.advice ?? null,
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, seat.goals?.finance ?? null, settings.dealPricing.profitRangePct),
+          figureFor: (c) => cardRangeLine(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct),
         },
       });
     }
@@ -274,6 +291,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       // The label is settled below, from what the email turned out to be.
       unsubscribe: { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
+      // Batch 14: "Yes, more like this" / "Not for me" under each teaser, on this send's own token (Part F),
+      // and "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
+      answerToken: token,
+      actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
     });
     // Named for what the email IS, after the early-access backstop has had its
     // say: a Today's 5 whose teasers were all dropped is a changes email, and
@@ -285,7 +306,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       perUser.push({ user: p.id, sent: false, reason: 'nothing_to_say' });
       return;
     }
-    const sendSummary = { teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, subject: built.message.subject };
+    // `parts` (Batch 14): which profile each teaser was sent for, so an answer from the email lands on it.
+    const sendSummary = { teasers: built.teaserIds, parts: sendParts(parts.map((x) => x.seat.profile?.id ?? null), built.teasersByPart), alerts: built.changeIds, droppedTeasers: built.droppedTeasers, subject: built.message.subject };
     if (opts.dry) {
       wouldEmail.push({
         user: p.id,
@@ -294,7 +316,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         tier: paid ? 'paid' : 'free',
         ...sendSummary,
         today: !wantsTeasers(p) ? 'not_wanted' : seats.length === 0 ? 'profiles_paused' : parts.length > 0 ? 'stored' : unfunded.length > 0 ? 'no_credit' : 'chosen_at_send',
-        profiles: parts.map((x, i) => ({ profile: x.seat.profile?.id ?? null, teasers: built.teasersByPart[i]?.length ?? 0, wouldCharge: chargeFor(i) ? dailyPence : 0 })),
+        profiles: parts.map((x, i) => ({ profile: x.seat.profile?.id ?? null, teasers: built.teasersByPart[i]?.length ?? 0, advice: x.deals.advice ?? null, wouldCharge: chargeFor(i) ? dailyPence : 0 })),
+        // Batch 14: every teaser carries "Yes, more like this" / "Not for me" on this send's token; "Act fast" titles.
+        answerLinks: built.teaserIds.length,
+        actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
         unfunded: unfunded.length,
         payer: payers.get(p.id)?.payerId ?? p.id,
       });

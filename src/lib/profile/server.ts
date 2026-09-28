@@ -23,6 +23,7 @@ import 'server-only';
  */
 import { cache } from 'react';
 import { redirect } from 'next/navigation';
+import { after } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { teamOf } from '../team';
@@ -47,6 +48,7 @@ import { cardRangeLine } from '../marketplace/profit-range';
 import { quizPathFor } from '../auth/landing';
 import { logActivity } from '../activity/log';
 import { todayKey } from '../today/day';
+import { mustHaveCountFor, rechooseForMember, tailoringPreview } from '../tailoring/server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -269,7 +271,9 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   if (!s.progress.mandatoryDone && prog.mandatoryDone) logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
   if (!s.quiz.completedAt && prog.complete) logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
 
-  const matchCount = await matchCountFor({ userId, email: input.email, answers: next });
+  // Batch 14: today's list follows the answer (after the response: it never holds the quiz up, and never charges).
+  after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered }).then(() => undefined));
+  const matchCount = await matchCountFor({ userId, email: input.email, answers: next, answered });
   return { ok: true, warning, view: { answers: next, answered, progress: progressView(prog), matchCount, credit } };
 }
 
@@ -350,8 +354,16 @@ export async function creditViewFor(s: ProfileSummary): Promise<CreditView> {
 
 // ── The count and the samples ──
 
-/** "N deals match you": the grid's own head count for these answers. Never charged. */
-export async function matchCountFor(p: { userId: string; email: string | null; answers: Answers }): Promise<number | null> {
+/**
+ * "N deals match you": the grid's own head count for these answers. Never
+ * charged. Batch 14: for a tailored profile, the deals that meet every
+ * must-have instead, which is the count Today shows (`answered`: marks saved
+ * in this same request, which a cached read could miss).
+ */
+export async function matchCountFor(p: { userId: string; email: string | null; answers: Answers; answered?: AnsweredMap }): Promise<number | null> {
+  const tailoring = await tailoringPreview(p.userId, p.answers, p.answered);
+  const must = await mustHaveCountFor({ userId: p.userId, email: p.email, tailoring }).catch(() => null);
+  if (must !== null) return must;
   const visibility = await dealVisibilityFor(p.userId, isAdminEmail(p.email));
   return countDeals(profileFilters(p.answers.goals, p.answers.savedAreas), visibility, { userId: p.userId });
 }

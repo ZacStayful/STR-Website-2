@@ -30,6 +30,7 @@ import { teamOf, payerFor } from '../team';
 import { logActivity } from '../activity/log';
 import { quoterFor } from '../credit/quote-server';
 import { dailyDealsLineFor } from '../listing/daily-deals';
+import { copyFilterModes } from '../tailoring/modes-server';
 import type { ProfilePath } from '../market/goals';
 import {
   checkName,
@@ -279,6 +280,8 @@ export async function createProfile(input: { userId: string; name: unknown; copy
     return fail('Could not create the profile. Please try again.');
   }
   const id = String(data);
+  // Batch 14: the must-have / nice-to-have switches come with the copy.
+  if (source) await copyFilterModes(source.id, id);
   logActivity(input.userId, 'saved_profile_created', { profileId: id, extras: { copied: Boolean(source), for_client: input.forClient, path: input.path ?? null } });
   return { ok: true, id };
 }

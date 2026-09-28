@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { purchaseDeal, rentToRentDeal, stampDutyAdditional, monthlyMortgage, maxPriceForYield, maxRentForMargin, monthlyCashflow, defaultSetupCost } from './deal.ts';
+import { purchaseDeal, rentToRentDeal, stampDutyAdditional, monthlyMortgage, maxPriceForYield, maxPriceForProfit, maxRentForMargin, monthlyCashflow, defaultSetupCost } from './deal.ts';
 
 test('additional-property stamp duty bands', () => {
   assert.equal(stampDutyAdditional(100_000), 5_000);
@@ -117,4 +117,40 @@ test('the mortgage rate records where it came from', () => {
   const plain = purchaseDeal(220_000, base);
   assert.equal(plain.mortgageRateSource, undefined);
   assert.equal(plain.mortgageRateLive, null);
+});
+
+// ── Batch 14: the most you can pay for your own monthly profit ──
+
+test('most you can pay: £30,000 a year, £300 a month at 25% down, 5.5% over 25 years', () => {
+  const gross = 30_000;
+  // The old figure: 10% gross yield, which at that price loses money every month.
+  assert.equal(maxPriceForYield(gross, 10), 300_000);
+  const old = purchaseDeal(300_000, { grossRevenue: gross, adr: 0, bedrooms: 2 });
+  assert.equal(old.netOperating, 12_600);
+  assert.ok(old.cashflowMonthly < -300, `the old figure loses about £332 a month (got ${old.cashflowMonthly})`);
+
+  const r = maxPriceForProfit(12_600, 300, 25, 5.5, 25);
+  assert.ok('price' in r);
+  const price = (r as { price: number }).price;
+  assert.ok(Math.abs(price - 162_843) < 5, `about £163,000 (got ${price})`);
+  // Rounded down to £1,000 it still clears the £300, within £5 of it.
+  const rounded = Math.floor(price / 1_000) * 1_000;
+  assert.equal(rounded, 162_000);
+  const at = 12_600 / 12 - monthlyMortgage(rounded * 0.75, 5.5, 25);
+  assert.ok(at >= 300 && at <= 305, `cash flow £${at.toFixed(2)} a month`);
+  // The exact figure is the inverse of the mortgage: exactly £300 a month.
+  assert.ok(Math.abs(12_600 / 12 - monthlyMortgage(price * 0.75, 5.5, 25) - 300) < 1e-6);
+});
+
+test('most you can pay: never 0 or negative; a cash buyer has no ceiling; no interest still works', () => {
+  assert.deepEqual(maxPriceForProfit(12_600, 1_050, 25, 5.5, 25), { none: true }, 'the whole net is the profit: no price');
+  assert.deepEqual(maxPriceForProfit(6_000, 800, 25, 5.5, 25), { none: true });
+  assert.deepEqual(maxPriceForProfit(-2_000, 0, 25, 5.5, 25), { none: true });
+  assert.deepEqual(maxPriceForProfit(12_600, 300, 100, 5.5, 25), { any: true });
+  const free = maxPriceForProfit(12_600, 300, 25, 0, 25) as { price: number };
+  assert.equal(Math.round(free.price), Math.round((750 * 300) / 0.75));
+  // A different profit or deposit gives a different figure.
+  const at500 = (maxPriceForProfit(12_600, 500, 25, 5.5, 25) as { price: number }).price;
+  const at40 = (maxPriceForProfit(12_600, 300, 40, 5.5, 25) as { price: number }).price;
+  assert.ok(at500 < 162_843 && at40 > 162_843);
 });

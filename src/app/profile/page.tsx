@@ -13,6 +13,10 @@ import { todayKey } from "@/lib/today/day";
 import { saveAdvancedAction } from "./actions";
 import { profilesFor } from "@/lib/profiles/server";
 import { labelsShown } from "@/lib/profiles/rules";
+import { tailoringForMember } from "@/lib/tailoring/server";
+import { activeCriteria, criterionForQuestion, modeOf, NOT_APPLIED, wantsFor } from "@/lib/tailoring/criteria";
+import { isSwitchable } from "@/lib/tailoring/profile";
+import { FilterModeSwitch } from "./_components/FilterModeSwitch";
 
 export const metadata: Metadata = {
   title: "Your profile — Stayful Intelligence",
@@ -29,7 +33,7 @@ const SECTION_ORDER: SectionId[] = ["about", "buy", "r2r", "source", "manage"];
  * count Today shows, so a change moves it at once; the day's deals follow
  * from the next Today's 5.
  */
-export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ via?: string | string[]; saved?: string | string[]; new?: string | string[] }> }) {
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ via?: string | string[]; saved?: string | string[]; new?: string | string[]; mode?: string | string[] }> }) {
   const params = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   const supabase = await createSupabaseServerClient();
@@ -50,7 +54,10 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
       </main>
     );
   }
-  const [count, credit, savedProfiles] = await Promise.all([matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers }), creditViewFor(summary), profilesFor(user.id)]);
+  const [count, credit, savedProfiles] = await Promise.all([matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers, answered: summary.quiz.answered }), creditViewFor(summary), profilesFor(user.id)]);
+  // Batch 14: which answers are must-haves and which nice-to-haves, for this profile.
+  const tailoring = await tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, summary.answers.goals, summary.answers.savedAreas, now);
+  const switchedOn = tailoring ? activeCriteria(wantsFor(tailoring)) : new Set<string>();
   // Saved profiles (Batch 13): these answers are the active profile's; "About you" is shared by all of them.
   const profileName = savedProfiles.readable && savedProfiles.active && labelsShown(savedProfiles.all) ? savedProfiles.active.name : null;
 
@@ -81,6 +88,16 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             </p>
           )}
           <p className="mt-1 text-sm text-muted-foreground">{progress.path ? `${PATH_LABELS[progress.path]}. ` : ""}Every answer here shapes the deals we show you. Tap one to change it{progress.complete ? "" : ", or carry on where you left off"}.</p>
+          {first(params.mode) === "1" && (
+            <p role="status" className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
+              Saved. Today’s deals for this profile now follow it.
+            </p>
+          )}
+          {first(params.mode) === "0" && (
+            <p role="status" className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              Could not save that switch. Please try again shortly.
+            </p>
+          )}
           {first(params.new) === "1" && (
             <p role="status" className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
               New profile created as a copy. Change whatever’s different: tap any answer below.
@@ -113,8 +130,12 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
               {s.questions.map((q) => {
                 const mark = quiz.answered[q.id];
                 const label = mark?.notSure ? "Not sure" : answerLabel(q.id, answers);
+                // Batch 14: the answer's switch, when this answer judges deals at all.
+                const criterion = criterionForQuestion(q.id);
+                const active = tailoring && criterion && switchedOn.has(criterion) && !mark?.notSure ? criterion : null;
+                const mode = active && tailoring ? modeOf(active, tailoring) : null;
                 return (
-                  <li key={q.id}>
+                  <li key={q.id} id={`q-${q.id}`} className="scroll-mt-4">
                     <Link href={editHref(q.id)} className="flex min-h-14 items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40">
                       <span className="min-w-0">
                         <span className="block text-sm font-medium text-foreground">{q.short}</span>
@@ -122,6 +143,18 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
                       </span>
                       <span className="shrink-0 text-xs font-semibold text-primary">Change</span>
                     </Link>
+                    {active && mode && isSwitchable(active) && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3">
+                        <span className="text-xs text-muted-foreground">{mode === "must" ? "Deals that miss this aren’t shown." : "Deals that miss this are shown lower down."}</span>
+                        <FilterModeSwitch criterion={active} question={q.id} mode={mode} label={q.short} />
+                      </div>
+                    )}
+                    {active === "motivation" && (
+                      <p className="px-4 pb-3 text-xs text-muted-foreground">{mode === "must" ? "A must-have: deals from sellers who show no sign of it aren’t shown." : "A nice-to-have: motivated sellers are shown first."}</p>
+                    )}
+                    {NOT_APPLIED.includes(q.id) && label && !mark?.notSure && (
+                      <p className="px-4 pb-3 text-xs text-muted-foreground">Listings don’t say this yet, so it doesn’t change which deals you see.</p>
+                    )}
                   </li>
                 );
               })}

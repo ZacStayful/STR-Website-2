@@ -68,7 +68,8 @@ export interface QuickEstimate {
   /** True when we looked for tracked performance and no provider had it. */
   trackedMissing: boolean;
   pmiMarket: { adr: number | null; occupancy: number | null; revenueAnnual: number | null; activeListings: number | null; supplyGrowthPct: number | null; grade: string | null; updatedAt: string | null } | null;
-  deal: Deal | null;
+  /** Batch 14: with the minimum monthly profit it was worked at, for "most you can pay". */
+  deal: (Deal & { minProfitPcm?: number }) | null;
   /** A lookup was skipped (provider budget spent, or it took longer than the request could wait); the UI says so instead of showing nothing. */
   limited: boolean;
   /** Why there is no estimate, rung by rung (only when `estimate` is null; older stored rows lack it). */

@@ -8,6 +8,7 @@
  */
 import { detectListingUrl, SOURCE_LABELS } from '../../src/lib/listing/detect.ts';
 import { formatListingPrice } from '../../src/lib/listing/format.ts';
+import { mostYouCanPayForDeal, payLine } from '../../src/lib/marketplace/most-you-can-pay.ts';
 import { esc, send, type CheckResponse, type CheckResult, type StatusResult } from './shared.ts';
 
 const HOST_ID = 'stayful-intelligence-root';
@@ -122,8 +123,11 @@ function resultHtml(site: string, r: CheckResponse): string {
 
   let deal = '';
   const d = q.deal;
-  if (d?.kind === 'purchase') deal = `<div class="deal">At ${gbp(d.askingPrice)}: <strong>${d.grossYieldPct.toFixed(1)}% gross yield</strong> · ${gbp(d.cashflowMonthly)}/mo after mortgage · max price for ${d.targetYieldPct}%: ${gbp(d.maxPriceForTargetYield)}</div>`;
-  if (d?.kind === 'rent-to-rent') deal = `<div class="deal">Rent-to-rent at ${gbp(d.advertisedRentPcm)} pcm: <strong>${gbp(d.monthlyMargin)}/mo margin</strong>${d.breakevenOccupancyPct !== null ? ` · breakeven ${Math.round(d.breakevenOccupancyPct)}% occupancy` : ''}</div>`;
+  // Batch 14: the most you can pay for the member's own monthly profit, not a 10% yield.
+  const pay = d ? payLine(mostYouCanPayForDeal(d, { minProfitPcm: d.minProfitPcm, basis: 'listing' })) : '';
+  const payText = pay ? ` · ${esc(pay[0].toLowerCase() + pay.slice(1))}` : '';
+  if (d?.kind === 'purchase') deal = `<div class="deal">At ${gbp(d.askingPrice)}: <strong>${d.grossYieldPct.toFixed(1)}% gross yield</strong> · ${gbp(d.cashflowMonthly)}/mo after mortgage${payText}</div>`;
+  if (d?.kind === 'rent-to-rent') deal = `<div class="deal">Rent-to-rent at ${gbp(d.advertisedRentPcm)} pcm: <strong>${gbp(d.monthlyMargin)}/mo margin</strong>${d.breakevenOccupancyPct !== null ? ` · breakeven ${Math.round(d.breakevenOccupancyPct)}% occupancy` : ''}${payText}</div>`;
 
   const report = `${site}/estimate?listing=${encodeURIComponent(snap.canonicalUrl)}`;
   const explorer = r.checkedListingId ? `${site}/markets?pane=listings&listing=${encodeURIComponent(r.checkedListingId)}` : `${site}/markets?check=${encodeURIComponent(snap.canonicalUrl)}`;

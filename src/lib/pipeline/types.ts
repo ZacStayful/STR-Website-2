@@ -36,7 +36,7 @@ export type MessageField = (typeof MESSAGE_FIELDS)[number];
  * figure is missing). The code decides which line is shown, so these are
  * always filled when their line appears.
  */
-export const OFFER_FIELDS = ['targetYield', 'targetMargin', 'targetCeiling', 'opening', 'low', 'high', 'motivated', 'timeOnMarket', 'reductions'] as const;
+export const OFFER_FIELDS = ['targetYield', 'targetMargin', 'targetCeiling', 'opening', 'low', 'high', 'motivated', 'timeOnMarket', 'reductions', 'minProfit', 'depositPct', 'mortgageRate', 'termYears'] as const;
 export type OfferField = (typeof OFFER_FIELDS)[number];
 
 export type Fields = Partial<Record<string, string | null>>;
@@ -94,6 +94,8 @@ export interface OfferWording {
     noRevenue: string;
     studio: string;
     noMargin: string;
+    /** Batch 14: a purchase no price makes the member's monthly profit on. */
+    noPrice: string;
     tooFarBelow: PerKind;
     notMarketplace: string;
     noHistory: string;

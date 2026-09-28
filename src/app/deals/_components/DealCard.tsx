@@ -2,11 +2,13 @@ import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
+import { payLine } from "@/lib/marketplace/most-you-can-pay";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { earlyAccessHint } from "@/lib/marketplace/early-access";
 import { PASS_REASON_GROUPS, type DealReaction } from "@/lib/marketplace/reactions";
 import { priceText } from "@/lib/credit/deal-pricing";
 import type { CardView } from "@/lib/marketplace/card-view";
+import { ANALYSIS_LEAD_LINE } from "@/lib/tailoring/about-prompts";
 import { openDealAction } from "../actions";
 import { DealCardFrame } from "./DealCardFrame";
 
@@ -77,21 +79,61 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           {badges.tags.map((t) => (
             <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
           ))}
+          {view?.explanation?.elsewhere && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">Best elsewhere</span>}
         </div>
       </div>
       <div className="p-3">
+        {view?.numbers && view.numbers.length > 0 ? (
+          <>
+            {/* Batch 14: three numbers for this member's role and goal (src/lib/tailoring/numbers.ts). */}
+            <dl className="grid grid-cols-3 gap-2">
+              {view.numbers.map((n) => (
+                <div key={n.key} className="min-w-0">
+                  <dd className="truncate text-sm font-bold text-foreground">{n.value}</dd>
+                  <dt className="truncate text-[11px] text-muted-foreground">{n.label}</dt>
+                  {n.help && <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">{n.help}</p>}
+                </div>
+              ))}
+            </dl>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              area estimate
+              {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
+            </p>
+            <p className="mt-0.5 text-xs font-medium text-foreground">
+              {price ? `Asking ${price}` : ""}
+              {view.pay ? `${price ? " · " : ""}${payLine(view.pay)}` : ""}
+            </p>
+          </>
+        ) : (
+          <>
         <div className="flex items-baseline justify-between gap-2">
           <p className="text-lg font-bold text-foreground">{view ? (view.range?.label ?? "—") : figure.big}</p>
           {price && <p className="text-sm font-semibold text-foreground">{price}</p>}
         </div>
         {view ? (
-          <p className="text-xs text-muted-foreground">
-            area estimate{view.range ? ` · ${view.range.basis}` : ""}
-            {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
-          </p>
+          <>
+            <p className="text-xs text-muted-foreground">
+              area estimate{view.range ? ` · ${view.range.basis}` : ""}
+              {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
+            </p>
+            {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure. */}
+            {view.pay && <p className="mt-0.5 text-xs font-medium text-foreground">{price ? `Asking ${price} · ` : ""}{payLine(view.pay)}</p>}
+          </>
         ) : (
           <p className="text-xs text-muted-foreground">{figure.small}</p>
         )}
+          </>
+        )}
+        {/* Batch 14: why it is on their list, and how well it matches. */}
+        {view?.explanation && (view.explanation.why || view.explanation.match) && (
+          <p className="mt-1 text-xs text-primary">
+            {view.explanation.match && <span className="mr-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold">{view.explanation.match}</span>}
+            {view.explanation.why}
+          </p>
+        )}
+        {view?.explanation?.flags.map((f) => (
+          <p key={f} className="text-[11px] font-medium text-warning">{f}</p>
+        ))}
         <p className="mt-1.5 truncate text-sm font-medium text-foreground">{where || "Location on the sheet"}</p>
         {motivation.length > 0 && <p className="truncate text-xs font-medium text-primary">{motivation.join(" · ")}</p>}
         <p className="truncate text-xs text-muted-foreground">{describeType(card)}</p>
@@ -144,17 +186,29 @@ function PriceButtons({ dealId, live, view }: { dealId: string; live: boolean; v
     );
   }
   const full = view.fullAnalysis ? priceText(view.fullAnalysis) : "";
+  const quick = !view.opened && live && view.quickLook ? (
+    <form action={openDealAction}>
+      <input type="hidden" name="id" value={dealId} />
+      <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
+    </form>
+  ) : null;
+  const analysis = view.opened || live ? <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}</Link> : null;
+  // Batch 14, Part E: "Knowing the numbers" holds them back, so the Full analysis comes first, with one line.
+  if (view.lead === "analysis" && analysis) {
+    return (
+      <div className="border-t border-border px-3 py-2">
+        <p className="mb-1.5 text-[11px] text-muted-foreground">{ANALYSIS_LEAD_LINE}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          {analysis}
+          {quick}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2">
-      {!view.opened && live && view.quickLook && (
-        <form action={openDealAction}>
-          <input type="hidden" name="id" value={dealId} />
-          <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
-        </form>
-      )}
-      {(view.opened || live) && (
-        <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}</Link>
-      )}
+      {quick}
+      {analysis}
     </div>
   );
 }

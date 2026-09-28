@@ -22,33 +22,21 @@ import 'server-only';
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { getAreaCardsWithin } from '../market/cached';
-import { personaliseScore, personalInputFor } from '../market/personalise';
-import { areaMetaForCode } from '../market/areas';
 import type { MarketGoals } from '../market/goals';
-import { applyCandidateFeedback, feedbackRules, type AppliedRules, type PickFeedback } from '../listing/picks';
-import { rankForMember } from '../listing/rank';
-import { rankPicks, type SourcedListing } from '../listing/sourcing';
-import { isSendable } from '../listing/screen';
+import type { SourcedListing } from '../listing/sourcing';
 import { formatListingPrice } from '../listing/format';
-import { analyseRelaxation, closestMatch, describeRelaxation } from '../listing/relax';
 import { loadPicks } from '../listing/picks-server';
-import type { DealFilters } from '../marketplace/grid';
-import { rankingPool, type RankingRow } from '../marketplace/queries';
+import { rankingPool } from '../marketplace/queries';
 import type { DealVisibility } from '../marketplace/visibility';
-import { applyKindFeedback, buildCandidate, CLOSEST_ADVICE, dealKey, filtersForGoals, nearestAreas, nearestOutside, orderForToday, referencePoint, WIDEN_AREA_ADVICE, type Built, type CandidateContext, type TodayCandidate } from './candidates';
+import { usesTailoring, type TailoringProfile } from '../tailoring/profile';
+import type { TailoredOptions } from '../tailoring/today';
+import { widenOptions, type WidenOption } from '../tailoring/widen';
+import { chooseDay, type DayChoice } from './choose-day';
 import { feedbackForMember } from './feedback';
-import { todayKey, todayStart, TODAY_SIZE } from './day';
+import { todayKey, todayStart } from './day';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
-/** Rows of the pool read for ranking: the best-profit end of what matches. */
-const POOL_LIMIT = 1000;
-/** How deep the ranking reaches, as the picks run's SPREAD_DEPTH. */
-const DEPTH = 40;
-/** Rows read when looking for the nearest thing to a search that matched nothing. */
-const NEAR_LIMIT = 400;
-/** Areas searched outside the member's own when theirs hold nothing. */
-const NEARBY_AREAS = 12;
 /** How long the page waits for the market snapshot (area fit); without it the deal's own figures carry the fit. */
 const AREA_WAIT_MS = 4_000;
 const PAGE = 1000;
@@ -59,6 +47,14 @@ export interface TodaySelection {
   dealIds: string[];
   nearMiss: boolean;
   advice: string | null;
+  /**
+   * A tailored list (Batch 14): the deals in the member's pool that meet
+   * every must-have when it was chosen, for "N deals match you". Null for an
+   * untailored list, or before Batch 14's schema section has been run.
+   */
+  mustMatches: number | null;
+  /** The pool read hit its limit when the count was taken: it is "at least". */
+  mustCapped?: boolean;
 }
 
 export interface MemberContext {
@@ -80,6 +76,12 @@ export interface MemberContext {
    * choose a second one that differs from the morning's email.
    */
   profileActive?: boolean;
+  /**
+   * The profile's tailoring (Batch 14, src/lib/tailoring): its answers,
+   * must-have / nice-to-have switches and what the member liked. Absent or
+   * not tailored (usesTailoring): the list is chosen exactly as before.
+   */
+  tailoring?: TailoringProfile | null;
 }
 
 /** The day's list: the stored one, or a new one chosen and stored now. Null when it cannot be read (schema not run). */
@@ -88,10 +90,7 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   const admin = createAdminClient();
   const day = todayKey(now);
   const profileId = member.profileId ?? null;
-  const read = () =>
-    profileId
-      ? admin.from('profile_today_lists').select('day, deal_ids, near_miss, advice').eq('profile_id', profileId).eq('day', day).maybeSingle()
-      : admin.from('today_selections').select('day, deal_ids, near_miss, advice').eq('user_id', member.userId).eq('day', day).maybeSingle();
+  const read = () => (profileId ? readProfileList(admin, profileId, day) : admin.from('today_selections').select('day, deal_ids, near_miss, advice').eq('user_id', member.userId).eq('day', day).maybeSingle());
   const first = await read();
   if (first.error) {
     console.error('[today] selection read failed (schema behind?):', first.error.message);
@@ -111,7 +110,7 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
     }
   }
 
-  let chosen: Omit<TodaySelection, 'day'>;
+  let chosen: DayChoice;
   try {
     const exclude = await excludedFor(admin, member, day);
     chosen = await chooseToday(admin, member, exclude, now);
@@ -123,7 +122,7 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   // An empty day is not stored: nothing to keep steady, and the next visit
   // may find something (a deal leaving the early-access window, a read that
   // failed this time).
-  if (chosen.dealIds.length === 0) return { day, ...chosen };
+  if (chosen.dealIds.length === 0) return { day, dealIds: [], nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
   const { error } = profileId
     ? await admin
         .from('profile_today_lists')
@@ -132,18 +131,63 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
         .from('today_selections')
         .upsert({ user_id: member.userId, day, deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice }, { onConflict: 'user_id,day', ignoreDuplicates: true });
   if (error) console.error('[today] selection insert failed:', error.message);
+  if (!error && profileId && chosen.mustMatches !== null) await storeTailoring(admin, profileId, day, chosen, []);
   // Read back: when two devices chose at once, both show the one stored first.
   const again = await read();
-  return again.data ? fromRow(again.data) : { day, ...chosen };
+  return again.data ? fromRow(again.data) : { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
 }
 
-function fromRow(r: { day: unknown; deal_ids: unknown; near_miss: unknown; advice: unknown }): TodaySelection {
+interface ListRow {
+  day: unknown;
+  deal_ids: unknown;
+  near_miss: unknown;
+  advice: unknown;
+  shown_ids?: unknown;
+  tailoring?: unknown;
+}
+
+const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+function fromRow(r: ListRow): TodaySelection {
+  const t = r.tailoring && typeof r.tailoring === 'object' ? (r.tailoring as Record<string, unknown>) : null;
+  const n = typeof t?.mustMatches === 'number' && Number.isFinite(t.mustMatches) ? t.mustMatches : null;
   return {
     day: String(r.day),
-    dealIds: Array.isArray(r.deal_ids) ? r.deal_ids.filter((x): x is string => typeof x === 'string') : [],
+    dealIds: ids(r.deal_ids),
     nearMiss: r.near_miss === true,
     advice: typeof r.advice === 'string' && r.advice.trim() ? r.advice : null,
+    mustMatches: n,
+    mustCapped: t?.capped === true,
   };
+}
+
+/**
+ * A profile's list for a day, with Batch 14's two columns when they are
+ * there (shown_ids, tailoring). Until that schema section is run the list
+ * still reads, without them: an un-run section never blanks Today.
+ */
+async function readProfileList(admin: Admin, profileId: string, day: string): Promise<{ data: ListRow | null; error: { message: string } | null }> {
+  const full = await admin.from('profile_today_lists').select('day, deal_ids, near_miss, advice, shown_ids, tailoring').eq('profile_id', profileId).eq('day', day).maybeSingle();
+  if (!full.error) return { data: (full.data as ListRow | null) ?? null, error: null };
+  const plain = await admin.from('profile_today_lists').select('day, deal_ids, near_miss, advice').eq('profile_id', profileId).eq('day', day).maybeSingle();
+  return { data: (plain.data as ListRow | null) ?? null, error: plain.error };
+}
+
+let warnedTailoringColumns = 0;
+/**
+ * What a tailored choice adds to the stored list: the must-have count for
+ * the header, and every deal it took off (shown_ids), so a replaced card is
+ * never shown again. Best effort: without Batch 14's columns the list itself
+ * is already stored and nothing else is lost.
+ */
+async function storeTailoring(admin: Admin, profileId: string, day: string, chosen: Pick<DayChoice, 'mustMatches' | 'capped'>, shown: readonly string[]): Promise<void> {
+  const patch: Record<string, unknown> = { tailoring: { mustMatches: chosen.mustMatches, capped: chosen.capped } };
+  if (shown.length > 0) patch.shown_ids = [...new Set(shown)];
+  const { error } = await admin.from('profile_today_lists').update(patch).eq('profile_id', profileId).eq('day', day);
+  if (error && Date.now() - warnedTailoringColumns > 60_000) {
+    warnedTailoringColumns = Date.now();
+    console.warn('[today] tailoring columns not stored (Batch 14 schema not run?):', error.message);
+  }
 }
 
 /**
@@ -205,126 +249,123 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
         if ((data?.length ?? 0) < PAGE) break;
       }
     })(),
+    (async () => {
+      // Cards a re-choose took off a list (Batch 14): never shown again on a
+      // later day, nor on another profile's list today. This profile's own
+      // today can take them back: a switch flipped back restores the list.
+      // Its own query, so a schema without the column costs only this.
+      if (!member.profileId) return;
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await admin.from('profile_today_lists').select('profile_id, day, shown_ids').eq('user_id', member.userId).lte('day', day).order('day', { ascending: true }).order('profile_id', { ascending: true }).range(from, from + PAGE - 1);
+        if (error) break;
+        for (const r of (data ?? []) as { profile_id: string; day: string; shown_ids: unknown }[]) {
+          if (String(r.day) === day && r.profile_id === member.profileId) continue;
+          for (const id of ids(r.shown_ids)) out.add(id);
+        }
+        if ((data?.length ?? 0) < PAGE) break;
+      }
+    })(),
   ]);
   return out;
 }
 
-async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date): Promise<Omit<TodaySelection, 'day'>> {
-  const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
-  const rules = feedbackRules(feedback);
-  const filters = applyKindFeedback(filtersForGoals(member.goals, member.savedAreas), rules);
-  const mode = member.goals?.motivation.mode ?? 'off';
-  const ctx = await candidateContext(member.goals, filters, now);
-  const usable = (rows: RankingRow[]): Built[] => {
-    const out: Built[] = [];
-    for (const row of rows) {
-      if (exclude.has(row.id)) continue;
-      // "Wrong area" answers: the picks run stops searching there, Today stops showing it.
-      if (row.postcode_area && rules.badAreas.has(row.postcode_area.toUpperCase())) continue;
-      const built = buildCandidate(row, ctx);
-      if (built) out.push(built);
-    }
-    return out;
-  };
-
-  // ── The day's list ──
-  const pool = usable(await rankingPool(filters, member.visibility, { userId: member.userId }, POOL_LIMIT));
-  const exact = pool.filter((b) => b.fails.length === 0).map((b) => b.candidate);
-  const ranked = rankForMember(exact, feedback, rules, { depth: DEPTH, mode }).ranked;
-  const top = await withFullListings(admin, orderForToday(ranked), feedback, rules);
-  if (top.length > 0) return { dealIds: top.slice(0, TODAY_SIZE).map((c) => c.dealId), nearMiss: false, advice: null };
-
-  // ── Nothing matched: the closest thing, and what to change ──
-  // First inside their own areas, with the budget lifted: a row failing only
-  // on price (or on time on market) is what tells relax.ts which setting is
-  // costing them the most.
-  const loose = usable(await rankingPool({ ...filters, minPrice: null, maxPrice: null }, member.visibility, { userId: member.userId }, NEAR_LIMIT));
-  const misses = viableMisses(loose.filter((b) => b.fails.length > 0), feedback, rules);
-  let closest: Built | null = null;
-  if (misses.length > 0) {
-    // Fewest failed settings first, then the seller most ready to deal (relax.ts).
-    const best = closestMatch(
-      misses.map((m) => m.near),
-      (l) => misses.find((m) => m.near.listing === l)?.candidate.motivation?.score ?? 0,
-    );
-    const chosen = best ? misses.find((m) => m.near === best) ?? null : null;
-    closest = chosen;
-    const motiv = member.goals?.motivation ?? null;
-    const kind = chosen?.candidate.listing.kind ?? 'sale';
-    const relaxation = analyseRelaxation(
-      misses.map((m) => m.near),
-      { kind, thresholdUnits: motiv ? (kind === 'rent' ? motiv.minWeeksOnMarket : motiv.minMonthsOnMarket) : 0, maxPrice: filters.maxPrice, minBedrooms: null },
-    );
-    const advice = describeRelaxation(relaxation);
-    if (chosen && advice) return { dealIds: [chosen.candidate.dealId], nearMiss: true, advice };
-  }
-  // Their areas hold nothing that works: the nearest deal just outside them.
-  if (filters.areas.length > 0) {
-    const own = new Set(filters.areas);
-    const from = referencePoint(member.goals, filters.areas);
-    const nearby = nearestAreas(from, own, NEARBY_AREAS);
-    if (nearby.length > 0) {
-      const wide = usable(await rankingPool({ ...filters, areas: nearby }, member.visibility, { userId: member.userId }, NEAR_LIMIT));
-      const around = rankForMember(wide.filter((b) => b.fails.length === 0).map((b) => b.candidate), feedback, rules, { depth: NEAR_LIMIT, mode }).ranked;
-      const checked = await withFullListings(admin, around, feedback, rules, around.length);
-      const nearest = nearestOutside(checked, from, own);
-      if (nearest) return { dealIds: [nearest.dealId], nearMiss: true, advice: WIDEN_AREA_ADVICE };
-    }
-  }
-  // Something close, but no single setting would have admitted it.
-  if (closest) return { dealIds: [closest.candidate.dealId], nearMiss: true, advice: CLOSEST_ADVICE };
-  return { dealIds: [], nearMiss: false, advice: null };
-}
-
 /**
- * Near misses that could still be offered: past the member's feedback rules,
- * a deal that works (the money test the ranking applies), clearing the income
- * bar, and card-cleared if they asked for that. "Closest" never means a deal
- * the member already ruled out or one that loses money.
+ * Choosing itself is pure (choose.ts); this wires its reads to the database.
+ * Feedback and the market snapshot are read first, in that order, as before.
  */
-function viableMisses(misses: Built[], feedback: PickFeedback[], rules: AppliedRules): Built[] {
-  const survivors = new Set(applyCandidateFeedback(misses.map((m) => m.candidate), feedback, rules).map((c) => c.dealId));
-  const pass = misses.filter((m) => survivors.has(m.candidate.dealId));
-  const works = new Set(rankPicks(pass.map((m) => m.candidate), pass.length, 'off').map((c) => c.dealId));
-  return pass.filter((m) => works.has(m.candidate.dealId) && (!m.candidate.screening || isSendable(m.candidate.screening)) && (m.candidate.precheck === 'ok' || !rules.strictSuitability));
-}
-
-async function candidateContext(goals: MarketGoals | null, filters: DealFilters, now: Date): Promise<CandidateContext> {
+async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date, opts: TailoredOptions = {}): Promise<DayChoice> {
+  const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
   // The market snapshot scores areas for fit. On a cold cache the page does
   // not wait for a rebuild: without it the deal's own figures carry the fit.
-  const cards = (await getAreaCardsWithin(AREA_WAIT_MS)) ?? [];
-  const byCode = new Map(cards.map((c) => [c.code, c]));
-  const fits = new Map<string, number | null>();
-  return {
-    goals,
-    areaFit: (code) => {
-      if (!code) return null;
-      if (fits.has(code)) return fits.get(code)!;
-      const card = byCode.get(code);
-      const fit = !card ? null : goals ? personaliseScore(personalInputFor(card, goals), goals)?.score ?? card.score?.score ?? null : card.score?.score ?? null;
-      fits.set(code, fit);
-      return fit;
+  const cards = await getAreaCardsWithin(AREA_WAIT_MS);
+  return chooseDay(
+    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null },
+    {
+      pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit),
+      fullListings: (dealIds) => fullListingsFor(admin, dealIds),
     },
-    areaName: (code) => (code ? byCode.get(code)?.name ?? areaMetaForCode(code).name : 'the UK'),
-    minPrice: filters.minPrice,
-    maxPrice: filters.maxPrice,
-    now,
-  };
+    opts,
+  );
+}
+
+/** Of these deals, the ones the member has kept, passed or opened: a re-choose never takes those off. */
+async function answeredOrOpened(admin: Admin, member: MemberContext, dealIds: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (dealIds.length === 0) return out;
+  const [reactions, opens] = await Promise.all([
+    admin.from('deal_reactions').select('deal_id').eq('user_id', member.userId).in('deal_id', [...dealIds]),
+    admin.from('deal_opens').select('deal_id').eq('user_id', member.payerId).eq('status', 'open').in('deal_id', [...dealIds]),
+  ]);
+  if (reactions.error || opens.error) throw new Error(`answers unreadable: ${(reactions.error ?? opens.error)!.message}`);
+  for (const r of [...(reactions.data ?? []), ...(opens.data ?? [])] as { deal_id: string }[]) out.add(r.deal_id);
+  return out;
 }
 
 /**
- * The last pass of the feedback rules, on the full stored listing of each
- * ranked deal. The card's columns carry no title, features or price
- * qualifier, and "needs too much work" (and a title-only flat or house)
- * reads those. The full listing is read here, server-side, and never leaves:
- * what comes back is the same candidate, with its public listing.
+ * Today's list chosen again after the member changed what they want (a
+ * must-have switch, a widen, an accepted prompt, a profile answer): the
+ * cards that still meet every must-have stay where they are, and so does
+ * anything they have kept, passed or opened; the rest are replaced from
+ * deals not shown today. Only a profile's list, only a tailored one, and
+ * only once one has been chosen today (otherwise the next visit chooses
+ * with the new answers anyway).
+ *
+ * The update is checked (the list must still be the one read), so two
+ * devices cannot overwrite each other: on a clash it reads again. It writes
+ * nothing but the list: no pick, no open, no charge.
  */
-async function withFullListings<C extends TodayCandidate>(admin: Admin, ranked: C[], feedback: PickFeedback[], rules: AppliedRules, limit = DEPTH): Promise<C[]> {
-  const head = ranked.slice(0, limit);
-  if (head.length === 0) return [];
+export async function rechooseToday(member: MemberContext, now: Date = new Date()): Promise<TodaySelection | null> {
+  if (!hasServiceRole() || !member.profileId || !usesTailoring(member.tailoring)) return null;
+  const admin = createAdminClient();
+  const day = todayKey(now);
+  const profileId = member.profileId;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data, error } = await readProfileList(admin, profileId, day);
+    if (error || !data) return null;
+    const stored = fromRow(data);
+    const current = stored.dealIds;
+    let chosen: DayChoice;
+    try {
+      const [exclude, pinned] = await Promise.all([excludedFor(admin, member, day), answeredOrOpened(admin, member, current)]);
+      chosen = await chooseToday(admin, member, exclude, now, { current, pinned });
+    } catch (err) {
+      console.error('[today] re-choosing failed:', (err as Error)?.message ?? err);
+      return null;
+    }
+    const same = chosen.dealIds.length === current.length && chosen.dealIds.every((id, i) => id === current[i]);
+    if (same && chosen.nearMiss === stored.nearMiss && chosen.advice === stored.advice) {
+      await storeTailoring(admin, profileId, day, chosen, []);
+      return { ...stored, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
+    }
+    const { data: updated, error: updErr } = await admin
+      .from('profile_today_lists')
+      .update({ deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice })
+      .eq('profile_id', profileId)
+      .eq('day', day)
+      .filter('deal_ids', 'eq', `{${current.join(',')}}`)
+      .select('day');
+    if (updErr) {
+      console.error('[today] re-choose save failed:', updErr.message);
+      return null;
+    }
+    // Changed underneath us (another device, another answer): read it again.
+    if (!updated || updated.length === 0) continue;
+    const replaced = current.filter((id) => !chosen.dealIds.includes(id));
+    await storeTailoring(admin, profileId, day, chosen, [...ids(data.shown_ids), ...replaced]);
+    return { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
+  }
+  return null;
+}
+
+/**
+ * The full stored listing of each deal, by deal id, for the last pass of the
+ * feedback rules (choose.ts withFullListings). Read here, server-side, and
+ * never returned to a page.
+ */
+async function fullListingsFor(admin: Admin, dealIds: string[]): Promise<Map<string, SourcedListing>> {
   const urlById = new Map<string, string>();
-  for (let i = 0; i < head.length; i += ID_CHUNK) {
-    const { data, error } = await admin.from('marketplace_deals').select('id, canonical_url').in('id', head.slice(i, i + ID_CHUNK).map((c) => c.dealId));
+  for (let i = 0; i < dealIds.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('marketplace_deals').select('id, canonical_url').in('id', dealIds.slice(i, i + ID_CHUNK));
     if (error) console.warn('[today] deal urls read failed:', error.message);
     for (const r of (data ?? []) as { id: string; canonical_url: string }[]) urlById.set(r.id, r.canonical_url);
   }
@@ -335,14 +376,35 @@ async function withFullListings<C extends TodayCandidate>(admin: Admin, ranked: 
     if (error) console.warn('[today] listings read failed:', error.message);
     for (const r of (data ?? []) as { canonical_url: string; snapshot: SourcedListing }[]) if (r.snapshot && typeof r.snapshot === 'object') snapshots.set(r.canonical_url, r.snapshot);
   }
-  const full = head.map((c) => {
-    const url = urlById.get(c.dealId);
-    const snap = url ? snapshots.get(url) : undefined;
-    // The stand-in URL is kept, so nothing downstream is keyed on the real one.
-    return snap ? { ...c, listing: { ...snap, canonicalUrl: dealKey(c.dealId) } } : c;
-  });
-  const kept = new Set(applyCandidateFeedback(full, feedback, rules).map((c) => c.dealId));
-  return head.filter((c) => kept.has(c.dealId));
+  const out = new Map<string, SourcedListing>();
+  for (const [id, url] of urlById) {
+    const snap = snapshots.get(url);
+    if (snap) out.set(id, snap);
+  }
+  return out;
+}
+
+/**
+ * Widen-and-see (Batch 14, tailoring/widen.ts), for the Today page only (the
+ * daily runs have no time for it): the offers for a tailored profile whose
+ * list is short, each with the real count of deals it would add. Empty on
+ * any failure: the page then says the day is short without offers.
+ */
+export async function widenOptionsFor(member: MemberContext, current: readonly string[], now: Date = new Date()): Promise<WidenOption[]> {
+  if (!hasServiceRole() || !usesTailoring(member.tailoring)) return [];
+  const admin = createAdminClient();
+  try {
+    const [exclude, feedback, cards] = await Promise.all([excludedFor(admin, member, todayKey(now)), feedbackForMember(admin, member.userId, now, member.profileId ?? null), getAreaCardsWithin(AREA_WAIT_MS)]);
+    return await widenOptions(
+      { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring },
+      member.tailoring,
+      { pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit), fullListings: (dealIds) => fullListingsFor(admin, dealIds) },
+      current,
+    );
+  } catch (err) {
+    console.error('[today] widen offers failed:', (err as Error)?.message ?? err);
+    return [];
+  }
 }
 
 /** This morning's pick, when there is one: already paid for, so already opened. */

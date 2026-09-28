@@ -24,6 +24,13 @@ import { openPricePence } from "@/lib/marketplace/ladder";
 import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
+import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
+import { profilesFor } from "@/lib/profiles/server";
+import { tailoringForMember } from "@/lib/tailoring/server";
+import { numbersForCard } from "@/lib/tailoring/numbers";
+import { explainCard } from "@/lib/tailoring/why";
+import { ANALYSIS_LEAD_LINE, consentOpening, leadFor } from "@/lib/tailoring/about-prompts";
+import { areaLookup } from "@/lib/tailoring/order";
 import { priceLine } from "../_components/DealCard";
 import { openDealAction } from "../actions";
 import { dealTrackingFor } from "@/lib/listing/tracked-server";
@@ -83,8 +90,12 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const sheet = await dealSheet(id, payerId, adminUser, visibility);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
-  const [settings, credit, cards, profileRes, quoter] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser)]);
+  const [settings, credit, cards, profileRes, quoter, savedRes, savedProfiles] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
+  // Batch 14: the member's finance as their figures use it (a cash buyer borrows nothing).
+  const finance = memberFinance(goals);
+  // Batch 14: the member's tailoring (their active profile), for the numbers that lead the sheet.
+  const tailoring = await tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, goals, ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area));
   const pricing = quoter.pricing;
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
@@ -104,7 +115,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // The profit as an area-estimate range at the member's finance (Batch 10):
   // the exact figure for the property is what a Full analysis is for.
   const gross = screening?.grossRevenue?.value ?? null;
-  const range = profitRange({ kind: deal.kind, priceAmount: deal.price_amount, pricePeriod: deal.price_period, bedrooms: deal.bedrooms, grossRevenue: gross, confidence: screening?.confidence ?? null, finance: goals?.finance ?? null, widths: pricing.profitRangePct });
+  const range = profitRange({ kind: deal.kind, priceAmount: deal.price_amount, pricePeriod: deal.price_period, bedrooms: deal.bedrooms, grossRevenue: gross, confidence: screening?.confidence ?? null, finance, widths: pricing.profitRangePct });
   const pct = range?.pct ?? 25;
   const uplift = deal.kind === "sale" ? upliftTag(deal.uplift_pct) : null;
 
@@ -148,10 +159,39 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   if (deal.price_amount !== null) {
     const rev = gross !== null ? { grossRevenue: gross, adr: 0 } : areaCard ? areaRevenueFor({ byBedrooms: areaCard.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: areaCard.headline.grossRevenue, adr: areaCard.headline.adr } }, deal.bedrooms) : null;
     if (rev) {
-      const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(goals?.finance ?? {}) } };
+      const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(finance ?? {}) } };
       model = deal.kind === "rent" ? rentToRentDeal(Number(deal.price_amount), base) : purchaseDeal(Number(deal.price_amount), base);
     }
   }
+  // Batch 14: the most they can pay to hit their own monthly profit, on the
+  // same income and at the same finance as the range above (the member's
+  // active profile; the house figures and £500 without answers).
+  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct });
+  const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
+  const payGap = pay ? gapLine(askingFigure, pay) : null;
+  // Batch 14, Part C: the same three numbers as the member's card, from the same function.
+  const sheetCard: Card = {
+    ...card,
+    screening_gross: gross,
+    screening_confidence: screening?.confidence ?? null,
+    deal_setup: model?.kind === "rent-to-rent" ? model.setupCost : null,
+    deal_breakeven: model?.kind === "rent-to-rent" ? model.breakevenOccupancyPct : null,
+    deal_payback: model?.kind === "rent-to-rent" ? model.paybackMonths : null,
+    deal_margin: model?.kind === "rent-to-rent" ? model.monthlyMargin : null,
+  };
+  const numbers = numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
+  // Part D: why it fits them, and how well, in the same words as their card.
+  const explanation = numbers ? explainCard(sheetCard, tailoring, areaLookup(cards), now) : null;
+  // Part E: what holds them back leads the sheet. "Knowing the numbers": the
+  // Full analysis first. "Landlord or agent consent": Batch 7's first message
+  // first, as the next-step card on a deal on their My deals, else its
+  // opening lines (never the address).
+  const lead = leadFor(tailoring);
+  const analysisFirst = lead === "analysis" && canBuy;
+  const consentStep = lead === "consent" && Boolean(priv) && tracking.tracked;
+  const consentLines = lead === "consent" && !consentStep ? consentOpening(factsFromCard(deal, false, null), now) : null;
+  // Batch 10: at Kept the next step leads with the Full analysis.
+  const stepLead = tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null;
   const pctRange = (v: number) => {
     const [lo, hi] = spread(v, pct, 0.1);
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
@@ -164,7 +204,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         <div className="mb-3 flex items-center justify-between gap-2 text-xs">
           <Link href="/deals" className="text-muted-foreground hover:underline">← All deals</Link>
           {/* Batch 3: a public link showing only what the card shows (never the address), on the member's referral code. */}
-          <ShareDealButton dealId={deal.id} />
+          {/* Batch 14: a deal sourcer's share leads, as "Share with an investor". */}
+          {goals?.path === "source" ? <ShareDealButton dealId={deal.id} label="Share with an investor" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" /> : <ShareDealButton dealId={deal.id} />}
         </div>
 
         {message && <p className={"mb-4 rounded-md border p-3 text-sm " + (message.tone === "ok" ? "border-primary/40 bg-primary/10 text-foreground" : "border-destructive/40 bg-destructive/10 text-destructive")}>{message.text}</p>}
@@ -183,6 +224,24 @@ export default async function DealPage({ params, searchParams }: { params: Promi
 
         <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_280px]">
           <section>
+            {/* Batch 14, Part E: "Landlord or agent consent" leads with the first message. */}
+            {consentStep && (
+              <div className="mb-4">
+                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={stepLead} />
+              </div>
+            )}
+            {consentLines && (
+              <section aria-labelledby="consent-opening" className="mb-4 rounded-xl border border-border bg-card p-4">
+                <h2 id="consent-opening" className="text-sm font-semibold text-foreground">{consentLines.heading}</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">{consentLines.intro}</p>
+                <blockquote className="mt-2 space-y-1.5 border-l-2 border-primary/40 pl-3 text-sm text-foreground">
+                  {consentLines.lines.map((l, i) => (
+                    <p key={i} className="whitespace-pre-line">{l}</p>
+                  ))}
+                </blockquote>
+                <p className="mt-2 text-[11px] text-muted-foreground">Open the deal and keep it, and the whole message, with the address filled in, is ready to send from My deals.</p>
+              </section>
+            )}
             <div className="overflow-hidden rounded-xl border border-border bg-card">
               <div className="relative aspect-[16/10] w-full bg-muted">
                 {priv && priv.photos.length > 0 ? (
@@ -231,7 +290,15 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 {/* Batch 10: past Kept without a Full analysis, an advisory line (never a block). */}
                 {stagePastKept && canBuy && !blocked && <StageReminder itemKey={`d-${deal.id}`} dealId={deal.id} stage={tracking.stage} href={`${dealPath}?analysis=1&from=stage`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
                 {/* Batch 7: the next step, for the member's own opened deal only. At Kept it leads with the Full analysis. */}
-                <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null} />
+                {!consentStep && <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={stepLead} />}
+
+                {/* Batch 14, Part E: "Knowing the numbers" puts the Full analysis first. */}
+                {analysisFirst && (
+                  <div className="mt-4">
+                    <p className="mb-1.5 text-xs text-muted-foreground">{ANALYSIS_LEAD_LINE}</p>
+                    <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
+                  </div>
+                )}
 
                 {priv ? (
                   <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -256,7 +323,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 ) : (
                   <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : "This deal is off the market and cannot be opened."}</p>
                 )}
-                {canBuy && (
+                {canBuy && !analysisFirst && (
                   <div className="mt-3">
                     <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
                   </div>
@@ -265,6 +332,40 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               </div>
             </div>
 
+            {/* Batch 14: a tailored member's own numbers lead; everything else is under "More numbers". */}
+            {numbers && (
+              <section className="mt-4 rounded-xl border border-border bg-card p-4">
+                <h2 className="text-sm font-semibold text-foreground">Your numbers</h2>
+                {explanation && (explanation.why || explanation.match) && (
+                  <p className="mt-1 text-xs text-primary">
+                    {explanation.match && <span className="mr-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold">{explanation.match}</span>}
+                    {explanation.why}
+                  </p>
+                )}
+                {explanation?.flags.map((f) => (
+                  <p key={f} className="text-[11px] font-medium text-warning">{f}</p>
+                ))}
+                <dl className="mt-3 grid grid-cols-3 gap-3">
+                  {numbers.map((n) => (
+                    <div key={n.key} className="min-w-0">
+                      <dd className="text-base font-bold text-foreground">{n.value}</dd>
+                      <dt className="text-xs text-muted-foreground">{n.label}</dt>
+                      {n.help && <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{n.help}</p>}
+                    </div>
+                  ))}
+                </dl>
+                {pay && !numbers && (
+                  <div className="mt-3 rounded-lg bg-muted/50 p-3">
+                    <p className="text-base font-bold text-foreground">{payLine(pay)}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{basisLine(pay)}</p>
+                    {payGap && <p className={"mt-1 text-xs font-semibold " + (payGap.startsWith("Within") ? "text-primary" : "text-destructive")}>{payGap}</p>}
+                  </div>
+                )}
+                <p className="mt-2 text-[11px] text-muted-foreground">Area estimates at your figures. A Full analysis works them out exactly for this property.</p>
+              </section>
+            )}
+
+            <MoreNumbers folded={Boolean(numbers)}>
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{BAND_LABELS[screening.band]}</h2>
@@ -281,7 +382,17 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {model && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{model.kind === "purchase" ? "If you bought it" : "If you rented it (rent-to-rent)"}</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">{model.kind === "purchase" ? `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. Change these in your Market Explorer goals. Figures that rest on the area’s short-let income are ranges.` : `At ${gbp(model.advertisedRentPcm)} pcm rent. Figures that rest on the area’s short-let income are ranges.`}</p>
+                {pay && (
+                  <div className="mt-3 rounded-lg bg-muted/50 p-3">
+                    <p className="text-base font-bold text-foreground">{payLine(pay)}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{basisLine(pay)}</p>
+                    {payGap && <p className={"mt-1 text-xs font-semibold " + (payGap.startsWith("Within") ? "text-primary" : "text-destructive")}>{payGap}</p>}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {model.kind === "purchase" ? (cashBuyerOf(goals) ? `At ${gbp(model.askingPrice)}, bought with cash. ` : `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `) : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
+                  <Link href="/profile" className="underline-offset-4 hover:underline">Change your figures on your profile</Link>. Figures that rest on the area’s short-let income are ranges.
+                </p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
                   {model.kind === "purchase" ? (
                     <>
@@ -291,19 +402,19 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                       <Fig label="Cash needed" value={gbp(model.cashRequired)} sub={`incl. ${gbp(model.stampDuty)} stamp duty`} />
                       <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} />
                       <Fig label="Net operating / yr" value={gbpRange(model.netOperating, 100)} />
-                      <Fig label="Max price at target yield" value={gbpRange(model.maxPriceForTargetYield, 1000)} sub={`${model.targetYieldPct}% target`} />
                     </>
                   ) : (
                     <>
                       <Fig label="Margin / mo" value={range?.kind === "rent-to-rent" ? range.label.replace(/\/mo$/, "") : gbpRange(model.monthlyMargin)} />
                       <Fig label="Margin / yr" value={gbpRange(model.annualMargin, 100)} />
                       <Fig label="Setup cost" value={gbp(model.setupCost)} />
-                      <Fig label="Max rent at target margin" value={`${gbpRange(model.maxRentForTargetMargin)} pcm`} sub={`${gbp(model.targetMarginPcm)} target`} />
                     </>
                   )}
                 </dl>
               </section>
             )}
+
+            </MoreNumbers>
 
             {canBuy && <AnalysisPreview />}
 
@@ -375,5 +486,16 @@ function Row({ k, v }: { k: string; v: string }) {
       <dt className="text-muted-foreground">{k}</dt>
       <dd className="font-medium text-foreground">{v}</dd>
     </div>
+  );
+}
+
+/** Batch 14: for a member with their own numbers, the rest of the figures fold away under "More numbers". */
+function MoreNumbers({ folded, children }: { folded: boolean; children: React.ReactNode }) {
+  if (!folded) return <>{children}</>;
+  return (
+    <details className="mt-4 rounded-xl border border-border bg-card p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-foreground">More numbers</summary>
+      {children}
+    </details>
   );
 }

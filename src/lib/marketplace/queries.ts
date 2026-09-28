@@ -200,6 +200,26 @@ export async function rankingPool(f: DealFilters, visibility: DealVisibility, me
 }
 
 /**
+ * Browse's "Best for you" (Batch 14, tailoring/browse.ts): every deal the
+ * grid's filters match, through the grid's own query and visibility cutoff,
+ * up to `limit`, with the lean columns the order reads added. The member's
+ * passes are NOT applied here: the order is cached a few minutes, and the
+ * page takes the passes out fresh on every request. Server-side only: the
+ * rows never reach a page, only the ids they are put in order by. Null on
+ * any failure.
+ */
+export async function browsePool(f: DealFilters, visibility: DealVisibility, limit: number, extraColumns: string): Promise<DealCard[] | null> {
+  if (!hasServiceRole()) return null;
+  const filters: DealFilters = { ...f, view: 'all', sort: 'profit', page: 1 };
+  const res = await dealsQuery(createAdminClient(), filters, visibility, { reaction: null, countOnly: false, extraColumns }).range(0, Math.max(0, limit - 1));
+  if (res.error) {
+    console.error('[marketplace] browsePool failed:', res.error.message);
+    return null;
+  }
+  return ((res.data ?? []) as unknown as (DealCard & { photo: string | null })[]).map(({ photo, ...row }) => ({ ...row, has_photo: Boolean(photo) }));
+}
+
+/**
  * Cards by id, in the order asked, for a list chosen earlier (Today's stored
  * selection): only deals still live and visible to this member now. A deal
  * that has since gone simply drops out.
@@ -367,9 +387,11 @@ export const teaserForArea = unstable_cache(teaserUncached, ['marketplace-area-t
  * The Market Explorer's "deals on the market here" block: counts, the median
  * profit and the top three deals, formatted and with signed photo URLs. The
  * cached teaser is shared with the public area page; the photo signatures
- * are day-scoped so they are added outside the cache.
+ * are day-scoped so they are added outside the cache. `top` (Batch 14): the
+ * member's own top deals here ("Best for you"), in place of the teaser's
+ * best by profit; the counts and median stay the shared ones.
  */
-export async function marketDealsForArea(code: string, visibility: DealVisibility, now: Date = new Date()): Promise<AreaDealsSummary | null> {
+export async function marketDealsForArea(code: string, visibility: DealVisibility, now: Date = new Date(), top: DealCard[] | null = null): Promise<AreaDealsSummary | null> {
   const t = await teaserForArea(code, visibility.hourCutoffIso).catch((err) => {
     console.error('[marketplace] marketDealsForArea failed:', (err as Error)?.message ?? err);
     return null;
@@ -377,5 +399,5 @@ export async function marketDealsForArea(code: string, visibility: DealVisibilit
   if (!t) return null;
   const { getBillingSettings } = await import('../credit/unit-costs');
   const widths = (await getBillingSettings()).dealPricing.profitRangePct;
-  return { code: t.code, sale: t.sale, rent: t.rent, total: t.total, medianProfit: t.medianProfit, top: t.top.map((c) => areaDealView(c, photoUrlFor(c, now), now, widths)) };
+  return { code: t.code, sale: t.sale, rent: t.rent, total: t.total, medianProfit: t.medianProfit, top: (top ?? t.top).map((c) => areaDealView(c, photoUrlFor(c, now), now, widths)) };
 }

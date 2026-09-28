@@ -245,6 +245,37 @@ estimate: confirm it against the Twilio console and correct it on
    per member, the share with two or more, and weekly active for one
    profile against two or more.
 
+### 9. Switch on tailoring (Batch 14)
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 14: tailoring"
+   section, at the end). Run it after Batch 13's section: it adds to that
+   section's tables. It is additive and idempotent: `filter_modes` on
+   `search_profiles`, `shown_ids` and `tailoring` on `profile_today_lists`,
+   and a new service-role table `tailoring_prompts`. No `billing_settings`
+   rows (every tailoring number is in `src/lib/tailoring/config.ts`) and
+   nothing added to `ACCESS_COLUMNS`. The code reads each new column in a
+   query of its own, so until it is run members get no must-have switches,
+   no profile checks and no "never shown twice" record for replaced cards;
+   Today itself still works.
+2. **Straight after the deploy:** a member with no new answers sees exactly
+   the Today they saw before (the golden test in
+   `src/lib/today/choose.test.ts` pins it). "No new answers" means no real
+   quiz answer beyond the goal fields Today already read, no must-have
+   switch, no bedrooms preference, and no Keep, own open or Full analysis in
+   the last 60 days (`usesTailoring` in `src/lib/tailoring/profile.ts`): any
+   of those puts them on the tailored path. Answer a few quiz questions on a
+   test account, then flip a must-have on `/profile` and watch Today change.
+3. **Check the dry runs:** `/api/internal/sourcing?dry=1` and
+   `/api/internal/daily-digest?dry=1` show each member's advice line,
+   whether the teasers carry "Yes, more like this" / "Not for me", and
+   whether "Act fast · new today" is on. Nothing is written.
+4. **The browser extension** now shows "Most you can pay" instead of the
+   10%-yield ceiling (`extension/src/content.ts`): it needs a Chrome Web
+   Store release to reach members.
+5. **Admin:** `/admin/tailoring` shows the keep rate on Today's 5 by role,
+   profile completeness and deals wanted; open → Full analysis by what holds
+   members back; and how often each tailoring action happened.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -266,6 +297,9 @@ which are required, and what breaks without them.
 | `src/app/admin/profile` | Profile quiz completion rate, where members stop, and where "Not sure" is chosen most |
 | `src/app/profiles` | Saved profiles (Batch 13): up to five sets of search criteria per member (a sourcer keeps one per client). The active one is what the header shows and every page follows; each running (not paused) one gets its own Today's 5, section of the daily email and daily charge. Rules in `src/lib/profiles/rules.ts` (pure, tested), reads and writes in `src/lib/profiles/server.ts` (`activeProfileFor`, `runningProfilesFor` for later batches). The active profile's criteria are also the live `profiles.market_goals` / `saved_areas`, kept in step by triggers, so pages that follow the active profile read them unchanged. `/profiles/switch?to=<id>&next=…` is the email links' way in |
 | `src/app/admin/profiles` | Saved profiles per member, running per member, the share with two or more, and weekly active split by one profile against two or more |
+| `src/lib/tailoring` | Tailoring (Batch 14): what a profile's answers do to Today, Browse ("Best for you"), the Explorer, the cards' three numbers, the why-line and match, "widen and see", the profile checks and "Most you can pay". Every rule is pure and tested; every number is in `config.ts`; the reads and writes are the `*-server.ts` files. A member with no new answers takes the untouched path |
+| `src/app/admin/tailoring` | Keep rate on Today's 5 by role, profile completeness and deals wanted; open → Full analysis by what holds members back; tailoring actions by step |
+| `src/app/p/d` | Where a daily-email teaser's "Yes, more like this" / "Not for me" lands (public, keyed on the send's own token): a GET writes nothing, one confirming button records a Keep or a Pass |
 | `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |

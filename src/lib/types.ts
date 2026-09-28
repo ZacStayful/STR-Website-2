@@ -311,7 +311,11 @@ export interface SourceListingRef {
   price?: { amount: number; period: 'total' | 'pcm' | 'pw' | 'night' };
 }
 
-export type DealResult = Deal & { basis: 'asking-price' | 'advertised-rent' | 'estimated-value' };
+export type DealResult = Deal & {
+  basis: 'asking-price' | 'advertised-rent' | 'estimated-value';
+  /** Batch 14: the member's minimum monthly profit the report was worked at ("most you can pay"). Absent on reports run before it. */
+  minProfitPcm?: number;
+};
 
 export interface CompetitorsResult {
   summary: CompetitorSummary;

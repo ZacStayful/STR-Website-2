@@ -39,7 +39,7 @@ import { sendEmail, isEmailConfigured } from "../email/send";
 import { buildDaily, type ProfileDeals, type Unsubscribe } from "../notify/message";
 import { renderEmail } from "../notify/render-email";
 import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
-import { capDay, sendKey, testSendKey } from "../notify/cap";
+import { capDay, newSendToken, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
@@ -51,6 +51,13 @@ import { labelFor, profileLinks, seatKey, seatsFor, type SavedProfile } from "..
 import { GOALS_EDITOR_HREF } from "../nav";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
+import { tailoringForSeats } from "../tailoring/server";
+import { mustHaveTest } from "../tailoring/criteria";
+import { orderPicks } from "../tailoring/pick-order";
+import type { TailoringProfile } from "../tailoring/profile";
+import { wantsActFast } from "../tailoring/about-prompts";
+import { sendParts } from "../tailoring/email-answers";
+import { memberFinance } from "../marketplace/most-you-can-pay";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -467,8 +474,15 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
   const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
+  // Each seat's tailoring (Batch 14): the same loader the Today page uses, so
+  // a list stored here is the one the page would have chosen. A failed read
+  // leaves every seat untailored: chosen exactly as before.
+  const tailoringBySeat = await tailoringForSeats(admin, members.map((m) => ({ userId: m.id, profile: m.profile, goals: m.goals, savedAreas: m.areas }))).catch((err) => {
+    console.error("[sourcing] tailoring read failed:", (err as Error)?.message ?? err);
+    return new Map<string, TailoringProfile>();
+  });
   // What Today's list needs to know about a member (src/lib/today/selection.ts).
-  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null, profileActive: m.profile?.isActive ?? false });
+  const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null, profileActive: m.profile?.isActive ?? false, tailoring: tailoringBySeat.get(m.key) ?? null });
   if (dry) {
     // What each member's daily email would carry besides the pick, read
     // without writing anything: a Today list only if one is stored already
@@ -503,6 +517,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               slot: slots === null ? "unreadable" : slots.get(m.id)?.status ?? "free",
               tier: m.paid ? "paid" : "free",
               today: plan ? teasersFrom(plan, null, m.paid ? PAID_VISIBILITY : freeVisibility).map((c) => c.id) : "chosen_at_send",
+              // Batch 14: the day's advice line (a near miss, or "only N met your must-haves"), the teasers'
+              // "Yes, more like this" / "Not for me" (on the send's own token; none on a test send), and "Act fast".
+              advice: plan?.advice ?? null,
+              answerLinks: true,
+              actFast: wantsActFast(tailoringBySeat.get(m.key) ?? null),
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
               wouldCharge: m.admin
@@ -790,6 +809,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // House picks have no filter, so no motivation read: there is no member
     // threshold to judge them against.
     const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
+    // Batch 14: a tailored seat's must-haves hold for the charged pick too, so
+    // nobody is charged for a deal their Today would not show. Null: untailored.
+    const meetsMustHaves = mustHaveTest(tailoringBySeat.get(m.key) ?? null);
     const seen = new Set<string>();
     const candidates: (Candidate & { precheck: "ok" | "unknown" })[] = [];
     // Listings that failed the filter rather than the property tests. Kept only
@@ -850,7 +872,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const { screening, figures } = screenSourced(l, card ?? null, rentTable);
       const candidate = {
         listing: l,
-        deal: dealForSourced(l, figures, m.goals?.finance ?? null),
+        deal: dealForSourced(l, figures, memberFinance(m.goals)),
         areaFit,
         areaName: card?.name ?? q.areaName,
         precheck,
@@ -858,6 +880,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         motivationQualifies: qualifies,
         screening,
       };
+      if (meetsMustHaves && !meetsMustHaves(candidate)) return;
       if (fails.length === 0) {
         candidates.push(candidate);
         return;
@@ -882,7 +905,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // Today page (see rank.ts), so the email and the page rank alike.
     const result = rankForMember(candidates, feedbackBySeat.get(m.key) ?? [], m.rules, { depth: SPREAD_DEPTH, mode: motiv?.mode ?? "off" });
     for (const [band, n] of Object.entries(result.screened) as [Band, number][]) screened[band] = (screened[band] ?? 0) + n;
-    const list: Ranked[] = result.ranked;
+    // Batch 14: a tailored seat's pick comes in its Today's order (untailored: unchanged).
+    const list: Ranked[] = orderPicks(result.ranked, tailoringBySeat.get(m.key) ?? null, cards);
     if (list.length === 0) {
       // Nothing matched. A strict filter reads as a broken product when it just
       // goes quiet, so send the nearest thing and say which setting stopped the
@@ -1289,7 +1313,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             screening: sending.screening ?? null,
             dealId: pickDealId,
             // Batch 10: the profit as a range at the profile's finance, never one figure.
-            range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: m.goals?.finance ?? null, widths: settings.dealPricing.profitRangePct }),
+            range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: memberFinance(m.goals), widths: settings.dealPricing.profitRangePct }),
             profileLinks: links,
           });
           unsubscribe ??= section.unsubscribe;
@@ -1326,10 +1350,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           pick: pickPart,
           pickDealId: row?.dealId ?? null,
           teasers,
-          advice: plan?.nearMiss ? plan.advice : null,
+          // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
+          advice: plan?.advice ?? null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, m.goals?.finance ?? null, settings.dealPricing.profitRangePct),
+          figureFor: (c) => cardRangeLine(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
         },
       });
     }
@@ -1345,6 +1370,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // email rather than be told twice. The admin's test send shows them without
     // marking anything.
     const settled = alertsOn.has(userId) && (claimId || opts.ignoreToday) ? pending.get(userId) ?? null : null;
+    // Batch 14, Part F: this send's own token, stored with its slot, for the teasers' "Yes, more like this" /
+    // "Not for me". A send with no slot row (the admin's test send) gets no links: they could answer nothing.
+    const answerToken = claimId ? newSendToken() : null;
     const built = buildDaily({
       siteUrl: base,
       pick: null,
@@ -1357,6 +1385,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       unsubscribe,
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
       profileNudge: nudges.has(userId) ? { percent: nudges.get(userId)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
+      answerToken,
+      // Part E: About you is the member's own, so any seat's answer is theirs.
+      actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
     });
     const mail = built ? renderEmail(built.message) : null;
     const failRows = async () => {
@@ -1375,11 +1406,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       continue;
     }
     if (built.droppedTeasers.length > 0) console.error("[sourcing] early-access backstop dropped teasers", JSON.stringify({ user: userId, dropped: built.droppedTeasers }));
-    const sendSummary = { pickId: sentRows[0].id, pickIds: sentRows.map((r) => r.id), pickDealId: sentRows[0].dealId, teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, todayReady: parts.every((p) => plans.get(p.member.key) != null), profiles: parts.length, subject: mail.subject };
+    // `parts` (Batch 14): which profile each teaser was sent for, so an answer from the email lands on it.
+    const sendSummary = { pickId: sentRows[0].id, pickIds: sentRows.map((r) => r.id), pickDealId: sentRows[0].dealId, teasers: built.teaserIds, parts: sendParts(parts.map((p) => p.member.profile?.id ?? null), built.teasersByPart), alerts: built.changeIds, droppedTeasers: built.droppedTeasers, todayReady: parts.every((p) => plans.get(p.member.key) != null), profiles: parts.length, subject: mail.subject };
     // A failed write here leaves the row "claimed", which a later run could take
     // over after five minutes; the send below still carries the slot's
     // idempotency key, so Resend refuses any second, different daily email.
-    if (claimId && !(await markSending(admin, claimId, sendSummary, null))) console.error("[sourcing] mark sending failed; relying on the idempotency key", JSON.stringify({ user: userId }));
+    if (claimId && !(await markSending(admin, claimId, sendSummary, answerToken))) console.error("[sourcing] mark sending failed; relying on the idempotency key", JSON.stringify({ user: userId }));
     const res = await sendEmail({
       to: who.email,
       subject: mail.subject,

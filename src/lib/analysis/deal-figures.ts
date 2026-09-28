@@ -62,9 +62,11 @@ export function dealFigures(i: DealFiguresInput): DealFigures {
 
   const dealBase = { grossRevenue: i.shortLet.annualRevenue, adr: i.shortLet.averageDailyRate, bedrooms: i.bedrooms, finance, country: i.taxCountry, stampDuty: i.stampDuty, mortgageRate, bills };
   let deal: DealResult | null = null;
-  if (i.rentPcm) deal = { ...rentToRentDeal(i.rentPcm, dealBase), basis: 'advertised-rent' };
-  else if (i.askingPrice) deal = { ...purchaseDeal(i.askingPrice, dealBase), basis: 'asking-price' };
-  else if (i.estimatedValue) deal = { ...purchaseDeal(i.estimatedValue, dealBase), basis: 'estimated-value' };
+  // Batch 14: the minimum profit it was worked at travels with it, for "most you can pay".
+  const minProfitPcm = finance.targetMarginPcm;
+  if (i.rentPcm) deal = { ...rentToRentDeal(i.rentPcm, dealBase), basis: 'advertised-rent', minProfitPcm };
+  else if (i.askingPrice) deal = { ...purchaseDeal(i.askingPrice, dealBase), basis: 'asking-price', minProfitPcm };
+  else if (i.estimatedValue) deal = { ...purchaseDeal(i.estimatedValue, dealBase), basis: 'estimated-value', minProfitPcm };
   const fixedPcm = deal?.kind === 'rent-to-rent' ? deal.advertisedRentPcm : deal?.kind === 'purchase' ? deal.mortgageMonthly : 0;
   const cashflow = i.shortLet.annualRevenue > 0 ? monthlyCashflow(i.shortLet.monthlyRevenue, fixedPcm, { billsPcm: bills.billsPcm }) : null;
   return { deal, cashflow, futureValue };

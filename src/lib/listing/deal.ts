@@ -178,6 +178,29 @@ export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDe
   };
 }
 
+/**
+ * The most a buyer can pay and still keep `minProfitPcm` a month after the
+ * mortgage (Batch 14): the exact inverse of monthlyMortgage.
+ *
+ *   payment = net operating ÷ 12 − minimum profit     (≤ 0: no price does it)
+ *   loan    = payment × (1 − (1 + r)^−n) ÷ r            (r = 0: payment × n)
+ *   price   = loan ÷ (1 − deposit)
+ *
+ * A 100% deposit borrows nothing, so no price is too high for the profit:
+ * `any`. Never 0 and never negative: `none` when no price leaves the profit.
+ * Not rounded: the caller rounds down, so the rounded figure still clears it.
+ */
+export function maxPriceForProfit(netOperatingAnnual: number, minProfitPcm: number, depositPct: number, ratePct: number, termYears: number): { price: number } | { none: true } | { any: true } {
+  const payment = netOperatingAnnual / 12 - minProfitPcm;
+  if (!Number.isFinite(payment) || payment <= 0) return { none: true };
+  if (depositPct >= 100) return { any: true };
+  const r = ratePct / 100 / 12;
+  const n = Math.max(1, Math.round(termYears * 12));
+  const loan = r === 0 ? payment * n : (payment * (1 - Math.pow(1 + r, -n))) / r;
+  const price = loan / (1 - Math.max(0, depositPct) / 100);
+  return Number.isFinite(price) && price > 0 ? { price } : { none: true };
+}
+
 /** Highest price at which gross revenue / price still meets the target yield. */
 export function maxPriceForYield(grossRevenue: number, targetYieldPct: number): number {
   if (targetYieldPct <= 0) return 0;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView } from './grid.ts';
+import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, SORT_LABELS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView } from './grid.ts';
 
 test('parseDealFilters whitelists every value and clamps numbers', () => {
   assert.deepEqual(parseDealFilters({}), DEFAULT_FILTERS);
@@ -11,6 +11,17 @@ test('parseDealFilters whitelists every value and clamps numbers', () => {
   assert.equal(parseDealFilters({ page: '99999' }).page, 500);
   assert.equal(parseDealFilters({ minPrice: '300000', maxPrice: '200000' }).maxPrice, null, 'an inverted range drops the ceiling');
   assert.deepEqual(parseDealFilters({ area: 'ng' }).areas, ['NG'], 'the singular form works too');
+});
+
+test('"Best for you" is the default sort; every other sort is written into the URL', () => {
+  assert.equal(DEFAULT_FILTERS.sort, 'best');
+  assert.equal(parseDealFilters({}).sort, 'best');
+  assert.equal(parseDealFilters({ sort: 'best' }).sort, 'best');
+  assert.equal(parseDealFilters({ sort: 'profit' }).sort, 'profit', 'the old default is still a choice');
+  assert.equal(filtersToSearch({ ...DEFAULT_FILTERS, sort: 'profit' }), '?sort=profit');
+  assert.equal(filtersToSearch({ ...DEFAULT_FILTERS, sort: 'best' }), '');
+  assert.equal(SORT_LABELS.best, 'Best for you');
+  assert.equal(Object.keys(SORT_LABELS)[0], 'best', 'first in the sort menu');
 });
 
 test('filtersToSearch round-trips and omits defaults', () => {

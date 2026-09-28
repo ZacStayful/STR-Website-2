@@ -11,7 +11,8 @@ import type { ConfirmedVia, DealStatus } from './types.ts';
 import { profitRange, upliftTag } from './profit-range.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
-export type DealSort = 'profit' | 'uplift' | 'newest' | 'price';
+/** 'best' (Batch 14, the default): "Best for you", the member's own order (src/lib/tailoring/browse.ts). */
+export type DealSort = 'best' | 'profit' | 'uplift' | 'newest' | 'price';
 /**
  * Which of the member's own reactions a query reads: everything they have
  * not passed (the grid, Today), only kept, or only passed (the "you passed on
@@ -39,9 +40,9 @@ export interface DealFilters {
 export const PAGE_SIZE = 24;
 export const MAX_PAGE = 500;
 
-export const DEFAULT_FILTERS: DealFilters = { kind: 'both', areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'profit', view: 'all', page: 1 };
+export const DEFAULT_FILTERS: DealFilters = { kind: 'both', areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'best', view: 'all', page: 1 };
 
-export const SORT_LABELS: Record<DealSort, string> = { profit: 'Highest profit', uplift: 'Highest uplift', newest: 'Newest', price: 'Lowest price' };
+export const SORT_LABELS: Record<DealSort, string> = { best: 'Best for you', profit: 'Highest profit', uplift: 'Highest uplift', newest: 'Newest', price: 'Lowest price' };
 export const KIND_LABELS: Record<DealKindFilter, string> = { both: 'Buy or rent', sale: 'To buy', rent: 'Rent-to-rent' };
 
 const AREA_CODES = new Set(AREA_META.map((a) => a.code));
@@ -78,7 +79,7 @@ export function parseDealFilters(raw: Raw): DealFilters {
     maxPrice: maxPrice !== null && minPrice !== null && maxPrice < minPrice ? null : maxPrice,
     minProfit: num(raw.minProfit, 0, 10_000_000),
     minUplift: num(raw.minUplift, 0, 10_000),
-    sort: sort === 'uplift' || sort === 'newest' || sort === 'price' ? sort : 'profit',
+    sort: sort === 'profit' || sort === 'uplift' || sort === 'newest' || sort === 'price' ? sort : 'best',
     view: view === 'kept' || view === 'passed' ? view : 'all',
     page: num(raw.page, 1, MAX_PAGE) ?? 1,
   };
@@ -94,7 +95,7 @@ export function filtersToSearch(f: Partial<DealFilters>): string {
   if (f.maxPrice) p.set('maxPrice', String(f.maxPrice));
   if (f.minProfit) p.set('minProfit', String(f.minProfit));
   if (f.minUplift) p.set('minUplift', String(f.minUplift));
-  if (f.sort && f.sort !== 'profit') p.set('sort', f.sort);
+  if (f.sort && f.sort !== 'best') p.set('sort', f.sort);
   if (f.view && f.view !== 'all') p.set('view', f.view);
   if (f.page && f.page > 1) p.set('page', String(f.page));
   const s = p.toString();
@@ -141,7 +142,7 @@ export const PRIVATE_DEAL_COLUMNS: readonly string[] = ['canonical_url', 'addres
  * member. Kept separate from PUBLIC_DEAL_COLUMNS so the cached area teaser
  * (up to 2,000 rows) does not carry them.
  */
-export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence`;
+export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, deal_setup:deal->>setupCost, deal_breakeven:deal->>breakevenOccupancyPct, deal_payback:deal->>paybackMonths, deal_margin:deal->>monthlyMargin`;
 
 export interface DealCard {
   id: string;
@@ -177,6 +178,11 @@ export interface DealCard {
   screening_gross?: string | number | null;
   /** CARD_COLUMNS only: the screening's confidence: high | medium | low. */
   screening_confidence?: string | null;
+  /** CARD_COLUMNS only (Batch 14): a rental's stored setup cost (£), break-even occupancy (%), payback (months) and monthly margin (£), as text from the JSON paths. */
+  deal_setup?: string | number | null;
+  deal_breakeven?: string | number | null;
+  deal_payback?: string | number | null;
+  deal_margin?: string | number | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;

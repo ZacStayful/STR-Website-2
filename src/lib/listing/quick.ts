@@ -179,8 +179,9 @@ export async function quickEstimate(input: QuickInput, ctx: BrokerContext): Prom
   let deal: QuickEstimate['deal'] = null;
   if (estimate && input.price && input.price > 0) {
     const base = { grossRevenue: estimate.grossRevenue, adr: estimate.adr ?? 0, bedrooms: input.bedrooms, finance: { ...DEFAULT_FINANCE, ...(input.finance ?? {}) } };
-    if (input.kind === 'sale') deal = purchaseDeal(input.price, base);
-    if (input.kind === 'rent') deal = rentToRentDeal(input.price, base);
+    // Batch 14: the minimum profit it was worked at, for "most you can pay".
+    if (input.kind === 'sale') deal = { ...purchaseDeal(input.price, base), minProfitPcm: base.finance.targetMarginPcm };
+    if (input.kind === 'rent') deal = { ...rentToRentDeal(input.price, base), minProfitPcm: base.finance.targetMarginPcm };
   }
 
   return { area, estimate, competitors, tracked, trackedMissing, pmiMarket, deal, limited, noEstimate };

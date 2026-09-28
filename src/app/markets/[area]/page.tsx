@@ -7,11 +7,14 @@ import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "../_components/product/MarketExplorerProductPage";
 import { MarketPage } from "../_components/explorer/v2/market/MarketPage";
 import { loadExplorerUser } from "../_lib/loadExplorerUser";
-import { isSortKey } from "@/lib/market/rank";
+import { defaultSortFor, isSortKey } from "@/lib/market/rank";
 import { isTabKey } from "@/lib/market/tab-model";
 import { marketDealsForArea } from "@/lib/marketplace/queries";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { isAdminEmail } from "@/lib/admin";
+import { profilesFor } from "@/lib/profiles/server";
+import { tailoringForMember } from "@/lib/tailoring/server";
+import { bestForYouInArea } from "@/lib/tailoring/browse-server";
 
 // One market as a full page: overview, sub-markets, listings, occupancy,
 // revenue, rates, seasonality, competition, licensing, long-let vs
@@ -52,8 +55,17 @@ export default async function AreaPage({
 
   const access = await getMarketAccess();
   const visibility = await dealVisibilityFor(access.user?.id ?? null, isAdminEmail(access.user?.email));
-  const [{ sort, district, tab }, snapshot, user, marketDeals] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user), marketDealsForArea(meta.code, visibility)]);
+  const [{ sort, district, tab }, snapshot, user] = await Promise.all([searchParams, getMarketSnapshot(), loadExplorerUser(access.user)]);
   const { cards } = snapshot;
+  // Batch 14: with goals, the block's top deals are the member's own "Best for you" here; else (or on any failure) the shared best by profit.
+  const signedIn = access.user;
+  const mine = signedIn && user.goals
+    ? await profilesFor(signedIn.id)
+        .then((saved) => tailoringForMember(signedIn.id, saved.readable ? saved.active : null, user.goals, user.savedAreas, new Date()))
+        .then((tailoring) => bestForYouInArea(meta.code, visibility, { userId: signedIn.id, goals: user.goals, tailoring }, cards))
+        .catch(() => null)
+    : null;
+  const marketDeals = await marketDealsForArea(meta.code, visibility, new Date(), mine);
   const card = cards.find((c) => c.code === meta.code) ?? null;
   // ?district=NG7 opens a sub-market inside the area; anything that is not one of its districts is ignored by the page.
   const initialDistrict = typeof district === "string" && /^[A-Z]{1,2}\d[A-Z\d]?$/i.test(district) ? district.toUpperCase() : null;
@@ -70,7 +82,7 @@ export default async function AreaPage({
       marketDeals={marketDeals}
       initialTab={isTabKey(tab) ? tab : "overview"}
       initialDistrict={initialDistrict}
-      initialSort={isSortKey(sort) ? sort : "stayful"}
+      initialSort={isSortKey(sort) ? sort : defaultSortFor(user.goals)}
     />
   );
 }

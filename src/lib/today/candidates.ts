@@ -20,7 +20,7 @@ import type { DealCard } from '../marketplace/grid.ts';
 import type { Precheck } from '../listing/rank.ts';
 import { ageFromDates, rentPcm, type RankCandidate, type SourcedListing } from '../listing/sourcing.ts';
 import { bandRank, parseScreening, type Screening } from '../listing/screen.ts';
-import { meetsMotivationBar, parseMotivation, NO_MOTIVATION } from '../listing/motivation.ts';
+import { meetsMotivationBar, parseMotivation, NO_MOTIVATION, type Motivation } from '../listing/motivation.ts';
 import { thresholdDaysFor, type MarketGoals } from '../market/goals.ts';
 import type { Dimension, NearMiss } from '../listing/relax.ts';
 import { areaCentroid } from '../market/area-centroids.ts';
@@ -114,6 +114,24 @@ export interface Built {
 }
 
 /**
+ * The member's own motivated-seller read of a row. The pool stores one
+ * verdict per listing, read at the house threshold; the member's own "how
+ * long is too long" is applied on top, so "motivated sellers only" still
+ * means what they set it to. The slower-than-its-area test needs the area's
+ * median, which the pool does not carry, so it is skipped, as the picks run
+ * skips it when an area's sample is thin. Null / undefined when the member
+ * did not ask about motivation.
+ */
+export function motivationFor(row: Pick<PoolRow, 'kind' | 'motivation' | 'listed_date' | 'first_seen_at'>, goals: MarketGoals | null, now: Date): { motivation: Motivation | null; qualifies: boolean | undefined } {
+  const motiv = goals && goals.motivation.mode !== 'off' ? goals.motivation : null;
+  if (!motiv) return { motivation: null, qualifies: undefined };
+  const motivation = parseMotivation(row.motivation) ?? NO_MOTIVATION;
+  const age = ageFromDates(row.listed_date, row.first_seen_at, now);
+  const longEnough = age !== null && age.days >= thresholdDaysFor(motiv, row.kind);
+  return { motivation, qualifies: longEnough && meetsMotivationBar(motivation, { mode: motiv.mode, areaRelative: motiv.areaRelative, areaMedianKnown: false }) };
+}
+
+/**
  * One row as a candidate, with what it fails. Null for a row the ranking can
  * never use: no deal figures, or a short-let check worse than "unknown".
  */
@@ -128,17 +146,8 @@ export function buildCandidate(row: PoolRow, ctx: CandidateContext): Built | nul
   const fails: Dimension[] = [];
   if (amount !== null && ((ctx.maxPrice !== null && amount > ctx.maxPrice) || (ctx.minPrice !== null && amount < ctx.minPrice))) fails.push('price');
 
-  // Motivation: the pool stores one verdict per listing, read at the house
-  // threshold. The member's own "how long is too long" is applied on top, so
-  // "motivated sellers only" still means what they set it to. The
-  // slower-than-its-area test needs the area's median, which the pool does
-  // not carry, so it is skipped — as the picks run skips it when an area's
-  // sample is thin.
-  const motiv = ctx.goals && ctx.goals.motivation.mode !== 'off' ? ctx.goals.motivation : null;
-  const motivation = motiv ? parseMotivation(row.motivation) ?? NO_MOTIVATION : null;
-  const longEnough = motiv ? age !== null && age.days >= thresholdDaysFor(motiv, row.kind) : false;
-  const qualifies = motiv && motivation ? longEnough && meetsMotivationBar(motivation, { mode: motiv.mode, areaRelative: motiv.areaRelative, areaMedianKnown: false }) : undefined;
-  if (motiv?.mode === 'only' && qualifies !== true) fails.push('motivation');
+  const { motivation, qualifies } = motivationFor(row, ctx.goals, ctx.now);
+  if (ctx.goals?.motivation.mode === 'only' && qualifies !== true) fails.push('motivation');
 
   const candidate: TodayCandidate = {
     listing,

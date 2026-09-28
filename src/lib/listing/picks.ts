@@ -219,7 +219,7 @@ export function dealScoreOf(deal: Deal | null | undefined): number | null {
 
 // "auction" needs context: plenty of ordinary listings sit on Auction Close
 // or in The Auction House, and dropping those loses good picks.
-const NEEDS_WORK = /needs? (?:modernis|renovat|refurb|updating|complet|some work|work throughout)|in need of|renovation project|refurbishment project|doer[- ]upper|fixer[- ]upper|unmodernised|cash buyers? only|(?:by|via|at) auction|modern method of auction|auction (?:guide|lot)\b/i;
+export const NEEDS_WORK = /needs? (?:modernis|renovat|refurb|updating|complet|some work|work throughout)|in need of|renovation project|refurbishment project|doer[- ]upper|fixer[- ]upper|unmodernised|cash buyers? only|(?:by|via|at) auction|modern method of auction|auction (?:guide|lot)\b/i;
 
 /**
  * Only feedback the member confirmed counts: a "no" from the reasons form, or

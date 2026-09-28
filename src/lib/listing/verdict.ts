@@ -10,6 +10,8 @@ import type { QuickEstimate } from './quick-types.ts';
 import { gradeFor } from '../market/score.ts';
 import { trendLabel, type Direction } from '../market/trend.ts';
 import { competitionTone, type CompetitionLabel } from '../market/competition.ts';
+import { mostYouCanPayForDeal } from '../marketplace/most-you-can-pay.ts';
+import { TAILORING } from '../tailoring/config.ts';
 
 export type VerdictTone = 'works' | 'tight' | 'no' | 'info' | 'unknown';
 
@@ -89,34 +91,40 @@ function limitedNote(quick: QuickEstimate | null): string {
 }
 
 function purchaseVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'purchase' }>): Verdict {
-  const ratio = deal.targetYieldPct > 0 ? deal.grossYieldPct / deal.targetYieldPct : 0;
-  const tone: VerdictTone = ratio >= 1 ? 'works' : ratio >= 0.8 ? 'tight' : 'no';
-  const price = absGbp(deal.askingPrice);
+  // Batch 14: the call is the member's own monthly profit after the mortgage,
+  // not a 10% gross yield, so a price that loses money never "works".
+  const minProfit = (deal as { minProfitPcm?: number }).minProfitPcm ?? TAILORING.fallbackMinProfitPcm;
   const cash = deal.cashflowMonthly;
-  const cashText = cash >= 0 ? `with ${absGbp(cash)} a month left after the mortgage` : `and ${absGbp(cash)} a month short after the mortgage`;
+  const tone: VerdictTone = cash >= minProfit ? 'works' : cash >= 0 ? 'tight' : 'no';
+  const price = absGbp(deal.askingPrice);
+  const target = absGbp(minProfit);
+  const pay = mostYouCanPayForDeal(deal, { minProfitPcm: minProfit, basis: 'listing' });
+  const payText =
+    pay.state === 'price'
+      ? `The most you can pay to make ${target} a month is about ${absGbp(pay.amount!)}.`
+      : pay.state === 'any'
+        ? `With no mortgage any price clears ${target} a month; check your return on cash.`
+        : `No price reaches ${target} a month at these figures.`;
+  const cashText = cash >= 0 ? `${absGbp(cash)} a month left after the mortgage` : `${absGbp(cash)} a month short after the mortgage`;
   const yieldText = `${pct(deal.grossYieldPct, 1)} gross yield`;
   const headline = tone === 'works' ? `Works at ${price}` : tone === 'tight' ? `Tight at ${price}` : `Doesn’t work at ${price}`;
-  let sentence =
-    tone === 'works'
-      ? `${yieldText} against your ${pct(deal.targetYieldPct)} target, ${cashText}.`
-      : tone === 'tight'
-        ? `${yieldText}, just under your ${pct(deal.targetYieldPct)} target, ${cashText}. It works at ${absGbp(deal.maxPriceForTargetYield)} or below.`
-        : `${yieldText} against your ${pct(deal.targetYieldPct)} target, ${cashText}. It would need to be ${absGbp(deal.maxPriceForTargetYield)} or below.`;
+  let sentence = tone === 'works' ? `${cashText[0].toUpperCase()}${cashText.slice(1)}, against your ${target} target (${yieldText}).` : `${cashText[0].toUpperCase()}${cashText.slice(1)}, under your ${target} target (${yieldText}). ${payText}`;
   sentence += limitedNote(input.quick);
-  const max = Math.max(20, Math.ceil((Math.max(deal.grossYieldPct, deal.targetYieldPct) * 1.25) / 5) * 5);
+  const min = Math.min(-300, Math.floor(cash / 100) * 100);
+  const max = Math.max(1000, Math.ceil((Math.max(cash, minProfit) * 1.5) / 100) * 100);
   return {
     tone,
     chip: VERDICT_CHIPS[tone],
     headline,
     sentence,
-    track: { min: 0, max, target: deal.targetYieldPct, me: deal.grossYieldPct, unit: 'pct', targetLabel: `Your target ${pct(deal.targetYieldPct)}` },
+    track: { min, max, target: minProfit, me: cash, unit: 'gbp', targetLabel: `Your target ${target}` },
     keys: [
       { label: 'Est. revenue', value: absGbp(deal.grossRevenue), sub: rateLine(input.quick) || 'a year, gross' },
       { label: 'Cash needed', value: absGbp(deal.cashRequired), sub: `${gbpK(deal.askingPrice * (deal.depositPct / 100))} deposit · ${gbpK(deal.stampDuty)} stamp duty · ${gbpK(deal.setupCost)} setup` },
-      { label: 'Monthly cashflow', value: signedGbp(cash), sub: `after a ${absGbp(deal.mortgageMonthly)} mortgage`, tone: cash >= 0 ? 'works' : 'no' },
+      { label: 'Monthly cashflow', value: signedGbp(cash), sub: `after a ${absGbp(deal.mortgageMonthly)} mortgage`, tone: cash >= minProfit ? 'works' : cash >= 0 ? 'tight' : 'no' },
       licensingKey(input.quick),
     ],
-    ceiling: tone === 'works' ? `You could pay up to ${absGbp(deal.maxPriceForTargetYield)} and still hit your ${pct(deal.targetYieldPct)} target.` : `Offer ${absGbp(deal.maxPriceForTargetYield)} or less to reach your ${pct(deal.targetYieldPct)} target.`,
+    ceiling: payText,
     number: pct(deal.grossYieldPct, 1),
     numberLabel: 'yield',
   };
@@ -127,7 +135,9 @@ function rentVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'rent-
   const tone: VerdictTone = m >= deal.targetMarginPcm ? 'works' : m >= 0 ? 'tight' : 'no';
   const rent = `${absGbp(deal.advertisedRentPcm)} a month`;
   const headline = tone === 'works' ? `Works at ${rent}` : tone === 'tight' ? `Tight at ${rent}` : `Doesn’t work at ${rent}`;
-  const ceilingRent = absGbp(deal.maxRentForTargetMargin);
+  // Batch 14: the most rent you can pay, rounded down so it still leaves the margin.
+  const payRent = mostYouCanPayForDeal(deal, { minProfitPcm: deal.targetMarginPcm, basis: 'listing' });
+  const ceilingRent = payRent.state === 'price' ? absGbp(payRent.amount!) : absGbp(0);
   const sentence =
     (tone === 'works'
       ? `${absGbp(m)} a month left after rent, bills and management, against your ${absGbp(deal.targetMarginPcm)} target.`
@@ -146,7 +156,7 @@ function rentVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'rent-
     keys: [
       { label: 'Monthly margin', value: `${m < 0 ? '−' : ''}${absGbp(m)}`, sub: `after ${absGbp(deal.advertisedRentPcm)} rent and ${absGbp(deal.monthlyOperating)} running costs`, tone: m >= deal.targetMarginPcm ? 'works' : m >= 0 ? 'tight' : 'no' },
       { label: 'Breakeven occupancy', value: deal.breakevenOccupancyPct === null ? '—' : pct(deal.breakevenOccupancyPct), sub: occ === null ? 'of nights, to cover rent and bills' : `area runs at ${Math.round(occ)}%`, tone: deal.breakevenOccupancyPct !== null && occ !== null ? (deal.breakevenOccupancyPct <= occ ? 'works' : 'no') : undefined },
-      { label: 'Rent ceiling', value: ceilingRent, sub: `for a ${absGbp(deal.targetMarginPcm)} monthly margin` },
+      { label: 'Most rent you can pay', value: ceilingRent, sub: `for your ${absGbp(deal.targetMarginPcm)} a month` },
       licensingKey(input.quick),
     ],
     ceiling: 'Landlord consent and a company let are needed for rent-to-rent; ask before viewing.',

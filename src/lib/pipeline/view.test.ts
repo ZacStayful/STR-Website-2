@@ -103,10 +103,11 @@ test('Offer: the range, the working line, the label, and the message with and wi
   const offer = computeOfferRange({ kind: 'purchase', marketplace: true, asking: 186000, target: 182000, ageDays: 213, reductions: 2, rules });
   const v = buildNextStepView(input({ stage: 'offer', offer }))!;
   assert.equal(v.offer!.figure, '£171,000 to £182,000');
-  assert.equal(v.offer!.working, "Hits your 10% target up to £182,000 · on the market 6 months and reduced twice, so we'd open at £171,000");
+  // Batch 14: T is the most they can pay to make their own monthly profit.
+  assert.equal(v.offer!.working, "The most you can pay to make £500 a month is £182,000 · on the market 6 months and reduced twice, so we'd open at £171,000");
   assert.equal(v.offer!.disclaimer, NEXT_STEPS.offer.disclaimer);
   assert.equal(v.offer!.initialAmount, 171000);
-  assert.match(v.offer!.notes[0], /10% target gross yield/);
+  assert.equal(v.offer!.notes[0], 'Based on £500 a month profit at your 25% deposit, 5.5% over 25 years (area estimate).');
   assert.ok(v.offer!.goalsLink);
   assert.ok(v.message!.withAmount!.body.includes(OFFER_SLOT));
   assert.doesNotMatch(v.message!.body, /@@|\{|\[/);
@@ -119,7 +120,7 @@ test('Offer at launch (no bands): the target figure only, and no empty note', ()
   const offer = computeOfferRange({ kind: 'purchase', marketplace: true, asking: 186000, target: 182000, ageDays: 213, reductions: 2, rules: NO_OFFER_RULES });
   const v = buildNextStepView(input({ stage: 'offer', offer }))!;
   assert.equal(v.offer!.figure, 'Up to £182,000');
-  assert.equal(v.offer!.working, 'Hits your 10% target up to £182,000');
+  assert.equal(v.offer!.working, 'The most you can pay to make £500 a month is £182,000');
   assert.ok(v.offer!.notes.every((n) => n.trim() !== ''));
 });
 
@@ -133,6 +134,18 @@ test('Offer with no figure: the reason, no label, nothing to pre-fill', () => {
   const far = computeOfferRange({ kind: 'purchase', marketplace: true, asking: 186000, target: 100000, ageDays: 213, reductions: 0, rules: NO_OFFER_RULES });
   const f = buildNextStepView(input({ stage: 'offer', offer: far }))!;
   assert.match(f.offer!.notes[0], /no more than £100,000/);
+});
+
+test('Offer when no price makes the monthly profit: the reason, and the member’s own figures in the note', () => {
+  const offer = computeOfferRange({ kind: 'purchase', marketplace: true, asking: 186000, target: null, targetMissing: 'noPrice', ageDays: 213, reductions: 0, rules: NO_OFFER_RULES });
+  assert.equal(offer.show, false);
+  assert.deepEqual(offer.missing, ['noPrice']);
+  const v = buildNextStepView(input({ stage: 'offer', offer, finance: { targetYieldPct: 10, targetMarginPcm: 300, depositPct: 40, mortgageRatePct: 4.75, termYears: 30 } }))!;
+  assert.deepEqual(v.offer!.notes, ["At your £300 a month, no price works with your deposit and rate, so we haven't suggested an offer."]);
+  assert.ok(v.offer!.goalsLink);
+  const ok = computeOfferRange({ kind: 'purchase', marketplace: true, asking: 186000, target: 150000, ageDays: 213, reductions: 0, rules: NO_OFFER_RULES });
+  const w = buildNextStepView(input({ stage: 'offer', offer: ok, finance: { targetYieldPct: 10, targetMarginPcm: 300, depositPct: 40, mortgageRatePct: 4.75, termYears: 30 } }))!;
+  assert.equal(w.offer!.notes[0], 'Based on £300 a month profit at your 40% deposit, 4.75% over 30 years (area estimate).');
 });
 
 test('a stale asking figure adds a check-it note at the Offer stage', () => {

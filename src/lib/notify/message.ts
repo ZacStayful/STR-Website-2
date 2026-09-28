@@ -28,6 +28,8 @@ import { dealVisible } from '../marketplace/visibility.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { formatListingPrice } from '../listing/format.ts';
 import { manageNotificationsUrl } from '../url.ts';
+import { actFastTitle } from '../tailoring/about-prompts.ts';
+import { EMAIL_ANSWER_LABELS, teaserAnswerUrl } from '../tailoring/email-answers.ts';
 
 // ── The data ──
 
@@ -43,6 +45,8 @@ export interface Item {
   title: string;
   lines: string[];
   link: Link | null;
+  /** Batch 14: small answer links under the item ("Yes, more like this" · "Not for me"). */
+  links?: Link[];
 }
 
 export type Tone = 'normal' | 'muted' | 'strong' | 'accent' | 'callout' | 'small';
@@ -99,21 +103,32 @@ export function figureLine(card: Pick<DealCard, 'kind' | 'annual_profit' | 'upli
   return `${f.big} · ${f.small}`;
 }
 
+/** Batch 14: what the member's answers add to a teaser. */
+export interface TeaserExtras {
+  /** Part F: the send's token, for "Yes, more like this" / "Not for me" (links to /p/d/, the token and the deal id only). */
+  answers?: { siteUrl: string; token: string } | null;
+  /** Part E: their next deal is this month, so a deal first seen in the last day says "Act fast · new today". */
+  actFast?: boolean;
+}
+
 /**
  * One teaser: figure, price, town, type and motivation, linking to Today.
  * Built from public columns only. `figureFor` (Batch 10) gives the profit as
  * the member's range ("£450–£700/mo · area estimate"); without it, the old line.
  */
-export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null): Item {
+export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null, extras: TeaserExtras = {}): Item {
   const figure = figureFor ? figureFor(card) : figureLine(card);
   const first = [priceLine(card), placeOf(card)].filter((x): x is string => Boolean(x)).join(' · ');
   const type = describeType(card);
   const why = motivationLine({ kind: card.kind, motivation: card.motivation, price_history: card.price_history, listed_date: card.listed_date }, now);
   const kindWord = card.kind === 'rent' ? 'Rent-to-rent' : 'To buy';
+  const title = figure ?? kindWord;
+  const answers = extras.answers;
   return {
-    title: figure ?? kindWord,
+    title: extras.actFast ? actFastTitle(title, card.first_seen_at, now) : title,
     lines: [first, type ? `${kindWord} · ${type}` : kindWord, why.length > 0 ? why.join(' · ') : null].filter((x): x is string => Boolean(x)),
     link: { label: 'See it on Today', url: todayUrl },
+    ...(answers ? { links: (['yes', 'no'] as const).map((a) => ({ label: EMAIL_ANSWER_LABELS[a], url: teaserAnswerUrl(answers.siteUrl, answers.token, card.id, a) })) } : {}),
   };
 }
 
@@ -171,6 +186,12 @@ export interface ChangeInput {
   profileId?: string | null;
   /** That profile's name, set by the sender only once the member has two profiles: "For Client: JS". */
   profileName?: string | null;
+  /**
+   * Batch 14, a price drop: where the new price sits against the most the
+   * member can pay for their own monthly profit, at that profile's finance:
+   * "Now £6,000 above what you can pay" / "Now within what you can pay".
+   */
+  payGap?: string | null;
 }
 
 const GONE_WORDS: Record<string, string> = {
@@ -221,8 +242,8 @@ function changeItemOf(c: ChangeInput, siteUrl: string): Item | null {
       const to = money(c.newAmount, c.period);
       if (!from || !to || !(Number(c.newAmount) < Number(c.oldAmount))) return null;
       // A marketplace deal's figures are only ever an area range now (Batch 10): say they changed, and where the exact one is.
-      if (c.dealId && !c.figure) return { title: `Price drop: ${from} → ${to}`, lines: [place, 'The figures have changed. Get the exact figure with a Full analysis.'], link: { label: 'Full analysis', url: `${siteUrl.replace(/\/$/, '')}/deals/${encodeURIComponent(c.dealId)}?analysis=1` } };
-      return { title: `Price drop: ${from} → ${to}`, lines: [place, c.figure ? `Now ${c.figure}` : null].filter((x): x is string => Boolean(x)), link };
+      if (c.dealId && !c.figure) return { title: `Price drop: ${from} → ${to}`, lines: [place, c.payGap ?? null, 'The figures have changed. Get the exact figure with a Full analysis.'].filter((x): x is string => Boolean(x)), link: { label: 'Full analysis', url: `${siteUrl.replace(/\/$/, '')}/deals/${encodeURIComponent(c.dealId)}?analysis=1` } };
+      return { title: `Price drop: ${from} → ${to}`, lines: [place, c.figure ? `Now ${c.figure}` : null, c.payGap ?? null].filter((x): x is string => Boolean(x)), link };
     }
     case 'back_on_market': {
       const was = c.previousStatus ? PREVIOUS_WORDS[c.previousStatus] : null;
@@ -307,6 +328,14 @@ export interface DailyInput {
    * (named only when the member has two or more; the letter covers the rest).
    */
   unfunded?: string[];
+  /**
+   * Batch 14, Part F: the send's own token (notification_sends), for the
+   * "Yes, more like this" / "Not for me" links under each teaser. Absent: no
+   * links (a send with no recorded row, whose links could answer nothing).
+   */
+  answerToken?: string | null;
+  /** Batch 14, Part E: their next deal is this month: "Act fast · new today" on a teaser first seen in the last day. */
+  actFast?: boolean;
 }
 
 /** One saved profile's part of the daily email. */
@@ -393,7 +422,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     if (kept.length > 0) {
       const blocks: Block[] = [];
       if (part.advice) blocks.push({ type: 'text', text: part.advice, tone: 'callout' });
-      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor)) });
+      const extras: TeaserExtras = { answers: input.answerToken ? { siteUrl: base, token: input.answerToken } : null, actFast: input.actFast };
+      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor, extras)) });
       blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !part.pick }] });
       sections.push({ key: 'teasers', title: part.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
     }

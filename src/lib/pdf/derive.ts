@@ -5,6 +5,7 @@ import { splitAddress, formatIssued } from "./format.ts";
 import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
 import { diligenceNotes } from "../analysis/due-diligence.ts";
 import { futureValueSentence } from "../listing/growth.ts";
+import { basisLine, mostYouCanPayForDeal } from "../marketplace/most-you-can-pay.ts";
 import type { PdfBrand } from "./theme";
 import { bandPositions, beatTargets, earningsRangeOf, estimatePosition, MIN_TOP_BADGE_LISTINGS, topQuarterThreshold, type AnnualEarningsRange, type EstimatePosition } from "../comps/earnings.ts";
 import { readLocalTrend, trendShort } from "../comps/local-trend.ts";
@@ -762,9 +763,19 @@ export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
   return deal;
 }
 
-/** Same page data from a bare deal (used by the shareable deal sheet, which has no monthly series). */
-export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: string | null, cashflow: PdfDeal["cashflow"]): PdfDeal {
+/**
+ * Same page data from a bare deal (used by the shareable deal sheet, which
+ * has no monthly series). `house`: a public copy, so "most you can pay" is
+ * worked on the house figures, never the sharer's own.
+ */
+export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: string | null, cashflow: PdfDeal["cashflow"], opts: { house?: boolean } = {}): PdfDeal {
   const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+  // Batch 14: the most you can pay to hit the monthly profit, on this deal's own income.
+  const payMetric = () => {
+    const pay = mostYouCanPayForDeal(d, opts.house ? { house: true, basis: "listing" } : { minProfitPcm: d.minProfitPcm, basis: "exact" });
+    const value = pay.state === "price" ? `${opts.house ? "~" : ""}${gbp(pay.amount!)}${pay.kind === "rent" ? " pcm" : ""}` : pay.state === "any" ? "Any price" : "None";
+    return { label: pay.kind === "rent" ? "Most rent you can pay" : "Most you can pay", value, sub: basisLine(pay) };
+  };
   const basisLabel =
     d.basis === "asking-price" ? `Based on the asking price of ${gbp(d.kind === "purchase" ? d.askingPrice : 0)}`
     : d.basis === "advertised-rent" ? `Based on the advertised rent of ${gbp(d.kind === "rent-to-rent" ? d.advertisedRentPcm : 0)} pcm`
@@ -791,7 +802,7 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
         { label: "Cash on cash", value: `${d.cashOnCashPct}%`, sub: `on ${gbp(d.cashRequired)} in` },
         { label: "Stamp duty", value: gbp(d.stampDuty), sub: `${taxName}, additional-property rate${d.stampDutySource === "propertydata" ? " (live)" : ""}` },
         { label: "Setup budget", value: gbp(d.setupCost) },
-        { label: `Max price for ${d.targetYieldPct}% yield`, value: gbp(d.maxPriceForTargetYield) },
+        payMetric(),
         { label: "Net operating / yr", value: gbp(d.netOperating), sub: "before mortgage" },
       ],
       cashflow,
@@ -810,7 +821,7 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
       { label: "Monthly gross", value: gbp(d.monthlyGross) },
       { label: "Running costs", value: gbp(d.monthlyOperating), sub: "platform, management, cleaning, bills" },
       { label: "Net before rent", value: gbp(d.monthlyNetBeforeRent) },
-      { label: `Max rent for ${gbp(d.targetMarginPcm)} margin`, value: gbp(d.maxRentForTargetMargin) },
+      payMetric(),
     ],
     cashflow,
     note: `Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £${bills} a month bills${d.councilTax ? ` (band ${d.councilTax.band} council tax included)` : ""}. Not financial advice.`,

@@ -8,13 +8,20 @@ import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
 import { MY_DEALS_PASSED_HREF, NAV_TARGETS, dealsViewRedirect } from "@/lib/nav";
-import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount } from "@/lib/marketplace/queries";
+import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount, type DealPage } from "@/lib/marketplace/queries";
 import { earlyAccessBanner, earlyAccessFor, isFiltered } from "@/lib/marketplace/early-access";
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { cardViewsFor } from "@/lib/marketplace/card-state";
+import { cashBuyerOf } from "@/lib/marketplace/most-you-can-pay";
 import { parseMarketGoals } from "@/lib/market/goals";
+import { getAreaCardsWithin } from "@/lib/market/cached";
+import { profilesFor } from "@/lib/profiles/server";
+import { tailoringForMember } from "@/lib/tailoring/server";
+import { withTailoring } from "@/lib/tailoring/numbers";
+import { bestForYouPage, type BestPage } from "@/lib/tailoring/browse-server";
+import { TAILORING } from "@/lib/tailoring/config";
 import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
@@ -22,6 +29,9 @@ import { EarlyAccessBanner } from "./_components/EarlyAccessBanner";
 import { ShareDealButton } from "./_components/ShareDealButton";
 import { DealsMap } from "./_components/DealsMap";
 import { Pagination } from "./_components/Pagination";
+
+/** How long the page waits for the market snapshot for the cards' area figures; without it they fall back. */
+const AREA_WAIT_MS = 2_000;
 
 export const metadata: Metadata = {
   title: "Deals — Stayful Intelligence",
@@ -56,22 +66,45 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
   // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
   const visibility = await dealVisibilityFor(user.id, isAdminEmail(user.email));
+  const now = new Date();
+  const adminUser = isAdminEmail(user.email);
+  // The market snapshot, for the cards' area figures and the "Best for you" order: waited on briefly, never built here.
+  const snapshotReady = getAreaCardsWithin(AREA_WAIT_MS);
+  // The member's answers: the active profile's tailoring (Batch 14) orders "Best for you" and picks each card's three numbers.
+  const answersReady = Promise.all([supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]).then(async ([{ data: profile }, savedRes, savedProfiles]) => {
+    const goals = parseMarketGoals(profile?.market_goals);
+    const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
+    const active = savedProfiles.readable ? savedProfiles.active : null;
+    return { goals, profileId: active?.id ?? null, tailoring: await tailoringForMember(user.id, active, goals, savedAreas, now) };
+  });
   // The member's own passes shape the grid: a passed deal leaves it (and is on My deals, under Passed).
+  // "Best for you" (the default): the member's own order; on any failure, the grid's own query by profit, so Browse never goes blank.
+  const pageReady: Promise<BestPage | DealPage> =
+    filters.sort === "best"
+      ? Promise.all([answersReady, snapshotReady]).then(async ([a, cards]) => (await bestForYouPage(filters, visibility, { userId: user.id, profileId: a.profileId, goals: a.goals, tailoring: a.tailoring }, cards)) ?? listDeals({ ...filters, sort: "profit" }, visibility, { userId: user.id }))
+      : listDeals(filters, visibility, { userId: user.id });
   // Early access: a free member gets one line with the real count of deals they are waiting on (matching this search); a paying member gets a badge on each of those deals.
-  const [page, counts, settings, waiting] = await Promise.all([
-    listDeals(filters, visibility, { userId: user.id }),
+  const [page, counts, settings, waiting, { goals, tailoring }, snapshot] = await Promise.all([
+    pageReady,
     liveCountsByArea(visibility.hourCutoffIso),
     getBillingSettings(),
     visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
+    answersReady,
+    snapshotReady,
   ]);
   const ids = page.cards.map((c) => c.id);
-  const adminUser = isAdminEmail(user.email);
-  const { data: profile } = await supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle();
   // Batch 10: each card's profit range at this member's finance, and its buttons at their price.
-  const [opened, reactions, views] = await Promise.all([openedDealIds((await payerFor(user.id)).payerId, ids), reactionsFor(user.id, ids), cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: parseMarketGoals(profile?.market_goals)?.finance ?? null })]);
+  const [opened, reactions, baseViews] = await Promise.all([
+    openedDealIds((await payerFor(user.id)).payerId, ids),
+    reactionsFor(user.id, ids),
+    cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
+  ]);
+  const capped = "capped" in page && page.capped;
+  // "Best for you" orders at most TAILORING.poolLimit deals; the counts still say how many match.
+  const matching = capped ? (await countDeals(filters, visibility, { userId: user.id })) ?? page.total : page.total;
+  const views = withTailoring(baseViews, page.cards, tailoring, snapshot, now);
   // Nothing left in the grid: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
-  const now = new Date();
   const countMap: Record<string, number> = {};
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);
   const message = typeof raw.msg === "string" ? MESSAGES[raw.msg] ?? null : null;
@@ -99,9 +132,9 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
         {message && <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>}
 
-        <GoalsStrip total={page.total} fromWelcome={cameFromWelcome(raw.from)} />
+        <GoalsStrip total={matching} fromWelcome={cameFromWelcome(raw.from)} />
         <EarlyAccessBanner text={banner} />
-        <DealsFilterBar filters={filters} counts={counts} total={page.total} />
+        <DealsFilterBar filters={filters} counts={counts} total={matching} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <section>
@@ -130,6 +163,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
                 ))}
               </ul>
             )}
+            {capped && <p className="mt-3 text-xs text-muted-foreground">Showing your best {TAILORING.poolLimit.toLocaleString("en-GB")} for this search. Narrow the filters to see the rest.</p>}
             <Pagination filters={{ ...filters, page: page.page }} total={page.total} pages={page.pages} />
           </section>
           <aside className="order-first lg:order-none">

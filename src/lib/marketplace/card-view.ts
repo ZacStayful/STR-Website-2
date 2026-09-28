@@ -9,7 +9,11 @@
  */
 
 import { openPricePence, type DealOpenLadder } from './ladder.ts';
-import { profitRange, upliftTag, type ProfitRange } from './profit-range.ts';
+import { profitRange, upliftTag, widthFor, type ProfitRange } from './profit-range.ts';
+import { mostYouCanPay, type PayCeiling } from './most-you-can-pay.ts';
+import type { CardNumber } from '../tailoring/numbers.ts';
+import type { Explanation } from '../tailoring/why.ts';
+import type { Lead } from '../tailoring/about-prompts.ts';
 import { analysisQuote } from '../analysis/deal-analysis-rules.ts';
 import type { DealPricing, PriceLabel } from '../credit/deal-pricing.ts';
 import type { FinanceDefaults } from '../listing/deal.ts';
@@ -28,6 +32,22 @@ export const NOT_OPENED: CardState = { opened: false, openPaidBasePence: 0, repo
 
 export interface CardView {
   range: ProfitRange | null;
+  /**
+   * Batch 14: the most this member can pay to hit their own monthly profit,
+   * on the card's income, where its range would start at their minimum.
+   * Null without the screening's income.
+   */
+  pay: PayCeiling | null;
+  /**
+   * Batch 14, Part C: the three numbers for this member's role and goal
+   * (src/lib/tailoring/numbers.ts), added by the page once it knows their
+   * profile. Absent or null: the card draws exactly as before.
+   */
+  numbers?: CardNumber[] | null;
+  /** Batch 14, Part D: why it is on their list, and how well it matches (src/lib/tailoring/why.ts). */
+  explanation?: Explanation | null;
+  /** Batch 14, Part E: "Knowing the numbers" holds them back, so the Full analysis leads (src/lib/tailoring/about-prompts.ts). */
+  lead?: Lead;
   /** "+45% vs a long let", purchases only. */
   uplift: string | null;
   opened: boolean;
@@ -47,9 +67,13 @@ export function cardView(input: {
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
   ladder: DealOpenLadder;
   finance?: Partial<FinanceDefaults> | null;
+  /** They buy with cash: nothing is borrowed, so no price is too high for the profit. */
+  cashBuyer?: boolean;
   label: (basePence: number) => PriceLabel;
 }): CardView {
   const { card, state } = input;
+  // Batch 14: a cash buyer's range has no mortgage in it either, as "Most you can pay" has none (memberFinance).
+  const finance = input.cashBuyer ? { ...(input.finance ?? {}), depositPct: 100 } : input.finance ?? null;
   const range = profitRange({
     kind: card.kind,
     priceAmount: card.price_amount,
@@ -57,14 +81,16 @@ export function cardView(input: {
     bedrooms: card.bedrooms,
     grossRevenue: card.screening_gross ?? null,
     confidence: card.screening_confidence ?? null,
-    finance: input.finance ?? null,
+    finance,
     widths: input.pricing.profitRangePct,
   });
   const analysed = state.reportId !== null;
   const ladderPence = openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), input.ladder);
   const quote = analysisQuote({ admin: input.admin, pricing: input.pricing, opened: state.opened, openPaidBasePence: state.openPaidBasePence, openPricePence: ladderPence, withPmi: false });
+  const pay = mostYouCanPay({ kind: card.kind, grossRevenue: card.screening_gross ?? null, bedrooms: card.bedrooms, finance: input.finance ?? null, cashBuyer: input.cashBuyer, widthPct: widthFor(card.screening_confidence ?? null, input.pricing.profitRangePct) });
   return {
     range,
+    pay,
     uplift: card.kind === 'sale' ? upliftTag(card.uplift_pct) : null,
     opened: state.opened,
     analysed,

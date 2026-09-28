@@ -8,7 +8,7 @@ export type SortKey = 'stayful' | 'personal' | 'revenue' | 'yield' | 'occupancy'
 
 export const SORT_LABELS: Record<SortKey, string> = {
   stayful: 'Stayful score',
-  personal: 'Your fit',
+  personal: 'Best for you',
   revenue: 'Avg revenue',
   yield: 'Yield-on-cost',
   occupancy: 'Occupancy',
@@ -26,6 +26,15 @@ export interface ExplorerRow {
   personal: PersonalScore | null;
   saved: boolean;
   trend?: AreaTrend | null;
+}
+
+/**
+ * The list's order when the URL names none (Batch 14): "Best for you" (the
+ * member's fit) once they have goals, the Stayful score before. The URL
+ * carries a sort only when it differs from this.
+ */
+export function defaultSortFor(goals: unknown): SortKey {
+  return goals ? 'personal' : 'stayful';
 }
 
 export function isSortKey(v: unknown): v is SortKey {

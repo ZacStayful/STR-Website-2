@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { sharedListingByToken } from "@/lib/listing/share";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
+import type { Deal } from "@/lib/listing/deal";
+import { basisLine, mostYouCanPayForDeal } from "@/lib/marketplace/most-you-can-pay";
 
 export const dynamic = "force-dynamic";
 
@@ -64,7 +66,7 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
                   <Tile label="Cash on cash" value={`${d.cashOnCashPct}%`} sub={`on ${gbp(d.cashRequired)} in`} />
                   <Tile label="Stamp duty" value={gbp(d.stampDuty)} />
                   <Tile label="Setup budget" value={gbp(d.setupCost)} />
-                  <Tile label={`Max price for ${d.targetYieldPct}% yield`} value={gbp(d.maxPriceForTargetYield)} />
+                  <PayTile d={d} />
                   <Tile label="Net operating / yr" value={gbp(d.netOperating)} />
                 </>
               ) : (
@@ -76,7 +78,7 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
                   <Tile label="Monthly gross" value={gbp(d.monthlyGross)} />
                   <Tile label="Running costs" value={gbp(d.monthlyOperating)} />
                   <Tile label="Net before rent" value={gbp(d.monthlyNetBeforeRent)} />
-                  <Tile label={`Max rent for ${gbp(d.targetMarginPcm)} margin`} value={gbp(d.maxRentForTargetMargin)} />
+                  <PayTile d={d} />
                 </>
               )}
             </div>
@@ -95,6 +97,13 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
       </div>
     </main>
   );
+}
+
+/** Batch 14: the most you can pay, on the house figures: a public page never uses the sharer's own. */
+function PayTile({ d }: { d: Deal }) {
+  const pay = mostYouCanPayForDeal(d, { house: true, basis: "listing" });
+  const value = pay.state === "price" ? `~${gbp(pay.amount!)}${pay.kind === "rent" ? " pcm" : ""}` : pay.state === "any" ? "Any price" : "None";
+  return <Tile label={pay.kind === "rent" ? "Most rent you can pay" : "Most you can pay"} value={value} sub={basisLine(pay)} />;
 }
 
 function Tile({ label, value, sub }: { label: string; value: string; sub?: string }) {

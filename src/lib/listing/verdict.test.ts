@@ -26,27 +26,38 @@ function quickFor(grossRevenue: number, adr: number, occupancy: number, extra: P
   return { area, estimate: { grossRevenue, adr, occupancy, source: 'area-bedrooms', note: 'Manchester average for 2-bed properties (41 reports)', updatedAt: null, stale: false }, competitors: null, tracked: null, trackedMissing: false, pmiMarket: null, deal: null, limited: false, ...extra };
 }
 
-test('a purchase over the yield target works, with the ceiling price', () => {
-  const deal = purchaseDeal(220_000, { grossRevenue: 31_200, adr: 142, bedrooms: 2 });
-  const v = dealVerdict({ kind: 'sale', price: { amount: 220_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(31_200, 142, 61) });
+// Batch 14: a purchase is judged on the member's own monthly profit after the
+// mortgage (their minimum, else £500), not on a 10% gross yield.
+test('a purchase that clears the member’s monthly profit works, with the most they can pay', () => {
+  const deal = { ...purchaseDeal(150_000, { grossRevenue: 31_200, adr: 142, bedrooms: 2 }), minProfitPcm: 300 };
+  const v = dealVerdict({ kind: 'sale', price: { amount: 150_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(31_200, 142, 61) });
   assert.equal(v.tone, 'works');
-  assert.equal(v.headline, 'Works at £220,000');
-  assert.match(v.sentence, /14\.2% gross yield against your 10% target/);
-  assert.match(v.ceiling ?? '', /£312,000/);
-  assert.equal(v.number, '14.2%');
+  assert.equal(v.headline, 'Works at £150,000');
+  assert.equal(v.sentence, '£411 a month left after the mortgage, against your £300 target (20.8% gross yield).');
+  assert.equal(v.ceiling, 'The most you can pay to make £300 a month is about £174,000.');
+  assert.equal(v.number, '20.8%');
   assert.equal(v.keys.length, 4);
   assert.equal(v.keys[3].value, 'None required');
-  assert.ok(v.track && v.track.me === 14.2 && v.track.target === 10);
+  assert.ok(v.track && v.track.me === 411 && v.track.target === 300 && v.track.unit === 'gbp');
 });
 
-test('a purchase just under target is tight and names the price that works', () => {
+test('a purchase that makes money but less than the target is tight, and names the most to pay', () => {
+  const deal = purchaseDeal(220_000, { grossRevenue: 31_200, adr: 142, bedrooms: 2 });
+  const v = dealVerdict({ kind: 'sale', price: { amount: 220_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(31_200, 142, 61) });
+  assert.equal(v.tone, 'tight');
+  assert.equal(v.headline, 'Tight at £220,000');
+  assert.match(v.sentence, /£89 a month left after the mortgage, under your £500 target \(14\.2% gross yield\)/);
+  assert.match(v.sentence, /The most you can pay to make £500 a month is about £130,000\./);
+  assert.equal(v.keys[2].tone, 'tight');
+});
+
+test('a 9% yield that loses money every month does not work', () => {
   const deal = purchaseDeal(185_000, { grossRevenue: 16_800, adr: 108, bedrooms: 2 });
   const v = dealVerdict({ kind: 'sale', price: { amount: 185_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(16_800, 108, 52) });
-  assert.equal(v.tone, 'tight');
-  assert.equal(v.headline, 'Tight at £185,000');
-  assert.match(v.sentence, /a month short after the mortgage/);
-  assert.match(v.sentence, /£168,000 or below/);
+  assert.equal(v.tone, 'no');
+  assert.match(v.sentence, /£374 a month short after the mortgage/);
   assert.equal(v.keys[2].tone, 'no');
+  for (const line of [v.sentence, v.ceiling ?? '']) assert.ok(!/value|worth|valuation/i.test(line), line);
 });
 
 test('a purchase well under target does not work', () => {
@@ -62,7 +73,7 @@ test('rent-to-rent with a losing margin does not work and gives the rent ceiling
   assert.equal(v.tone, 'no');
   assert.equal(v.headline, 'Doesn’t work at £1,195 a month');
   assert.match(v.sentence, /Loses £93 a month/);
-  assert.match(v.sentence, /£602 or below/);
+  assert.match(v.sentence, /£600 or below/);
   assert.equal(v.number, '−£93/mo');
   assert.equal(v.keys[1].sub, 'area runs at 61%');
 });

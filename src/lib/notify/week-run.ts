@@ -45,6 +45,7 @@ import { labelFor, labelsShown, profileLinks, seatsFor, type SavedProfile } from
 import { profileTagsFor } from '../profiles/deal-tags';
 import { GOALS_EDITOR_HREF } from '../nav';
 import { cardRangeLine } from '../marketplace/profit-range';
+import { memberFinance } from '../marketplace/most-you-can-pay';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_WINDOW_MS = 14 * DAY_MS;
@@ -219,7 +220,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       const withGoals = seats.filter((s) => s.profile?.goals);
       for (const s of withGoals) if (s.heading) profileOf.set(s.heading, s.profile!);
       byProfile = missedByProfile(
-        withGoals.map((s) => ({ heading: s.heading, filters: filtersForGoals(s.profile!.goals, s.profile!.areas), figureFor: (d: WentDeal) => cardRangeLine(d, s.profile!.goals?.finance ?? null, rangeWidths) })),
+        withGoals.map((s) => ({ heading: s.heading, filters: filtersForGoals(s.profile!.goals, s.profile!.areas), figureFor: (d: WentDeal) => cardRangeLine(d, memberFinance(s.profile!.goals), rangeWidths) })),
         { deals: went, seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free },
       );
       missed = missedTotal(byProfile);
