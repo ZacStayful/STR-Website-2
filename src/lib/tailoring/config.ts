@@ -61,6 +61,9 @@ export const TAILORING = {
   /** Browse's "Best for you": how long a member's order for one search is kept, so pages never shuffle or repeat. */
   browse: { cacheSeconds: 300 },
 
+  /** /admin/tailoring: how far back its figures look (the same 28 days as Batch 10's take-up figures). */
+  adminWindowDays: 28,
+
   /** The minimum monthly profit when the member has not given one: Batch 12's own default. */
   fallbackMinProfitPcm: 500,
 
