@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { numbersForCard, priceCutPct, roleFor } from './numbers.ts';
+import { numbersForCard, priceCutPct, roleFor, withTailoring } from './numbers.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
 import { areaLookup } from './order.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
@@ -91,4 +91,16 @@ test('nothing private reaches a number', () => {
     const text = JSON.stringify(numbersForCard({ ...card(), canonical_url: 'https://www.rightmove.co.uk/properties/1', address: '1 High Street', postcode: 'NG7 1AA' } as DealCard, p, area, NOW));
     for (const secret of ['rightmove', 'High Street', 'NG7 1AA']) assert.ok(!text.includes(secret), secret);
   }
+});
+
+test('withTailoring: Today gives an untailored member the plain why-line only; "Best elsewhere" is Today’s alone', () => {
+  const views = new Map([['d1', { numbers: null, explanation: null }]]);
+  const plain = withTailoring(views, [card()], plainProfile(DEFAULT_GOALS, [], WIDTHS), null, NOW, { why: true }).get('d1')!;
+  assert.equal(plain.numbers, null, 'no new answers: no numbers');
+  assert.equal(plain.explanation?.why, 'Picked for: +40% on a long let');
+  assert.equal(plain.explanation?.match, null);
+  assert.equal(withTailoring(views, [card()], plainProfile(DEFAULT_GOALS, [], WIDTHS), null, NOW).get('d1')!.explanation, null, 'Browse: nothing added for them');
+  const best = profile({ path: 'buy', where: 'near_plus_best', home: { postcode: 'DE1 1AA', lat: 52.92, lng: -1.47 }, maxDistanceMiles: 10 });
+  assert.equal(withTailoring(views, [card()], best, null, NOW, { why: true }).get('d1')!.explanation?.elsewhere, true);
+  assert.equal(withTailoring(views, [card()], best, null, NOW).get('d1')!.explanation?.elsewhere, false);
 });

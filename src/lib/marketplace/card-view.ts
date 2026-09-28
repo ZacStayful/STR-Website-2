@@ -12,6 +12,7 @@ import { openPricePence, type DealOpenLadder } from './ladder.ts';
 import { profitRange, upliftTag, widthFor, type ProfitRange } from './profit-range.ts';
 import { mostYouCanPay, type PayCeiling } from './most-you-can-pay.ts';
 import type { CardNumber } from '../tailoring/numbers.ts';
+import type { Explanation } from '../tailoring/why.ts';
 import { analysisQuote } from '../analysis/deal-analysis-rules.ts';
 import type { DealPricing, PriceLabel } from '../credit/deal-pricing.ts';
 import type { FinanceDefaults } from '../listing/deal.ts';
@@ -42,6 +43,8 @@ export interface CardView {
    * profile. Absent or null: the card draws exactly as before.
    */
   numbers?: CardNumber[] | null;
+  /** Batch 14, Part D: why it is on their list, and how well it matches (src/lib/tailoring/why.ts). */
+  explanation?: Explanation | null;
   /** "+45% vs a long let", purchases only. */
   uplift: string | null;
   opened: boolean;

@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 import { isPromptQuestion, promptsFor } from '@/lib/tailoring/behaviour';
 import { answerPrompt, currentTailoring, rechooseForMember, saveFilterMode } from '@/lib/tailoring/server';
+import { isWidenKey, widenChanges } from '@/lib/tailoring/widen';
 
 /**
  * Today's tailoring actions (Batch 14). Every one checks the session, reads
@@ -68,4 +69,35 @@ export async function leadsUpsellAction(): Promise<void> {
   const { user } = await signedIn();
   logActivity(user.id, 'leads_upsell_clicked');
   redirect('/leads/funnels');
+}
+
+/**
+ * Widen and see: one of the offered changes, by key. The change itself is
+ * worked out again from the member's answers; then today's empty slots are
+ * filled (never charged).
+ */
+export async function applyWidenAction(formData: FormData): Promise<void> {
+  const { supabase, user } = await signedIn();
+  const key = formData.get('key');
+  if (!isWidenKey(key)) redirect('/today');
+  const now = new Date();
+  const current = await currentTailoring(user.id, now);
+  const offer = current ? widenChanges(current.tailoring).find((c) => c.key === key) ?? null : null;
+  if (!current || !offer) redirect('/today');
+  let goals = current.tailoring.goals;
+  if (offer.change.kind === 'goals') {
+    const { error } = await supabase.from('profiles').update({ market_goals: offer.change.goals, market_goals_updated_at: now.toISOString() }).eq('id', user.id);
+    if (error) {
+      console.error('[tailoring] widen save failed:', error.message);
+      redirect('/today?check=0');
+    }
+    goals = offer.change.goals;
+  } else {
+    const saved = await saveFilterMode(user.id, offer.change.criterion, 'nice');
+    if (!saved.ok) redirect('/today?check=0');
+  }
+  logActivity(user.id, 'tailoring_widen', { profileId: current.profileId, extras: { option: key, step: 'applied' } });
+  await rechooseForMember({ userId: user.id, email: user.email ?? null, goals, now });
+  revalidatePath('/today');
+  redirect('/today?check=1');
 }

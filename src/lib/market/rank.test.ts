@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sortRows, type ExplorerRow } from './rank.ts';
+import { defaultSortFor, sortRows, SORT_LABELS, type ExplorerRow } from './rank.ts';
 import type { AreaCardData } from './explorer.ts';
 
 function row(code: string, over: Record<string, unknown> = {}, personal: number | null = null, distance: number | null = null, saved = false): ExplorerRow {
@@ -60,4 +60,10 @@ test('daily rate sorts by the headline ADR with nulls last', () => {
 test('price growth sorts by the area\'s five-year figure with nulls last', () => {
   const rows = [row('A', { keyStats: { growth5y: 4.2 } }), row('B', { keyStats: null }), row('C', { keyStats: { growth5y: 17.8 } })];
   assert.deepEqual(sortRows(rows, 'growth').map((r) => r.card.code), ['C', 'A', 'B']);
+});
+
+test('the default order is "Best for you" once the member has goals, the Stayful score before', () => {
+  assert.equal(defaultSortFor(null), 'stayful');
+  assert.equal(defaultSortFor({ path: 'buy' }), 'personal');
+  assert.equal(SORT_LABELS.personal, 'Best for you');
 });

@@ -341,7 +341,8 @@ function readsFor(s: Scenario): { reads: ChooseReads; trace: string[] } {
   const trace: string[] = [];
   const reads: ChooseReads = {
     pool: async (f, limit) => {
-      trace.push(`pool ${limit} ${stable(f)}`);
+      // The query rankingPool runs: it always reads the whole view, best profit first, whatever sort the filters carry.
+      trace.push(`pool ${limit} ${stable({ ...f, view: 'all', sort: 'profit', page: 1 })}`);
       const n = (v: number | null) => (v === null ? null : Number(v));
       return s.rows
         .filter((row) => {

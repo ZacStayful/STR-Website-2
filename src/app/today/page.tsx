@@ -11,8 +11,8 @@ import { earlyAccessBanner, earlyAccessFor } from "@/lib/marketplace/early-acces
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { filtersForGoals } from "@/lib/today/candidates";
-import { displayOrder, greeting, matchLine, todayKey, todayStart } from "@/lib/today/day";
-import { todaySelection, todaysPick, type TodaysPick } from "@/lib/today/selection";
+import { displayOrder, greeting, matchLine, todayKey, todayStart, TODAY_SIZE } from "@/lib/today/day";
+import { todaySelection, todaysPick, widenOptionsFor, type TodaysPick } from "@/lib/today/selection";
 import { syncChecklist } from "@/lib/today/checklist-server";
 import { GOALS_EDITOR_HREF, TODAY_LIST_ID } from "@/lib/nav";
 import { DealCard } from "@/app/deals/_components/DealCard";
@@ -30,12 +30,13 @@ import { pauseProfileAction } from "@/app/profiles/actions";
 import { markPromptShown, promptStatesFor, tailoringForMember } from "@/lib/tailoring/server";
 import { sharesWithInvestors, usesTailoring, wantsLandlordLeads } from "@/lib/tailoring/profile";
 import { promptToShow } from "@/lib/tailoring/behaviour";
-import { withNumbers } from "@/lib/tailoring/numbers";
+import { withTailoring } from "@/lib/tailoring/numbers";
 import { getAreaCardsWithin } from "@/lib/market/cached";
 import { ownsAnyFunnel } from "@/lib/funnels/ownership";
 import { logActivity } from "@/lib/activity/log";
 import { BehaviourPrompt } from "./_components/BehaviourPrompt";
 import { LeadsUpsell } from "./_components/LeadsUpsell";
+import { WidenAndSee } from "./_components/WidenAndSee";
 
 /** How long the page waits for the market snapshot for the cards' area figures; without it they fall back. */
 const AREA_WAIT_MS = 2_000;
@@ -112,12 +113,23 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
 
   const stored = selection?.dealIds ?? [];
   const pickDealId = pick?.dealId ?? null;
-  const answered = await reactionsFor(user.id, pickDealId ? [pickDealId, ...stored] : stored);
+  // Batch 14: a tailored day the must-haves leave short gets "widen and see", with real counts (page only).
+  const onDay = [...new Set(pickDealId ? [pickDealId, ...stored] : stored)];
+  const short = selection !== null && usesTailoring(tailoring) && onDay.length < TODAY_SIZE;
+  // A near miss is on the list without meeting them; the pick was chosen with them.
+  const widenCount = onDay.length - (selection?.nearMiss ? stored.filter((id) => id !== pickDealId).length : 0);
+  const [answered, widen] = await Promise.all([
+    reactionsFor(user.id, onDay),
+    short ? widenOptionsFor({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, onDay, now) : Promise.resolve([]),
+  ]);
+  if (short && widen.length > 0) {
+    logActivity(user.id, "tailoring_widen_shown", { profileId, extras: { step: "shown", options: widen.length }, dedupeKey: `tailoring_widen_shown:${profileId ?? "member"}:${todayKey(now)}` });
+  }
   const order = displayOrder(stored, pickDealId, new Set(answered.keys()));
   const cards = await dealCardsByIds(order, visibility);
   const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }), getAreaCardsWithin(AREA_WAIT_MS)]);
   // Batch 14: the three numbers for this member's role and goal.
-  const views = withNumbers(baseViews, cards, tailoring, snapshot, now);
+  const views = withTailoring(baseViews, cards, tailoring, snapshot, now, { why: true });
   const pickCard = pickDealId ? cards.find((c) => c.id === pickDealId) ?? null : null;
   const dayCards = cards.filter((c) => c.id !== pickDealId);
   const ids = cards.map((c) => c.id);
@@ -221,9 +233,11 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
                     <div className="mb-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
                       <p className="font-semibold text-foreground">Not an exact match</p>
                       {selection.advice && <p className="mt-0.5 text-foreground">{selection.advice}</p>}
-                      <Link href={GOALS_EDITOR_HREF} className="mt-1 inline-block font-medium text-foreground underline-offset-4 hover:underline">
-                        Edit what you’re looking for
-                      </Link>
+                      {!short && (
+                        <Link href={GOALS_EDITOR_HREF} className="mt-1 inline-block font-medium text-foreground underline-offset-4 hover:underline">
+                          Edit what you’re looking for
+                        </Link>
+                      )}
                     </div>
                   )}
                   <ul className="grid gap-4 sm:grid-cols-2">{dayCards.map(card)}</ul>
@@ -234,9 +248,11 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         ) : (
           <>
             {pick && <OutsidePick pick={pick} />}
-            <EmptyDay hasGoals={goals !== null} ready={selection !== null} />
+            {short ? <WidenAndSee count={widenCount} options={widen} /> : <EmptyDay hasGoals={goals !== null} ready={selection !== null} />}
           </>
         )}
+        {/* Outside the cards, so it stays once the short day's cards are all answered. */}
+        {!paused && ids.length > 0 && short && <WidenAndSee count={widenCount} options={widen} />}
         </div>
 
         <EarlyAccessBanner text={banner} returnTo="/today" />

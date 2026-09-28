@@ -7,7 +7,7 @@ import { siteUrl } from "@/lib/url";
 import { MarketExplorerProductPage } from "./_components/product/MarketExplorerProductPage";
 import { FindShell } from "./_components/explorer/v2/find/FindShell";
 import { loadExplorerUser } from "./_lib/loadExplorerUser";
-import { isSortKey } from "@/lib/market/rank";
+import { defaultSortFor, isSortKey } from "@/lib/market/rank";
 import { isRegionSlug } from "@/lib/market/regions";
 import { detectListingUrl } from "@/lib/listing/detect";
 
@@ -78,7 +78,7 @@ export default async function MarketsPage({ searchParams }: { searchParams: Prom
       initialLevel={initialLevel}
       initialActiveListing={activeListing}
       initialCheckUrl={checkUrl}
-      initialSort={isSortKey(sort) ? sort : "stayful"}
+      initialSort={isSortKey(sort) ? sort : defaultSortFor(user.goals)}
       initialQuery={typeof q === "string" ? q.slice(0, 40) : ""}
     />
   );

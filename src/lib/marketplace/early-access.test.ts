@@ -47,6 +47,8 @@ test('the banner uses the real count, says when it is filtered, and hides at zer
 test('sort, page and the kept / passed view are not a search', () => {
   assert.equal(isFiltered(DEFAULT_FILTERS), false);
   assert.equal(isFiltered(parseDealFilters({ sort: 'newest', page: '3', view: 'kept' })), false);
+  assert.equal(isFiltered(parseDealFilters({ sort: 'profit' })), false, 'the old default sort is not a search either');
+  assert.equal(isFiltered(parseDealFilters({ sort: 'best', kind: 'rent' })), true);
   assert.equal(isFiltered(parseDealFilters({ areas: 'YO' })), true);
   assert.equal(isFiltered(parseDealFilters({ kind: 'rent' })), true);
   assert.equal(isFiltered(parseDealFilters({ minProfit: '10000' })), true);

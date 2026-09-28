@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toggleSavedAreaAction } from "../../../../actions";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
-import { sortRows, isSortKey } from "@/lib/market/rank";
+import { sortRows, isSortKey, defaultSortFor } from "@/lib/market/rank";
 import { hasBeds, inBudget, passesConfidence } from "@/lib/market/filters";
 import { areaTrend, pulse, trendLabel } from "@/lib/market/trend";
 import { regionForSlug } from "@/lib/market/regions";
@@ -61,7 +61,7 @@ export function FindShell({
   initialLevel = "markets",
   initialActiveListing = null,
   initialCheckUrl = null,
-  initialSort = "stayful",
+  initialSort,
   initialQuery = "",
 }: {
   cards: AreaCardData[];
@@ -83,7 +83,9 @@ export function FindShell({
   const [level, setLevel] = useState<Level>(initialLevel);
   const [region, setRegion] = useState<string | null>(initialRegion);
   const [filters, setFilters] = useState<Filters>({ ...DEFAULT_FILTERS, q: initialQuery });
-  const [sort, setSort] = useState<SortKey>(isSortKey(initialSort) ? initialSort : "stayful");
+  // Batch 14: "Best for you" is the default once the member has goals; the URL names a sort only when it differs.
+  const defaultSort = defaultSortFor(goals);
+  const [sort, setSort] = useState<SortKey>(isSortKey(initialSort) ? initialSort : defaultSort);
   const [metric, setMetric] = useState<MapMetric>("score");
   const [hover, setHover] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<"cards" | "map">(initialActiveListing ? "map" : "cards");
@@ -111,11 +113,11 @@ export function FindShell({
       if (s.level === "sub") u.searchParams.set("level", "sub");
       if (s.level === "deals") u.searchParams.set("pane", "listings");
       if (s.level === "deals" && s.listing) u.searchParams.set("listing", s.listing);
-      if (s.sort !== "stayful") u.searchParams.set("sort", s.sort);
+      if (s.sort !== defaultSort) u.searchParams.set("sort", s.sort);
       if (s.q.trim()) u.searchParams.set("q", s.q.trim());
       window.history.replaceState(null, "", u.toString());
     } catch { /* ignore */ }
-  }, []);
+  }, [defaultSort]);
   const urlState = { level, region, sort, q: filters.q, listing: activeListing };
   const changeLevel = (l: Level) => { setLevel(l); if (l !== "deals") setActiveListing(null); setMobilePane("cards"); syncUrl({ ...urlState, level: l, listing: l === "deals" ? activeListing : null }); };
   const changeRegion = (slug: string | null) => { setRegion(slug); syncUrl({ ...urlState, region: slug }); };
@@ -163,9 +165,9 @@ export function FindShell({
   }, [visible, effectiveSort]);
   const districtSortNote = level === "sub" && (effectiveSort === "stayful" || effectiveSort === "personal" || effectiveSort === "distance" || effectiveSort === "trend") ? "Districts carry no score, so they are ordered by revenue." : null;
 
-  const sortQuery = sort !== "stayful" ? `?sort=${sort}` : "";
+  const sortQuery = sort !== defaultSort ? `?sort=${sort}` : "";
   const openArea = useCallback((code: string) => { const r = byCode.get(code); if (r) router.push(`/markets/${r.card.slug}${sortQuery}`); }, [byCode, router, sortQuery]);
-  const openDistrict = (row: ExplorerRow, d: DistrictCardData) => router.push(`/markets/${row.card.slug}?district=${d.code}${sort !== "stayful" ? `&sort=${sort}` : ""}`);
+  const openDistrict = (row: ExplorerRow, d: DistrictCardData) => router.push(`/markets/${row.card.slug}?district=${d.code}${sort !== defaultSort ? `&sort=${sort}` : ""}`);
 
   const toggleSaved = (code: string) => {
     const flip = (prev: Set<string>) => { const next = new Set(prev); if (next.has(code)) next.delete(code); else next.add(code); return next; };

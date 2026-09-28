@@ -31,6 +31,7 @@ import { motivationFor } from '../today/candidates.ts';
 import { factsFromRow, memberFigures, rentalFromCard, type DealFacts, type MemberFigures } from './criteria.ts';
 import { areaLookup, leaningsFor, operationsMiles, type AreaFacts, type AreaLookup } from './order.ts';
 import type { AreaCardData } from '../market/explorer.ts';
+import { explainCard, type Explanation } from './why.ts';
 import { asked, usesTailoring, type TailoringProfile } from './profile.ts';
 
 export type Role = 'buy_cashflow' | 'buy_growth' | 'r2r' | 'source' | 'manage';
@@ -206,14 +207,22 @@ export function numbersForCard(card: DealCard, p: TailoringProfile | null | unde
   );
 }
 
-/** Cards' views with their numbers added, for a page that knows the member's profile. Untailored: unchanged. */
-export function withNumbers<V extends { numbers?: CardNumber[] | null }>(views: ReadonlyMap<string, V>, cards: readonly DealCard[], p: TailoringProfile | null | undefined, snapshot: readonly AreaCardData[] | null, now: Date): Map<string, V> {
-  if (!usesTailoring(p)) return new Map(views);
+/**
+ * Cards' views with what the member's profile adds: the three numbers and
+ * the why-line with the match. `why` (Today's list): a profile with no new
+ * answers gets the generic why-line too, and a "near me + the best
+ * elsewhere" profile's national cards say "Best elsewhere"; elsewhere
+ * (Browse) that badge would only mark every card outside their area.
+ */
+export function withTailoring<V extends { numbers?: CardNumber[] | null; explanation?: Explanation | null }>(views: ReadonlyMap<string, V>, cards: readonly DealCard[], p: TailoringProfile | null | undefined, snapshot: readonly AreaCardData[] | null, now: Date, opts: { why?: boolean } = {}): Map<string, V> {
   const area = areaLookup(snapshot);
   const out = new Map(views);
   for (const c of cards) {
     const v = out.get(c.id);
-    if (v) out.set(c.id, { ...v, numbers: numbersForCard(c, p, area, now) });
+    if (!v) continue;
+    const tailored = usesTailoring(p);
+    const explained = tailored || opts.why ? explainCard(c, p, area, now) : null;
+    out.set(c.id, { ...v, numbers: tailored ? numbersForCard(c, p, area, now) : v.numbers ?? null, explanation: explained ? { ...explained, elsewhere: Boolean(opts.why) && explained.elsewhere } : v.explanation ?? null });
   }
   return out;
 }

@@ -1342,7 +1342,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           pick: pickPart,
           pickDealId: row?.dealId ?? null,
           teasers,
-          advice: plan?.nearMiss ? plan.advice : null,
+          // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
+          advice: plan?.advice ?? null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
           figureFor: (c) => cardRangeLine(c, m.goals?.finance ?? null, settings.dealPricing.profitRangePct),

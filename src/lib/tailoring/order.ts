@@ -237,6 +237,6 @@ export function compareKeys(a: OrderKey, b: OrderKey): number {
   );
 }
 
-export function orderKey(c: { precheck: string; screening?: Screening | null; fit: number }, j: Judgement | undefined, bonus: number, profit: number | null, id: string): OrderKey {
+export function orderKey(c: { precheck: string; screening?: Pick<Screening, 'band'> | null; fit: number }, j: Judgement | undefined, bonus: number, profit: number | null, id: string): OrderKey {
   return { precheckOk: c.precheck === 'ok', band: bandRank(c.screening?.band ?? 'qualified'), niceMissed: j?.niceMissed ?? 0, met: j?.met ?? 0, fit: c.fit + bonus, profit, id };
 }

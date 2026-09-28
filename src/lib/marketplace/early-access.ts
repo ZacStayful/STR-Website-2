@@ -10,7 +10,7 @@
  *
  * Pure, so the wording and the arithmetic are tested.
  */
-import { filtersToSearch, type DealFilters } from './grid.ts';
+import { DEFAULT_FILTERS, filtersToSearch, type DealFilters } from './grid.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -34,7 +34,7 @@ export function earlyAccessHint(freeAt: Date, now: Date = new Date()): string {
 
 /** Whether the member has narrowed the grid (anything beyond sort, page and their own kept/passed view). */
 export function isFiltered(f: DealFilters): boolean {
-  return filtersToSearch({ ...f, sort: 'profit', page: 1, view: 'all' }) !== '';
+  return filtersToSearch({ ...f, sort: DEFAULT_FILTERS.sort, page: 1, view: 'all' }) !== '';
 }
 
 /**

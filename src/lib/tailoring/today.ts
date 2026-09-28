@@ -88,6 +88,16 @@ export function mustMissAdvice(keys: readonly CriterionKey[]): string {
   return `Nothing met all your must-haves today. This is the closest: ${list}. You can widen your search or make one of them a nice-to-have.`;
 }
 
+/**
+ * A day the must-haves leave short: the email says so and points to Today,
+ * where widen-and-see shows what would add more (the page shows that
+ * instead of this line). Null for a full day.
+ */
+export function shortListAdvice(n: number): string | null {
+  if (n >= TODAY_SIZE || n <= 0) return null;
+  return `Only ${n} deal${n === 1 ? '' : 's'} met all your must-haves today. Widen your search on Today to see more.`;
+}
+
 const byId = (a: { dealId: string }, b: { dealId: string }) => (a.dealId < b.dealId ? -1 : a.dealId > b.dealId ? 1 : 0);
 
 /**
@@ -167,6 +177,39 @@ function slotted<C extends TodayCandidate>(local: readonly C[], national: readon
   return chosen.sort((a, b) => (order.get(a.dealId) ?? 0) - (order.get(b.dealId) ?? 0));
 }
 
+/**
+ * The deals a profile's Today could take from these rows: every check the
+ * list itself makes (exclusions, "wrong area", the must-haves, the feedback
+ * rules, the income bar, the money test, strict suitability, motivated
+ * only), bar the last read of the full listing. What widen-and-see counts.
+ */
+export function admissible(rows: readonly PoolRow[], input: Pick<ChooseInput, 'feedback' | 'exclude' | 'cards' | 'now'>, p: TailoringProfile): TodayCandidate[] {
+  const rules = feedbackRules(input.feedback);
+  const filters = applyKindFeedback({ ...DEFAULT_FILTERS, kind: p.goals?.sourcingKind ?? 'both' }, rules);
+  const ctx = candidateContext(p.goals, filters, input.cards, input.now);
+  const wants = wantsFor(p);
+  const exact: TodayCandidate[] = [];
+  for (const row of rows) {
+    if (input.exclude.has(row.id)) continue;
+    if (row.postcode_area && rules.badAreas.has(row.postcode_area.toUpperCase())) continue;
+    const built = buildCandidate(row, ctx);
+    if (!built) continue;
+    if (judgeRow(row, p, wants, input.now).judgement.mustFails.length === 0) exact.push(built.candidate);
+  }
+  return rankForMember(exact, input.feedback, rules, { depth: Math.max(1, exact.length), mode: p.goals?.motivation.mode ?? 'off' }).ranked;
+}
+
+/** The kind the tailored path reads, after a "rent-to-rent, not buying" answer and the like. */
+export function tailoredFilters(p: TailoringProfile, feedback: ChooseInput['feedback']) {
+  return applyKindFeedback({ ...DEFAULT_FILTERS, kind: p.goals?.sourcingKind ?? 'both' }, feedbackRules(feedback));
+}
+
+/** How many of these candidates pass the last feedback pass on their full listing. */
+export async function passFullListing<C extends TodayCandidate>(reads: ChooseReads, candidates: readonly C[], input: Pick<ChooseInput, 'feedback'>): Promise<C[]> {
+  if (candidates.length === 0) return [];
+  return withFullListings(reads, [...candidates], input.feedback, feedbackRules(input.feedback), candidates.length);
+}
+
 export async function chooseTailored(input: ChooseInput, p: TailoringProfile, reads: ChooseReads, opts: TailoredOptions = {}): Promise<TailoredChoice> {
   const { goals, feedback, exclude, now } = input;
   const rules = feedbackRules(feedback);
@@ -232,7 +275,8 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
       else if (queue.length > 0) list.push(queue.shift()!);
     }
     list.push(...queue);
-    return { dealIds: list.slice(0, TODAY_SIZE), nearMiss: false, advice: null, mustMatches, capped: rows.length >= TAILORING.poolLimit };
+    const dealIds = list.slice(0, TODAY_SIZE);
+    return { dealIds, nearMiss: false, advice: shortListAdvice(dealIds.length), mustMatches, capped: rows.length >= TAILORING.poolLimit };
   }
 
   // ── Nothing meets the must-haves: the closest, and what it misses ──

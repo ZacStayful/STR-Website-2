@@ -264,7 +264,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           heading: seat.heading,
           pick: null,
           teasers,
-          advice: plan?.nearMiss ? plan.advice : null,
+          // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
+          advice: plan?.advice ?? null,
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
           figureFor: (c) => cardRangeLine(c, seat.goals?.finance ?? null, settings.dealPricing.profitRangePct),

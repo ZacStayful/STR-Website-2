@@ -53,6 +53,9 @@ export const TAILORING = {
   /** Widen and see: suggestions shown at most, and the size of each step offered. */
   widen: { maxSuggestions: 3, milesStep: 10, maxMiles: 100, rentStepPcm: 250, profitStepPcm: 100, cashStep: 'next band' as const },
 
+  /** Browse's "Best for you": how long a member's order for one search is kept, so pages never shuffle or repeat. */
+  browse: { cacheSeconds: 300 },
+
   /** The minimum monthly profit when the member has not given one: Batch 12's own default. */
   fallbackMinProfitPcm: 500,
 

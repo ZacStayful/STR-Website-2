@@ -28,6 +28,7 @@ import { basisLine, cashBuyerOf, gapLine, mostYouCanPay, payLine } from "@/lib/m
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
 import { numbersForCard } from "@/lib/tailoring/numbers";
+import { explainCard } from "@/lib/tailoring/why";
 import { areaLookup } from "@/lib/tailoring/order";
 import { priceLine } from "../_components/DealCard";
 import { openDealAction } from "../actions";
@@ -176,6 +177,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
     deal_margin: model?.kind === "rent-to-rent" ? model.monthlyMargin : null,
   };
   const numbers = numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
+  // Part D: why it fits them, and how well, in the same words as their card.
+  const explanation = numbers ? explainCard(sheetCard, tailoring, areaLookup(cards), now) : null;
   const pctRange = (v: number) => {
     const [lo, hi] = spread(v, pct, 0.1);
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
@@ -294,6 +297,15 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {numbers && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">Your numbers</h2>
+                {explanation && (explanation.why || explanation.match) && (
+                  <p className="mt-1 text-xs text-primary">
+                    {explanation.match && <span className="mr-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold">{explanation.match}</span>}
+                    {explanation.why}
+                  </p>
+                )}
+                {explanation?.flags.map((f) => (
+                  <p key={f} className="text-[11px] font-medium text-warning">{f}</p>
+                ))}
                 <dl className="mt-3 grid grid-cols-3 gap-3">
                   {numbers.map((n) => (
                     <div key={n.key} className="min-w-0">

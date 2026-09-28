@@ -7,6 +7,7 @@ import { ArrowRight } from "lucide-react";
 import { toggleSavedAreaAction } from "../../../../actions";
 import { personaliseScore, personalInputFor } from "@/lib/market/personalise";
 import { areaTrend } from "@/lib/market/trend";
+import { defaultSortFor } from "@/lib/market/rank";
 import { MIN_DISTRICT_SAMPLES } from "@/lib/market/confidence";
 import { buildTabModel, type TabKey } from "@/lib/market/tab-model";
 import { districtLabel, marketTitle, subMarketTitle } from "@/lib/market/labels";
@@ -96,7 +97,8 @@ export function MarketPage({
 
   const backParams = new URLSearchParams();
   if (card) backParams.set("region", card.region.slug);
-  if (initialSort !== "stayful") backParams.set("sort", initialSort);
+  // Batch 14: the list's own default ("Best for you" with goals) is left out of the link back.
+  if (initialSort !== defaultSortFor(goals)) backParams.set("sort", initialSort);
   const backHref = backParams.size ? `/markets?${backParams}` : "/markets";
 
   if (!card || !row) {

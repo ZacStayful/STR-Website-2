@@ -30,6 +30,7 @@ import { rankingPool } from '../marketplace/queries';
 import type { DealVisibility } from '../marketplace/visibility';
 import { usesTailoring, type TailoringProfile } from '../tailoring/profile';
 import type { TailoredOptions } from '../tailoring/today';
+import { widenOptions, type WidenOption } from '../tailoring/widen';
 import { chooseDay, type DayChoice } from './choose-day';
 import { feedbackForMember } from './feedback';
 import { todayKey, todayStart } from './day';
@@ -373,6 +374,29 @@ async function fullListingsFor(admin: Admin, dealIds: string[]): Promise<Map<str
     if (snap) out.set(id, snap);
   }
   return out;
+}
+
+/**
+ * Widen-and-see (Batch 14, tailoring/widen.ts), for the Today page only (the
+ * daily runs have no time for it): the offers for a tailored profile whose
+ * list is short, each with the real count of deals it would add. Empty on
+ * any failure: the page then says the day is short without offers.
+ */
+export async function widenOptionsFor(member: MemberContext, current: readonly string[], now: Date = new Date()): Promise<WidenOption[]> {
+  if (!hasServiceRole() || !usesTailoring(member.tailoring)) return [];
+  const admin = createAdminClient();
+  try {
+    const [exclude, feedback, cards] = await Promise.all([excludedFor(admin, member, todayKey(now)), feedbackForMember(admin, member.userId, now, member.profileId ?? null), getAreaCardsWithin(AREA_WAIT_MS)]);
+    return await widenOptions(
+      { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring },
+      member.tailoring,
+      { pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit), fullListings: (dealIds) => fullListingsFor(admin, dealIds) },
+      current,
+    );
+  } catch (err) {
+    console.error('[today] widen offers failed:', (err as Error)?.message ?? err);
+    return [];
+  }
 }
 
 /** This morning's pick, when there is one: already paid for, so already opened. */

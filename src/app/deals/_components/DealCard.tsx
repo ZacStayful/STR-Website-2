@@ -78,6 +78,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           {badges.tags.map((t) => (
             <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
           ))}
+          {view?.explanation?.elsewhere && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">Best elsewhere</span>}
         </div>
       </div>
       <div className="p-3">
@@ -122,6 +123,16 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         )}
           </>
         )}
+        {/* Batch 14: why it is on their list, and how well it matches. */}
+        {view?.explanation && (view.explanation.why || view.explanation.match) && (
+          <p className="mt-1 text-xs text-primary">
+            {view.explanation.match && <span className="mr-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold">{view.explanation.match}</span>}
+            {view.explanation.why}
+          </p>
+        )}
+        {view?.explanation?.flags.map((f) => (
+          <p key={f} className="text-[11px] font-medium text-warning">{f}</p>
+        ))}
         <p className="mt-1.5 truncate text-sm font-medium text-foreground">{where || "Location on the sheet"}</p>
         {motivation.length > 0 && <p className="truncate text-xs font-medium text-primary">{motivation.join(" · ")}</p>}
         <p className="truncate text-xs text-muted-foreground">{describeType(card)}</p>

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseTailored, mustMatchCount, mustMissAdvice, tailoredOrder } from './today.ts';
+import { chooseTailored, mustMatchCount, mustMissAdvice, shortListAdvice, tailoredOrder } from './today.ts';
 import { plainProfile, type TailoringProfile } from './profile.ts';
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
 import type { PoolRow } from '../today/candidates.ts';
@@ -193,4 +193,16 @@ test('a beginner’s day keeps projects back unless nothing else fills it', asyn
   assert.deepEqual((await chooseTailored(w.input(beginner), beginner, w.reads)).dealIds, ['b', 'c', 'a']);
   const bold = profile({}, { about: { ...DEFAULT_ABOUT, dealsDone: '0', risk: 'go' } });
   assert.deepEqual((await chooseTailored(w.input(bold), bold, w.reads)).dealIds, ['a', 'b', 'c']);
+});
+
+test('a day the must-haves leave short says so, for the email; a full day says nothing', async () => {
+  const w = world({ rows: [row('cheap', { price_amount: 150_000 }), row('cheaper', { price_amount: 120_000 }), row('dear', { price_amount: 260_000 })] });
+  const p = profile({ budget: 'u200' });
+  const r = await chooseTailored(w.input(p), p, w.reads);
+  assert.equal(r.dealIds.length, 2);
+  assert.equal(r.nearMiss, false);
+  assert.equal(r.advice, 'Only 2 deals met all your must-haves today. Widen your search on Today to see more.');
+  assert.equal(shortListAdvice(1), 'Only 1 deal met all your must-haves today. Widen your search on Today to see more.');
+  assert.equal(shortListAdvice(5), null);
+  assert.equal(shortListAdvice(0), null, 'an empty day is the near miss or the empty state, not this line');
 });
