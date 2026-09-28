@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { chargeOrder, checkName, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profilePriceLine, SHARED_QUESTION_IDS } from './rules.ts';
+import { chargeOrder, checkName, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile } from './rules.ts';
 
 const p = (over: Partial<{ id: string; name: string; isActive: boolean; createdAt: string; pausedAt: string | null; deletedAt: string | null }> = {}) => ({
   id: over.id ?? 'a',
@@ -89,4 +89,34 @@ test('a My deals entry takes its profile from the row, then the Keep / Pass, the
   assert.equal(entryProfile({ pick: 'p', open: 'o' }), 'p');
   assert.equal(entryProfile({ open: 'o' }), 'o');
   assert.equal(entryProfile({}), null);
+});
+
+const full = (over: Partial<SavedProfile> = {}): SavedProfile => ({ ...p(over), userId: 'u', goals: null, areas: [], answered: {}, forClient: false, copiedFrom: null, ...over });
+
+test('seats: one per running profile, active first; one unnamed seat without profiles; none when all are paused', () => {
+  const none = seatsFor('u', undefined);
+  assert.deepEqual(none.seats.map((s) => [s.key, s.profile, s.heading]), [['u', null, null]]);
+  assert.equal(none.allPaused, false);
+
+  const one = seatsFor('u', [full({ id: 'a', isActive: true })]);
+  assert.deepEqual(one.seats.map((s) => [s.key, s.heading]), [['u:a', null]], 'one profile: no heading');
+
+  const three = seatsFor('u', [
+    full({ id: 'old', name: 'Old', createdAt: '2026-01-01T00:00:00Z' }),
+    full({ id: 'act', name: 'Client: JS', isActive: true, createdAt: '2026-05-01T00:00:00Z' }),
+    full({ id: 'off', name: 'Paused', pausedAt: '2026-09-01T00:00:00Z' }),
+  ]);
+  assert.deepEqual(three.seats.map((s) => [s.key, s.heading]), [['u:act', 'Client: JS'], ['u:old', 'Old']]);
+
+  const paused = seatsFor('u', [full({ id: 'a', isActive: true, pausedAt: '2026-09-01T00:00:00Z' })]);
+  assert.deepEqual(paused.seats, []);
+  assert.equal(paused.allPaused, true);
+});
+
+test('profile links: the active profile goes straight there, another through the switch', () => {
+  assert.deepEqual(profileLinks('https://x.test/', { id: 'a', isActive: true }, '/profile'), { today: 'https://x.test/today', edit: 'https://x.test/profile' });
+  assert.deepEqual(profileLinks('https://x.test', null, '/profile'), { today: 'https://x.test/today', edit: 'https://x.test/profile' });
+  const other = profileLinks('https://x.test', { id: 'b-1', isActive: false }, '/profile');
+  assert.equal(other.today, 'https://x.test/profiles/switch?to=b-1&next=%2Ftoday');
+  assert.equal(other.edit, 'https://x.test/profiles/switch?to=b-1&next=%2Fprofile');
 });

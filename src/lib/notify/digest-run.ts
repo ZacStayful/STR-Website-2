@@ -19,6 +19,11 @@ import 'server-only';
  * follow Daily picks. Nothing goes to anyone whose slot is used, and nothing
  * with no content goes at all. Nothing else here is charged.
  *
+ * Saved profiles (Batch 13): the teasers come in a part for each running
+ * profile (active first), each its own Today and its own day's charge. When
+ * the credit runs out part-way, the later profiles are left out and named;
+ * a member whose profiles are all paused gets their changes only.
+ *
  * Entry point: /api/internal/daily-digest (the cron, secret-gated, ?dry=1).
  */
 import { createAdminClient } from '../supabase/admin';
@@ -36,12 +41,17 @@ import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './
 import { newSendToken, sendKey } from './cap';
 import { pendingChanges, trackedAlertsOn } from './alerts-server';
 import { closingIds } from './alerts';
-import { mapLimit, teasersFrom, todayPlans } from './daily-server';
+import { mapLimit, planKey, teasersFrom, todayPlans } from './daily-server';
 import { getBalance } from '../credit/ledger';
 import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
 import { cardRangeLine } from '../marketplace/profit-range';
 import { profileNudgesFor } from '../profile/server';
+import { allProfilesFor } from '../profiles/server';
+import { profileLinks, seatsFor, type Seat } from '../profiles/rules';
+import { GOALS_EDITOR_HREF } from '../nav';
+import type { ProfileDeals } from './message';
+import type { MarketGoals } from '../market/goals';
 
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
@@ -146,15 +156,30 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     else if (seatSuspended(p)) perUser.push({ user: p.id, sent: false, reason: 'seat_suspended' });
   }
   const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p);
-  const contexts: MemberContext[] = open.filter(wantsTeasers).map((p) => {
-    const payerId = payers.get(p.id)?.payerId ?? p.id;
-    return { userId: p.id, payerId, goals: parseMarketGoals(p.market_goals), savedAreas: [], visibility: paidOf(p) ? PAID_VISIBILITY : freeVisibility };
-  });
-  // Saved areas feed Today's choice exactly as the page reads them.
-  for (let i = 0; i < contexts.length; i += ID_CHUNK) {
-    const { data } = await admin.from('saved_areas').select('user_id, postcode_area').in('user_id', contexts.slice(i, i + ID_CHUNK).map((c) => c.userId));
-    for (const r of (data ?? []) as { user_id: string; postcode_area: string }[]) contexts.find((c) => c.userId === r.user_id)?.savedAreas.push(r.postcode_area.toUpperCase());
+  // A seat for each running profile (Batch 13); unreadable profiles (schema
+  // not run): every member is one seat, as before.
+  const profileRows = await allProfilesFor(admin, open.filter(wantsTeasers).map((p) => p.id));
+  const savedAreas = new Map<string, string[]>();
+  // Saved areas feed Today's choice exactly as the page reads them (a seat with no profile).
+  const needAreas = open.filter((p) => wantsTeasers(p) && !profileRows?.get(p.id)?.length).map((p) => p.id);
+  for (let i = 0; i < needAreas.length; i += ID_CHUNK) {
+    const { data } = await admin.from('saved_areas').select('user_id, postcode_area').in('user_id', needAreas.slice(i, i + ID_CHUNK));
+    for (const r of (data ?? []) as { user_id: string; postcode_area: string }[]) savedAreas.set(r.user_id, [...(savedAreas.get(r.user_id) ?? []), r.postcode_area.toUpperCase()]);
   }
+  type DigestSeat = Seat & { context: MemberContext; goals: MarketGoals | null };
+  const seatsOf = new Map<string, DigestSeat[]>();
+  for (const p of open.filter(wantsTeasers)) {
+    const payerId = payers.get(p.id)?.payerId ?? p.id;
+    const visibility = paidOf(p) ? PAID_VISIBILITY : freeVisibility;
+    seatsOf.set(
+      p.id,
+      seatsFor(p.id, profileRows?.get(p.id)).seats.map((seat) => {
+        const goals = seat.profile ? seat.profile.goals : parseMarketGoals(p.market_goals);
+        return { ...seat, goals, context: { userId: p.id, payerId, goals, savedAreas: seat.profile ? seat.profile.areas : savedAreas.get(p.id) ?? [], visibility, profileId: seat.profile?.id ?? null } };
+      }),
+    );
+  }
+  const contexts: MemberContext[] = [...seatsOf.values()].flatMap((list) => list.map((x) => x.context));
   const plans = await todayPlans(admin, contexts, now, { create: !opts.dry, concurrency: 6 });
   const base = siteUrl();
 
@@ -166,9 +191,20 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   const dailyPence = settings.dealPricing.todays5DailyPence;
   summary.chargeMode = mode;
   const isAdmin = (p: ProfileRow) => Boolean(p.email && isAdminEmail(p.email));
+  // Each seat's teasers, decided before any send so the purse can be spent in
+  // order: a member's profiles in charge order, the ones the credit cannot
+  // cover left out (and named in the email).
+  const teasersOf = new Map<string, ReturnType<typeof teasersFrom>>();
+  for (const p of open) {
+    const visibility = paidOf(p) ? PAID_VISIBILITY : freeVisibility;
+    for (const seat of seatsOf.get(p.id) ?? []) {
+      const plan = plans.get(planKey(seat.context)) ?? null;
+      teasersOf.set(seat.key, plan ? teasersFrom(plan, null, visibility) : []);
+    }
+  }
   const noCredit = new Set<string>();
   if (mode === 'per_day') {
-    const wanting = open.filter((p) => !isAdmin(p) && wantsTeasers(p) && (plans.get(p.id) ?? null) !== null);
+    const wanting = open.filter((p) => !isAdmin(p) && (seatsOf.get(p.id) ?? []).some((seat) => (teasersOf.get(seat.key)?.length ?? 0) > 0));
     const payerIds = [...new Set(wanting.map((p) => payers.get(p.id)?.payerId ?? p.id))];
     const spendable = new Map<string, number | null>();
     for (let i = 0; i < payerIds.length; i += 10) {
@@ -177,7 +213,12 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       some.forEach((id, j) => spendable.set(id, balances[j]?.spendableBasePence ?? null));
     }
     const purse = new PayerPurse(spendable);
-    for (const p of wanting) if (!purse.take(payers.get(p.id)?.payerId ?? p.id, dailyPence)) noCredit.add(p.id);
+    for (const p of wanting) {
+      for (const seat of seatsOf.get(p.id) ?? []) {
+        if ((teasersOf.get(seat.key)?.length ?? 0) === 0) continue;
+        if (!purse.take(payers.get(p.id)?.payerId ?? p.id, dailyPence)) noCredit.add(seat.key);
+      }
+    }
     summary.noCreditForTodays5 = noCredit.size;
   }
   const wouldEmail: Record<string, unknown>[] = [];
@@ -193,35 +234,69 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       return;
     }
     const paid = paidOf(p);
-    const visibility = paid ? PAID_VISIBILITY : freeVisibility;
-    const plan = wantsTeasers(p) && !noCredit.has(p.id) ? plans.get(p.id) ?? null : null;
-    const teasers = plan ? teasersFrom(plan, null, visibility) : [];
-    // A day of daily deals is charged only for Today's 5 itself, never for changes alone.
-    const chargeDay = mode === 'per_day' && teasers.length > 0 && !isAdmin(p);
+    const seats = wantsTeasers(p) ? seatsOf.get(p.id) ?? [] : [];
+    const parts: { seat: DigestSeat; deals: ProfileDeals }[] = [];
+    const unfunded: string[] = [];
+    for (const seat of seats) {
+      const teasers = teasersOf.get(seat.key) ?? [];
+      if (teasers.length === 0) continue;
+      if (noCredit.has(seat.key)) {
+        if (seat.heading) unfunded.push(seat.heading);
+        continue;
+      }
+      const plan = plans.get(planKey(seat.context)) ?? null;
+      parts.push({
+        seat,
+        deals: {
+          heading: seat.heading,
+          pick: null,
+          teasers,
+          advice: plan?.nearMiss ? plan.advice : null,
+          todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
+          // Batch 10: each deal's profit as a range at this profile's finance.
+          figureFor: (c) => cardRangeLine(c, seat.goals?.finance ?? null, settings.dealPricing.profitRangePct),
+        },
+      });
+    }
     const changes = alertsOn.has(p.id) ? pending.get(p.id)?.changes ?? [] : [];
-    const kind = teasers.length > 0 ? 'todays_5' : 'deal_changes';
     const token = newSendToken();
     const unsubscribeUrl = `${base.replace(/\/$/, '')}/api/notify/unsubscribe/${token}`;
     const built = buildDaily({
       siteUrl: base,
       now,
       pick: null,
-      teasers,
-      advice: plan?.nearMiss ? plan.advice : null,
+      teasers: [],
+      profiles: parts.map((x) => x.deals),
+      unfunded,
       changes,
       freeCutoffIso: paid ? null : freeVisibility.cutoffIso,
-      unsubscribe: { label: kind === 'todays_5' ? 'Stop daily picks' : 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
-      // Batch 10: each deal's profit as a range at the member's finance.
-      figureFor: (c) => cardRangeLine(c, parseMarketGoals(p.market_goals)?.finance ?? null, settings.dealPricing.profitRangePct),
+      // The label is settled below, from what the email turned out to be.
+      unsubscribe: { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
     });
+    // Named for what the email IS, after the early-access backstop has had its
+    // say: a Today's 5 whose teasers were all dropped is a changes email, and
+    // its link turns off the changes, so it must not say "Stop daily picks".
+    if (built?.message.unsubscribe) built.message.unsubscribe = { ...built.message.unsubscribe, label: built.message.kind === 'todays_5' ? 'Stop daily picks' : 'Stop these emails' };
+    // A day of daily deals is charged only for a profile's Today's 5 itself, never for changes alone.
+    const chargeFor = (i: number) => mode === 'per_day' && !isAdmin(p) && (built?.teasersByPart[i]?.length ?? 0) > 0;
     if (!built) {
       perUser.push({ user: p.id, sent: false, reason: 'nothing_to_say' });
       return;
     }
     const sendSummary = { teasers: built.teaserIds, alerts: built.changeIds, droppedTeasers: built.droppedTeasers, subject: built.message.subject };
     if (opts.dry) {
-      wouldEmail.push({ user: p.id, email: p.email, kind: built.message.kind, tier: paid ? 'paid' : 'free', ...sendSummary, today: noCredit.has(p.id) ? 'no_credit' : plan ? 'stored' : wantsTeasers(p) ? 'chosen_at_send' : 'not_wanted', wouldCharge: chargeDay ? { pence: dailyPence, payer: payers.get(p.id)?.payerId ?? p.id } : 0 });
+      wouldEmail.push({
+        user: p.id,
+        email: p.email,
+        kind: built.message.kind,
+        tier: paid ? 'paid' : 'free',
+        ...sendSummary,
+        today: !wantsTeasers(p) ? 'not_wanted' : seats.length === 0 ? 'profiles_paused' : parts.length > 0 ? 'stored' : unfunded.length > 0 ? 'no_credit' : 'chosen_at_send',
+        profiles: parts.map((x, i) => ({ profile: x.seat.profile?.id ?? null, teasers: built.teasersByPart[i]?.length ?? 0, wouldCharge: chargeFor(i) ? dailyPence : 0 })),
+        unfunded: unfunded.length,
+        payer: payers.get(p.id)?.payerId ?? p.id,
+      });
       perUser.push({ user: p.id, sent: false, kind: built.message.kind, reason: 'would_send' });
       return;
     }
@@ -251,9 +326,11 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     summary.emails += 1;
     if (built.message.kind === 'todays_5') summary.todays5 += 1;
     else summary.changesOnly += 1;
-    if (chargeDay && built.message.kind === 'todays_5') {
+    for (const [i, part] of parts.entries()) {
+      if (!chargeFor(i)) continue;
       const payer = payers.get(p.id);
-      const day = await chargeDailyDeals(admin, { userId: p.id, payerId: payer?.payerId ?? p.id, memberId: payer?.memberId ?? null, day: claim.day, pence: dailyPence, run: 'digest', sendRef: token });
+      const profile = part.seat.profile;
+      const day = await chargeDailyDeals(admin, { userId: p.id, payerId: payer?.payerId ?? p.id, memberId: payer?.memberId ?? null, day: claim.day, pence: dailyPence, run: 'digest', sendRef: token, profile: profile ? { id: profile.id, active: profile.isActive } : null });
       if (day.charged) summary.chargedBasePence += dailyPence;
     }
     perUser.push({ user: p.id, sent: true, kind: built.message.kind, teasers: built.teaserIds.length, changes: built.changeIds.length });

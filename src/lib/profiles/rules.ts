@@ -138,6 +138,53 @@ export function chargeOrder<P extends Pick<SavedProfile, 'id' | 'isActive' | 'cr
 }
 
 /**
+ * One member's place in a daily run (the picks passes and the digest): a
+ * section of the one daily email and one daily charge each. `profile` is null
+ * for a member with no profile row (the schema not run yet, or a signup the
+ * lazy first profile has not reached): one section, charged as before.
+ */
+export interface Seat {
+  userId: string;
+  profile: SavedProfile | null;
+  /** The key a run keeps a seat's picks, list and charge under. */
+  key: string;
+  /** The section heading: the profile's name when labels show, else null (no heading). */
+  heading: string | null;
+}
+
+export function seatKey(userId: string, profileId: string | null): string {
+  return profileId ? `${userId}:${profileId}` : userId;
+}
+
+/**
+ * A member's seats for the day, in charge order (active first, then oldest).
+ * `profiles` is every row the member has (paused and deleted included, for
+ * the labels); undefined when they have none. `allPaused`: they have
+ * profiles and every one is paused, so no Today's 5 and no charge.
+ */
+export function seatsFor(userId: string, profiles: readonly SavedProfile[] | undefined): { seats: Seat[]; allPaused: boolean } {
+  if (!profiles || profiles.every((p) => p.deletedAt)) return { seats: [{ userId, profile: null, key: seatKey(userId, null), heading: null }], allPaused: false };
+  const running = chargeOrder(profiles);
+  const labelled = labelsShown(profiles);
+  return {
+    seats: running.map((p) => ({ userId, profile: p, key: seatKey(userId, p.id), heading: labelled ? p.name : null })),
+    allPaused: running.length === 0,
+  };
+}
+
+/**
+ * Where a profile's "Open Today" and "Edit" links go from an email: straight
+ * to the page for the active profile, through the switch route for another
+ * one (it needs the session and only changes which profile the header shows).
+ */
+export function profileLinks(siteUrl: string, profile: Pick<SavedProfile, 'id' | 'isActive'> | null, editPath: string): { today: string; edit: string } {
+  const base = siteUrl.replace(/\/$/, '');
+  if (!profile || profile.isActive) return { today: `${base}/today`, edit: `${base}${editPath}` };
+  const via = (next: string) => `${base}/profiles/switch?to=${encodeURIComponent(profile.id)}&next=${encodeURIComponent(next)}`;
+  return { today: via('/today'), edit: via(editPath) };
+}
+
+/**
  * A new profile's criteria: a copy of the one it was made from, pointed at
  * the path the member chose ("What's this profile for?"), so the quiz asks
  * that path's questions for it. The search kind follows the path, as the

@@ -476,6 +476,12 @@ export interface PickEmailInput {
    * place of the single figures, and the Full analysis in place of the report.
    */
   range?: { label: string; basis: string } | null;
+  /**
+   * Saved profiles (Batch 13): "See today's 5" and "Edit my filter" for the
+   * profile this pick is for, through the switch route when it is not the
+   * active one (profileLinks in src/lib/profiles/rules.ts).
+   */
+  profileLinks?: { today: string; edit: string } | null;
 }
 
 export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null } | null) {
@@ -539,7 +545,8 @@ export function describeMotivation(m: Motivation | null | undefined, limit = 3):
 export function pickSection(input: PickEmailInput): { section: Section; subject: string; headline: string; eyebrow: string; unsubscribe: Unsubscribe; links: ReturnType<typeof pickLinks> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
-  const links = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
+  const plain = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
+  const links = input.profileLinks ? { ...plain, today: input.profileLinks.today, filter: input.profileLinks.edit } : plain;
   const kindWord = l.kind === 'rent' ? 'rent-to-rent' : 'to buy';
   const sc = input.screening && input.screening.band !== 'insufficient-data' ? input.screening : null;
   // The subject leads on the screening where there is one: "42% above a long let"

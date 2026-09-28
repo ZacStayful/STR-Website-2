@@ -19,6 +19,7 @@ import { displayOrder, todayKey, TODAY_SIZE } from '../today/day';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { payersFor, type Payer } from '../team';
+import { seatKey } from '../profiles/rules';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -55,30 +56,49 @@ export async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (it
   return out;
 }
 
+/** The key a plan is kept under: the member, or the member's profile (seatKey in src/lib/profiles/rules.ts). */
+export function planKey(m: Pick<MemberContext, 'userId' | 'profileId'>): string {
+  return seatKey(m.userId, m.profileId ?? null);
+}
+
 /**
- * Each member's Today list. With `create`, a member with no list yet gets one
- * chosen and stored now (exactly what their first visit would do); without
- * it (dry runs), only a stored list is read and nothing is written.
+ * Each member's Today list, keyed by planKey (one per saved profile). With
+ * `create`, a list not chosen yet is chosen and stored now (exactly what the
+ * member's first visit would do); without it (dry runs), only a stored list
+ * is read and nothing is written. One member's profiles are chosen one after
+ * another, in the order given (active first), so each leaves out what the
+ * one before it took: no deal twice across a member's profiles in a day.
  */
 export async function todayPlans(admin: Admin, members: readonly MemberContext[], now: Date, opts: { create: boolean; concurrency?: number }): Promise<Map<string, TodayPlan | null>> {
   const out = new Map<string, TodayPlan | null>();
   if (members.length === 0) return out;
   const lists = new Map<string, { stored: string[]; advice: string | null; nearMiss: boolean } | null>();
   if (opts.create) {
-    const chosen = await mapLimit(members, opts.concurrency ?? 6, (m) => todaySelection(m, now).catch((err) => {
-      console.error('[notify] today selection failed:', (err as Error)?.message ?? err);
-      return null;
-    }));
-    members.forEach((m, i) => lists.set(m.userId, chosen[i] ? { stored: chosen[i]!.dealIds, advice: chosen[i]!.advice, nearMiss: chosen[i]!.nearMiss } : null));
+    const byUser = new Map<string, MemberContext[]>();
+    for (const m of members) byUser.set(m.userId, [...(byUser.get(m.userId) ?? []), m]);
+    await mapLimit([...byUser.values()], opts.concurrency ?? 6, async (seats) => {
+      for (const m of seats) {
+        const chosen = await todaySelection(m, now).catch((err) => {
+          console.error('[notify] today selection failed:', (err as Error)?.message ?? err);
+          return null;
+        });
+        lists.set(planKey(m), chosen ? { stored: chosen.dealIds, advice: chosen.advice, nearMiss: chosen.nearMiss } : null);
+      }
+    });
   } else {
     const day = todayKey(now);
-    for (let i = 0; i < members.length; i += ID_CHUNK) {
-      const some = members.slice(i, i + ID_CHUNK).map((m) => m.userId);
-      const { data, error } = await admin.from('today_selections').select('user_id, deal_ids, near_miss, advice').eq('day', day).in('user_id', some);
+    const parse = (r: { deal_ids: unknown; near_miss: unknown; advice: unknown }) => ({ stored: Array.isArray(r.deal_ids) ? r.deal_ids.filter((x): x is string => typeof x === 'string') : [], advice: typeof r.advice === 'string' && r.advice.trim() ? r.advice : null, nearMiss: r.near_miss === true });
+    const legacy = members.filter((m) => !m.profileId).map((m) => m.userId);
+    for (let i = 0; i < legacy.length; i += ID_CHUNK) {
+      const { data, error } = await admin.from('today_selections').select('user_id, deal_ids, near_miss, advice').eq('day', day).in('user_id', legacy.slice(i, i + ID_CHUNK));
       if (error) console.warn('[notify] today read failed:', error.message);
-      for (const r of (data ?? []) as { user_id: string; deal_ids: unknown; near_miss: unknown; advice: unknown }[]) {
-        lists.set(r.user_id, { stored: Array.isArray(r.deal_ids) ? r.deal_ids.filter((x): x is string => typeof x === 'string') : [], advice: typeof r.advice === 'string' && r.advice.trim() ? r.advice : null, nearMiss: r.near_miss === true });
-      }
+      for (const r of (data ?? []) as { user_id: string; deal_ids: unknown; near_miss: unknown; advice: unknown }[]) lists.set(r.user_id, parse(r));
+    }
+    const seats = members.filter((m) => m.profileId);
+    for (let i = 0; i < seats.length; i += ID_CHUNK) {
+      const { data, error } = await admin.from('profile_today_lists').select('user_id, profile_id, deal_ids, near_miss, advice').eq('day', day).in('profile_id', seats.slice(i, i + ID_CHUNK).map((m) => m.profileId!));
+      if (error) console.warn('[notify] profile today read failed:', error.message);
+      for (const r of (data ?? []) as { user_id: string; profile_id: string; deal_ids: unknown; near_miss: unknown; advice: unknown }[]) lists.set(planKey({ userId: r.user_id, profileId: r.profile_id }), parse(r));
     }
   }
 
@@ -91,7 +111,7 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
     for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) cards.set(card.id, { ...card, has_photo: Boolean(photo) });
   }
   const answered = new Map<string, Set<string>>();
-  const withLists = [...lists.entries()].filter(([, l]) => l && l.stored.length > 0).map(([id]) => id);
+  const withLists = [...new Set(members.filter((m) => (lists.get(planKey(m))?.stored.length ?? 0) > 0).map((m) => m.userId))];
   for (let i = 0; i < withLists.length; i += ID_CHUNK) {
     for (let j = 0; j < allIds.length; j += ID_CHUNK) {
       const { data, error } = await admin.from('deal_reactions').select('user_id, deal_id').in('user_id', withLists.slice(i, i + ID_CHUNK)).in('deal_id', allIds.slice(j, j + ID_CHUNK));
@@ -100,9 +120,9 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
     }
   }
   for (const m of members) {
-    const l = lists.get(m.userId);
+    const l = lists.get(planKey(m));
     if (!l) {
-      out.set(m.userId, null);
+      out.set(planKey(m), null);
       continue;
     }
     const mine = new Map<string, DealCard>();
@@ -110,7 +130,7 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
       const c = cards.get(id);
       if (c) mine.set(id, c);
     }
-    out.set(m.userId, { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine });
+    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine });
   }
   return out;
 }

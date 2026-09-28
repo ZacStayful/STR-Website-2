@@ -144,20 +144,31 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     }
     const p = profiles.get(userId) ?? null;
     const skip = (reason: string) => perUser.push({ user: userId, email: p?.email ?? null, picks: rows.length, sent: false, reason });
+    // A member who will never get this letter for these misses (no email,
+    // picks or the letter switched off, a team member) has them superseded
+    // now. Left open they would sit at the head of the queue, oldest first,
+    // until they filled the whole read and starved everyone else's letter.
+    const retire = async (reason: string) => {
+      skip(reason);
+      if (opts.dry) return;
+      const { error: supErr } = await admin.from("sourcing_missed").update({ superseded_at: now.toISOString() }).in("id", rows.map((r) => r.id));
+      if (supErr) console.error("[picks-paused] supersede failed:", supErr.message);
+      else summary.superseded += rows.length;
+    };
     if (!p || !p.email) {
-      skip("no_email");
+      await retire("no_email");
       continue;
     }
     if (p.sourcing_alerts === false) {
-      skip("picks_off");
+      await retire("picks_off");
       continue;
     }
     if (p.alert_credit === false) {
-      skip("switched_off");
+      await retire("switched_off");
       continue;
     }
     if (payerIn(payers, userId).memberId) {
-      skip("team_member");
+      await retire("team_member");
       continue;
     }
     const { list, superseded } = missesToList(rows.map(toMissed), p.sourcing_last_sent_at);

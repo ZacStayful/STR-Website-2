@@ -55,7 +55,8 @@ export type Block =
   | { type: 'buttons'; links: Link[] }
   | { type: 'items'; items: Item[] };
 
-export type SectionKey = 'pick' | 'teasers' | 'changes' | 'missed' | 'recap' | 'areas' | 'notice';
+/** 'profile': a saved profile's heading, over its pick and teasers (Batch 13). */
+export type SectionKey = 'pick' | 'teasers' | 'changes' | 'missed' | 'recap' | 'areas' | 'notice' | 'profile';
 
 export interface Section {
   key: SectionKey;
@@ -285,6 +286,32 @@ export interface DailyInput {
   figureFor?: (card: DealCard) => string | null;
   /** Batch 12: the profile line while the profile is incomplete (profileNudgeSection). Absent once complete. */
   profileNudge?: ProfileNudge | null;
+  /**
+   * Saved profiles (Batch 13): one part per running profile, in charge order
+   * (the active one first). When given it replaces `pick`, `teasers` and
+   * `advice`, which are the one-profile case.
+   */
+  profiles?: ProfileDeals[];
+  /**
+   * The names of profiles left out today because the credit ran out part-way
+   * (named only when the member has two or more; the letter covers the rest).
+   */
+  unfunded?: string[];
+}
+
+/** One saved profile's part of the daily email. */
+export interface ProfileDeals {
+  /** The profile's name as a heading, once the member has two or more; null: no heading. */
+  heading: string | null;
+  pick: { section: Section; headline: string } | null;
+  /** The marketplace deal the pick was drawn from: never a teaser under another profile too. */
+  pickDealId?: string | null;
+  teasers: DealCard[];
+  advice?: string | null;
+  /** "Open Today" for this profile: /today, or through the switch route for another profile. */
+  todayUrl?: string;
+  /** Each teaser's profit at this profile's finance; defaults to the input's. */
+  figureFor?: (card: DealCard) => string | null;
 }
 
 /** "Your profile is 60% done: finish it for better deals and £5 credit." */
@@ -311,6 +338,8 @@ export interface BuiltMessage {
   message: Message;
   /** Teaser ids actually in the email, in order. */
   teaserIds: string[];
+  /** The same, per profile part (in the order given): what each profile's charge is for. */
+  teasersByPart: string[][];
   /** Every alert id the changes in the email stand for (collapsed ones included): what to mark sent. */
   changeIds: string[];
   /** Alerts given to the builder that it would not tell (not true as stated). Closed with the email, never told later. */
@@ -328,20 +357,47 @@ export interface BuiltMessage {
 export function buildDaily(input: DailyInput): BuiltMessage | null {
   const now = input.now ?? new Date();
   const base = input.siteUrl.replace(/\/$/, '');
-  const todayUrl = `${base}/today`;
-  const { kept, dropped } = visibleTeasers(input.teasers, input.freeCutoffIso);
+  const parts: ProfileDeals[] = input.profiles ?? [{ heading: null, pick: input.pick, teasers: input.teasers, advice: input.advice ?? null }];
+  const dropped: string[] = [];
+  // One deal is told once per email, whichever profile found it first; a pick is never a teaser.
+  const told = new Set<string>(parts.map((p) => p.pickDealId).filter((id): id is string => Boolean(id)));
+  const shown = parts.map((part) => {
+    const { kept, dropped: gone } = visibleTeasers(part.teasers, input.freeCutoffIso);
+    dropped.push(...gone);
+    const fresh = kept.filter((c) => !told.has(c.id));
+    for (const c of fresh) told.add(c.id);
+    return { part, kept: fresh };
+  });
   const { section: changes, used } = changesSection(input.changes, base);
-  const dealCount = (input.pick ? 1 : 0) + kept.length;
+  const picks = shown.filter((x) => x.part.pick);
+  const dealCount = picks.length + shown.reduce((sum, x) => sum + x.kept.length, 0);
   if (dealCount === 0 && !changes) return null;
 
   const sections: Section[] = [];
-  if (input.pick) sections.push(input.pick.section);
-  if (kept.length > 0) {
-    const blocks: Block[] = [];
-    if (input.advice) blocks.push({ type: 'text', text: input.advice, tone: 'callout' });
-    blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, input.figureFor)) });
-    blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !input.pick }] });
-    sections.push({ key: 'teasers', title: input.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
+  const anyPick = picks.length > 0;
+  for (const { part, kept } of shown) {
+    if (!part.pick && kept.length === 0) continue;
+    const todayUrl = part.todayUrl ?? `${base}/today`;
+    if (part.heading) sections.push({ key: 'profile', title: `For ${part.heading}`, blocks: [] });
+    if (part.pick) sections.push(part.pick.section);
+    if (kept.length > 0) {
+      const blocks: Block[] = [];
+      if (part.advice) blocks.push({ type: 'text', text: part.advice, tone: 'callout' });
+      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor)) });
+      blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !part.pick }] });
+      sections.push({ key: 'teasers', title: part.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
+    }
+  }
+  const unfunded = (input.unfunded ?? []).filter((n) => n.trim());
+  if (unfunded.length > 0 && dealCount > 0) {
+    sections.push({
+      key: 'notice',
+      title: null,
+      blocks: [
+        { type: 'text', text: `Not sent today, because your credit ran out: ${unfunded.join(', ')}. Top up and ${unfunded.length === 1 ? 'it starts' : 'they start'} again tomorrow morning.`, tone: 'callout' },
+        { type: 'buttons', links: [{ label: 'Top up', url: `${base}/account/billing` }] },
+      ],
+    });
   }
   if (changes) sections.push(changes);
   if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
@@ -352,7 +408,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   if (kind === 'deal_changes') subject = capitalise(phrase ?? 'Changes on your deals');
   else {
     const head = `${plural(dealCount, 'deal')} today`;
-    subject = phrase ? `${head} · ${phrase}` : input.pick ? `${head} · top pick: ${input.pick.headline}` : head;
+    subject = phrase ? `${head} · ${phrase}` : anyPick ? `${head} · top pick: ${picks[0].part.pick!.headline}` : head;
   }
   return {
     message: {
@@ -364,7 +420,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
       manageUrl: manageNotificationsUrl(base),
       unsubscribe: input.unsubscribe,
     },
-    teaserIds: kept.map((c) => c.id),
+    teaserIds: shown.flatMap((x) => x.kept.map((c) => c.id)),
+    teasersByPart: shown.map((x) => x.kept.map((c) => c.id)),
     changeIds: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     refusedIds: input.changes.filter((c) => !used.includes(c)).flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     droppedTeasers: dropped,

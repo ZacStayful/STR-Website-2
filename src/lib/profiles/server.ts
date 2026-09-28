@@ -170,6 +170,40 @@ export async function runningProfilesFor(admin: Admin, userIds: readonly string[
   return out;
 }
 
+/**
+ * Every profile row of these members, paused and deleted included (the
+ * labels need both), oldest first: what the daily runs make seats from
+ * (seatsFor). Null when the table cannot be read (schema not run): the runs
+ * then serve every member as one seat, exactly as before this batch.
+ */
+export async function allProfilesFor(admin: Admin, userIds: readonly string[]): Promise<Map<string, SavedProfile[]> | null> {
+  const out = new Map<string, SavedProfile[]>();
+  const unique = [...new Set(userIds)];
+  for (let i = 0; i < unique.length; i += ID_CHUNK) {
+    const some = unique.slice(i, i + ID_CHUNK);
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await admin
+        .from('search_profiles')
+        .select(PROFILE_COLUMNS)
+        .in('user_id', some)
+        .order('user_id', { ascending: true })
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        console.warn('[profiles] profiles unreadable (schema behind?):', error.message);
+        return null;
+      }
+      for (const raw of (data ?? []) as unknown[]) {
+        const p = parseProfileRow(raw);
+        if (p) out.set(p.userId, [...(out.get(p.userId) ?? []), p]);
+      }
+      if ((data?.length ?? 0) < PAGE) break;
+    }
+  }
+  return out;
+}
+
 /** Profiles by id, deleted ones included: the names on labels. Empty on any failure. */
 export async function profilesByIds(admin: Admin, ids: readonly string[]): Promise<Map<string, SavedProfile>> {
   const out = new Map<string, SavedProfile>();
