@@ -16,6 +16,8 @@ import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "..
 import { capDay, newSendToken, sendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import type { RunResult } from "./picks-run";
+import { allProfilesFor } from "../profiles/server";
+import { labelFor } from "../profiles/rules";
 
 // ─── "Your picks have paused": the run ────────────────────────────────
 // The daily-picks run records, for every member it could not send to for
@@ -32,6 +34,9 @@ import type { RunResult } from "./picks-run";
 // member, and it carries the changes on deals they track that the daily
 // email would have carried. A member whose slot is already spent today is
 // left for the next run, when the letter is still due.
+//
+// Saved profiles (Batch 13): still one letter per member; once they have two
+// profiles, each missed pick and each change names the profile it was for.
 //
 // Entry points: /api/internal/picks-paused (the cron, secret-gated, ?dry=1)
 // and the admin page's dry-run button (session-gated).
@@ -121,6 +126,21 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
   const byUser = new Map<string, MissRow[]>();
   for (const r of (data ?? []) as MissRow[]) byUser.set(r.user_id, [...(byUser.get(r.user_id) ?? []), r]);
   const ids = [...byUser.keys()];
+  // Which profile each miss was for, read apart so an older schema reads the
+  // queue exactly as before (unlabelled), and the members' profiles for names.
+  const missProfile = new Map<string, string>();
+  const profileRows = await allProfilesFor(admin, ids);
+  if (profileRows) {
+    const missIds = [...byUser.values()].flat().map((r) => r.id);
+    for (const some of chunk(missIds, ID_CHUNK)) {
+      const { data: tags, error: tagErr } = await admin.from("sourcing_missed").select("id, profile_id").in("id", some).not("profile_id", "is", null);
+      if (tagErr) {
+        console.warn("[picks-paused] miss profiles unreadable:", tagErr.message);
+        break;
+      }
+      for (const t of (tags ?? []) as { id: string; profile_id: string }[]) missProfile.set(t.id, t.profile_id);
+    }
+  }
 
   const profiles = new Map<string, ProfileRow>();
   for (const some of chunk(ids, ID_CHUNK)) {
@@ -171,7 +191,10 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       await retire("team_member");
       continue;
     }
-    const { list, superseded } = missesToList(rows.map(toMissed), p.sourcing_last_sent_at);
+    const { list, superseded } = missesToList(
+      rows.map((r) => ({ ...toMissed(r), profileName: labelFor(profileRows?.get(userId), missProfile.get(r.id)) })),
+      p.sourcing_last_sent_at,
+    );
     if (superseded.length > 0 && !opts.dry) {
       const { error: supErr } = await admin.from("sourcing_missed").update({ superseded_at: now.toISOString() }).in("id", superseded.map((m) => m.id!));
       if (supErr) console.error("[picks-paused] supersede failed:", supErr.message);
@@ -208,7 +231,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     // ride a letter whose slot records them as told.
     const letter = (withChanges: boolean) => {
       const settled = withChanges && alertsOn.has(userId) ? pending.get(userId) ?? null : null;
-      const given = settled?.changes ?? [];
+      const given = (settled?.changes ?? []).map((c) => ({ ...c, profileName: labelFor(profileRows?.get(userId), c.profileId) }));
       const { section: changes, used } = changesSection(given, base);
       const ids = (list: readonly ChangeInput[]) => list.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
       const extra = changes ? { ...renderSections([changes]), subjectSuffix: changesPhrase(used) } : null;

@@ -16,6 +16,11 @@ import 'server-only';
  *   - the email takes the Monday "weekly" slot (src/lib/notify/cap.ts); a
  *     second run the same day finds it taken and sends nothing.
  *   - each section follows its own switch; all off or nothing to say = no email.
+ * Saved profiles (Batch 13):
+ *   - "Deals you missed" is one part per running profile, each deal counted
+ *     once (under the first profile it matched, active first);
+ *   - recap lines name the profile a deal is tracked under, once the member
+ *     has two; "Your areas" stays the active profile's (saved_areas).
  */
 import { createAdminClient } from '../supabase/admin';
 import { getAreaCards } from '../market/cached';
@@ -34,7 +39,11 @@ import { claimSlot, finishSend, markSending, releaseClaim } from './sends';
 import { newSendToken, sendKey, slotAllowed } from './cap';
 import { mapLimit, payersForAll } from './daily-server';
 import { trackedLink, trackedPlace, trackingFor } from './tracked-read';
-import { buildYourWeek, missedFor, recapItems, WENT_REASONS, type RecapSource, type WentDeal } from './week';
+import { buildYourWeek, missedByProfile, missedFor, missedTotal, recapItems, WENT_REASONS, type ProfileMissed, type RecapSource, type WentDeal } from './week';
+import { allProfilesFor } from '../profiles/server';
+import { labelFor, labelsShown, profileLinks, seatsFor, type SavedProfile } from '../profiles/rules';
+import { profileTagsFor } from '../profiles/deal-tags';
+import { GOALS_EDITOR_HREF } from '../nav';
 import { cardRangeLine } from '../marketplace/profit-range';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -191,22 +200,48 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
   const rangeWidths = settings.dealPricing.profitRangePct;
   const paidOf = (p: ProfileRow) => (p.email && isAdminEmail(p.email) ? true : hasEverPaid(byId.get(payers.get(p.id)?.payerId ?? p.id) ?? owners.get(payers.get(p.id)?.payerId ?? p.id) ?? null));
 
+  // Every profile row (Batch 13); unreadable (schema not run): one profile each, as before.
+  const profileRows = await allProfilesFor(admin, ids);
+
   // ── Per member: decide each section ──
-  type Plan = { p: ProfileRow; since: string; missed: ReturnType<typeof missedFor> | null; areas: ReturnType<typeof digestChanges> | null; rows: SavedRow[]; free: number | null };
+  type Plan = { p: ProfileRow; since: string; missed: ReturnType<typeof missedFor> | null; byProfile: ProfileMissed[] | null; profileOf: Map<string, SavedProfile>; areas: ReturnType<typeof digestChanges> | null; rows: SavedRow[]; free: number | null };
   const plans: Plan[] = profiles.map((p) => {
     const since = sinceOf(p.id);
-    const goals = parseMarketGoals(p.market_goals);
     const rows = saved.get(p.id) ?? [];
     const free = paidOf(p) ? null : settings.freeDealDelayHours;
-    // No goals, no honest "matching you" (Q10).
-    const missed = newSwitches && on(p.alert_missed) && goals ? missedFor({ deals: went, filters: filtersForGoals(goals, rows.map((r) => r.postcode_area)), seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free }) : null;
+    const wantMissed = newSwitches && on(p.alert_missed);
+    const seats = seatsFor(p.id, profileRows?.get(p.id)).seats;
+    const profileOf = new Map<string, SavedProfile>();
+    let missed: Plan['missed'] = null;
+    let byProfile: Plan['byProfile'] = null;
+    if (wantMissed && seats.some((s) => s.profile)) {
+      // One part per running profile with answers; no answers, no honest "matching you" (Q10).
+      const withGoals = seats.filter((s) => s.profile?.goals);
+      for (const s of withGoals) if (s.heading) profileOf.set(s.heading, s.profile!);
+      byProfile = missedByProfile(
+        withGoals.map((s) => ({ heading: s.heading, filters: filtersForGoals(s.profile!.goals, s.profile!.areas), figureFor: (d: WentDeal) => cardRangeLine(d, s.profile!.goals?.finance ?? null, rangeWidths) })),
+        { deals: went, seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free },
+      );
+      missed = missedTotal(byProfile);
+    } else if (wantMissed && seats.length > 0) {
+      const goals = parseMarketGoals(p.market_goals);
+      // No goals, no honest "matching you" (Q10).
+      missed = goals ? missedFor({ deals: went, filters: filtersForGoals(goals, rows.map((r) => r.postcode_area)), seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free }) : null;
+    }
     const areas = on(p.alert_weekly) && areasReadable && rows.length > 0 ? digestChanges(rows, cardByCode, trendByCode) : null;
-    return { p, since, missed, areas, rows, free };
+    return { p, since, missed, byProfile, profileOf, areas, rows, free };
   });
   // The recap only rides along, so only members with another section need their tracked deals read.
   // Not for a suspended seat: the loop skips them, so reading their deals is wasted time.
   const needRecap = plans.filter((pl) => newSwitches && on(pl.p.alert_tracked) && !payers.get(pl.p.id)?.suspended && ((pl.missed?.total ?? 0) > 0 || (pl.areas?.length ?? 0) > 0));
   const tracking = await trackingFor(admin, needRecap.map((pl) => ({ id: pl.p.id, admin: Boolean(pl.p.email && isAdminEmail(pl.p.email)) })));
+  // Which profile each tracked deal is under, only for members whose emails name profiles.
+  const recapTags = new Map<string, Map<string, string>>();
+  for (const pl of needRecap) {
+    const t = tracking.get(pl.p.id);
+    if (!t || !labelsShown(profileRows?.get(pl.p.id) ?? [])) continue;
+    recapTags.set(pl.p.id, await profileTagsFor(pl.p.id, payers.get(pl.p.id)?.payerId ?? pl.p.id, t.load.view));
+  }
 
   const base = siteUrl();
   const nowIso = now.toISOString();
@@ -249,6 +284,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
               dealHistory: card ? parseHistory(card.price_history) : null,
               retired: card?.retired_reason && card.retired_at ? { reason: card.retired_reason, at: card.retired_at } : null,
               revivedAt: v.dealId ? t.revived.get(v.dealId)?.at ?? null : null,
+              profileName: labelFor(profileRows?.get(p.id), recapTags.get(p.id)?.get(v.key)),
             };
           }),
           pl.since,
@@ -256,7 +292,23 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       : null;
     const token = newSendToken();
     const unsubscribeUrl = `${base.replace(/\/$/, '')}/api/notify/unsubscribe/${token}`;
-    const built = buildYourWeek({ siteUrl: base, now, since: pl.since, missed: pl.missed, freeDelayHours: pl.free, recap, areas: pl.areas, unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }, figureFor: (d) => cardRangeLine(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths) });
+    const built = buildYourWeek({
+      siteUrl: base,
+      now,
+      since: pl.since,
+      missed: pl.missed,
+      missedByProfile: pl.byProfile,
+      // A profile's "Open Today" goes through the switch when it is not the active one.
+      todayUrlFor: (heading) => {
+        const profile = heading ? pl.profileOf.get(heading) : undefined;
+        return profile ? profileLinks(base, profile, GOALS_EDITOR_HREF).today : undefined;
+      },
+      freeDelayHours: pl.free,
+      recap,
+      areas: pl.areas,
+      unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
+      figureFor: (d) => cardRangeLine(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths),
+    });
     const areaChanges = pl.areas?.length ?? 0;
     if (!built) {
       // Nothing to say. The areas' state is recorded (the baseline, on a first run).

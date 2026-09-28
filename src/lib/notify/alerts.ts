@@ -42,6 +42,8 @@ export interface AlertPayload {
   status?: string | null;
   previousStatus?: string | null;
   watchers?: number | null;
+  /** The saved profile the deal is tracked under (Batch 13), when tagged: named in the email once the member has two. */
+  profileId?: string | null;
 }
 
 export interface AlertRow {
@@ -93,6 +95,7 @@ function toChange(r: AlertRow, over: Partial<ChangeInput> = {}): ChangeInput {
     status: p.status ?? null,
     previousStatus: p.previousStatus ?? null,
     watchers: p.watchers ?? null,
+    profileId: p.profileId ?? null,
     ...over,
   };
 }
@@ -229,6 +232,8 @@ export interface TrackedForAlerts {
   checkedListingId: string | null;
   /** When the member started tracking it at this stage: nothing before this alerts. */
   trackedSince: string;
+  /** The saved profile it is tracked under (Batch 13), stamped into every alert's payload. */
+  profileId?: string | null;
   /** The pipeline row's own history. */
   pipelineHistory: readonly PriceHistoryEntry[] | null;
   /** The row's stored figures, for the figure at a new price when there is no marketplace deal. */
@@ -298,7 +303,7 @@ export function alertsFor(userId: string, items: readonly TrackedForAlerts[], wa
     const floor = Math.max(time(it.trackedSince), now.getTime() - ALERT_MAX_AGE_MS);
     const source: AlertInsert['source'] = it.dealId ? 'marketplace' : 'pipeline';
     const base = { user_id: userId, source, deal_key: it.key, deal_id: it.dealId, checked_listing_id: it.checkedListingId };
-    const common: AlertPayload = { kind: it.kind, opened: it.opened, address: it.opened ? it.address : null, town: it.town, type: it.type, stage: it.stage };
+    const common: AlertPayload = { kind: it.kind, opened: it.opened, address: it.opened ? it.address : null, town: it.town, type: it.type, stage: it.stage, ...(it.profileId ? { profileId: it.profileId } : {}) };
     const push = (alert_type: AlertType, event_at: string, payload: AlertPayload) => out.push({ ...base, alert_type, event_at, payload: { ...common, ...payload } });
 
     // ── Price drops: the marketplace record when there is one (always pcm for rent, re-screened), else the row's ──

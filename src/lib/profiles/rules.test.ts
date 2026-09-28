@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { chargeOrder, checkName, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile } from './rules.ts';
+import { chargeOrder, checkName, labelFor, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile } from './rules.ts';
 
 const p = (over: Partial<{ id: string; name: string; isActive: boolean; createdAt: string; pausedAt: string | null; deletedAt: string | null }> = {}) => ({
   id: over.id ?? 'a',
@@ -119,4 +119,14 @@ test('profile links: the active profile goes straight there, another through the
   const other = profileLinks('https://x.test', { id: 'b-1', isActive: false }, '/profile');
   assert.equal(other.today, 'https://x.test/profiles/switch?to=b-1&next=%2Ftoday');
   assert.equal(other.edit, 'https://x.test/profiles/switch?to=b-1&next=%2Fprofile');
+});
+
+test('labelFor: a name only once labels show, deleted ones marked', () => {
+  const one = [full({ id: 'a', name: 'My deals' })];
+  assert.equal(labelFor(one, 'a'), null);
+  const two = [...one, full({ id: 'b', name: 'Client: JS', deletedAt: '2026-09-01T00:00:00Z' })];
+  assert.equal(labelFor(two, 'b'), 'Client: JS (deleted profile)');
+  assert.equal(labelFor(two, 'zzz'), null);
+  assert.equal(labelFor(undefined, 'a'), null);
+  assert.equal(labelFor(two, null), null);
 });

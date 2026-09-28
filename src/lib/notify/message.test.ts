@@ -240,3 +240,8 @@ test('saved profiles: one profile needs no heading, and a profile with nothing t
   assert.ok(!built.message.sections.some((s) => s.key === 'profile'));
   assert.equal(buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, profiles: [{ heading: 'A', pick: null, teasers: [] }], unfunded: ['B'] }), null, 'an unfunded line alone is no email');
 });
+
+test('saved profiles: a change names its profile only when the sender gives a name', () => {
+  assert.deepEqual(changeItem(change({ profileName: 'Client: JS' }), SITE)!.lines.slice(-1), ['For Client: JS']);
+  assert.ok(!changeItem(change({ profileId: 'p1' }), SITE)!.lines.some((l) => l.startsWith('For ')));
+});

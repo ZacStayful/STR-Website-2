@@ -129,6 +129,17 @@ export function profileLabel(p: Pick<SavedProfile, 'name' | 'deletedAt'>): strin
 }
 
 /**
+ * The name to label something with (a change on a tracked deal, a missed
+ * pick, a recap line): the profile's label when the member's labels show,
+ * else null. `profiles` is every row the member has, deleted ones included.
+ */
+export function labelFor(profiles: readonly Pick<SavedProfile, 'id' | 'name' | 'deletedAt'>[] | undefined, profileId: string | null | undefined): string | null {
+  if (!profiles || !profileId || !labelsShown(profiles)) return null;
+  const p = profiles.find((x) => x.id === profileId);
+  return p ? profileLabel(p) : null;
+}
+
+/**
  * The order a member's running profiles are served and charged in: the
  * active one first, then oldest first. When credit runs out part-way, the
  * ones at the end are the ones that miss the day.

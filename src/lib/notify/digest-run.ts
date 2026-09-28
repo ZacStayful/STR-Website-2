@@ -48,7 +48,7 @@ import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-serv
 import { cardRangeLine } from '../marketplace/profit-range';
 import { profileNudgesFor } from '../profile/server';
 import { allProfilesFor } from '../profiles/server';
-import { profileLinks, seatsFor, type Seat } from '../profiles/rules';
+import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
 import { GOALS_EDITOR_HREF } from '../nav';
 import type { ProfileDeals } from './message';
 import type { MarketGoals } from '../market/goals';
@@ -158,7 +158,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p);
   // A seat for each running profile (Batch 13); unreadable profiles (schema
   // not run): every member is one seat, as before.
-  const profileRows = await allProfilesFor(admin, open.filter(wantsTeasers).map((p) => p.id));
+  const profileRows = await allProfilesFor(admin, open.map((p) => p.id));
   const savedAreas = new Map<string, string[]>();
   // Saved areas feed Today's choice exactly as the page reads them (a seat with no profile).
   const needAreas = open.filter((p) => wantsTeasers(p) && !profileRows?.get(p.id)?.length).map((p) => p.id);
@@ -258,7 +258,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         },
       });
     }
-    const changes = alertsOn.has(p.id) ? pending.get(p.id)?.changes ?? [] : [];
+    // Each change names its profile once the member has two.
+    const changes = (alertsOn.has(p.id) ? pending.get(p.id)?.changes ?? [] : []).map((c) => ({ ...c, profileName: labelFor(profileRows?.get(p.id), c.profileId) }));
     const token = newSendToken();
     const unsubscribeUrl = `${base.replace(/\/$/, '')}/api/notify/unsubscribe/${token}`;
     const built = buildDaily({

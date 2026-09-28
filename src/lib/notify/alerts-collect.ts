@@ -19,6 +19,9 @@ import { trackedPlace, trackingFor, type MemberTracking } from './tracked-read';
 import { describeType } from '../marketplace/grid';
 import { parseHistory } from '../listing/recheck';
 import { textAlertMemberIds } from '../sms/store';
+import { allProfilesFor } from '../profiles/server';
+import { labelsShown } from '../profiles/rules';
+import { profileTagsFor } from '../profiles/deal-tags';
 
 const PAGE = 1000;
 const ID_CHUNK = 150;
@@ -47,8 +50,12 @@ function chunks<T>(list: readonly T[], size = ID_CHUNK): T[][] {
   return out;
 }
 
-/** The tracked deals of one member, as alertsFor reads them. */
-function itemsOf(t: MemberTracking): TrackedForAlerts[] {
+/**
+ * The tracked deals of one member, as alertsFor reads them. `tags`: each
+ * entry's saved profile (Batch 13), stamped into its alerts so the email can
+ * say which profile a change is for.
+ */
+function itemsOf(t: MemberTracking, tags: ReadonlyMap<string, string> = new Map()): TrackedForAlerts[] {
   const out: TrackedForAlerts[] = [];
   for (const v of t.load.view) {
     if (!v.mine) continue;
@@ -68,6 +75,7 @@ function itemsOf(t: MemberTracking): TrackedForAlerts[] {
       dealId: v.dealId,
       checkedListingId: v.checkedListingId,
       trackedSince: v.lastChangedAt,
+      profileId: tags.get(v.key) ?? null,
       pipelineHistory: v.checkedListingId ? t.pipelineHistory.get(v.checkedListingId) ?? null : null,
       pipelineDeal: v.checkedListingId ? (t.pipelineDeal.get(v.checkedListingId) as TrackedForAlerts['pipelineDeal']) ?? null : null,
       deal: card
@@ -186,6 +194,14 @@ export async function runCollector(opts: { dry: boolean; onlyUserIds?: string[] 
       for (const p of (data ?? []) as { id: string; email: string | null }[]) if (p.email && isAdminEmail(p.email)) adminAccounts.add(p.id);
     }
     const memberPayers = await payersForAll(ids);
+    // Which profile each tracked deal is under, for members whose emails name
+    // profiles (two or more). Everyone else is left alone: one read fewer each.
+    const profileRows = await allProfilesFor(admin, ids);
+    const tagsOf = new Map<string, Map<string, string>>();
+    for (const userId of ids) {
+      if (!labelsShown(profileRows?.get(userId) ?? [])) continue;
+      tagsOf.set(userId, await profileTagsFor(userId, memberPayers.get(userId)?.payerId ?? userId, tracking.get(userId)?.load.view ?? []));
+    }
 
     // ── Decide and write ──
     const inserts: AlertInsert[] = [];
@@ -194,7 +210,7 @@ export async function runCollector(opts: { dry: boolean; onlyUserIds?: string[] 
       const watchers = new Map<string, number>();
       for (const [dealId, accounts] of watcherAccounts) watchers.set(dealId, [...accounts].filter((a) => a !== own && !adminAccounts.has(a)).length);
       const before: AlertedBefore = { lowestDrop: lowestDrop.get(userId) ?? new Map(), lastBack: lastBack.get(userId) ?? new Map(), lastGone: lastGone.get(userId) ?? new Map() };
-      const items = itemsOf(t);
+      const items = itemsOf(t, tagsOf.get(userId));
       const mine = alertsFor(userId, items, watchers, before, now);
       inserts.push(...mine);
       perUser.push({ user: userId, tracked: items.length, alerts: mine.map((a) => ({ type: a.alert_type, deal: a.deal_key, at: a.event_at })) });

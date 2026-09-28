@@ -167,6 +167,10 @@ export interface ChangeInput {
   previousStatus?: string | null;
   /** nearly_gone: other accounts that opened or kept it in the last week. */
   watchers?: number | null;
+  /** The saved profile it is tracked under (Batch 13). */
+  profileId?: string | null;
+  /** That profile's name, set by the sender only once the member has two profiles: "For Client: JS". */
+  profileName?: string | null;
 }
 
 const GONE_WORDS: Record<string, string> = {
@@ -203,6 +207,12 @@ export function changePlace(c: Pick<ChangeInput, 'opened' | 'address' | 'town' |
 
 /** One change as an item, or null when the input cannot support a truthful line. */
 export function changeItem(c: ChangeInput, siteUrl: string): Item | null {
+  const item = changeItemOf(c, siteUrl);
+  if (!item || !c.profileName) return item;
+  return { ...item, lines: [...item.lines, `For ${c.profileName}`] };
+}
+
+function changeItemOf(c: ChangeInput, siteUrl: string): Item | null {
   const place = changePlace(c);
   const link = changeLink(c, siteUrl);
   switch (c.alertType) {

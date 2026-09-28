@@ -2,7 +2,9 @@
  * "Your week", the Monday email (Part D): up to three sections, each shown
  * only when it has something true to say.
  *
- *   1. Deals you missed   deals that matched the member's goals, that they
+ *   1. Deals you missed   deals that matched the member's goals (each running
+ *                         saved profile's, Batch 13: one part per profile,
+ *                         a deal counted under the first that matched), that they
  *                         never opened, kept, passed or were sent as a pick,
  *                         and that went sold / under offer / let agreed since
  *                         their last Your week. Up to five, best profit first,
@@ -97,6 +99,8 @@ export interface Missed {
   listed: WentDeal[];
   /** Of the total, how many went while still in early access (free accounts only; 0 for paid). */
   earlyAccess: number;
+  /** Every matching deal's id (the total's), so another profile does not count it again. */
+  matched: string[];
 }
 
 export function missedFor(input: MissedInput): Missed {
@@ -105,7 +109,46 @@ export function missedFor(input: MissedInput): Missed {
   const free = input.freeDelayHours;
   const visible = free === null ? matching : matching.filter((d) => wasVisibleToFree(d, free));
   const listed = [...visible].sort((a, b) => (num(b.annual_profit) ?? -Infinity) - (num(a.annual_profit) ?? -Infinity)).slice(0, MISSED_LISTED);
-  return { total: matching.length, listed, earlyAccess: matching.length - visible.length };
+  return { total: matching.length, listed, earlyAccess: matching.length - visible.length, matched: matching.map((d) => d.id) };
+}
+
+/** One saved profile's "Deals you missed". */
+export interface ProfileMissed {
+  /** The profile's name once the member has two or more; null: no name. */
+  heading: string | null;
+  missed: Missed;
+  /** Batch 10: a missed deal's profit as a range at this profile's finance. */
+  figureFor?: (d: WentDeal) => string | null;
+}
+
+/**
+ * "Deals you missed" for each of a member's running profiles, in charge order
+ * (active first): a deal that matched two profiles is counted once, under the
+ * first. Profiles with nothing are left out.
+ */
+export function missedByProfile(
+  profiles: readonly { heading: string | null; filters: DealFilters; figureFor?: (d: WentDeal) => string | null }[],
+  common: Omit<MissedInput, 'filters'>,
+): ProfileMissed[] {
+  const counted = new Set(common.seen);
+  const out: ProfileMissed[] = [];
+  for (const p of profiles) {
+    const missed = missedFor({ ...common, filters: p.filters, seen: counted });
+    for (const id of missed.matched) counted.add(id);
+    if (missed.total > 0) out.push({ heading: p.heading, missed, figureFor: p.figureFor });
+  }
+  return out;
+}
+
+/** The profiles' parts as one total, for the subject and the run's record. */
+export function missedTotal(parts: readonly ProfileMissed[]): Missed | null {
+  if (parts.length === 0) return null;
+  return {
+    total: parts.reduce((n, p) => n + p.missed.total, 0),
+    listed: parts.flatMap((p) => p.missed.listed),
+    earlyAccess: parts.reduce((n, p) => n + p.missed.earlyAccess, 0),
+    matched: parts.flatMap((p) => p.missed.matched),
+  };
 }
 
 const WENT_WORDS: Record<WentReason, string> = { sold: 'Sold', under_offer: 'Under offer', let_agreed: 'Let agreed' };
@@ -145,7 +188,7 @@ function delayWords(hours: number): string {
   return hours % 24 === 0 ? plural(hours / 24, 'day') : plural(hours, 'hour');
 }
 
-export function missedSection(m: Missed, opts: { siteUrl: string; since: string; now: Date; freeDelayHours: number | null; figureFor?: (d: WentDeal) => string | null }): Section | null {
+export function missedSection(m: Missed, opts: { siteUrl: string; since: string; now: Date; freeDelayHours: number | null; figureFor?: (d: WentDeal) => string | null; heading?: string | null; todayUrl?: string }): Section | null {
   if (m.total === 0) return null;
   const base = opts.siteUrl.replace(/\/$/, '');
   const blocks: Section['blocks'] = [];
@@ -155,8 +198,8 @@ export function missedSection(m: Missed, opts: { siteUrl: string; since: string;
     blocks.push({ type: 'text', text: `${m.earlyAccess} of these ${m.earlyAccess === 1 ? 'was' : 'were'} in early access — paid members saw ${m.earlyAccess === 1 ? 'it' : 'them'} ${delayWords(opts.freeDelayHours)} before you could.`, tone: 'callout' });
     blocks.push({ type: 'buttons', links: [{ label: 'See deals first', url: `${base}/upgrade`, primary: true }] });
   }
-  blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: `${base}/today`, primary: opts.freeDelayHours === null || m.earlyAccess === 0 }] });
-  return { key: 'missed', title: 'Deals you missed', blocks };
+  blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: opts.todayUrl ?? `${base}/today`, primary: opts.freeDelayHours === null || m.earlyAccess === 0 }] });
+  return { key: 'missed', title: opts.heading ? `Deals you missed for ${opts.heading}` : 'Deals you missed', blocks };
 }
 
 /** One line of the recap: which deal (never an address it may not show) and what moved. */
@@ -164,6 +207,8 @@ export interface RecapItem {
   place: string;
   summary: string;
   link: Link;
+  /** The saved profile it is tracked under, once the member has two (Batch 13). */
+  profileName?: string | null;
 }
 
 /** One tracked deal, as the recap needs it. `place` is already address-safe (B5's opened rule). */
@@ -178,6 +223,7 @@ export interface RecapSource {
   /** How the marketplace deal went, when it has. */
   retired: { reason: string; at: string } | null;
   revivedAt: string | null;
+  profileName?: string | null;
 }
 
 const RETIRED_WORDS: Record<string, string> = { sold: 'now sold', under_offer: 'now under offer', let_agreed: 'now let agreed', removed: 'no longer listed' };
@@ -207,14 +253,14 @@ export function recapItems(sources: readonly RecapSource[], since: string): Reca
     if (!saidStatus && s.revivedAt && (time(s.revivedAt) ?? 0) >= from && !(s.retired && (time(s.retired.at) ?? 0) > (time(s.revivedAt) ?? 0))) moves.push('back on the market');
     if (moves.length === 0) continue;
     const summary = moves.join('; ');
-    out.push({ place: s.place, summary: summary[0].toUpperCase() + summary.slice(1), link: s.link });
+    out.push({ place: s.place, summary: summary[0].toUpperCase() + summary.slice(1), link: s.link, ...(s.profileName ? { profileName: s.profileName } : {}) });
   }
   return out;
 }
 
 export function recapSection(items: readonly RecapItem[]): Section | null {
   if (items.length === 0) return null;
-  return { key: 'recap', title: 'Your deals this week', blocks: [{ type: 'items', items: items.map((i) => ({ title: i.place, lines: [i.summary], link: i.link })) }] };
+  return { key: 'recap', title: 'Your deals this week', blocks: [{ type: 'items', items: items.map((i) => ({ title: i.place, lines: i.profileName ? [i.summary, `For ${i.profileName}`] : [i.summary], link: i.link })) }] };
 }
 
 export function areasSection(changes: readonly AlertChange[], siteUrl: string): Section | null {
@@ -244,6 +290,14 @@ export interface WeekInput {
   unsubscribe: Unsubscribe | null;
   /** Batch 10: a missed deal's profit as the member's area-estimate range. */
   figureFor?: (d: WentDeal) => string | null;
+  /**
+   * Saved profiles (Batch 13): section 1 as one part per running profile
+   * (missedByProfile). When given it replaces `missed` (whose total should
+   * then be missedTotal of these, for the subject).
+   */
+  missedByProfile?: readonly ProfileMissed[] | null;
+  /** A profile's "Open Today", by heading: through the switch route for a profile that is not the active one. */
+  todayUrlFor?: (heading: string | null) => string | undefined;
 }
 
 export interface BuiltWeek {
@@ -252,12 +306,17 @@ export interface BuiltWeek {
 }
 
 export function buildYourWeek(input: WeekInput): BuiltWeek | null {
-  const missed = input.missed ? missedSection(input.missed, { siteUrl: input.siteUrl, since: input.since, now: input.now, freeDelayHours: input.freeDelayHours, figureFor: input.figureFor }) : null;
+  const missedParts: Section[] = input.missedByProfile
+    ? input.missedByProfile
+        .map((p) => missedSection(p.missed, { siteUrl: input.siteUrl, since: input.since, now: input.now, freeDelayHours: input.freeDelayHours, figureFor: p.figureFor ?? input.figureFor, heading: p.heading, todayUrl: input.todayUrlFor?.(p.heading) }))
+        .filter((s): s is Section => s !== null)
+    : [input.missed ? missedSection(input.missed, { siteUrl: input.siteUrl, since: input.since, now: input.now, freeDelayHours: input.freeDelayHours, figureFor: input.figureFor }) : null].filter((s): s is Section => s !== null);
+  const missed = missedParts.length > 0 ? missedParts[0] : null;
   const areas = input.areas ? areasSection(input.areas, input.siteUrl) : null;
   // The recap rides along; it never sends the email on its own.
   if (!missed && !areas) return null;
   const recap = input.recap ? recapSection(input.recap) : null;
-  const sections = [missed, recap, areas].filter((s): s is Section => s !== null);
+  const sections = [...missedParts, recap, areas].filter((s): s is Section => s !== null);
   const parts: string[] = [];
   if (missed && input.missed) parts.push(`${plural(input.missed.total, 'deal')} matching you went`);
   if (areas && input.areas) parts.push(input.areas.length === 1 ? `${input.areas[0].name} changed` : `${input.areas.length} of your areas changed`);

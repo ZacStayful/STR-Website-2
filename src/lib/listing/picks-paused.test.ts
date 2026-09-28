@@ -85,6 +85,7 @@ test('each line says area, type and price, never a single profit figure (Batch 1
   assert.equal(missedPickLine(miss()), 'Nottingham · 2-bed Purchase · £185,000');
   assert.equal(missedPickLine(miss({ kind: 'rent', bedrooms: null, priceAmount: 950, pricePeriod: 'pcm', annualProfit: 7_100 })), 'Nottingham · Rent-to-rent · £950 pcm');
   assert.equal(missedPickLine(miss({ priceAmount: null, pricePeriod: null, annualProfit: null })), 'Nottingham · 2-bed Purchase · price not stated');
+  assert.equal(missedPickLine(miss({ profileName: 'Client: JS' })), 'Nottingham · 2-bed Purchase · £185,000 · for Client: JS', 'saved profiles: named once the member has two');
 });
 
 test('the letter is plain, has one Top up button, the manage link, and never the address, postcode or listing link', () => {

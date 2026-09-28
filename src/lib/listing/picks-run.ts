@@ -47,7 +47,7 @@ import { cardRangeLine, profitRange } from "../marketplace/profit-range";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
 import { allProfilesFor } from "../profiles/server";
-import { profileLinks, seatKey, seatsFor, type SavedProfile } from "../profiles/rules";
+import { labelFor, profileLinks, seatKey, seatsFor, type SavedProfile } from "../profiles/rules";
 import { GOALS_EDITOR_HREF } from "../nav";
 import { closingIds, type Settled } from "../notify/alerts";
 import type { MemberContext } from "../today/selection";
@@ -1333,7 +1333,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       teasers: [],
       profiles: parts.map((p) => p.deals),
       unfunded,
-      changes: settled?.changes ?? [],
+      // Each change names its profile once the member has two.
+      changes: (settled?.changes ?? []).map((c) => ({ ...c, profileName: labelFor(profileRows?.get(userId), c.profileId) })),
       freeCutoffIso: who.paid ? null : freeVisibility.cutoffIso,
       unsubscribe,
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
