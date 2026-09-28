@@ -28,8 +28,8 @@ injected, rather than inside the route handlers.
 
 ## Deploying
 
-Vercel deploys `main` automatically. Seven things are **not** automated, and all
-seven have to be done by hand.
+Vercel deploys `main` automatically. Ten things are **not** automated, and all
+ten have to be done by hand.
 
 ### 1. Run `supabase/schema.sql` after any merge that changes it
 
@@ -276,6 +276,31 @@ estimate: confirm it against the Twilio console and correct it on
    profile completeness and deals wanted; open → Full analysis by what holds
    members back; and how often each tailoring action happened.
 
+### 10. Switch on demand-led sourcing (Batch 15)
+
+1. **Run `supabase/schema.sql`** (the "Batch 15: demand-led sourcing"
+   section). It is additive and idempotent: a service-role table
+   `demand_searches`, the `demand_search_reserve` and `demand_sourcing_month`
+   functions, and six `billing_settings` rows (`demand_min_members` 2,
+   `demand_monthly_cap_pence` 10000, `demand_paying_weight` 2,
+   `demand_radius_areas` 5, `demand_active_days` 30,
+   `demand_max_areas_per_profile` 10). Nothing is added to `ACCESS_COLUMNS`.
+   Until it is run the demand job searches nothing and `/admin/demand` says
+   so; the rest of the site does not read any of it.
+2. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/demand-sourcing` (every 10 minutes 05:05–06:55 UTC).
+3. **Check the dry run:** `/api/internal/demand-sourcing?dry=1` lists what it
+   would search, each search's worst-case cost, the month's spend and what is
+   left, and every skipped area with its reason. It asks the broker nothing
+   and writes nothing. `/admin/demand` shows the same plan live.
+4. **Then switch it on:** set `DEMAND_SOURCING_ENABLED=true` (off until then,
+   like the text alerts). "Run a pass now" on `/admin/demand` works either
+   way.
+5. **The sweep changes on the same deploy:** passes skip searches an earlier
+   pass finished today, so the sweep reaches its whole list (it stalled at
+   about 30 of 108 a day), with areas members want first. `/admin/deals`
+   shows each pass as "done today / list".
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -300,6 +325,7 @@ which are required, and what breaks without them.
 | `src/lib/tailoring` | Tailoring (Batch 14): what a profile's answers do to Today, Browse ("Best for you"), the Explorer, the cards' three numbers, the why-line and match, "widen and see", the profile checks and "Most you can pay". Every rule is pure and tested; every number is in `config.ts`; the reads and writes are the `*-server.ts` files. A member with no new answers takes the untouched path |
 | `src/app/admin/tailoring` | Keep rate on Today's 5 by role, profile completeness and deals wanted; open → Full analysis by what holds members back; tailoring actions by step |
 | `src/app/p/d` | Where a daily-email teaser's "Yes, more like this" / "Not for me" lands (public, keyed on the send's own token): a GET writes nothing, one confirming button records a Keep or a Pass |
+| `src/app/admin/demand` | Demand vs supply (Batch 15): per postcode area × kind × house / flat, the members and profiles that want it beside the live deals, whether the sweep or the demand-led searches cover it, and the gap; this month's spend against the cap, the next pass's plan, the settings and the latest searches. Rules in `src/lib/sourcing-demand` (pure, tested), reads and writes in `src/lib/sourcing-demand/server.ts` (below) |
 | `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
@@ -422,3 +448,37 @@ charged.
   analysis, `reminder_shown` (recorded only, sent from the browser once a
   reminder is on screen) and `reminder_acted` (a Full analysis started from the
   reminder's button). Their take-up figures are on `/admin/weekly-active`.
+
+## Demand-led sourcing
+
+`src/lib/sourcing-demand`: members' running saved profiles steer which extra
+areas get searched, within a monthly spend cap.
+
+- **Demand:** every running profile (Batch 13's `allProfilesFor` +
+  `seatsFor`, as the daily run reads them) of members seen in the last
+  `demand_active_days` days, less `ADMIN_EMAILS`, `@stayful.co.uk` and
+  accounts switched off on `/admin/weekly-active`. A team counts once, as the
+  account that pays. "Most profitable anywhere" adds no areas; chosen areas
+  count; "near me" adds the home area plus the nearest
+  `demand_radius_areas` inside the radius; existing units and a company's
+  operating areas count too, at most `demand_max_areas_per_profile` a
+  profile.
+- **What is added:** an area × kind wanted by `demand_min_members` members
+  that the marketplace sweep does not cover (the sweep takes every area with
+  5+ analyser reports, so these are "early" areas; areas with no data cannot
+  be screened and are never searched). Most wanted first, paying members
+  counting ×`demand_paying_weight`. The sweep's own list is never shortened;
+  it just searches members' areas first.
+- **The cap:** each search claims its worst case against
+  `demand_monthly_cap_pence` for the UK month before it asks, and is settled
+  to what the meter recorded for it. When the cap is spent, demand-led
+  searches stop until the 1st; the sweep, daily picks and the recheck never
+  read it. A pass stops at the cap, after two empty answers in a row, at
+  eight searches or after 44 s.
+- **Cost:** a search is one PMI listings credit (2p) or one OnTheMarket page
+  (0.2p nominal) while PMI is down. This month's spend:
+
+  ```sql
+  select public.demand_sourcing_month('{"month": "2026-10-01"}');
+  ```
+
