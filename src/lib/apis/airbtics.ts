@@ -23,6 +23,7 @@ import {
   calendarMonthValues,
   latestCompleteMonth,
   seasonalMultipliers,
+  series,
   SEASONAL_WINDOW_MONTHS,
   windowEndingAt,
   windowLabel,
@@ -30,6 +31,7 @@ import {
 } from '../comps/months.ts';
 import { compHistoryExtras } from '../comps/extras.ts';
 import { boundsRadiusKm, listingsNearbyFrom } from '../comps/nearby.ts';
+import { bedroomsFilter, boxAround, type CompListing, type ReportCompLike } from '../deal-quality/comps.ts';
 import type {
   ShortLetData,
   ShortLetComparable,
@@ -679,7 +681,7 @@ const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 // ═══════════════════════════════════════════════════════════════════
 
 /** V3 — Classify location from UK postcode outward code. Defaults to 'suburban'. */
-function classifyLocation(postcode: string | undefined): LocationClass {
+export function classifyLocation(postcode: string | undefined): LocationClass {
   if (!postcode) return 'suburban';
   const upper = postcode.toUpperCase();
 
@@ -1087,6 +1089,7 @@ function buildDataFromReportComps(
   locationClass: LocationClass,
   postcode: string,
   options?: ShortLetOptions,
+  variant?: DealIncomeVariant,
 ): { data: ShortLetData; quality: DataQuality } {
   const hasParking = options?.hasParking;
   const finishQuality = options?.finishQuality;
@@ -1409,7 +1412,12 @@ function buildDataFromReportComps(
   console.log(`[V3] Step 6: quality multiplier = ${qualityMultiplier} (${finishQuality || 'average'})`);
 
   // ── Step 7: Separate ADR + occupancy seasonal curves from comp monthly data ──
-  const seasonalADRMultiplier = seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly), seasonWindow);
+  // A deal check's comparables (the listings search) carry no monthly
+  // history, so both curves would fall back to the UK default and their
+  // product would lift the year by ~4%. There, and only there, ADR stays flat
+  // and the default shapes occupancy alone. A full report never passes it.
+  const flatAdr = variant?.flatAdrWithoutMonthly === true && !enrichedComps.some((c) => series(c.booked_daily_rate_ltm_monthly).size > 0);
+  const seasonalADRMultiplier = flatAdr ? new Array<number>(12).fill(1) : seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly), seasonWindow);
   const seasonalOccMultiplier = seasonalMultipliers(enrichedComps.map((c) => c.occupancy_rate_ltm_monthly), seasonWindow);
 
   // ── Step 8b (V3): Headline ADR multiplier — outdoor + parking only ──
@@ -2001,25 +2009,7 @@ async function fetchNearbyListings(
 
   const totalCount = data.message?.total_count ?? 0;
 
-  // The listings field is a JSON string that needs double-parsing. The
-  // parsed payload itself is wrapped in a `{ message: [...] }` object — not
-  // a bare array — so unwrap one more level before checking shape.
-  let listings: AirbticsListing[] = [];
-  if (data.message?.listings) {
-    try {
-      const parsed = typeof data.message.listings === 'string'
-        ? JSON.parse(data.message.listings)
-        : data.message.listings;
-      const inner = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed?.message)
-          ? parsed.message
-          : [];
-      listings = inner;
-    } catch (e) {
-      console.error('[DEBUG] Airbtics: failed to parse listings JSON:', e);
-    }
-  }
+  const listings = parseListingsField<AirbticsListing>(data.message?.listings);
 
   console.log(`[DEBUG] Listings found: ${listings.length} (total_count: ${totalCount}, radius: ${radiusMetres}m)`);
   if (listings.length > 0) {
@@ -2027,6 +2017,162 @@ async function fetchNearbyListings(
   }
 
   return { totalCount, listings };
+}
+
+/**
+ * The listings field of a listings-search reply is a JSON string that needs
+ * double-parsing, and the parsed payload is wrapped in a `{ message: [...] }`
+ * object — not a bare array — so one more level is unwrapped before checking
+ * shape. Anything unreadable is an empty list.
+ */
+function parseListingsField<T>(raw: unknown): T[] {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.message) ? parsed.message : [];
+  } catch (e) {
+    console.error('[DEBUG] Airbtics: failed to parse listings JSON:', e);
+    return [];
+  }
+}
+
+// ─── Deal checks (Batch 16) ─────────────────────────────────────
+
+export interface DealListingsParams {
+  lat: number;
+  lng: number;
+  radiusKm: number;
+  bedrooms: number;
+  page: number;
+  /**
+   * true: Airbtics filters to entire homes with the bedroom count and some
+   * revenue. false: the plain box, filtered by the caller (the fallback if
+   * Airbtics ever refuses the filters).
+   */
+  filtered: boolean;
+}
+
+export interface DealListingsPage {
+  /** Airbtics' count of listings matching in the whole box. */
+  totalCount: number;
+  /** Nearest first, at most 50. */
+  listings: CompListing[];
+  filtered: boolean;
+}
+
+/** The fields a deal check reads, so the cached answer stays small. */
+function toCompListing(l: Record<string, unknown>): CompListing {
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
+  const amenities = l.amenities && typeof l.amenities === 'object' && !Array.isArray(l.amenities) ? (l.amenities as Record<string, boolean>) : null;
+  return {
+    listingID: String(l.listingID ?? ''),
+    name: str(l.name),
+    latitude: num(l.latitude) ?? Number.NaN,
+    longitude: num(l.longitude) ?? Number.NaN,
+    bedrooms: typeof l.bedrooms === 'number' || typeof l.bedrooms === 'string' ? l.bedrooms : null,
+    bathrooms: num(l.bathrooms),
+    accommodates: num(l.accommodates),
+    room_type: str(l.room_type),
+    property_type: str(l.property_type),
+    room_and_property_type: str(l.room_and_property_type),
+    added_on: str(l.added_on),
+    visible_review_count: num(l.visible_review_count),
+    reveiw_scores_rating: num(l.reveiw_scores_rating),
+    avg_booked_daily_rate_ltm: num(l.avg_booked_daily_rate_ltm),
+    avg_occupancy_rate_ltm: num(l.avg_occupancy_rate_ltm),
+    annual_revenue_ltm: num(l.annual_revenue_ltm),
+    active_days_count_ltm: num(l.active_days_count_ltm),
+    no_of_bookings_ltm: num(l.no_of_bookings_ltm),
+    minimum_nights: num(l.minimum_nights),
+    host_name: str(l.host_name),
+    amenities,
+  };
+}
+
+/**
+ * One page of Airbnb listings around a deal, nearest first: Airbtics'
+ * listings search over the box enclosing `radiusKm`, sorted by distance from
+ * the deal. One metered call ($0.05, unit `bounds`).
+ */
+async function fetchDealListings(p: DealListingsParams, apiKey: string): Promise<{ page: DealListingsPage } | { status: number }> {
+  const bedrooms = bedroomsFilter(p.bedrooms);
+  const body = {
+    bounds: boxAround(p.lat, p.lng, p.radiusKm),
+    center_lat: p.lat,
+    center_lng: p.lng,
+    sort_by: 'distance',
+    page: p.page,
+    ...(p.filtered ? { filters: { property_type: ['entire_home'], ...(bedrooms ? { bedrooms } : {}), revenue: { min: 1 } } } : {}),
+  };
+  const key = `${p.lat.toFixed(4)},${p.lng.toFixed(4)}|${p.radiusKm}km|${p.bedrooms}b|p${p.page}${p.filtered ? '' : '|plain'}`;
+  const response = await airbticsCall('bounds', key, `${BASE_URL}/listings/search/bounds`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(BOUNDS_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    console.error(`[deal-comps] listings search failed HTTP ${response.status} body: ${response.text.slice(0, 300)}`);
+    return { status: response.status };
+  }
+  const data = response.data;
+  if (!data || data.message === 'insufficient_credits') return { status: 0 };
+  const totalCount = Number(data.message?.total_count ?? 0);
+  const listings = parseListingsField<Record<string, unknown>>(data.message?.listings).map(toCompListing);
+  return { page: { totalCount: Number.isFinite(totalCount) ? totalCount : 0, listings, filtered: p.filtered } };
+}
+
+/**
+ * The filtered search, or — only when Airbtics refuses the filters (HTTP
+ * 400/422, which it does not bill) — the plain box, filtered by the caller.
+ * Null when there is no key or the search failed any other way.
+ */
+export async function searchListingsForDeal(p: Omit<DealListingsParams, 'filtered'>): Promise<DealListingsPage | null> {
+  const apiKey = process.env.AIRBTICS_API_KEY;
+  if (!apiKey) return null;
+  const first = await fetchDealListings({ ...p, filtered: true }, apiKey);
+  if ('page' in first) return first.page;
+  if (first.status !== 400 && first.status !== 422) return null;
+  const plain = await fetchDealListings({ ...p, filtered: false }, apiKey);
+  return 'page' in plain ? plain.page : null;
+}
+
+export interface DealIncomeVariant {
+  /** No monthly history in the comparables: keep ADR flat through the year; the UK curve shapes occupancy only. */
+  flatAdrWithoutMonthly: boolean;
+}
+
+export interface DealIncomeSubject {
+  lat: number;
+  lng: number;
+  bedrooms: number;
+  guests: number;
+  /** Full postcode where known (the pipeline's location class reads it); the outcode otherwise. */
+  postcode: string;
+  /** How far the comparables reach, km. */
+  radiusKm: number;
+  options?: ShortLetOptions;
+}
+
+/**
+ * A deal's short-let figures from its own comparables, through the same
+ * pipeline a full analysis runs on its report (buildDataFromReportComps).
+ */
+export function dealIncomeFromComps(comps: ReportCompLike[], s: DealIncomeSubject, variant: DealIncomeVariant): { data: ShortLetData; quality: DataQuality } {
+  const report: ReportAllResult = {
+    id: 'deal-check',
+    latitude: s.lat,
+    longitude: s.lng,
+    bedrooms: s.bedrooms,
+    bathrooms: s.options?.bathrooms ?? Math.max(1, Math.ceil(s.bedrooms * 0.75)),
+    accommodates: s.guests,
+    radius: Math.round(s.radiusKm * 1000),
+    comps_status: 'success',
+    comps,
+  };
+  return buildDataFromReportComps(report, s.bedrooms, s.guests, s.lat, s.lng, classifyLocation(s.postcode), s.postcode, s.options, variant);
 }
 
 interface MarketSummary {

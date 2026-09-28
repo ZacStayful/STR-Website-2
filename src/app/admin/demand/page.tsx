@@ -19,7 +19,9 @@ import { DEFAULT_DEMAND_SETTINGS } from "@/lib/sourcing-demand/settings";
 import { demandSourcingEnabled } from "@/lib/sourcing-demand/run";
 import { addedSince, areaDataFrom, cachedAnswerKeys, lastSearches, livePool, loadDemand, monthFigures, readDemandSettings, sweepAreaSet, sweepDoneToday, todaysSearches } from "@/lib/sourcing-demand/server";
 import { defaultDir, demandRows, isSortKey, planView, sortRows, STATUS_LABELS, supplyFrom, type SortDir, type SortKey } from "@/lib/sourcing-demand/table";
-import { runDemandPassAction, updateDemandSettingsAction } from "./actions";
+import { calibrationView } from "@/lib/deal-quality/calibrate-run";
+import { CALIBRATION_GATE_PCT, CALIBRATION_MAX_CALLS, VARIANTS, VARIANT_LABELS } from "@/lib/deal-quality/calibration";
+import { runDealCalibrationAction, runDemandPassAction, updateDemandSettingsAction } from "./actions";
 import { oneOf } from "../picks/responses/windows";
 
 // Mirrored in actions.ts: a 'use server' module may only export async functions.
@@ -114,7 +116,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
   const month = londonMonthStart(now);
   const settings = await readDemandSettings(admin);
   const since = new Date(now.getTime() - NEW_DEALS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash] = await Promise.all([
+  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash, calibration] = await Promise.all([
     loadScreenContext(SNAPSHOT_WAIT_MS),
     loadDemand(admin, settings, now),
     monthFigures(admin, month),
@@ -127,6 +129,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
     getUnitCostTable(),
     pmiConfigured() ? pmiAccount().catch(() => null) : Promise.resolve(null),
     readFlash(),
+    calibrationView(admin, now),
   ]);
 
   const schemaReady = figures !== null && searches !== null;
@@ -181,9 +184,9 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
       {flash && (
         <div className="mb-4 rounded-lg border border-border bg-card p-4 text-sm">
           <p className="font-medium text-foreground">
-            {flash.kind === "settings" ? (flash.body.error ? String(flash.body.error) : "Settings saved. The job reads them within a minute.") : "Pass run"} · {new Date(flash.at).toLocaleString("en-GB")}
+            {flash.kind === "settings" ? (flash.body.error ? String(flash.body.error) : "Settings saved. The job reads them within a minute.") : flash.kind === "calibration-dry" ? "Comparison dry run (nothing spent)" : flash.kind === "calibration" ? "Comparison run" : "Pass run"} · {new Date(flash.at).toLocaleString("en-GB")}
           </p>
-          {flash.kind === "pass" && <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(flash.body, null, 1)}</pre>}
+          {(flash.kind === "pass" || flash.kind === "calibration" || flash.kind === "calibration-dry") && <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(flash.body, null, 1)}</pre>}
         </div>
       )}
 
@@ -229,6 +232,75 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
         <form action={runDemandPassAction} className="mt-4">
           <button type="submit" disabled={!schemaReady} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50">Run a pass now</button>
           <span className="ml-3 text-xs text-muted-foreground">Real searches, within the cap and the threshold, whatever the switch says. Takes up to a minute.</span>
+        </form>
+      </section>
+
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Deal checks · Step 0: comparison with past reports</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Re-runs {calibration?.cases || 24} past full analyses (8 urban, 8 rural, 8 coastal; 1–5 beds) through the deal check’s own comparables search, at their own location, and compares the new yearly revenue with the stored one. If the typical gap is over {CALIBRATION_GATE_PCT}%, the deal checks are not built on it. At most {CALIBRATION_MAX_CALLS} Airbtics calls ({money(CALIBRATION_MAX_CALLS * 5)}) for the whole comparison, house spend. Each Run carries on where the last one stopped.
+        </p>
+        {!calibration ? (
+          <p className="mt-3 text-sm text-muted-foreground">The runs could not be read.</p>
+        ) : (
+          <>
+            {calibration.dry && (
+              <p className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">
+                Dry run {new Date(calibration.dry.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}: {String(calibration.dry.remaining ?? "?")} of {String(calibration.dry.cases ?? "?")} cases to run, at most {money(Number(calibration.dry.maxCostPence ?? 0))} (expect about {money(Number(calibration.dry.expectedCostPence ?? 0))}); {String(calibration.dry.callsUsed ?? 0)} of {CALIBRATION_MAX_CALLS} calls used so far.{calibration.dry.airbticsKey === false ? " No Airbtics key here: a Run would search nothing." : ""}
+              </p>
+            )}
+            <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Stat label="Cases done" value={`${calibration.summary.done} of ${calibration.cases || "—"}`} sub={calibration.summary.failed > 0 ? `${calibration.summary.failed} to retry` : undefined} />
+              <Stat label="Calls used" value={`${calibration.summary.calls} of ${CALIBRATION_MAX_CALLS}`} sub={`${money(calibration.summary.pence)} spent`} />
+              <Stat label="Typical gap (as planned)" value={calibration.summary.medianAbsGap.planned === null ? "—" : `${calibration.summary.medianAbsGap.planned}%`} sub={calibration.summary.medianGapPlanned === null ? undefined : `median signed ${calibration.summary.medianGapPlanned > 0 ? "+" : ""}${calibration.summary.medianGapPlanned}%`} />
+              <Stat label="Gate" value={calibration.summary.gate === "pass" ? "Pass" : calibration.summary.gate === "fail" ? "Stop" : "Waiting"} sub={calibration.summary.best ? `closest: ${VARIANT_LABELS[calibration.summary.best]}` : "needs 20 cases"} />
+            </div>
+            <ul className="mt-3 text-xs text-muted-foreground">
+              {VARIANTS.map((v) => (
+                <li key={v}>{VARIANT_LABELS[v]}: typical gap {calibration.summary.medianAbsGap[v] === null ? "—" : `${calibration.summary.medianAbsGap[v]}%`}</li>
+              ))}
+              <li>
+                By class (as planned): {Object.entries(calibration.summary.byClass).map(([cls, c]) => `${cls.replace("_", " ")} ${c.medianAbsGap === null ? "—" : `${c.medianAbsGap}%`} (${c.n})`).join(" · ")}
+              </li>
+              <li>
+                Confidence (as planned): {Object.entries(calibration.summary.confidence).map(([c, n]) => `${c} ${n}`).join(" · ") || "—"}{calibration.summary.insufficient > 0 ? ` · ${calibration.summary.insufficient} under the minimum comparables would not be shown` : ""}
+              </li>
+            </ul>
+            {calibration.results.length > 0 && (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-left text-xs text-muted-foreground">
+                    <tr><th className="py-1">Area</th><th>Class</th><th className="text-right">Beds</th><th className="text-right">Stored</th><th className="text-right">New</th><th className="text-right">Gap</th><th className="text-right">Comps</th><th className="text-right">Reach</th><th className="text-right">Calls</th><th>Confidence</th><th>Note</th></tr>
+                  </thead>
+                  <tbody>
+                    {calibration.results.map((r) => {
+                      const v = r.variants.planned;
+                      return (
+                        <tr key={r.id} className="border-t border-border">
+                          <td className="py-1">{r.area}</td>
+                          <td>{r.locationClass.replace("_", " ")}</td>
+                          <td className="text-right">{r.bedrooms} ({r.guests}g)</td>
+                          <td className="text-right">£{Math.round(r.storedGross).toLocaleString("en-GB")}</td>
+                          <td className="text-right">{v?.gross ? `£${v.gross.toLocaleString("en-GB")}` : "—"}</td>
+                          <td className={`text-right ${v?.gapPct !== null && v?.gapPct !== undefined && Math.abs(v.gapPct) > CALIBRATION_GATE_PCT ? "font-medium text-foreground" : "text-muted-foreground"}`}>{v?.gapPct === null || v?.gapPct === undefined ? "—" : `${v.gapPct > 0 ? "+" : ""}${v.gapPct}%`}</td>
+                          <td className="text-right">{v?.compCount ?? 0} of {r.found}</td>
+                          <td className="text-right">{r.radiusKm} km</td>
+                          <td className="text-right">{r.calls}</td>
+                          <td>{v?.confidence ?? "—"}{v?.spreadPct !== null && v?.spreadPct !== undefined ? ` (±${v.spreadPct}%; past ±${r.storedSpreadPct ?? "?"}%)` : ""}</td>
+                          <td className="text-xs text-muted-foreground">{[r.error, r.kindRelaxed ? "any kind" : null, r.filtered ? null : "filters refused", r.filterMatch !== null && r.filterMatch < 0.9 ? `filters ${Math.round(r.filterMatch * 100)}%` : null, r.settingDropped > 0 ? `setting −${r.settingDropped}` : null].filter(Boolean).join(" · ")}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+        <form action={runDealCalibrationAction} className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run</button>
+          <span className="text-xs text-muted-foreground">Dry run spends nothing. Run makes real Airbtics calls within the comparison’s ceiling and takes up to a minute.</span>
         </form>
       </section>
 

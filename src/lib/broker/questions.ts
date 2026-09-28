@@ -2,7 +2,7 @@ import 'server-only';
 
 import type { Question } from './types';
 import { COST_PENCE, TTL } from './config';
-import { findNearbyListings, findNearbyListingsPage } from '../apis/airbtics';
+import { findNearbyListings, findNearbyListingsPage, searchListingsForDeal, type DealListingsPage, type DealListingsParams } from '../apis/airbtics';
 import { gridCell, matchTracked, type NearbyListingsValue, type TrackedListing } from '../listing/competitors';
 import { storedCompForListing, storedPostcodeFigures, type PostcodeFigures } from './providers/internal';
 import { pmiStrEstimate, pmiStrMarket, pmiListings, num, type PmiStrEstimate, type PmiStrMarket } from './providers/pmi';
@@ -36,6 +36,25 @@ export const nearbyListings: Question<NearbyParams, NearbyListingsValue> = {
       costPence: COST_PENCE.airbticsBounds,
       ttlMs: TTL.airbticsBounds,
       run: (p) => findNearbyListingsPage(p.lat, p.lng, 1),
+    },
+  ],
+};
+
+// ── Airbnb listings around a deal, for its comparables check (Batch 16) ──
+// One Airbtics listings search per ask, nearest first, filtered to entire
+// homes with the deal's bedroom count. A week's cache: checking the same
+// place again inside it is free.
+export type DealComparablesParams = Omit<DealListingsParams, 'filtered'>;
+export const dealComparables: Question<DealComparablesParams, DealListingsPage> = {
+  name: 'dealComparables',
+  key: (p) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}|${p.radiusKm}km|${p.bedrooms}b|p${p.page}`,
+  rungs: [
+    {
+      provider: 'airbtics',
+      level: 3,
+      costPence: COST_PENCE.airbticsBounds,
+      ttlMs: TTL.airbticsBounds,
+      run: (p) => searchListingsForDeal(p),
     },
   ],
 };
