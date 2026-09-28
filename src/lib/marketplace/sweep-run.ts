@@ -5,12 +5,14 @@ import 'server-only';
  * broker path the daily picks use, screened into the pool.
  *
  * Runs as several short cron passes (the route is capped at 60 s and PMI
- * paces listings calls ~5 s apart). Each pass asks the broker for every
- * query in order; answers already given today come back from the cache in
- * milliseconds, so later passes finish what earlier ones started. A listing
- * seen in today's feed is confirmed live for free; one the feed marks sold
- * or let agreed is retired for free; a qualified newcomer is inserted as
- * pending_verify and the hourly recheck reads its page before it goes live.
+ * paces listings calls ~5 s apart). Each pass records the searches it
+ * finished in its marketplace_runs summary, and later passes skip them
+ * without asking the broker, so the day's passes share the list instead of
+ * re-reading the same answers (src/lib/marketplace/sweep-plan.ts has the
+ * order). A listing seen in today's feed is confirmed live for free; one the
+ * feed marks sold or let agreed is retired for free; a qualified newcomer is
+ * inserted as pending_verify and the hourly recheck reads its page before it
+ * goes live.
  *
  * Entry points: /api/internal/marketplace-sweep (cron, secret-gated) and the
  * /admin/deals buttons (session-gated). MARKETPLACE_SWEEP_ENABLED=false is
@@ -21,10 +23,9 @@ import { ask, marketplaceListings } from '../broker';
 import { runMetered, newActionId } from '../credit/context';
 import { pmiAccount, pmiConfigured } from '../broker/providers/pmi';
 import { COST_PENCE } from '../broker/config';
-import { topScoredAreas, type HouseAreaCard } from '../listing/picks';
-import { queryKey, type SourcingKind, type SourcingQuery } from '../listing/sourcing';
 import { absorbListings, cohortLoader, emptyAbsorbCounters, type AbsorbCounters } from './absorb';
 import { loadScreenContext, recordRun, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
+import { countFrom, DEFAULT_SWEEP_AREAS, DEFAULT_SWEEP_MAX_QUERIES, HISTORY_DAYS, planPass, sweepHistory, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
 
 const TIME_BUDGET_MS = 50_000;
 const SNAPSHOT_WAIT_MS = 20_000;
@@ -35,9 +36,9 @@ export function sweepEnabled(): boolean {
   return process.env.MARKETPLACE_SWEEP_ENABLED !== 'false';
 }
 
-function envInt(name: string, fallback: number): number {
-  const n = Number(process.env[name] ?? fallback);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+/** How many top scored areas the sweep covers (MARKETPLACE_SWEEP_AREAS, default 60). */
+export function sweepAreaLimit(): number {
+  return countFrom(process.env.MARKETPLACE_SWEEP_AREAS, DEFAULT_SWEEP_AREAS);
 }
 
 export interface SweepOptions {
@@ -55,6 +56,15 @@ export interface SweepSummary extends AbsorbCounters {
   cached: number;
   unavailable: number;
   listings: number;
+  /** Searches left to ask for when the pass started (the list minus what is done). */
+  pending: number;
+  /** Finished by an earlier pass today: skipped without asking the broker. */
+  doneToday: number;
+  /** Came back empty twice today: left until tomorrow. */
+  leftForTomorrow: number;
+  /** The searches this pass finished, and the ones that came back empty (read by later passes). */
+  doneKeys: string[];
+  emptyKeys: string[];
   cohortAreas: number;
   rawCostPence: number;
   ranOutOfTime: boolean;
@@ -67,15 +77,22 @@ export interface SweepResult {
   body: SweepSummary | { error: string; detail?: string };
 }
 
-/** The searches for one pass: every top area × both kinds, unbounded. */
-export function sweepQueries(cards: HouseAreaCard[], areas: number, maxQueries: number): SourcingQuery[] {
-  const out: SourcingQuery[] = [];
-  for (const a of topScoredAreas(cards, areas)) {
-    for (const kind of ['sale', 'rent'] as SourcingKind[]) {
-      out.push({ key: queryKey(kind, a.code, null, null, null), kind, area: a.code, areaName: a.name, areaSlug: a.slug, minPrice: null, maxPrice: null, minBedrooms: null });
-    }
+/** Earlier sweep passes over the last few days: what each finished and found empty. */
+async function loadHistory(admin: Admin, now: Date): Promise<SweepHistory> {
+  const since = new Date(now.getTime() - HISTORY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await admin
+    .from('marketplace_runs')
+    .select('started_at, doneKeys:summary->doneKeys, emptyKeys:summary->emptyKeys')
+    .eq('kind', 'sweep')
+    .eq('dry', false)
+    .gte('started_at', since);
+  if (error) {
+    // Unreadable: plan as if nothing were done, which is how every pass behaved before.
+    console.warn('[marketplace-sweep] run history unreadable:', error.message);
+    return sweepHistory([], now);
   }
-  return out.slice(0, maxQueries);
+  const runs: SweepRunRecord[] = ((data ?? []) as { started_at: string; doneKeys: unknown; emptyKeys: unknown }[]).map((r) => ({ startedAt: r.started_at, doneKeys: r.doneKeys, emptyKeys: r.emptyKeys }));
+  return sweepHistory(runs, now);
 }
 
 export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
@@ -83,8 +100,10 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
   const elapsed = () => Date.now() - startedAt.getTime();
   const done = (result: SweepResult): SweepResult => {
     const body = result.body as Record<string, unknown>;
-    const { wouldQuery: _w, ...rest } = body;
+    const { wouldQuery: _w, doneKeys: _d, emptyKeys: _e, ...rest } = body;
     void _w;
+    void _d;
+    void _e;
     console.log('[marketplace-sweep] run', JSON.stringify({ status: result.status, ms: elapsed(), ...rest }));
     return result;
   };
@@ -96,9 +115,10 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
   }
   const ctx = await loadScreenContext(SNAPSHOT_WAIT_MS);
   if (ctx === null) return done({ status: 503, body: { error: 'snapshot_warming', detail: 'Market snapshot still building; the next pass will use it' } });
-  const areas = opts.areas ?? envInt('MARKETPLACE_SWEEP_AREAS', 60);
-  const maxQueries = opts.maxQueries ?? envInt('MARKETPLACE_SWEEP_MAX_QUERIES', 120);
+  const areas = opts.areas ?? sweepAreaLimit();
+  const maxQueries = opts.maxQueries ?? countFrom(process.env.MARKETPLACE_SWEEP_MAX_QUERIES, DEFAULT_SWEEP_MAX_QUERIES);
   const queries = sweepQueries(ctx.cards, areas, maxQueries);
+  const plan = planPass(queries, await loadHistory(admin, startedAt));
 
   const summary: SweepSummary = {
     dry: opts.dry,
@@ -109,6 +129,11 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     cached: 0,
     unavailable: 0,
     listings: 0,
+    pending: plan.pending.length,
+    doneToday: plan.doneToday,
+    leftForTomorrow: plan.leftForTomorrow,
+    doneKeys: [],
+    emptyKeys: [],
     ...emptyAbsorbCounters(),
     cohortAreas: 0,
     rawCostPence: 0,
@@ -121,9 +146,10 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
       status: 200,
       body: {
         ...summary,
-        estimatedRawPence: queries.length * COST_PENCE.pmiListings,
+        // Worst case: every search still to do today answered by PMI. Finished searches cost nothing more.
+        estimatedRawPence: plan.pending.length * COST_PENCE.pmiListings,
         pmi: account ? { plan: account.plan ?? null, creditsMonthly: account.credits_monthly ?? null, creditsRemaining: account.credits_remaining ?? null } : null,
-        wouldQuery: queries.map((q) => q.key),
+        wouldQuery: plan.pending.map((q) => q.key),
       },
     });
   }
@@ -131,7 +157,7 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
   // The cohort feed for an area, from the weekly cache or a fresh (paid) read.
   const cohorts = cohortLoader(admin, { buy: true, maxBuys: COHORT_AREAS_PER_PASS, action: 'cron:marketplace-sweep', tag: 'marketplace-sweep' });
 
-  for (const query of queries) {
+  for (const query of plan.pending) {
     if (elapsed() > QUERY_BUDGET_MS) {
       summary.ranOutOfTime = true;
       break;
@@ -139,6 +165,7 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     const res = await runMetered({ userId: null, admin: false, action: 'cron:marketplace-sweep', actionId: newActionId() }, () => ask(marketplaceListings, query, { mode: 'cron' }));
     if (!res.value) {
       summary.unavailable += 1;
+      summary.emptyKeys.push(query.key);
       continue;
     }
     summary.answered += 1;
@@ -146,10 +173,12 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
     summary.rawCostPence += res.costPence ?? 0;
     const listings = res.value;
     summary.listings += listings.length;
-    if (listings.length === 0) continue;
-    await cohorts.loadFor(query.area);
-    summary.cohortAreas = cohorts.bought();
-    await absorbListings(admin, ctx.cardByCode, ctx.rentTable, cohorts.index, query, listings, summary);
+    if (listings.length > 0) {
+      await cohorts.loadFor(query.area);
+      summary.cohortAreas = cohorts.bought();
+      await absorbListings(admin, ctx.cardByCode, ctx.rentTable, cohorts.index, query, listings, summary);
+    }
+    summary.doneKeys.push(query.key);
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
       break;

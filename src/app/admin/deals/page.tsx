@@ -76,6 +76,16 @@ function n(v: unknown): number {
 }
 
 /**
+ * Searches the sweep had finished today by the end of a pass. Passes skip
+ * what earlier passes finished (Batch 15), so a pass's own `answered` is only
+ * its share; older rows, which re-read everything, keep showing `answered`.
+ */
+function sweepDoneToday(summary: Record<string, unknown>): number {
+  if (typeof summary.doneToday !== "number") return n(summary.answered);
+  return n(summary.doneToday) + (Array.isArray(summary.doneKeys) ? summary.doneKeys.length : 0);
+}
+
+/**
  * The marketplace's control room: what the sweep and the recheck did, what
  * is live, what members open and pay, and the ladder that prices an open.
  * The ladder tuning panel exists because the £50–£70 a month target rests on
@@ -208,12 +218,12 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
         <section className="rounded-xl border border-border bg-card p-5">
           <h2 className="text-base font-semibold text-foreground">Sweep, last 7 passes</h2>
           <table className="mt-3 w-full text-xs">
-            <thead className="text-left text-muted-foreground"><tr><th className="py-1">When</th><th>Queries</th><th>Cached</th><th>Listings</th><th>New</th><th>Retired</th><th>Raw p</th></tr></thead>
+            <thead className="text-left text-muted-foreground"><tr><th className="py-1">When</th><th title="Searches finished today by the end of this pass, out of the sweep's list">Done today</th><th>Cached</th><th>Listings</th><th>New</th><th>Retired</th><th>Raw p</th></tr></thead>
             <tbody>
               {sweeps.map((r) => (
                 <tr key={r.id} className="border-t border-border">
                   <td className="py-1">{new Date(r.started_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
-                  <td>{n(r.summary.answered)}/{n(r.summary.queries)}</td>
+                  <td>{sweepDoneToday(r.summary)}/{n(r.summary.queries)}</td>
                   <td>{n(r.summary.cached)}</td>
                   <td>{n(r.summary.listings)}</td>
                   <td>{n(r.summary.newDeals)}</td>
