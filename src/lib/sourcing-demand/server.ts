@@ -20,7 +20,7 @@ import { seatsFor } from '../profiles/rules';
 import { parseMarketGoals } from '../market/goals';
 import { parseAboutYou } from '../profile/about';
 import type { AreaCardData } from '../market/explorer';
-import { sweepAreaCodes, sweepAreaLimit, sweepEnabled, sweepHistory, type SweepRunRecord } from '../marketplace/sweep-plan';
+import { fullyCoveredAreas, sweepAreaLimit, sweepEnabled, sweepHistory, sweepMaxQueries, sweepQueries, type SweepRunRecord } from '../marketplace/sweep-plan';
 import { areaScores, buildDemand, summariseToday, type AreaData, type Demand, type DemandMember, type DemandProfile, type TodayKeys, type TodayRow } from './demand';
 import { MAX_NO_ANSWER_PER_DAY } from './config';
 import { DEMAND_SETTING_KEYS, parseDemandSettings, type DemandSettings } from './settings';
@@ -179,9 +179,13 @@ export function areaDataFrom(cards: readonly AreaCardData[]): Map<string, AreaDa
   return out;
 }
 
-/** The areas the marketplace sweep covers; none while its cron is switched off, so demand is not left to nobody. */
+/**
+ * The areas the marketplace sweep covers, both kinds, from the same list
+ * (and query limit) its passes use; none while its cron is switched off, so
+ * demand is not left to nobody.
+ */
 export function sweepAreaSet(cards: readonly AreaCardData[]): Set<string> {
-  return sweepEnabled() ? new Set(sweepAreaCodes([...cards], sweepAreaLimit())) : new Set();
+  return sweepEnabled() ? fullyCoveredAreas(sweepQueries([...cards], sweepAreaLimit(), sweepMaxQueries())) : new Set();
 }
 
 /**

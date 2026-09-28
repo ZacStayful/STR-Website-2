@@ -46,20 +46,36 @@ export function sweepAreaLimit(): number {
   return countFrom(process.env.MARKETPLACE_SWEEP_AREAS, DEFAULT_SWEEP_AREAS);
 }
 
-/** The postcode areas the sweep covers, best scored first. */
-export function sweepAreaCodes(cards: HouseAreaCard[], limit: number): string[] {
-  return topScoredAreas(cards, limit).map((c) => c.code.toUpperCase());
+/** The most searches on the sweep's list (MARKETPLACE_SWEEP_MAX_QUERIES, default 120 = 60 areas × 2 kinds). */
+export function sweepMaxQueries(): number {
+  return countFrom(process.env.MARKETPLACE_SWEEP_MAX_QUERIES, DEFAULT_SWEEP_MAX_QUERIES);
 }
+
+const SWEEP_KINDS: readonly SourcingKind[] = ['sale', 'rent'];
 
 /** The searches for one pass: every top area × both kinds, unbounded. */
 export function sweepQueries(cards: HouseAreaCard[], areas: number, maxQueries: number): SourcingQuery[] {
   const out: SourcingQuery[] = [];
   for (const a of topScoredAreas(cards, areas)) {
-    for (const kind of ['sale', 'rent'] as SourcingKind[]) {
+    for (const kind of SWEEP_KINDS) {
       out.push({ key: queryKey(kind, a.code, null, null, null), kind, area: a.code, areaName: a.name, areaSlug: a.slug, minPrice: null, maxPrice: null, minBedrooms: null });
     }
   }
   return out.slice(0, maxQueries);
+}
+
+/**
+ * The areas the sweep's list covers for both kinds. A list cut short by the
+ * query limit covers its last areas partly or not at all; those are left to
+ * the demand-led searches (a kind both jobs ask for shares one cached answer).
+ */
+export function fullyCoveredAreas(queries: readonly Pick<SourcingQuery, 'area' | 'kind'>[]): Set<string> {
+  const kinds = new Map<string, Set<SourcingKind>>();
+  for (const q of queries) {
+    const area = q.area.toUpperCase();
+    kinds.set(area, (kinds.get(area) ?? new Set<SourcingKind>()).add(q.kind));
+  }
+  return new Set([...kinds].filter(([, k]) => k.size === SWEEP_KINDS.length).map(([area]) => area));
 }
 
 /** One earlier pass, as read back from marketplace_runs. */

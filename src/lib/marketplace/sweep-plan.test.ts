@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countFrom, MAX_EMPTY_PER_DAY, planPass, sweepAreaCodes, sweepHistory, sweepQueries } from './sweep-plan.ts';
+import { countFrom, fullyCoveredAreas, MAX_EMPTY_PER_DAY, planPass, sweepHistory, sweepQueries } from './sweep-plan.ts';
 import type { HouseAreaCard } from '../listing/picks.ts';
 
 const card = (code: string, score: number | null, tier: 'confirmed' | 'building' | 'early' = 'confirmed'): HouseAreaCard => ({
@@ -23,10 +23,11 @@ test('countFrom takes positive whole numbers and falls back on anything else', (
   assert.equal(countFrom('lots', 60), 60);
 });
 
-test('sweepAreaCodes: scored, not early, best first, capped', () => {
-  assert.deepEqual(sweepAreaCodes(CARDS, 60), ['YO', 'HG', 'BA', 'LE']);
-  assert.deepEqual(sweepAreaCodes(CARDS, 2), ['YO', 'HG']);
-  assert.deepEqual(sweepAreaCodes([], 60), []);
+test('fullyCoveredAreas: scored, not early, capped, and only areas with both kinds on the list', () => {
+  assert.deepEqual([...fullyCoveredAreas(sweepQueries(CARDS, 60, 120))], ['YO', 'HG', 'BA', 'LE']);
+  assert.deepEqual([...fullyCoveredAreas(sweepQueries(CARDS, 2, 120))], ['YO', 'HG']);
+  assert.deepEqual([...fullyCoveredAreas(sweepQueries(CARDS, 60, 5))], ['YO', 'HG'], 'BA has only its sale search inside the limit; LE has none');
+  assert.deepEqual([...fullyCoveredAreas(sweepQueries([], 60, 120))], []);
 });
 
 test('sweepQueries: both kinds per area, unbounded keys, capped', () => {

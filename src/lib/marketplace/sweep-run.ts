@@ -25,7 +25,7 @@ import { pmiAccount, pmiConfigured } from '../broker/providers/pmi';
 import { COST_PENCE } from '../broker/config';
 import { absorbListings, cohortLoader, emptyAbsorbCounters, type AbsorbCounters } from './absorb';
 import { loadScreenContext, recordRun, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
-import { countFrom, DEFAULT_SWEEP_MAX_QUERIES, HISTORY_DAYS, planPass, sweepAreaLimit, sweepEnabled, sweepHistory, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
+import { HISTORY_DAYS, planPass, sweepAreaLimit, sweepEnabled, sweepHistory, sweepMaxQueries, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
 import { sweepDemandScores } from '../sourcing-demand/server';
 
 const TIME_BUDGET_MS = 50_000;
@@ -116,7 +116,7 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
   const ctx = await loadScreenContext(SNAPSHOT_WAIT_MS);
   if (ctx === null) return done({ status: 503, body: { error: 'snapshot_warming', detail: 'Market snapshot still building; the next pass will use it' } });
   const areas = opts.areas ?? sweepAreaLimit();
-  const maxQueries = opts.maxQueries ?? countFrom(process.env.MARKETPLACE_SWEEP_MAX_QUERIES, DEFAULT_SWEEP_MAX_QUERIES);
+  const maxQueries = opts.maxQueries ?? sweepMaxQueries();
   const queries = sweepQueries(ctx.cards, areas, maxQueries);
   // Members' wanted areas go first (Batch 15); no demand, or any failure reading it, keeps the score order.
   const [history, demandScore] = await Promise.all([loadHistory(admin, startedAt), sweepDemandScores(startedAt)]);
