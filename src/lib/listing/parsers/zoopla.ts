@@ -2,6 +2,7 @@ import type { ListingSnapshot } from '../types.ts';
 import { scriptJsonById, metaContent, titleOf, parsePrice, findPostcode, findOutcode, findNode } from '../html.ts';
 import { toNum, toStr, strArray, statusFromText, baseSnapshot, type ParseContext } from './shared.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
+import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
 export const ZOOPLA_PARSER_VERSION = 1;
 
@@ -57,10 +58,12 @@ export function parseZoopla(html: string, ctx: ParseContext): ListingSnapshot | 
   snap.features = strArray(features?.bullets);
   snap.sharedOwnership = false;
   snap.shortLetsPermitted = null;
+  snap.auction = false;
   if (listing) {
     const description = stripHtml([toStr(listing.detailedDescription), toStr(listing.description)].filter((s): s is string => Boolean(s)).join(' '));
     snap.sharedOwnership = /shared ownership/i.test([description, ...snap.features].join(' '));
     snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features].join('. '));
+    snap.auction = AUCTION_WORDING.test([description, snap.price?.qualifier ?? '', ...snap.features].join(' | '));
   }
   const og = metaContent(html, 'og:image');
   if (og) snap.photos.push(og);

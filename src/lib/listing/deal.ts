@@ -17,6 +17,7 @@
 import { stampDutyLocal, type StampDutyFigure, type TaxCountry, type TaxName } from './stamp-duty.ts';
 import type { BillsSplit, CouncilTaxFigure } from './bills.ts';
 import type { MortgageRateInfo, MortgageRateSource, LiveMortgageRate } from './mortgage-rate.ts';
+import { auctionCash, auctionPrice, DEFAULT_AUCTION_TERMS, type AuctionMethod, type AuctionTerms } from '../deal-quality/auction.ts';
 
 export interface FinanceDefaults {
   depositPct: number; // 25
@@ -70,6 +71,26 @@ export interface PurchaseDeal {
   /** The bills line the figures used (council tax plus the fixed allowance). */
   billsPcm?: number;
   councilTax?: CouncilTaxFigure | null;
+  /**
+   * An auction lot (Batch 16): `askingPrice` is then the guide plus the usual
+   * uplift, `cashRequired` the bridging cash, and the cash flow the member's
+   * own mortgage after the refinance.
+   */
+  auction?: AuctionDealFigures;
+}
+
+export interface AuctionDealFigures {
+  guide: number;
+  method: AuctionMethod;
+  premium: number;
+  /** The bridging loan and the deposit it leaves to find. */
+  bridgingLoan: number;
+  bridgingDeposit: number;
+  /** Arrangement fee plus legal and valuation. */
+  bridgingFees: number;
+  /** Interest over the bridge, paid off from the refinance. */
+  bridgingInterest: number;
+  bridgingMonths: number;
 }
 
 export interface RentToRentDeal {
@@ -175,6 +196,36 @@ export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDe
     mortgageRateLive: input.mortgageRate?.live ?? null,
     billsPcm: costs.billsPcm,
     councilTax: input.bills?.councilTax ?? null,
+  };
+}
+
+/**
+ * An auction lot at its guide: bought at the guide plus the usual uplift,
+ * with the auction house's premium, completed on a bridging loan and then
+ * refinanced onto the member's own mortgage. Stamp duty is on the price
+ * (the premium is not part of it). Cash required is the bridging cash
+ * (deposit at the bridging LTV, stamp duty, premium, bridging fees, setup);
+ * the cash flow is the member's mortgage on the price. See
+ * ../deal-quality/auction.ts for the terms.
+ */
+export function auctionDeal(guide: number, method: AuctionMethod, input: DealInputs, terms: AuctionTerms = DEFAULT_AUCTION_TERMS): PurchaseDeal {
+  const price = auctionPrice(guide, terms);
+  const deal = purchaseDeal(price, input);
+  const cash = auctionCash(price, deal.stampDuty, deal.setupCost, method, terms);
+  return {
+    ...deal,
+    cashRequired: cash.cashRequired,
+    cashOnCashPct: cash.cashRequired > 0 ? round1(((deal.cashflowMonthly * 12) / cash.cashRequired) * 100) : 0,
+    auction: {
+      guide,
+      method,
+      premium: cash.premium,
+      bridgingLoan: cash.loan,
+      bridgingDeposit: cash.deposit,
+      bridgingFees: cash.fees,
+      bridgingInterest: cash.interest,
+      bridgingMonths: terms.termMonths,
+    },
   };
 }
 

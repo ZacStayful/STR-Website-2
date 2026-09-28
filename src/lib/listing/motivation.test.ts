@@ -404,3 +404,12 @@ test('a measured months-on-market beats anything we inferred', () => {
   assert.ok(m.fired.includes('long_on_market'));
   assert.ok(m.firmScore > 0);
 });
+
+test('an auction flag from the page counts as firm evidence; "guide price" alone never fires', () => {
+  const flagged = motivationFromSnapshot(snapshot({ auction: true }), 'sale', { thresholdDays: 150, now: NOW });
+  assert.ok(flagged.fired.includes('auction'));
+  const guide = motivationFromSnapshot(snapshot({ price: { amount: 300_000, period: 'total', qualifier: 'Guide price' } }), 'sale', { thresholdDays: 150, now: NOW });
+  assert.equal(guide.fired.includes('auction'), false);
+  const worded = motivationFromSnapshot(snapshot({ features: ['Property Scheduled for Online Auction'] }), 'sale', { thresholdDays: 150, now: NOW });
+  assert.ok(worded.fired.includes('auction'));
+});

@@ -233,6 +233,20 @@ export function describeType(card: Pick<DealCard, 'bedrooms' | 'raw_type' | 'ten
 const gbpWhole = (n: number): string => `${Math.round(n) < 0 ? '−' : ''}£${Math.abs(Math.round(n)).toLocaleString('en-GB')}`;
 
 /** "£250,000" or "£1,200 pcm". */
+/**
+ * An auction lot (Batch 16): the stored motivation verdict carries the
+ * 'auction' signal, which src/lib/deal-quality/auction.ts feeds from the
+ * portal's flag, the page's wording or PropertyData's auction cohort.
+ * "Guide price" on its own never makes a lot. Its price is a guide, not an
+ * asking price.
+ */
+export function isAuctionCard(card: { motivation?: unknown }): boolean {
+  const fired = (card.motivation as { fired?: unknown } | null | undefined)?.fired;
+  return Array.isArray(fired) && fired.includes('auction');
+}
+
+export const AUCTION_LABEL = 'Auction · guide price';
+
 export function priceLine(card: Pick<DealCard, 'price_amount' | 'price_period'>): string | null {
   if (card.price_amount === null) return null;
   const n = Number(card.price_amount);

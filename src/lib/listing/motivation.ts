@@ -31,6 +31,7 @@ import type { ListingSnapshot } from './types.ts';
 import { stripHtml } from './suitability.ts';
 import type { CohortKey, CohortMember } from './cohorts.ts';
 import { agentHashDiffers } from '../crypto/agent.ts';
+import { AUCTION_WORDING } from '../deal-quality/auction.ts';
 
 export type Confidence = 'firm' | 'soft';
 
@@ -107,7 +108,9 @@ const PROBATE = new RegExp(
   String.raw`\bprobate\b${STREET_AFTER}|\bdeceased (?:estate|owner)\b|\bexecutors?\b${STREET_AFTER}|\bestate of the late\b|\bletters of administration\b`,
   'i',
 );
-const AUCTION = /\b(?:by|via|at|for sale by) auction\b|\bmodern method of auction\b|\bauction (?:guide|lot)\b|\bunder the hammer\b/i;
+// One pattern for "is this an auction lot", shared with the auction cost
+// model (Batch 16): "guide price" alone never counts.
+const AUCTION = AUCTION_WORDING;
 const OFFERS_INVITED = /\boffers? (?:invited|considered|welcome|over|in excess of|in the region of)\b|\ball offers? considered\b|\bopen to offers\b|\bno reasonable offer refused\b/i;
 const PORTFOLIO = /\bportfolio of \d+\b|\b\d+ (?:flats|houses|properties) (?:for sale|as a portfolio)\b|\binvestment portfolio\b|\blandlord (?:selling|retiring|exiting)\b/i;
 const TENANTED = /\btenants? in situ\b|\bcurrently (?:tenanted|let)\b|\bsold with (?:a )?tenants?\b|\bwith sitting tenants?\b/i;
@@ -153,6 +156,8 @@ export interface MotivationFacts {
   hasAgent: boolean | null;
   /** Cohorts a data provider puts this property in. Facts, so they weigh as firm. */
   cohorts: CohortKey[];
+  /** The page's own auction flag (Rightmove `auctionOnly`, or the parser's read of the description). */
+  auctionFlag?: boolean | null;
   /** The provider's own reduction figure, as a percentage off the first asking price. */
   reducedByPct: number | null;
   now: Date;
@@ -207,7 +212,7 @@ export function judgeMotivation(f: MotivationFacts): Motivation {
   // Their price-reduced list is a 15%+ cut since first listing; past double that
   // the seller has plainly been chasing the market down more than once.
   if (f.reducedByPct !== null && f.reducedByPct >= 30) fire('reduced_repeatedly');
-  if (inCohort('auction')) fire('auction', 'firm');
+  if (inCohort('auction') || f.auctionFlag === true) fire('auction', 'firm');
   if (inCohort('tenanted')) fire('tenanted', 'firm');
   if (inCohort('chain_free')) fire('chain_free', 'firm');
 
@@ -303,6 +308,7 @@ export function motivationFromListing(l: SourcedListing, ctx: MotivationContext)
   return judgeMotivation({
     ...baseFacts(ctx, l.kind, l.agentHash),
     text: [l.title, l.rawType, l.priceQualifier ?? null, l.tenure ?? null, ...(l.features ?? [])].filter(Boolean).join(' | '),
+    auctionFlag: l.auction ?? null,
     age: ctx.age ?? cohortAge(ctx) ?? listingAge(l, ctx.firstSeenAt ?? null, now),
     addedOrReduced: l.addedOrReduced ?? null,
     listingUpdate: null,
@@ -321,6 +327,7 @@ export function motivationFromSnapshot(s: ListingSnapshot, kind: SourcingKind, c
   return judgeMotivation({
     ...baseFacts(ctx, kind, s.agentHash),
     text: [s.title, s.rawType ?? null, s.price?.qualifier ?? null, s.tenure ?? null, ...s.features].filter(Boolean).join(' | '),
+    auctionFlag: s.auction ?? null,
     age,
     addedOrReduced: null,
     listingUpdate: s.listingUpdate ?? null,

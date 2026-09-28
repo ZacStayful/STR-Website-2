@@ -179,6 +179,7 @@ export function mergeSnapshotIntoListing(l: SourcedListing, s: ListingSnapshot):
     priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
     sharedOwnership: s.sharedOwnership ?? false,
     shortLetsPermitted: s.shortLetsPermitted ?? null,
+    auction: s.auction ?? l.auction ?? null,
     listedDate: s.listedDate ?? l.listedDate ?? null,
     agentHash: s.agentHash ?? l.agentHash ?? null,
   };
@@ -213,6 +214,7 @@ export function snapshotFromDeal(l: SourcedListing, live: ListingSnapshot | null
     tenure: l.tenure ?? undefined,
     sharedOwnership: l.sharedOwnership ?? undefined,
     shortLetsPermitted: l.shortLetsPermitted ?? null,
+    auction: l.auction ?? undefined,
     features: l.features ?? [],
     photos: l.photo ? [l.photo] : [],
     listedDate: l.listedDate ?? undefined,

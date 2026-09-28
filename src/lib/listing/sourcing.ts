@@ -51,6 +51,8 @@ export interface SourcedListing {
   sharedOwnership?: boolean | null;
   /** From the fetched page's description: permission (`true`), prohibition (`false`), silent / not read (`null`). */
   shortLetsPermitted?: boolean | null;
+  /** From the fetched page: an auction lot (`true`), read and not one (`false`), not read (`null`). See deal-quality/auction.ts. */
+  auction?: boolean | null;
   /**
    * Motivation evidence. All optional: rows stored before these existed read
    * with `?? null`, and the score treats a missing value as no signal rather

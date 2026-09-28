@@ -4,6 +4,7 @@ import { jsonAfter, metaContent, titleOf, parsePrice, findOutcode } from '../htm
 import { toNum, toStr, strArray, statusFromText, baseSnapshot, isoFromCompactDate, isoFromUkDate, parseListingUpdate, type ParseContext } from './shared.ts';
 import { agentHash } from '../../crypto/agent.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
+import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
 export const RIGHTMOVE_PARSER_VERSION = 2;
 
@@ -32,7 +33,7 @@ interface RmPropertyData {
 interface RmModel {
   propertyData: RmPropertyData | null;
   /** Sibling of `propertyData`, and the only place the exact listing date lives. */
-  analyticsInfo: { analyticsProperty?: { added?: unknown } } | null;
+  analyticsInfo: { analyticsProperty?: { added?: unknown; auctionOnly?: unknown } } | null;
 }
 
 /**
@@ -140,10 +141,12 @@ export function parseRightmove(html: string, ctx: ParseContext): ListingSnapshot
   // Suitability evidence: the description is read here and dropped (never stored).
   snap.sharedOwnership = false;
   snap.shortLetsPermitted = null;
+  snap.auction = model?.analyticsInfo?.analyticsProperty?.auctionOnly === true;
   if (p) {
     const description = stripHtml([toStr(p.text?.description), toStr(p.text?.shortDescription)].filter((s): s is string => Boolean(s)).join(' '));
     snap.sharedOwnership = p.sharedOwnership?.sharedOwnershipFlag === true || /shared ownership/i.test(description);
     snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features].join('. '));
+    snap.auction = snap.auction || AUCTION_WORDING.test([description, snap.price?.qualifier ?? '', ...snap.features].join(' | '));
   }
 
   const images = Array.isArray(p?.images) ? (p.images as { url?: unknown }[]) : [];

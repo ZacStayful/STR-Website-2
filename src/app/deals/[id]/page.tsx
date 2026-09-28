@@ -21,7 +21,7 @@ import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { openPricePence } from "@/lib/marketplace/ladder";
-import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
+import { AUCTION_LABEL, badgesFor, describeType, isAuctionCard, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
 import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
@@ -101,6 +101,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
   const badges = badgesFor(card, now);
   const price = priceLine(card);
+  // An auction lot's figure is a guide, not an asking price (Batch 16).
+  const auction = isAuctionCard(card);
   const area = deal.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
   const areaCard = deal.postcode_area ? cards.find((c) => c.code === deal.postcode_area) ?? null : null;
   const profit = deal.annual_profit === null ? null : Number(deal.annual_profit);
@@ -258,6 +260,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   {badges.tags.map((t) => (
                     <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
                   ))}
+                  {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
                   {deal.status === "retired" && <span className="rounded-full bg-destructive px-2 py-0.5 text-[11px] font-semibold text-white">Off the market</span>}
                 </div>
               </div>
@@ -266,7 +269,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   <p className="text-2xl font-bold text-foreground">
                     {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">area estimate{range ? ` · ${range.basis}` : ""}</span>
                   </p>
-                  {price && <p className="text-lg font-semibold text-foreground">{price}</p>}
+                  {price && <p className="text-lg font-semibold text-foreground">{auction ? `Guide ${price}` : price}</p>}
                 </div>
                 {uplift && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
                 <p className="mt-2 text-sm font-medium text-foreground">{priv ? (priv.address ?? where) : where}</p>

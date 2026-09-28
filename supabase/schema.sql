@@ -4187,6 +4187,16 @@ insert into public.billing_settings (key, value) values
   ('r2r_qualified_profit', '6000'::jsonb)
 on conflict (key) do nothing;
 
+-- ── Auction lots (Part E; src/lib/deal-quality/auction.ts has the defaults and bounds) ──
+--   auction_model   how an auction lot is priced from its guide: the usual uplift (%), the
+--                   buyer's premium (£1,500 inc VAT in a traditional room; the modern method's
+--                   4.5% + VAT, at least £6,000), and the bridging loan it completes on
+--                   (70% LTV, 0.85% a month, 2% arrangement, £2,000 legal and valuation,
+--                   12 months) before refinancing onto the member's own mortgage.
+insert into public.billing_settings (key, value) values
+  ('auction_model', '{"upliftPct": 15, "traditionalPremium": 1500, "modernPremiumPct": 4.5, "vatPct": 20, "modernPremiumMin": 6000, "bridgingLtvPct": 70, "bridgingMonthlyPct": 0.85, "arrangementPct": 2, "legalAndValuation": 2000, "termMonths": 12}'::jsonb)
+on conflict (key) do nothing;
+
 -- ── Spend safety (Part H) ──
 --   area_rent_daily_attempts   the most PropertyData long-let lookups the market snapshot may
 --                              make for its areas in a UTC day, failed attempts included
