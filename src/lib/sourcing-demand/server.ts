@@ -20,7 +20,7 @@ import { seatsFor } from '../profiles/rules';
 import { parseMarketGoals } from '../market/goals';
 import { parseAboutYou } from '../profile/about';
 import type { AreaCardData } from '../market/explorer';
-import { sweepAreaCodes, sweepAreaLimit, sweepEnabled } from '../marketplace/sweep-plan';
+import { sweepAreaCodes, sweepAreaLimit, sweepEnabled, sweepHistory, type SweepRunRecord } from '../marketplace/sweep-plan';
 import { areaScores, buildDemand, type AreaData, type Demand, type DemandMember, type DemandProfile } from './demand';
 import { DEMAND_SETTING_KEYS, parseDemandSettings, type DemandSettings } from './settings';
 
@@ -371,4 +371,41 @@ async function poolRows(admin: Admin, where: (q: PoolQuery) => PoolQuery): Promi
     if ((data?.length ?? 0) < PAGE) break;
   }
   return out;
+}
+
+/** The marketplace sweep's searches finished today (its pass records), for "searched today" on the admin page. */
+export async function sweepDoneToday(admin: Admin, now: Date = new Date()): Promise<Set<string>> {
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const { data, error } = await admin.from('marketplace_runs').select('started_at, doneKeys:summary->doneKeys').eq('kind', 'sweep').eq('dry', false).gte('started_at', dayStart);
+  if (error) {
+    console.warn('[demand-sourcing] sweep runs unreadable:', error.message);
+    return new Set();
+  }
+  const runs: SweepRunRecord[] = ((data ?? []) as { started_at: string; doneKeys: unknown }[]).map((r) => ({ startedAt: r.started_at, doneKeys: r.doneKeys }));
+  return sweepHistory(runs, now).doneToday;
+}
+
+export interface SearchLogRow {
+  reserved_at: string;
+  postcode_area: string;
+  kind: string;
+  status: string;
+  provider: string | null;
+  cached: boolean | null;
+  cost_pence: number | null;
+  reserve_pence: number;
+  listings: number | null;
+  new_deals: number | null;
+  triggered_by: string;
+}
+
+/** The latest demand-led searches, newest first. Null when unreadable (the schema not run yet). */
+export async function lastSearches(admin: Admin, limit: number): Promise<SearchLogRow[] | null> {
+  const { data, error } = await admin
+    .from('demand_searches')
+    .select('reserved_at, postcode_area, kind, status, provider, cached, cost_pence, reserve_pence, listings, new_deals, triggered_by')
+    .order('reserved_at', { ascending: false })
+    .limit(limit);
+  if (error) return null;
+  return (data ?? []) as SearchLogRow[];
 }

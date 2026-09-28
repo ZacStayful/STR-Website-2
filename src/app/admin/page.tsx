@@ -138,6 +138,9 @@ export default async function AdminPage() {
           <Link href="/admin/profiles" className="text-sm font-medium text-primary hover:underline">
             Saved profiles
           </Link>
+          <Link href="/admin/demand" className="text-sm font-medium text-primary hover:underline">
+            Demand vs supply
+          </Link>
           <Link href="/admin/next-steps" className="text-sm font-medium text-primary hover:underline">
             Next steps
           </Link>

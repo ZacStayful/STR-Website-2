@@ -33,7 +33,8 @@ import { absorbListings, cohortLoader, emptyAbsorbCounters, type AbsorbCounters 
 import { loadScreenContext, revalidateDeals } from '../marketplace/server';
 import { DEMAND_ACTION, MAX_FAILURES_IN_A_ROW, MAX_SEARCHES_PER_PASS, PASS_BUDGET_MS, SNAPSHOT_WAIT_MS, STALE_CLAIM_MS } from './config';
 import { actualPence, effectiveCap, reservePence, type UnitCostOf } from './cost';
-import { cellKey, planSearches, type DemandPlan, type PlannedSearch, type Skipped } from './demand';
+import { cellKey, planSearches } from './demand';
+import { planView } from './table';
 import type { DemandSettings } from './settings';
 import { areaDataFrom, cachedAnswerKeys, callRowsFor, claimSearch, closeStaleClaims, livePool, loadDemand, monthFigures, readDemandSettings, searchedTodayKeys, settleSearch, sweepAreaSet, type Admin } from './server';
 
@@ -53,22 +54,6 @@ export interface DemandRunOptions {
 }
 
 export type StopReason = 'cap' | 'failures' | 'time' | 'max' | 'error' | null;
-
-export interface PlannedView {
-  key: string;
-  area: string;
-  kind: string;
-  members: number;
-  paying: number;
-  profiles: number;
-  score: number;
-  /** Screened on thin figures (1–4 analyser reports in the area). */
-  early: boolean;
-  /** Worst case this search would reserve against the cap; 0 when a fresh answer is already cached. */
-  estPence: number;
-  /** Within this pass's limit. */
-  thisPass: boolean;
-}
 
 export interface DemandRunSummary extends AbsorbCounters {
   dry: boolean;
@@ -105,14 +90,6 @@ export interface DemandRunSummary extends AbsorbCounters {
 export interface DemandRunResult {
   status: number;
   body: DemandRunSummary | { error: string; detail?: string };
-}
-
-/** The plan as the dry run and the admin page show it. */
-export function planView(plan: DemandPlan, reserve: number, cached: ReadonlySet<string>, maxQueries: number): { wouldSearch: PlannedView[]; skipped: Skipped[] } {
-  return {
-    wouldSearch: plan.searches.map((s: PlannedSearch, i) => ({ key: s.key, area: s.area, kind: s.kind, members: s.members, paying: s.paying, profiles: s.profiles, score: s.score, early: s.early, estPence: cached.has(s.key) ? 0 : reserve, thisPass: i < maxQueries })),
-    skipped: plan.skipped,
-  };
 }
 
 async function unitCostLookup(): Promise<UnitCostOf> {
