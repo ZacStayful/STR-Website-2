@@ -99,6 +99,14 @@ export const ACTIVITY_KINDS = {
   profile_reminder_shown: recordOnly('Was shown the profile reminder'),
   profile_email_click: recordOnly('Opened their profile from the daily email'),
 
+  // Saved profiles (Batch 13, src/lib/profiles). Ids only in extras, never a profile's name.
+  saved_profile_created: inApp('Created a saved profile'),
+  saved_profile_renamed: inApp('Renamed a saved profile'),
+  saved_profile_switched: inApp('Switched saved profile'),
+  saved_profile_paused: inApp('Paused a saved profile'),
+  saved_profile_resumed: inApp('Resumed a saved profile'),
+  saved_profile_deleted: inApp('Deleted a saved profile'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),

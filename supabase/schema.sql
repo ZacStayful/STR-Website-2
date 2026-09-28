@@ -3672,3 +3672,310 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 13: saved profiles
+-- =========================
+-- Up to five saved profiles per member (src/lib/profiles). A profile is one
+-- set of search criteria: the same MarketGoals jsonb as profiles.market_goals,
+-- the "specific areas" answer (saved_areas) and the quiz's answered marks
+-- (profile_quiz.answered). "About you" (profiles.about_you), the quiz gate and
+-- the £5 stay one per member, exactly as Batch 12 built them.
+--
+-- ONE profile per member is active: the one the header shows. Its criteria
+-- are ALSO the live profiles.market_goals / saved_areas / profile_quiz.answered
+-- that every existing reader and writer already uses. The triggers below copy
+-- any change of those into the active profile's row, so the quiz, the Advanced
+-- form, the relaxation link and lead provisioning never need to know which
+-- profile is active. select_search_profile swaps them in one transaction.
+-- Everything that runs per profile (the daily run, the digest, emails, My
+-- deals) reads search_profiles.
+--
+-- Running = not paused and not deleted: gets its own Today's 5 in the daily
+-- email and its own daily charge. Paused only by the member (no auto-pause).
+-- Deletes are soft, so deals keep their profile and read "(deleted profile)".
+-- Team members keep exactly one profile (src/lib/profiles/rules.ts).
+-- Nothing here is in ACCESS_COLUMNS (src/lib/access.ts), and must not become so.
+-- Everything is additive: this section can be run before the code is merged.
+
+create table if not exists public.search_profiles (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  name text not null,
+  criteria jsonb,                              -- MarketGoals; null = no preferences yet (house picks)
+  areas text[] not null default '{}',          -- postcode areas: the "specific areas" answer
+  answered jsonb not null default '{}'::jsonb, -- the quiz's {question: {at, notSure}} marks for this profile
+  for_client boolean not null default false,   -- set up for someone else (the permission reminder)
+  copied_from uuid,                            -- the profile it was copied from (analytics only)
+  is_active boolean not null default false,    -- the one the header shows; its criteria are also profiles.market_goals
+  paused_at timestamptz,                       -- daily deals paused by the member; null = running
+  deleted_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.search_profiles'::regclass and conname = 'search_profiles_name_check') then
+    alter table public.search_profiles add constraint search_profiles_name_check check (char_length(btrim(name)) between 1 and 40);
+  end if;
+end $$;
+create unique index if not exists search_profiles_active_uidx on public.search_profiles (user_id) where is_active and deleted_at is null;
+create unique index if not exists search_profiles_name_uidx on public.search_profiles (user_id, lower(btrim(name))) where deleted_at is null;
+create index if not exists search_profiles_user_idx on public.search_profiles (user_id, created_at);
+create index if not exists search_profiles_running_idx on public.search_profiles (user_id) where deleted_at is null and paused_at is null;
+alter table public.search_profiles enable row level security;  -- no policies: service role only
+revoke all on public.search_profiles from anon, authenticated;
+
+-- ── Each profile's Today list for a day (src/lib/today/selection.ts) ──
+-- today_selections is keyed (user_id, day): one list a member. This is the
+-- same thing per profile. today_selections is left as it was (history, and a
+-- rollback keeps working); its rows are copied here for the first profile.
+create table if not exists public.profile_today_lists (
+  profile_id uuid not null references public.search_profiles(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  deal_ids uuid[] not null default '{}',
+  near_miss boolean not null default false,
+  advice text,
+  created_at timestamptz not null default now(),
+  primary key (profile_id, day)
+);
+create index if not exists profile_today_lists_user_day_idx on public.profile_today_lists (user_id, day);
+alter table public.profile_today_lists enable row level security;  -- no policies: service role only
+revoke all on public.profile_today_lists from anon, authenticated;
+
+-- ── One daily-deals charge per profile per day (src/lib/listing/daily-deals-server.ts) ──
+-- Batch 10's daily_deal_charges is keyed (user_id, day): one charge a member.
+-- A member with three running profiles is charged three times a day, so the
+-- guard row moves here, keyed (profile_id, day), inserted BEFORE the debit
+-- exactly as Batch 10's is. daily_deal_charges is left as it was; a legacy row
+-- for the same member and day counts as the active profile's charge.
+create table if not exists public.profile_daily_charges (
+  id uuid not null default gen_random_uuid(),
+  profile_id uuid not null references public.search_profiles(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  payer_id uuid not null references public.profiles(id) on delete cascade,
+  run text not null,                         -- picks | digest
+  send_ref text,
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_id bigint,
+  created_at timestamptz not null default now(),
+  primary key (profile_id, day)
+);
+create unique index if not exists profile_daily_charges_id_uidx on public.profile_daily_charges (id);
+create index if not exists profile_daily_charges_user_day_idx on public.profile_daily_charges (user_id, day);
+create index if not exists profile_daily_charges_payer_idx on public.profile_daily_charges (payer_id, day desc);
+alter table public.profile_daily_charges enable row level security;  -- no policies: service role only
+revoke all on public.profile_daily_charges from anon, authenticated;
+
+-- ── Which profile a pick, a Keep / Pass, a pipeline row, an open or a miss belongs to ──
+-- Nullable: untagged history is attached to the member's first profile below.
+-- A team member's open is recorded against the owner (deal_opens.user_id is
+-- the payer), so opens are tagged only when the opener pays for themselves.
+alter table public.sourcing_sent add column if not exists profile_id uuid references public.search_profiles(id) on delete set null;
+alter table public.deal_reactions add column if not exists profile_id uuid references public.search_profiles(id) on delete set null;
+alter table public.checked_listings add column if not exists profile_id uuid references public.search_profiles(id) on delete set null;
+alter table public.deal_opens add column if not exists profile_id uuid references public.search_profiles(id) on delete set null;
+alter table public.sourcing_missed add column if not exists profile_id uuid references public.search_profiles(id) on delete set null;
+create index if not exists sourcing_sent_profile_idx on public.sourcing_sent (profile_id) where profile_id is not null;
+create index if not exists deal_reactions_profile_idx on public.deal_reactions (profile_id) where profile_id is not null;
+create index if not exists checked_listings_profile_idx on public.checked_listings (profile_id) where profile_id is not null;
+create index if not exists deal_opens_profile_idx on public.deal_opens (profile_id) where profile_id is not null;
+create index if not exists sourcing_missed_profile_idx on public.sourcing_missed (profile_id) where profile_id is not null;
+
+-- ── Every member's first profile, "My deals", holding what they have now ──
+insert into public.search_profiles (user_id, name, criteria, areas, answered, is_active)
+select p.id,
+       'My deals',
+       p.market_goals,
+       coalesce((select array_agg(s.postcode_area order by s.postcode_area) from public.saved_areas s where s.user_id = p.id), '{}'),
+       coalesce((select q.answered from public.profile_quiz q where q.user_id = p.id), '{}'::jsonb),
+       true
+  from public.profiles p
+ where not exists (select 1 from public.search_profiles sp where sp.user_id = p.id);
+
+-- ── Untagged history belongs to the member's first profile ──
+-- Only rows from before the first profile ever existed: after that the
+-- triggers below tag every new row, so a re-run never relabels anything (and
+-- never pins a team member's untagged open on the owner's profile).
+do $$
+declare
+  v_cutover timestamptz := (select min(created_at) from public.search_profiles);
+begin
+  if v_cutover is null then return; end if;
+  with first_profile as (select distinct on (user_id) user_id, id from public.search_profiles order by user_id, created_at)
+  update public.sourcing_sent t set profile_id = f.id from first_profile f where t.profile_id is null and f.user_id = t.user_id and t.sent_at < v_cutover;
+  with first_profile as (select distinct on (user_id) user_id, id from public.search_profiles order by user_id, created_at)
+  update public.deal_reactions t set profile_id = f.id from first_profile f where t.profile_id is null and f.user_id = t.user_id and t.created_at < v_cutover;
+  with first_profile as (select distinct on (user_id) user_id, id from public.search_profiles order by user_id, created_at)
+  update public.checked_listings t set profile_id = f.id from first_profile f where t.profile_id is null and f.user_id = t.user_id and t.created_at < v_cutover;
+  with first_profile as (select distinct on (user_id) user_id, id from public.search_profiles order by user_id, created_at)
+  update public.deal_opens t set profile_id = f.id from first_profile f where t.profile_id is null and f.user_id = t.user_id and t.opened_at < v_cutover;
+  with first_profile as (select distinct on (user_id) user_id, id from public.search_profiles order by user_id, created_at)
+  update public.sourcing_missed t set profile_id = f.id from first_profile f where t.profile_id is null and f.user_id = t.user_id and t.missed_at < v_cutover;
+end $$;
+insert into public.profile_today_lists (profile_id, user_id, day, deal_ids, near_miss, advice, created_at)
+select f.id, t.user_id, t.day, t.deal_ids, t.near_miss, t.advice, t.created_at
+  from public.today_selections t
+  join (select distinct on (user_id) user_id, id from public.search_profiles order by user_id, created_at) f on f.user_id = t.user_id
+on conflict (profile_id, day) do nothing;
+
+-- ── New rows are tagged with the member's active profile unless the code says otherwise ──
+-- Security definer: members insert pipeline rows through their own session
+-- and cannot read search_profiles. The code still sets profile_id wherever
+-- it matters (a pick's own profile, the profile a card was shown under).
+create or replace function private.search_profiles_tag()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if new.profile_id is null then
+    select sp.id into new.profile_id from public.search_profiles sp
+     where sp.user_id = new.user_id and sp.is_active and sp.deleted_at is null;
+  end if;
+  return new;
+end;
+$$;
+revoke execute on function private.search_profiles_tag() from public;
+drop trigger if exists search_profiles_tag on public.sourcing_sent;
+create trigger search_profiles_tag before insert on public.sourcing_sent for each row execute function private.search_profiles_tag();
+drop trigger if exists search_profiles_tag on public.deal_reactions;
+create trigger search_profiles_tag before insert on public.deal_reactions for each row execute function private.search_profiles_tag();
+drop trigger if exists search_profiles_tag on public.checked_listings;
+create trigger search_profiles_tag before insert on public.checked_listings for each row execute function private.search_profiles_tag();
+drop trigger if exists search_profiles_tag on public.sourcing_missed;
+create trigger search_profiles_tag before insert on public.sourcing_missed for each row execute function private.search_profiles_tag();
+
+-- ── The live copies keep the active profile up to date ──
+create or replace function private.search_profiles_sync_goals()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  update public.search_profiles
+     set criteria = new.market_goals, updated_at = now()
+   where user_id = new.id and is_active and deleted_at is null;
+  return new;
+end;
+$$;
+revoke execute on function private.search_profiles_sync_goals() from public;
+drop trigger if exists search_profiles_sync_goals on public.profiles;
+create trigger search_profiles_sync_goals after update of market_goals on public.profiles
+  for each row when (old.market_goals is distinct from new.market_goals)
+  execute function private.search_profiles_sync_goals();
+
+create or replace function private.search_profiles_sync_areas()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := coalesce(new.user_id, old.user_id);
+begin
+  update public.search_profiles
+     set areas = coalesce((select array_agg(s.postcode_area order by s.postcode_area) from public.saved_areas s where s.user_id = v_user), '{}'),
+         updated_at = now()
+   where user_id = v_user and is_active and deleted_at is null;
+  return null;
+end;
+$$;
+revoke execute on function private.search_profiles_sync_areas() from public;
+drop trigger if exists search_profiles_sync_areas on public.saved_areas;
+create trigger search_profiles_sync_areas after insert or delete on public.saved_areas
+  for each row execute function private.search_profiles_sync_areas();
+
+create or replace function private.search_profiles_sync_answered()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  update public.search_profiles
+     set answered = new.answered, updated_at = now()
+   where user_id = new.user_id and is_active and deleted_at is null;
+  return new;
+end;
+$$;
+revoke execute on function private.search_profiles_sync_answered() from public;
+drop trigger if exists search_profiles_sync_answered on public.profile_quiz;
+create trigger search_profiles_sync_answered after insert or update of answered on public.profile_quiz
+  for each row execute function private.search_profiles_sync_answered();
+
+-- ── Create: the limit is checked under the member's row lock, so two at once cannot make a sixth ──
+-- p: {user, name, criteria, areas, answered, for_client, copied_from}
+-- Raises profile_limit (P0409) at billing_settings.saved_profiles_max.
+create or replace function public.create_search_profile(p jsonb)
+returns uuid language plpgsql set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_max integer := coalesce((select (value #>> '{}')::integer from public.billing_settings where key = 'saved_profiles_max'), 5);
+  v_count integer;
+  v_id uuid;
+begin
+  if v_user is null then raise exception 'profile_user_required'; end if;
+  perform 1 from public.profiles where id = v_user for no key update;
+  select count(*) into v_count from public.search_profiles where user_id = v_user and deleted_at is null;
+  if v_count >= v_max then
+    raise exception 'profile_limit' using errcode = 'P0409', detail = json_build_object('max', v_max)::text;
+  end if;
+  insert into public.search_profiles (user_id, name, criteria, areas, answered, for_client, copied_from, is_active)
+  values (
+    v_user,
+    btrim(p->>'name'),
+    p->'criteria',
+    coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'areas', '[]'::jsonb)) x), '{}'),
+    coalesce(p->'answered', '{}'::jsonb),
+    coalesce((p->>'for_client')::boolean, false),
+    nullif(p->>'copied_from', '')::uuid,
+    v_count = 0
+  ) returning id into v_id;
+  return v_id;
+end;
+$$;
+revoke all on function public.create_search_profile(jsonb) from public, anon, authenticated;
+grant execute on function public.create_search_profile(jsonb) to service_role;
+
+-- ── Switch: save the old active profile, load the new one into the live copies ──
+-- p: {user, profile, shared: [question ids stored in about_you]}
+-- The About-you marks are the member's, not the profile's, so they are kept
+-- as they are; every other mark comes from the profile switched to.
+-- Raises profile_not_found (P0404) for a deleted, unknown or someone else's profile.
+create or replace function public.select_search_profile(p jsonb)
+returns uuid language plpgsql set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_target uuid := nullif(p->>'profile', '')::uuid;
+  v_shared text[] := coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'shared', '[]'::jsonb)) x), '{}');
+  v_row public.search_profiles%rowtype;
+  v_old uuid;
+begin
+  perform 1 from public.profiles where id = v_user for no key update;
+  select * into v_row from public.search_profiles where id = v_target and user_id = v_user and deleted_at is null;
+  if not found then
+    raise exception 'profile_not_found' using errcode = 'P0404';
+  end if;
+  select id into v_old from public.search_profiles where user_id = v_user and is_active and deleted_at is null;
+  if v_old = v_target then return v_target; end if;
+  if v_old is not null then
+    update public.search_profiles sp
+       set is_active = false,
+           criteria = pr.market_goals,
+           areas = coalesce((select array_agg(s.postcode_area order by s.postcode_area) from public.saved_areas s where s.user_id = v_user), '{}'),
+           answered = coalesce((select q.answered from public.profile_quiz q where q.user_id = v_user), sp.answered),
+           updated_at = now()
+      from public.profiles pr
+     where sp.id = v_old and pr.id = v_user;
+  end if;
+  update public.search_profiles set is_active = true, updated_at = now() where id = v_target;
+  update public.profiles set market_goals = v_row.criteria, market_goals_updated_at = now() where id = v_user;
+  delete from public.saved_areas where user_id = v_user and not (postcode_area = any (v_row.areas));
+  insert into public.saved_areas (user_id, postcode_area)
+  select v_user, a from unnest(v_row.areas) a
+  on conflict (user_id, postcode_area) do nothing;
+  update public.profile_quiz q
+     set answered = (v_row.answered - v_shared)
+                    || coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(q.answered) e where e.key = any (v_shared)), '{}'::jsonb),
+         updated_at = now()
+   where q.user_id = v_user;
+  return v_target;
+end;
+$$;
+revoke all on function public.select_search_profile(jsonb) from public, anon, authenticated;
+grant execute on function public.select_search_profile(jsonb) to service_role;
+
+-- ── Setting: how many profiles a member may keep (src/lib/profiles/settings.ts) ──
+insert into public.billing_settings (key, value) values ('saved_profiles_max', '5'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
