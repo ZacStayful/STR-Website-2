@@ -29,14 +29,45 @@ export const CALIBRATION_MIN_CASES = 20;
 /** The bedroom mix each class is filled in. */
 const BEDROOM_ORDER = [1, 2, 3, 4, 5, 2, 3, 4];
 
-export type VariantKey = 'planned' | 'withDates' | 'bothCurves' | 'setting';
-export const VARIANTS: VariantKey[] = ['planned', 'withDates', 'bothCurves', 'setting'];
+export type VariantKey = 'planned' | 'nearest12' | 'nearest20' | 'withDates' | 'bothCurves' | 'setting';
+export const VARIANTS: VariantKey[] = ['planned', 'nearest12', 'nearest20', 'withDates', 'bothCurves', 'setting'];
 export const VARIANT_LABELS: Record<VariantKey, string> = {
-  planned: 'As planned (listing dates dropped, seasonal fix)',
+  planned: 'As planned (up to 40 nearest similar homes, listing dates dropped, seasonal fix)',
+  nearest12: 'The 12 nearest similar homes only',
+  nearest20: 'The 20 nearest similar homes only',
   withDates: 'Keep listing dates (young listings annualised)',
   bothCurves: 'No seasonal fix (UK curve on ADR and occupancy)',
   setting: 'As planned, plus the setting check',
 };
+
+/** A "start again" marker in the run history: the comparison begins afresh after it, on the cases it names. */
+export interface RunLike {
+  summary: { reset?: unknown; caseIds?: unknown; results?: readonly CaseResult[]; calls?: unknown; pence?: unknown } | null | undefined;
+}
+
+function caseIdsOf(run: RunLike | null | undefined): string[] {
+  const ids = run?.summary?.caseIds;
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+}
+
+/**
+ * The runs of the comparison under way (after the last "start again"
+ * marker), the runs of the one before it, and the case list: the marker's
+ * own (the same cases again), else the first run's that named one.
+ */
+export function splitAtReset<T extends RunLike>(runs: readonly T[]): { current: T[]; previous: T[]; caseIds: string[] } {
+  let at = -1;
+  for (let i = runs.length - 1; i >= 0; i -= 1) {
+    if (runs[i].summary?.reset === true) {
+      at = i;
+      break;
+    }
+  }
+  if (at < 0) return { current: [...runs], previous: [], caseIds: runs.map(caseIdsOf).find((l) => l.length > 0) ?? [] };
+  const current = runs.slice(at + 1);
+  const fromMarker = caseIdsOf(runs[at]);
+  return { current, previous: splitAtReset(runs.slice(0, at)).current, caseIds: fromMarker.length > 0 ? fromMarker : (current.map(caseIdsOf).find((l) => l.length > 0) ?? []) };
+}
 
 export interface CandidateRow {
   id: string;
@@ -159,7 +190,7 @@ export function summariseCalibration(results: readonly CaseResult[], cases: numb
     const c = r.variants.planned?.confidence ?? 'insufficient';
     confidence[c] = (confidence[c] ?? 0) + 1;
   }
-  const candidates = (['planned', 'withDates', 'setting', 'bothCurves'] as VariantKey[]).filter((v) => medianAbsGap[v] !== null);
+  const candidates = (['planned', 'nearest12', 'nearest20', 'withDates', 'setting', 'bothCurves'] as VariantKey[]).filter((v) => medianAbsGap[v] !== null);
   const best = candidates.length === 0 ? null : candidates.reduce((a, b) => ((medianAbsGap[b] as number) < (medianAbsGap[a] as number) ? b : a));
   const withFigure = ok.filter((r) => r.variants.planned?.gross !== null && r.variants.planned?.gross !== undefined).length;
   const gate: CalibrationSummary['gate'] = withFigure < Math.min(CALIBRATION_MIN_CASES, cases) || best === null ? 'pending' : (medianAbsGap[best] as number) <= CALIBRATION_GATE_PCT ? 'pass' : 'fail';

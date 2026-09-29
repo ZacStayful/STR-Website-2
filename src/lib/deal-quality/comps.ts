@@ -137,30 +137,23 @@ export function similarComps(listings: readonly CompListing[], subject: Subject,
   return { matched: anyKind.filter((c) => kindMatches(subject.kind, typeBucket(c))), anyKind };
 }
 
-export type LocationClassLike = 'urban' | 'suburban' | 'rural_village' | 'rural_isolated' | 'coastal';
-
-/** How far the first search reaches, before any hint: the pipeline's own location classes. */
-const CLASS_START_KM: Record<LocationClassLike, number> = {
-  urban: 0.8,
-  suburban: 2,
-  rural_village: 5,
-  coastal: 5,
-  rural_isolated: 12,
-};
-
 /** The smallest step at or beyond `km`; the largest step when none is. */
 export function stepAtLeast(radii: readonly number[], km: number): number {
   return radii.find((r) => r >= km - 1e-9) ?? radii[radii.length - 1];
 }
 
 /**
- * Where the first search starts: the reach of the nearest past report's
- * comparables when there is one (free, from our own data), else the
- * location class's usual reach.
+ * Where the first search starts: the smallest step, wherever the listing
+ * is. The analyser's own search does the same (0.4 km first, widening until
+ * it holds 12), and Step 0's first run showed why it matters: coastal and
+ * rural searches that began at their class's 5 km took the comparables from
+ * a circle the stored reports had found theirs within 0.2–1.8 km of, and
+ * read 15–18% apart from them; urban searches, which began at 0.8 km, read
+ * 7% apart. A sparse area costs a call or two more; a dense one costs the
+ * same and reads its own street.
  */
-export function startRadiusKm(settings: Pick<DealCompsSettings, 'radiiKm'>, hintKm: number | null, locationClass: LocationClassLike): number {
-  const km = hintKm !== null && Number.isFinite(hintKm) && hintKm > 0 ? hintKm : CLASS_START_KM[locationClass] ?? 2;
-  return stepAtLeast(settings.radiiKm, km);
+export function startRadiusKm(settings: Pick<DealCompsSettings, 'radiiKm'>): number {
+  return settings.radiiKm[0];
 }
 
 export interface SearchStep {

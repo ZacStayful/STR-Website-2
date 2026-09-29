@@ -90,13 +90,12 @@ test('similar: same bedrooms, entire home, earning, inside the radius, one per l
   assert.ok(Math.abs(s.matched[0].distanceKm - 0.3) < 0.02);
 });
 
-test('start radius: the nearest past report’s reach rounded up to a step, else the location class', () => {
-  assert.equal(startRadiusKm(DEFAULT_DEAL_COMPS, 1.39, 'urban'), 2);
-  assert.equal(startRadiusKm(DEFAULT_DEAL_COMPS, 40, 'urban'), 25);
-  assert.equal(startRadiusKm(DEFAULT_DEAL_COMPS, null, 'urban'), 0.8);
-  assert.equal(startRadiusKm(DEFAULT_DEAL_COMPS, null, 'coastal'), 5);
-  assert.equal(startRadiusKm(DEFAULT_DEAL_COMPS, null, 'rural_isolated'), 12);
+test('start radius: the smallest step wherever the listing is, as the analyser’s own search starts', () => {
+  assert.equal(startRadiusKm(DEFAULT_DEAL_COMPS), 0.8);
+  assert.equal(startRadiusKm({ radiiKm: [2, 5] }), 2);
   assert.equal(stepAtLeast([0.8, 2, 5], 2), 2);
+  assert.equal(stepAtLeast([0.8, 2, 5], 1.39), 2);
+  assert.equal(stepAtLeast([0.8, 2, 5], 40), 5);
 });
 
 test('the search stops once it holds the target, or when the calls run out', () => {

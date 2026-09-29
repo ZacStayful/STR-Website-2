@@ -24,7 +24,9 @@ import {
   gapPct,
   latestResults,
   optionsFromMultipliers,
+  splitAtReset,
   summariseCalibration,
+  type CalibrationSummary,
   type CaseResult,
   type VariantResult,
 } from './calibration';
@@ -77,6 +79,8 @@ interface RunSummary {
   results?: CaseResult[];
   calls?: number;
   pence?: number;
+  /** A "start again" marker: the comparison begins afresh after it, on the same cases. */
+  reset?: boolean;
 }
 
 export interface CalibrationRunResult {
@@ -157,7 +161,11 @@ interface Batch {
   pence: number;
 }
 
-/** The comparison under way: the runs of the last fortnight. The first run's case list is the comparison's. */
+/**
+ * The comparison under way: the runs of the last fortnight after the last
+ * "start again" marker (calibration.ts splitAtReset). The marker's case
+ * list is the comparison's, else the first run's that named one.
+ */
 async function loadBatch(admin: Admin, now: Date): Promise<Batch | null> {
   const since = new Date(now.getTime() - CALIBRATION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await admin.from('marketplace_runs').select('started_at, summary').eq('kind', CALIBRATION_KIND).eq('dry', false).gte('started_at', since).order('started_at', { ascending: true }).limit(200);
@@ -165,10 +173,11 @@ async function loadBatch(admin: Admin, now: Date): Promise<Batch | null> {
     console.error('[deal-calibration] runs unreadable:', error.message);
     return null;
   }
-  const runs = ((data ?? []) as { summary: RunSummary | null }[]).map((r) => r.summary ?? {});
-  const withCases = runs.find((r) => Array.isArray(r.caseIds) && r.caseIds.length > 0);
+  const rows = ((data ?? []) as { summary: RunSummary | null }[]).map((r) => ({ summary: r.summary ?? {} }));
+  const { current, caseIds } = splitAtReset(rows);
+  const runs = current.map((r) => r.summary);
   return {
-    caseIds: withCases?.caseIds ?? [],
+    caseIds,
     results: latestResults(runs),
     calls: runs.reduce((s, r) => s + (num(r.calls) ?? 0), 0),
     pence: runs.reduce((s, r) => s + (num(r.pence) ?? 0), 0),
@@ -198,7 +207,7 @@ async function runCase(c: Case, settings: DealQualitySettings, claim: () => bool
     variants: {},
   };
   try {
-    const search = await searchDealComps(subject, settings.comps, { hintKm: null, maxCalls: settings.checks.maxCallsPerCheck, claim, release });
+    const search = await searchDealComps(subject, settings.comps, { maxCalls: settings.checks.maxCallsPerCheck, claim, release });
     const result: CaseResult = { ...base, found: search.comps.length, radiusKm: search.radiusKm, calls: search.calls, pence: search.pence, filtered: search.filtered, filterMatch: search.filterMatch, kindRelaxed: search.kindRelaxed };
     if (search.steps.length === 0) return { ...result, error: search.stopped ? 'spend ceiling reached' : 'search failed' };
     const incomeSubject = { ...subject, guests: c.guests, options: c.options };
@@ -209,6 +218,9 @@ async function runCase(c: Case, settings: DealQualitySettings, claim: () => bool
         : { gross: null, compCount: comps.length, spreadPct: null, confidence: 'insufficient', gapPct: null };
     };
     result.variants.planned = figure(DEAL_CHECK_VARIANT);
+    // The same comparables cut to the nearest dozen or score (they are nearest first): does the pipeline read closer to the stored report on a tighter pool?
+    result.variants.nearest12 = figure(DEAL_CHECK_VARIANT, search.comps.slice(0, 12));
+    result.variants.nearest20 = figure(DEAL_CHECK_VARIANT, search.comps.slice(0, 20));
     result.variants.withDates = figure({ keepListingDate: true, flatAdrWithoutMonthly: true });
     result.variants.bothCurves = figure({ keepListingDate: false, flatAdrWithoutMonthly: false });
     const setting = withSettingFilter(search, subject, settings.comps);
@@ -227,7 +239,7 @@ async function record(admin: Admin, dry: boolean, startedAt: Date, summary: Reco
   if (error) console.error('[deal-calibration] run record failed:', error.message);
 }
 
-export async function runDealCalibration(opts: { dry: boolean; triggeredBy: string }): Promise<CalibrationRunResult> {
+export async function runDealCalibration(opts: { dry: boolean; triggeredBy: string; reset?: boolean }): Promise<CalibrationRunResult> {
   const startedAt = new Date();
   let admin: Admin;
   try {
@@ -244,6 +256,14 @@ export async function runDealCalibration(opts: { dry: boolean; triggeredBy: stri
     const rows = await candidates(admin);
     if (!rows) return { status: 500, body: { error: 'Could not read the past reports' } };
     caseIds = chooseCases(rows.map((r) => ({ ...r, bedrooms: r.bedrooms, location_class: r.location_class }))).map((r) => r.id);
+  }
+
+  if (opts.reset) {
+    // "Start again": a marker after which the comparison begins afresh on the
+    // same cases, with a fresh ceiling. The earlier results stay recorded
+    // (the panel shows them as the previous comparison).
+    await record(admin, false, startedAt, { reset: true, triggeredBy: opts.triggeredBy, caseIds, calls: 0, pence: 0, previous: { done: batch.results.size, calls: batch.calls, pence: batch.pence } });
+    return { status: 200, body: { reset: true, cases: caseIds.length, previousDone: batch.results.size, previousCalls: batch.calls, previousPence: batch.pence, note: 'The comparison starts again on the same cases, with a fresh ceiling. Press Run.', triggeredBy: opts.triggeredBy } };
   }
   const cases = await loadCases(admin, caseIds);
   if (!cases) return { status: 500, body: { error: 'Could not read the chosen reports' } };
@@ -315,10 +335,13 @@ export async function runDealCalibration(opts: { dry: boolean; triggeredBy: stri
 export interface CalibrationView {
   cases: number;
   results: CaseResult[];
-  summary: ReturnType<typeof summariseCalibration>;
+  summary: CalibrationSummary;
   /** The latest dry run, when it is newer than the latest real run. */
   dry: (Record<string, unknown> & { at: string }) | null;
   lastRunAt: string | null;
+  /** When "start again" was last pressed, and the comparison it closed. */
+  resetAt: string | null;
+  previous: CalibrationSummary | null;
 }
 
 /** What /admin/demand shows of the comparison under way. Null when the runs cannot be read. */
@@ -330,16 +353,20 @@ export async function calibrationView(admin: Admin, now: Date = new Date()): Pro
     return null;
   }
   const rows = (data ?? []) as { dry: boolean; started_at: string; summary: (RunSummary & Record<string, unknown>) | null }[];
-  const real = rows.filter((r) => !r.dry).map((r) => ({ at: r.started_at, s: r.summary ?? {} }));
-  const dryRows = rows.filter((r) => r.dry);
+  const realRows = rows.filter((r) => !r.dry).map((r) => ({ at: r.started_at, summary: r.summary ?? {} }));
+  const { current: real, previous, caseIds } = splitAtReset(realRows);
+  const marker = [...realRows].reverse().find((r) => r.summary.reset === true) ?? null;
+  const resetAt = marker?.at ?? null;
+  const dryRows = rows.filter((r) => r.dry && (!resetAt || r.started_at > resetAt));
   const lastRunAt = real.length > 0 ? real[real.length - 1].at : null;
   const lastDry = dryRows[dryRows.length - 1];
-  const withCases = real.find((r) => Array.isArray(r.s.caseIds) && r.s.caseIds.length > 0);
-  const results = [...latestResults(real.map((r) => r.s)).values()];
-  const calls = real.reduce((s, r) => s + (num(r.s.calls) ?? 0), 0);
-  const pence = real.reduce((s, r) => s + (num(r.s.pence) ?? 0), 0);
-  const cases = withCases?.s.caseIds?.length ?? (typeof lastDry?.summary?.cases === 'number' ? (lastDry.summary.cases as number) : 0);
+  const results = [...latestResults(real.map((r) => r.summary)).values()];
+  const calls = real.reduce((s, r) => s + (num(r.summary.calls) ?? 0), 0);
+  const pence = real.reduce((s, r) => s + (num(r.summary.pence) ?? 0), 0);
+  const cases = caseIds.length > 0 ? caseIds.length : typeof lastDry?.summary?.cases === 'number' ? (lastDry.summary.cases as number) : 0;
   const dry = lastDry && (!lastRunAt || lastDry.started_at > lastRunAt) ? { ...(lastDry.summary ?? {}), at: lastDry.started_at } : null;
   if (dry) delete (dry as Record<string, unknown>).caseIds;
-  return { cases, results, summary: summariseCalibration(results, cases, calls, pence), dry, lastRunAt };
+  const previousResults = [...latestResults(previous.map((r) => r.summary)).values()];
+  const previousSummary = previous.length > 0 ? summariseCalibration(previousResults, splitAtReset(previous).caseIds.length || previousResults.length, previous.reduce((s, r) => s + (num(r.summary.calls) ?? 0), 0), previous.reduce((s, r) => s + (num(r.summary.pence) ?? 0), 0)) : null;
+  return { cases, results, summary: summariseCalibration(results, cases, calls, pence), dry, lastRunAt, resetAt, previous: previousSummary };
 }

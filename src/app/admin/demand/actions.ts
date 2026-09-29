@@ -63,9 +63,12 @@ export async function updateDemandSettingsAction(formData: FormData): Promise<vo
  */
 export async function runDealCalibrationAction(formData: FormData): Promise<void> {
   const user = await requireAdmin();
-  const dry = formData.get('mode') !== 'run';
-  const result = await runDealCalibration({ dry, triggeredBy: user.email ?? 'admin' });
-  await flash(dry ? 'calibration-dry' : 'calibration', { status: result.status, ...(result.body as Record<string, unknown>) });
+  const mode = formData.get('mode');
+  // "Start again" keeps the case list and gives the comparison a fresh ceiling; it spends nothing itself.
+  const reset = mode === 'reset';
+  const dry = !reset && mode !== 'run';
+  const result = await runDealCalibration({ dry, reset, triggeredBy: user.email ?? 'admin' });
+  await flash(reset ? 'calibration-reset' : dry ? 'calibration-dry' : 'calibration', { status: result.status, ...(result.body as Record<string, unknown>) });
 }
 
 /**

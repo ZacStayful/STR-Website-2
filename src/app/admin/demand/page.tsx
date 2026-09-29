@@ -186,9 +186,9 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
       {flash && (
         <div className="mb-4 rounded-lg border border-border bg-card p-4 text-sm">
           <p className="font-medium text-foreground">
-            {flash.kind === "settings" ? (flash.body.error ? String(flash.body.error) : "Settings saved. The job reads them within a minute.") : flash.kind === "calibration-dry" ? "Comparison dry run (nothing spent)" : flash.kind === "calibration" ? "Comparison run" : flash.kind === "backfill-dry" ? "Clean-up dry run (nothing changed)" : flash.kind === "backfill" ? "Clean-up run" : "Pass run"} · {new Date(flash.at).toLocaleString("en-GB")}
+            {flash.kind === "settings" ? (flash.body.error ? String(flash.body.error) : "Settings saved. The job reads them within a minute.") : flash.kind === "calibration-dry" ? "Comparison dry run (nothing spent)" : flash.kind === "calibration" ? "Comparison run" : flash.kind === "calibration-reset" ? "Comparison started again on the same cases (nothing spent)" : flash.kind === "backfill-dry" ? "Clean-up dry run (nothing changed)" : flash.kind === "backfill" ? "Clean-up run" : "Pass run"} · {new Date(flash.at).toLocaleString("en-GB")}
           </p>
-          {(flash.kind === "pass" || flash.kind === "calibration" || flash.kind === "calibration-dry" || flash.kind === "backfill" || flash.kind === "backfill-dry") && <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(flash.body, null, 1)}</pre>}
+          {(flash.kind === "pass" || flash.kind === "calibration" || flash.kind === "calibration-dry" || flash.kind === "calibration-reset" || flash.kind === "backfill" || flash.kind === "backfill-dry") && <pre className="mt-2 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{JSON.stringify(flash.body, null, 1)}</pre>}
         </div>
       )}
 
@@ -240,8 +240,14 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
       <section className="mt-8 rounded-xl border border-border bg-card p-5">
         <h2 className="text-base font-semibold text-foreground">Deal checks · Step 0: comparison with past reports</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Re-runs {calibration?.cases || 24} past full analyses (8 urban, 8 rural, 8 coastal; 1–5 beds) through the deal check’s own comparables search, at their own location, and compares the new yearly revenue with the stored one. If the typical gap is over {CALIBRATION_GATE_PCT}%, the deal checks are not built on it. At most {CALIBRATION_MAX_CALLS} Airbtics calls ({money(CALIBRATION_MAX_CALLS * 5)}) for the whole comparison, house spend. Each Run carries on where the last one stopped.
+          Re-runs {calibration?.cases || 24} past full analyses (8 urban, 8 rural, 8 coastal; 1–5 beds) through the deal check’s own comparables search, at their own location, and compares the new yearly revenue with the stored one. The search starts at the smallest step wherever the property is (as the analyser’s own search does) and widens only while short of 12 similar homes. If the typical gap is over {CALIBRATION_GATE_PCT}%, the deal checks are not built on it. At most {CALIBRATION_MAX_CALLS} Airbtics calls ({money(CALIBRATION_MAX_CALLS * 5)}) for the whole comparison, house spend. Each Run carries on where the last one stopped; “Start again” keeps the same cases and gives the comparison a fresh ceiling, and the earlier results stay recorded below as the previous comparison.
         </p>
+        {calibration?.previous && (
+          <p className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">
+            Previous comparison{calibration.resetAt ? ` (closed ${new Date(calibration.resetAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })})` : ""}: {calibration.previous.done} cases, {calibration.previous.calls} calls, {money(calibration.previous.pence)}; typical gap as planned {calibration.previous.medianAbsGap.planned === null ? "—" : `${calibration.previous.medianAbsGap.planned}%`}
+            {calibration.previous.best ? `, closest ${VARIANT_LABELS[calibration.previous.best].toLowerCase()} at ${calibration.previous.medianAbsGap[calibration.previous.best]}%` : ""}; gate {calibration.previous.gate === "pass" ? "passed" : calibration.previous.gate === "fail" ? "stopped" : "waiting"}.
+          </p>
+        )}
         {!calibration ? (
           <p className="mt-3 text-sm text-muted-foreground">The runs could not be read.</p>
         ) : (
@@ -302,7 +308,8 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
         <form action={runDealCalibrationAction} className="mt-4 flex flex-wrap items-center gap-3">
           <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry run</button>
           <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run</button>
-          <span className="text-xs text-muted-foreground">Dry run spends nothing. Run makes real Airbtics calls within the comparison’s ceiling and takes up to a minute.</span>
+          <button type="submit" name="mode" value="reset" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Start again (same cases)</button>
+          <span className="text-xs text-muted-foreground">Dry run and Start again spend nothing. Run makes real Airbtics calls within the comparison’s ceiling and takes up to a minute; press it until every case is done.</span>
         </form>
       </section>
 

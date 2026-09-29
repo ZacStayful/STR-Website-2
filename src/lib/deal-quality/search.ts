@@ -8,7 +8,7 @@ import 'server-only';
  * comparison with past reports.
  */
 import { ask, dealComparables } from '../broker';
-import { classifyLocation, dealIncomeFromComps, type ShortLetOptions } from '../apis/airbtics';
+import { dealIncomeFromComps, type ShortLetOptions } from '../apis/airbtics';
 import type { DataQuality, ShortLetData } from '../types';
 import type { DealCompsSettings, DealConfidenceSettings } from './config';
 import {
@@ -58,8 +58,6 @@ export interface CompsSearch {
 }
 
 export interface SearchOptions {
-  /** How far the nearest past report's comparables reached, km, when known. */
-  hintKm: number | null;
   /** The most Airbtics calls this search may make. */
   maxCalls: number;
   /**
@@ -74,7 +72,8 @@ export interface SearchOptions {
 export async function searchDealComps(subject: Subject & { postcode: string }, settings: DealCompsSettings, opts: SearchOptions): Promise<CompsSearch> {
   const out: CompsSearch = { comps: [], radiusKm: 0, steps: [], calls: 0, pence: 0, kindRelaxed: false, filterMatch: null, filtered: true, everyListingRead: false, failed: false, stopped: false };
   const listings: CompListing[] = [];
-  let step: SearchStep | null = { radiusKm: startRadiusKm(settings, opts.hintKm, classifyLocation(subject.postcode)), page: 1 };
+  // The smallest step wherever the listing is, widening only while short of the target (comps.ts startRadiusKm).
+  let step: SearchStep | null = { radiusKm: startRadiusKm(settings), page: 1 };
   let found = 0;
   while (step && out.steps.length < MAX_STEPS) {
     if (out.calls >= opts.maxCalls) break;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CALIBRATION_MAX_CALLS, chooseCases, gapPct, latestResults, median, optionsFromMultipliers, summariseCalibration, type CaseResult } from './calibration.ts';
+import { CALIBRATION_MAX_CALLS, chooseCases, gapPct, latestResults, median, optionsFromMultipliers, splitAtReset, summariseCalibration, type CaseResult } from './calibration.ts';
 
 function row(id: string, cls: string, area: string, beds: number, day: number) {
   return { id, created_at: `2026-09-${String(day).padStart(2, '0')}T10:00:00Z`, postcode_area: area, bedrooms: beds, location_class: cls };
@@ -92,4 +92,33 @@ test('the stored headline multiplier gives the extras back', () => {
   assert.deepEqual(optionsFromMultipliers({ outdoorSpace: 1.12, parking: 1.03 }), { outdoorSpace: 'hot_tub', parkingSpaces: 1 });
   assert.deepEqual(optionsFromMultipliers({ outdoorSpace: 1, parking: 1 }), {});
   assert.deepEqual(optionsFromMultipliers(null), {});
+});
+
+test('"start again": the comparison after the last marker, on the marker’s cases; the one before it is kept apart', () => {
+  const run = (summary: Record<string, unknown>) => ({ summary });
+  const first = [run({ caseIds: ['a', 'b'], results: [result('a', 'urban', { planned: 30 })], calls: 2, pence: 10 }), run({ results: [result('b', 'urban', { planned: 20 })], calls: 1, pence: 5 })];
+  const none = splitAtReset(first);
+  assert.equal(none.current.length, 2);
+  assert.equal(none.previous.length, 0);
+  assert.deepEqual(none.caseIds, ['a', 'b']);
+  const marker = run({ reset: true, caseIds: ['a', 'b'], calls: 0, pence: 0 });
+  const second = run({ results: [result('a', 'urban', { planned: 4 })], calls: 1, pence: 5 });
+  const split = splitAtReset([...first, marker, second]);
+  assert.deepEqual(split.current, [second], 'only the runs after the marker');
+  assert.deepEqual(split.previous, first, 'the comparison before it, whole');
+  assert.deepEqual(split.caseIds, ['a', 'b'], 'the same cases again');
+  const twice = splitAtReset([...first, marker, second, run({ reset: true, caseIds: ['a'] })]);
+  assert.deepEqual(twice.current, []);
+  assert.deepEqual(twice.previous, [second], 'the previous comparison is the one between the two markers');
+  assert.deepEqual(twice.caseIds, ['a']);
+  assert.deepEqual(splitAtReset([run({ reset: true }), second]).caseIds, [], 'a marker without cases: the next run that names them');
+});
+
+test('the nearest-only variants compete for "closest" alongside the planned one', () => {
+  const rs = Array.from({ length: 22 }, (_, i) => ({ ...result(`n${i}`, 'coastal', { planned: 14, withDates: 14, bothCurves: 16, setting: 14 }), variants: { ...result(`n${i}`, 'coastal', { planned: 14, withDates: 14, bothCurves: 16, setting: 14 }).variants, nearest12: { gross: 106, compCount: 12, spreadPct: 20, confidence: 'high', gapPct: 6 }, nearest20: { gross: 109, compCount: 12, spreadPct: 25, confidence: 'medium', gapPct: 9 } } }));
+  const s = summariseCalibration(rs, 24, 30, 150);
+  assert.equal(s.medianAbsGap.nearest12, 6);
+  assert.equal(s.medianAbsGap.nearest20, 9);
+  assert.equal(s.best, 'nearest12');
+  assert.equal(s.gate, 'pass', 'the gate reads the closest variant');
 });
