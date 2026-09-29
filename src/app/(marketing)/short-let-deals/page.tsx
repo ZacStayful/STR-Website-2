@@ -4,27 +4,32 @@ import { areaMetaForCode } from "@/lib/market/areas";
 import { liveCountsByArea } from "@/lib/marketplace/queries";
 import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { siteUrl } from "@/lib/url";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { barsText } from "@/lib/listing/screen";
 
 const PAGE_TITLE = "Short-let deals on the market right now, by area";
-const PAGE_DESCRIPTION = "Every property for sale or to rent in Stayful's top UK short-let areas that nets at least 40% more as a short let than a long let, or £8,000 a year after rent. Updated every morning.";
+/** The rent-to-rent bar is a setting (billing_settings.r2r_qualified_profit). */
+const pageDescription = (r2rBar: number) => `Every property for sale or to rent in Stayful's top UK short-let areas that nets ${barsText(r2rBar)}. Updated every morning.`;
 
-export const metadata: Metadata = {
-  title: PAGE_TITLE,
-  description: PAGE_DESCRIPTION,
-  alternates: { canonical: siteUrl("/short-let-deals") },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    title: PAGE_TITLE,
+    description: pageDescription((await getBillingSettings()).r2rQualifiedProfit),
+    alternates: { canonical: siteUrl("/short-let-deals") },
+  };
+}
 
 export const revalidate = 3600;
 
 /** The public index: every area with live deals, linked to its teaser page. */
 export default async function ShortLetDealsIndexPage() {
   // Visitors see the delayed set: never more than a free member would.
-  const counts = (await liveCountsByArea((await publicDealVisibility()).hourCutoffIso)).filter((c) => c.total > 0);
+  const [counts, settings] = await Promise.all([liveCountsByArea((await publicDealVisibility()).hourCutoffIso).then((all) => all.filter((c) => c.total > 0)), getBillingSettings()]);
   return (
     <div className="mx-auto max-w-4xl px-5 py-14">
       <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Deals marketplace</p>
       <h1 className="mt-2 text-3xl font-bold text-[#2e3d2b]">{PAGE_TITLE}</h1>
-      <p className="mt-3 text-[#5b6657]">{PAGE_DESCRIPTION} Members see every deal with its figures; opening one shows the address, photos and listing link.</p>
+      <p className="mt-3 text-[#5b6657]">{pageDescription(settings.r2rQualifiedProfit)} Members see every deal with its figures; opening one shows the address, photos and listing link.</p>
       {counts.length === 0 ? (
         <p className="mt-8 rounded-xl border border-dashed border-[#e4e7dc] p-8 text-center text-sm text-[#7a8274]">The first sweep is running. Check back tomorrow morning.</p>
       ) : (

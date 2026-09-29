@@ -36,6 +36,8 @@ export interface PayInput {
   cashBuyer?: boolean;
   /** The card's profit range half-width, %. 0 for an exact income (a Full analysis). */
   widthPct: number;
+  /** Batch 16: the income is the deal's own comparables check, not the area's average. */
+  checked?: boolean;
 }
 
 export interface PayCeiling {
@@ -48,8 +50,8 @@ export interface PayCeiling {
   depositPct: number;
   mortgageRatePct: number;
   termYears: number;
-  /** What income it rests on: the area estimate (a card, the sheet), a Full analysis's own (exact), or a listing's own estimate (a shared listing). */
-  basis: 'area' | 'exact' | 'listing';
+  /** What income it rests on: the area estimate (a card, the sheet), the deal's own comparables check (Batch 16), a Full analysis's own (exact), or a listing's own estimate (a shared listing). */
+  basis: 'area' | 'checked' | 'exact' | 'listing';
   /** Worked on the house figures, not the member's (a public page, or no answers yet). */
   house: boolean;
 }
@@ -78,7 +80,7 @@ export function mostYouCanPay(input: PayInput): PayCeiling | null {
   const fin: FinanceDefaults = { ...DEFAULT_FINANCE, ...(input.finance ?? {}) };
   const minProfit = Number.isFinite(fin.targetMarginPcm) ? fin.targetMarginPcm : TAILORING.fallbackMinProfitPcm;
   const depositPct = input.cashBuyer ? 100 : fin.depositPct;
-  const base = { kind: input.kind, minProfitPcm: minProfit, depositPct, mortgageRatePct: fin.mortgageRatePct, termYears: fin.termYears, basis: input.widthPct <= 0 ? ('exact' as const) : ('area' as const), house };
+  const base = { kind: input.kind, minProfitPcm: minProfit, depositPct, mortgageRatePct: fin.mortgageRatePct, termYears: fin.termYears, basis: input.widthPct <= 0 ? ('exact' as const) : input.checked ? ('checked' as const) : ('area' as const), house };
   const need = profitNeeded(minProfit, input.widthPct);
   const model = { grossRevenue: gross, adr: 0, bedrooms: input.bedrooms ?? 2, finance: fin };
   if (input.kind === 'rent') {
@@ -109,7 +111,7 @@ export function payLine(c: PayCeiling): string {
 /** "For £300/month profit at your 25% deposit, 5.5% over 25 years (area estimate)". */
 export function basisLine(c: PayCeiling): string {
   const whose = c.house ? 'a' : 'your';
-  const tail = c.basis === 'exact' ? '(exact for this property)' : c.basis === 'listing' ? '(estimate for this listing)' : '(area estimate)';
+  const tail = c.basis === 'exact' ? '(exact for this property)' : c.basis === 'listing' ? '(estimate for this listing)' : c.basis === 'checked' ? '(on its own comparables)' : '(area estimate)';
   if (c.kind === 'rent') return `For ${gbp(c.minProfitPcm)}/month profit after the rent ${tail}`;
   if (c.depositPct >= 100) return `For ${gbp(c.minProfitPcm)}/month profit, buying with cash ${tail}`;
   const rate = `${Number.isInteger(c.mortgageRatePct) ? c.mortgageRatePct : Math.round(c.mortgageRatePct * 100) / 100}%`;

@@ -364,10 +364,11 @@ async function teaserUncached(code: string, cutoffIso: string | null): Promise<A
   // those three only, so the 2,000-row read above stays light.
   const top = rows.slice(0, 3);
   if (top.length > 0) {
-    const { data: extra, error: extraErr } = await admin.from('marketplace_deals').select('id, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence').in('id', top.map((r) => r.id));
+    const { data: extra, error: extraErr } = await admin.from('marketplace_deals').select('id, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, check_comps:screening->check->>compCount').in('id', top.map((r) => r.id));
     if (extraErr) console.error('[marketplace] teaser ranges failed:', extraErr.message);
-    const byId = new Map(((extra ?? []) as { id: string; screening_gross: string | null; screening_confidence: string | null }[]).map((r) => [r.id, r]));
-    for (const r of top) Object.assign(r, { screening_gross: byId.get(r.id)?.screening_gross ?? null, screening_confidence: byId.get(r.id)?.screening_confidence ?? null });
+    const byId = new Map(((extra ?? []) as { id: string; screening_gross: string | null; screening_confidence: string | null; check_comps: string | null }[]).map((r) => [r.id, r]));
+    // Batch 16: the check's comparables count too (a count, never where), for the "based on N similar Airbnbs nearby" caption.
+    for (const r of top) Object.assign(r, { screening_gross: byId.get(r.id)?.screening_gross ?? null, screening_confidence: byId.get(r.id)?.screening_confidence ?? null, check_comps: byId.get(r.id)?.check_comps ?? null });
   }
   return {
     code,

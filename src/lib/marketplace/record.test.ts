@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDealRecord, qualifiesForMarketplace, townFrom, feedStatusOf, mergeSnapshotIntoListing, snapshotFromDeal, areaRentKey, type AreaCardLike } from './record.ts';
+import { buildDealRecord, qualifiesForMarketplace, townFrom, feedStatusOf, mergeSnapshotIntoListing, snapshotFromDeal, areaRentKey, parseStoredDeal, type AreaCardLike } from './record.ts';
 import type { SourcedListing } from '../listing/sourcing.ts';
+import { R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
 import type { ListingSnapshot } from '../listing/types.ts';
 
 const listing = (over: Partial<SourcedListing> = {}): SourcedListing => ({
@@ -35,7 +36,7 @@ const rents = new Map([[areaRentKey('YO', 3), { monthlyRent: 1_200, samples: 5 }
 const NOW = new Date('2026-09-25T12:00:00Z');
 
 test('a purchase that clears 40% over a long let qualifies, and the record carries the grid columns', () => {
-  const rec = buildDealRecord(listing(), { card, rentTable: rents, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW });
+  const rec = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW });
   // 48,000 × 0.44 = 21,120 net; long-let net 1,200 × 12 × 0.9 = 12,960; costs 5,304 → surplus 2,856 → 22% uplift: medium.
   assert.equal(rec.band, 'medium');
   assert.equal(rec.annualProfit, 2_856);
@@ -47,7 +48,7 @@ test('a purchase that clears 40% over a long let qualifies, and the record carri
   assert.ok(rec.deal && rec.deal.kind === 'purchase');
   assert.ok(!qualifiesForMarketplace(rec));
 
-  const strong = buildDealRecord(listing(), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, firstSeenAt: null, now: NOW });
+  const strong = buildDealRecord(listing(), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   // 60,000 × 0.44 = 26,400 − 5,304 − 12,960 = 8,136 → 62.8%: qualified.
   assert.equal(strong.band, 'qualified');
   assert.equal(strong.annualProfit, 8_136);
@@ -55,7 +56,7 @@ test('a purchase that clears 40% over a long let qualifies, and the record carri
 });
 
 test('a rental is judged on its advertised rent and normalised to pcm', () => {
-  const rec = buildDealRecord(listing({ kind: 'rent', price: { amount: 300, period: 'pw' } }), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, firstSeenAt: null, now: NOW });
+  const rec = buildDealRecord(listing({ kind: 'rent', price: { amount: 300, period: 'pw' } }), { card: { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   assert.equal(rec.pricePeriod, 'pcm');
   assert.equal(rec.priceAmount, 1_300);
   assert.equal(rec.screening.kind, 'rent-to-rent');
@@ -130,4 +131,96 @@ test('snapshotFromDeal returns the live snapshot when there is one, else a minim
   assert.equal(minimal.displayAddress, '12 High Street, Fulford, York, YO10 4AB');
   assert.equal(minimal.fetchedAt, NOW.toISOString());
   assert.equal(minimal.parserVersion, 0);
+});
+
+// ── Batch 16 ──
+
+test('every record carries its stream: a cheap sale is low entry at the house cash in, a rental is rent-to-rent, the bar is a rule', () => {
+  const cheap = listing({ price: { amount: 120_000, period: 'total' }, bedrooms: 2 });
+  const rec = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  // 25% deposit £30,000 + SDLT £6,000 + setup £13,000 = £49,000.
+  assert.ok(rec.deal && rec.deal.kind === 'purchase');
+  assert.equal(rec.deal.cashRequired, 49_000);
+  assert.equal(rec.deal.taxCountry, 'england');
+  assert.equal(rec.stream, 'low_entry');
+  const strict = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { lowEntry: { maxCashIn: 40_000 } } });
+  assert.equal(strict.stream, 'top60');
+  assert.equal(buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'top60', '£250,000 needs £84,000');
+  assert.equal(buildDealRecord(listing({ kind: 'rent', price: { amount: 1_200, period: 'pcm' } }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'r2r');
+});
+
+test('an auction lot is priced as one (guide plus uplift, on a bridge) and its stream follows the bridging cash', () => {
+  const lot = listing({ price: { amount: 130_000, period: 'total' }, bedrooms: 4, auction: true });
+  const rec = buildDealRecord(lot, { card: { ...card, byBedrooms: [{ bedrooms: 4, grossRevenue: 60_000, adr: 220 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.ok(rec.deal && rec.deal.kind === 'purchase' && rec.deal.auction, 'modelled as an auction');
+  assert.equal(rec.deal.askingPrice, 149_500, 'the guide plus the usual 15%');
+  assert.equal(rec.deal.auction.guide, 130_000);
+  assert.equal(rec.deal.auction.method, 'traditional', 'no modern-method wording');
+  // Bridging deposit £44,850 + SDLT £7,965 + premium £1,500 + fees £4,093 + setup £20,000.
+  assert.equal(rec.deal.cashRequired, 78_408);
+  assert.equal(rec.stream, 'top60');
+  const online = buildDealRecord(listing({ ...lot, features: ['Scheduled for online auction', 'Legal pack available'] }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(online.deal?.kind === 'purchase' ? online.deal.auction?.method : null, 'modern');
+  const noUplift = buildDealRecord(lot, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { auctionTerms: { upliftPct: 0, traditionalPremium: 1_500, modernPremiumPct: 4.5, vatPct: 20, modernPremiumMin: 6_000, bridgingLtvPct: 70, bridgingMonthlyPct: 0.85, arrangementPct: 2, legalAndValuation: 2_000, termMonths: 12 } } });
+  assert.equal(noUplift.deal?.kind === 'purchase' ? noUplift.deal.askingPrice : null, 130_000, 'the terms are a rule');
+  assert.equal(buildDealRecord(listing({ price: { amount: 130_000, period: 'total' } }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).deal?.kind === 'purchase' ? 'plain' : 'x', 'plain', 'no auction evidence: an ordinary purchase');
+});
+
+test('a listing pays its own nation’s transaction tax', () => {
+  const scottish = listing({ address: '1 Royal Mile, Edinburgh, EH1 1AA', postcode: 'EH1 1AA', outcode: 'EH1', postcodeArea: 'EH' });
+  const rec = buildDealRecord(scottish, { card: { ...card, code: 'EH' }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.ok(rec.deal && rec.deal.kind === 'purchase');
+  assert.equal(rec.deal.taxCountry, 'scotland');
+  // LBTT on £250,000: 2% of £105,000 = £2,100, plus the 8% ADS £20,000.
+  assert.equal(rec.deal.stampDuty, 22_100);
+});
+
+test('a region’s figures standing in for an area screen at low confidence whatever the bedroom match', () => {
+  const strong = { ...card, byBedrooms: [{ bedrooms: 3, grossRevenue: 60_000, adr: 200 }] };
+  const own = buildDealRecord(listing(), { card: strong, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(own.screening.grossRevenue?.confidence, 'medium');
+  assert.equal(own.screening.confidence, 'medium');
+  const region = buildDealRecord(listing(), { card: { ...strong, fallback: true }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(region.screening.grossRevenue?.confidence, 'low');
+  assert.equal(region.screening.confidence, 'low');
+  assert.equal(region.band, own.band, 'the figure is the same; only the trust in it drops');
+});
+
+test('parseStoredDeal reads a stored deal back defensively', () => {
+  const rec = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  const stored = JSON.parse(JSON.stringify(rec.deal)); // as the row holds it: no undefined fields
+  assert.deepEqual(parseStoredDeal(stored), stored);
+  assert.equal(parseStoredDeal(null), null);
+  assert.equal(parseStoredDeal({ kind: 'purchase' }), null);
+  assert.equal(parseStoredDeal({ kind: 'rent-to-rent', advertisedRentPcm: 900 }), null);
+  assert.equal(parseStoredDeal('{"kind":"purchase"}'), null);
+});
+
+// ── Batch 16, Part B: a record built on the deal's own check ──
+
+test('with a check, the screening and the deal read the checked figures, and the check rides on the screening', () => {
+  const check = { checkedAt: '2026-09-25T03:45:00.000Z', via: 'daily' as const, gross: 60_000, adr: 210, occupancy: 0.72, compCount: 12, spreadPct: 15, confidence: 'high' as const, radiusKm: 0.8, calls: 1, pence: 5, bedrooms: 3, kind: 'sale' as const, locationClass: 'urban', kindRelaxed: false };
+  const rec = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW, check });
+  assert.equal(rec.screening.grossRevenue?.value, 60_000);
+  assert.equal(rec.screening.grossRevenue?.source, 'checked');
+  assert.equal(rec.screening.confidence, 'high', 'the check’s confidence, not the rent’s');
+  // 60,000 × 0.44 = 26,400 net; long-let net 12,960; costs 5,304 → surplus 8,136 → 62.8% uplift: qualified.
+  assert.equal(rec.band, 'qualified');
+  assert.equal(rec.annualProfit, 8_136);
+  assert.deepEqual(rec.screening.check, check);
+  assert.equal(rec.deal?.kind, 'purchase');
+  assert.equal((rec.deal as { grossRevenue: number }).grossRevenue, 60_000, 'the deal model reads the checked gross');
+  const without = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW });
+  assert.equal(without.screening.grossRevenue?.value, 48_000, 'without a check, the area figure as before');
+  assert.equal(without.screening.check, undefined);
+  assert.equal(without.stream, rec.stream);
+});
+
+test('a check on a listing with no area card still screens it (no card, no area figure, but its own figure)', () => {
+  const check = { checkedAt: '2026-09-25T03:45:00.000Z', via: 'daily' as const, gross: 30_000, adr: 120, occupancy: 0.6, compCount: 8, spreadPct: 30, confidence: 'medium' as const, radiusKm: 2, calls: 2, pence: 10, bedrooms: 2, kind: 'rent' as const, locationClass: 'coastal', kindRelaxed: true };
+  const rec = buildDealRecord(listing({ kind: 'rent', bedrooms: 2, price: { amount: 900, period: 'pcm' } }), { card: null, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW, check });
+  // 30,000 × 0.44 = 13,200; rent 10,800; costs 4,704 → −2,304: unqualified, but banded on its own figure rather than "no data".
+  assert.equal(rec.band, 'unqualified');
+  assert.equal(rec.screening.grossRevenue?.source, 'checked');
+  assert.equal(rec.stream, 'r2r');
 });

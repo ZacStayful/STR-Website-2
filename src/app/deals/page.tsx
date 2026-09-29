@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { barsText } from "@/lib/listing/screen";
 import { parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
 import { MY_DEALS_PASSED_HREF, NAV_TARGETS, dealsViewRedirect } from "@/lib/nav";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount, type DealPage } from "@/lib/marketplace/queries";
@@ -121,7 +122,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
           <div>
             <h1 className="text-2xl font-bold text-foreground">Deals</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Every listing on the market in Stayful’s top areas that nets at least 40% more as a short let than a long let, or £8,000 a year after rent. Profit is an area estimate at your finance: take a Quick look for the address, photos and listing link, or a Full analysis for the exact figures for the property.
+              Every listing on the market in Stayful’s top areas that nets {barsText(settings.r2rQualifiedProfit)}. Profit is an area estimate at your finance: take a Quick look for the address, photos and listing link, or a Full analysis for the exact figures for the property.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">

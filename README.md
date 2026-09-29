@@ -301,6 +301,60 @@ estimate: confirm it against the Twilio console and correct it on
    about 30 of 108 a day), with areas members want first. `/admin/deals`
    shows each pass as "done today / list".
 
+### 11. Switch on deal checks (Batch 16)
+
+Every marketplace deal earns its place on its own Airbnb comparables
+instead of the area's average, says how sure its range is, and two cheaper
+ways in get their own streams. In this order:
+
+1. **Run `supabase/schema.sql`** (the "Batch 16: deal quality" section; the
+   Batch 14 and 15 sections too if the database is still without them). It
+   is additive and idempotent: the settings rows (`r2r_qualified_profit`
+   6000, `auction_model`, `area_rent_daily_attempts` 40, `low_entry`,
+   `deal_comps`, `deal_confidence`, `deal_checks`), the
+   `analyser_reports_removed` archive, `provider_calls.raw_pence`, three
+   spend functions, `marketplace_deals.stream` (filled in once for existing
+   rows) and the shortlist index. Nothing is added to `ACCESS_COLUMNS`.
+   Until it is run every setting falls back to its decided default, the
+   spend views page through rows, the backfill clean-up refuses to delete,
+   and deal rows are written without their stream.
+2. **Clean up the past reports:** on `/admin/demand`, "Past reports" →
+   Dry run, then Run (about £1.30 of geocoding; duplicates are archived
+   before they are deleted). `/api/internal/report-backfill?dry=1` is the
+   same plan.
+3. **Read Step 0:** the "Deal checks · Step 0" panel on `/admin/demand`
+   holds the comparison with past full analyses (run twice on 29 Sep 2026:
+   11.5% typical gap against the 15% gate; the area average sits 16.7%).
+   Nothing to do unless the check's method changes; `?reset=1` starts it
+   again on the same cases.
+4. **Check the crons:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/deal-checks` (03:40, 03:50, 04:00, 04:10, 04:20 UTC) and
+   `/api/internal/low-entry-search` (03:00, 03:10, 03:20 UTC).
+5. **Dry-run the checks:** `/api/internal/deal-checks?dry=1`, or "Dry-run
+   today's checks" on `/admin/deals`: the day's slots by stream, what would
+   be checked (area, bedrooms, stream, profit; never an address), the
+   worst-case cost and what the day's cap has left. Asks nothing, writes
+   nothing. The shortlist is empty until the switch is on.
+6. **Then switch the checks on:** `DEAL_CHECKS_ENABLED=true`. From the next
+   sweep a qualifying listing waits as `pending_check` for its own check
+   (20 a UK day, £1 raw, by stream; `billing_settings.deal_checks`, editable
+   on `/admin/deals`) instead of going live on the area's average. "Run a
+   checks pass" on `/admin/deals` works either way.
+7. **Bring the deals already live through a check:** on `/admin/deals`,
+   either "Dry-run the re-check" then "Run a re-check pass" (sales by
+   profit first, then rentals; £12 ceiling over every run, and the day's
+   cap; press again to carry on) or "Count unchecked live deals" then
+   "Retire every unchecked live deal" (the next sweep revives each onto the
+   shortlist while it is still in the feed). `/api/internal/deal-recheck?dry=1`
+   and `?retire=1&dry=1` are the same.
+8. **The low-entry search:** "Dry-run low-entry search" then a few "Run a
+   low-entry pass" presses on `/admin/deals` to see the nationwide count
+   under the £135,000 cap (about 18p a pass), then
+   `LOW_ENTRY_SEARCH_ENABLED=true` for the cron. The cash-in bar (£50,000)
+   and the price cap are settings on the same page.
+9. **Market-warm** has its own switch now (`MARKET_WARM_ENABLED=false`
+   stops the 04:45 cron) and `?dry=1`.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -324,6 +378,7 @@ which are required, and what breaks without them.
 | `src/app/admin/profiles` | Saved profiles per member, running per member, the share with two or more, and weekly active split by one profile against two or more |
 | `src/lib/tailoring` | Tailoring (Batch 14): what a profile's answers do to Today, Browse ("Best for you"), the Explorer, the cards' three numbers, the why-line and match, "widen and see", the profile checks and "Most you can pay". Every rule is pure and tested; every number is in `config.ts`; the reads and writes are the `*-server.ts` files. A member with no new answers takes the untouched path |
 | `src/app/admin/tailoring` | Keep rate on Today's 5 by role, profile completeness and deals wanted; open → Full analysis by what holds members back; tailoring actions by step |
+| `src/lib/deal-quality` | Deal quality (Batch 16): each deal's own comparables check (`checks.ts` rules, `checks-run.ts` the nightly job, `recheck-comps-run.ts` the one-off re-check, `search.ts` and `comps.ts` the search and the figures), Step 0's comparison with past analyses (`calibration.ts`, `calibrate-run.ts`), the auction model, the three streams and the nationwide low-entry search, the Monday backfill clean-up, and the settings (`config.ts`). Pure rules beside their `*-run.ts` files; every job has `?dry=1` and is recorded in `marketplace_runs` with who ran it |
 | `src/app/p/d` | Where a daily-email teaser's "Yes, more like this" / "Not for me" lands (public, keyed on the send's own token): a GET writes nothing, one confirming button records a Keep or a Pass |
 | `src/app/admin/demand` | Demand vs supply (Batch 15): per postcode area × kind × house / flat, the members and profiles that want it beside the live deals, whether the sweep or the demand-led searches cover it, and the gap; this month's spend against the cap, the next pass's plan, the settings and the latest searches. Rules in `src/lib/sourcing-demand` (pure, tested), reads and writes in `src/lib/sourcing-demand/server.ts` (below) |
 | `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |

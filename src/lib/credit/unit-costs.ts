@@ -3,6 +3,8 @@ import { UNIT_COST_SEED, seedTable, unitKey, type UnitCost, type UnitCostTable, 
 import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 import { parseLadder, DEFAULT_DEAL_OPEN_LADDER, type DealOpenLadder } from '../marketplace/ladder.ts';
 import { DEFAULT_DEAL_PRICING, effectivePricingDate, parseDateSetting, parseDays, parsePence, parsePlanCredit, parseRangePct, type DealPricing } from './deal-pricing.ts';
+import { parseR2rBar, R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
+import { DEAL_CHECKS_KEY, DEFAULT_DEAL_CHECKS, DEFAULT_LOW_ENTRY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '../deal-quality/config.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -46,7 +48,21 @@ export interface BillingSettings {
   profileCompletePence: number;
   /** Batch 12: the share (%) of the non-mandatory questions that need a real answer, not "Not sure", before that credit is paid. */
   profileCreditMinRealPct: number;
+  /** Batch 16: the rent-to-rent bar, £ a year of profit after rent (src/lib/listing/screen.ts parseR2rBar). */
+  r2rQualifiedProfit: number;
+  /**
+   * Batch 16: the most PropertyData long-let lookups the market snapshot may
+   * make for its areas in a UTC day, failed attempts included
+   * (src/lib/market/area-longlet.ts). 0 stops them.
+   */
+  areaRentDailyAttempts: number;
+  /** Batch 16, Part F: the low-entry stream's bar and the nationwide search's limits (src/lib/deal-quality/config.ts). */
+  lowEntry: LowEntrySettings;
+  /** Batch 16, Part B: the daily checks' limits (billing_settings.deal_checks); a re-screen reads validDays from here. */
+  dealChecks: DealChecksSettings;
 }
+
+export const DEFAULT_AREA_RENT_DAILY_ATTEMPTS = 40;
 
 export const DEFAULT_PROFILE_COMPLETE_PENCE = 500;
 export const DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT = 75;
@@ -64,7 +80,17 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   dealPricing: DEFAULT_DEAL_PRICING,
   profileCompletePence: DEFAULT_PROFILE_COMPLETE_PENCE,
   profileCreditMinRealPct: DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT,
+  r2rQualifiedProfit: R2R_QUALIFIED_PROFIT,
+  areaRentDailyAttempts: DEFAULT_AREA_RENT_DAILY_ATTEMPTS,
+  lowEntry: DEFAULT_LOW_ENTRY,
+  dealChecks: DEFAULT_DEAL_CHECKS,
 };
+
+/** Whole attempts from 0 to 1,000; anything else is the default. */
+function parseAttempts(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : Number.NaN;
+  return Number.isInteger(n) && n >= 0 && n <= 1000 ? n : DEFAULT_AREA_RENT_DAILY_ATTEMPTS;
+}
 
 export function invalidateCreditCaches(): void {
   tableCache = null;
@@ -132,6 +158,10 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       },
       profileCompletePence: Math.max(0, Math.round(num('profile_complete_pence', DEFAULT_PROFILE_COMPLETE_PENCE))),
       profileCreditMinRealPct: Math.min(100, Math.max(0, num('profile_credit_min_real_pct', DEFAULT_PROFILE_CREDIT_MIN_REAL_PCT))),
+      r2rQualifiedProfit: parseR2rBar(kv.get('r2r_qualified_profit')),
+      areaRentDailyAttempts: parseAttempts(kv.get('area_rent_daily_attempts')),
+      lowEntry: parseLowEntry(kv.get(LOW_ENTRY_KEY)),
+      dealChecks: parseDealChecks(kv.get(DEAL_CHECKS_KEY)),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

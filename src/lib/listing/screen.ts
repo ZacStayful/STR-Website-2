@@ -11,7 +11,8 @@
  *                 letting agent's 10%). Qualifies on a 40% uplift.
  *   rent-to-rent  the member would RENT and sub-let. The advertised rent IS
  *                 the market rent and the operator pays ALL of it, so no agent
- *                 fee is deducted. Qualifies on £8,000 a year of profit.
+ *                 fee is deducted. Qualifies on £6,000 a year of profit (a
+ *                 setting: billing_settings.r2r_qualified_profit).
  *
  * WHY THE BAR IS HIGH. The threshold is a market-quality signal, not a
  * profitability calculation. A wide gap between short-let net and long-let net
@@ -35,6 +36,7 @@
  * Pure: no network, no database, no `server-only`, so it runs under `node --test`.
  */
 import type { SourcingKind } from './sourcing.ts';
+import type { StoredCheck } from '../deal-quality/checks.ts';
 import { nationalRentFor } from '../market/rent-ladder.ts';
 
 // ── The constants ──
@@ -55,9 +57,31 @@ export const LTL_AGENT_FEE_RATE = 0.10;
 export const BUY_QUALIFIED_UPLIFT_PCT = 40;
 export const BUY_MEDIUM_UPLIFT_PCT = 10;
 
-/** Rent-to-rent: annual profit after rent and fixed costs, in £. */
-export const R2R_QUALIFIED_PROFIT = 8_000;
+/**
+ * Rent-to-rent: annual profit after rent and fixed costs, in £. The
+ * qualified bar is a setting (billing_settings.r2r_qualified_profit, read by
+ * parseR2rBar and passed in by every caller); this is its default, used
+ * when the row is missing or unreadable. The medium bar is fixed.
+ */
+export const R2R_QUALIFIED_PROFIT = 6_000;
 export const R2R_MEDIUM_PROFIT = 4_000;
+
+/**
+ * The stored R2R bar, in whole pounds. It may not fall below the medium bar
+ * (a qualified deal would then earn less than a medium one) or rise above
+ * ABSOLUTE_QUALIFIED_SURPLUS (the cash route would then qualify deals under
+ * the bar); anything else, or a missing row, is the default.
+ */
+export function parseR2rBar(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw.trim()) : Number.NaN;
+  return Number.isInteger(n) && n >= R2R_MEDIUM_PROFIT && n <= ABSOLUTE_QUALIFIED_SURPLUS ? n : R2R_QUALIFIED_PROFIT;
+}
+
+/** Per-call settings the screening needs from outside (the R2R bar is a setting). */
+export interface ScreenOptions {
+  /** billing_settings.r2r_qualified_profit, in £; the default when absent. */
+  r2rQualifiedProfit?: number;
+}
 
 /**
  * An alternative route to `qualified` on BOTH kinds: a cash surplus this large
@@ -72,9 +96,10 @@ export const R2R_MEDIUM_PROFIT = 4_000;
  * £7,912, p90 £18,578 across 615 screened sale listings), so today it promotes
  * nothing and is a dormant safety net for prime stock.
  *
- * On rent-to-rent it can NEVER bind, because £20,000 already clears the £8,000
- * bar. It is applied there anyway so both kinds run the same rule. That branch
- * is intentionally redundant — do not delete it as dead code.
+ * On rent-to-rent it can NEVER bind, because £20,000 already clears the R2R
+ * bar (parseR2rBar keeps the bar at or under £20,000). It is applied there
+ * anyway so both kinds run the same rule. That branch is intentionally
+ * redundant — do not delete it as dead code.
  */
 export const ABSOLUTE_QUALIFIED_SURPLUS = 20_000;
 
@@ -142,7 +167,12 @@ export function isBand(v: unknown): v is Band {
   return typeof v === 'string' && (BAND_ORDER as string[]).includes(v);
 }
 
-export type FigureSource = 'confirmed' | 'estimated';
+/**
+ * confirmed   the listing's own figure (an advertised rent)
+ * estimated   the area's average for this size, or the national rent ladder
+ * checked     the property's own Airbnb comparables (Batch 16: a deal check)
+ */
+export type FigureSource = 'confirmed' | 'estimated' | 'checked';
 export type Confidence = 'high' | 'medium' | 'low';
 
 /** One input figure, and how much it should be trusted. Never present an estimate as confirmed. */
@@ -157,6 +187,16 @@ const CONFIDENCE_ORDER: Confidence[] = ['low', 'medium', 'high'];
 /** The weaker of two confidences — a result is only as good as its worst input. */
 export function lowerConfidence(a: Confidence, b: Confidence): Confidence {
   return CONFIDENCE_ORDER.indexOf(a) <= CONFIDENCE_ORDER.indexOf(b) ? a : b;
+}
+
+/**
+ * A screening is as sure as its weakest input — except when the gross is
+ * the property's own comparables check (Batch 16): the range a member sees
+ * is built on that figure, and the rent only decides whether the deal
+ * qualifies, so the check's confidence is the screening's.
+ */
+export function screeningConfidence(gross: Figure, rent: Figure): Confidence {
+  return gross.source === 'checked' ? gross.confidence : lowerConfidence(gross.confidence, rent.confidence);
 }
 
 // ── The result ──
@@ -182,6 +222,12 @@ interface ScreeningBase {
   /** True when ABSOLUTE_QUALIFIED_SURPLUS is what earned `qualified`. */
   byAbsolute: boolean;
   reason: string;
+  /**
+   * Batch 16: the deal's own comparables check the gross came from, kept
+   * on the screening so every later re-screen can build on it while it is
+   * good (src/lib/deal-quality/checks.ts). Absent on an area-figure screening.
+   */
+  check?: StoredCheck | null;
 }
 
 export interface PurchaseScreening extends ScreeningBase {
@@ -247,7 +293,7 @@ function insufficient(input: ScreenInput, reason: string) {
 /**
  * Money is rounded to the pound BEFORE the band is decided, so the figure shown
  * and the band shown can never disagree at a boundary (a profit printed as
- * £8,000 always reads as qualified).
+ * £6,000 always reads as qualified).
  */
 export function screenPurchase(input: ScreenInput): PurchaseScreening {
   const gap = missingInput(input);
@@ -263,7 +309,7 @@ export function screenPurchase(input: ScreenInput): PurchaseScreening {
   const upliftPct = round1((surplus / ltlNet) * 100);
   const requiredGross = round(((1 + BUY_QUALIFIED_UPLIFT_PCT / 100) * ltlNet + fixedCosts) / STR_NET_MULTIPLE);
   const shortfall = round(gross.value) - requiredGross;
-  const confidence = lowerConfidence(gross.confidence, rent.confidence);
+  const confidence = screeningConfidence(gross, rent);
 
   const byPct = upliftPct >= BUY_QUALIFIED_UPLIFT_PCT;
   const byAbsolute = !byPct && surplus >= ABSOLUTE_QUALIFIED_SURPLUS;
@@ -297,7 +343,7 @@ export function screenPurchase(input: ScreenInput): PurchaseScreening {
   };
 }
 
-export function screenRentToRent(input: ScreenInput): RentToRentScreening {
+export function screenRentToRent(input: ScreenInput, opts: ScreenOptions = {}): RentToRentScreening {
   const gap = missingInput(input);
   if (gap) return { ...insufficient(input, gap), kind: 'rent-to-rent', annualRent: null, annualProfit: null, revenueMultiple: null };
 
@@ -309,14 +355,15 @@ export function screenRentToRent(input: ScreenInput): RentToRentScreening {
   // No agent fee: the operator pays the landlord's full asking rent.
   const annualRent = round(rent.value * 12);
   const annualProfit = strNet - annualRent - fixedCosts;
-  const requiredGross = round((annualRent + fixedCosts + R2R_QUALIFIED_PROFIT) / STR_NET_MULTIPLE);
+  const bar = opts.r2rQualifiedProfit ?? R2R_QUALIFIED_PROFIT;
+  const requiredGross = round((annualRent + fixedCosts + bar) / STR_NET_MULTIPLE);
   const shortfall = round(gross.value) - requiredGross;
   const revenueMultiple = round2(gross.value / annualRent);
-  const confidence = lowerConfidence(gross.confidence, rent.confidence);
+  const confidence = screeningConfidence(gross, rent);
 
-  const byProfit = annualProfit >= R2R_QUALIFIED_PROFIT;
-  // Intentionally redundant: £20,000 already clears £8,000. Kept so both kinds
-  // run the same rule — see ABSOLUTE_QUALIFIED_SURPLUS.
+  const byProfit = annualProfit >= bar;
+  // Intentionally redundant: £20,000 already clears the bar. Kept so both
+  // kinds run the same rule — see ABSOLUTE_QUALIFIED_SURPLUS.
   const byAbsolute = !byProfit && annualProfit >= ABSOLUTE_QUALIFIED_SURPLUS;
   const band: Band = byProfit || byAbsolute ? 'qualified' : annualProfit >= R2R_MEDIUM_PROFIT ? 'medium' : 'unqualified';
 
@@ -324,7 +371,7 @@ export function screenRentToRent(input: ScreenInput): RentToRentScreening {
     band === 'qualified'
       ? `Clears ${gbp(annualProfit)} a year after rent and running costs, ${gbp(shortfall)} above the ${gbp(requiredGross)} needed, at ${revenueMultiple}× the rent.`
       : band === 'medium'
-        ? `Makes ${gbp(annualProfit)} a year — under the ${gbp(R2R_QUALIFIED_PROFIT)} bar and ${gbp(Math.abs(shortfall))} short of the ${gbp(requiredGross)} needed.`
+        ? `Makes ${gbp(annualProfit)} a year — under the ${gbp(bar)} bar and ${gbp(Math.abs(shortfall))} short of the ${gbp(requiredGross)} needed.`
         : `Only ${gbp(annualProfit)} a year at ${revenueMultiple}× the rent — ${gbp(Math.abs(shortfall))} short of the ${gbp(requiredGross)} needed.`;
 
   return {
@@ -390,18 +437,28 @@ export function marketRentFor(input: MarketRentInput): { figure: Figure; tier: R
 }
 
 /**
- * Short-let revenue as a screening input. Always an estimate — the finder never
- * has a property-specific figure — so the only question is whether it is for this
- * property's size or a blend across the area.
+ * Short-let revenue from the area's figures as a screening input: an estimate,
+ * for this property's size or a blend across the area. (The property's own
+ * figure, when it has been checked, is checkedGrossFigure.)
  */
 export function grossRevenueFor(grossRevenue: number | null, exactBedroomMatch: boolean): Figure | null {
   if (!grossRevenue || grossRevenue <= 0) return null;
   return { value: grossRevenue, source: 'estimated', confidence: exactBedroomMatch ? 'medium' : 'low' };
 }
 
+/** Short-let revenue from the deal's own comparables check (Batch 16): its figure at its own confidence. */
+export function checkedGrossFigure(check: Pick<StoredCheck, 'gross' | 'confidence'>): Figure {
+  return { value: check.gross, source: 'checked', confidence: check.confidence };
+}
+
 /** Screens a listing by its kind: a sale is a purchase, a rental is rent-to-rent. */
-export function screen(kind: SourcingKind, input: ScreenInput): Screening {
-  return kind === 'rent' ? screenRentToRent(input) : screenPurchase(input);
+/** The two bars in words, as the marketplace pages state them ("nets …"). */
+export function barsText(r2rBar: number = R2R_QUALIFIED_PROFIT): string {
+  return `at least ${BUY_QUALIFIED_UPLIFT_PCT}% more as a short let than a long let, or ${gbp(r2rBar)} a year after rent`;
+}
+
+export function screen(kind: SourcingKind, input: ScreenInput, opts: ScreenOptions = {}): Screening {
+  return kind === 'rent' ? screenRentToRent(input, opts) : screenPurchase(input);
 }
 
 /**
@@ -431,7 +488,7 @@ export function screeningScore(s: Screening | null | undefined): number | null {
  */
 export function screeningWorking(s: Screening): { label: string; value: string }[] {
   if (s.band === 'insufficient-data') return [];
-  const mark = (f: Figure | null) => (f && f.source === 'estimated' ? ' (est.)' : '');
+  const mark = (f: Figure | null) => (f && f.source === 'estimated' ? ' (est.)' : f && f.source === 'checked' ? ' (own comparables)' : '');
   const out: { label: string; value: string }[] = [
     { label: 'Short-let revenue', value: `${gbp(s.grossRevenue!.value)}/yr${mark(s.grossRevenue)}` },
     { label: 'Short-let net', value: `${gbp(s.strNet!)}/yr` },

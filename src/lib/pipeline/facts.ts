@@ -33,7 +33,7 @@ export interface DealFacts {
   /** marketplace_deals.motivation, as stored. */
   motivation?: unknown;
   /** The marketplace deal's state; null for a listing the member added. */
-  dealStatus: 'live' | 'retired' | 'pending_verify' | null;
+  dealStatus: 'live' | 'retired' | 'pending_verify' | 'pending_check' | null;
   retiredReason: string | null;
   /** When the listing was last confirmed live, which is when its price was last read. */
   lastConfirmedAt: string | null;

@@ -2,7 +2,7 @@ import 'server-only';
 
 import type { Question } from './types';
 import { COST_PENCE, TTL } from './config';
-import { findNearbyListings, findNearbyListingsPage } from '../apis/airbtics';
+import { findNearbyListings, findNearbyListingsPage, searchListingsForDeal, type DealListingsPage, type DealListingsParams } from '../apis/airbtics';
 import { gridCell, matchTracked, type NearbyListingsValue, type TrackedListing } from '../listing/competitors';
 import { storedCompForListing, storedPostcodeFigures, type PostcodeFigures } from './providers/internal';
 import { pmiStrEstimate, pmiStrMarket, pmiListings, num, type PmiStrEstimate, type PmiStrMarket } from './providers/pmi';
@@ -36,6 +36,25 @@ export const nearbyListings: Question<NearbyParams, NearbyListingsValue> = {
       costPence: COST_PENCE.airbticsBounds,
       ttlMs: TTL.airbticsBounds,
       run: (p) => findNearbyListingsPage(p.lat, p.lng, 1),
+    },
+  ],
+};
+
+// ── Airbnb listings around a deal, for its comparables check (Batch 16) ──
+// One Airbtics listings search per ask, nearest first, filtered to entire
+// homes with the deal's bedroom count. A week's cache: checking the same
+// place again inside it is free.
+export type DealComparablesParams = Omit<DealListingsParams, 'filtered'>;
+export const dealComparables: Question<DealComparablesParams, DealListingsPage> = {
+  name: 'dealComparables',
+  key: (p) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}|${p.radiusKm}km|${p.bedrooms}b|p${p.page}`,
+  rungs: [
+    {
+      provider: 'airbtics',
+      level: 3,
+      costPence: COST_PENCE.airbticsBounds,
+      ttlMs: TTL.airbticsBounds,
+      run: (p) => searchListingsForDeal(p),
     },
   ],
 };
@@ -230,5 +249,36 @@ export const marketplaceListings: Question<SourcingQuery, SourcedListing[]> = {
       },
     },
     { provider: 'onthemarket', level: 3, costPence: COST_PENCE.onthemarketFetch, ttlMs: TTL.sourcing, run: (q) => fetchOnTheMarketSearch(q) },
+  ],
+};
+
+// ── The nationwide low-entry search (Batch 16, Part F) ──
+// The marketplace search with the query's price ceiling and bedroom floor,
+// in its own cache namespace (the sweep's unbounded answer is a different
+// question) and with a wider reach: a postcode area is 20–50 km across and
+// its cheap stock sits in the towns, not around the centroid. Every portal,
+// like the marketplace search.
+const LOW_ENTRY_RADIUS_M = 15_000;
+export const lowEntryListings: Question<SourcingQuery, SourcedListing[]> = {
+  name: 'lowEntryListings',
+  key: (q) => q.key,
+  rungs: [
+    {
+      provider: 'pmi',
+      level: 3,
+      costPence: COST_PENCE.pmiListings,
+      ttlMs: TTL.lowEntry,
+      run: async (q) => {
+        const c = areaCentroid(q.area);
+        if (!c) return null;
+        const resp = await pmiListings(
+          { lat: c.lat, lng: c.lng, radiusM: LOW_ENTRY_RADIUS_M },
+          { type: 'sale', maxPrice: q.maxPrice ?? undefined, minBedrooms: q.minBedrooms ?? undefined, sort: 'date_desc', perPage: 50 },
+        );
+        const list = fromPmiListings(resp, 'sale', { sources: 'all' });
+        return list.length > 0 ? list : null;
+      },
+    },
+    { provider: 'onthemarket', level: 3, costPence: COST_PENCE.onthemarketFetch, ttlMs: TTL.lowEntry, run: (q) => fetchOnTheMarketSearch(q) },
   ],
 };

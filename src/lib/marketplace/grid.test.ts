@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, SORT_LABELS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView } from './grid.ts';
+import { parseDealFilters, filtersToSearch, DEFAULT_FILTERS, SORT_LABELS, PUBLIC_DEAL_COLUMNS, PRIVATE_DEAL_COLUMNS, CARD_COLUMNS, badgesFor, describeType, PAGE_SIZE, priceLine, headlineFigure, areaDealView, isAuctionCard } from './grid.ts';
 
 test('parseDealFilters whitelists every value and clamps numbers', () => {
   assert.deepEqual(parseDealFilters({}), DEFAULT_FILTERS);
@@ -110,4 +110,22 @@ test('negative figures read with a proper minus, never "£-500" or "+-5%"', () =
   assert.deepEqual(headlineFigure({ kind: 'rent', annual_profit: -500, uplift_pct: null }), { big: '−£500/yr', small: 'profit after rent' });
   assert.equal(headlineFigure({ kind: 'sale', annual_profit: -1200, uplift_pct: -5 }).big, '−5%');
   assert.equal(headlineFigure({ kind: 'sale', annual_profit: -1200, uplift_pct: -5 }).small, '−£1,200/yr over a long let');
+});
+
+test('an auction lot is read off its stored motivation verdict; a bare guide price is not one', () => {
+  assert.equal(isAuctionCard({ motivation: { score: 20, firmScore: 20, fired: ['auction'] } }), true);
+  assert.equal(isAuctionCard({ motivation: { score: 25, firmScore: 25, fired: ['price_reduced'] } }), false);
+  assert.equal(isAuctionCard({ motivation: null }), false);
+  assert.equal(isAuctionCard({}), false);
+});
+
+test('a card row carries the house cash in and the auction method as JSON paths, never a private column (Batch 16)', () => {
+  assert.ok(CARD_COLUMNS.includes('deal_cash:deal->>cashRequired'));
+  assert.ok(CARD_COLUMNS.includes('deal_auction:deal->auction->>method'));
+  for (const col of PRIVATE_DEAL_COLUMNS) assert.ok(!CARD_COLUMNS.split(', ').includes(col), col);
+});
+
+test('Batch 16, Part C: the card columns carry the check’s comparables count, and nothing about where they are', () => {
+  assert.ok(CARD_COLUMNS.includes('check_comps:screening->check->>compCount'));
+  assert.ok(!/radiusKm|postcode|address|lat\b|lng\b/.test(CARD_COLUMNS.replace('postcode_area', '')), 'no location column beyond the area');
 });

@@ -41,10 +41,16 @@ test('a lead-database row never feeds the single-postcode figure, however good',
   assert.equal(usableForPostcodeFigure({ source: LEAD_DB_SOURCE, comparables_found: 12, quality_level: 'high' }), false);
 });
 
-test('other sources feed it when the estimate is trustworthy', () => {
+test('the live analyser feeds it when the estimate is trustworthy', () => {
   assert.equal(usableForPostcodeFigure({ source: 'analyser', comparables_found: 12, quality_level: 'high' }), true);
-  assert.equal(usableForPostcodeFigure({ source: 'monday_backfill' }), true);
   assert.equal(usableForPostcodeFigure({ source: 'analyser', comparables_found: 0, quality_level: 'low' }), false);
+});
+
+test('the Monday backfill and deal checks never feed the single-postcode figure (Batch 16)', () => {
+  // Backfill rows get postcodes back, but created_at is their July load date, not the PDF's.
+  assert.equal(usableForPostcodeFigure({ source: 'monday_backfill' }), false);
+  // A deal's own comparables check is not a report anyone ran.
+  assert.equal(usableForPostcodeFigure({ source: 'deal_comps', comparables_found: 12, quality_level: 'high' }), false);
 });
 
 test('the lead-database source string matches what the estimate software writes', () => {

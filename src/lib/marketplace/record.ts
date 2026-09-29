@@ -12,13 +12,17 @@
  * by the caller.
  */
 import { areaRevenueFor, dealForSourced, rentPcm, type AreaFigures, type SourcedListing, type SourcingKind } from '../listing/sourcing.ts';
-import { screen, marketRentFor, grossRevenueFor, type Screening, type Band } from '../listing/screen.ts';
+import { screen, marketRentFor, grossRevenueFor, checkedGrossFigure, type Screening, type Band } from '../listing/screen.ts';
 import { suitabilityFromListing, type Suitability } from '../listing/suitability.ts';
 import { motivationFromListing, type Motivation, type MotivationContext } from '../listing/motivation.ts';
 import { DEFAULT_GOALS, thresholdDaysFor } from '../market/goals.ts';
 import { statusFromText } from '../listing/parsers/shared.ts';
 import type { Deal } from '../listing/deal.ts';
 import type { ListingSnapshot, ListingStatus } from '../listing/types.ts';
+import { streamFor, type Stream } from '../deal-quality/streams.ts';
+import { DEFAULT_LOW_ENTRY, type LowEntrySettings } from '../deal-quality/config.ts';
+import type { AuctionTerms } from '../deal-quality/auction.ts';
+import type { StoredCheck } from '../deal-quality/checks.ts';
 
 /** The stored-rent lookup, keyed exactly as broker/providers/internal.ts keys it. */
 export function areaRentKey(postcodeArea: string, bedrooms: number): string {
@@ -38,6 +42,12 @@ export interface AreaCardLike {
   byBedrooms: { bedrooms: number; grossRevenue: number | null; adr: number | null }[];
   headline: { grossRevenue: number | null; adr: number | null };
   score?: { score: number } | null;
+  /**
+   * Batch 16, Part F: a region's figures standing in for an area with no
+   * card of its own (the nationwide low-entry search). Its screening is low
+   * confidence whatever the bedroom match; the deal's own comparables decide.
+   */
+  fallback?: boolean;
 }
 
 export function figuresFor(card: AreaCardLike | null): AreaFigures | null {
@@ -45,12 +55,21 @@ export function figuresFor(card: AreaCardLike | null): AreaFigures | null {
   return { byBedrooms: card.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: card.headline.grossRevenue, adr: card.headline.adr } };
 }
 
+/** The deal's own checked figures in the shape the deal model reads (Batch 16, Part B). */
+export function figuresFromCheck(l: Pick<SourcedListing, 'bedrooms'>, check: Pick<StoredCheck, 'gross' | 'adr' | 'bedrooms'>): AreaFigures {
+  return { byBedrooms: [{ bedrooms: l.bedrooms ?? check.bedrooms, grossRevenue: check.gross, adr: check.adr }], headline: { grossRevenue: check.gross, adr: check.adr } };
+}
+
 /**
  * The income screening for a sourced listing against its area's figures and
- * the stored rent for its size. Lifted verbatim from the picks run.
+ * the stored rent for its size. Lifted verbatim from the picks run. With a
+ * `check` (the deal's own comparables, still good for this listing: the
+ * caller decides with validCheckFor), the gross is the check's figure at the
+ * check's confidence and the deal model reads the same figures; the check
+ * rides on the screening so the next re-screen finds it again.
  */
-export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rentTable: ReadonlyMap<string, StoredRent>): { screening: Screening; figures: AreaFigures | null } {
-  const figures = figuresFor(card);
+export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rentTable: ReadonlyMap<string, StoredRent>, r2rBar: number, check: StoredCheck | null = null): { screening: Screening; figures: AreaFigures | null } {
+  const figures = check ? figuresFromCheck(l, check) : figuresFor(card);
   const rev = figures ? areaRevenueFor(figures, l.bedrooms) : null;
   const exactBeds = l.bedrooms !== null && (card?.byBedrooms.some((b) => b.bedrooms === l.bedrooms && b.grossRevenue) ?? false);
   const rent = marketRentFor({
@@ -59,18 +78,38 @@ export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rent
     advertisedRentPcm: l.kind === 'rent' ? rentPcm(l.price) : null,
     storedRent: l.postcodeArea && l.bedrooms !== null ? (rentTable.get(areaRentKey(l.postcodeArea, l.bedrooms)) ?? null) : null,
   });
-  const screening = screen(l.kind, {
-    bedrooms: l.bedrooms,
-    grossRevenue: grossRevenueFor(rev?.grossRevenue ?? null, exactBeds),
-    marketRent: rent?.figure ?? null,
-  });
+  const screening = screen(
+    l.kind,
+    {
+      bedrooms: l.bedrooms,
+      grossRevenue: check ? checkedGrossFigure(check) : grossRevenueFor(rev?.grossRevenue ?? null, exactBeds && !card?.fallback),
+      marketRent: rent?.figure ?? null,
+    },
+    { r2rQualifiedProfit: r2rBar },
+  );
+  if (check) screening.check = check;
   return { screening, figures };
+}
+
+/** Batch 16's rules a record is built under: the auction terms and the low-entry bar (ScreenContext.rules). The decided defaults without them. */
+export interface DealRules {
+  auctionTerms?: AuctionTerms;
+  lowEntry?: Pick<LowEntrySettings, 'maxCashIn'>;
+  /**
+   * Part B: whether a new or revived deal waits on the shortlist for its own
+   * comparables check (DEAL_CHECKS_ENABLED), how long a check stays good for
+   * a re-screen, and how long a shortlisted deal waits before it is dropped
+   * (billing_settings.deal_checks).
+   */
+  checks?: { enabled: boolean; validDays: number; shortlistExpiryDays: number };
 }
 
 export interface DealRecord {
   screening: Screening;
   band: Band;
   deal: Deal | null;
+  /** Batch 16, Part F: which stream the deal is in (src/lib/deal-quality/streams.ts). */
+  stream: Stream;
   suitability: Suitability;
   motivation: Motivation;
   /** screening.surplus: the annual surplus over a long let, or the R2R annual profit. The ladder and sort key. */
@@ -86,14 +125,19 @@ export interface DealRecord {
 export interface BuildOptions {
   card: AreaCardLike | null;
   rentTable: ReadonlyMap<string, StoredRent>;
+  /** billing_settings.r2r_qualified_profit (ScreenContext.r2rBar). */
+  r2rBar: number;
   firstSeenAt: string | null;
   cohort?: MotivationContext['cohort'];
   areaMedianDays?: number | null;
   now?: Date;
+  rules?: DealRules;
+  /** Part B: the deal's own check, still good for this listing (checks.ts validCheckFor); the area figures without one. */
+  check?: StoredCheck | null;
 }
 
 export function buildDealRecord(l: SourcedListing, opts: BuildOptions): DealRecord {
-  const { screening, figures } = screenSourced(l, opts.card, opts.rentTable);
+  const { screening, figures } = screenSourced(l, opts.card, opts.rentTable, opts.r2rBar, opts.check ?? null);
   const motivation = motivationFromListing(l, {
     thresholdDays: thresholdDaysFor(DEFAULT_GOALS.motivation, l.kind),
     areaMedianDays: opts.areaMedianDays ?? null,
@@ -102,10 +146,13 @@ export function buildDealRecord(l: SourcedListing, opts: BuildOptions): DealReco
     now: opts.now,
   });
   const price = normalisedPrice(l);
+  // The house-finance deal, an auction lot at its auction price (Part E); the stream follows its cash in (Part F).
+  const deal = dealForSourced(l, figures, null, { auctionTerms: opts.rules?.auctionTerms });
   return {
     screening,
     band: screening.band,
-    deal: dealForSourced(l, figures, null),
+    deal,
+    stream: streamFor(l.kind, deal, opts.rules?.lowEntry ?? DEFAULT_LOW_ENTRY),
     suitability: suitabilityFromListing(l),
     motivation,
     annualProfit: screening.surplus,
@@ -132,6 +179,19 @@ export function normalisedPrice(l: SourcedListing): { amount: number; period: 't
  */
 export function qualifiesForMarketplace(rec: Pick<DealRecord, 'band' | 'suitability'>): boolean {
   return rec.band === 'qualified' && (rec.suitability === 'ok' || rec.suitability === 'unknown');
+}
+
+/**
+ * A stored `marketplace_deals.deal` value back into a Deal, defensively: a
+ * row from an older shape degrades to "no deal" rather than throwing on a
+ * page render.
+ */
+export function parseStoredDeal(raw: unknown): Deal | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (o.kind === 'purchase') return typeof o.askingPrice === 'number' && typeof o.cashRequired === 'number' ? (raw as Deal) : null;
+  if (o.kind === 'rent-to-rent') return typeof o.advertisedRentPcm === 'number' && typeof o.setupCost === 'number' ? (raw as Deal) : null;
+  return null;
 }
 
 /** A status the feed itself states in the listing's tags / features, if any. */
@@ -173,6 +233,7 @@ export function mergeSnapshotIntoListing(l: SourcedListing, s: ListingSnapshot):
     priceQualifier: s.price?.qualifier ?? l.priceQualifier ?? null,
     sharedOwnership: s.sharedOwnership ?? false,
     shortLetsPermitted: s.shortLetsPermitted ?? null,
+    auction: s.auction ?? l.auction ?? null,
     listedDate: s.listedDate ?? l.listedDate ?? null,
     agentHash: s.agentHash ?? l.agentHash ?? null,
   };
@@ -207,6 +268,7 @@ export function snapshotFromDeal(l: SourcedListing, live: ListingSnapshot | null
     tenure: l.tenure ?? undefined,
     sharedOwnership: l.sharedOwnership ?? undefined,
     shortLetsPermitted: l.shortLetsPermitted ?? null,
+    auction: l.auction ?? undefined,
     features: l.features ?? [],
     photos: l.photo ? [l.photo] : [],
     listedDate: l.listedDate ?? undefined,

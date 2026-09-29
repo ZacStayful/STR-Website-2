@@ -1643,10 +1643,12 @@ create table if not exists public.marketplace_deals (
   price_history jsonb not null default '[]'::jsonb,
   reduced_at timestamptz,
   listed_date timestamptz,
-  -- pending_verify: qualified on the feed, waiting for its first page fetch,
-  -- which supplies the photo and the live status. live: on the grid.
+  -- pending_check: qualified on the area's figures, waiting on the shortlist
+  -- for its own comparables check (Batch 16). pending_verify: qualified,
+  -- waiting for its first page fetch, which supplies the photo and the live
+  -- status. live: on the grid.
   status text not null default 'pending_verify',
-  retired_reason text,                       -- sold | under_offer | let_agreed | removed | unqualified | unsuitable | stale_listed | stale_unseen | unverifiable | admin
+  retired_reason text,                       -- sold | under_offer | let_agreed | removed | unqualified | unsuitable | stale_listed | stale_unseen | unverifiable | admin | insufficient_data | unchecked (Batch 16)
   retired_at timestamptz,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
@@ -4167,5 +4169,178 @@ insert into public.billing_settings (key, value) values
   ('demand_active_days', '30'::jsonb),
   ('demand_max_areas_per_profile', '10'::jsonb)
 on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 16: deal quality
+-- =========================
+-- Each marketplace deal is checked on its own Airbnb comparables before it is
+-- shown; cheaper-entry deal streams; past reports cleaned up; spend safety
+-- (src/lib/deal-quality). Every statement is idempotent: re-running this
+-- section changes nothing. Service role only. Nothing here is in
+-- ACCESS_COLUMNS (src/lib/access.ts), and must not become so.
+
+-- ── Settings (defaults and bounds in code; a missing or bad row takes the default) ──
+--   r2r_qualified_profit   the rent-to-rent bar: £ a year of profit after rent and running
+--                          costs (src/lib/listing/screen.ts parseR2rBar: whole pounds from
+--                          £4,000, the medium bar, to £20,000; was £8,000). Edited on /admin/deals.
+insert into public.billing_settings (key, value) values
+  ('r2r_qualified_profit', '6000'::jsonb)
+on conflict (key) do nothing;
+
+-- ── Auction lots (Part E; src/lib/deal-quality/auction.ts has the defaults and bounds) ──
+--   auction_model   how an auction lot is priced from its guide: the usual uplift (%), the
+--                   buyer's premium (£1,500 inc VAT in a traditional room; the modern method's
+--                   4.5% + VAT, at least £6,000), and the bridging loan it completes on
+--                   (70% LTV, 0.85% a month, 2% arrangement, £2,000 legal and valuation,
+--                   12 months) before refinancing onto the member's own mortgage.
+insert into public.billing_settings (key, value) values
+  ('auction_model', '{"upliftPct": 15, "traditionalPremium": 1500, "modernPremiumPct": 4.5, "vatPct": 20, "modernPremiumMin": 6000, "bridgingLtvPct": 70, "bridgingMonthlyPct": 0.85, "arrangementPct": 2, "legalAndValuation": 2000, "termMonths": 12}'::jsonb)
+on conflict (key) do nothing;
+
+-- ── Past reports: the Monday backfill clean-up (Part D; src/lib/deal-quality/backfill.ts) ──
+-- analyser_reports_removed: every analyser_reports row the clean-up removes,
+-- archived whole before it is deleted (an exact duplicate of another row, or
+-- an earlier analysis of the same file), with the row it gave way to. Nothing
+-- is deleted unless its archive row was written. Service role only.
+create table if not exists public.analyser_reports_removed (
+  id uuid primary key,                 -- the removed row's own id
+  removed_at timestamptz not null default now(),
+  reason text not null,                -- exact_duplicate | reanalysed
+  kept_id uuid,                        -- the row that stays in its place
+  removed_by text,                     -- the admin's email, or 'internal'
+  row jsonb not null                   -- the whole row as it was
+);
+alter table public.analyser_reports_removed enable row level security;  -- no policies: service role only
+revoke all on public.analyser_reports_removed from anon, authenticated;
+
+-- ── Spend safety (Part H) ──
+--   area_rent_daily_attempts   the most PropertyData long-let lookups the market snapshot may
+--                              make for its areas in a UTC day, failed attempts included
+--                              (src/lib/market/area-longlet.ts). 0 stops them.
+insert into public.billing_settings (key, value) values
+  ('area_rent_daily_attempts', '40'::jsonb)
+on conflict (key) do nothing;
+
+-- provider_calls.cost_pence is a whole number, so a 2.5p PropertyData credit
+-- logged as 3p and a 0.395p geocode as 0. raw_pence keeps the exact cost the
+-- meter priced (null on rows written before this column); spend reads use
+-- coalesce(raw_pence, cost_pence).
+alter table public.provider_calls add column if not exists raw_pence numeric(14,4);
+
+-- Spend reads that see every row. PostgREST returns at most 1,000 rows a
+-- query, so the admin spend views and the broker's daily budget summed only
+-- the first 1,000 calls of a day or week: during the 12–25 Sep valuation-rent
+-- loop the budgets could not bind and the views showed a fraction of it.
+-- Service role only.
+
+-- A provider's spend since p_since by the broker's own lookups (questions not
+-- named '<provider>.<unit>'), all payers or one: the broker's daily budget.
+create or replace function public.provider_spend_since(p_provider text, p_since timestamptz, p_user uuid default null)
+returns numeric
+language sql
+stable
+set search_path = ''
+as $$
+  select coalesce(sum(coalesce(c.raw_pence, c.cost_pence)), 0)::numeric
+  from public.provider_calls c
+  where c.provider = p_provider
+    and c.ok
+    and c.at >= p_since
+    and c.question not like p_provider || '.%'
+    and (p_user is null or c.user_id = p_user);
+$$;
+revoke all on function public.provider_spend_since(text, timestamptz, uuid) from public, anon, authenticated;
+
+-- Calls and spend per UTC day and provider since p_since: the admin dashboard.
+create or replace function public.provider_spend_daily(p_since timestamptz)
+returns table (day text, provider text, calls bigint, cache_hits bigint, failed bigint, pence numeric)
+language sql
+stable
+set search_path = ''
+as $$
+  select to_char(c.at at time zone 'UTC', 'YYYY-MM-DD'), c.provider, count(*), count(*) filter (where c.cache_hit), count(*) filter (where not c.ok),
+         coalesce(sum(coalesce(c.raw_pence, c.cost_pence)), 0)::numeric
+  from public.provider_calls c
+  where c.at >= p_since
+  group by 1, 2;
+$$;
+revoke all on function public.provider_spend_daily(timestamptz) from public, anon, authenticated;
+
+-- Paid calls per provider × unit since p_since, with what was charged and
+-- what was house spend: /admin/billing.
+create or replace function public.provider_spend_by_unit(p_since timestamptz)
+returns table (provider text, unit text, calls bigint, raw_pence numeric, charged_pence numeric, house_pence numeric)
+language sql
+stable
+set search_path = ''
+as $$
+  select c.provider, coalesce(c.unit, ''), count(*),
+         coalesce(sum(coalesce(c.raw_pence, c.cost_pence)), 0)::numeric,
+         coalesce(sum(c.charged_pence), 0)::numeric,
+         coalesce(sum(coalesce(c.raw_pence, c.cost_pence)) filter (where not coalesce(c.charged_pence, 0) > 0), 0)::numeric
+  from public.provider_calls c
+  where c.at >= p_since and c.ok and not c.cache_hit
+  group by 1, 2;
+$$;
+revoke all on function public.provider_spend_by_unit(timestamptz) from public, anon, authenticated;
+
+-- ── The three streams and the nationwide low-entry search (Part F; src/lib/deal-quality/streams.ts) ──
+--   low_entry        the low-entry stream's bar (a sale the house deal model gets into for at most
+--                    maxCashIn, £), and the nationwide search's price cap (£), bedroom floor, weekly
+--                    spend cap (raw pence, Monday to Sunday UK time) and areas a pass. Bounds in
+--                    src/lib/deal-quality/config.ts; edited on /admin/deals.
+--   deal_comps       the deal check's comparables search (Step 0, Part B): target count, radius
+--   deal_confidence  steps, minimum, setting check; the confidence bands; the daily checks' limits.
+--   deal_checks      Defaults and bounds in src/lib/deal-quality/config.ts.
+insert into public.billing_settings (key, value) values
+  ('low_entry', '{"maxCashIn": 50000, "searchMaxPrice": 135000, "minBedrooms": 1, "weeklyCapPence": 400, "areasPerPass": 8}'::jsonb),
+  ('deal_comps', '{"targetCount": 12, "radiiKm": [0.8, 2, 5, 12, 25], "maxRadiusKm": 25, "minComps": 5, "setting": {"minRadiusKm": 5, "neighbourKm": 1.5, "ratio": 3, "minCluster": 3}}'::jsonb),
+  ('deal_confidence', '{"highPct": 20, "mediumPct": 40, "mediumMaxComps": 7}'::jsonb),
+  ('deal_checks', '{"perDay": 20, "dailyCapPence": 100, "split": {"top60": 6, "low_entry": 8, "r2r": 6}, "maxCallsPerCheck": 3, "validDays": 180, "shortlistExpiryDays": 7, "recheckCeilingPence": 1200}'::jsonb)
+on conflict (key) do nothing;
+
+-- marketplace_deals.stream: which stream a deal is in — top60 (a sale in the
+-- sweep's areas), low_entry (a sale the house finance gets into for at most
+-- the low-entry cash; an auction lot at its auction price) or r2r (a rental).
+-- Set when the record is built (src/lib/marketplace/record.ts); the code
+-- writes it through writeWithoutMissing, so a database without the column
+-- still takes the row. Rows from before the column are filled in once, from
+-- the house-finance deal they carry, at the seeded £50,000 bar.
+alter table public.marketplace_deals add column if not exists stream text;
+create index if not exists marketplace_deals_live_stream_idx on public.marketplace_deals (stream, kind) where status = 'live';
+update public.marketplace_deals
+set stream = case
+  when kind = 'rent' then 'r2r'
+  when deal->>'kind' = 'purchase' and (deal->>'cashRequired')::numeric > 0 and (deal->>'cashRequired')::numeric <= 50000 then 'low_entry'
+  else 'top60'
+end
+where stream is null;
+-- marketplace_runs.kind also takes 'low_entry_search' (src/lib/deal-quality/low-entry-run.ts).
+
+-- ── The daily paid checks (Part B; src/lib/deal-quality/checks.ts, checks-run.ts, recheck-comps-run.ts) ──
+-- No new column. A qualifying listing now waits as marketplace_deals.status
+-- 'pending_check' (the shortlist: invisible to members, like pending_verify)
+-- for its own Airbnb comparables check; the check it gets is kept on the
+-- deal's own screening (screening.check: gross, adr, occupancy, compCount,
+-- spreadPct, confidence, radiusKm, calls, pence, checkedAt, bedrooms, kind),
+-- so every later re-screen builds on it while it is good, and a database
+-- that has not run this section still takes every row. While a deal is
+-- shortlisted, next_check_due_at is when it is dropped unchecked and
+-- check_failures counts its failed searches (three retire it as
+-- unverifiable). Two more retired_reason values: 'insufficient_data' (too
+-- few similar homes within the widest radius: never shown, never revived)
+-- and 'unchecked' (dropped from the shortlist, or retired by the admin
+-- button; revived onto the shortlist like unqualified). marketplace_runs.kind
+-- also takes 'deal_checks' (the nightly job) and 'deal_recheck' (the one-off
+-- re-check of live deals, and the retire-unchecked button), each with who
+-- ran it; today's runs are what the day's cap is read from. A check also
+-- writes an analyser_reports row with source 'deal_comps', keyed on the deal
+-- id (request_id) so a re-check replaces it, carrying the outward code only
+-- (never the full postcode, the address or the listing): those rows feed the
+-- area and district figures and stay out of the single-postcode figure
+-- (src/lib/market/quality.ts).
+create index if not exists marketplace_deals_shortlist_idx on public.marketplace_deals (annual_profit desc) where status = 'pending_check';
 
 notify pgrst, 'reload schema';

@@ -14,16 +14,21 @@ import { areaMetaForCode } from "@/lib/market/areas";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { BAND_LABELS, parseScreening } from "@/lib/listing/screen";
-import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type Deal } from "@/lib/listing/deal";
+import { checkOf } from "@/lib/deal-quality/checks";
+import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE, type Deal } from "@/lib/listing/deal";
+import { countryForPostcode } from "@/lib/listing/stamp-duty";
 import { areaRevenueFor } from "@/lib/listing/sourcing";
+import { parseStoredDeal } from "@/lib/marketplace/record";
+import { cashLine } from "@/lib/deal-quality/streams";
+import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { openPricePence } from "@/lib/marketplace/ladder";
-import { badgesFor, describeType, type DealCard as Card } from "@/lib/marketplace/grid";
+import { AUCTION_LABEL, badgesFor, describeType, isAuctionCard, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
-import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
+import { moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/marketplace/profit-range";
 import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
@@ -101,11 +106,16 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
   const badges = badgesFor(card, now);
   const price = priceLine(card);
+  // An auction lot's figure is a guide, not an asking price (Batch 16).
+  const auction = isAuctionCard(card);
   const area = deal.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
   const areaCard = deal.postcode_area ? cards.find((c) => c.code === deal.postcode_area) ?? null : null;
   const profit = deal.annual_profit === null ? null : Number(deal.annual_profit);
   const ladderPence = openPricePence(profit, settings.dealOpenLadder);
   const screening = parseScreening(deal.screening);
+  // Batch 16: the deal's own comparables check, when it has one (the count is all the page says of it).
+  const check = checkOf(deal.screening);
+  const caption = rangeCaption(check?.compCount);
   const motivation = parseMotivation(deal.motivation);
   const history = parseHistory(deal.price_history);
   const message = msg ? MESSAGES[msg] ?? null : null;
@@ -155,18 +165,33 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // size (the same figure as the range above). Anything that rests on that
   // income is shown as a range; the price, the cash needed, the mortgage and
   // the stamp duty are the listing's and the member's own, so stay exact.
+  // Batch 16, Part E: the stored deal says whether this is an auction lot; the
+  // model then buys at the guide plus the usual uplift, on a bridge, at the
+  // terms in billing_settings.auction_model.
+  const storedDeal = parseStoredDeal(deal.deal);
+  const storedAuction = storedDeal?.kind === "purchase" ? storedDeal.auction ?? null : null;
+  const auctionTerms = storedAuction ? (await readDealQualitySettings(createAdminClient())).auction : undefined;
   let model: Deal | null = null;
   if (deal.price_amount !== null) {
     const rev = gross !== null ? { grossRevenue: gross, adr: 0 } : areaCard ? areaRevenueFor({ byBedrooms: areaCard.byBedrooms.map((b) => ({ bedrooms: b.bedrooms, grossRevenue: b.grossRevenue, adr: b.adr })), headline: { grossRevenue: areaCard.headline.grossRevenue, adr: areaCard.headline.adr } }, deal.bedrooms) : null;
     if (rev) {
-      const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(finance ?? {}) } };
-      model = deal.kind === "rent" ? rentToRentDeal(Number(deal.price_amount), base) : purchaseDeal(Number(deal.price_amount), base);
+      const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: deal.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(finance ?? {}) }, country: countryForPostcode(priv?.postcode ?? deal.outcode) };
+      model = deal.kind === "rent" ? rentToRentDeal(Number(deal.price_amount), base) : storedAuction ? auctionDeal(storedAuction.guide, storedAuction.method, base, auctionTerms) : purchaseDeal(Number(deal.price_amount), base);
     }
   }
+  // Batch 16, Part F: what it takes to get in. A purchase's cash in at the
+  // member's finance (the bridging cash for a lot), a rental's setup cost;
+  // the stored house figure when the model could not be built.
+  const cashIn =
+    deal.kind === "rent"
+      ? model?.kind === "rent-to-rent" ? model.setupCost : storedDeal?.kind === "rent-to-rent" ? storedDeal.setupCost : null
+      : model?.kind === "purchase" ? model.cashRequired : storedDeal?.kind === "purchase" ? storedDeal.cashRequired : null;
+  const cashText = cashLine(deal.kind, cashIn);
+  const lowEntry = deal.kind === "sale" && storedDeal?.kind === "purchase" && storedDeal.cashRequired > 0 && storedDeal.cashRequired <= settings.lowEntry.maxCashIn;
   // Batch 14: the most they can pay to hit their own monthly profit, on the
   // same income and at the same finance as the range above (the member's
   // active profile; the house figures and £500 without answers).
-  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct });
+  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct, checked: check !== null });
   const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
   const payGap = pay ? gapLine(askingFigure, pay) : null;
   // Batch 14, Part C: the same three numbers as the member's card, from the same function.
@@ -174,6 +199,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
     ...card,
     screening_gross: gross,
     screening_confidence: screening?.confidence ?? null,
+    check_comps: check?.compCount ?? null,
     deal_setup: model?.kind === "rent-to-rent" ? model.setupCost : null,
     deal_breakeven: model?.kind === "rent-to-rent" ? model.breakevenOccupancyPct : null,
     deal_payback: model?.kind === "rent-to-rent" ? model.paybackMonths : null,
@@ -258,15 +284,22 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   {badges.tags.map((t) => (
                     <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
                   ))}
+                  {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
+                  {lowEntry && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
                   {deal.status === "retired" && <span className="rounded-full bg-destructive px-2 py-0.5 text-[11px] font-semibold text-white">Off the market</span>}
                 </div>
               </div>
               <div className="p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <p className="text-2xl font-bold text-foreground">
-                    {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">area estimate{range ? ` · ${range.basis}` : ""}</span>
+                    {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{caption}{range ? ` · ${range.basis}` : ""}</span>
                   </p>
-                  {price && <p className="text-lg font-semibold text-foreground">{price}</p>}
+                  {(price || cashText) && (
+                    <p className="text-lg font-semibold text-foreground">
+                      {price ? (auction ? `Guide ${price}` : price) : ""}
+                      {cashText && <span className={"text-sm font-medium text-muted-foreground" + (price ? " ml-2" : "")}>{cashText}</span>}
+                    </p>
+                  )}
                 </div>
                 {uplift && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
                 <p className="mt-2 text-sm font-medium text-foreground">{priv ? (priv.address ?? where) : where}</p>
@@ -321,7 +354,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     </form>
                   </div>
                 ) : (
-                  <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : "This deal is off the market and cannot be opened."}</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : deal.status === "pending_check" ? "We’re checking this property’s own Airbnb comparables before it goes live. Come back tomorrow." : "This deal is off the market and cannot be opened."}</p>
                 )}
                 {canBuy && !analysisFirst && (
                   <div className="mt-3">
@@ -369,9 +402,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{BAND_LABELS[screening.band]}</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Our screening of the area and size, as ranges. A Full analysis works the figures out for this property.</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{check ? `Our check on this property’s own comparables (${check.compCount} similar Airbnbs nearby), as ranges. A Full analysis works the exact figures out for this property.` : "Our screening of the area and size, as ranges. A Full analysis works the figures out for this property."}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
-                  {gross !== null && <Fig label="Short-let revenue, area" value={`${moneyRange(spread(gross, pct, 100))}/yr`} />}
+                  {gross !== null && <Fig label={check ? "Short-let revenue, own comparables" : "Short-let revenue, area"} value={`${moneyRange(spread(gross, pct, 100))}/yr`} />}
                   {range && <Fig label={range.kind === "purchase" ? "Cash flow / mo" : "Profit / mo"} value={range.label.replace(/\/mo$/, "")} />}
                   {screening.kind === "purchase" && screening.upliftPct !== null && <Fig label="Against a long let" value={`${screening.upliftPct >= 0 ? "+" : "−"}${Math.abs(Math.round(screening.upliftPct))}%`} />}
                   {screening.kind === "rent-to-rent" && screening.revenueMultiple !== null && <Fig label="Revenue multiple" value={`about ${screening.revenueMultiple.toFixed(1)}× the rent`} />}
@@ -390,7 +423,13 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   </div>
                 )}
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {model.kind === "purchase" ? (cashBuyerOf(goals) ? `At ${gbp(model.askingPrice)}, bought with cash. ` : `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `) : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
+                  {model.kind === "purchase"
+                    ? model.auction
+                      ? `Guide ${gbp(model.auction.guide)}, modelled at ${gbp(model.askingPrice)} (the guide plus the usual uplift), bought on a ${model.auction.bridgingMonths}-month bridging loan and refinanced onto a mortgage at a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit and ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `
+                      : cashBuyerOf(goals)
+                        ? `At ${gbp(model.askingPrice)}, bought with cash. `
+                        : `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `
+                    : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
                   <Link href="/profile" className="underline-offset-4 hover:underline">Change your figures on your profile</Link>. Figures that rest on the area’s short-let income are ranges.
                 </p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-4">
@@ -399,9 +438,18 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                       <Fig label="Gross yield" value={pctRange(model.grossYieldPct)} />
                       <Fig label="Cash flow / mo" value={range?.kind === "purchase" ? range.label.replace(/\/mo$/, "") : gbpRange(model.cashflowMonthly)} />
                       <Fig label="Cash on cash" value={pctRange(model.cashOnCashPct)} />
-                      <Fig label="Cash needed" value={gbp(model.cashRequired)} sub={`incl. ${gbp(model.stampDuty)} stamp duty`} />
-                      <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} />
+                      <Fig label="Cash in" value={gbp(model.cashRequired)} sub={model.auction ? `on the bridge: deposit, ${gbp(model.stampDuty)} tax, premium, fees, setup` : `incl. ${gbp(model.stampDuty)} stamp duty`} />
+                      <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} sub={model.auction ? "after the refinance" : undefined} />
                       <Fig label="Net operating / yr" value={gbpRange(model.netOperating, 100)} />
+                      {/* Batch 16, Part E: the bridging finance an auction lot is bought on. */}
+                      {model.auction && (
+                        <>
+                          <Fig label="Bridging loan" value={gbp(model.auction.bridgingLoan)} sub={`${gbp(model.auction.bridgingDeposit)} deposit on the bridge`} />
+                          <Fig label="Buyer’s premium" value={gbp(model.auction.premium)} sub={model.auction.method === "modern" ? "modern method (reservation fee)" : "traditional room"} />
+                          <Fig label="Bridging fees" value={gbp(model.auction.bridgingFees)} sub="arrangement, legal and valuation" />
+                          <Fig label="Bridging interest" value={gbp(model.auction.bridgingInterest)} sub={`${model.auction.bridgingMonths} months, paid off from the refinance`} />
+                        </>
+                      )}
                     </>
                   ) : (
                     <>

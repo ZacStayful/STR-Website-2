@@ -28,6 +28,12 @@
 /** `analyser_reports.source` for runs requested by the Stayful lead database. */
 export const LEAD_DB_SOURCE = 'lead_db';
 
+/** The Monday backfill: figures read out of past Stayful analysis PDFs. */
+export const BACKFILL_SOURCE = 'monday_backfill';
+
+/** A marketplace deal's own comparables check (Batch 16), stored in the analyser's shape. */
+export const DEAL_COMPS_SOURCE = 'deal_comps';
+
 export interface ReportQuality {
   /** `raw_response.dataQuality.comparablesFound`; null or absent when the row carries no quality block. */
   comparables_found?: number | null;
@@ -56,7 +62,13 @@ export function isTrustworthyReport(q: ReportQuality): boolean {
  * reports: an area, or one bedroom size inside an area or a ready district,
  * can rest on one (only a district's own figures wait for
  * MIN_DISTRICT_SAMPLES). The line drawn is the full postcode.
+ *
+ * Two more sources stay out (Batch 16). The Monday backfill now gets its
+ * postcodes back, but its PDFs date from months before the 16 July load
+ * that stamps their created_at, so a "recent" window cannot see how old they
+ * are. And a deal check's comparables row is not a report anyone ran, so it
+ * cannot stand behind "recent Stayful reports".
  */
 export function usableForPostcodeFigure(r: ReportQuality & { source?: string | null }): boolean {
-  return r.source !== LEAD_DB_SOURCE && isTrustworthyReport(r);
+  return r.source !== LEAD_DB_SOURCE && r.source !== BACKFILL_SOURCE && r.source !== DEAL_COMPS_SOURCE && isTrustworthyReport(r);
 }

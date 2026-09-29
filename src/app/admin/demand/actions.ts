@@ -8,6 +8,8 @@ import { isAdminEmail } from '@/lib/admin';
 import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { runDemandSourcing } from '@/lib/sourcing-demand/run';
 import { DEMAND_SETTING_KEYS, validateSettingsForm, type DemandSettings } from '@/lib/sourcing-demand/settings';
+import { runDealCalibration } from '@/lib/deal-quality/calibrate-run';
+import { runReportBackfill } from '@/lib/deal-quality/backfill-run';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const FLASH_COOKIE = 'sf_demand_flash';
@@ -51,4 +53,32 @@ export async function updateDemandSettingsAction(formData: FormData): Promise<vo
   }
   revalidatePath('/admin/demand');
   return flash('settings', { saved: true });
+}
+
+/**
+ * Step 0 of the deal checks (Batch 16): the comparison with past full
+ * analyses. "Dry run" lists what is left and the most it can cost, and
+ * spends nothing; "Run" carries on where the last run stopped, within the
+ * comparison's own ceiling. House spend.
+ */
+export async function runDealCalibrationAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const mode = formData.get('mode');
+  // "Start again" keeps the case list and gives the comparison a fresh ceiling; it spends nothing itself.
+  const reset = mode === 'reset';
+  const dry = !reset && mode !== 'run';
+  const result = await runDealCalibration({ dry, reset, triggeredBy: user.email ?? 'admin' });
+  await flash(reset ? 'calibration-reset' : dry ? 'calibration-dry' : 'calibration', { status: result.status, ...(result.body as Record<string, unknown>) });
+}
+
+/**
+ * Part D: the Monday backfill clean-up. "Dry run" counts what it would
+ * remove, fill and geocode, and the cost; "Run" does it (duplicates archived
+ * before they are deleted) and carries on where the last run stopped.
+ */
+export async function runReportBackfillAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runReportBackfill({ dry, triggeredBy: user.email ?? 'admin' });
+  await flash(dry ? 'backfill-dry' : 'backfill', { status: result.status, ...(result.body as Record<string, unknown>) });
 }

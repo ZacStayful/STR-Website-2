@@ -8,6 +8,7 @@ import { getManagedAreas } from './managed-areas';
 import { getAreaLongLetRent } from './area-longlet';
 import { readAllRegionKeyStats } from './key-stats-cache';
 import { withTimeout } from '../timeout';
+import { runMetered, newActionId } from '../credit/context';
 import { keepAlive } from '../keep-alive';
 import type { MonthBucket } from './types';
 
@@ -33,11 +34,18 @@ const CACHE_KEY = 'market-snapshot-v10';
 
 const EMPTY: ExplorerData = { cards: [], regions: [], national: [], generatedAt: '', totalReports: 0 };
 
-async function buildExplorerWithManaged(): Promise<ExplorerData> {
-  const [rows, planning, managed, keyStats] = await Promise.all([loadReportRows(), loadPlanningSignals(), getManagedAreas(), readAllRegionKeyStats()]);
-  if (rows.length === 0) return EMPTY;
-  const keyStatsRows = new Map([...keyStats].map(([region, s]) => [region, s.rows] as const));
-  return buildExplorerData(buildSnapshot(rows, { planning }), { managedAreas: managed, areaLongLetRent: getAreaLongLetRent, keyStats: keyStatsRows });
+/**
+ * House spend, whoever's request finds the cache cold: without its own meter
+ * context the build's area-rent lookups inherited the caller's, so a
+ * member's report that happened to rebuild the snapshot paid for them.
+ */
+function buildExplorerWithManaged(): Promise<ExplorerData> {
+  return runMetered({ userId: null, admin: false, action: 'house:market-snapshot', actionId: newActionId() }, async () => {
+    const [rows, planning, managed, keyStats] = await Promise.all([loadReportRows(), loadPlanningSignals(), getManagedAreas(), readAllRegionKeyStats()]);
+    if (rows.length === 0) return EMPTY;
+    const keyStatsRows = new Map([...keyStats].map(([region, s]) => [region, s.rows] as const));
+    return buildExplorerData(buildSnapshot(rows, { planning }), { managedAreas: managed, areaLongLetRent: getAreaLongLetRent, keyStats: keyStatsRows });
+  });
 }
 
 const cachedSnapshot = unstable_cache(buildExplorerWithManaged, [CACHE_KEY], { revalidate: CACHE_SECONDS, tags: [TAG] });

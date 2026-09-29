@@ -6,7 +6,9 @@
  */
 import type { ListingSource } from './types.ts';
 import type { Deal, FinanceDefaults } from './deal.ts';
-import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE } from './deal.ts';
+import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE } from './deal.ts';
+import { countryForPostcode } from './stamp-duty.ts';
+import { auctionEvidenceFor, auctionMethod, isAuctionLot, type AuctionTerms } from '../deal-quality/auction.ts';
 import { detectListingUrl, SERVER_FETCHABLE } from './detect.ts';
 import { escapeHtml as esc } from '../email/escape.ts';
 import { scriptJsonById, parsePrice, findPostcode, findOutcode } from './html.ts';
@@ -51,6 +53,8 @@ export interface SourcedListing {
   sharedOwnership?: boolean | null;
   /** From the fetched page's description: permission (`true`), prohibition (`false`), silent / not read (`null`). */
   shortLetsPermitted?: boolean | null;
+  /** From the fetched page: an auction lot (`true`), read and not one (`false`), not read (`null`). See deal-quality/auction.ts. */
+  auction?: boolean | null;
   /**
    * Motivation evidence. All optional: rows stored before these existed read
    * with `?? null`, and the score treats a missing value as no signal rather
@@ -378,12 +382,35 @@ export function areaRevenueFor(figures: AreaFigures, bedrooms: number | null): {
   return { grossRevenue: rev, adr: bs?.adr ?? figures.headline.adr ?? 0 };
 }
 
-export function dealForSourced(listing: SourcedListing, figures: AreaFigures | null, finance: Partial<FinanceDefaults> | null): Deal | null {
+export interface DealForSourcedOptions {
+  /** billing_settings.auction_model (Batch 16); the decided defaults without it. */
+  auctionTerms?: AuctionTerms;
+}
+
+/**
+ * The quick deal on the area's figures at the given finance (the house
+ * figures without one). The transaction tax is the listing's own nation's,
+ * from its postcode, outcode or area. A sale that is an auction lot (Batch
+ * 16, Part E) is priced as one: the guide plus the usual uplift, the
+ * auction house's premium, and the bridging cash to get in.
+ */
+export function dealForSourced(listing: SourcedListing, figures: AreaFigures | null, finance: Partial<FinanceDefaults> | null, opts: DealForSourcedOptions = {}): Deal | null {
   if (!figures || !listing.price) return null;
   const rev = areaRevenueFor(figures, listing.bedrooms);
   if (!rev) return null;
-  const base = { grossRevenue: rev.grossRevenue, adr: rev.adr, bedrooms: listing.bedrooms ?? 2, finance: { ...DEFAULT_FINANCE, ...(finance ?? {}) } };
-  if (listing.kind === 'sale') return listing.price.period === 'total' ? purchaseDeal(listing.price.amount, base) : null;
+  const base = {
+    grossRevenue: rev.grossRevenue,
+    adr: rev.adr,
+    bedrooms: listing.bedrooms ?? 2,
+    finance: { ...DEFAULT_FINANCE, ...(finance ?? {}) },
+    country: countryForPostcode(listing.postcode ?? listing.outcode ?? listing.postcodeArea),
+  };
+  if (listing.kind === 'sale') {
+    if (listing.price.period !== 'total') return null;
+    const evidence = auctionEvidenceFor(listing);
+    if (isAuctionLot(evidence)) return auctionDeal(listing.price.amount, auctionMethod(evidence.text), base, opts.auctionTerms);
+    return purchaseDeal(listing.price.amount, base);
+  }
   const pcm = listing.price.period === 'pcm' ? listing.price.amount : listing.price.period === 'pw' ? (listing.price.amount * 52) / 12 : null;
   return pcm ? rentToRentDeal(Math.round(pcm), base) : null;
 }

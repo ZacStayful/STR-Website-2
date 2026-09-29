@@ -178,6 +178,22 @@ export const WARM_REGIONS_PER_RUN = 4;
  * most `max` per run, in a fixed order so a deferred region is first next
  * time. Cheap when everything is fresh: eleven cache reads, no spend.
  */
+/**
+ * What warmRegionKeyStats would buy, reading the cache only: the regions
+ * missing or past their month, at most `max`, in the same order. For the
+ * market-warm cron's dry run; spends nothing.
+ */
+export async function planRegionKeyStats(read: KeyStatsReader, max = WARM_REGIONS_PER_RUN): Promise<{ wouldBuy: PdRegion[]; fresh: PdRegion[]; deferred: PdRegion[] }> {
+  const out = { wouldBuy: [] as PdRegion[], fresh: [] as PdRegion[], deferred: [] as PdRegion[] };
+  for (const region of PD_REGIONS) {
+    const cached = await read(region, 'cache');
+    if (cached.value && !cached.stale) out.fresh.push(region);
+    else if (out.wouldBuy.length >= max) out.deferred.push(region);
+    else out.wouldBuy.push(region);
+  }
+  return out;
+}
+
 export async function warmRegionKeyStats(read: KeyStatsReader, max = WARM_REGIONS_PER_RUN): Promise<WarmResult> {
   const out: WarmResult = { warmed: [], fresh: [], deferred: [], failed: [] };
   for (const region of PD_REGIONS) {

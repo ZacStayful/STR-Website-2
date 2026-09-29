@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { describeType, priceLine } from "@/lib/marketplace/grid";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
+import { profitRange, rangeCaption, upliftTag } from "@/lib/marketplace/profit-range";
 import { BasicVsDetailed } from "@/app/deals/_components/BasicVsDetailed";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { photoUrlFor } from "@/lib/marketplace/queries";
@@ -133,7 +133,7 @@ function SharedCard({ card, kind, where, photoUrl, now, range }: { card: NonNull
           <p className="text-2xl font-bold">{range?.label ?? "—"}</p>
           {price && <p className="text-lg font-semibold">{price}</p>}
         </div>
-        <p className="text-sm text-[#7a8274]">area estimate{range ? ` · ${range.basis}` : ""}{uplift ? ` · ${uplift}` : ""}</p>
+        <p className="text-sm text-[#7a8274]">{rangeCaption(card.check_comps)}{range ? ` · ${range.basis}` : ""}{uplift ? ` · ${uplift}` : ""}</p>
         {where && <p className="mt-2 text-base font-medium">{where}</p>}
         {motivation.length > 0 && <p className="text-sm font-medium text-[#5d8156]">{motivation.join(" · ")}</p>}
         {type && <p className="text-sm text-[#7a8274]">{type}</p>}

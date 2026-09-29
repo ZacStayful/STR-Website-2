@@ -9,8 +9,10 @@ import { estimateAction, fullAnalysisRawCeiling } from "@/lib/credit/estimate";
 import { earliestPricingDate } from "@/lib/credit/pricing-date";
 import { formatGbp } from "@/lib/credit/pricing";
 import { isEnforcing } from "@/lib/credit/http";
+import { allRows as pagedRows, providerSpendByUnit } from "@/lib/broker/store";
 import { BillingAdminClient } from "./BillingAdminClient";
 import { PricingNoticePanel } from "./PricingNoticePanel";
+import { PropertyDataCheckPanel } from "./PropertyDataCheckPanel";
 
 export const metadata: Metadata = { title: "Billing admin — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -39,33 +41,34 @@ export default async function BillingAdminPage() {
 
   const admin = createAdminClient();
   const since = sevenDaysAgoIso();
-  const [table, settings, calls, tx, codes] = await Promise.all([
+  const [table, settings, spend, tx, codes] = await Promise.all([
     getUnitCostTable(),
     getBillingSettings(),
-    admin.from("provider_calls").select("provider, unit, cost_pence, charged_pence, ok, cache_hit").gte("at", since),
-    admin.from("credit_transactions").select("kind, amount_pence, base_pence, action").gte("at", since),
+    providerSpendByUnit(admin, since).catch((err) => {
+      console.error("[admin/billing] provider spend unreadable:", (err as Error)?.message ?? err);
+      return [];
+    }),
+    pagedRows<{ kind: string; amount_pence: number | null }>((from, to) => admin.from("credit_transactions").select("kind, amount_pence").gte("at", since).order("id", { ascending: true }).range(from, to)).catch((err) => {
+      console.error("[admin/billing] credit transactions unreadable:", (err as Error)?.message ?? err);
+      return [];
+    }),
     admin.from("credit_codes").select("code, kind, amount_pence, max_redemptions, redeemed_count, expires_at, active, created_by, owner_user_id").order("created_at", { ascending: false }).limit(50),
   ]);
 
   const stats = new Map<string, CallStat>();
-  for (const r of calls.data ?? []) {
-    if (!r.ok || r.cache_hit) continue;
-    const key = `${r.provider}:${r.unit ?? ""}`;
-    const s = stats.get(key) ?? { provider: String(r.provider), unit: String(r.unit ?? ""), calls: 0, rawPence: 0, chargedPence: 0 };
-    s.calls += 1;
-    s.rawPence += Number(r.cost_pence) || 0;
-    s.chargedPence += Number(r.charged_pence) || 0;
-    stats.set(key, s);
+  let houseBase = 0;
+  let rawTotal = 0;
+  for (const r of spend) {
+    stats.set(`${r.provider}:${r.unit}`, { provider: r.provider, unit: r.unit, calls: r.calls, rawPence: r.rawPence, chargedPence: r.chargedPence });
+    houseBase += r.housePence;
+    rawTotal += r.rawPence;
   }
   let issued = 0;
   let consumed = 0;
-  let houseBase = 0;
-  for (const t of tx.data ?? []) {
+  for (const t of tx) {
     if (t.kind === "grant" || t.kind === "adjust") issued += Math.max(0, Number(t.amount_pence) || 0);
     if (t.kind === "debit") consumed += Math.abs(Number(t.amount_pence) || 0);
   }
-  for (const r of calls.data ?? []) if (r.ok && !r.cache_hit && !(Number(r.charged_pence) > 0)) houseBase += Number(r.cost_pence) || 0;
-  const rawTotal = (calls.data ?? []).reduce((n, r) => n + (r.ok && !r.cache_hit ? Number(r.cost_pence) || 0 : 0), 0);
 
   const rows = [...table.values()].sort((a, b) => a.provider.localeCompare(b.provider) || a.unit.localeCompare(b.unit)).map((u) => ({ ...u, stat: stats.get(`${u.provider}:${u.unit}`) ?? null }));
   const report = estimateAction(table, "report");
@@ -101,6 +104,7 @@ export default async function BillingAdminPage() {
 
       <div className="mb-6">
         <PricingNoticePanel planned={settings.dealPricing.newPricingPlanned} announced={settings.dealPricing.pricingNoticeFor} earliest={guards.earliestDate} />
+        <PropertyDataCheckPanel />
       </div>
       <BillingAdminClient rows={rows} settings={settings} guards={guards} codes={(codes.data ?? []).map((c) => ({ code: String(c.code), kind: String(c.kind), amountPence: Number(c.amount_pence), maxRedemptions: c.max_redemptions === null ? null : Number(c.max_redemptions), redeemedCount: Number(c.redeemed_count) || 0, expiresAt: (c.expires_at as string | null) ?? null, active: c.active !== false, createdBy: (c.created_by as string | null) ?? null, referral: Boolean(c.owner_user_id) }))} />
     </div>

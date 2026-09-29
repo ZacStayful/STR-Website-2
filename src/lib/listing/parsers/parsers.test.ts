@@ -154,3 +154,13 @@ test('unreadable pages yield null rather than throwing', () => {
   assert.equal(parseListing('rightmove', '', { id: '1', canonicalUrl: 'x', now: NOW }), null);
   assert.equal(parseListing('airbnb', '<html></html>', { id: '1', canonicalUrl: 'x', now: NOW }), null);
 });
+
+test('Rightmove: the auctionOnly flag marks an auction lot; the ordinary sale is not one', () => {
+  const html = fixture('rightmove-sale.html');
+  const ctx = { id: '91877934', canonicalUrl: 'https://www.rightmove.co.uk/properties/91877934', now: NOW };
+  assert.equal(parseListing('rightmove', html, ctx)!.auction, false);
+  // In the flattened page model index 6 is true and 7 false (status.published = 6 on a live listing).
+  const flagged = html.replace('auctionOnly\\":7', 'auctionOnly\\":6');
+  assert.notEqual(flagged, html, 'the fixture carries the flag');
+  assert.equal(parseListing('rightmove', flagged, ctx)!.auction, true);
+});

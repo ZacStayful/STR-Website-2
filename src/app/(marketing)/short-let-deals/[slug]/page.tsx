@@ -8,10 +8,11 @@ import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { describeType } from "@/lib/marketplace/grid";
 import { priceLine } from "@/app/deals/_components/DealCard";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
+import { profitRange, rangeCaption, upliftTag } from "@/lib/marketplace/profit-range";
 import { ladderRangeText } from "@/lib/marketplace/ladder";
 import { formatPence } from "@/lib/credit/deal-pricing";
 import { siteUrl } from "@/lib/url";
+import { barsText } from "@/lib/listing/screen";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const meta = areaMetaForSlug(slug);
   if (!meta) return { title: "Short-let deals" };
   const title = `Short-let deals in ${meta.name}: properties that beat a long let`;
-  const description = `Properties for sale and to rent in ${meta.name} (${meta.code}) that Stayful estimates net at least 40% more as a short let than a long let, or £8,000 a year after rent. Updated every morning.`;
+  const description = `Properties for sale and to rent in ${meta.name} (${meta.code}) that Stayful estimates net ${barsText((await getBillingSettings()).r2rQualifiedProfit)}. Updated every morning.`;
   return { title, description, alternates: { canonical: siteUrl(`/short-let-deals/${meta.slug}`) } };
 }
 
@@ -49,7 +50,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
     <div className="mx-auto max-w-4xl px-5 py-14">
       <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]"><Link href="/short-let-deals">Deals marketplace</Link> · {meta.code}</p>
       <h1 className="mt-2 text-3xl font-bold text-[#2e3d2b]">Short-let deals in {meta.name}</h1>
-      <p className="mt-3 text-[#5b6657]">Every listing on the market in {meta.name} that Stayful estimates nets at least 40% more as a short let than a long let, or £8,000 a year after rent for rent-to-rent. Checked against the listing page and updated every morning.</p>
+      <p className="mt-3 text-[#5b6657]">Every listing on the market in {meta.name} that Stayful estimates nets {barsText(settings.r2rQualifiedProfit)} for rent-to-rent. Checked against the listing page and updated every morning.</p>
 
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Tile label="Live deals" value={teaser ? String(teaser.total) : "—"} sub={teaser ? `${teaser.sale} to buy · ${teaser.rent} rent-to-rent` : undefined} />
@@ -75,7 +76,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
                   <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
                 </div>
                 <div className="p-3">
-                  <p className="text-lg font-bold text-[#2e3d2b]">{range?.label ?? "—"} <span className="text-xs font-normal text-[#7a8274]">area estimate{uplift ? ` · ${uplift}` : ""}</span></p>
+                  <p className="text-lg font-bold text-[#2e3d2b]">{range?.label ?? "—"} <span className="text-xs font-normal text-[#7a8274]">{rangeCaption(card.check_comps)}{uplift ? ` · ${uplift}` : ""}</span></p>
                   <p className="mt-1 text-sm text-[#2e3d2b]">{[priceLine(card), describeType(card)].filter(Boolean).join(" · ")}</p>
                   <p className="text-xs text-[#7a8274]">{[card.town, card.outcode].filter(Boolean).join(" · ")}</p>
                 </div>

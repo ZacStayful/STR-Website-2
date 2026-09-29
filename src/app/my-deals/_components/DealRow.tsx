@@ -86,7 +86,7 @@ export function DealRow({
     href = `/deals/${card.id}`;
     photo = photoUrlFor(card, now) ?? (item.opened ? item.listing?.photo ?? null : null);
     big = view ? (view.range?.label ?? "—") : figure.big;
-    small = view ? [`area estimate${view.range ? ` · ${view.range.basis}` : ""}`, view.uplift].filter(Boolean).join(" · ") : figure.small;
+    small = view ? [`${view.caption}${view.range ? ` · ${view.range.basis}` : ""}`, view.uplift].filter(Boolean).join(" · ") : figure.small;
     price = priceLine(card);
     // The address rule: only for a deal the member may see the whole of.
     title = item.opened ? (item.listing?.address ?? address ?? where) : where;

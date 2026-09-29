@@ -65,6 +65,12 @@ export interface ListingSnapshot {
    * `false` prohibited, `null` silent. The description itself is not kept.
    */
   shortLetsPermitted?: boolean | null;
+  /**
+   * An auction lot: Rightmove's own flag, or auction wording in the page's
+   * text (read and dropped). Absent on snapshots parsed before Batch 16:
+   * those fall back to the listing's visible text.
+   */
+  auction?: boolean;
   features: string[];
   photos: string[];
 

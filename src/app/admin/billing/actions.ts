@@ -216,3 +216,18 @@ export async function sendPricingNoticeAction(): Promise<NoticeActionResult> {
     return { ok: false, message: (err as Error).message, body: null };
   }
 }
+
+export type PdCheckResult = { ok: boolean; message: string; verdict?: string };
+
+/** Batch 16, Part H: does PropertyData bill a failed call? One known-failing call, at most one credit. */
+export async function propertyDataBillingCheckAction(): Promise<PdCheckResult> {
+  try {
+    const { email } = await requireAdmin();
+    const { runPropertyDataFailedCallCheck } = await import('@/lib/broker/pd-billing-check');
+    const r = await runPropertyDataFailedCallCheck(email);
+    const credits = r.creditsBefore !== null ? ` Credits used: ${r.creditsBefore} before, ${r.creditsAfter ?? '?'} after; ${r.otherPaidCalls ?? '?'} other paid calls meanwhile.` : '';
+    return { ok: r.verdict !== 'inconclusive', verdict: r.verdict, message: `${r.detail}${credits}` };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}

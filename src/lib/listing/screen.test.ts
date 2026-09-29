@@ -11,6 +11,9 @@ import {
   BAND_LABELS,
   ABSOLUTE_QUALIFIED_SURPLUS,
   R2R_QUALIFIED_PROFIT,
+  R2R_MEDIUM_PROFIT,
+  parseR2rBar,
+  barsText,
   marketRentFor,
   grossRevenueFor,
   isSendable,
@@ -77,15 +80,16 @@ test('purchase under 10% is unqualified but still carries its gap', () => {
 
 // ── Rent-to-rent: the worked examples ──
 
-test('rent-to-rent qualifies on £8,000 profit, with no agent fee on the rent', () => {
+test('rent-to-rent qualifies on £6,000 profit, with no agent fee on the rent', () => {
+  assert.equal(R2R_QUALIFIED_PROFIT, 6_000);
   const s = screenRentToRent(input({ bedrooms: 2, grossRevenue: est(60_000), marketRent: firm(900) }));
   assert.equal(s.kind, 'rent-to-rent');
   // Full rent, not 90% of it: the operator pays the landlord's asking price.
   assert.equal(s.annualRent, 10_800);
   assert.equal(s.strNet, 26_400);
   assert.equal(s.annualProfit, 10_896);
-  assert.equal(s.requiredGross, 53_418);
-  assert.equal(s.gap, 6_582);
+  assert.equal(s.requiredGross, 48_873);
+  assert.equal(s.gap, 11_127);
   assert.equal(s.revenueMultiple, 5.56);
   assert.equal(s.band, 'qualified');
 });
@@ -94,16 +98,49 @@ test('rent-to-rent is unqualified when the rent eats the margin', () => {
   const s = screenRentToRent(input({ bedrooms: 2, grossRevenue: est(42_000), marketRent: firm(1_100) }));
   assert.equal(s.annualRent, 13_200);
   assert.equal(s.annualProfit, 576);
-  assert.equal(s.requiredGross, 58_873);
-  assert.equal(s.gap, -16_873);
+  assert.equal(s.requiredGross, 54_327);
+  assert.equal(s.gap, -12_327);
   assert.equal(s.revenueMultiple, 3.18);
   assert.equal(s.band, 'unqualified');
 });
 
-test('rent-to-rent medium band sits between £4,000 and £8,000', () => {
-  const s = screenRentToRent(input({ bedrooms: 2, grossRevenue: est(52_000), marketRent: firm(900) }));
-  assert.ok(s.annualProfit !== null && s.annualProfit >= 4_000 && s.annualProfit < 8_000);
+test('rent-to-rent medium band sits between £4,000 and £6,000', () => {
+  const s = screenRentToRent(input({ bedrooms: 2, grossRevenue: est(46_000), marketRent: firm(900) }));
+  assert.equal(s.annualProfit, 4_736);
+  assert.equal(R2R_MEDIUM_PROFIT, 4_000);
   assert.equal(s.band, 'medium');
+  assert.match(s.reason, /under the £6,000 bar/);
+});
+
+test('the R2R bar is a setting: the same deal is medium at £8,000 and qualified at £6,000', () => {
+  const deal = input({ bedrooms: 2, grossRevenue: est(52_000), marketRent: firm(900) });
+  const before = screenRentToRent(deal, { r2rQualifiedProfit: 8_000 });
+  const after = screenRentToRent(deal, { r2rQualifiedProfit: 6_000 });
+  assert.equal(before.annualProfit, 7_376);
+  assert.equal(before.band, 'medium');
+  assert.equal(before.requiredGross, 53_418);
+  assert.equal(after.band, 'qualified');
+  assert.equal(screen('rent', deal, { r2rQualifiedProfit: 8_000 }).band, 'medium');
+  assert.equal(screen('rent', deal).band, 'qualified', 'no setting passed: the £6,000 default');
+  // The bar never touches a purchase.
+  assert.deepEqual(screen('sale', deal, { r2rQualifiedProfit: 20_000 }), screen('sale', deal));
+});
+
+test('the stored bar is read in whole pounds between the medium bar and the £20,000 cash bar', () => {
+  assert.equal(parseR2rBar(6_000), 6_000);
+  assert.equal(parseR2rBar('7000'), 7_000);
+  assert.equal(parseR2rBar(4_000), 4_000);
+  assert.equal(parseR2rBar(20_000), 20_000);
+  assert.equal(parseR2rBar(3_999), R2R_QUALIFIED_PROFIT, 'under the medium bar');
+  assert.equal(parseR2rBar(25_000), R2R_QUALIFIED_PROFIT, 'over the cash bar');
+  assert.equal(parseR2rBar(6_500.5), R2R_QUALIFIED_PROFIT);
+  assert.equal(parseR2rBar(null), R2R_QUALIFIED_PROFIT);
+  assert.equal(parseR2rBar('lots'), R2R_QUALIFIED_PROFIT);
+});
+
+test('the bars in words follow the setting', () => {
+  assert.equal(barsText(), 'at least 40% more as a short let than a long let, or £6,000 a year after rent');
+  assert.equal(barsText(7_500), 'at least 40% more as a short let than a long let, or £7,500 a year after rent');
 });
 
 // ── The £20,000 absolute route ──
@@ -127,7 +164,7 @@ test('the absolute route only promotes — it never demotes or relabels a percen
   assert.equal(s.byAbsolute, false, 'qualified on the percentage, so not credited to the cash route');
 });
 
-test('the absolute route can never bind on rent-to-rent, because £20k already clears £8k', () => {
+test('the absolute route can never bind on rent-to-rent, because £20k already clears the bar', () => {
   const s = screenRentToRent({ bedrooms: 1, grossRevenue: est(120_000), marketRent: firm(900) });
   assert.ok(s.annualProfit !== null && s.annualProfit > ABSOLUTE_QUALIFIED_SURPLUS);
   assert.ok(s.annualProfit >= R2R_QUALIFIED_PROFIT);
@@ -288,4 +325,23 @@ test("a stored screening round-trips, and anything else degrades to null", () =>
   assert.equal(parseScreening({ band: "nonsense", kind: "purchase" }), null);
   assert.equal(parseScreening({ band: "qualified", kind: "spaceship" }), null);
   assert.equal(parseScreening("qualified"), null);
+});
+
+// ── Batch 16, Part B: the deal's own comparables check as the gross ──
+
+test('a checked gross sets the screening’s confidence; the rent only decides whether it qualifies', () => {
+  const checked: Figure = { value: 48_000, source: 'checked', confidence: 'high' };
+  const lowRent: Figure = { value: 1_200, source: 'estimated', confidence: 'low' };
+  const s = screenPurchase({ bedrooms: 3, grossRevenue: checked, marketRent: lowRent });
+  assert.equal(s.confidence, 'high', 'the range a member sees is built on the checked figure');
+  assert.equal(s.band, 'medium', 'the rent still decides the band');
+  const estimated: Figure = { value: 48_000, source: 'estimated', confidence: 'high' };
+  assert.equal(screenPurchase({ bedrooms: 3, grossRevenue: estimated, marketRent: lowRent }).confidence, 'low', 'an area estimate is as weak as its weakest input, as before');
+  const lowCheck: Figure = { value: 48_000, source: 'checked', confidence: 'low' };
+  assert.equal(screenPurchase({ bedrooms: 3, grossRevenue: lowCheck, marketRent: { value: 1_200, source: 'confirmed', confidence: 'high' } }).confidence, 'low');
+  const r2r = screenRentToRent({ bedrooms: 2, grossRevenue: { value: 40_000, source: 'checked', confidence: 'medium' }, marketRent: { value: 1_000, source: 'confirmed', confidence: 'high' } });
+  assert.equal(r2r.confidence, 'medium');
+  const working = screeningWorking(s);
+  assert.equal(working[0].value, '£48,000/yr (own comparables)');
+  assert.ok(working.some((w) => w.value.endsWith('(est.)')), 'the rent estimate is still marked');
 });

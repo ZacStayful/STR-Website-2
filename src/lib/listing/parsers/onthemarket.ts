@@ -2,6 +2,7 @@ import type { ListingSnapshot } from '../types.ts';
 import { scriptJsonById, metaContent, titleOf, parsePrice, findPostcode, findOutcode } from '../html.ts';
 import { toNum, toStr, statusFromText, baseSnapshot, type ParseContext } from './shared.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
+import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
 export const ONTHEMARKET_PARSER_VERSION = 1;
 
@@ -93,12 +94,14 @@ export function parseOnTheMarket(html: string, ctx: ParseContext): ListingSnapsh
   if (p?.student === true) snap.features.push('Student let');
   snap.sharedOwnership = false;
   snap.shortLetsPermitted = null;
+  snap.auction = false;
   if (p) {
     // Suitability evidence: description read and dropped; tenure / key info lines count too.
     const description = stripHtml([toStr(p.description), toStr(p['full-description']), toStr(p.summary)].filter((s): s is string => Boolean(s)).join(' '));
     const keyLines = keyInfo.map((k) => `${toStr(k?.title) ?? ''}: ${toStr(k?.value) ?? ''}`);
     snap.sharedOwnership = /shared ownership/i.test([description, snap.price?.qualifier ?? '', ...keyLines].join(' '));
     snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features, ...keyLines].join('. '));
+    snap.auction = AUCTION_WORDING.test([description, snap.price?.qualifier ?? '', ...snap.features, ...keyLines].join(' | '));
   }
 
   const images = Array.isArray(p?.images) ? (p.images as { largeUrl?: unknown; url?: unknown }[]) : [];

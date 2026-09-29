@@ -40,6 +40,8 @@ export const TAILORING = {
   sourcer: { motivationPointsPer10: 1, roomPoints: 5 },
   /** Similar to what the member liked: points per shared attribute with any signal, capped. */
   similarity: { perAttribute: 3, cap: 10, priceBandPct: 20 },
+  /** Batch 16: a deal shown on its own comparables check, by the check's confidence (src/lib/deal-quality/rank-signal.ts). */
+  checked: { high: 5, medium: 3, low: 0 },
 
   /** "Near me + the best elsewhere": local slots, then national ones; either fills from the other when short. */
   nearPlusBest: { local: 3, national: 2 },

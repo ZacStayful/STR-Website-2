@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
-import { badgesFor, describeType, headlineFigure, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
+import { AUCTION_LABEL, badgesFor, describeType, headlineFigure, isAuctionCard, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
 import { payLine } from "@/lib/marketplace/most-you-can-pay";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { earlyAccessHint } from "@/lib/marketplace/early-access";
@@ -61,6 +61,9 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
   const badges = badgesFor(card, now);
   const figure = headlineFigure(card);
   const price = priceLine(card);
+  // An auction lot's figure is a guide, not an asking price (Batch 16).
+  const auction = isAuctionCard(card);
+  const priceWord = auction ? "Guide" : "Asking";
   const motivation = motivationLine(card, now);
   const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ");
   const open = opened ? "Opened" : `Open · ${formatOpenPrice(openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder))}`;
@@ -76,6 +79,9 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
           <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
           {earlyAccess && <span className="rounded-full bg-warning px-2 py-0.5 text-[11px] font-semibold text-warning-foreground">Early access</span>}
+          {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
+          {/* Batch 16, Part F: the low-entry stream (the house finance gets in for at most the low-entry cash). */}
+          {view?.lowEntry && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
           {badges.tags.map((t) => (
             <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
           ))}
@@ -96,12 +102,12 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
               ))}
             </dl>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              area estimate
+              {view.caption}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
+            {/* Batch 16, Part F: what it takes to get in ("£38k cash in" / "£12k to start") sits with the price on every card. */}
             <p className="mt-0.5 text-xs font-medium text-foreground">
-              {price ? `Asking ${price}` : ""}
-              {view.pay ? `${price ? " · " : ""}${payLine(view.pay)}` : ""}
+              {[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}
             </p>
           </>
         ) : (
@@ -113,11 +119,11 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         {view ? (
           <>
             <p className="text-xs text-muted-foreground">
-              area estimate{view.range ? ` · ${view.range.basis}` : ""}
+              {view.caption}{view.range ? ` · ${view.range.basis}` : ""}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
-            {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure. */}
-            {view.pay && <p className="mt-0.5 text-xs font-medium text-foreground">{price ? `Asking ${price} · ` : ""}{payLine(view.pay)}</p>}
+            {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure; Batch 16: the cash in / to start. */}
+            {(view.pay || view.cash) && <p className="mt-0.5 text-xs font-medium text-foreground">{[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}</p>}
           </>
         ) : (
           <p className="text-xs text-muted-foreground">{figure.small}</p>
