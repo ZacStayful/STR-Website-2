@@ -4873,3 +4873,295 @@ exception when others then
 end $$;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 19: consent and attribution
+-- =========================
+-- Cookie consent, the Meta pixel and Conversions API, and where members came
+-- from (src/lib/tracking, src/lib/meta). Every table here is service role only
+-- (RLS on, no policies, nothing granted to anon or authenticated): the app's
+-- routes take the member from the session. Nothing is charged. Nothing here is
+-- in ACCESS_COLUMNS (src/lib/access.ts), and must not become so, and nothing
+-- is added to profiles. Everything is additive: this section can be run
+-- before the code is merged, and until it is run the banner still works (the
+-- choice is kept on the device), nothing is recorded or sent to Meta, and
+-- /admin/signups says to run it.
+
+-- ── consent_records: proof of every cookie choice (src/lib/tracking/consent-server.ts) ──
+--   visitor_id  the random device id kept in the sf_consent cookie
+--   user_id     the member: signed in when they chose, or attached when they
+--               signed up or in on that device. Set to null if the account is
+--               deleted, so the proof stays (it then holds no personal data)
+--   choice      accept | reject
+--   source      banner | signup | settings (the Cookie settings link)
+--   version     the wording shown (cookie-v1, …). New wording means a new
+--               version, so every choice stays tied to what the person saw
+create table if not exists public.consent_records (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  visitor_id uuid not null,
+  user_id uuid references public.profiles(id) on delete set null,
+  choice text not null,
+  source text not null,
+  version text not null
+);
+create index if not exists consent_records_visitor_idx on public.consent_records (visitor_id, created_at desc);
+create index if not exists consent_records_user_idx on public.consent_records (user_id, created_at desc) where user_id is not null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.consent_records'::regclass and conname = 'consent_records_choice_check') then
+    alter table public.consent_records add constraint consent_records_choice_check check (choice in ('accept', 'reject'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.consent_records'::regclass and conname = 'consent_records_source_check') then
+    alter table public.consent_records add constraint consent_records_source_check check (source in ('banner', 'signup', 'settings'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.consent_records'::regclass and conname = 'consent_records_version_check') then
+    alter table public.consent_records add constraint consent_records_version_check check (char_length(version) between 1 and 40);
+  end if;
+end $$;
+alter table public.consent_records enable row level security;  -- no policies: service role only
+revoke all on public.consent_records from anon, authenticated;
+
+-- ── member_consent: each member's latest choice, which the server obeys ──
+--   choice/chosen_at  the newest choice wins, whichever device it came from
+--                     (member_consent_set below)
+--   record_id         the consent_records row it came from
+--   ctx_*             the member's last-seen browser details (IP, user agent,
+--                     _fbp, _fbc), kept only while the choice is Accept and
+--                     cleared the moment it is Reject. Used only for a
+--                     Conversions API event that happens with no browser in
+--                     the request (a Stripe payment); refreshed at most hourly
+create table if not exists public.member_consent (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  choice text not null,
+  chosen_at timestamptz not null,
+  source text not null,
+  version text not null,
+  record_id uuid references public.consent_records(id) on delete set null,
+  ctx_ip text,
+  ctx_ua text,
+  ctx_fbp text,
+  ctx_fbc text,
+  ctx_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.member_consent'::regclass and conname = 'member_consent_choice_check') then
+    alter table public.member_consent add constraint member_consent_choice_check check (choice in ('accept', 'reject'));
+  end if;
+end $$;
+alter table public.member_consent enable row level security;  -- no policies: service role only
+revoke all on public.member_consent from anon, authenticated;
+
+-- ── member_consent_set: the newest choice wins, in one statement ──
+-- p: {user, choice, chosen_at, source, version, record_id}. Returns the row
+-- the member now has: {choice, chosen_at, applied}. applied is false when a
+-- newer choice was already saved (another device), which then stands. A
+-- Reject clears the stored browser details in the same write.
+create or replace function public.member_consent_set(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_choice text := p->>'choice';
+  v_at timestamptz := coalesce(nullif(p->>'chosen_at', '')::timestamptz, now());
+  v_applied boolean := false;
+  v_row public.member_consent%rowtype;
+begin
+  if v_user is null or v_choice not in ('accept', 'reject') then
+    return jsonb_build_object('applied', false, 'choice', null, 'chosen_at', null);
+  end if;
+  insert into public.member_consent as mc (user_id, choice, chosen_at, source, version, record_id, updated_at)
+  values (v_user, v_choice, v_at, coalesce(p->>'source', 'banner'), coalesce(p->>'version', 'cookie-v1'), nullif(p->>'record_id', '')::uuid, now())
+  on conflict (user_id) do update set
+    choice = excluded.choice,
+    chosen_at = excluded.chosen_at,
+    source = excluded.source,
+    version = excluded.version,
+    record_id = excluded.record_id,
+    ctx_ip = case when excluded.choice = 'reject' then null else mc.ctx_ip end,
+    ctx_ua = case when excluded.choice = 'reject' then null else mc.ctx_ua end,
+    ctx_fbp = case when excluded.choice = 'reject' then null else mc.ctx_fbp end,
+    ctx_fbc = case when excluded.choice = 'reject' then null else mc.ctx_fbc end,
+    ctx_at = case when excluded.choice = 'reject' then null else mc.ctx_at end,
+    updated_at = now()
+  where mc.chosen_at <= excluded.chosen_at
+  returning true into v_applied;
+  select * into v_row from public.member_consent where user_id = v_user;
+  return jsonb_build_object('applied', coalesce(v_applied, false), 'choice', v_row.choice, 'chosen_at', v_row.chosen_at);
+end $$;
+revoke all on function public.member_consent_set(jsonb) from public, anon, authenticated;
+grant execute on function public.member_consent_set(jsonb) to service_role;
+
+-- ── member_attribution: where a member came from, first touch, once ──
+-- Written once when a website account is created (src/lib/tracking/signup-server.ts):
+-- at the moment the email sign-up form is submitted (so confirming on another
+-- device cannot lose it), or on the Google callback. Never overwritten
+-- (insert … on conflict do nothing). Existing members have no row and are
+-- "direct / unknown"; there is no backfill. Lead-form accounts have no row
+-- either: the report reads profiles.lead_source for them.
+--   env           production | preview | development: previews write to this
+--                 database too, and only production rows are reported
+--   signup_method email | google
+--   team_invite   the sign-up was to join someone's team (left out of the report)
+--   fbclid(_at)   the Meta click id and when it was seen, kept to build fbc
+--                 for the member's Conversions API events
+--   landing_path  the first page, without its query; ids and tokens replaced
+--   captured_via  form | cookie | redirect (Google's return) | none
+create table if not exists public.member_attribution (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  env text not null default 'production',
+  signup_method text not null,
+  team_invite boolean not null default false,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  utm_content text,
+  utm_term text,
+  fbclid text,
+  fbclid_at timestamptz,
+  landing_path text,
+  referrer_domain text,
+  captured_via text not null default 'none'
+);
+create index if not exists member_attribution_created_idx on public.member_attribution (created_at);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.member_attribution'::regclass and conname = 'member_attribution_method_check') then
+    alter table public.member_attribution add constraint member_attribution_method_check check (signup_method in ('email', 'google'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.member_attribution'::regclass and conname = 'member_attribution_via_check') then
+    alter table public.member_attribution add constraint member_attribution_via_check check (captured_via in ('form', 'cookie', 'redirect', 'none'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.member_attribution'::regclass and conname = 'member_attribution_lengths_check') then
+    alter table public.member_attribution add constraint member_attribution_lengths_check check (
+      coalesce(char_length(utm_source), 0) <= 200 and coalesce(char_length(utm_medium), 0) <= 200
+      and coalesce(char_length(utm_campaign), 0) <= 200 and coalesce(char_length(utm_content), 0) <= 200
+      and coalesce(char_length(utm_term), 0) <= 200 and coalesce(char_length(fbclid), 0) <= 500
+      and coalesce(char_length(landing_path), 0) <= 200 and coalesce(char_length(referrer_domain), 0) <= 200
+    );
+  end if;
+end $$;
+alter table public.member_attribution enable row level security;  -- no policies: service role only
+revoke all on public.member_attribution from anon, authenticated;
+
+-- ── meta_conversions: every conversion we know of, sent to Meta or not (src/lib/meta/conversions.ts) ──
+-- One row per conversion, keyed on dedupe_key (the only unique key), inserted
+-- before anything is sent: only the caller whose insert went in may send, so
+-- a Stripe redelivery, the webhook and the one-click route, or a retry can
+-- never send twice. The row is written even without consent, so "once per
+-- account" holds if the member accepts later; it is sent only if they accept
+-- within the release window (src/lib/tracking/config.ts).
+--   dedupe_key          CompleteRegistration:<user>, ProfileComplete:<user>,
+--                       FirstReport:<user>, Subscribe:<user>, Purchase:<payment intent>
+--   event_id            what Meta de-duplicates the browser and server copies on
+--                       (a random id, the Stripe invoice or the PaymentIntent)
+--   env                 production | preview | development: only production
+--                       rows are ever sent or fired
+--   consented           the member's choice was Accept when it was recorded or released
+--   server_status       held (no consent yet) | pending | sending | sent |
+--                       failed | skipped; server_note says why (never the token)
+--   test_event          sent with META_TEST_EVENT_CODE (Test events only)
+--   browser_claimed_at  the browser fired it (claimed once, atomically)
+create table if not exists public.meta_conversions (
+  dedupe_key text primary key,
+  event_id text not null,
+  event_name text not null,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  env text not null default 'production',
+  value_pence integer,
+  currency text,
+  consented boolean not null default false,
+  released_at timestamptz,
+  server_status text not null default 'pending',
+  server_note text,
+  server_http integer,
+  server_sent_at timestamptz,
+  test_event boolean not null default false,
+  browser_claimed_at timestamptz
+);
+create index if not exists meta_conversions_user_idx on public.meta_conversions (user_id, created_at desc);
+create index if not exists meta_conversions_created_idx on public.meta_conversions (created_at desc);
+create index if not exists meta_conversions_event_idx on public.meta_conversions (event_id);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.meta_conversions'::regclass and conname = 'meta_conversions_event_check') then
+    alter table public.meta_conversions add constraint meta_conversions_event_check check (event_name in ('CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.meta_conversions'::regclass and conname = 'meta_conversions_status_check') then
+    alter table public.meta_conversions add constraint meta_conversions_status_check check (server_status in ('held', 'pending', 'sending', 'sent', 'failed', 'skipped'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.meta_conversions'::regclass and conname = 'meta_conversions_note_check') then
+    alter table public.meta_conversions add constraint meta_conversions_note_check check (server_note is null or char_length(server_note) <= 300);
+  end if;
+end $$;
+alter table public.meta_conversions enable row level security;  -- no policies: service role only
+revoke all on public.meta_conversions from anon, authenticated;
+
+-- ── When tracking started ──
+-- Set once, the first time this section runs, and never changed: the sign-up
+-- journey events (CompleteRegistration, ProfileComplete, FirstReport) count
+-- only for accounts created after it, and Subscribe only for subscriptions
+-- started after it, so existing members' renewals and old quizzes never fire.
+-- A fact rather than a setting: not on /admin/billing.
+insert into public.billing_settings (key, value) values ('meta_tracking_since', to_jsonb(now()))
+on conflict (key) do nothing;
+
+-- ── signup_source_facts: what /admin/signups adds up (src/lib/tracking/report-server.ts) ──
+-- p: {from, to} (timestamps; either may be null). One entry per account
+-- created in the range that has a member_attribution row (a website sign-up)
+-- or came from a lead form (profiles.lead_source): its attribution, whether it
+-- has signed in, when it finished the profile, its first report (report_run
+-- or full_analysis) and its first real payment (a card top-up or a paid
+-- subscription invoice, annual included, less refunds and disputes). Weekly
+-- active is not here: the page reuses Batch 9's activity_weekly_facts.
+-- security definer: it reads auth.users.last_sign_in_at.
+create or replace function public.signup_source_facts(p jsonb)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  v_from timestamptz := coalesce(nullif(p->>'from', '')::timestamptz, '-infinity'::timestamptz);
+  v_to timestamptz := coalesce(nullif(p->>'to', '')::timestamptz, 'infinity'::timestamptz);
+begin
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'u', pr.id,
+      'email', pr.email,
+      'created', pr.created_at,
+      'signed_in', au.last_sign_in_at is not null,
+      'lead', case when pr.lead_source is not null then coalesce(pr.lead_source->>'source', 'lead_form') end,
+      'a', case when ma.user_id is null then null else jsonb_build_object(
+        'src', ma.utm_source, 'med', ma.utm_medium, 'cmp', ma.utm_campaign, 'cnt', ma.utm_content,
+        'fb', ma.fbclid is not null, 'ref', ma.referrer_domain, 'env', ma.env,
+        'method', ma.signup_method, 'team', ma.team_invite) end,
+      'profile_done', pq.completed_at,
+      'first_report', fr.at,
+      'first_paid', fp.at
+    ) order by pr.created_at)
+    from public.profiles pr
+    left join auth.users au on au.id = pr.id
+    left join public.member_attribution ma on ma.user_id = pr.id
+    left join public.profile_quiz pq on pq.user_id = pr.id
+    left join lateral (
+      select min(e.occurred_at) as at from public.activity_events e
+      where e.user_id = pr.id and e.kind in ('report_run', 'full_analysis')
+    ) fr on true
+    left join lateral (
+      select min(g.created_at) as at from public.credit_grants g
+      where g.user_id = pr.id
+        and (g.kind = 'topup' or (g.kind = 'plan' and (g.source_ref like 'inv:%' or g.source_ref like 'annual:%')))
+        and not exists (
+          select 1 from public.credit_grants r
+          where r.user_id = g.user_id and r.kind = 'adjustment'
+            and r.source_ref in (g.source_ref || ':refunded', g.source_ref || ':disputed')
+        )
+    ) fp on true
+    where pr.created_at >= v_from and pr.created_at < v_to
+      and (ma.user_id is not null or pr.lead_source is not null)
+  ), '[]'::jsonb);
+end $$;
+revoke all on function public.signup_source_facts(jsonb) from public, anon, authenticated;
+grant execute on function public.signup_source_facts(jsonb) to service_role;
+
+notify pgrst, 'reload schema';
