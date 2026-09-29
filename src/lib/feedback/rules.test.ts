@@ -23,6 +23,7 @@ import {
   pathOnly,
   reportTotals,
   scaledSize,
+  screenshotCutoff,
   screenshotExtension,
   screenshotProblem,
   shortBuild,
@@ -252,6 +253,17 @@ test('the UK day starts at UK midnight, summer and winter', () => {
   assert.equal(ukDayStart(new Date('2026-07-10T12:00:00Z')).toISOString(), '2026-07-09T23:00:00.000Z');
   assert.equal(ukDayStart(new Date('2026-07-09T23:30:00Z')).toISOString(), '2026-07-09T23:00:00.000Z');
   assert.equal(ukDayStart(new Date('2026-12-10T12:00:00Z')).toISOString(), '2026-12-10T00:00:00.000Z');
+});
+
+test('screenshots are deleted after the retention days, and a bad setting can never reach recent ones', () => {
+  const now = new Date('2026-09-28T02:45:00Z');
+  const daysBefore = (n: number) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(screenshotCutoff(now, 90).toISOString(), daysBefore(90));
+  assert.equal(screenshotCutoff(now, 0).toISOString(), daysBefore(7));
+  assert.equal(screenshotCutoff(now, -30).toISOString(), daysBefore(7));
+  assert.equal(screenshotCutoff(now, 6.9).toISOString(), daysBefore(7));
+  assert.equal(screenshotCutoff(now, Number.NaN).toISOString(), daysBefore(90));
+  assert.equal(screenshotCutoff(now, 1e9).toISOString(), daysBefore(3650));
 });
 
 test('Fixed for a bug, Built for an idea; a member sees Received for new', () => {

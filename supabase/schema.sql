@@ -4625,8 +4625,9 @@ alter table public.feedback_reports enable row level security;  -- no policies: 
 revoke all on public.feedback_reports from anon, authenticated;
 
 -- ── feedback_screenshots: the images sent with a report (src/lib/feedback/storage.ts) ──
--- One row per image in the private bucket, written before the upload and
--- removed if the upload fails, so no stored image is ever without its row.
+-- One row per image in the private bucket, written before the upload. If the
+-- upload fails, the image is removed (in case it landed) before the row, so
+-- no stored image is ever without its row.
 -- report_id is set to null when the report goes (the account was deleted),
 -- so the retention run still finds the image and removes it. deleted_at: the
 -- image has been removed from the bucket after the retention period; the row

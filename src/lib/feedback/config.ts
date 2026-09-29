@@ -125,6 +125,12 @@ export const SEND_TIME_BUDGET_MS = 45_000;
 /** Screenshots removed per storage call in the retention run. */
 export const RETENTION_BATCH = 100;
 
+/** The retention run stops starting new work after this (its route has 60 s); the rest waits for the next night. */
+export const RETENTION_TIME_BUDGET_MS = 40_000;
+
+/** The retention run stops retrying admin emails after this many failures in a row (Resend is down). */
+export const RETENTION_EMAIL_FAILURES_MAX = 3;
+
 /** Announcements after the third fold under "N more". */
 export const BANNER_FOLD_AFTER = 3;
 

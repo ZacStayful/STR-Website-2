@@ -87,3 +87,8 @@ test('the screenshot bucket is private, and stays so', () => {
 test('nothing reaches the access gate', () => {
   for (const col of ['feedback', 'announcement']) assert.ok(!ACCESS_COLUMNS.includes(col), col);
 });
+
+test('the privacy policy states the screenshot retention the settings start with', () => {
+  const privacy = readFileSync(new URL('../../app/(marketing)/privacy/page.tsx', import.meta.url), 'utf8');
+  assert.ok(privacy.includes(`any screenshots (deleted after ${DEFAULT_SETTINGS.retentionDays} days)`), 'privacy policy and feedback_screenshot_retention_days disagree');
+});

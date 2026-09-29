@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   alternates: { canonical: siteUrl("/privacy") },
 };
 
-const LAST_UPDATED = "28 September 2026";
+const LAST_UPDATED = "29 September 2026";
 
 /**
  * The privacy policy, from the legal drafts of 27 September 2026 (section A),
@@ -17,6 +17,8 @@ const LAST_UPDATED = "28 September 2026";
  * cookie stated. "Information about other people" was added with saved
  * profiles (Batch 13), drafted for this page since the held-back drafts were
  * not in the repository; the profiles page links to it (#other-people).
+ * "Bug reports and ideas" was added with feedback (Batch 18); the 90 days is
+ * the default of feedback_screenshot_retention_days (src/lib/feedback).
  */
 export default function PrivacyPage() {
   return (
@@ -38,6 +40,7 @@ export default function PrivacyPage() {
           <li><strong>How you use the service:</strong> pages and deals you view, deals you keep or pass, reports you run, visits and time spent, and which emails or messages you open or click.</li>
           <li><strong>Payments:</strong> your plan, credit balance and transaction history. Card details are handled by Stripe; we never see or store your full card number.</li>
           <li><strong>Feedback</strong> you give on deals, including reasons.</li>
+          <li><strong>Bug reports and ideas:</strong> when you send feedback we keep your message, any screenshots (deleted after 90 days), the page you were on, your browser, device and screen size, and the app version.</li>
           <li><strong>Technical data:</strong> IP address, browser and device type, used for security and to keep you signed in.</li>
         </ul>
 

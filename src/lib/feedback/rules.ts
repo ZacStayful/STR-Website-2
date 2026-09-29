@@ -322,6 +322,17 @@ export function ukDayStart(now: Date): Date {
   return londonDayStart(ukDay(now)) ?? new Date(now.getTime() - 24 * 60 * 60 * 1000);
 }
 
+/**
+ * Screenshots stored before this are deleted by the retention run. The days
+ * are clamped again here, whatever the caller passes, so a bad setting can
+ * never delete a recent image: never fewer than the settings' minimum.
+ */
+export function screenshotCutoff(now: Date, retentionDays: number): Date {
+  const { min, max } = SETTING_BOUNDS.retentionDays;
+  const days = Number.isFinite(retentionDays) ? Math.min(max, Math.max(min, Math.floor(retentionDays))) : DEFAULT_SETTINGS.retentionDays;
+  return new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+}
+
 // ── Labels ──
 
 export function kindLabel(kind: ReportKind, form: 'short' | 'long' = 'short'): string {

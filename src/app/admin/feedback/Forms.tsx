@@ -162,6 +162,9 @@ export function SettingsForm({ settings }: { settings: FeedbackSettings }) {
           <input name="adminEmail" type="email" defaultValue={settings.adminEmail} placeholder={DEFAULT_SETTINGS.adminEmail} className={field} required />
         </label>
       </div>
+      <p className="text-xs text-muted-foreground">
+        The privacy policy tells members screenshots are deleted after {DEFAULT_SETTINGS.retentionDays} days: change it too if you change how long they’re kept.
+      </p>
       <div className="flex items-center gap-3">
         <button type="submit" disabled={pending} className={primary}>
           {pending ? "Saving…" : "Save settings"}

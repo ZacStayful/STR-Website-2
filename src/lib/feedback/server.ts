@@ -25,7 +25,7 @@ import {
   type ScreenshotType,
 } from './rules';
 import { feedbackSettings } from './settings-server';
-import { screenshotPath, uploadScreenshot } from './storage';
+import { removeScreenshots, screenshotPath, uploadScreenshot } from './storage';
 
 /**
  * Batch 18's feedback on the server: sending a report, and the email to the
@@ -145,7 +145,11 @@ export async function submitReport(input: SubmitInput): Promise<SubmitOutcome> {
       continue;
     }
     failed += 1;
-    await admin.from('feedback_screenshots').delete().eq('id', (shot as { id: string }).id);
+    // An upload that errored may still have landed (the answer was lost), so
+    // the image is removed before its row: an image never outlives its row,
+    // which is how the retention run finds it. If that fails too, the row
+    // stays and the retention run removes the image with the others.
+    if ((await removeScreenshots([path])).ok) await admin.from('feedback_screenshots').delete().eq('id', (shot as { id: string }).id);
   }
   if (attached > 0) {
     const { error: countError } = await admin.from('feedback_reports').update({ screenshot_count: attached, updated_at: new Date().toISOString() }).eq('id', result.id);
