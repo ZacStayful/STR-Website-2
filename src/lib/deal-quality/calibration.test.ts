@@ -53,7 +53,7 @@ function result(id: string, cls: string, gaps: Partial<Record<'planned' | 'withD
   };
 }
 
-test('the gate waits for 20 cases, passes at a typical gap of 10% or less, stops above it', () => {
+test('the gate waits for 20 cases, passes at a typical gap of 15% or less, stops above it', () => {
   const few = Array.from({ length: 10 }, (_, i) => result(`a${i}`, 'urban', { planned: 5 }));
   assert.equal(summariseCalibration(few, 24, 10, 50).gate, 'pending');
   const close = Array.from({ length: 22 }, (_, i) => result(`b${i}`, i % 2 ? 'urban' : 'coastal', { planned: i % 2 ? -9 : 8, withDates: 12, bothCurves: 14, setting: 9 }));
@@ -61,7 +61,10 @@ test('the gate waits for 20 cases, passes at a typical gap of 10% or less, stops
   assert.equal(s.gate, 'pass');
   assert.equal(s.medianAbsGap.planned, 8.5);
   assert.equal(s.best, 'planned');
-  const far = Array.from({ length: 22 }, (_, i) => result(`c${i}`, 'rural_village', { planned: 18, withDates: 16, bothCurves: 22, setting: 15 }));
+  // The second run's reading (29 Sep 2026): 11.5% as planned passes the 15% gate.
+  const mid = Array.from({ length: 24 }, (_, i) => result(`m${i}`, 'coastal', { planned: i % 2 ? 11.5 : -11.5, withDates: 11.5, bothCurves: 12, setting: 11.5 }));
+  assert.equal(summariseCalibration(mid, 24, 24, 120).gate, 'pass');
+  const far = Array.from({ length: 22 }, (_, i) => result(`c${i}`, 'rural_village', { planned: 22, withDates: 20, bothCurves: 26, setting: 18 }));
   const f = summariseCalibration(far, 24, 30, 150);
   assert.equal(f.gate, 'fail');
   assert.equal(f.best, 'setting');

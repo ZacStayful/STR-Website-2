@@ -1,8 +1,8 @@
 /**
  * Step 0 of the deal checks: before any deal is checked, re-run past full
  * analyses through the deal check's own search and see how far the new
- * figure lands from the stored one. If the typical gap is over 10%, the
- * checks are not built on it.
+ * figure lands from the stored one. If the typical gap is over the gate,
+ * the checks are not built on it.
  *
  * Twenty-four stored analyser reports — eight urban, eight rural, eight
  * coastal, one to five bedrooms, one per postcode area within each class —
@@ -22,8 +22,18 @@ export const CASES_PER_CLASS = 8;
 export const CALIBRATION_MAX_CALLS = CALIBRATION_CLASSES.length * CASES_PER_CLASS * 3;
 /** Results older than this start a new comparison. */
 export const CALIBRATION_WINDOW_DAYS = 14;
-/** The brief's gate: stop if the typical gap is over this. */
-export const CALIBRATION_GATE_PCT = 10;
+/**
+ * The gate: stop if the typical gap is over this. The brief set 10%. Two
+ * runs on 29 Sep 2026 read 11.7% and then 11.5% (urban 7.6%, rural 11.9%,
+ * coastal 14.8%; signed median −2%, so no lean), against 16.7% for the area
+ * average every live deal used until then, measured the same way on the same
+ * fresh reports; the stored reports are themselves estimates on twelve
+ * comparables with spreads of 20–160%, so two honest readings of one
+ * property differ by about this much. Zac chose to accept the check at that
+ * accuracy and let the ranges on the cards carry the error, so the gate is
+ * 15% (the PR #104 description holds both runs' figures).
+ */
+export const CALIBRATION_GATE_PCT = 15;
 /** Enough cases for the gate to be read. */
 export const CALIBRATION_MIN_CASES = 20;
 /** The bedroom mix each class is filled in. */
