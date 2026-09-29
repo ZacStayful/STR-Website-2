@@ -2,8 +2,8 @@
  * The photo check's usage, hop by hop, and its cost (Batch 17): the requested
  * model's attempt and, after a refusal, the fallback that answered, each
  * metered at its own model's unit_costs rows. A model without rows of its
- * own is metered at Opus 4.8's, the dearest, so spend is never
- * under-counted.
+ * own is metered at the dearest rows (the plain input_token and
+ * output_token), so spend is never under-counted.
  *
  * Pure: no network, no database, no server-only.
  */

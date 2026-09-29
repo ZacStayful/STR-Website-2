@@ -87,9 +87,10 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'anthropic', unit: 'output_token', label: 'Anthropic output token (Opus 4.8)', unitCostPence: (25 * USD) / 1_000_000, notes: '$25 per MTok' },
   { provider: 'anthropic', unit: 'cache_read_token', label: 'Anthropic cache read token', unitCostPence: (0.5 * USD) / 1_000_000, notes: '10% of input' },
   { provider: 'anthropic', unit: 'cache_write_token', label: 'Anthropic cache write token', unitCostPence: (6.25 * USD) / 1_000_000, notes: '125% of input' },
-  // Batch 17: the Project photo check runs on Opus 5.5 and is metered at its own
-  // rates (the rows above are Opus 4.8's, 25% dearer). A refusal re-run on the
-  // server-side fallback is metered at the model that answered.
+  // Batch 17: the Project photo check is metered at its own model's rates
+  // (PHOTO_CHECK_MODEL, src/lib/project/photo-check-usage.ts; the rows above
+  // are 25% dearer). A refusal re-run on the server-side fallback is metered
+  // at the model that answered.
   { provider: 'anthropic', unit: 'opus55_input_token', label: 'Anthropic input token (Opus 5.5)', unitCostPence: (4 * USD) / 1_000_000, notes: '$4 per MTok' },
   { provider: 'anthropic', unit: 'opus55_output_token', label: 'Anthropic output token (Opus 5.5)', unitCostPence: (20 * USD) / 1_000_000, notes: '$20 per MTok, thinking included' },
   { provider: 'anthropic', unit: 'sonnet55_input_token', label: 'Anthropic input token (Sonnet 5.5)', unitCostPence: (2 * USD) / 1_000_000, notes: '$2 per MTok' },

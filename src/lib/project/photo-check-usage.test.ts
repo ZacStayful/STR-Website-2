@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PHOTO_CHECK_MODEL, hopsOf, photoCheckCostPence, photoCheckWorstPence, unitsFor } from './photo-check-usage.ts';
 
-test('the check runs on Opus 5.5 and is metered at its own rows, not Opus 4.8’s', () => {
+test('the check runs on its own model and is metered at that model’s rows, not the dearest', () => {
   assert.equal(PHOTO_CHECK_MODEL, 'claude-opus-5-5');
   assert.deepEqual(unitsFor('claude-opus-5-5'), { input: 'opus55_input_token', output: 'opus55_output_token' });
   assert.deepEqual(unitsFor('claude-sonnet-5-5'), { input: 'sonnet55_input_token', output: 'sonnet55_output_token' });
   assert.deepEqual(unitsFor('claude-opus-4-8'), { input: 'input_token', output: 'output_token' }, 'any other model at the dearest known rows');
 });
 
-test('about 10p a listing: 20k input and 3k output on Opus 5.5', () => {
+test('about 10p a listing: 20k input and 3k output on the check’s model', () => {
   const pence = photoCheckCostPence([{ model: 'claude-opus-5-5', inputTokens: 20_000, outputTokens: 3_000 }]);
   // $4/MTok × 20k = $0.08; $20/MTok × 3k = $0.06; $0.14 at 79p = 11.06p.
   assert.equal(pence, 11.06);
@@ -28,7 +28,7 @@ test('a refusal re-run on the fallback: each hop at the model that ran it', () =
 
 test('a claim reserves the check’s true worst case: every image at full size, a refusal and a fallback, both replies at max_tokens', () => {
   const eleven = photoCheckWorstPence(11);
-  // Opus 5.5: 56,800 input × 0.0316p/1k + 16,000 output × 0.158p/1k ≈ 43.2p; the fallback at the dearest rows ≈ 54p.
+  // The check's model: 56,800 input × 0.0316p/1k + 16,000 output × 0.158p/1k ≈ 43.2p; the fallback at the dearest rows ≈ 54p.
   assert.ok(eleven > 90 && eleven < 105, `eleven images: ${eleven}p`);
   assert.ok(photoCheckWorstPence(13) > eleven);
   assert.ok(photoCheckWorstPence(0) > 0, 'the text and the reply alone');

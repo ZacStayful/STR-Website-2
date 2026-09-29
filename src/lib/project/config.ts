@@ -229,7 +229,7 @@ export interface ProjectChecksSettings {
   reuseDays: number;
   /** PropertyData's listed-building and conservation-area checks before the photo check (Q9). */
   planningChecks: boolean;
-  /** The photo check's thinking effort (Opus 5.5 always thinks). */
+  /** The photo check's thinking effort (its model always thinks). */
   effort: 'low' | 'medium' | 'high';
 }
 

@@ -2,15 +2,15 @@ import 'server-only';
 
 /**
  * The Project photo check's call (Batch 17, Part C): up to ten photos and the
- * floorplan, by URL, to Claude Opus 5.5 with the line catalogue, answered as
+ * floorplan, by URL, to PHOTO_CHECK_MODEL with the line catalogue, answered as
  * structured output (photo-check-schema.ts) and validated before anything is
  * costed. House spend, metered as the question `projectPhotoCheck` at the
  * model that answered; never a member's credit.
  *
- *   - Opus 5.5 always thinks: no `thinking` field; `output_config.effort`
+ *   - The model always thinks: no `thinking` field; `output_config.effort`
  *     (a setting, medium to start) is the control, and max_tokens (16,000)
  *     leaves room for the thinking as well as the answer.
- *   - No forced tool_choice (Opus 5.5 rejects it): structured output instead.
+ *   - No forced tool_choice (the model rejects it): structured output instead.
  *   - A policy refusal is re-run once, in the same call, on the model the API
  *     picks (`fallbacks: "default"`, beta server-side-fallback-2026-07-01).
  *     The installed SDK types only know the array form, so the scalar is sent
