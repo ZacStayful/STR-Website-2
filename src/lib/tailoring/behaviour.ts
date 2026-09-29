@@ -8,7 +8,7 @@
  *   location   they look in chosen areas and kept at least 3 outside them
  *   budget     they gave a budget and kept at least 3 deals outside it
  *   kind       they kept at least 3 deals of a deal type the profile does
- *              not show (Batch 17: Buy and let, BRRR, Rent-to-rent; the one
+ *              not show (Batch 17: Short-let, BRRR, Rent-to-rent; the one
  *              kept most)
  * Accepting changes the answer (type, bedrooms; kind adds the kept deal type
  * to the profile's types) or makes the check a nice-to-have (location,
@@ -56,7 +56,7 @@ export interface PromptState {
 
 const PLURAL = { flat: 'flats', house: 'houses' } as const;
 /** "4 BRRR projects". */
-const TYPE_PLURAL: Record<DealType, string> = { buy_let: 'Buy and let deals', brrr: 'BRRR projects', r2r: 'rent-to-rent deals' };
+const TYPE_PLURAL: Record<DealType, string> = { buy_str: 'short-let deals', brrr: 'BRRR projects', r2r: 'rent-to-rent deals', btl: 'buy-to-let deals' };
 const bedWord = (n: number) => (n >= 4 ? '4+ bed' : `${n}-bed`);
 const bedAnswer = (n: number) => (n >= 4 ? '4 or more bedrooms' : `${n} bed`);
 
@@ -110,7 +110,7 @@ export function promptsFor(p: TailoringProfile): Prompt[] {
   const shown = typesShown({ goals: g, about: p.about });
   const unshown = new Map<DealType, number>();
   for (const s of keeps) {
-    const t = s.dealType ?? (s.kind === 'rent' ? 'r2r' : 'buy_let');
+    const t = s.dealType ?? (s.kind === 'rent' ? 'r2r' : 'buy_str');
     if (!shown.includes(t)) unshown.set(t, (unshown.get(t) ?? 0) + 1);
   }
   const [top] = [...unshown.entries()].sort((a, b) => b[1] - a[1] || DEAL_TYPES.indexOf(a[0]) - DEAL_TYPES.indexOf(b[0]));

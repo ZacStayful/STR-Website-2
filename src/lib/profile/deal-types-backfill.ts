@@ -3,9 +3,9 @@
  * what each profile's older answers become, and what the dry run prints.
  * The mapping is deal-types.ts legacyDealTypes, decided 29 Sep:
  *
- *   investor → Buy and let; r2r → Rent-to-rent; both → both
+ *   investor → Short-let; r2r → Rent-to-rent; both → both
  *   sourcers by who they source for (both, or unanswered: both)
- *   exploring by what they picked; managers from their path (Buy and let)
+ *   exploring by what they picked; managers from their path (Short-let)
  *   Condition light refresh or full project → also BRRR, its budget a copy
  *     of the buy budget (Q19), its work: refresh → Light, project → Either (Q24)
  *   the rent-to-rent minimum profit copied from the one shared field

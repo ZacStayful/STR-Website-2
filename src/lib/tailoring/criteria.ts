@@ -104,13 +104,13 @@ export interface Wants {
   /** Their home, placed (its own point, else its postcode area's centre): "about N miles away". */
   home: { lat: number; lng: number } | null;
   budget: { min: number | null; max: number | null } | null;
-  /** Batch 17: the most they'd pay for a project, before works: judges BRRR deals (the budget judges Buy-and-let ones). */
+  /** Batch 17: the most they'd pay for a project, before works: judges BRRR deals (the budget judges Short-let ones). */
   brrrBudget: { min: number | null; max: number | null } | null;
   /** Batch 17: "Light refresh" only; null for "Full project" and "Either", which take both levels (Q24). */
   brrrWork: 'light' | null;
   cashTop: number | null;
   rentMax: number | null;
-  /** The buyer's minimum profit a month: judges Buy-and-let and BRRR deals. */
+  /** The buyer's minimum profit a month: judges Short-let and BRRR deals. */
   minProfit: number | null;
   /** Batch 17: the rent-to-rent minimum, its own answer now (it used to overwrite the buyer's): judges rentals. */
   minProfitR2r: number | null;
@@ -237,7 +237,7 @@ export interface DealFacts {
   motivationScore: number;
   /** Renovation or auction wording in what the deal says about itself (its type, title, features, or an auction signal); every Project deal. */
   needsWork: boolean;
-  /** Batch 17: the deal's own type (dealTypeOf); absent reads as its kind's (a sale is Buy and let). */
+  /** Batch 17: the deal's own type (dealTypeOf); absent reads as its kind's (a sale is Short-let). */
   dealType?: DealType;
   /** Batch 17: a Project (BRRR) deal's card numbers; null or absent for any other deal. */
   project?: ProjectCardData | null;
@@ -245,7 +245,7 @@ export interface DealFacts {
 
 /** The deal's type: its own, else its kind's. */
 export function typeOfFacts(f: Pick<DealFacts, 'kind' | 'dealType'>): DealType {
-  return f.dealType ?? (f.kind === 'rent' ? 'r2r' : 'buy_let');
+  return f.dealType ?? (f.kind === 'rent' ? 'r2r' : 'buy_str');
 }
 
 const num = (v: unknown): number | null => {
@@ -329,7 +329,7 @@ export function factsFromListing(l: SourcedListing, deal: Deal | null, screening
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,
     needsWork: isProject || NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | ')) || (motivation.fired ?? []).includes('auction'),
-    dealType: l.kind === 'rent' ? 'r2r' : isProject ? 'brrr' : 'buy_let',
+    dealType: l.kind === 'rent' ? 'r2r' : isProject ? 'brrr' : 'buy_str',
     project: isProject ? project : null,
   };
 }

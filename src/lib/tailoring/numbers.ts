@@ -100,12 +100,12 @@ function jobOf(p: TailoringProfile): 'source' | 'manage' | null {
 
 /**
  * The role a card is read for, by the deal's own type (a kind stands for its
- * type: a sale is Buy and let); null when the profile has no new answers
+ * type: a sale is Short-let); null when the profile has no new answers
  * (the card is unchanged).
  */
 export function roleFor(p: TailoringProfile | null | undefined, deal: DealType | 'sale' | 'rent'): Role | null {
   if (!usesTailoring(p)) return null;
-  const type: DealType = deal === 'sale' ? 'buy_let' : deal === 'rent' ? 'r2r' : deal;
+  const type: DealType = deal === 'sale' ? 'buy_str' : deal === 'rent' ? 'r2r' : deal;
   if (type === 'brrr') return 'brrr';
   const job = jobOf(p);
   if (job) return job;

@@ -30,14 +30,14 @@ test('a new member: nothing answered, the first question next, the gate closed',
 
 test('answers move the bar, "Not sure" counts for the bar but not as real, and the last one completes it', () => {
   let a = answer(fresh(), 'roles', ['investor']);
-  a = answer(a, 'deal_types', ['buy_let']);
+  a = answer(a, 'deal_types', ['buy_str']);
   a = answer(a, 'where', { mode: 'anywhere' });
   a = answer(a, 'budget', 'u200');
   const marks: AnsweredMap = { roles: { at: AT, notSure: false }, deal_types: { at: AT, notSure: false }, where: { at: AT, notSure: false }, budget: { at: AT, notSure: false } };
   let p = progress(a, quiz(marks));
   assert.equal(p.mandatoryDone, true, 'the mandatory answers open the app');
   assert.deepEqual(p.mandatory, ['roles', 'deal_types', 'where', 'budget']);
-  assert.deepEqual(p.types, ['buy_let']);
+  assert.deepEqual(p.types, ['buy_str']);
   assert.equal(p.next, 'deals_done', 'straight on to question 5');
   assert.equal(p.answered.length, 4);
   assert.equal(p.real, 4);
@@ -71,7 +71,7 @@ test('a question that stops applying drops out of the count; marks for it are ig
 
 test('the mandatory questions are one money question per chosen type (Q27)', () => {
   const marks: AnsweredMap = { roles: { at: AT, notSure: false }, deal_types: { at: AT, notSure: false }, where: { at: AT, notSure: false } };
-  const two = answer(answer(fresh(), 'roles', ['investor', 'r2r']), 'deal_types', ['buy_let', 'r2r']);
+  const two = answer(answer(fresh(), 'roles', ['investor', 'r2r']), 'deal_types', ['buy_str', 'r2r']);
   const p = progress(two, quiz(marks));
   assert.deepEqual(p.mandatory, ['roles', 'deal_types', 'where', 'budget', 'max_rent']);
   assert.equal(p.mandatoryDone, false);
@@ -89,7 +89,7 @@ test('a member from before the quiz is seeded from what they already told us', (
   assert.equal(answers.goals.path, 'buy');
   assert.equal(answers.goals.where, 'near');
   assert.deepEqual(Object.keys(answered).sort(), ['bedrooms', 'budget', 'deal_types', 'finance', 'roles', 'where']);
-  assert.deepEqual(answers.goals.dealTypes, ['buy_let']);
+  assert.deepEqual(answers.goals.dealTypes, ['buy_str']);
   assert.equal(answered.budget?.notSure, false);
   const p = progress(answers, quiz(answered));
   assert.equal(p.mandatoryDone, true, 'never blocked: they answered the welcome questions');
@@ -107,7 +107,7 @@ test('seeding: "not sure yet" on money counts as answered but not real; both kin
 
   const both = seedFromGoals(emptyAnswers(parseMarketGoals({ version: 1, sourcingKind: 'both', finance: { targetMarginPcm: 700 } })!, null, []), NOW);
   assert.deepEqual(both.answers.about.roles, ['investor', 'r2r']);
-  assert.deepEqual(both.answers.goals.dealTypes, ['buy_let', 'r2r']);
+  assert.deepEqual(both.answers.goals.dealTypes, ['buy_str', 'r2r']);
   assert.equal(both.answers.goals.where, 'anywhere');
   assert.equal(both.answered.budget?.notSure, true, 'a money question per type, "not sure yet" as then');
   assert.equal(both.answered.max_rent?.notSure, true);

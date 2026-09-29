@@ -168,11 +168,18 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
                 <fieldset className="text-sm">
                   <legend className="font-medium text-foreground">Which deals should this profile show?</legend>
                   <div className="mt-1 flex flex-wrap gap-3">
-                    {TYPE_CHOICES.map((c) => (
-                      <label key={c.value} className="flex items-center gap-1.5">
-                        <input type="checkbox" name="types" value={c.value} defaultChecked={dealTypesFor({ goals: view.active?.goals ?? null, about: null }).includes(c.value)} /> {c.label}
-                      </label>
-                    ))}
+                    {TYPE_CHOICES.map((c) =>
+                      c.soon ? (
+                        // Declared but not available yet: shown, never chosen (Batch 17, Part 4).
+                        <label key={c.value} className="flex items-center gap-1.5 text-muted-foreground opacity-60" aria-disabled="true">
+                          <input type="checkbox" disabled /> {c.label} <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium">Coming soon</span>
+                        </label>
+                      ) : (
+                        <label key={c.value} className="flex items-center gap-1.5">
+                          <input type="checkbox" name="types" value={c.value} defaultChecked={dealTypesFor({ goals: view.active?.goals ?? null, about: null }).includes(c.value)} /> {c.label}
+                        </label>
+                      ),
+                    )}
                   </div>
                 </fieldset>
                 <label className="flex items-start gap-2 text-sm">

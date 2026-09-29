@@ -16,7 +16,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { parseMarketGoals, type DealType, type MarketGoals } from '../market/goals.ts';
-import { DEAL_TYPE_LONG_LABELS, DEAL_TYPES, kindsFor, orderedTypes } from '../profile/deal-types.ts';
+import { availableTypes, DEAL_TYPE_LONG_LABELS, DEAL_TYPES, isAvailableDealType, kindsFor } from '../profile/deal-types.ts';
 import { parseAnswered, type AnsweredMap } from '../profile/state.ts';
 import type { QuestionId } from '../profile/questions.ts';
 
@@ -36,11 +36,11 @@ export const CLIENT_PERMISSION_LINE = 'Only add a client’s details with their 
 export const SHARED_QUESTION_IDS: readonly QuestionId[] = ['roles', 'deals_done', 'units_now', 'unit_areas', 'time', 'next_deal', 'deals_wanted', 'blocker', 'risk'];
 
 /** "Which deals should this profile show?" when a profile is made (Batch 17: the deal types, not a path). */
-export const TYPE_CHOICES: readonly { value: DealType; label: string }[] = DEAL_TYPES.map((t) => ({ value: t, label: DEAL_TYPE_LONG_LABELS[t] }));
+export const TYPE_CHOICES: readonly { value: DealType; label: string; soon: boolean }[] = DEAL_TYPES.map((t) => ({ value: t, label: DEAL_TYPE_LONG_LABELS[t], soon: !isAvailableDealType(t) }));
 
 /** The ticked types from the form, in the question's order; unknown values dropped. */
 export function typesFromForm(values: readonly unknown[]): DealType[] {
-  return orderedTypes(values.filter((v): v is DealType => (DEAL_TYPES as readonly unknown[]).includes(v)));
+  return availableTypes(values.filter((v): v is DealType => (DEAL_TYPES as readonly unknown[]).includes(v)));
 }
 
 export interface SavedProfile {
@@ -201,8 +201,10 @@ export function profileLinks(siteUrl: string, profile: Pick<SavedProfile, 'id' |
  */
 export function criteriaForNewProfile(source: MarketGoals | null, types: readonly DealType[]): MarketGoals | null {
   if (!source) return null;
-  if (types.length === 0) return source;
-  return { ...source, dealTypes: orderedTypes(types), sourcingKind: kindsFor(types) };
+  // Only available types count (a coming-soon one is never held).
+  const chosen = availableTypes(types);
+  if (chosen.length === 0) return source;
+  return { ...source, dealTypes: chosen, sourcingKind: kindsFor(chosen) };
 }
 
 /** The price line shown before creating a profile and on its settings, from the member's own daily-deals line. */

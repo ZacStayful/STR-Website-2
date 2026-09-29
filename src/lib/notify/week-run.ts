@@ -150,7 +150,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
   const went: WentDeal[] = [];
   {
     const earliest = new Date(now.getTime() - MAX_WINDOW_MS).toISOString();
-    // Batch 17: a Project deal's numbers tell its type; without the column yet, every sale is Buy and let.
+    // Batch 17: a Project deal's numbers tell its type; without the column yet, every sale is Short-let.
     let withProject = true;
     for (let from = 0; ; from += PAGE) {
       const read = () =>

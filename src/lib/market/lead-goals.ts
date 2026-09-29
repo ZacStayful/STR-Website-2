@@ -83,7 +83,7 @@ export function bedroomsFrom(v: unknown): 1 | 2 | 3 | 4 | null {
   return n >= 4 ? 4 : (n as 1 | 2 | 3);
 }
 
-const TYPES_FOR_KIND: Record<MarketGoals['sourcingKind'], DealType[]> = { sale: ['buy_let'], rent: ['r2r'], both: ['buy_let', 'r2r'] };
+const TYPES_FOR_KIND: Record<MarketGoals['sourcingKind'], DealType[]> = { sale: ['buy_str'], rent: ['r2r'], both: ['buy_str', 'r2r'] };
 
 export function kindFrom(v: unknown): MarketGoals['sourcingKind'] {
   const s = str(v).toLowerCase();

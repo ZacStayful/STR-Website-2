@@ -121,7 +121,7 @@ function DealTypesBackfill({ dry, done, written, left, already, outOfTime }: { d
     <section id="deal-types" className="rounded-xl border border-border bg-card p-5">
       <h2 className="text-base font-semibold text-foreground">Deal types: move existing profiles (Batch 17)</h2>
       <p className="mt-1 text-xs text-muted-foreground">
-        Maps each profile’s older answers to “Which deals do you want to see?”: investor → Buy and let, rent-to-rent → Rent-to-rent, Condition light refresh or full project → also BRRR (its budget a copy of the buy budget). Profiles with types already are left alone; profiles with nothing to go on meet the question on their next visit.
+        Maps each profile’s older answers to “Which deals do you want to see?”: investor → Short-let, rent-to-rent → Rent-to-rent, Condition light refresh or full project → also BRRR (its budget a copy of the buy budget). Profiles with types already are left alone; profiles with nothing to go on meet the question on their next visit.
       </p>
       {done === "done" && (
         <p role="status" className="mt-3 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">

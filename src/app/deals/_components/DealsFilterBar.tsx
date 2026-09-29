@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { filtersToSearch, kindOfTypes, SORT_LABELS, type DealFilters, type DealSort } from "@/lib/marketplace/grid";
-import { DEAL_TYPES, DEAL_TYPE_LABELS, type DealType } from "@/lib/profile/deal-types";
+import { AVAILABLE_DEAL_TYPES, DEAL_TYPE_LABELS, type DealType } from "@/lib/profile/deal-types";
 import type { AreaCount } from "@/lib/marketplace/queries";
 
 const BEDS = ["any", "1", "2", "3", "4+"] as const;
@@ -12,7 +12,7 @@ const BEDS = ["any", "1", "2", "3", "4+"] as const;
  * URL is always the whole filter. The member's kept and passed deals are on
  * My deals, not here (Batch 11).
  *
- * Batch 17: the deal types (Buy and let / BRRR / Rent-to-rent) replace the
+ * Batch 17: the deal types (Short-let / BRRR / Rent-to-rent) replace the
  * old buy-or-rent choice. With none in the URL the grid shows the profile's
  * own types (`ownTypes`); "All types" is one click (Q29).
  */
@@ -22,8 +22,8 @@ export function DealsFilterBar({ filters, counts, total, ownTypes }: { filters: 
   const areasWithDeals = counts.filter((c) => c.total > 0);
   const chosen = filters.areas.map((code) => areaMetaForCode(code));
   // No types means every type (the profile chose all three, or `type=all`).
-  const shown = filters.types.length === 0 ? DEAL_TYPES : filters.types;
-  const narrowed = shown.length < DEAL_TYPES.length;
+  const shown = filters.types.length === 0 ? AVAILABLE_DEAL_TYPES : filters.types;
+  const narrowed = shown.length < AVAILABLE_DEAL_TYPES.length;
   const isOwn = sameTypes(filters.types, ownTypes);
   const countKind = filters.kind !== "both" ? filters.kind : kindOfTypes(filters.types);
   return (
@@ -32,14 +32,14 @@ export function DealsFilterBar({ filters, counts, total, ownTypes }: { filters: 
         <fieldset className="text-xs text-muted-foreground">
           <legend className="block">Deals{isOwn && narrowed ? " · your profile’s" : ""}</legend>
           <span className="flex flex-wrap items-center gap-1">
-            {DEAL_TYPES.map((t) => (
+            {AVAILABLE_DEAL_TYPES.map((t) => (
               <label key={t} className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground">
                 <input type="checkbox" name="type" value={t} defaultChecked={shown.includes(t)} />
                 {DEAL_TYPE_LABELS[t]}
               </label>
             ))}
             {narrowed && (
-              <Link href={`/deals${filtersToSearch({ ...filters, kind: "both", types: [...DEAL_TYPES], page: 1 })}`} className="px-1 text-sm font-medium text-foreground underline-offset-4 hover:underline">
+              <Link href={`/deals${filtersToSearch({ ...filters, kind: "both", types: [...AVAILABLE_DEAL_TYPES], page: 1 })}`} className="px-1 text-sm font-medium text-foreground underline-offset-4 hover:underline">
                 All types
               </Link>
             )}
@@ -114,7 +114,7 @@ export function DealsFilterBar({ filters, counts, total, ownTypes }: { filters: 
 
 /** The same types, whatever the order; none and all three are both "every type". */
 function sameTypes(a: readonly DealType[], b: readonly DealType[]): boolean {
-  const all = (x: readonly DealType[]) => (x.length === 0 ? DEAL_TYPES : x);
+  const all = (x: readonly DealType[]) => (x.length === 0 ? AVAILABLE_DEAL_TYPES : x);
   const [x, y] = [all(a), all(b)];
   return x.length === y.length && x.every((t) => y.includes(t));
 }

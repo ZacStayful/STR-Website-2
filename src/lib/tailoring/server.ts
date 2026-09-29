@@ -132,7 +132,7 @@ async function signalsFor(admin: Admin, userIds: readonly string[], since: Date)
 /** The deal behind each signal: kind, type, size, area and price only. A deal that has since gone still counts. */
 async function signalFacts(admin: Admin, dealIds: readonly string[]): Promise<Map<string, Omit<Signal, 'dealId' | 'source' | 'at'>>> {
   const out = new Map<string, Omit<Signal, 'dealId' | 'source' | 'at'>>();
-  // Batch 17: the project column tells a BRRR deal; until the schema section is run, every sale is Buy and let.
+  // Batch 17: the project column tells a BRRR deal; until the schema section is run, every sale is Short-let.
   let withProject = true;
   for (const some of chunks(dealIds)) {
     const read = () => admin.from('marketplace_deals').select(`id, kind, raw_type, bedrooms, postcode_area, price_amount, price_period${withProject ? ', project' : ''}`).in('id', some);

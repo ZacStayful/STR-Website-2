@@ -4,7 +4,7 @@
  * batch (choose.ts) for everyone else. choose.test.ts holds the second to a
  * golden record through this function.
  *
- * Batch 17: a profile shows the deal types it chose (Buy and let, BRRR,
+ * Batch 17: a profile shows the deal types it chose (Short-let, BRRR,
  * Rent-to-rent). Each type is chosen on its own — the same chooser, its pool
  * narrowed to that type, judged on that type's own money answer (a BRRR
  * deal on the project budget) — and the day is their mix (mix.ts): the

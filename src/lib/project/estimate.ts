@@ -67,7 +67,7 @@ export interface ProjectEstimate extends Evaluation {
 }
 
 export type EstimateOutcome =
-  /** The photos say ready to go: released as an ordinary Buy-and-let deal. */
+  /** The photos say ready to go: released as an ordinary Short-let deal. */
   | { kind: 'ready'; lowWorks: number }
   | { kind: 'project'; estimate: ProjectEstimate };
 

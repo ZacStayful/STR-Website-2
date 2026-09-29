@@ -150,7 +150,7 @@ export function alertGapLine(asking: number | null, c: PayCeiling): string | nul
  */
 export function cashBuyerOf(goals: MarketGoals | null | undefined): boolean {
   if (!goals || goals.buyer.funding !== 'cash') return false;
-  if (goals.dealTypes) return goals.dealTypes.includes('buy_let') || goals.dealTypes.includes('brrr');
+  if (goals.dealTypes) return goals.dealTypes.includes('buy_str') || goals.dealTypes.includes('brrr');
   return goals.path === 'buy' || goals.path === null;
 }
 

@@ -137,8 +137,16 @@ export const GOAL_OPTIONS = {
    * Batch 17: "Which deals do you want to see?", per profile and multi-select,
    * in the question's own order. What decides the deal types a profile is
    * shown (src/lib/profile/deal-types.ts); sourcingKind follows from it.
+   *
+   *   buy_str  Short-let: buy it and run it as a holiday let
+   *   brrr     BRRR: buy, refurb, refinance (a Project deal)
+   *   r2r      Rent-to-rent
+   *   btl      Buy to let (long-term tenants): declared, NOT available yet
+   *            (AVAILABLE_DEAL_TYPES below). Batch 28 switches it on.
+   *
+   * Reserved for later, not a type yet: 'hmo'.
    */
-  dealTypes: ['buy_let', 'brrr', 'r2r'],
+  dealTypes: ['buy_str', 'brrr', 'r2r', 'btl'],
   /** Batch 17: "How much work would you take on?" for BRRR (it replaced Condition). */
   brrrWork: ['light', 'full', 'either'],
   /** Where to look: near home, chosen areas, anywhere, or near home plus the best elsewhere. */
@@ -187,6 +195,15 @@ export interface BuyerGoals {
 
 export type DealType = GoalOption<'dealTypes'>;
 
+/**
+ * The deal types a profile can choose and hold today: the one list the
+ * "Coming soon" state comes from. Buy to let (long-term tenants) is declared
+ * but not here, so the question shows it greyed out, "All of them" means
+ * these three, a stored 'btl' is dropped when read, and nothing sources,
+ * ranks or shows it. Batch 28 switches it on by adding it here.
+ */
+export const AVAILABLE_DEAL_TYPES: readonly DealType[] = ['buy_str', 'brrr', 'r2r'];
+
 export interface R2rGoals {
   /**
    * Batch 17: the rent-to-rent minimum profit, £ a month. It used to share
@@ -233,7 +250,7 @@ export interface MarketGoals {
   management: Management;
   riskAppetite: RiskAppetite;
   finance: FinanceGoals;
-  /** Buy-to-let (sale), rent-to-rent (rent) or both. Default sale. */
+  /** The listing kinds searched: sales (short-let purchases and BRRR), rentals (rent-to-rent) or both. Default sale. Batch 17: follows the deal types. */
   sourcingKind: SourcingKind;
   /** Rent-to-rent ceiling (£ pcm) for the daily pick's rent searches; null = no bound. */
   maxRentPcm: number | null;
@@ -405,9 +422,10 @@ export function parseSourcerGoals(raw: unknown): SourcerGoals {
 }
 
 /** The chosen deal types in the question's order, duplicates and unknowns dropped; null when none (never answered). */
+/** The stored types: available ones only (a 'btl' cannot be held while it is coming soon), in the question's order. */
 export function parseDealTypes(raw: unknown): DealType[] | null {
   if (!Array.isArray(raw)) return null;
-  const set = new Set(raw.filter((v) => (GOAL_OPTIONS.dealTypes as readonly unknown[]).includes(v)) as DealType[]);
+  const set = new Set(raw.filter((v) => (AVAILABLE_DEAL_TYPES as readonly unknown[]).includes(v)) as DealType[]);
   const out = GOAL_OPTIONS.dealTypes.filter((t) => set.has(t));
   return out.length > 0 ? out : null;
 }

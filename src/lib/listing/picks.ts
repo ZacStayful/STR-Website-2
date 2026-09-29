@@ -151,7 +151,7 @@ export const PICK_REASONS = [
   { key: 'not_str_suitable', label: 'Could not be run as a short let', group: 'type', effect: 'we tighten the short-let checks' },
   { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send properties that beat this one against a long-term let' },
   { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we add rent-to-rent deals to this profile' },
-  { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we add deals to buy to this profile' },
+  { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we add short-let deals to buy to this profile' },
   { key: 'seen_it', label: 'Already seen it', group: 'other', effect: null },
 ] as const;
 

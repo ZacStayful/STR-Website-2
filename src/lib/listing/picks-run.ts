@@ -812,20 +812,20 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const seatOf = (m: Member) => (m.profile ? { profile: m.profile.id } : {});
   const candidateCount = new Map<string, number>();
   // Batch 17: the pick is one of the profile's chosen deal types. A sale that
-  // is a Project deal is BRRR; any other sale Buy and let; a rental
+  // is a Project deal is BRRR; any other sale Short-let; a rental
   // Rent-to-rent. Unreadable: every sale might be a Project deal, so a sale
   // goes only to a profile that takes both.
   const candidateUrls = new Set(seenUrls);
   for (const list of olderCandidates.values()) for (const l of list) candidateUrls.add(l.canonicalUrl);
   const projects = await projectCardsByUrl([...candidateUrls]);
-  const typeOfCandidate = (l: SourcedListing): DealType | null => (l.kind === "rent" ? "r2r" : projects === null ? null : projects.has(l.canonicalUrl) ? "brrr" : "buy_let");
+  const typeOfCandidate = (l: SourcedListing): DealType | null => (l.kind === "rent" ? "r2r" : projects === null ? null : projects.has(l.canonicalUrl) ? "brrr" : "buy_str");
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
-    // What this profile is shown (Q22: an unanswered one, Buy and let + Rent-to-rent).
+    // What this profile is shown (Q22: an unanswered one, Short-let + Rent-to-rent).
     const types = typesShown({ goals: m.goals, about: tailoringBySeat.get(m.key)?.about ?? null });
     const typeFits = (l: SourcedListing) => {
       const t = typeOfCandidate(l);
-      return t === null ? types.includes("buy_let") && types.includes("brrr") : types.includes(t);
+      return t === null ? types.includes("buy_str") && types.includes("brrr") : types.includes(t);
     };
     // House picks have no filter, so no motivation read: there is no member
     // threshold to judge them against.

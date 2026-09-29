@@ -42,7 +42,7 @@ import {
 import { BUDGET_LABELS, isBudget } from '../market/filters.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, type AboutYou, type Role } from './about.ts';
-import { DEAL_TYPE_LONG_LABELS, DEAL_TYPES, dealTypesFor, kindsFor, orderedTypes } from './deal-types.ts';
+import { AVAILABLE_DEAL_TYPES, availableTypes, COMING_SOON_DEAL_TYPES, DEAL_TYPE_LABELS, DEAL_TYPE_LONG_LABELS, DEAL_TYPES, dealTypesFor, isAvailableDealType, kindsFor } from './deal-types.ts';
 import type { ImageKey } from './images.ts';
 
 export type SectionId = 'about' | 'buy' | 'r2r' | 'source' | 'manage';
@@ -124,6 +124,8 @@ export interface Option {
   help?: string;
   /** A photo on the answer card itself ('plain' draws the card without one). */
   image?: ImageKey | 'plain';
+  /** Shown greyed out with this badge ("Coming soon"), never selectable, and never ticked by "All of them". */
+  soon?: string;
 }
 
 type Text = string | ((a: Answers) => string);
@@ -184,6 +186,14 @@ function budgetVoice(a: Answers): 'own' | 'clients' | 'manager' {
 /** The "All of them" option of "Which deals do you want to see?". */
 export const ALL_DEAL_TYPES = 'all';
 
+/** The line under each deal type in the question. */
+const DEAL_TYPE_HELP: Record<DealType, string> = {
+  buy_str: 'Buy a property that’s ready to go, and run it as a holiday let',
+  brrr: 'A property that needs work, priced for it',
+  r2r: 'Rent from a landlord and let it short-term',
+  btl: 'Buy a property and let it to long-term tenants',
+};
+
 const BUDGET_OPTIONS: readonly Option[] = (['u200', '200-350', '350-500', '500+'] as const).map((b) => opt(b, BUDGET_LABELS[b]));
 
 export const QUESTIONS: readonly Question[] = [
@@ -207,12 +217,12 @@ export const QUESTIONS: readonly Question[] = [
     why: 'Today mixes the kinds you pick, and asks only what each one needs.',
     image: 'deal_types',
     short: 'Deals you want',
-    options: [
-      opt('buy_let', DEAL_TYPE_LONG_LABELS.buy_let, 'A property to buy that’s ready to let'),
-      opt('brrr', DEAL_TYPE_LONG_LABELS.brrr, 'A property that needs work, priced for it'),
-      opt('r2r', DEAL_TYPE_LONG_LABELS.r2r, 'Rent from a landlord and let it short-term'),
-      opt(ALL_DEAL_TYPES, 'All of them'),
-    ],
+    // Every declared type in the question's order; one not yet available is shown greyed out,
+    // "Coming soon" (AVAILABLE_DEAL_TYPES, market/goals.ts). "All of them" is every available one.
+    options: DEAL_TYPES.map((t) => {
+      const o = opt(t, DEAL_TYPE_LONG_LABELS[t], DEAL_TYPE_HELP[t]);
+      return isAvailableDealType(t) ? o : { ...o, soon: 'Coming soon' };
+    }).concat([opt(ALL_DEAL_TYPES, 'All of them')]),
     allOption: ALL_DEAL_TYPES,
     mandatory: true,
     affectsMatch: true,
@@ -241,11 +251,11 @@ export const QUESTIONS: readonly Question[] = [
     title: (a) => (budgetVoice(a) === 'clients' ? 'What do your clients typically spend?' : budgetVoice(a) === 'manager' ? 'What’s the budget for deals you take on?' : 'What’s your budget?'),
     why: (a) => (budgetVoice(a) === 'clients' ? 'So we find deals your clients can actually buy.' : budgetVoice(a) === 'manager' ? 'So we pitch deals at the right price for you.' : 'So every deal is one you could actually buy.'),
     image: (a) => (budgetVoice(a) === 'clients' ? 'budget_source' : budgetVoice(a) === 'manager' ? 'budget_manage' : 'budget_buy'),
-    short: 'Buy and let budget',
+    short: 'Short-let budget',
     options: BUDGET_OPTIONS,
     mandatory: true,
     affectsMatch: true,
-    applies: wants('buy_let'),
+    applies: wants('buy_str'),
   },
   {
     id: 'brrr_budget',
@@ -364,7 +374,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'cash_available',
     short: 'Cash available',
     options: [opt('u30', 'Under £30k'), opt('30-60', '£30k to £60k'), opt('60-100', '£60k to £100k'), opt('100-200', '£100k to £200k'), opt('200+', '£200k or more')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'funding',
@@ -375,7 +385,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'funding',
     short: 'Funding',
     options: [opt('cash', 'Cash'), opt('btl', 'Buy-to-let mortgage'), opt('holiday_let', 'Holiday-let mortgage'), opt('bridging', 'Bridging')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'finance',
@@ -385,7 +395,7 @@ export const QUESTIONS: readonly Question[] = [
     why: 'So every profit figure uses your numbers, not ours.',
     image: 'finance',
     short: 'Deposit and rate',
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'entity',
@@ -396,7 +406,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'entity',
     short: 'Buying as',
     options: [opt('own_name', 'Own name'), opt('company', 'Limited company'), opt('undecided', 'Undecided')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'main_goal',
@@ -407,7 +417,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'main_goal',
     short: 'Main goal',
     options: [opt('cashflow', 'Monthly cashflow'), opt('growth', 'Long-term growth'), opt('both', 'Both')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'min_profit',
@@ -418,7 +428,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'min_profit',
     short: 'Minimum profit',
     presets: PROFIT_PRESETS_PCM,
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'property_type',
@@ -429,7 +439,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'cards',
     short: 'Property type',
     options: [opt('flat', 'Flat', undefined, 'property_flat'), opt('house', 'House', undefined, 'property_house'), opt('either', 'Either', undefined, 'plain')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'bedrooms',
@@ -440,7 +450,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'bedrooms',
     short: 'Bedrooms',
     options: [opt('1', '1 bed'), opt('2', '2 bed'), opt('3', '3 bed'), opt('4', '4 or more')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'brrr_work',
@@ -462,7 +472,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'leasehold',
     short: 'Leasehold',
     options: [opt('yes', 'Yes'), opt('no', 'No'), opt('depends', 'Depends on the lease')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
   {
     id: 'restricted_areas',
@@ -473,7 +483,7 @@ export const QUESTIONS: readonly Question[] = [
     image: 'restricted_areas',
     short: 'Restricted areas',
     options: [opt('avoid', 'Avoid them'), opt('warn', 'Show them with a warning')],
-    applies: wants('buy_let', 'brrr'),
+    applies: wants('buy_str', 'brrr'),
   },
 
   // ── Section C: rent-to-rent operator ──
@@ -656,7 +666,7 @@ export function imageOf(q: Question, a: Answers): ImageKey | 'cards' {
 /** The money question for each chosen type (all mandatory, Q27): the budget, the project budget, the rent ceiling. */
 export function moneyQuestionsFor(types: readonly DealType[]): QuestionId[] {
   const out: QuestionId[] = [];
-  if (types.includes('buy_let')) out.push('budget');
+  if (types.includes('buy_str')) out.push('budget');
   if (types.includes('brrr')) out.push('brrr_budget');
   if (types.includes('r2r')) out.push('max_rent');
   return out;
@@ -694,11 +704,15 @@ function withRoles(a: Answers, about: AboutYou): Answers {
   return { ...next, goals };
 }
 
-/** The deal types as the question posts them: "All of them" ticks every type. */
+/**
+ * The deal types as the question posts them: "All of them" ticks every
+ * available type, and a type that is not available yet (Buy to let) is never
+ * kept, whatever is posted.
+ */
 export function dealTypesFromAnswer(raw: unknown): DealType[] {
   const list = Array.isArray(raw) ? raw : [raw];
-  if (list.includes(ALL_DEAL_TYPES)) return [...DEAL_TYPES];
-  return orderedTypes(list.filter((v): v is DealType => (DEAL_TYPES as readonly unknown[]).includes(v)));
+  if (list.includes(ALL_DEAL_TYPES)) return [...AVAILABLE_DEAL_TYPES];
+  return availableTypes(list.filter((v): v is DealType => (DEAL_TYPES as readonly unknown[]).includes(v)));
 }
 
 const setBuyer = (a: Answers, patch: Partial<BuyerGoals>): Answers => ({ ...a, goals: { ...a.goals, buyer: { ...a.goals.buyer, ...patch } } });
@@ -726,6 +740,9 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
     }
     case 'deal_types': {
       const types = dealTypesFromAnswer(raw);
+      const posted = Array.isArray(raw) ? raw : [raw];
+      const soon = COMING_SOON_DEAL_TYPES.filter((t) => posted.includes(t));
+      if (types.length === 0 && soon.length > 0) return fail(`${soon.map((t) => DEAL_TYPE_LABELS[t]).join(' and ')} ${soon.length === 1 ? 'is' : 'are'} coming soon. Tick one of the others for now.`);
       if (types.length === 0) return fail('Tick at least one.');
       return { ok: true, answers: { ...a, goals: { ...goals, dealTypes: types, sourcingKind: kindsFor(types) } } };
     }
@@ -1068,7 +1085,8 @@ export function answerLabel(id: QuestionId, a: Answers): string | null {
     case 'multi': {
       const opts = optionsOf(q, a);
       const picked = v as string[];
-      if (q.allOption && opts.filter((o) => o.value !== q.allOption).every((o) => picked.includes(o.value))) return opts.find((o) => o.value === q.allOption)?.label ?? null;
+      // "All of them": every option that can be chosen (never one that is coming soon).
+      if (q.allOption && opts.filter((o) => o.value !== q.allOption && !o.soon).every((o) => picked.includes(o.value))) return opts.find((o) => o.value === q.allOption)?.label ?? null;
       const labels = picked.map((x) => opts.find((o) => o.value === x)?.label).filter((x): x is string => Boolean(x));
       return labels.length > 0 ? labels.join(', ') : null;
     }

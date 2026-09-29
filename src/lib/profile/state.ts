@@ -167,7 +167,7 @@ export function seedFromGoals(a: Answers, now: Date): { answers: Answers; answer
     answers = withRoles.answers;
     answered.roles = { at, notSure: false };
   }
-  const types = a.goals.sourcingKind === 'rent' ? ['r2r'] : a.goals.sourcingKind === 'both' ? ['buy_let', 'r2r'] : ['buy_let'];
+  const types = a.goals.sourcingKind === 'rent' ? ['r2r'] : a.goals.sourcingKind === 'both' ? ['buy_str', 'r2r'] : ['buy_str'];
   const withTypes = applyAnswer('deal_types', types, answers);
   if (withTypes.ok) {
     answers = withTypes.answers;

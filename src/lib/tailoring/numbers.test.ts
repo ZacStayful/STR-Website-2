@@ -125,10 +125,10 @@ test('a Project deal shows the project’s numbers to everyone, sourcers and man
 });
 
 test('sourcers and managers keep their own numbers on other deals, unless they also invest or run rent-to-rent (Q23 a)', () => {
-  assert.equal(roleFor(profile({}, { roles: ['sourcer'] }), 'buy_let'), 'source');
+  assert.equal(roleFor(profile({}, { roles: ['sourcer'] }), 'buy_str'), 'source');
   assert.equal(roleFor(profile({}, { roles: ['sourcer'] }), 'r2r'), 'source');
-  assert.equal(roleFor(profile({}, { roles: ['manager'] }), 'buy_let'), 'manage');
-  assert.equal(roleFor(profile({}, { roles: ['sourcer', 'investor'] }), 'buy_let'), 'buy_cashflow');
+  assert.equal(roleFor(profile({}, { roles: ['manager'] }), 'buy_str'), 'manage');
+  assert.equal(roleFor(profile({}, { roles: ['sourcer', 'investor'] }), 'buy_str'), 'buy_cashflow');
   assert.equal(roleFor(profile({}, { roles: ['manager', 'r2r'] }), 'r2r'), 'r2r');
   assert.equal(roleFor(profile({}, { roles: ['investor'] }), 'r2r'), 'r2r', 'an investor looking at a rental reads it as a rental');
   // Answered before the roles question: the old path decides, as before.

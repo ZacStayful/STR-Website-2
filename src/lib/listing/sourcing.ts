@@ -99,7 +99,7 @@ export function budgetBounds(budget: MarketGoals['budget']): { min: number | nul
 
 /**
  * Batch 17: the price band a profile's sale searches cover. The budget for
- * Buy and let, the project budget (before works) for BRRR, the two together
+ * Short-let, the project budget (before works) for BRRR, the two together
  * when both are chosen: each candidate is then held to its own type's band
  * (withinTypeBudget). A profile that has not answered the deal types keeps
  * its budget, as before.
@@ -108,7 +108,7 @@ export function saleBoundsForGoals(goals: MarketGoals): { min: number | null; ma
   const types = goals.dealTypes ?? [];
   if (!types.includes('brrr')) return budgetBounds(goals.budget);
   const project = budgetBounds(goals.brrr.budget);
-  if (!types.includes('buy_let')) return project;
+  if (!types.includes('buy_str')) return project;
   const buy = budgetBounds(goals.budget);
   return {
     min: buy.min === null || project.min === null ? null : Math.min(buy.min, project.min),

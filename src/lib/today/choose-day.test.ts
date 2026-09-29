@@ -85,49 +85,49 @@ const input = (types: DealType[] | undefined, over: Partial<ChooseInput> = {}, g
 
 const typesOf = (ids: string[]) => ids.map((id) => id.replace(/\d+$/, ''));
 
-test('All three: Today starts 2 Buy and let / 2 Rent-to-rent / 1 BRRR, dealt round the types', async () => {
-  const { reads, seen } = readsOf(poolOf({ buy_let: 6, brrr: 6, r2r: 6 }));
-  const day = await chooseDay(input(['buy_let', 'brrr', 'r2r']), reads);
+test('All three: Today starts 2 Short-let / 2 Rent-to-rent / 1 BRRR, dealt round the types', async () => {
+  const { reads, seen } = readsOf(poolOf({ buy_str: 6, brrr: 6, r2r: 6 }));
+  const day = await chooseDay(input(['buy_str', 'brrr', 'r2r']), reads);
   assert.equal(day.dealIds.length, 5);
   const t = typesOf(day.dealIds);
-  assert.deepEqual([t.filter((x) => x === 'buy_let').length, t.filter((x) => x === 'r2r').length, t.filter((x) => x === 'brrr').length], [2, 2, 1]);
-  assert.deepEqual(seen, ['buy_let', 'brrr', 'r2r'], 'one pool read per type, each narrowed to it');
+  assert.deepEqual([t.filter((x) => x === 'buy_str').length, t.filter((x) => x === 'r2r').length, t.filter((x) => x === 'brrr').length], [2, 2, 1]);
+  assert.deepEqual(seen, ['buy_str', 'brrr', 'r2r'], 'one pool read per type, each narrowed to it');
   assert.equal(day.nearMiss, false);
 });
 
-test('Buy and let only: never a rental or a Project deal, even on a short day', async () => {
-  const { reads, seen } = readsOf(poolOf({ buy_let: 2, brrr: 6, r2r: 6 }));
-  const day = await chooseDay(input(['buy_let']), reads);
-  assert.deepEqual(day.dealIds, ['buy_let1', 'buy_let2']);
-  assert.ok(seen.every((s) => s === 'buy_let'), 'no other type is ever read');
+test('Short-let only: never a rental or a Project deal, even on a short day', async () => {
+  const { reads, seen } = readsOf(poolOf({ buy_str: 2, brrr: 6, r2r: 6 }));
+  const day = await chooseDay(input(['buy_str']), reads);
+  assert.deepEqual(day.dealIds, ['buy_str1', 'buy_str2']);
+  assert.ok(seen.every((s) => s === 'buy_str'), 'no other type is ever read');
 });
 
 test('an empty slot goes to another chosen type, never an unchosen one', async () => {
-  const { reads } = readsOf(poolOf({ buy_let: 6, r2r: 6, brrr: 0 }));
-  const day = await chooseDay(input(['buy_let', 'brrr', 'r2r']), reads);
+  const { reads } = readsOf(poolOf({ buy_str: 6, r2r: 6, brrr: 0 }));
+  const day = await chooseDay(input(['buy_str', 'brrr', 'r2r']), reads);
   assert.equal(day.dealIds.length, 5);
   assert.ok(!day.dealIds.some((id) => id.startsWith('brrr')));
-  const onlyBrrr = await chooseDay(input(['brrr', 'r2r']), readsOf(poolOf({ buy_let: 6, brrr: 1, r2r: 1 })).reads);
-  assert.deepEqual([...onlyBrrr.dealIds].sort(), ['brrr1', 'r2r1'], 'two types with one deal each: two cards, no Buy and let');
+  const onlyBrrr = await chooseDay(input(['brrr', 'r2r']), readsOf(poolOf({ buy_str: 6, brrr: 1, r2r: 1 })).reads);
+  assert.deepEqual([...onlyBrrr.dealIds].sort(), ['brrr1', 'r2r1'], 'two types with one deal each: two cards, no Short-let');
 });
 
 test('the mix shifts toward what the member keeps, but keeps one of each', async () => {
-  const { reads } = readsOf(poolOf({ buy_let: 6, brrr: 6, r2r: 6 }));
-  const day = await chooseDay(input(['buy_let', 'brrr', 'r2r'], { typeKeeps: { r2r: 6 } }), reads);
+  const { reads } = readsOf(poolOf({ buy_str: 6, brrr: 6, r2r: 6 }));
+  const day = await chooseDay(input(['buy_str', 'brrr', 'r2r'], { typeKeeps: { r2r: 6 } }), reads);
   const t = typesOf(day.dealIds);
-  assert.deepEqual([t.filter((x) => x === 'buy_let').length, t.filter((x) => x === 'r2r').length, t.filter((x) => x === 'brrr').length], [1, 3, 1]);
+  assert.deepEqual([t.filter((x) => x === 'buy_str').length, t.filter((x) => x === 'r2r').length, t.filter((x) => x === 'brrr').length], [1, 3, 1]);
 });
 
 test('no types: the whole pool, one list, exactly as before Batch 17', async () => {
-  const { reads, seen } = readsOf(poolOf({ buy_let: 3, brrr: 3, r2r: 3 }));
+  const { reads, seen } = readsOf(poolOf({ buy_str: 3, brrr: 3, r2r: 3 }));
   const day = await chooseDay(input(undefined), reads);
   assert.equal(day.dealIds.length, 5);
   assert.deepEqual(seen, ['all']);
 });
 
-test('a profile with no types yet is shown Buy and let + Rent-to-rent: never BRRR (Q22)', async () => {
+test('a profile with no types yet is shown Short-let + Rent-to-rent: never BRRR (Q22)', async () => {
   const types = typesShown({ goals: null, about: null });
-  const day = await chooseDay(input(types), readsOf(poolOf({ buy_let: 6, brrr: 6, r2r: 6 })).reads);
+  const day = await chooseDay(input(types), readsOf(poolOf({ buy_str: 6, brrr: 6, r2r: 6 })).reads);
   assert.equal(day.dealIds.length, 5);
   assert.ok(!day.dealIds.some((id) => id.startsWith('brrr')));
 });
@@ -135,7 +135,7 @@ test('a profile with no types yet is shown Buy and let + Rent-to-rent: never BRR
 test('each type judged on its own money answer: BRRR on the project budget, before works', () => {
   const g = { ...DEFAULT_GOALS, budget: '500+' as const, brrr: { budget: 'u200' as const, work: null } };
   assert.equal(inputForType(input(['brrr'], {}, g), 'brrr').goals?.budget, 'u200');
-  assert.equal(inputForType(input(['brrr'], {}, g), 'buy_let').goals?.budget, '500+');
+  assert.equal(inputForType(input(['brrr'], {}, g), 'buy_str').goals?.budget, '500+');
   assert.equal(inputForType(input(['r2r'], {}, g), 'r2r').goals?.sourcingKind, 'rent');
 });
 
@@ -145,11 +145,11 @@ test('"I want rent-to-rent, not to buy" never flips a type’s pool (it adds the
 });
 
 test('re-choosing a mixed day keeps each type’s answered cards where they are', async () => {
-  const rows = poolOf({ buy_let: 8, brrr: 4, r2r: 8 });
+  const rows = poolOf({ buy_str: 8, brrr: 4, r2r: 8 });
   const { reads } = readsOf(rows);
-  const first = await chooseDay(input(['buy_let', 'brrr', 'r2r']), reads);
+  const first = await chooseDay(input(['buy_str', 'brrr', 'r2r']), reads);
   const pinned = new Set([first.dealIds[0], first.dealIds[2]]);
-  const again = await chooseDay(input(['buy_let', 'brrr', 'r2r'], { exclude: new Set(first.dealIds.filter((id) => !pinned.has(id))) }), reads, { current: first.dealIds, pinned });
+  const again = await chooseDay(input(['buy_str', 'brrr', 'r2r'], { exclude: new Set(first.dealIds.filter((id) => !pinned.has(id))) }), reads, { current: first.dealIds, pinned });
   assert.equal(again.dealIds[0], first.dealIds[0]);
   assert.equal(again.dealIds[2], first.dealIds[2]);
   assert.equal(new Set(again.dealIds).size, again.dealIds.length);

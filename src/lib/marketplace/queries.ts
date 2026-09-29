@@ -37,7 +37,7 @@ type Admin = ReturnType<typeof createAdminClient>;
  * Batch 17's marketplace_deals.project (a Project deal's card numbers). The
  * column comes with the schema section; until it is run a read that names it
  * fails, so the first such failure is remembered and every read after it goes
- * without: there are no Project deals yet, and every sale is Buy and let. It
+ * without: there are no Project deals yet, and every sale is Short-let. It
  * is never in CARD_COLUMNS for the same reason (read it with projectCardsFor).
  */
 let projectColumnMissing = false;
@@ -281,8 +281,8 @@ const TYPE_CHUNK = 150;
 
 /**
  * Batch 17: each deal's type by id — Rent-to-rent for a rental, BRRR for a
- * sale with a Project estimate, Buy and let for any other sale. Until the
- * schema section is run every sale is Buy and let. Deals it cannot read are
+ * sale with a Project estimate, Short-let for any other sale. Until the
+ * schema section is run every sale is Short-let. Deals it cannot read are
  * absent.
  */
 export async function dealTypesByIds(ids: readonly string[]): Promise<Map<string, DealType>> {

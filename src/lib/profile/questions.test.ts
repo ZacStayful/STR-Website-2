@@ -55,8 +55,8 @@ test('the questions a profile gets follow its deal types, with the money questio
   let a = fresh();
   assert.deepEqual(questionsFor(a).slice(0, 3).map((q) => q.id), ['roles', 'deal_types', 'where'], 'nothing type-specific until they say');
   a = answer(a, 'roles', ['investor']);
-  assert.equal(a.goals.sourcingKind, 'sale', 'an investor maps to Buy and let until they choose');
-  a = answer(a, 'deal_types', ['buy_let']);
+  assert.equal(a.goals.sourcingKind, 'sale', 'an investor maps to Short-let until they choose');
+  a = answer(a, 'deal_types', ['buy_str']);
   const ids = questionsFor(a).map((q) => q.id);
   assert.deepEqual(ids.slice(0, 4), ['roles', 'deal_types', 'where', 'budget']);
   assert.ok(ids.includes('cash_available') && ids.includes('leasehold'), 'the buying section');
@@ -74,7 +74,7 @@ test('"All of them" ticks every type; the kind searched follows; nothing is requ
   assert.equal(applyAnswer('deal_types', [], a).ok, false);
   assert.equal(applyAnswer('deal_types', ['nonsense'], a).ok, false);
   a = answer(a, 'deal_types', ['all']);
-  assert.deepEqual(a.goals.dealTypes, ['buy_let', 'brrr', 'r2r']);
+  assert.deepEqual(a.goals.dealTypes, ['buy_str', 'brrr', 'r2r']);
   assert.equal(a.goals.sourcingKind, 'both');
   assert.equal(answerLabel('deal_types', a), 'All of them');
   assert.deepEqual(moneyQuestionsFor(a.goals.dealTypes!), ['budget', 'brrr_budget', 'max_rent']);
@@ -89,21 +89,21 @@ test('"All of them" ticks every type; the kind searched follows; nothing is requ
 
 test('the question count per combination (the plan’s table), plus the role sections', () => {
   const count = (types: string[], roles: string[] = ['investor']) => questionsFor(answer(answer(fresh(), 'roles', roles), 'deal_types', types)).length;
-  assert.equal(count(['buy_let']), 21);
+  assert.equal(count(['buy_str']), 21);
   assert.equal(count(['brrr']), 22);
   assert.equal(count(['r2r']), 17);
-  assert.equal(count(['buy_let', 'brrr']), 23);
-  assert.equal(count(['buy_let', 'r2r']), 28);
+  assert.equal(count(['buy_str', 'brrr']), 23);
+  assert.equal(count(['buy_str', 'r2r']), 28);
   assert.equal(count(['brrr', 'r2r']), 29);
   assert.equal(count(['all']), 30);
-  assert.equal(count(['buy_let'], ['investor', 'sourcer']), 24, 'sourcing adds 3');
-  assert.equal(count(['buy_let'], ['manager']), 25, 'management adds 4');
+  assert.equal(count(['buy_str'], ['investor', 'sourcer']), 24, 'sourcing adds 3');
+  assert.equal(count(['buy_str'], ['manager']), 25, 'management adds 4');
 });
 
 test('roles no longer pick a path: sourcers and managers get their sections, and money questions in their words', () => {
   let s = answer(fresh(), 'roles', ['sourcer']);
   assert.deepEqual(s.about.roles, ['sourcer']);
-  s = answer(s, 'deal_types', ['buy_let', 'r2r']);
+  s = answer(s, 'deal_types', ['buy_str', 'r2r']);
   const ids = questionsFor(s).map((q) => q.id);
   assert.ok(ids.includes('sourcing_fee') && ids.includes('motivated_sellers'));
   assert.ok(!ids.includes('units_managed'));
@@ -112,7 +112,7 @@ test('roles no longer pick a path: sourcers and managers get their sections, and
   assert.equal(text(q('max_rent').title, s), 'What’s the most rent your clients would pay a landlord each month?');
   const both = answer(s, 'roles', ['investor', 'sourcer']);
   assert.equal(text(q('budget').title, both), 'What’s your budget?', 'anyone who also invests answers for themselves');
-  const m = answer(answer(fresh(), 'roles', ['manager']), 'deal_types', ['buy_let']);
+  const m = answer(answer(fresh(), 'roles', ['manager']), 'deal_types', ['buy_str']);
   assert.equal(text(q('budget').title, m), 'What’s the budget for deals you take on?');
   assert.ok(questionsFor(m).some((x) => x.id === 'looking_for'));
 });
@@ -121,7 +121,7 @@ test('BRRR: the project budget and how much work, stored on their own', () => {
   let a = answer(answer(fresh(), 'roles', ['investor']), 'deal_types', ['brrr']);
   a = answer(a, 'brrr_budget', 'u200');
   assert.equal(a.goals.brrr.budget, 'u200');
-  assert.equal(a.goals.budget, null, 'the buy-and-let budget is its own answer');
+  assert.equal(a.goals.budget, null, 'the short-let budget is its own answer');
   assert.equal(answerLabel('brrr_budget', a), 'Under £200k');
   a = answer(a, 'brrr_work', 'either');
   assert.equal(a.goals.brrr.work, 'either');

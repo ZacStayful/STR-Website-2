@@ -271,7 +271,7 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
   return out;
 }
 
-/** The deal types this member's profile is shown (Batch 17): its choice, its older answers mapped, or Buy and let + Rent-to-rent. */
+/** The deal types this member's profile is shown (Batch 17): its choice, its older answers mapped, or Short-let + Rent-to-rent. */
 export function typesFor(member: Pick<MemberContext, 'goals' | 'tailoring'>): DealType[] {
   return typesShown({ goals: member.goals, about: member.tailoring?.about ?? null });
 }

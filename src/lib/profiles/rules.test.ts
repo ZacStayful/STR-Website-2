@@ -55,14 +55,14 @@ test('labels show from two live profiles, or once one was deleted', () => {
 });
 
 test('a new profile copies the criteria and shows the deal types ticked (Batch 17)', () => {
-  const buy = { ...DEFAULT_GOALS, path: 'buy' as const, sourcingKind: 'sale' as const, budget: '200-350' as const, dealTypes: ['buy_let' as const] };
+  const buy = { ...DEFAULT_GOALS, path: 'buy' as const, sourcingKind: 'sale' as const, budget: '200-350' as const, dealTypes: ['buy_str' as const] };
   assert.equal(criteriaForNewProfile(buy, []), buy, 'nothing ticked: the copy as it is');
   const r2r = criteriaForNewProfile(buy, ['r2r', 'brrr'])!;
   assert.deepEqual(r2r.dealTypes, ['brrr', 'r2r']);
   assert.equal(r2r.sourcingKind, 'both');
   assert.equal(r2r.budget, '200-350', 'everything else is copied');
-  assert.equal(criteriaForNewProfile(null, ['buy_let']), null);
-  assert.deepEqual(typesFromForm(['r2r', 'nonsense', 'buy_let', 'r2r']), ['buy_let', 'r2r']);
+  assert.equal(criteriaForNewProfile(null, ['buy_str']), null);
+  assert.deepEqual(typesFromForm(['r2r', 'nonsense', 'buy_str', 'r2r']), ['buy_str', 'r2r']);
 });
 
 test('the price line names the profile and keeps the member’s own price', () => {

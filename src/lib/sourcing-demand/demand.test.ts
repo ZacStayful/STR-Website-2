@@ -14,7 +14,7 @@ const OPTS = { ...ELIG, ...AREAS };
 const COALVILLE = { postcode: 'LE67 3AB', lat: 52.7229, lng: -1.3706 };
 
 /** A profile's goals; its deal types follow the kind it searches unless given (Batch 17: the types decide the kinds). */
-const TYPES_OF: Record<MarketGoals['sourcingKind'], MarketGoals['dealTypes']> = { sale: ['buy_let'], rent: ['r2r'], both: ['buy_let', 'r2r'] };
+const TYPES_OF: Record<MarketGoals['sourcingKind'], MarketGoals['dealTypes']> = { sale: ['buy_str'], rent: ['r2r'], both: ['buy_str', 'r2r'] };
 const goals = (over: Partial<MarketGoals> = {}): MarketGoals => ({ ...DEFAULT_GOALS, ...over, dealTypes: over.dealTypes !== undefined ? over.dealTypes : TYPES_OF[over.sourcingKind ?? 'sale'] });
 const member = (id: string, over: Partial<DemandMember> = {}): DemandMember => ({ id, email: `${id}@example.com`, lastSeenAt: seen(1), payerId: id, paying: false, unitAreas: [], switchedOff: false, ...over });
 const profile = (memberId: string, g: MarketGoals | null, areas: string[] = [], profileId: string | null = `${memberId}-p`): DemandProfile => ({ memberId, profileId, goals: g, areas });

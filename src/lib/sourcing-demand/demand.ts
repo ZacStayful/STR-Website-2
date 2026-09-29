@@ -131,8 +131,8 @@ export function profileAreas(profile: Pick<DemandProfile, 'goals' | 'areas'>, un
 
 /**
  * The kinds a profile's deal types search (Batch 17, the one helper every
- * "which deal types" decision goes through): Buy and let and BRRR are sales,
- * Rent-to-rent a rental. A profile with no types yet: Buy and let +
+ * "which deal types" decision goes through): Short-let and BRRR are sales,
+ * Rent-to-rent a rental. A profile with no types yet: Short-let +
  * Rent-to-rent, what it is shown (Q22).
  */
 export function kindsOf(goals: MarketGoals, roles: AboutYou['roles'] = []): DemandKind[] {

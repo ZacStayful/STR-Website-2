@@ -18,7 +18,7 @@ test('the three live profiles with answers (29 Sep) map as the plan says', () =>
   const both = backfillProfile(goals({ path: 'r2r', sourcingKind: 'rent', budget: '200-350' }), about(['investor', 'r2r'], { mainRole: 'r2r' }), {}, NOW);
   assert.equal(both.status, 'map');
   if (both.status === 'map') {
-    assert.deepEqual(both.after.types, ['buy_let', 'r2r']);
+    assert.deepEqual(both.after.types, ['buy_str', 'r2r']);
     assert.equal(both.goals.sourcingKind, 'both');
     assert.equal(both.after.brrrBudget, null, 'no BRRR: Condition was never answered');
   }
@@ -28,7 +28,7 @@ test('Condition refresh or project adds BRRR: its budget a copy of the buy budge
   const refresh = backfillProfile(goals({ path: 'buy', budget: 'u200', buyer: { ...DEFAULT_GOALS.buyer, condition: 'refresh' } }), about(['investor']), { budget: { at: AT, notSure: false } }, NOW);
   assert.equal(refresh.status, 'map');
   if (refresh.status === 'map') {
-    assert.deepEqual(refresh.after.types, ['buy_let', 'brrr']);
+    assert.deepEqual(refresh.after.types, ['buy_str', 'brrr']);
     assert.equal(refresh.after.brrrBudget, 'u200');
     assert.equal(refresh.after.brrrWork, 'light');
     assert.ok(refresh.marks.deal_types && refresh.marks.brrr_budget && refresh.marks.brrr_work, 'the new mandatory questions are answered: no trip back through the gate');
@@ -51,7 +51,7 @@ test('idempotent: a profile with types is left alone; one with nothing to go on 
 
 test('managers from their path, sourcers by who they source for; the rent-to-rent minimum copied across', () => {
   const manager = backfillProfile(goals({ path: 'manage' }), about(['manager']), {}, NOW);
-  if (manager.status === 'map') assert.deepEqual(manager.after.types, ['buy_let']);
+  if (manager.status === 'map') assert.deepEqual(manager.after.types, ['buy_str']);
   const sourcer = backfillProfile(goals({ path: 'source', sourcer: { ...DEFAULT_GOALS.sourcer, sourceFor: 'r2r' } }), about(['sourcer']), {}, NOW);
   if (sourcer.status === 'map') assert.deepEqual(sourcer.after.types, ['r2r']);
   const r2r = backfillProfile(goals({ path: 'r2r', sourcingKind: 'rent', finance: { ...DEFAULT_GOALS.finance, targetMarginPcm: 600 } }), about(['r2r']), {}, NOW);

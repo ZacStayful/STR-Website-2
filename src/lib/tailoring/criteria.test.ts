@@ -102,7 +102,7 @@ test('minimum profit: only a real answer sets it, and it is judged on the low en
   assert.equal(r2r.minProfit, null);
   assert.equal(wantsFor(profile({ path: 'r2r', finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 900 } }, { answered: { r2r_min_profit: real } })).minProfitR2r, 900);
   assert.equal(wantsFor(profile({ path: 'r2r', finance }, { answered: { min_profit: real } })).minProfit, null, 'the buying question is not asked there');
-  const both = profile({ dealTypes: ['buy_let', 'r2r'], finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 100_000 } }, { answered: { min_profit: real, r2r_min_profit: real } });
+  const both = profile({ dealTypes: ['buy_str', 'r2r'], finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 100_000 } }, { answered: { min_profit: real, r2r_min_profit: real } });
   assert.equal(keys(both, rental()).profit, 'must:fail', 'a rental on the rent-to-rent minimum');
   assert.notEqual(keys(both, f).profit, 'must:fail', 'a sale on the buyer’s, not overwritten');
 });
@@ -208,9 +208,9 @@ test('the daily pick meets a tailored profile’s must-haves; an untailored one 
 
 const PROJECT = { v: 1 as const, level: 'full' as const, price: 70_000, bedrooms: 3, worksLow: 26_620, worksHigh: 39_710, value: 127_800, valueAdded: 18_090, valueAddedPct: 14.2, ceilingApplied: false, months: 4, cashLow: 74_766, cashHigh: 87_856, moneyLeftInLow: 27_916, moneyLeftInHigh: 41_006, refinancePct: 75, estimatedAt: AT };
 const brrrDeal = (over: Partial<DealFacts> = {}): DealFacts => sale({ amount: 70_000, dealType: 'brrr', project: PROJECT, needsWork: true, ...over });
-const typed = (g: Partial<MarketGoals>, answered: TailoringProfile['answered'] = {}) => profile({ dealTypes: ['buy_let', 'brrr'], ...g }, { answered: { deal_types: real, ...answered } });
+const typed = (g: Partial<MarketGoals>, answered: TailoringProfile['answered'] = {}) => profile({ dealTypes: ['buy_str', 'brrr'], ...g }, { answered: { deal_types: real, ...answered } });
 
-test('a BRRR deal is judged on the project budget, before works; a Buy-and-let deal on the budget', () => {
+test('a BRRR deal is judged on the project budget, before works; a Short-let deal on the budget', () => {
   const p = typed({ budget: '200-350', brrr: { budget: 'u200', work: null } });
   assert.equal(keys(p, brrrDeal()).budget, 'must:pass', '£70k inside the project budget');
   assert.equal(keys(p, sale({ amount: 70_000 })).budget, 'must:fail', 'the same price is under the buy budget');
@@ -239,7 +239,7 @@ test('"How much work?" Light refresh matches light projects only; Full project a
   const light = typed({ brrr: { budget: null, work: 'light' } }, { brrr_work: real });
   assert.equal(keys(light, brrrDeal()).work, 'must:fail', 'a full project for a light-refresh answer');
   assert.equal(keys(light, brrrDeal({ project: { ...PROJECT, level: 'light' } })).work, 'must:pass');
-  assert.equal(keys(light, sale()).work, undefined, 'a Buy-and-let deal is never judged on it');
+  assert.equal(keys(light, sale()).work, undefined, 'a Short-let deal is never judged on it');
   for (const work of ['full', 'either'] as const) {
     const p = typed({ brrr: { budget: null, work } }, { brrr_work: real });
     assert.equal(keys(p, brrrDeal()).work, undefined, `${work}: both levels, so no check`);
@@ -260,8 +260,8 @@ test('a pool row with a Project estimate reads as a BRRR deal; without, as its k
   assert.equal(f.needsWork, true);
   assert.equal(f.project?.worksHigh, 39_710);
   const plain = factsFromRow(row, null, { qualifies: undefined, score: 0 });
-  assert.equal(plain.dealType, 'buy_let');
+  assert.equal(plain.dealType, 'buy_str');
   assert.equal(plain.project, null);
-  assert.equal(factsFromRow({ ...row, project: { junk: true } }, null, { qualifies: undefined, score: 0 }).dealType, 'buy_let', 'an unusable estimate is not a Project deal');
+  assert.equal(factsFromRow({ ...row, project: { junk: true } }, null, { qualifies: undefined, score: 0 }).dealType, 'buy_str', 'an unusable estimate is not a Project deal');
   assert.equal(factsFromRow({ ...row, kind: 'rent', price_period: 'pcm', price_amount: 900, project: PROJECT }, null, { qualifies: undefined, score: 0 }).dealType, 'r2r');
 });

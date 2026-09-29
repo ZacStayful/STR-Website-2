@@ -8,7 +8,7 @@ const NOW = new Date('2026-09-28T09:00:00Z');
 const OPTS = { adminEmails: [], activeDays: 30, now: NOW, radiusAreas: 5, maxAreasPerProfile: 10 };
 const member = (id: string, paying = false): DemandMember => ({ id, email: `${id}@example.com`, lastSeenAt: NOW.toISOString(), payerId: id, paying, unitAreas: [], switchedOff: false });
 /** A profile's goals; its deal types follow the kind it searches unless given (Batch 17: the types decide the kinds). */
-const TYPES_OF: Record<MarketGoals['sourcingKind'], MarketGoals['dealTypes']> = { sale: ['buy_let'], rent: ['r2r'], both: ['buy_let', 'r2r'] };
+const TYPES_OF: Record<MarketGoals['sourcingKind'], MarketGoals['dealTypes']> = { sale: ['buy_str'], rent: ['r2r'], both: ['buy_str', 'r2r'] };
 const goals = (over: Partial<MarketGoals> = {}): MarketGoals => ({ ...DEFAULT_GOALS, where: 'areas', ...over, dealTypes: over.dealTypes !== undefined ? over.dealTypes : TYPES_OF[over.sourcingKind ?? 'sale'] });
 const buyer = (propertyType: 'house' | 'flat' | 'either' | null, over: Partial<MarketGoals> = {}) => goals({ sourcingKind: 'sale', buyer: { ...DEFAULT_GOALS.buyer, propertyType }, ...over });
 const profile = (memberId: string, g: MarketGoals, areas: string[]): DemandProfile => ({ memberId, profileId: `${memberId}-${areas.join('')}`, goals: g, areas });

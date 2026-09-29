@@ -36,5 +36,5 @@ test('nobody yet: nothing to divide by', () => {
   assert.deepEqual(stats.dropOff, []);
   assert.equal(pctLabel(null), '—');
   assert.equal(pctLabel(0.256), '26%');
-  assert.equal(questionLabel('budget'), 'About you · Buy and let budget');
+  assert.equal(questionLabel('budget'), 'About you · Short-let budget');
 });
