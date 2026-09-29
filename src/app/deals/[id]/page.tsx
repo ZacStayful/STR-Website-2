@@ -25,6 +25,10 @@ import { isHeldForProject, projectEstimateFor } from "@/lib/project/read-server"
 import { projectCardsFor } from "@/lib/marketplace/queries";
 import { kindWordFor, projectNumbersFor, projectSummary } from "@/lib/project/display";
 import { ProjectSection } from "../_components/ProjectSection";
+import { ProjectWorking } from "../_components/ProjectWorking";
+import { memberWorkingFor } from "@/lib/project/member-figures-server";
+import { memberContextFrom } from "@/lib/project/member-figures";
+import { readProjectSettings } from "@/lib/project/settings-server";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
@@ -208,6 +212,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // its working, with reasons and photo numbers, only once it is opened.
   const pn = projectCard ? projectNumbersFor({ screening_gross: gross, screening_confidence: screening?.confidence ?? null, check_comps: check?.compCount ?? null }, projectCard, finance, pricing.profitRangePct) : null;
   const projectStored = pn && priv ? await projectEstimateFor(createAdminClient(), deal.id) : null;
+  // Part G: the member's own working (private to them), once opened.
+  const [projectWorking, projectSettings] = projectStored && deal.bedrooms !== null ? await Promise.all([memberWorkingFor(createAdminClient(), user.id, deal.id), readProjectSettings(createAdminClient())]) : [null, null];
+  const workingCtx = projectStored && projectSettings && deal.bedrooms !== null ? memberContextFrom(projectStored.estimate, deal.bedrooms, projectSettings, projectSettings.bridging) : null;
   // Batch 14, Part C: the same three numbers as the member's card, from the same function.
   const sheetCard: Card = {
     ...card,
@@ -414,7 +421,16 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               </section>
             )}
 
-            {pn && projectCard && <ProjectSection project={projectCard} numbers={pn} opened={Boolean(priv)} stored={projectStored} />}
+            {pn && projectCard && (
+              <ProjectSection
+                dealId={deal.id}
+                project={projectCard}
+                numbers={pn}
+                opened={Boolean(priv)}
+                stored={projectStored}
+                working={projectStored && workingCtx ? <ProjectWorking dealId={deal.id} baseLines={projectStored.estimate.lines} savedLines={projectWorking?.latest?.lines ?? null} savedVersion={projectWorking?.latest?.version ?? null} locked={projectWorking?.latest?.locked ?? false} ctx={workingCtx} /> : null}
+              />
+            )}
 
             <MoreNumbers folded={Boolean(numbers)}>
             {screening && screening.band !== "insufficient-data" && (

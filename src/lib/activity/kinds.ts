@@ -115,6 +115,14 @@ export const ACTIVITY_KINDS = {
   tailoring_prompt_shown: recordOnly('Was shown a profile check on Today'),
   leads_upsell_clicked: inApp('Tapped the Leads card on Today'),
 
+  // Batch 17: Project deals (src/lib/project). Deal ids and line keys only, never a figure.
+  project_view: inApp('Looked at a Project deal'),
+  project_working: inApp('Opened a Project deal’s working'),
+  project_line_edit: inApp('Changed a line of a Project deal’s works'),
+  project_line_add: inApp('Added a line to a Project deal’s works'),
+  project_lock: inApp('Locked their figures for a Project deal'),
+  project_unlock: inApp('Unlocked their figures for a Project deal'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),

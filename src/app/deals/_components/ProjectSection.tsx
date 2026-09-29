@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { LEVEL_LABELS, GARDEN_NOTE, lineCost, type WorksLine } from "@/lib/project/costing";
 import { moneyLeftInLine, VALUE_DISCLAIMER, WORKS_DISCLAIMER, type ProjectCardData, type ProjectNumbers } from "@/lib/project/headline";
 import type { StoredEstimate } from "@/lib/project/read-server";
+import { ProjectViewPing } from "./ProjectViewPing";
 
 /**
  * "The project" on a Project deal's sheet (Batch 17, Part F). Before the deal
@@ -36,13 +37,14 @@ function photoList(nums: readonly number[]): string | null {
   return nums.length === 1 ? `photo ${nums[0]}` : `photos ${nums.join(", ")}`;
 }
 
-export function ProjectSection({ project, numbers, opened, stored, working }: { project: ProjectCardData; numbers: ProjectNumbers; opened: boolean; stored: StoredEstimate | null; working?: ReactNode }) {
+export function ProjectSection({ dealId, project, numbers, opened, stored, working }: { dealId: string; project: ProjectCardData; numbers: ProjectNumbers; opened: boolean; stored: StoredEstimate | null; working?: ReactNode }) {
   const e = stored?.estimate ?? null;
   const left = moneyLeftInLine(project);
   const shown = e ? e.lines.filter((l) => l.status !== "not_needed") : [];
   const notNeeded = e ? e.lines.filter((l) => l.status === "not_needed") : [];
   return (
     <section aria-labelledby="the-project" className="mt-4 rounded-xl border border-border bg-card p-4">
+      <ProjectViewPing dealId={dealId} />
       <h2 id="the-project" className="text-sm font-semibold text-foreground">
         The project <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{LEVEL_LABELS[project.level]}</span>
       </h2>
