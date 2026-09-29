@@ -65,5 +65,8 @@ test('profit after works: a light refresh on the ordinary model; a full project 
   assert.equal(light, purchaseDeal(240_000, { grossRevenue: 40_000, adr: 0, bedrooms: 3 }).cashflowMonthly);
   const full = profitAfterWorksPcm({ level: 'full', price: 70_000, value: 127_800, bedrooms: 3, grossRevenue: 30_000, finance: { mortgageRatePct: 6, termYears: 20 } });
   const net = purchaseDeal(70_000, { grossRevenue: 30_000, adr: 0, bedrooms: 3 }).netOperating;
-  assert.equal(full, Math.round(net / 12 - monthlyMortgage(95_850, 6, 20)), 'the member’s own rate and term on 75% of the value');
+  // Batch 16b: every purchase mortgage is interest-only, the refinance's included.
+  assert.equal(full, Math.round(net / 12 - (95_850 * 0.06) / 12), 'the member’s own rate on 75% of the value, interest-only');
+  const repayment = profitAfterWorksPcm({ level: 'full', price: 70_000, value: 127_800, bedrooms: 3, grossRevenue: 30_000, finance: { mortgageRatePct: 6, termYears: 20, mortgageType: 'repayment' } });
+  assert.equal(repayment, Math.round(net / 12 - monthlyMortgage(95_850, 6, 20)), 'the repayment formula stays behind the one setting');
 });

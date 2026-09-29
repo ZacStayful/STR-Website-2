@@ -26,7 +26,7 @@
  * Pure: no network, no database, no server-only.
  */
 
-import { DEFAULT_COSTS, DEFAULT_FINANCE, defaultSetupCost, monthlyMortgage, purchaseDeal, type FinanceDefaults } from '../listing/deal.ts';
+import { DEFAULT_COSTS, DEFAULT_FINANCE, defaultSetupCost, mortgagePayment, purchaseDeal, type FinanceDefaults } from '../listing/deal.ts';
 import { stampDutyLocal, type TaxCountry, type TaxName } from '../listing/stamp-duty.ts';
 import { DEFAULT_AUCTION_TERMS, type AuctionTerms } from '../deal-quality/auction.ts';
 import { formatRange, widthFor, type ProfitRangeInput } from '../marketplace/profit-range.ts';
@@ -153,10 +153,12 @@ export function projectFinance(input: FinanceInput): ProjectFinance {
 
 /**
  * The monthly short-let profit after the works, the middle of the range, at
- * the member's own finance (the house figures without them):
- *   light: the ordinary deal model on the price (deposit, rate, term);
- *   full:  after the refinance, the member's rate and term on 75% of the
- *          value after works.
+ * the member's own finance (the house figures without them), on the same
+ * mortgage as every purchase deal (Batch 16b: interest-only, through
+ * mortgagePayment):
+ *   light: the ordinary deal model on the price (deposit, rate);
+ *   full:  after the refinance, the member's rate on 75% of the value after
+ *          works.
  * The income is the deal's own (Batch 16's comparables check, or the area
  * figure until it has one); comparable Airbnbs are finished homes, so this
  * is the income after the works.
@@ -167,7 +169,7 @@ export function profitAfterWorksPcm(input: { level: ProjectLevel; price: number;
   const deal = purchaseDeal(input.price, base);
   if (input.level === 'light') return deal.cashflowMonthly;
   const loan = input.value * ((input.refinancePct ?? DEFAULT_PROJECT_VALUE.refinancePct) / 100);
-  return Math.round(deal.netOperating / 12 - monthlyMortgage(loan, fin.mortgageRatePct, fin.termYears));
+  return Math.round(deal.netOperating / 12 - mortgagePayment(loan, fin));
 }
 
 export interface ProjectProfitRange {
