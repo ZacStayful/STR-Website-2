@@ -430,11 +430,19 @@ export async function markDuplicate(input: { reportId: string; ofRef: unknown; t
   const { data: rootRow } = await admin.from('feedback_reports').select(FAMILY_COLUMNS).eq('id', verdict.rootId).maybeSingle();
   const root = rootRow as FamilyRow | null;
   if (!root) return { ok: false, message: `There is no report #${ref}.` };
+  // The report and its own duplicates move onto the original. Found first
+  // and updated by id: PostgREST applies an or() again to the rows an update
+  // returns, which would drop the duplicates that just moved (so their
+  // reporters would not be told).
+  const { data: family, error: familyError } = await admin.from('feedback_reports').select('id').or(`id.eq.${input.reportId},duplicate_of.eq.${input.reportId}`);
+  if (familyError) return { ok: false, message: `Could not save: ${familyError.message}` };
+  const familyIds = ((family ?? []) as { id: string }[]).map((r) => r.id);
+  if (!familyIds.includes(input.reportId)) return { ok: false, message: 'That report could not be found.' };
   const now = new Date().toISOString();
   const { data: moved, error } = await admin
     .from('feedback_reports')
     .update({ duplicate_of: root.id, status: root.status, status_message: root.status_message, status_changed_at: now, updated_at: now })
-    .or(`id.eq.${input.reportId},duplicate_of.eq.${input.reportId}`)
+    .in('id', familyIds)
     .select(FAMILY_COLUMNS);
   if (error) return { ok: false, message: `Could not save: ${error.message}` };
   const movedRows = (moved ?? []) as FamilyRow[];

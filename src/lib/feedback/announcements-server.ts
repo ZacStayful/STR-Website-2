@@ -208,10 +208,20 @@ export async function publishAnnouncement(id: string): Promise<{ ok: boolean; me
   if (!hasServiceRole()) return { ok: false, message: 'The service role key is not set.' };
   const admin = createAdminClient();
   const now = new Date().toISOString();
-  const { data, error } = await admin.from('announcements').update({ published_at: now, unpublished_at: null, updated_at: now }).eq('id', id).or('published_at.is.null,unpublished_at.not.is.null').select('id');
-  if (error) return { ok: false, message: `Could not publish: ${error.message}` };
+  const values = { published_at: now, unpublished_at: null, updated_at: now };
+  // A draft, or else one taken down: two plain conditional updates rather
+  // than one or(), which PostgREST applies again to the rows an update
+  // returns (they lack its columns, so the update fails every time).
+  let published = false;
+  for (const only of ['draft', 'taken_down'] as const) {
+    const base = admin.from('announcements').update(values).eq('id', id);
+    const { data, error } = await (only === 'draft' ? base.is('published_at', null) : base.not('unpublished_at', 'is', null)).select('id');
+    if (error) return { ok: false, message: `Could not publish: ${error.message}` };
+    published = (data ?? []).length > 0;
+    if (published) break;
+  }
   forgetLiveAnnouncements();
-  return { ok: true, message: (data ?? []).length > 0 ? 'Published: members will see it on their next page.' : 'It was already live.' };
+  return { ok: true, message: published ? 'Published: members will see it on their next page.' : 'It was already live.' };
 }
 
 export async function unpublishAnnouncement(id: string): Promise<{ ok: boolean; message: string }> {
