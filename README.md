@@ -517,6 +517,61 @@ members about new features and fixes with a banner from
    keeps, and that screenshots are deleted after 90 days) was drafted for
    this batch. Have it checked before merging.
 
+### 15. Switch on cookie consent and Meta measurement (Batch 19)
+
+A cookie banner (Accept / Reject, and "Cookie settings" at the foot of every
+page), Meta's pixel and Conversions API for five conversions
+(CompleteRegistration, ProfileComplete, FirstReport, Subscribe, Purchase),
+and "Sign-ups by source" on `/admin/signups`. Nothing is sent to Meta, and
+no Meta code or cookie reaches a browser, until the visitor taps Accept. In
+this order:
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 19: consent
+   and attribution" section; previews use the live database). It is
+   additive and idempotent: new service-role tables `consent_records` (the
+   proof of every choice), `member_consent` (each member's latest choice),
+   `member_attribution` (which ad or link brought each new account) and
+   `meta_conversions` (every conversion, and what was sent); the
+   `member_consent_set` and `signup_source_facts` functions; and one
+   `billing_settings` row, `meta_tracking_since`, set once to the moment
+   the section first runs. The sign-up conversions only count for accounts
+   made after it and Subscribe only for subscriptions started after it, so
+   existing members never fire them. Nothing is added to `ACCESS_COLUMNS`
+   or `profiles`, and there is no cron. Until it is run the site works but
+   nothing is recorded or sent, and `/admin/signups` says so.
+2. **Meta Events Manager → the dataset → Settings:** turn **Automatic
+   advanced matching off** (required: the code only ever sends a hashed
+   email and account number, and cannot switch Meta's own matching off);
+   turn "Track events automatically without code" off; leave first-party
+   cookies on; under Traffic permissions allow only the site's domain.
+   Then Settings → Conversions API → generate an access token.
+3. **Meta Business settings → Brand safety → Domains:** verify
+   `stayful.co.uk`.
+4. **Vercel → Environment Variables (Production):**
+   `NEXT_PUBLIC_META_PIXEL_ID` (the dataset id, digits only) and
+   `META_CAPI_ACCESS_TOKEN` (server only; never sent to the browser or
+   logged). `NEXT_PUBLIC_` values are fixed at build time, so redeploy
+   after setting it. Without the id there is no banner, pixel or server
+   event; without the token the browser still sends all five conversions.
+   The pixel only ever loads on the live site; a preview shows the banner
+   but never loads it.
+5. **Ads Manager → each ad → URL parameters:**
+   `utm_source=facebook&utm_medium=paid_social&utm_campaign={{campaign.name}}&utm_content={{ad.name}}&utm_term={{adset.name}}`.
+6. **To test:** Events Manager → Test events gives a code; set it as
+   `META_TEST_EVENT_CODE` and redeploy, then run the checklist in the pull
+   request. Every server event then carries the code and shows only under
+   Test events, and `/admin/signups` warns that test mode is on. Remove it
+   and redeploy when done. `META_DRY_RUN=true` logs what would be sent
+   instead of sending it.
+7. **Privacy:** the Cookies section and Meta in "Who we share it with" were
+   drafted for this batch; have them checked before merging. The policy
+   promises an email before any significant change: decide whether to send
+   one before setting the dataset live (nothing in this batch sends it).
+8. **Lead-form members:** this batch never sends CompleteRegistration for
+   them. The n8n workflow "Stayful lead activated → Meta CAPI" (inactive)
+   does that job; if it is switched on, move it to Graph API v26.0 and have
+   it respect the member's cookie choice (`member_consent`).
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -548,6 +603,9 @@ which are required, and what breaks without them.
 | `src/app/account/feedback` | "Your feedback": the member's own reports and where each has got to, with the line admin sent. Never the private note, the page, the device or the screenshots |
 | `src/app/admin/feedback` | Feedback (Batch 18): totals by type and status, submissions per week, the list with its filters, and the settings; each report with its screenshots, what was captured with it, the status and its emails (Preview, then Save), a private note and duplicates |
 | `src/app/admin/announcements` | Announcements: write, preview and publish the "What's new" banner, and for each one how many members were shown it, dismissed it or tapped "Take a look" |
+| `src/lib/tracking` | Cookie consent and sign-up attribution (Batch 19): every number, name and wording (`config.ts`); where the banner shows and the pixel may send, and tidying the address (`surfaces.ts`); the consent cookie and its rules (`consent.ts`); reading a landing's utm tags and click id (`touch.ts`); the report sums (`report.ts`), all pure and tested. The browser side is `browser.ts` and `runtime.ts`; the server side `consent-server.ts`, `attribution-server.ts`, `signup-server.ts` (the one call at sign-up and sign-in) and `report-server.ts` |
+| `src/lib/meta` | Meta's pixel and Conversions API (Batch 19): the settings (`env.ts`), hashing, click ids, the five conversions and their rules (`events.ts`), the payload and the send (`capi.ts`), all pure and tested; recording each conversion once and sending it (`conversions.ts`); the pixel in the browser (`pixel.ts`). `src/components/tracking` is the banner, "Cookie settings", the sign-up checkbox and `TrackingRoot` (rendered by the root layout after every page) |
+| `src/app/admin/signups` | Sign-ups by source (Batch 19): per utm source, campaign and ad, the share who finish the profile, run a first report within 7 days, pay, and are weekly active in weeks 2–4; and whether Meta measurement is set up, with the last 20 conversions |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |

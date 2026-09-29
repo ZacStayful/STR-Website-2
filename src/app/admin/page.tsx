@@ -132,6 +132,9 @@ export default async function AdminPage() {
           <Link href="/admin/weekly-active" className="text-sm font-medium text-primary hover:underline">
             Weekly active
           </Link>
+          <Link href="/admin/signups" className="text-sm font-medium text-primary hover:underline">
+            Sign-ups by source
+          </Link>
           <Link href="/admin/profile" className="text-sm font-medium text-primary hover:underline">
             Profile quiz
           </Link>
