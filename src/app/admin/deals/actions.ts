@@ -14,6 +14,7 @@ import { retireDeal, revalidateDeals } from '@/lib/marketplace/server';
 import { runLowEntrySearch } from '@/lib/deal-quality/low-entry-run';
 import { runDealChecks } from '@/lib/deal-quality/checks-run';
 import { retireUncheckedLive, runDealRecheck } from '@/lib/deal-quality/recheck-comps-run';
+import { runMortgageBackfill } from '@/lib/listing/mortgage-backfill-run';
 import { DEAL_CHECKS_KEY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '@/lib/deal-quality/config';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
@@ -127,6 +128,16 @@ export async function retireUncheckedAction(formData: FormData): Promise<void> {
   const dry = formData.get('mode') !== 'retire';
   const result = await retireUncheckedLive({ dry, triggeredBy: user.email ?? 'admin' });
   await finish(dry ? 'retire-unchecked-dry' : 'retire-unchecked', result.body as Record<string, unknown>);
+}
+
+// ── Batch 16b: the one-off interest-only backfill ──
+
+/** "Dry run" is the before/after report and writes nothing; "Run" rewrites the stored purchase deals at the interest-only mortgage, carrying on where the last run stopped. No spend. */
+export async function runMortgageBackfillAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runMortgageBackfill({ dry, triggeredBy: user.email ?? 'admin' });
+  await finish(dry ? 'mortgage-backfill-dry' : 'mortgage-backfill', result.body as Record<string, unknown>);
 }
 
 /**
