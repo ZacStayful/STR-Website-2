@@ -2,7 +2,7 @@
  * Client-safe types and pure helpers for a member's checked listings: the
  * deal pipeline, shown on My deals (/my-deals) and in the Market Explorer.
  */
-import type { Deal } from './deal.ts';
+import { atCurrentMortgage, type Deal } from './deal.ts';
 import type { ListingKind, ListingSource, ListingStatus } from './types.ts';
 import type { QuickEstimate } from './quick-types.ts';
 import { postcodeAreaOf } from './normalise.ts';
@@ -144,10 +144,17 @@ export function toCheckedListingRow(raw: Record<string, unknown>): CheckedListin
     notes: typeof raw.notes === 'string' ? raw.notes : '',
     shareToken: typeof raw.share_token === 'string' ? raw.share_token : null,
     analysedReportId: typeof raw.analysed_report_id === 'string' ? raw.analysed_report_id : null,
-    quick: (raw.quick_estimate as QuickEstimate | null) ?? null,
-    deal: (raw.deal as Deal | null) ?? null,
+    // The stored deals read at the current mortgage type (Batch 16b): the one parse point for a checked listing.
+    quick: refreshQuick((raw.quick_estimate as QuickEstimate | null) ?? null),
+    deal: raw.deal ? atCurrentMortgage(raw.deal as Deal) : null,
     updatedAt: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString(),
   };
+}
+
+function refreshQuick(quick: QuickEstimate | null): QuickEstimate | null {
+  if (!quick?.deal) return quick;
+  const deal = atCurrentMortgage(quick.deal);
+  return deal === quick.deal ? quick : { ...quick, deal };
 }
 
 /** Builds a pipeline row from a fresh /api/listing/resolve response (client side). */

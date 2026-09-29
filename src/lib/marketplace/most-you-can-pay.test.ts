@@ -11,14 +11,20 @@ const mine = { ...DEFAULT_FINANCE, targetMarginPcm: 300, depositPct: 25, mortgag
 test('the worked example: exact for the property, and on the card’s area estimate', () => {
   const exact = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: mine, widthPct: 0 })!;
   assert.equal(exact.state, 'price');
-  assert.equal(exact.amount, 162_000);
-  assert.equal(payLine(exact), 'Most you can pay £162,000');
-  assert.equal(basisLine(exact), 'For £300/month profit at your 25% deposit, 5.5% over 25 years (exact for this property)');
+  // Interest-only (Batch 16b): £750 a month of interest at 5.5% is a £163,636 loan, £218,182 at 25% down.
+  assert.equal(exact.amount, 218_000);
+  assert.equal(exact.mortgageType, 'interest_only');
+  assert.equal(payLine(exact), 'Most you can pay £218,000');
+  assert.equal(basisLine(exact), 'For £300/month profit at your 25% deposit, 5.5% interest-only (exact for this property)');
+  // The repayment formula, kept behind the setting, gives the old £162,000 over 25 years.
+  const repayment = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: { ...mine, mortgageType: 'repayment' }, widthPct: 0 })!;
+  assert.equal(repayment.amount, 162_000);
+  assert.equal(basisLine(repayment), 'For £300/month profit at your 25% deposit, 5.5% over 25 years (exact for this property)');
   // On the card the income is an estimate, so the figure is where the range STARTS at £300.
   const card = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: mine, widthPct: 15 })!;
-  assert.ok(card.amount! < 162_000);
+  assert.ok(card.amount! < 218_000);
   assert.equal(payLine(card), `Most you can pay ~£${card.amount!.toLocaleString('en-GB')}`);
-  assert.equal(basisLine(card), 'For £300/month profit at your 25% deposit, 5.5% over 25 years (area estimate)');
+  assert.equal(basisLine(card), 'For £300/month profit at your 25% deposit, 5.5% interest-only (area estimate)');
   assert.equal(profitNeeded(300, 15), 300 / 0.85);
   assert.equal(profitNeeded(0, 15), 10, 'the range is always at least £10 either side');
 });
@@ -66,7 +72,7 @@ test('house figures on public pages, and the member’s own figures change it', 
   const house = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: null, widthPct: 15 })!;
   assert.equal(house.house, true);
   assert.equal(house.minProfitPcm, 500, 'the £500 fallback');
-  assert.equal(basisLine(house), 'For £500/month profit at a 25% deposit, 5.5% over 25 years (area estimate)');
+  assert.equal(basisLine(house), 'For £500/month profit at a 25% deposit, 5.5% interest-only (area estimate)');
   const at300 = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: mine, widthPct: 15 })!;
   const at40 = mostYouCanPay({ kind: 'sale', grossRevenue: 30_000, bedrooms: 2, finance: { ...mine, depositPct: 40 }, widthPct: 15 })!;
   assert.ok(at300.amount! > house.amount!);
@@ -78,7 +84,7 @@ test('house figures on public pages, and the member’s own figures change it', 
 });
 
 test('the gap lines: My deals and the price-drop email', () => {
-  const c = { kind: 'sale' as const, state: 'price' as const, amount: 221_000, minProfitPcm: 300, depositPct: 25, mortgageRatePct: 5.5, termYears: 25, basis: 'area' as const, house: false };
+  const c = { kind: 'sale' as const, state: 'price' as const, amount: 221_000, minProfitPcm: 300, depositPct: 25, mortgageRatePct: 5.5, termYears: 25, mortgageType: 'interest_only' as const, basis: 'area' as const, house: false };
   assert.equal(gapLine(245_000, c), '£24,000 above what you can pay');
   assert.equal(gapLine(221_000, c), 'Within what you can pay');
   assert.equal(alertGapLine(227_000, c), 'Now £6,000 above what you can pay');
@@ -91,11 +97,14 @@ test('the gap lines: My deals and the price-drop email', () => {
 test('from a deal already worked out: a Full analysis exactly, a shared listing on the house figures', () => {
   const d = purchaseDeal(300_000, { grossRevenue: 30_000, adr: 0, bedrooms: 2, finance: mine });
   const exact = mostYouCanPayForDeal(d, { minProfitPcm: 300, basis: 'exact' });
-  assert.equal(exact.amount, 162_000);
-  assert.equal(gapLine(d.askingPrice, exact), '£138,000 above what you can pay');
+  assert.equal(exact.amount, 218_000);
+  assert.equal(gapLine(d.askingPrice, exact), '£82,000 above what you can pay');
+  // An old row saved on the repayment formula lends its deposit and rate only: the type is always the house's.
+  const oldRow = { ...d, mortgageType: 'repayment' as const };
+  assert.equal(mostYouCanPayForDeal(oldRow, { minProfitPcm: 300, basis: 'exact' }).amount, 218_000);
   const shared = mostYouCanPayForDeal(d, { house: true, basis: 'listing' });
   assert.equal(shared.minProfitPcm, 500);
-  assert.equal(basisLine(shared), 'For £500/month profit at a 25% deposit, 5.5% over 25 years (estimate for this listing)');
+  assert.equal(basisLine(shared), 'For £500/month profit at a 25% deposit, 5.5% interest-only (estimate for this listing)');
   assert.ok(shared.amount! < exact.amount!);
   const r = rentToRentDeal(1_100, { grossRevenue: 40_000, adr: 0, bedrooms: 2, finance: { ...mine, targetMarginPcm: 400 } });
   const rent = mostYouCanPayForDeal(r, { basis: 'exact' });

@@ -4,7 +4,7 @@
  * deal maths already produce, so the card, the row chip, the map pin and
  * the emails all say the same thing.
  */
-import type { Deal } from './deal.ts';
+import { atCurrentMortgage, type Deal } from './deal.ts';
 import type { ListingKind } from './types.ts';
 import type { QuickEstimate } from './quick-types.ts';
 import { gradeFor } from '../market/score.ts';
@@ -121,7 +121,7 @@ function purchaseVerdict(input: DealVerdictInput, deal: Extract<Deal, { kind: 'p
     keys: [
       { label: 'Est. revenue', value: absGbp(deal.grossRevenue), sub: rateLine(input.quick) || 'a year, gross' },
       { label: 'Cash needed', value: absGbp(deal.cashRequired), sub: `${gbpK(deal.askingPrice * (deal.depositPct / 100))} deposit · ${gbpK(deal.stampDuty)} stamp duty · ${gbpK(deal.setupCost)} setup` },
-      { label: 'Monthly cashflow', value: signedGbp(cash), sub: `after a ${absGbp(deal.mortgageMonthly)} mortgage`, tone: cash >= minProfit ? 'works' : cash >= 0 ? 'tight' : 'no' },
+      { label: 'Monthly cashflow', value: signedGbp(cash), sub: `after a ${absGbp(deal.mortgageMonthly)} ${deal.mortgageType === 'repayment' ? 'mortgage' : 'interest-only mortgage'}`, tone: cash >= minProfit ? 'works' : cash >= 0 ? 'tight' : 'no' },
       licensingKey(input.quick),
     ],
     ceiling: payText,
@@ -255,7 +255,9 @@ function unknownVerdict(input: DealVerdictInput): Verdict {
 
 /** The verdict for a checked listing. Never throws; degrades to "not enough data". */
 export function dealVerdict(input: DealVerdictInput): Verdict {
-  const deal = input.deal ?? input.quick?.deal ?? null;
+  // A stored deal reads at the current mortgage type (Batch 16b); a current one is untouched.
+  const stored = input.deal ?? input.quick?.deal ?? null;
+  const deal = stored ? atCurrentMortgage(stored) : null;
   if (input.kind === 'str') return strVerdict(input);
   if (deal?.kind === 'purchase') return purchaseVerdict(input, deal);
   if (deal?.kind === 'rent-to-rent') return rentVerdict(input, deal);

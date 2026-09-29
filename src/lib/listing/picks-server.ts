@@ -4,7 +4,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { areaMetaForCode } from '../market/areas';
 import { isPickToken, cleanReasons, dealScoreOf, PICK_REASONS, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
 import type { SourcedListing } from './sourcing';
-import type { Deal } from './deal';
+import { atCurrentMortgage, type Deal } from './deal';
 import { parseStoredRelaxation, type StoredRelaxation } from './relax';
 import { parseMotivation, type Motivation } from './motivation';
 import { parseScreening, screeningScore, type Screening } from './screen';
@@ -71,7 +71,8 @@ function toView(raw: Record<string, unknown>, listing: SourcedListing | null): P
     postcodeArea: area,
     areaName: area ? areaMetaForCode(area).name : null,
     listing: listing ?? fallback,
-    deal: (raw.deal as Deal | null) ?? null,
+    // The stored deal reads at the current mortgage type (Batch 16b).
+    deal: raw.deal ? atCurrentMortgage(raw.deal as Deal) : null,
     fit: typeof raw.fit === 'number' ? raw.fit : null,
     chargedBasePence: Number(raw.charged_base_pence) || 0,
     reaction: raw.reaction === 'yes' || raw.reaction === 'no' ? raw.reaction : null,

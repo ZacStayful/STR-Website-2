@@ -107,7 +107,7 @@ test('Offer: the range, the working line, the label, and the message with and wi
   assert.equal(v.offer!.working, "The most you can pay to make £500 a month is £182,000 · on the market 6 months and reduced twice, so we'd open at £171,000");
   assert.equal(v.offer!.disclaimer, NEXT_STEPS.offer.disclaimer);
   assert.equal(v.offer!.initialAmount, 171000);
-  assert.equal(v.offer!.notes[0], 'Based on £500 a month profit at your 25% deposit, 5.5% over 25 years (area estimate).');
+  assert.equal(v.offer!.notes[0], 'Based on £500 a month profit at your 25% deposit, 5.5% interest-only (area estimate).');
   assert.ok(v.offer!.goalsLink);
   assert.ok(v.message!.withAmount!.body.includes(OFFER_SLOT));
   assert.doesNotMatch(v.message!.body, /@@|\{|\[/);
@@ -145,7 +145,13 @@ test('Offer when no price makes the monthly profit: the reason, and the member�
   assert.ok(v.offer!.goalsLink);
   const ok = computeOfferRange({ kind: 'purchase', marketplace: true, asking: 186000, target: 150000, ageDays: 213, reductions: 0, rules: NO_OFFER_RULES });
   const w = buildNextStepView(input({ stage: 'offer', offer: ok, finance: { targetYieldPct: 10, targetMarginPcm: 300, depositPct: 40, mortgageRatePct: 4.75, termYears: 30 } }))!;
-  assert.equal(w.offer!.notes[0], 'Based on £300 a month profit at your 40% deposit, 4.75% over 30 years (area estimate).');
+  assert.equal(w.offer!.notes[0], 'Based on £300 a month profit at your 40% deposit, 4.75% interest-only (area estimate).');
+  // The repayment wording is kept behind the setting.
+  const rep = buildNextStepView(input({ stage: 'offer', offer: ok, finance: { targetYieldPct: 10, targetMarginPcm: 300, depositPct: 40, mortgageRatePct: 4.75, termYears: 30, mortgageType: 'repayment' } }))!;
+  assert.equal(rep.offer!.notes[0], 'Based on £300 a month profit at your 40% deposit, 4.75% over 30 years (area estimate).');
+  // A cash buyer's offer was worked with nothing borrowed: the note says so instead of naming a deposit and rate.
+  const cash = buildNextStepView(input({ stage: 'offer', offer: ok, cashBuyer: true }))!;
+  assert.equal(cash.offer!.notes[0], 'Based on £500 a month profit, buying with cash (area estimate).');
 });
 
 test('a stale asking figure adds a check-it note at the Offer stage', () => {

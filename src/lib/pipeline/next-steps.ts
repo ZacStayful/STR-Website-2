@@ -390,7 +390,9 @@ Thanks,
     },
     targetNote: {
       // DRAFT — Zac to rewrite
-      purchase: `Based on {minProfit} a month profit at your {depositPct} deposit, {mortgageRate} over {termYears} years (area estimate).`,
+      purchase: `Based on {minProfit} a month profit at your {depositPct} deposit, {mortgageRate} {mortgageTerms} (area estimate).`,
+      // DRAFT — Zac to rewrite
+      purchaseCash: `Based on {minProfit} a month profit, buying with cash (area estimate).`,
       // DRAFT — Zac to rewrite
       rentToRent: `Based on your {targetMargin} target monthly margin.`,
     },
