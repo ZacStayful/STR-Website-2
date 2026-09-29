@@ -75,7 +75,16 @@ export function widenChanges(p: TailoringProfile): WidenCandidate[] {
     withGoals('miles', `+${miles - g.maxDistanceMiles!} miles`, { ...g, maxDistanceMiles: miles });
   }
   if (must('rent') && w.rentMax !== null && w.rentMax + rentStepPcm <= MAX_RENT_PCM_RANGE.max) withGoals('rent', `Rent up to ${gbp(w.rentMax + rentStepPcm)}`, { ...g, maxRentPcm: w.rentMax + rentStepPcm });
-  if (must('profit') && w.minProfit !== null && w.minProfit >= profitStepPcm) withGoals('profit', `Minimum profit ${gbp(w.minProfit - profitStepPcm)}`, { ...g, finance: { ...g.finance, targetMarginPcm: w.minProfit - profitStepPcm } });
+  // Batch 17: two minimums now (the buyer's and the rent-to-rent one); widening lowers each one set by a step.
+  const buyLower = w.minProfit !== null && w.minProfit >= profitStepPcm ? w.minProfit - profitStepPcm : null;
+  const r2rLower = w.minProfitR2r !== null && w.minProfitR2r >= profitStepPcm ? w.minProfitR2r - profitStepPcm : null;
+  if (must('profit') && (buyLower !== null || r2rLower !== null)) {
+    withGoals('profit', `Minimum profit ${gbp((buyLower ?? r2rLower)!)}`, {
+      ...g,
+      finance: buyLower !== null ? { ...g.finance, targetMarginPcm: buyLower } : g.finance,
+      r2r: r2rLower !== null ? { ...g.r2r, minMarginPcm: r2rLower } : g.r2r,
+    });
+  }
   const bands = GOAL_OPTIONS.cashAvailable;
   const band = g.buyer.cashAvailable;
   const next = band ? bands[bands.indexOf(band) + 1] : undefined;

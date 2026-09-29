@@ -113,23 +113,26 @@ export function realAnswer(p: Pick<TailoringProfile, 'answered'>, id: QuestionId
 
 /**
  * Whether the question is one this profile is asked: a buyer's answers do not
- * judge a sourcer's deals because the member once took the buying path. A
- * profile with no path yet (answered before the quiz) is judged on what it has.
+ * judge a profile that no longer wants to buy because it once did (Batch 17:
+ * by the deal types it wants and the roles ticked). A profile with nothing to
+ * route by yet (answered before the quiz) is judged on what it has.
  */
 export function asked(p: Pick<TailoringProfile, 'goals' | 'about' | 'savedAreas'>, id: QuestionId): boolean {
   if (!p.goals) return false;
-  if (p.goals.path === null) return true;
+  // Nothing to route by yet (answered before the quiz): judged on what it has.
+  if (p.about.roles.length === 0 && p.goals.dealTypes === null && p.goals.path === null) return true;
   const q = questionById(id);
   return !q?.applies || q.applies({ goals: p.goals, about: p.about, savedAreas: p.savedAreas });
 }
 
 /**
- * The questions whose answers Today already read before this batch (the
- * path's kind, where, the budget or rent ceiling, motivated sellers). Answering
- * them does not by itself move a member onto the tailored path: they are
- * judged there exactly as they were.
+ * The questions whose answers Today already read before Batch 14 (the kind
+ * searched, where, the budget or rent ceiling, motivated sellers), and
+ * Batch 17's deal types and project budget, which choose the same way.
+ * Answering them does not by itself move a member onto the tailored path:
+ * they are judged there exactly as they were.
  */
-const ALREADY_READ: readonly QuestionId[] = ['roles', 'main_role', 'exploring_pick', 'where', 'budget', 'max_rent', 'client_rent', 'motivated_sellers'];
+const ALREADY_READ: readonly QuestionId[] = ['roles', 'deal_types', 'where', 'budget', 'brrr_budget', 'max_rent', 'motivated_sellers'];
 
 /**
  * Tailored: any other quiz question answered for real, a must-have /
@@ -162,11 +165,11 @@ export function plainProfile(goals: MarketGoals | null, savedAreas: readonly str
  */
 export function wantsLandlordLeads(p: TailoringProfile | null | undefined): boolean {
   const g = p?.goals;
-  if (!p || !g || g.path !== 'manage' || !asked(p, 'looking_for')) return false;
+  if (!p || !g || !p.about.roles.includes('manager') || !asked(p, 'looking_for')) return false;
   return g.manager.lookingFor === 'landlords' || g.manager.lookingFor === 'both';
 }
 
 /** A deal sourcer (Q14): their share button leads, as "Share with an investor". */
 export function sharesWithInvestors(p: TailoringProfile | null | undefined): boolean {
-  return p?.goals?.path === 'source';
+  return p?.about.roles.includes('sourcer') ?? false;
 }

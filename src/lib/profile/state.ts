@@ -12,9 +12,9 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import type { ProfilePath } from '../market/goals.ts';
 import { DEFAULT_FINANCE_GOALS } from '../market/goals.ts';
-import { applyAnswer, isQuestionId, moneyQuestionFor, questionsFor, type Answers, type Question, type QuestionId } from './questions.ts';
+import { applyAnswer, isQuestionId, moneyQuestionsFor, questionsFor, type Answers, type Question, type QuestionId } from './questions.ts';
+import { dealTypesFor, type DealType } from './deal-types.ts';
 
 export interface AnsweredMark {
   /** When it was answered (ISO). */
@@ -92,7 +92,8 @@ export function parseQuizRow(row: unknown): QuizRecord | null {
 export const SECONDS_PER_QUESTION = 20;
 
 export interface Progress {
-  path: ProfilePath | null;
+  /** The deal types the profile wants (chosen, or mapped from older answers); [] until known. */
+  types: DealType[];
   /** The questions this member gets, in order. */
   questions: QuestionId[];
   /** Of those, the ones answered (a real answer or "Not sure"). */
@@ -118,7 +119,7 @@ export function progress(a: Answers, quiz: QuizRecord): Progress {
   const mandatory = qs.filter((q) => q.mandatory).map((q) => q.id);
   const notSure = answered.filter((id) => quiz.answered[id]?.notSure).length;
   return {
-    path: a.goals.path,
+    types: dealTypesFor({ goals: a.goals, about: a.about }),
     questions: qs.map((q) => q.id),
     answered,
     next,
@@ -159,12 +160,18 @@ export function seedFromGoals(a: Answers, now: Date): { answers: Answers; answer
   const answered: AnsweredMap = {};
   let answers = a;
 
-  // What they were looking for → which describes them.
+  // What they were looking for → which describes them, and which deals they want.
   const roles = a.goals.sourcingKind === 'rent' ? ['r2r'] : a.goals.sourcingKind === 'both' ? ['investor', 'r2r'] : ['investor'];
   const withRoles = applyAnswer('roles', roles, answers);
   if (withRoles.ok) {
     answers = withRoles.answers;
     answered.roles = { at, notSure: false };
+  }
+  const types = a.goals.sourcingKind === 'rent' ? ['r2r'] : a.goals.sourcingKind === 'both' ? ['buy_let', 'r2r'] : ['buy_let'];
+  const withTypes = applyAnswer('deal_types', types, answers);
+  if (withTypes.ok) {
+    answers = withTypes.answers;
+    answered.deal_types = { at, notSure: false };
   }
 
   // Where: a home postcode, chosen areas, or anywhere — the welcome always asked.
@@ -172,16 +179,18 @@ export function seedFromGoals(a: Answers, now: Date): { answers: Answers; answer
   answers = { ...answers, goals: { ...answers.goals, where } };
   answered.where = { at, notSure: false };
 
-  // The money question for their path; "Not sure yet" was an answer then too.
-  const money = moneyQuestionFor(answers.goals.path);
-  if (money === 'budget') answered.budget = { at, notSure: answers.goals.budget === null };
-  if (money === 'max_rent') answered.max_rent = { at, notSure: answers.goals.maxRentPcm === null };
+  // The money question for each type; "Not sure yet" was an answer then too.
+  const money = moneyQuestionsFor(answers.goals.dealTypes ?? []);
+  if (money.includes('budget')) answered.budget = { at, notSure: answers.goals.budget === null };
+  if (money.includes('max_rent')) answered.max_rent = { at, notSure: answers.goals.maxRentPcm === null };
 
   if (answers.goals.bedrooms !== null) answered.bedrooms = { at, notSure: false };
   const f = answers.goals.finance;
   if (f.depositPct !== DEFAULT_FINANCE_GOALS.depositPct || f.mortgageRatePct !== DEFAULT_FINANCE_GOALS.mortgageRatePct) answered.finance = { at, notSure: false };
   if (f.targetMarginPcm !== DEFAULT_FINANCE_GOALS.targetMarginPcm) {
     answered.min_profit = { at, notSure: false };
+    // One answer then, two now: the rent-to-rent minimum starts as the same figure.
+    answers = { ...answers, goals: { ...answers.goals, r2r: { ...answers.goals.r2r, minMarginPcm: answers.goals.r2r.minMarginPcm ?? f.targetMarginPcm } } };
     answered.r2r_min_profit = { at, notSure: false };
   }
   if (answers.goals.motivation.mode !== 'off') answered.motivated_sellers = { at, notSure: false };

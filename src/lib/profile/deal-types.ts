@@ -87,11 +87,15 @@ export function legacyDealTypes(p: TypedProfile): DealType[] {
       out.add('r2r');
     }
   }
-  // No roles to go on: the search kind the profile was answering with, if it
-  // chose one (a path set it; "rent" and "both" are never the default).
-  if (out.size === 0 && g && (g.path !== null || g.sourcingKind !== 'sale')) {
-    if (g.sourcingKind !== 'rent') out.add('buy_let');
-    if (g.sourcingKind !== 'sale') out.add('r2r');
+  // No roles to go on: the path the profile was answering on, then the search
+  // kind if it chose one ("rent" and "both" are never the default).
+  if (out.size === 0 && g && g.path !== null) {
+    const f = g.sourcer.sourceFor;
+    if (g.path === 'buy' || g.path === 'manage' || (g.path === 'source' && f !== 'r2r')) out.add('buy_let');
+    if (g.path === 'r2r' || (g.path === 'source' && f !== 'buyers')) out.add('r2r');
+  } else if (out.size === 0 && g && g.sourcingKind !== 'sale') {
+    if (g.sourcingKind === 'both') out.add('buy_let');
+    out.add('r2r');
   }
   const condition = g?.buyer.condition ?? null;
   if (condition === 'refresh' || condition === 'project') out.add('brrr');

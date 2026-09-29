@@ -25,7 +25,7 @@ import { motivationLine } from '../marketplace/motivation-line.ts';
 import { parseMotivation } from '../listing/motivation.ts';
 import { motivationFor } from '../today/candidates.ts';
 import { TAILORING } from './config.ts';
-import { factsFromRow, judgeDeal, rentalFromCard, wantsFor, type Check, type DealFacts, type Judgement, type MemberFigures, type Wants } from './criteria.ts';
+import { factsFromRow, judgeDeal, minProfitFor, rentalFromCard, wantsFor, type Check, type DealFacts, type Judgement, type MemberFigures, type Wants } from './criteria.ts';
 import { adjustmentsFor, leaningsFor, type AreaLookup } from './order.ts';
 import { usesTailoring, type CriterionKey, type TailoringProfile } from './profile.ts';
 
@@ -54,7 +54,7 @@ function phrase(key: CriterionKey, f: DealFacts, fig: MemberFigures, w: Wants): 
     case 'rent':
       return w.rentMax !== null ? `under ${gbp(w.rentMax)} pcm` : null;
     case 'profit':
-      return w.minProfit !== null ? `clears your ${gbp(w.minProfit)} minimum` : null;
+      return minProfitFor(f, w) !== null ? `clears your ${gbp(minProfitFor(f, w)!)} minimum` : null;
     case 'bedrooms':
       return f.bedrooms !== null ? `${f.bedrooms}-bed` : null;
     case 'type':

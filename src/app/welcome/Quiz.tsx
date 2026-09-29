@@ -65,11 +65,11 @@ export function Quiz(start: QuizStart) {
   const isLast = (id: QuestionId, questions: QuestionId[]) => questions[questions.length - 1] === id;
 
   const advance = useCallback(
-    (view: { progress: ProgressView; answers: Answers }, wasEditing: QuestionId | null, pathBefore: string | null) => {
+    (view: { progress: ProgressView; answers: Answers }, wasEditing: QuestionId | null, listBefore: string) => {
       if (wasEditing) {
-        // Back to the page they came from, unless the change opened a new section to answer.
-        const pathChanged = view.answers.goals.path !== pathBefore;
-        if (view.progress.complete || !pathChanged) {
+        // Back to the page they came from, unless the change (a role, a deal type) opened questions to answer.
+        const listChanged = view.progress.questions.join() !== listBefore;
+        if (view.progress.complete || !listChanged) {
           router.push(start.returnTo);
           return;
         }
@@ -98,7 +98,7 @@ export function Quiz(start: QuizStart) {
     setError(null);
     setWarning(null);
     const wasEditing = editing;
-    const pathBefore = answers.goals.path;
+    const listBefore = progress.questions.join();
     startTransition(async () => {
       const r = await answerQuestionAction({ questionId: id, value, notSure, editing: wasEditing !== null });
       if (!r.ok) {
@@ -111,7 +111,7 @@ export function Quiz(start: QuizStart) {
       if (r.view.credit.paid && !credit.paid) notifyCreditChanged();
       setCredit(r.view.credit);
       if (r.warning) setWarning(r.warning);
-      advance(r.view, wasEditing, pathBefore);
+      advance(r.view, wasEditing, listBefore);
     });
   };
 
@@ -272,7 +272,7 @@ function Control({ q, answers, value, areas, busy, onAnswer, onPreview }: { q: Q
     case "budget":
       return <SingleChoice options={options} value={typeof value === "string" ? value : null} onPick={onAnswer} busy={busy} />;
     case "multi":
-      return <MultiChoice options={options} value={Array.isArray(value) ? (value as string[]) : []} onSubmit={onAnswer} busy={busy} />;
+      return <MultiChoice options={options} value={Array.isArray(value) ? (value as string[]) : []} onSubmit={onAnswer} busy={busy} allValue={q.allOption} />;
     case "where":
       return <WhereChoice options={options} value={(value as WhereAnswer | null) ?? null} areas={areas} onSubmit={onAnswer} onPreview={onPreview} busy={busy} />;
     case "rent":

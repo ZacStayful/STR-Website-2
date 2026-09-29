@@ -143,9 +143,15 @@ export function alertGapLine(asking: number | null, c: PayCeiling): string | nul
   return line === 'Within what you can pay' ? 'Now within what you can pay' : `Now ${line}`;
 }
 
-/** They said they buy with cash (the buying path's funding answer): nothing is borrowed. */
+/**
+ * They said they buy with cash (the buyer's funding answer) on a profile that
+ * buys: nothing is borrowed. Batch 17: a profile buys when it wants Buy and
+ * let or BRRR; one that has not chosen yet, as before, by its path.
+ */
 export function cashBuyerOf(goals: MarketGoals | null | undefined): boolean {
-  return Boolean(goals && goals.buyer.funding === 'cash' && (goals.path === 'buy' || goals.path === null));
+  if (!goals || goals.buyer.funding !== 'cash') return false;
+  if (goals.dealTypes) return goals.dealTypes.includes('buy_let') || goals.dealTypes.includes('brrr');
+  return goals.path === 'buy' || goals.path === null;
 }
 
 /**

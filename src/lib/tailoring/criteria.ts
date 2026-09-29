@@ -64,7 +64,7 @@ export const CRITERIA: Record<CriterionKey, CriterionSpec> = {
   location: { label: 'Location', kinds: ['sale', 'rent'], defaultMode: 'must', questions: ['where'] },
   budget: { label: 'Budget', kinds: ['sale'], defaultMode: 'must', questions: ['budget'] },
   cash: { label: 'Cash available', kinds: ['sale'], defaultMode: 'must', questions: ['cash_available'] },
-  rent: { label: 'Rent', kinds: ['rent'], defaultMode: 'must', questions: ['max_rent', 'client_rent'] },
+  rent: { label: 'Rent', kinds: ['rent'], defaultMode: 'must', questions: ['max_rent'] },
   profit: { label: 'Minimum profit', kinds: ['sale', 'rent'], defaultMode: 'must', questions: ['min_profit', 'r2r_min_profit'] },
   bedrooms: { label: 'Bedrooms', kinds: ['sale', 'rent'], defaultMode: 'nice', questions: ['bedrooms'] },
   type: { label: 'Flat or house', kinds: ['sale'], defaultMode: 'nice', questions: ['property_type'] },
@@ -93,7 +93,10 @@ export interface Wants {
   budget: { min: number | null; max: number | null } | null;
   cashTop: number | null;
   rentMax: number | null;
+  /** The buyer's minimum profit a month: judges Buy-and-let and BRRR deals. */
   minProfit: number | null;
+  /** Batch 17: the rent-to-rent minimum, its own answer now (it used to overwrite the buyer's): judges rentals. */
+  minProfitR2r: number | null;
   bedrooms: 1 | 2 | 3 | 4 | null;
   propertyType: 'flat' | 'house' | null;
   noLeasehold: boolean;
@@ -113,6 +116,7 @@ export const NO_WANTS: Wants = {
   cashTop: null,
   rentMax: null,
   minProfit: null,
+  minProfitR2r: null,
   bedrooms: null,
   propertyType: null,
   noLeasehold: false,
@@ -140,7 +144,8 @@ export function wantsFor(p: TailoringProfile): Wants {
     // inside (the untailored path keeps only the home's own area for it).
     areas = set(goalAreas(g.maxDistanceMiles ? placed : { ...placed, home: null }, p.savedAreas));
   }
-  const profitAnswered = (asked(p, 'min_profit') && realAnswer(p, 'min_profit')) || (asked(p, 'r2r_min_profit') && realAnswer(p, 'r2r_min_profit'));
+  const buyProfit = asked(p, 'min_profit') && realAnswer(p, 'min_profit');
+  const r2rProfit = asked(p, 'r2r_min_profit') && realAnswer(p, 'r2r_min_profit');
   const b = g.buyer;
   const r = g.r2r;
   return {
@@ -150,7 +155,9 @@ export function wantsFor(p: TailoringProfile): Wants {
     budget: g.budget ? budgetBounds(g.budget) : null,
     cashTop: asked(p, 'cash_available') && b.cashAvailable ? TAILORING.cashAvailableTop[b.cashAvailable] : null,
     rentMax: g.maxRentPcm,
-    minProfit: profitAnswered ? g.finance.targetMarginPcm : null,
+    minProfit: buyProfit ? g.finance.targetMarginPcm : null,
+    // Answered before the split, the one figure stood for both.
+    minProfitR2r: r2rProfit ? (g.r2r.minMarginPcm ?? g.finance.targetMarginPcm) : null,
     bedrooms: g.bedrooms,
     propertyType: asked(p, 'property_type') && (b.propertyType === 'flat' || b.propertyType === 'house') ? b.propertyType : null,
     noLeasehold: asked(p, 'leasehold') && b.leaseholdOk === 'no',
@@ -169,7 +176,7 @@ export function activeCriteria(w: Wants): Set<CriterionKey> {
     ['budget', w.budget !== null],
     ['cash', w.cashTop !== null],
     ['rent', w.rentMax !== null],
-    ['profit', w.minProfit !== null],
+    ['profit', w.minProfit !== null || w.minProfitR2r !== null],
     ['bedrooms', w.bedrooms !== null],
     ['type', w.propertyType !== null],
     ['leasehold', w.noLeasehold],
@@ -183,7 +190,7 @@ export function activeCriteria(w: Wants): Set<CriterionKey> {
 }
 
 /** Answers the quiz keeps that no deal carries yet: stored, shown, and judged on nothing. */
-export const NOT_APPLIED: readonly QuestionId[] = ['condition', 'furnished', 'deal_structure'];
+export const NOT_APPLIED: readonly QuestionId[] = ['brrr_work', 'furnished', 'deal_structure'];
 
 /** A deal as the checks read it: public columns and stored figures only, nothing a member pays to see. */
 export interface DealFacts {
@@ -328,6 +335,11 @@ export function modeOf(key: CriterionKey, p: Pick<TailoringProfile, 'modes' | 'g
 const within = (n: number, b: { min: number | null; max: number | null }) => (b.min === null || n >= b.min) && (b.max === null || n <= b.max);
 const atMost = (n: number | null, top: number): Verdict => (n === null ? 'unknown' : n <= top ? 'pass' : 'fail');
 
+/** The minimum profit that judges this deal: a rental's own, else the buyer's. */
+export function minProfitFor(f: Pick<DealFacts, 'kind'>, w: Pick<Wants, 'minProfit' | 'minProfitR2r'>): number | null {
+  return f.kind === 'rent' ? w.minProfitR2r : w.minProfit;
+}
+
 /** Every check the member's answers make on this deal, in CRITERIA order. */
 export function checksFor(f: DealFacts, fig: MemberFigures, w: Wants, mode: (key: CriterionKey) => Mode): Check[] {
   const out: Check[] = [];
@@ -337,7 +349,8 @@ export function checksFor(f: DealFacts, fig: MemberFigures, w: Wants, mode: (key
     if (w.budget) push('budget', f.amount === null ? 'unknown' : within(f.amount, w.budget) ? 'pass' : 'fail');
     if (w.cashTop !== null) push('cash', atMost(fig.cashRequired, w.cashTop));
   } else if (w.rentMax !== null) push('rent', atMost(f.amount, w.rentMax));
-  if (w.minProfit !== null) push('profit', fig.range === null ? 'unknown' : fig.range.lowPcm >= w.minProfit ? 'pass' : 'fail');
+  const minProfit = minProfitFor(f, w);
+  if (minProfit !== null) push('profit', fig.range === null ? 'unknown' : fig.range.lowPcm >= minProfit ? 'pass' : 'fail');
   if (w.bedrooms !== null) push('bedrooms', f.bedrooms === null ? 'unknown' : (w.bedrooms === 4 ? f.bedrooms >= 4 : f.bedrooms === w.bedrooms) ? 'pass' : 'fail');
   if (f.kind === 'sale') {
     if (w.propertyType) push('type', f.propertyKind === 'unknown' ? 'unknown' : f.propertyKind === w.propertyType ? 'pass' : 'fail');

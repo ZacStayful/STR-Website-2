@@ -32,6 +32,7 @@ import { moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/
 import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
+import { sharesWithInvestors } from "@/lib/tailoring/profile";
 import { numbersForCard } from "@/lib/tailoring/numbers";
 import { explainCard } from "@/lib/tailoring/why";
 import { ANALYSIS_LEAD_LINE, consentOpening, leadFor } from "@/lib/tailoring/about-prompts";
@@ -231,7 +232,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
           <Link href="/deals" className="text-muted-foreground hover:underline">← All deals</Link>
           {/* Batch 3: a public link showing only what the card shows (never the address), on the member's referral code. */}
           {/* Batch 14: a deal sourcer's share leads, as "Share with an investor". */}
-          {goals?.path === "source" ? <ShareDealButton dealId={deal.id} label="Share with an investor" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" /> : <ShareDealButton dealId={deal.id} />}
+          {sharesWithInvestors(tailoring) ? <ShareDealButton dealId={deal.id} label="Share with an investor" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" /> : <ShareDealButton dealId={deal.id} />}
         </div>
 
         {message && <p className={"mb-4 rounded-md border p-3 text-sm " + (message.tone === "ok" ? "border-primary/40 bg-primary/10 text-foreground" : "border-destructive/40 bg-destructive/10 text-destructive")}>{message.text}</p>}

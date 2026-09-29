@@ -4,9 +4,9 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
-import { PATH_LABELS } from "@/lib/profile/questions";
+import { dealTypesFor, describeTypes } from "@/lib/profile/deal-types";
 import { profilePriceLineFor, profilesFor } from "@/lib/profiles/server";
-import { CLIENT_PERMISSION_LINE, isRunning, limitMessage, NAME_HINT, PATH_CHOICES, PROFILE_NAME_MAX } from "@/lib/profiles/rules";
+import { CLIENT_PERMISSION_LINE, isRunning, limitMessage, NAME_HINT, PROFILE_NAME_MAX, TYPE_CHOICES } from "@/lib/profiles/rules";
 import { createProfileAction, deleteProfileAction, editProfileAction, pauseProfileAction, renameProfileAction, switchProfileAction } from "./actions";
 
 export const metadata: Metadata = {
@@ -76,7 +76,7 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
         <ul className="space-y-3">
           {view.live.map((p) => {
             const running = isRunning(p);
-            const path = p.goals?.path ?? null;
+            const types = dealTypesFor({ goals: p.goals, about: null });
             return (
               <li key={p.id} className="rounded-xl border border-border bg-card p-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -86,7 +86,7 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
                   {p.forClient && <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">For a client</span>}
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {path ? PATH_LABELS[path] : "No answers yet"}
+                  {types.length > 0 ? describeTypes(types) : "No answers yet"}
                   {" · "}
                   {running ? "Daily deals on" : "Daily deals paused: nothing is charged for this profile"}
                 </p>
@@ -166,11 +166,11 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
                   </select>
                 </label>
                 <fieldset className="text-sm">
-                  <legend className="font-medium text-foreground">What’s this profile for?</legend>
+                  <legend className="font-medium text-foreground">Which deals should this profile show?</legend>
                   <div className="mt-1 flex flex-wrap gap-3">
-                    {PATH_CHOICES.map((c) => (
+                    {TYPE_CHOICES.map((c) => (
                       <label key={c.value} className="flex items-center gap-1.5">
-                        <input type="radio" name="path" value={c.value} defaultChecked={(view.active?.goals?.path ?? "buy") === c.value} /> {c.label}
+                        <input type="checkbox" name="types" value={c.value} defaultChecked={dealTypesFor({ goals: view.active?.goals ?? null, about: null }).includes(c.value)} /> {c.label}
                       </label>
                     ))}
                   </div>

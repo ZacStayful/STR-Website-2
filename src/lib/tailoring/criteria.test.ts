@@ -96,9 +96,15 @@ test('minimum profit: only a real answer sets it, and it is judged on the low en
   assert.deepEqual(memberFigures(f, p).range, range);
   assert.equal(keys(p, f).profit, `must:${range.lowPcm >= 300 ? 'pass' : 'fail'}`);
   assert.equal(keys(p, sale({ grossRevenue: null })).profit, 'must:unknown');
-  // A rent-to-rent answer judges on the rent-to-rent path.
-  assert.equal(wantsFor(profile({ path: 'r2r', finance }, { answered: { r2r_min_profit: real } })).minProfit, 300);
+  // A rent-to-rent answer is its own (Batch 17): it judges rentals, never sales.
+  const r2r = wantsFor(profile({ path: 'r2r', finance }, { answered: { r2r_min_profit: real } }));
+  assert.equal(r2r.minProfitR2r, 300, 'answered before the split, the one figure stands for both');
+  assert.equal(r2r.minProfit, null);
+  assert.equal(wantsFor(profile({ path: 'r2r', finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 900 } }, { answered: { r2r_min_profit: real } })).minProfitR2r, 900);
   assert.equal(wantsFor(profile({ path: 'r2r', finance }, { answered: { min_profit: real } })).minProfit, null, 'the buying question is not asked there');
+  const both = profile({ dealTypes: ['buy_let', 'r2r'], finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 100_000 } }, { answered: { min_profit: real, r2r_min_profit: real } });
+  assert.equal(keys(both, rental()).profit, 'must:fail', 'a rental on the rent-to-rent minimum');
+  assert.notEqual(keys(both, f).profit, 'must:fail', 'a sale on the buyer’s, not overwritten');
 });
 
 test('a cash buyer: no mortgage in their range or their cash needed, so the must-have agrees with "Most you can pay"', () => {
@@ -147,9 +153,9 @@ test('modes: the member’s switch wins, and motivated sellers follow the answer
   assert.equal(keys(p, sale({ motivationQualifies: false })).motivation, 'must:fail', 'no evidence is a miss, as it always was');
 });
 
-test('buyer answers left on another path judge nothing', () => {
-  const sourcer = profile({ path: 'source', sourcingKind: 'both', buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'flat', leaseholdOk: 'no', cashAvailable: 'u30' } });
-  assert.deepEqual(keys(sourcer, sale()), {});
+test('buyer answers left on a profile that no longer buys judge nothing', () => {
+  const r2rOnly = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'flat', leaseholdOk: 'no', cashAvailable: 'u30' } });
+  assert.deepEqual(keys(r2rOnly, sale()), {});
 });
 
 test('the judgement counts what the order and the match % read', () => {
@@ -186,8 +192,8 @@ test('a marketplace row as facts: rent a week in pcm, the area upper-cased, tenu
 test('the switches the profile page offers are the checks the answers make', () => {
   const p = profile({ path: 'buy', budget: 'u200', where: 'areas', bedrooms: 2, buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'either', leaseholdOk: 'no', restrictedAreas: 'warn' } }, {}, ['NG']);
   assert.deepEqual([...activeCriteria(wantsFor(p))].sort(), ['bedrooms', 'budget', 'leasehold', 'location']);
-  assert.equal(criterionForQuestion('client_rent'), 'rent');
-  assert.equal(criterionForQuestion('condition'), null);
+  assert.equal(criterionForQuestion('max_rent'), 'rent');
+  assert.equal(criterionForQuestion('furnished'), null);
 });
 
 test('the daily pick meets a tailored profile’s must-haves; an untailored one is not tested', () => {

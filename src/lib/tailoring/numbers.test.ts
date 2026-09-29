@@ -74,7 +74,7 @@ test('deal sourcers: room below the typical price, the motivated-seller signal, 
 });
 
 test('management companies: revenue, distance to their units, local competition; occupancy when competition is unknown', () => {
-  const manager = profile({ path: 'manage', manager: { ...DEFAULT_GOALS.manager, operatingAreas: ['NG'] } });
+  const manager = profile({ path: 'manage', manager: { ...DEFAULT_GOALS.manager, operatingAreas: ['NG'] } }, { roles: ['manager'] });
   assert.deepEqual(shown(numbersForCard(card(), manager, area, NOW)), ['Short-let revenue: £25,500–£34,500/yr', 'From your units: Same area', 'Competition: Opportunity']);
   const derby = numbersForCard(card({ postcode_area: 'DE' }), manager, area, NOW)!;
   assert.deepEqual(derby.map((x) => x.key), ['revenue', 'distance', 'occupancy']);

@@ -49,13 +49,23 @@ export function SingleChoice({ options, value, onPick, busy }: { options: readon
 }
 
 /** Tick all that apply, then Continue. */
-export function MultiChoice({ options, value, onSubmit, busy }: { options: readonly Option[]; value: string[]; onSubmit: (values: string[]) => void; busy: boolean }) {
-  const [picked, setPicked] = useState<string[]>(value);
-  const toggle = (v: string) => setPicked((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]));
+/**
+ * Tick all that apply. `allValue`: the option that ticks every other one
+ * ("All of them"); it reads as ticked when they all are, and never goes
+ * into the answer itself.
+ */
+export function MultiChoice({ options, value, onSubmit, busy, allValue }: { options: readonly Option[]; value: string[]; onSubmit: (values: string[]) => void; busy: boolean; allValue?: string }) {
+  const others = options.filter((o) => o.value !== allValue).map((o) => o.value);
+  const [picked, setPicked] = useState<string[]>(value.filter((v) => v !== allValue));
+  const allOn = allValue !== undefined && others.length > 0 && others.every((v) => picked.includes(v));
+  const toggle = (v: string) => {
+    if (allValue !== undefined && v === allValue) return setPicked(allOn ? [] : others);
+    setPicked((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]));
+  };
   return (
     <div className="space-y-3">
       {options.map((o) => (
-        <ChoiceCard key={o.value} option={o} on={picked.includes(o.value)} onClick={() => toggle(o.value)} disabled={busy} />
+        <ChoiceCard key={o.value} option={o} on={o.value === allValue ? allOn : picked.includes(o.value)} onClick={() => toggle(o.value)} disabled={busy} />
       ))}
       <PrimaryButton onClick={() => onSubmit(picked)} disabled={busy || picked.length === 0}>
         Continue

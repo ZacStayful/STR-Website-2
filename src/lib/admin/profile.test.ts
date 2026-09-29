@@ -8,7 +8,7 @@ test('completion rate, the middle of the incomplete, and where they stop', () =>
   const stats = aggregateProfileStats(
     [
       fact({ userId: 'a', completedAt: '2026-09-21T09:00:00Z', percent: 100, complete: true, lastQuestion: 'growth_target', notSure: ['bedrooms'] }),
-      fact({ userId: 'b', percent: 40, lastQuestion: 'time', notSure: ['bedrooms', 'condition'] }),
+      fact({ userId: 'b', percent: 40, lastQuestion: 'time', notSure: ['bedrooms', 'brrr_work'] }),
       fact({ userId: 'c', percent: 20, lastQuestion: 'time' }),
       fact({ userId: 'd', percent: 60, lastQuestion: 'cash_available' }),
       fact({ userId: 'e', startedAt: null, percent: 0 }),
@@ -24,7 +24,7 @@ test('completion rate, the middle of the incomplete, and where they stop', () =>
   assert.equal(stats.averagePercent, 40);
   assert.deepEqual(stats.dropOff.map((d) => [d.question, d.count]), [['time', 2], ['cash_available', 1]], 'only the incomplete count as stopped');
   assert.equal(stats.dropOff[0].label, 'About you · Time you can give');
-  assert.deepEqual(stats.notSure.map((d) => [d.question, d.count]), [['bedrooms', 2], ['condition', 1]]);
+  assert.deepEqual(stats.notSure.map((d) => [d.question, d.count]), [['bedrooms', 2], ['brrr_work', 1]]);
 });
 
 test('nobody yet: nothing to divide by', () => {
@@ -36,5 +36,5 @@ test('nobody yet: nothing to divide by', () => {
   assert.deepEqual(stats.dropOff, []);
   assert.equal(pctLabel(null), '—');
   assert.equal(pctLabel(0.256), '26%');
-  assert.equal(questionLabel('budget'), 'About you · Budget');
+  assert.equal(questionLabel('budget'), 'About you · Buy and let budget');
 });
