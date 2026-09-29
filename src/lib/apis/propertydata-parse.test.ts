@@ -31,8 +31,7 @@ import {
   propertyTypeSlug,
   saleAttemptParams,
   ukCalendarDate,
-  UK_FALLBACK_MONTHLY_RENT,
-} from './propertydata-parse.ts';
+  UK_FALLBACK_MONTHLY_RENT, parseSoldPrices } from './propertydata-parse.ts';
 import { NATIONAL_MONTHLY_RENT, nationalRentFor } from '../market/rent-ladder.ts';
 
 const ERROR = { status: 'error', message: 'Invalid postcode' };
@@ -254,4 +253,31 @@ test('valuation attempts run from the member\'s details down to the plainest def
   assert.deepEqual(sale.slice(2).map((a) => a.property_type), ['flat', 'terraced_house', 'detached_house']);
   assert.equal(propertyTypeSlug('Detached House'), 'detached_house');
   assert.equal(propertyTypeSlug('bungalow'), 'flat');
+});
+
+// ── Batch 17: /sold-prices ──
+// Shape taken from PropertyData's documented reply; the one real call to
+// confirm the per-sale fields is a deploy step (no key in the build).
+test('sold prices: price, date, distance (theirs, else from the coordinates), type and bedrooms; never the address', () => {
+  const reply = {
+    status: 'success',
+    postcode: 'YO17 9AB',
+    data: {
+      points_analysed: 3,
+      raw_data: [
+        { date: '2025-11-14', address: '12 Mill Street, Norton', price: 165000, lat: 54.132, lng: -0.788, bedrooms: 3, type: 'terraced_house', distance: '0.21' },
+        { date: '2026-02-03T00:00:00Z', address: '3 Church Lane', price: '155,000', lat: 54.14, lng: -0.79, bedrooms: null, type: 'terraced_house' },
+        { date: '2024-01-01', address: 'x', price: 0 },
+      ],
+    },
+  };
+  const sales = parseSoldPrices(reply, { lat: 54.132, lng: -0.79 })!;
+  assert.equal(sales.length, 2, 'a sale with no price is dropped');
+  assert.deepEqual(sales[0], { price: 165_000, date: '2025-11-14', distanceMiles: 0.21, lat: 54.132, lng: -0.788, type: 'terraced_house', bedrooms: 3 });
+  assert.equal(sales[1].price, 155_000);
+  assert.ok(sales[1].distanceMiles! > 0.5 && sales[1].distanceMiles! < 0.6, 'worked out from the coordinates');
+  assert.ok(!JSON.stringify(sales).includes('Mill Street'), 'addresses are never kept');
+  assert.deepEqual(parseSoldPrices({ status: 'success', data: {} }), []);
+  assert.equal(parseSoldPrices({ status: 'error', message: 'Postcode not found' }), null);
+  assert.equal(parseSoldPrices(reply)![1].distanceMiles, null, 'no subject point and no distance: unknown, never guessed');
 });

@@ -30,6 +30,8 @@ export const TTL = {
   pdMortgageRates: DAY,
   pdDemand: 7 * DAY,
   pdKeyStats: 30 * DAY,
+  // Batch 17: a postcode's sold prices for a Project deal's ceiling.
+  pdSoldPrices: 30 * DAY,
 } as const;
 
 /** Pence per call. Real figures from the spike replace these estimates. */

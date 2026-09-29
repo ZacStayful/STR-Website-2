@@ -18,9 +18,10 @@ export const {
   pdAonb,
   pdNationalPark,
   pdListedBuildings,
+  pdSoldPrices,
   pdDemandSale,
   pdDemandRent,
   pdRegionKeyStats,
 } = pdQuestions(pdClient);
 
-export type { LongLetRentAnswer, LongLetRentParams, PostcodeParams, OutcodeParams, RegionParams, SaleValuationParams, StampDutyParams, StampDutyMode, StampDutyQuery } from './questions-propertydata-defs';
+export type { LongLetRentAnswer, LongLetRentParams, PostcodeParams, OutcodeParams, RegionParams, SaleValuationParams, SoldPricesParams, StampDutyParams, StampDutyMode, StampDutyQuery } from './questions-propertydata-defs';

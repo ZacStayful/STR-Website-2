@@ -27,6 +27,7 @@ import {
   parseKeyStats,
   parseListedBuildings,
   parseMortgageRates,
+  parseSoldPrices,
   parseStampDuty,
   parseValuationRent,
   parseValuationSale,
@@ -169,6 +170,9 @@ export const pdClient: PdClient = {
   floodRisk: (postcode) => pdGet('flood-risk', { postcode }, 'flood_risk', parseFloodRisk),
   designation: (postcode, field) => pdGet(field.replace(/_/g, '-'), { postcode }, field, (json) => parseDesignation(json, field)),
   listedBuildings: (postcode) => pdGet('listed-buildings', { postcode }, 'listed_buildings', parseListedBuildings),
+  // Batch 17: up to 100 sales; PropertyData has no radius parameter, the steps are applied after.
+  soldPrices: (postcode, type, maxAgeMonths, from) =>
+    pdGet('sold-prices', { postcode, max_age: String(Math.min(84, Math.max(3, Math.round(maxAgeMonths)))), points: '100', ...(type ? { type } : {}) }, 'sold_prices', (json) => parseSoldPrices(json, from)),
   demand: (outcode, kind) => pdGet(kind === 'sale' ? 'demand' : 'demand-rent', { postcode: outcode }, kind === 'sale' ? 'demand' : 'demand_rent', (json) => parseDemand(json, kind)),
   keyStats: (region) => pdGet('postcode-key-stats', { region }, 'postcode_key_stats', parseKeyStats),
 };
