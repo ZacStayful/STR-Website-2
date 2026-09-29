@@ -1,6 +1,7 @@
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
-import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildSetupSnapshot, sanitiseAddressForFilename } from "./derive";
+import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildPdfProject, buildSetupSnapshot, sanitiseAddressForFilename } from "./derive";
+import type { ReportProjectMine } from "../project/report";
 import type { PdfExpenses } from "./derive";
 import { StayfulReport } from "./StayfulReport";
 import { pdfBrand, type PdfBrand } from "./theme";
@@ -28,6 +29,12 @@ export interface RenderOptions {
    * signed-in member, the lead who filled in the funnel, or nothing.
    */
   preparedFor?: string;
+  /**
+   * Batch 17: on a Project deal's Full analysis, the reader's own locked
+   * figures, printed beside our estimate. Never on the stored report: each
+   * caller supplies them for whoever is downloading, or leaves them out.
+   */
+  projectMine?: ReportProjectMine | null;
 }
 
 export async function renderReportPdf(result: AnalysisResult, opts: RenderOptions = {}): Promise<Buffer> {
@@ -37,6 +44,7 @@ export async function renderReportPdf(result: AnalysisResult, opts: RenderOption
   if (opts.preparedFor) data.preparedFor = opts.preparedFor;
   data.deal = buildPdfDeal(result);
   data.diligence = buildPdfDiligence(result);
+  data.project = buildPdfProject(result, opts.projectMine ?? null);
   if (opts.setup) {
     const snap = buildSetupSnapshot(opts.setup);
     if (snap) data.setup = snap;

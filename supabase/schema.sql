@@ -4382,7 +4382,8 @@ create index if not exists marketplace_deals_project_shortlist_idx on public.mar
 --   project_no_evidence   fewer than 5 sold prices of its type within 3 miles
 --   project_uncheckable   flagged, but its page can never be read (Zoopla)
 -- marketplace_runs.kind also takes 'project_checks' (the project job, with
--- who ran it).
+-- who ran it) and 'project_backfill' (the one-off pass over the live deals
+-- whose words say they need work, dry runs included).
 
 -- ── project_checks: one photo-check claim a listing a UK day ──
 -- Claimed through project_claim_check (below) before the call is made, so

@@ -98,6 +98,8 @@ import { atCurrentMortgageResult } from "@/lib/analysis/deal-figures";
 import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
 import { DueDiligencePanel } from "./_components/DueDiligencePanel";
+import { ProjectReportPanel } from "./_components/ProjectReportPanel";
+import { parseReportProject, type ReportProjectMine } from "@/lib/project/report";
 import { SecondOpinionCard } from "./_components/SecondOpinionCard";
 import { PmiAddonCard } from "@/components/report/PmiAddonCard";
 import type { PriceLabel } from "@/lib/credit/deal-pricing";
@@ -313,6 +315,7 @@ function CircularScore({
 
 const TAB_SECTIONS = [
   { id: "overview", label: "Overview", icon: Home, num: 1 },
+  { id: "project", label: "Project", icon: Wrench, num: 0 },
   { id: "deal", label: "Deal", icon: Calculator, num: 0 },
   { id: "comparables", label: "Comparables", icon: Building2, num: 2 },
   { id: "amenities", label: "Amenities", icon: Sparkles, num: 3 },
@@ -367,8 +370,10 @@ type HomePageProps = {
    * A saved Full analysis of a feed deal (Batch 10, /reports/[id]): when its
    * figures were found, shown as "Analysed on" if that was before today, and
    * the PMI second opinion on offer when it has none (this member's price).
+   * On a Project deal's report (Batch 17), the reader's own locked figures,
+   * read with the page and never stored on the report.
    */
-  savedAnalysis?: { dealId: string; analysedAt: string | null; pmi: PriceLabel | null };
+  savedAnalysis?: { dealId: string; analysedAt: string | null; pmi: PriceLabel | null; projectMine?: ReportProjectMine | null };
 };
 
 /**
@@ -1266,7 +1271,10 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // Current active tab info for progress indicator
     // The FAQ is a Stayful management-service pitch, so it has no place on a
     // customer's own funnel — see the section itself below.
+    // Batch 17: a Project deal's Full analysis carries our estimate of the works.
+    const reportProject = parseReportProject(result?.project);
     const visibleTabs = TAB_SECTIONS
+      .filter((tab) => tab.id !== "project" || reportProject)
       .filter((tab) => tab.id !== "deal" || result?.deal || result?.secondOpinion || result?.enhancedNotice)
       // The registers only exist on reports run since PropertyData supplied them.
       .filter((tab) => tab.id !== "due-diligence" || result?.dueDiligence || result?.epc || result?.councilTax || result?.growth)
@@ -1522,6 +1530,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                             cleaningMonthly: effCleaningMonthly,
                             selfManaged,
                           },
+                          // Batch 17: the reader's own locked figures on a Project deal, for their copy only.
+                          projectMine: savedAnalysis?.projectMine ?? undefined,
                           setup: setupSnapshotRef.current
                             ? {
                                 furnishing: setupSnapshotRef.current.furnishing,
@@ -1974,6 +1984,16 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               </button>
             </div>
           </section>
+
+          {/* ══════════════════════════════════════════════════════════
+              Section 1a: The Project (Batch 17: a Project deal's works)
+              ══════════════════════════════════════════════════════════ */}
+          {reportProject && (
+            <section id="project" ref={setSectionRef("project")} className="mb-12">
+              <SectionHeading icon={Wrench} title="The Project" subtitle="The works it needs, the value after them and the money a project takes, from our estimate of this deal." />
+              <ProjectReportPanel project={reportProject} mine={savedAnalysis?.projectMine ?? null} />
+            </section>
+          )}
 
           {/* ══════════════════════════════════════════════════════════
               Section 1b: The Deal (listing links)

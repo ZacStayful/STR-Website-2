@@ -16,6 +16,7 @@ export type SectionId =
   | "location"
   | "setup"
   | "deal"
+  | "project"
   | "diligence"
   | "plan";
 
@@ -35,7 +36,9 @@ export interface Nav {
  * Document order. `plan` is last on purpose — it carries the call to action and
  * has to be the final thing a reader sees. `deal` is an appendix to the
  * economics, so it sits after the setup costs, and `diligence` (the registers:
- * EPC, flood, designations, liquidity) follows the deal it informs.
+ * EPC, flood, designations, liquidity) follows the deal it informs. `project`
+ * (Batch 17: a Project deal's works, value after works and finance) follows
+ * the deal it changes.
  */
 const ALL: readonly Section[] = [
   { id: "verdict", label: "THE VERDICT" },
@@ -44,6 +47,7 @@ const ALL: readonly Section[] = [
   { id: "location", label: "LOCATION & RISK" },
   { id: "setup", label: "SETUP COSTS" },
   { id: "deal", label: "THE DEAL" },
+  { id: "project", label: "THE PROJECT" },
   { id: "diligence", label: "DUE DILIGENCE" },
   { id: "plan", label: "THE PLAN" },
 ];
@@ -53,11 +57,13 @@ export interface SectionAvailability {
   deal: boolean;
   /** Absent on reports saved before PropertyData supplied the registers. */
   diligence?: boolean;
+  /** Only a Project deal's Full analysis has one. */
+  project?: boolean;
 }
 
 export function sectionsFor(has: SectionAvailability): Section[] {
   return ALL.filter((s) =>
-    s.id === "setup" ? has.setup : s.id === "deal" ? has.deal : s.id === "diligence" ? Boolean(has.diligence) : true,
+    s.id === "setup" ? has.setup : s.id === "deal" ? has.deal : s.id === "diligence" ? Boolean(has.diligence) : s.id === "project" ? Boolean(has.project) : true,
   );
 }
 

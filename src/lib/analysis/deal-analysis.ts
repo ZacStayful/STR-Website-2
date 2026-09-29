@@ -69,6 +69,7 @@ import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, t
 import { logActivity, recordActivity } from '../activity/log';
 import { activeProfileIdOf } from '../profiles/server';
 import { reminderEvent } from './take-up';
+import { reportProjectFor } from '../project/report-server';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -549,6 +550,11 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
       if (storeErr) console.error('[deal-analysis] saved analysis write failed:', storeErr.message);
       else analysisId = String(stored.id);
     }
+
+    // Batch 17: a Project deal's report carries our estimate (its reasons, never its photos). The member's
+    // own locked figures are read with the report, for whoever reads it, and never stored on it.
+    const project = await reportProjectFor(admin, deal, { grossRevenue: result.shortLet?.annualRevenue ?? null }, finance);
+    if (project) result.project = project;
 
     // ── The buyer's own report ──
     progress('saving', 95, 'Saving your Full analysis...');

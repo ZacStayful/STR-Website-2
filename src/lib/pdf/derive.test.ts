@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPdfDeal, buildPdfDiligence, deriveReportData } from './derive.ts';
+import { buildPdfDeal, buildPdfDiligence, deriveReportData, buildPdfProject } from './derive.ts';
 import { sampleAnalysis } from './__fixtures__/sample.ts';
 import { monthlyCashflow, monthlyMortgage, type PurchaseDeal } from '../listing/deal.ts';
 
@@ -258,4 +258,28 @@ test('the page 3 lead fits one line in the worst case', () => {
   a.shortLet.listingsNearby = { count: 9999, radiusKm: 1.6, area: 'box' };
   const lead = `${deriveReportData(a).compsLead} · Airbnb data via Airbtics`;
   assert.ok(lead.length <= 95, lead);
+});
+
+test('the project page exists only on a Project deal’s report, and carries the reader’s figures only when given them', async () => {
+  const { estimateFromFindings } = await import('../project/estimate.ts');
+  const { LINE_SPECS } = await import('../project/costing.ts');
+  const { reportProjectFrom } = await import('../project/report.ts');
+  assert.equal(buildPdfProject(sampleAnalysis()), undefined, 'an ordinary report has no project page');
+  const lines: Record<string, { status: 'needed' | 'cant_tell'; reason: string; photos: number[] }> = {};
+  for (const s of LINE_SPECS) lines[s.key] = { status: s.sight === 'hidden' ? 'cant_tell' : 'needed', reason: 'From the photos', photos: [1] };
+  const outcome = estimateFromFindings({ price: 70_000, facts: { bedrooms: 3, bathrooms: 1, propertyKind: 'house', floorAreaSqft: null }, country: 'england', ceiling: null, findings: { condition: 'full', kitchenSize: 'small', lines, counts: { rooms: null, radiators: null, windows: null, outsideDoors: null, internalDoors: null, bathrooms: null } } });
+  assert.equal(outcome.kind, 'project');
+  if (outcome.kind !== 'project') return;
+  const r = { ...sampleAnalysis(), project: reportProjectFrom(outcome.estimate, '2026-09-29T09:00:00.000Z', 1370) };
+  const page = buildPdfProject(r);
+  assert.ok(page);
+  assert.equal(page!.heading, 'Full project · estimated 29 September 2026');
+  assert.equal(page!.lines.length, outcome.estimate.lines.filter((l) => l.status !== 'not_needed').length);
+  assert.ok(page!.metrics.some((m) => m.label === 'Money left in'));
+  assert.ok(page!.metrics.some((m) => m.label === 'Profit after works' && m.value === '£1,370/mo'));
+  assert.equal(page!.mine, null, 'no figures of the reader’s own unless the caller supplies them');
+  const withMine = buildPdfProject(r, { version: 2, lockedAt: '2026-09-29T10:00:00.000Z', works: { low: 1, high: 2 }, value: 3, valueAdded: 4, valueAddedPct: 5, passes: true, cash: { low: 6, high: 7 }, moneyLeftIn: null, changedLines: 1, ownLines: 0 });
+  assert.equal(withMine!.mine!.metrics.length, 3);
+  // A hand-edited or older stored project is no page, never a broken one.
+  assert.equal(buildPdfProject({ ...sampleAnalysis(), project: { v: 9 } as never }), undefined);
 });

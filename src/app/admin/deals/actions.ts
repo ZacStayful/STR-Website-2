@@ -18,6 +18,7 @@ import { runMortgageBackfill } from '@/lib/listing/mortgage-backfill-run';
 import { DEAL_CHECKS_KEY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '@/lib/deal-quality/config';
 import { parseProjectAllowance, parseProjectChecks, PROJECT_CHECKS_KEY, type ProjectChecksSettings } from '@/lib/project/config';
 import { runProjectChecks } from '@/lib/project/check-run';
+import { runProjectBackfill } from '@/lib/project/live-backfill-run';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -193,6 +194,22 @@ export async function runProjectChecksAction(formData: FormData): Promise<void> 
   const dry = formData.get('mode') !== 'run';
   const result = await runProjectChecks({ dry, triggeredBy: user.email ?? 'admin' });
   await finish(dry ? 'project-checks-dry' : 'project-checks', withProjectLists(result.body as Record<string, unknown>));
+}
+
+/**
+ * The one-off Project backfill of live deals (Q16): "Dry run" counts what it
+ * would hold back for a Project check or retire, with a short sample (the
+ * full one is on /admin/deals/projects); "Run" does it, and needs the
+ * Project checks on. No spend.
+ */
+export async function runProjectBackfillAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runProjectBackfill({ dry, triggeredBy: user.email ?? 'admin' });
+  const body = result.body as Record<string, unknown>;
+  // The box at the top keeps a few examples; the cookie has no room for more.
+  const sample = Array.isArray(body.sample) ? { sample: (body.sample as string[]).slice(0, 8).join(' | ') } : {};
+  await finish(dry ? 'project-backfill-dry' : 'project-backfill', { ...body, ...sample });
 }
 
 /**

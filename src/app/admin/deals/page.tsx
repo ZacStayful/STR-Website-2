@@ -11,7 +11,7 @@ import { describeBand, formatOpenPrice, ladderBandIndex } from "@/lib/marketplac
 import { sweepEnabled } from "@/lib/marketplace/sweep-run";
 import { recheckEnabled } from "@/lib/marketplace/recheck-run";
 import { SOURCE_HOURLY_CAPS } from "@/lib/marketplace/cadence";
-import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, updateProjectChecksAction } from "./actions";
+import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, runProjectBackfillAction, updateProjectChecksAction } from "./actions";
 import { R2R_MEDIUM_PROFIT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { latestLowEntryRuns, lowEntrySearchEnabled } from "@/lib/deal-quality/low-entry-run";
 import { weekSpentPence } from "@/lib/deal-quality/low-entry-plan";
@@ -110,17 +110,19 @@ const pounds = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
  * each row is worked out from the deal it carries, as the record would.
  */
 async function streamCounts(admin: ReturnType<typeof createAdminClient>, maxCashIn: number, weekAgo: string): Promise<{ counts: Record<Stream, { live: number; week: number }>; derived: boolean } | null> {
-  const read = (withStream: boolean) => admin.from("marketplace_deals").select(withStream ? "kind, stream, deal, live_since" : "kind, deal, live_since").eq("status", "live").limit(20000);
-  let { data, error } = await read(true);
+  const read = (cols: string) => admin.from("marketplace_deals").select(cols).eq("status", "live").limit(20000);
+  // Batch 17: a live Project deal is counted by its project column (the hourly recheck rewrites stream from its deal), so it is read where the database has it.
+  let { data, error } = await read("kind, stream, project, deal, live_since");
+  if (error) ({ data, error } = await read("kind, stream, deal, live_since"));
   let derived = false;
   if (error) {
     derived = true;
-    ({ data, error } = await read(false));
+    ({ data, error } = await read("kind, deal, live_since"));
   }
   if (error) return null;
   const counts = Object.fromEntries(STREAMS.map((s) => [s, { live: 0, week: 0 }])) as Record<Stream, { live: number; week: number }>;
-  for (const r of (data ?? []) as unknown as { kind: "sale" | "rent"; stream?: unknown; deal: unknown; live_since: string | null }[]) {
-    const s = streamOfRow(r, { maxCashIn });
+  for (const r of (data ?? []) as unknown as { kind: "sale" | "rent"; stream?: unknown; project?: unknown; deal: unknown; live_since: string | null }[]) {
+    const s: Stream = r.project ? "project" : streamOfRow(r, { maxCashIn });
     counts[s].live += 1;
     if (r.live_since && r.live_since >= weekAgo) counts[s].week += 1;
   }
@@ -394,6 +396,14 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
             {(project?.runs ?? []).length === 0 && <tr><td className="py-2 text-muted-foreground" colSpan={8}>No Project pass has run yet.</td></tr>}
           </tbody>
         </table>
+        <p className="mt-4 text-sm text-muted-foreground">
+          <strong className="font-medium text-foreground">Live deals that need work (one-off).</strong> The hold only sees listings as they come in. This puts the sales already live, whose own words say they need work, through the same decision: back on the shortlist for their Project check, retired as a newcomer would be (it can never be a Project deal), or left live. It reads what is stored (no page fetch, no spend) and needs the Project checks on to run for real. Dry-run first: the counts and a few examples show in the box at the top, every example on the <Link href="/admin/deals/projects" className="text-primary hover:underline">Project deals page</Link>.
+        </p>
+        <form action={runProjectBackfillAction} className="mt-2 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry-run the live-deal backfill</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run the live-deal backfill</button>
+          <Link href="/admin/deals/projects" className="text-sm font-medium text-primary hover:underline">What Project deals are doing →</Link>
+        </form>
         <form action={updateProjectChecksAction} className="mt-4 grid gap-3 sm:grid-cols-4">
           <label className="flex items-center gap-2 text-sm"><input name="enabled" type="checkbox" defaultChecked={projectSettings.checks.enabled} /> Project checks on</label>
           <label className="text-sm">Sold-price lookups a day<input name="soldLookupsPerDay" type="text" inputMode="numeric" defaultValue={projectSettings.checks.soldLookupsPerDay} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
@@ -438,7 +448,7 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
       <section className="mt-8 rounded-xl border border-border bg-card p-5">
         <h2 className="text-base font-semibold text-foreground">Streams</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Every deal is in one stream from the moment it is screened: a rental is rent-to-rent; a sale the house finance (25% deposit, its nation’s tax, £6,000 + £3,500 a bedroom of setup) gets into for at most {pounds(settings.lowEntry.maxCashIn)} is low entry, an auction lot at its auction price; every other sale is a top-area deal. “This week” counts deals that went live in the last 7 days.
+          Every deal is in one stream from the moment it is screened: a rental is rent-to-rent; a sale the house finance (25% deposit, its nation’s tax, £6,000 + £3,500 a bedroom of setup) gets into for at most {pounds(settings.lowEntry.maxCashIn)} is low entry, an auction lot at its auction price; every other sale is a top-area deal; a sale that passed its Project check is a Project deal. “This week” counts deals that went live in the last 7 days.
           {streams?.derived ? " The stream column is not in the database yet (run schema.sql): each row is worked out from the deal it carries." : ""}
         </p>
         <table className="mt-3 w-full max-w-md text-sm">

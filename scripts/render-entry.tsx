@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { renderToFile } from "@react-pdf/renderer";
 import React from "react";
 import { StayfulReport } from "../src/lib/pdf/StayfulReport";
-import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildSetupSnapshot } from "../src/lib/pdf/derive";
+import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildPdfProject, buildSetupSnapshot } from "../src/lib/pdf/derive";
+import { estimateFromFindings } from "../src/lib/project/estimate";
+import { LINE_SPECS, type LineFinding, type LineKey } from "../src/lib/project/costing";
+import { reportProjectFrom, type ReportProjectMine } from "../src/lib/project/report";
 import { pdfBrand } from "../src/lib/pdf/theme";
 import { sampleAnalysis, sampleSetup } from "../src/lib/pdf/__fixtures__/sample";
 import type { PdfReportData } from "../src/lib/pdf/derive";
@@ -136,6 +139,32 @@ const VARIANTS: Array<{ name: string; sheets: number; build: Build }> = [
       d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
       d.deal = buildPdfDeal(r);
       d.diligence = buildPdfDiligence(r);
+      return d;
+    },
+  },
+  {
+    // Batch 17: a Project deal's Full analysis, every line priced with its
+    // reason, and the reader's own locked figures beside ours.
+    name: "with-project",
+    sheets: 10,
+    build: () => {
+      const lines: Partial<Record<LineKey, LineFinding>> = {};
+      for (const spec of LINE_SPECS) lines[spec.key] = { status: spec.sight === "hidden" ? "cant_tell" : "needed", reason: "Dated throughout: the photos show original fittings and wear, so this is priced as needed.", photos: [1, 2] };
+      const outcome = estimateFromFindings({
+        price: 70_000,
+        facts: { bedrooms: 3, bathrooms: 1, propertyKind: "house", floorAreaSqft: null },
+        country: "england",
+        ceiling: null,
+        findings: { condition: "full", kitchenSize: "small", lines, counts: { rooms: null, radiators: null, windows: null, outsideDoors: null, internalDoors: null, bathrooms: null } },
+      });
+      if (outcome.kind !== "project") throw new Error("the sample is not a project");
+      const r = { ...sampleAnalysis({ withDiligence: true }), project: reportProjectFrom(outcome.estimate, "2026-09-29T09:00:00.000Z", 1370) };
+      const mine: ReportProjectMine = { version: 2, lockedAt: "2026-09-29T10:00:00.000Z", works: { low: 30_000, high: 41_000 }, value: 128_000, valueAdded: 17_000, valueAddedPct: 13.3, passes: true, cash: { low: 80_000, high: 91_000 }, moneyLeftIn: { low: 40_000, high: 45_000 }, changedLines: 2, ownLines: 1 };
+      const d = deriveReportData(r);
+      d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
+      d.deal = buildPdfDeal(r);
+      d.diligence = buildPdfDiligence(r);
+      d.project = buildPdfProject(r, mine);
       return d;
     },
   },

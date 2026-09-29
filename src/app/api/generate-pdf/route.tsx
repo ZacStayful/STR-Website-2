@@ -7,6 +7,7 @@ import { leadByReportToken } from "@/lib/leads/report";
 import { touchLeadByReportToken } from "@/lib/leads/activity";
 import type { PdfBrand } from "@/lib/pdf/theme";
 import { logActivity } from "@/lib/activity/log";
+import { parseReportProjectMine } from "@/lib/project/report";
 
 export const runtime = "nodejs";
 
@@ -83,6 +84,8 @@ interface PdfRequestBody extends AnalysisResult {
     }>;
   };
   expenses?: PdfExpenses;
+  /** Batch 17: the downloader's own locked figures on a Project deal (the report page sends them). */
+  projectMine?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -108,6 +111,8 @@ export async function POST(request: Request) {
     expenses: body.expenses,
     setup: body.setup,
     preparedFor: caller.email,
+    // Only a signed-in member's own download carries their figures; a funnel or lead report never has any.
+    projectMine: caller.userId ? parseReportProjectMine(body.projectMine) : null,
   });
   const filename = reportFilename(body, brand);
 

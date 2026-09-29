@@ -3,6 +3,7 @@ import type { EarningsRange } from './comps/earnings.ts';
 import type { LocalTrend } from './comps/local-trend.ts';
 import type { ListingsNearby } from './comps/nearby.ts';
 import type { StayProfile } from './comps/stays.ts';
+import type { ReportProject } from './project/report.ts';
 
 // ─── Property Input ───────────────────────────────────────────────
 export interface PropertyInput {
@@ -371,6 +372,12 @@ export interface AnalysisResult {
    * src/lib/analysis/enhanced-notice.ts.
    */
   enhancedNotice?: EnhancedNotice | null;
+  /**
+   * Batch 17: a Project deal's estimate as it stood when the Full analysis
+   * ran (src/lib/project/report.ts): the works, the value after works and the
+   * finance, without photos. Absent on every other report.
+   */
+  project?: ReportProject | null;
   /** Row id in saved_searches once the report has been persisted. */
   reportId?: string;
 }
