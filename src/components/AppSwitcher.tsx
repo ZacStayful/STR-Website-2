@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { UsageChip } from "@/components/credit/UsageChip";
+import { FeedbackTrigger } from "@/components/feedback/FeedbackTrigger";
 import { ProfilePill, type PillProfiles } from "@/components/ProfilePill";
 import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type ActiveNav } from "@/lib/nav";
 
@@ -56,6 +57,8 @@ export function AppSwitcher({ active, admin, leads, profile = null, saved = null
       )}
       <ProfilePill profile={profile} saved={saved} />
       <UsageChip />
+      {/* Batch 18: a shortcut to the feedback form, not a nav item. */}
+      <FeedbackTrigger variant="header" />
     </nav>
   );
 }

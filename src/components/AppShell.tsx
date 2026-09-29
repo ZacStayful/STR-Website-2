@@ -16,6 +16,8 @@ import { requireProfileStart } from "@/lib/profile/server";
 import { profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import type { PillProfiles } from "@/components/ProfilePill";
+import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
+import { MembersFooter } from "@/components/feedback/MembersFooter";
 
 /**
  * Server shell for every members-only surface: resolves the member, their
@@ -104,6 +106,9 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
       <CreditBanner />
       <VisitHeartbeat />
       {children}
+      {/* Batch 18: the way to tell us about a bug or an idea, on every members-only page. */}
+      <MembersFooter />
+      <FeedbackDialog />
     </CreditProvider>
   );
 }
