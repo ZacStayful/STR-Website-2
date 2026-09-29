@@ -21,6 +21,7 @@ import { manageNotificationsUrl } from '../url.ts';
 import { GOALS_EDITOR_HREF } from '../nav.ts';
 import type { Block, Section, Unsubscribe } from '../notify/message.ts';
 import { renderEmail } from '../notify/render-email.ts';
+import { rangeCaption } from '../marketplace/profit-range.ts';
 
 export type PickBasis = 'goals' | 'house';
 export type PickStatus = 'pending' | 'sent' | 'failed';
@@ -562,7 +563,7 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   const work = sc && !range ? screeningWorking(sc) : [];
   const scVerdict = sc ? (range ? BAND_LABELS[sc.band] : `${BAND_LABELS[sc.band]} — ${sc.reason}`) : null;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
-  const dealLine = range ? `${range.label} · area estimate, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
+  const dealLine = range ? `${range.label} · ${rangeCaption(sc?.check?.compCount)}, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
   const motivationLine = describeMotivation(pick.motivation ?? null);
   // Said first and said plainly. A near miss presented as a match is a small
   // lie that costs more trust than the empty day it was avoiding.

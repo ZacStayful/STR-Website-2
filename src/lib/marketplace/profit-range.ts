@@ -105,6 +105,16 @@ export function profitRange(input: ProfitRangeInput): ProfitRange | null {
   return { kind, midPcm: Math.round(mid), lowPcm, highPcm, pct, label: formatRange(lowPcm, highPcm), basis: kind === 'purchase' ? 'cash flow after the mortgage' : 'profit after rent' };
 }
 
+/**
+ * The caption under a range (Batch 16, Part C): the deal's own comparables
+ * when it has been checked — the count only, never the radius or a place —
+ * else the area estimate, as before.
+ */
+export function rangeCaption(compCount: number | string | null | undefined): string {
+  const n = num(compCount);
+  return n !== null && n > 0 ? `based on ${n} similar Airbnb${n === 1 ? '' : 's'} nearby` : 'area estimate';
+}
+
 /** "+45% vs a long let": kept beside a purchase's range as a small tag. */
 export function upliftTag(upliftPct: number | string | null | undefined): string | null {
   const u = num(upliftPct);
@@ -136,13 +146,14 @@ export function rangeFromScreening(deal: { kind: 'sale' | 'rent'; price_amount: 
 
 /**
  * A card's range as an email line: "£450–£700/mo · area estimate · £38k
- * cash in", or null when there is none to show. The cash in (Batch 16) is
- * the house-finance figure the card row carries (deal_cash / deal_setup);
- * a card read without those columns has no cash line.
+ * cash in" (or "· based on 12 similar Airbnbs nearby" once the deal has
+ * been checked), or null when there is none to show. The cash in (Batch
+ * 16) is the house-finance figure the card row carries (deal_cash /
+ * deal_setup); a card read without those columns has no cash line.
  */
-export function cardRangeLine(card: { kind: 'sale' | 'rent'; price_amount: number | string | null; price_period: string | null; bedrooms: number | null; screening_gross?: number | string | null; screening_confidence?: string | null; deal_cash?: number | string | null; deal_setup?: number | string | null }, finance: ProfitRangeInput['finance'], widths: ProfitRangeInput['widths']): string | null {
+export function cardRangeLine(card: { kind: 'sale' | 'rent'; price_amount: number | string | null; price_period: string | null; bedrooms: number | null; screening_gross?: number | string | null; screening_confidence?: string | null; deal_cash?: number | string | null; deal_setup?: number | string | null; check_comps?: number | string | null }, finance: ProfitRangeInput['finance'], widths: ProfitRangeInput['widths']): string | null {
   const r = profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance, widths });
   if (!r) return null;
   const cash = cashLine(card.kind, card.kind === 'rent' ? card.deal_setup : card.deal_cash);
-  return `${r.label} · area estimate${cash ? ` · ${cash}` : ''}`;
+  return `${r.label} · ${rangeCaption(card.check_comps)}${cash ? ` · ${cash}` : ''}`;
 }

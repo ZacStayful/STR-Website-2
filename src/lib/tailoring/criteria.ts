@@ -195,9 +195,11 @@ export interface DealFacts {
   propertyKind: 'flat' | 'house' | 'unknown';
   tenure: 'freehold' | 'leasehold' | 'unknown';
   licensing: LicensingStatus;
-  /** The screening's short-let revenue for the area and size, £/yr, and its confidence. */
+  /** The screening's short-let revenue for the area and size (or the deal's own check, Batch 16), £/yr, and its confidence. */
   grossRevenue: number | null;
   confidence: string | null;
+  /** Batch 16: the comparables the deal's own check kept, when it has one; absent or null on the area's average. */
+  compCount?: number | null;
   /** The stored deal figures (house finance): a rental's setup cost, break-even and payback. */
   deal: Deal | null;
   /** The member's own motivated-seller test (candidates.ts buildCandidate); undefined when they did not ask. */
@@ -221,7 +223,7 @@ export function tenureOf(raw: string | null | undefined): DealFacts['tenure'] {
   return 'unknown';
 }
 
-type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'screening_gross' | 'screening_confidence'>;
+type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'screening_gross' | 'screening_confidence' | 'check_comps'>;
 
 /** A marketplace row (Today's pool, the grid) as facts. */
 export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }): DealFacts {
@@ -239,6 +241,7 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
     licensing: getLicensing(area).status,
     grossRevenue: num(row.screening_gross),
     confidence: row.screening_confidence ?? null,
+    compCount: num(row.check_comps),
     deal,
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,

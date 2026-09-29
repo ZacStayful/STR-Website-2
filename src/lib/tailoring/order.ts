@@ -34,10 +34,11 @@ import { areaCentroid } from '../market/area-centroids.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { AreaCardData } from '../market/explorer.ts';
 import { TAILORING } from './config.ts';
+import { checkSignal } from '../deal-quality/rank-signal.ts';
 import type { DealFacts, Judgement, MemberFigures } from './criteria.ts';
 import { asked, type Signal, type TailoringProfile } from './profile.ts';
 
-export type AdjustmentKey = 'cashflow' | 'growth' | 'steady' | 'bold' | 'operations' | 'sourcer' | 'similar';
+export type AdjustmentKey = 'cashflow' | 'growth' | 'steady' | 'bold' | 'operations' | 'sourcer' | 'similar' | 'checked';
 
 export interface Adjustment {
   key: AdjustmentKey;
@@ -185,6 +186,10 @@ export function adjustmentsFor(f: DealFacts, fig: MemberFigures, l: Leanings, ar
   }
 
   if (l.bold) add('bold', (f.motivationScore / 10) * TAILORING.bold.motivationPointsPer10, 'a seller who looks ready to deal');
+
+  // Batch 16: a deal shown on its own comparables check is a surer thing than one on the area's average.
+  const checked = checkSignal(f.confidence, f.compCount ?? null, TAILORING.checked);
+  if (checked) add('checked', checked.points, checked.reason);
 
   const miles = operationsMiles(f.area, l.operations);
   if (miles !== null) {

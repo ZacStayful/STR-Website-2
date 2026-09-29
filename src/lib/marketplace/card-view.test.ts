@@ -75,3 +75,12 @@ test('Batch 16: the cash in / to start line, at the member’s own deposit for a
   assert.equal(bare.lowEntry, false);
   assert.equal(cardView({ ...common, card: sale, lowEntryMaxCashIn: 40_000 }).lowEntry, false, 'the bar is the setting');
 });
+
+test('Batch 16, Part C: the caption names the deal’s own comparables once checked, and the pay ceiling rests on them', () => {
+  const view = cardView({ card: { ...CARD, screening_confidence: 'high', check_comps: 12 }, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly) });
+  assert.equal(view.caption, 'based on 12 similar Airbnbs nearby');
+  assert.equal(view.pay?.basis, 'checked');
+  const before = cardView({ card: CARD, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly) });
+  assert.equal(before.caption, 'area estimate');
+  assert.equal(before.pay?.basis, 'area');
+});

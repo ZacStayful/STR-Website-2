@@ -31,10 +31,10 @@ export function SampleDeals({ deals }: { deals: SampleDeal[] }) {
           </div>
           <div className="p-3">
             <div className="flex items-baseline justify-between gap-2">
-              <p className="text-lg font-bold text-foreground">{d.range ? d.range.replace(/ · area estimate$/, "") : d.figureBig}</p>
+              <p className="text-lg font-bold text-foreground">{d.range ? d.range.split(" · ")[0] : d.figureBig}</p>
               {d.price && <p className="text-sm font-semibold text-foreground">{d.price}</p>}
             </div>
-            <p className="text-xs text-muted-foreground">{d.range ? "area estimate at your numbers" : d.figureSmall}</p>
+            <p className="text-xs text-muted-foreground">{d.range ? `${d.range.split(" · ")[1] ?? "area estimate"}, at your numbers` : d.figureSmall}</p>
             <p className="mt-1.5 truncate text-sm font-medium text-foreground">{d.where || "Location on the sheet"}</p>
             <p className="truncate text-xs text-muted-foreground">{d.type}</p>
             <p className={"mt-2 text-[11px] " + (d.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{d.freshness}</p>

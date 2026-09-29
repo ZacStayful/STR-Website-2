@@ -10,7 +10,7 @@ import { reasonLabel } from "@/lib/listing/picks";
 import { ReasonChips } from "@/components/PickReasonChips";
 import { BAND_LABELS } from "@/lib/listing/screen";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { profitRange, upliftTag, type ProfitRangeInput } from "@/lib/marketplace/profit-range";
+import { profitRange, rangeCaption, upliftTag, type ProfitRangeInput } from "@/lib/marketplace/profit-range";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
@@ -167,7 +167,7 @@ function PickCard({ pick: p, tab, showReasons, finance, widths, profileName = nu
           <p className="mt-0.5 text-xs text-muted-foreground">
             {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), profileName ? `For ${profileName}` : null, p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
           </p>
-          {range && <p className="mt-1 text-xs font-medium text-primary">{range.label} · area estimate, {range.basis}{uplift ? ` · ${uplift}` : ""}</p>}
+          {range && <p className="mt-1 text-xs font-medium text-primary">{range.label} · {rangeCaption(p.screening?.check?.compCount)}, {range.basis}{uplift ? ` · ${uplift}` : ""}</p>}
           {p.screening && p.screening.band !== "insufficient-data" && <p className="mt-1.5 text-xs font-semibold text-foreground">{BAND_LABELS[p.screening.band]}</p>}
           {p.motivation && p.motivation.fired.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Why this one">

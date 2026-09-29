@@ -102,7 +102,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
               ))}
             </dl>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              area estimate
+              {view.caption}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
             {/* Batch 16, Part F: what it takes to get in ("£38k cash in" / "£12k to start") sits with the price on every card. */}
@@ -119,7 +119,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
         {view ? (
           <>
             <p className="text-xs text-muted-foreground">
-              area estimate{view.range ? ` · ${view.range.basis}` : ""}
+              {view.caption}{view.range ? ` · ${view.range.basis}` : ""}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
             {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure; Batch 16: the cash in / to start. */}

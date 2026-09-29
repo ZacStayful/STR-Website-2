@@ -9,7 +9,8 @@ import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { formatPence } from "@/lib/credit/deal-pricing";
 import { parseMarketGoals } from "@/lib/market/goals";
-import { rangeFromScreening } from "@/lib/marketplace/profit-range";
+import { rangeCaption, rangeFromScreening } from "@/lib/marketplace/profit-range";
+import { checkOf } from "@/lib/deal-quality/checks";
 
 export const metadata: Metadata = { title: "Opened deals — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -70,7 +71,7 @@ export default async function OpenedDealsPage() {
                         {deal ? [deal.town, area?.name && area.name !== deal.town ? area.name : null, deal.outcode].filter(Boolean).join(" · ") : "Deal"}
                       </Link>
                       <p className="text-xs text-muted-foreground">
-                        {[deal ? (deal.kind === "rent" ? "Rent-to-rent" : "To buy") : null, deal?.bedrooms ? `${deal.bedrooms} bed` : null, deal ? priceLine(deal) : null, range ? `${range.label} area estimate` : null].filter(Boolean).join(" · ")}
+                        {[deal ? (deal.kind === "rent" ? "Rent-to-rent" : "To buy") : null, deal?.bedrooms ? `${deal.bedrooms} bed` : null, deal ? priceLine(deal) : null, range ? `${range.label} ${rangeCaption(deal ? checkOf(deal.screening)?.compCount : null)}` : null].filter(Boolean).join(" · ")}
                       </p>
                     </div>
                     <div className="text-right text-xs">

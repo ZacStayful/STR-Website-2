@@ -124,3 +124,8 @@ test('a card row carries the house cash in and the auction method as JSON paths,
   assert.ok(CARD_COLUMNS.includes('deal_auction:deal->auction->>method'));
   for (const col of PRIVATE_DEAL_COLUMNS) assert.ok(!CARD_COLUMNS.split(', ').includes(col), col);
 });
+
+test('Batch 16, Part C: the card columns carry the check’s comparables count, and nothing about where they are', () => {
+  assert.ok(CARD_COLUMNS.includes('check_comps:screening->check->>compCount'));
+  assert.ok(!/radiusKm|postcode|address|lat\b|lng\b/.test(CARD_COLUMNS.replace('postcode_area', '')), 'no location column beyond the area');
+});

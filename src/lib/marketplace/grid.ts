@@ -8,7 +8,7 @@ import type { Beds } from '../market/filters.ts';
 import type { ListingSource } from '../listing/types.ts';
 import type { SourcingKind } from '../listing/sourcing.ts';
 import type { ConfirmedVia, DealStatus } from './types.ts';
-import { profitRange, upliftTag } from './profit-range.ts';
+import { profitRange, rangeCaption, upliftTag } from './profit-range.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
 /** 'best' (Batch 14, the default): "Best for you", the member's own order (src/lib/tailoring/browse.ts). */
@@ -142,7 +142,7 @@ export const PRIVATE_DEAL_COLUMNS: readonly string[] = ['canonical_url', 'addres
  * member. Kept separate from PUBLIC_DEAL_COLUMNS so the cached area teaser
  * (up to 2,000 rows) does not carry them.
  */
-export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, deal_setup:deal->>setupCost, deal_breakeven:deal->>breakevenOccupancyPct, deal_payback:deal->>paybackMonths, deal_margin:deal->>monthlyMargin, deal_cash:deal->>cashRequired, deal_auction:deal->auction->>method`;
+export const CARD_COLUMNS = `${PUBLIC_DEAL_COLUMNS}, motivation, price_history, live_since, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, deal_setup:deal->>setupCost, deal_breakeven:deal->>breakevenOccupancyPct, deal_payback:deal->>paybackMonths, deal_margin:deal->>monthlyMargin, deal_cash:deal->>cashRequired, deal_auction:deal->auction->>method, check_comps:screening->check->>compCount`;
 
 export interface DealCard {
   id: string;
@@ -187,6 +187,8 @@ export interface DealCard {
   deal_cash?: string | number | null;
   /** CARD_COLUMNS only (Batch 16): 'traditional' | 'modern' when the stored deal is an auction lot, else null. */
   deal_auction?: string | null;
+  /** CARD_COLUMNS only (Batch 16, Part C): the comparables the deal's own check kept, when it has one (a count, never where). Null on the area's average. */
+  check_comps?: string | number | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -302,7 +304,7 @@ export function areaDealView(card: DealCard, photoUrl: string | null, now: Date 
   const badges = badgesFor(card, now);
   const range = widths ? profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths }) : null;
   const uplift = card.kind === 'sale' ? upliftTag(card.uplift_pct) : null;
-  const figure = widths ? { big: range?.label ?? '—', small: [`area estimate${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') } : headlineFigure(card);
+  const figure = widths ? { big: range?.label ?? '—', small: [`${rangeCaption(card.check_comps)}${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') } : headlineFigure(card);
   return {
     id: card.id,
     kind: card.kind,

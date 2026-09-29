@@ -14,6 +14,7 @@ import { areaMetaForCode } from "@/lib/market/areas";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { BAND_LABELS, parseScreening } from "@/lib/listing/screen";
+import { checkOf } from "@/lib/deal-quality/checks";
 import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE, type Deal } from "@/lib/listing/deal";
 import { countryForPostcode } from "@/lib/listing/stamp-duty";
 import { areaRevenueFor } from "@/lib/listing/sourcing";
@@ -27,7 +28,7 @@ import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { openPricePence } from "@/lib/marketplace/ladder";
 import { AUCTION_LABEL, badgesFor, describeType, isAuctionCard, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
-import { moneyRange, profitRange, spread, upliftTag } from "@/lib/marketplace/profit-range";
+import { moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/marketplace/profit-range";
 import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
@@ -112,6 +113,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const profit = deal.annual_profit === null ? null : Number(deal.annual_profit);
   const ladderPence = openPricePence(profit, settings.dealOpenLadder);
   const screening = parseScreening(deal.screening);
+  // Batch 16: the deal's own comparables check, when it has one (the count is all the page says of it).
+  const check = checkOf(deal.screening);
+  const caption = rangeCaption(check?.compCount);
   const motivation = parseMotivation(deal.motivation);
   const history = parseHistory(deal.price_history);
   const message = msg ? MESSAGES[msg] ?? null : null;
@@ -187,7 +191,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // Batch 14: the most they can pay to hit their own monthly profit, on the
   // same income and at the same finance as the range above (the member's
   // active profile; the house figures and £500 without answers).
-  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct });
+  const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct, checked: check !== null });
   const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
   const payGap = pay ? gapLine(askingFigure, pay) : null;
   // Batch 14, Part C: the same three numbers as the member's card, from the same function.
@@ -195,6 +199,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
     ...card,
     screening_gross: gross,
     screening_confidence: screening?.confidence ?? null,
+    check_comps: check?.compCount ?? null,
     deal_setup: model?.kind === "rent-to-rent" ? model.setupCost : null,
     deal_breakeven: model?.kind === "rent-to-rent" ? model.breakevenOccupancyPct : null,
     deal_payback: model?.kind === "rent-to-rent" ? model.paybackMonths : null,
@@ -287,7 +292,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               <div className="p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <p className="text-2xl font-bold text-foreground">
-                    {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">area estimate{range ? ` · ${range.basis}` : ""}</span>
+                    {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{caption}{range ? ` · ${range.basis}` : ""}</span>
                   </p>
                   {(price || cashText) && (
                     <p className="text-lg font-semibold text-foreground">
@@ -349,7 +354,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     </form>
                   </div>
                 ) : (
-                  <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : "This deal is off the market and cannot be opened."}</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : deal.status === "pending_check" ? "We’re checking this property’s own Airbnb comparables before it goes live. Come back tomorrow." : "This deal is off the market and cannot be opened."}</p>
                 )}
                 {canBuy && !analysisFirst && (
                   <div className="mt-3">
@@ -397,9 +402,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{BAND_LABELS[screening.band]}</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Our screening of the area and size, as ranges. A Full analysis works the figures out for this property.</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{check ? `Our check on this property’s own comparables (${check.compCount} similar Airbnbs nearby), as ranges. A Full analysis works the exact figures out for this property.` : "Our screening of the area and size, as ranges. A Full analysis works the figures out for this property."}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
-                  {gross !== null && <Fig label="Short-let revenue, area" value={`${moneyRange(spread(gross, pct, 100))}/yr`} />}
+                  {gross !== null && <Fig label={check ? "Short-let revenue, own comparables" : "Short-let revenue, area"} value={`${moneyRange(spread(gross, pct, 100))}/yr`} />}
                   {range && <Fig label={range.kind === "purchase" ? "Cash flow / mo" : "Profit / mo"} value={range.label.replace(/\/mo$/, "")} />}
                   {screening.kind === "purchase" && screening.upliftPct !== null && <Fig label="Against a long let" value={`${screening.upliftPct >= 0 ? "+" : "−"}${Math.abs(Math.round(screening.upliftPct))}%`} />}
                   {screening.kind === "rent-to-rent" && screening.revenueMultiple !== null && <Fig label="Revenue multiple" value={`about ${screening.revenueMultiple.toFixed(1)}× the rent`} />}

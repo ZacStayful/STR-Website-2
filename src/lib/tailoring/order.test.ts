@@ -121,3 +121,12 @@ test('what a profile leans towards comes from its answers, only where they are a
   assert.deepEqual(look('M', 3), { growth5y: null, typicalValue: null });
   assert.deepEqual(areaLookup(null)('NG', 3), { growth5y: null, typicalValue: null });
 });
+
+test('Batch 16: a deal shown on its own comparables check is lifted by the check’s confidence, whatever the leanings', () => {
+  assert.deepEqual(pts(facts({ confidence: 'high', compCount: 12 }), none), { checked: 5 });
+  assert.deepEqual(pts(facts({ confidence: 'medium', compCount: 9 }), none), { checked: 3 });
+  assert.deepEqual(pts(facts({ confidence: 'low', compCount: 6 }), none), {}, 'a low-confidence check earns nothing: its wide range already says so');
+  assert.deepEqual(pts(facts({ confidence: 'high' }), none), {}, 'the area estimate at high confidence is not a check');
+  const adj = adjustmentsFor(facts({ confidence: 'high', compCount: 12 }), fig(facts()), none, noArea);
+  assert.equal(adj[0].reason, 'checked on 12 similar Airbnbs nearby');
+});

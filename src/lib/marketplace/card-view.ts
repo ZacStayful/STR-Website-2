@@ -9,7 +9,7 @@
  */
 
 import { openPricePence, type DealOpenLadder } from './ladder.ts';
-import { profitRange, upliftTag, widthFor, type ProfitRange } from './profit-range.ts';
+import { profitRange, rangeCaption, upliftTag, widthFor, type ProfitRange } from './profit-range.ts';
 import { mostYouCanPay, type PayCeiling } from './most-you-can-pay.ts';
 import type { CardNumber } from '../tailoring/numbers.ts';
 import type { Explanation } from '../tailoring/why.ts';
@@ -57,6 +57,8 @@ function cashInFor(card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period'
 
 export interface CardView {
   range: ProfitRange | null;
+  /** Batch 16, Part C: what the range rests on — "based on 12 similar Airbnbs nearby" once checked, else "area estimate". */
+  caption: string;
   /**
    * Batch 14: the most this member can pay to hit their own monthly profit,
    * on the card's income, where its range would start at their minimum.
@@ -96,7 +98,7 @@ export interface CardView {
 }
 
 export function cardView(input: {
-  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup'>>;
+  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup' | 'check_comps'>>;
   state: CardState;
   admin: boolean;
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
@@ -126,9 +128,10 @@ export function cardView(input: {
   const analysed = state.reportId !== null;
   const ladderPence = openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), input.ladder);
   const quote = analysisQuote({ admin: input.admin, pricing: input.pricing, opened: state.opened, openPaidBasePence: state.openPaidBasePence, openPricePence: ladderPence, withPmi: false });
-  const pay = mostYouCanPay({ kind: card.kind, grossRevenue: card.screening_gross ?? null, bedrooms: card.bedrooms, finance: input.finance ?? null, cashBuyer: input.cashBuyer, widthPct: widthFor(card.screening_confidence ?? null, input.pricing.profitRangePct) });
+  const pay = mostYouCanPay({ kind: card.kind, grossRevenue: card.screening_gross ?? null, bedrooms: card.bedrooms, finance: input.finance ?? null, cashBuyer: input.cashBuyer, widthPct: widthFor(card.screening_confidence ?? null, input.pricing.profitRangePct), checked: (num(card.check_comps) ?? 0) > 0 });
   return {
     range,
+    caption: rangeCaption(card.check_comps),
     pay,
     uplift: card.kind === 'sale' ? upliftTag(card.uplift_pct) : null,
     cash: cashLine(card.kind, cash),

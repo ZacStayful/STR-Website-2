@@ -8,7 +8,7 @@ import { isPickToken, reasonLabel, reasonEffect, feedbackRules, ruleApplied, typ
 import { ReasonChips } from "@/components/PickReasonChips";
 import { BAND_LABELS, screeningScore } from "@/lib/listing/screen";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
+import { profitRange, rangeCaption, upliftTag } from "@/lib/marketplace/profit-range";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
@@ -137,7 +137,7 @@ export default async function PickResponsePage({ params, searchParams }: { param
             {l.photo && <img src={l.photo} alt="" className="mt-4 w-full rounded-2xl border border-[#e4e7dc] object-cover" style={{ maxHeight: 320 }} />}
             {range && (
               <p className="mt-4 text-sm font-medium text-[#5d8156]">
-                {range.label} · area estimate, {range.basis}
+                {range.label} · {rangeCaption(pick.screening?.check?.compCount)}, {range.basis}
                 {uplift ? ` · ${uplift}` : ""}
               </p>
             )}

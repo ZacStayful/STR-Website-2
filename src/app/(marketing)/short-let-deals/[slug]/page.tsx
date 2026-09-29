@@ -8,7 +8,7 @@ import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { describeType } from "@/lib/marketplace/grid";
 import { priceLine } from "@/app/deals/_components/DealCard";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
-import { profitRange, upliftTag } from "@/lib/marketplace/profit-range";
+import { profitRange, rangeCaption, upliftTag } from "@/lib/marketplace/profit-range";
 import { ladderRangeText } from "@/lib/marketplace/ladder";
 import { formatPence } from "@/lib/credit/deal-pricing";
 import { siteUrl } from "@/lib/url";
@@ -76,7 +76,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
                   <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
                 </div>
                 <div className="p-3">
-                  <p className="text-lg font-bold text-[#2e3d2b]">{range?.label ?? "—"} <span className="text-xs font-normal text-[#7a8274]">area estimate{uplift ? ` · ${uplift}` : ""}</span></p>
+                  <p className="text-lg font-bold text-[#2e3d2b]">{range?.label ?? "—"} <span className="text-xs font-normal text-[#7a8274]">{rangeCaption(card.check_comps)}{uplift ? ` · ${uplift}` : ""}</span></p>
                   <p className="mt-1 text-sm text-[#2e3d2b]">{[priceLine(card), describeType(card)].filter(Boolean).join(" · ")}</p>
                   <p className="text-xs text-[#7a8274]">{[card.town, card.outcode].filter(Boolean).join(" · ")}</p>
                 </div>
