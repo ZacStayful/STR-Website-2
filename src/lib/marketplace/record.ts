@@ -24,6 +24,7 @@ import { DEFAULT_LOW_ENTRY, type LowEntrySettings } from '../deal-quality/config
 import type { AuctionTerms } from '../deal-quality/auction.ts';
 import type { StoredCheck } from '../deal-quality/checks.ts';
 import { mergeNeedsWork } from '../project/needs-work.ts';
+import type { ProjectSettings } from '../project/config.ts';
 
 /** The stored-rent lookup, keyed exactly as broker/providers/internal.ts keys it. */
 export function areaRentKey(postcodeArea: string, bedrooms: number): string {
@@ -103,6 +104,12 @@ export interface DealRules {
    * (billing_settings.deal_checks).
    */
   checks?: { enabled: boolean; validDays: number; shortlistExpiryDays: number };
+  /**
+   * Batch 17: the Project entry hold (src/lib/project/hold.ts), on while
+   * project_checks.enabled and DEAL_CHECKS_ENABLED both are, with the Project
+   * settings its free best case is worked out on.
+   */
+  project?: { hold: boolean; settings: ProjectSettings };
 }
 
 export interface DealRecord {

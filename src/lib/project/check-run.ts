@@ -64,7 +64,7 @@ import { DEFAULT_DEAL_CHECKS } from '../deal-quality/config';
 import { streamOfRow } from '../deal-quality/streams';
 import { dealChecksEnabled, readDealQualitySettings, type DealQualitySettings } from '../deal-quality/settings-server';
 import { ukDay } from '../activity/week';
-import { readProjectSettings, type ProjectSettingsRead } from './settings-server';
+import { projectChecksOn, readProjectSettings, type ProjectSettingsRead } from './settings-server';
 import { bestCase, ESTIMATE_VERSION, estimateFromFindings } from './estimate';
 import { ceilingFrom } from './value';
 import { ceilingTypeFor, designationExclusion, pdSoldTypeFor, soldSalesFrom } from './evidence';
@@ -357,7 +357,8 @@ async function prepCandidate(env: RunEnv, c: Candidate): Promise<StepResult> {
   }
   const card = (merged.postcodeArea ? ctx.cardByCode.get(merged.postcodeArea) : null) ?? (row.postcode_area ? ctx.cardByCode.get(row.postcode_area) : null) ?? null;
   const check = validCheckFor(checkOf(row.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
-  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: row.first_seen_at, now });
+  const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, row.postcode_area) : null;
+  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: row.first_seen_at, cohort, now });
   if (!qualifiesForMarketplace(rec)) {
     await retireHeld(admin, url, 'unqualified', now);
     return { outcome: 'unqualified' };
@@ -368,6 +369,7 @@ async function prepCandidate(env: RunEnv, c: Candidate): Promise<StepResult> {
     ...recordColumns(merged, rec),
     ...priceCols,
     stream: 'project',
+    needs_work: merged.needsWork && merged.needsWork.phrases.length > 0 ? merged.needsWork : null,
     photos: snap.photos.length > 0 ? snap.photos : (row.photos ?? null),
     last_seen_at: nowIso,
     last_checked_live_at: nowIso,
@@ -635,10 +637,7 @@ export interface ProjectRunResult {
   body: Record<string, unknown>;
 }
 
-/** The project checks' switch: its own setting AND Batch 16's checks (the hold rests on its shortlist). */
-export function projectChecksOn(settings: Pick<ProjectSettingsRead, 'checks'>): boolean {
-  return settings.checks.enabled && dealChecksEnabled();
-}
+export { projectChecksOn };
 
 async function recordRun(admin: Admin, startedAt: Date, summary: Record<string, unknown>): Promise<void> {
   const { error } = await admin.from('marketplace_runs').insert({ kind: PROJECT_CHECKS_KIND, dry: false, started_at: startedAt.toISOString(), finished_at: new Date().toISOString(), summary });

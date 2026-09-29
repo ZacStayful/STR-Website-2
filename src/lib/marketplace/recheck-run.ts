@@ -46,6 +46,8 @@ export interface RecheckSummary {
   due: number;
   fetched: number;
   live: number;
+  /** Batch 17: entry reads whose page said the sale needs work, held for their Project check. */
+  projectHeld: number;
   retired: Partial<Record<string, number>>;
   failed: number;
   paused: boolean;
@@ -80,7 +82,7 @@ export async function runMarketplaceRecheck(opts: { dry: boolean }): Promise<Rec
   } catch {
     return done({ status: 503, body: { error: 'Storage not configured' } });
   }
-  const summary: RecheckSummary = { dry: opts.dry, enabled: recheckEnabled(), retiredStale: {}, candidates: 0, due: 0, fetched: 0, live: 0, retired: {}, failed: 0, paused: false, caps: caps(), ranOutOfTime: false };
+  const summary: RecheckSummary = { dry: opts.dry, enabled: recheckEnabled(), retiredStale: {}, candidates: 0, due: 0, fetched: 0, live: 0, projectHeld: 0, retired: {}, failed: 0, paused: false, caps: caps(), ranOutOfTime: false };
 
   // ── Retire without a fetch: aged out, or nothing has confirmed it for weeks ──
   const stale: { canonical_url: string; reason: 'stale_listed' | 'stale_unseen' }[] = [];
@@ -174,6 +176,7 @@ export async function runMarketplaceRecheck(opts: { dry: boolean }): Promise<Rec
         break;
       }
       if (outcome.kind === 'live') summary.live += 1;
+      else if (outcome.kind === 'held') summary.projectHeld += 1;
       else if (outcome.kind === 'retired') summary.retired[outcome.reason] = (summary.retired[outcome.reason] ?? 0) + 1;
       else summary.failed += 1;
     }

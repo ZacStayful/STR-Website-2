@@ -17,7 +17,7 @@ import { postcodeAreaOf } from './normalise.ts';
 import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
 import type { DealType, MarketGoals } from '../market/goals.ts';
-import { needsWorkFrom, NO_NEEDS_WORK, type NeedsWork } from '../project/needs-work.ts';
+import { mergeNeedsWork, needsWorkFrom, NO_NEEDS_WORK, type NeedsWork } from '../project/needs-work.ts';
 import type { ExclusionReason } from '../project/exclusions.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
@@ -92,6 +92,12 @@ export interface SourcedListing {
 export function cardNeedsWork(l: Pick<SourcedListing, 'kind' | 'title' | 'priceQualifier' | 'features' | 'rawType'>): NeedsWork {
   if (l.kind !== 'sale') return NO_NEEDS_WORK;
   return needsWorkFrom(l.title, l.rawType ?? null, l.priceQualifier ?? null, ...(l.features ?? []));
+}
+
+/** A sale's renovation wording: its card's, with the page's once a read has been folded in (mergeSnapshotIntoListing). */
+export function listingNeedsWork(l: Pick<SourcedListing, 'kind' | 'title' | 'priceQualifier' | 'features' | 'rawType' | 'needsWork'>): NeedsWork {
+  if (l.kind !== 'sale') return NO_NEEDS_WORK;
+  return mergeNeedsWork(l.needsWork ?? null, cardNeedsWork(l));
 }
 
 export interface SourcingQuery {

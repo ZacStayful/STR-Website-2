@@ -13,6 +13,7 @@ import 'server-only';
 import type { createAdminClient } from '../supabase/admin';
 import { AUCTION_MODEL_KEY, parseAuctionTerms, type AuctionTerms } from '../deal-quality/auction';
 import { DEAL_CHECKS_KEY } from '../deal-quality/config';
+import { dealChecksEnabled } from '../deal-quality/settings-server';
 import { PROJECT_CEILING_KEY, PROJECT_CHECKS_KEY, PROJECT_COSTS_KEY, PROJECT_QUANTITIES_KEY, PROJECT_RATES_KEY, PROJECT_VALUE_KEY, parseProjectSettings, type ProjectSettings } from './config';
 import { DEFAULT_TODAY_MIX, parseTodayMix, TODAY_MIX_KEY, type TodayMixSettings } from '../today/mix';
 
@@ -31,6 +32,15 @@ export async function readProjectSettings(admin: Admin): Promise<ProjectSettings
   const rows: Record<string, unknown> = {};
   for (const r of (data ?? []) as { key: string; value: unknown }[]) rows[r.key] = r.value;
   return { ...parseProjectSettings(rows, rows[DEAL_CHECKS_KEY]), bridging: parseAuctionTerms(rows[AUCTION_MODEL_KEY]) };
+}
+
+/**
+ * The Project checks' switch: its own setting AND Batch 16's checks. The
+ * entry hold rests on Batch 16's shortlist, so without DEAL_CHECKS_ENABLED
+ * nothing is held, whatever project_checks.enabled says.
+ */
+export function projectChecksOn(settings: Pick<ProjectSettings, 'checks'>): boolean {
+  return settings.checks.enabled && dealChecksEnabled();
 }
 
 let mixCache: { at: number; value: TodayMixSettings } | null = null;

@@ -160,7 +160,9 @@ export async function checkDeal(deal: DealRow, listing: SourcedListing, cc: Chec
     }
     const check = storedCheckFrom({ ...figures, confidence }, search, { bedrooms, kind: listing.kind }, cc.via, now);
     const card = (listing.postcodeArea ? ctx.cardByCode.get(listing.postcodeArea) : null) ?? (deal.postcode_area ? ctx.cardByCode.get(deal.postcode_area) : null) ?? null;
-    const rec = buildDealRecord(listing, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, now });
+    // Batch 17 (bug 1): the cached cohorts, so the rebuilt record keeps its motivated-seller signals.
+    const cohort = ctx.cohorts ? await ctx.cohorts.find(listing, deal.postcode_area) : null;
+    const rec = buildDealRecord(listing, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, cohort, now });
     const withFigure = { ...found, confidence: check.confidence, comps: check.compCount, gross: check.gross };
     if (checkOutcome(true, qualifiesForMarketplace(rec)) === 'unqualified') {
       await retireDeal(admin, deal.canonical_url, 'unqualified', now);

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
+  listingNeedsWork,
   areasForGoals,
   queriesForGoals,
   onTheMarketSearchUrl,
@@ -318,4 +319,14 @@ test('rankPicksByBand never lets the depth cut drop a qualified listing behind m
   // Within a band, fit still decides the order; unscreened rows count as qualified.
   const unscreened = { ...rankable({ id: 'u', canonicalUrl: 'https://x/u' }, 200_000), areaFit: 50 };
   assert.deepEqual(rankPicksByBand([medium[0], unscreened, qualified], 5, 'off').map((p) => p.listing.id), ['u', 'q', 'm0']);
+});
+
+test('Batch 17: a sale’s renovation wording is its card’s and its page’s together; a rental has none', () => {
+  const card = { kind: 'sale' as const, title: 'Three bedroom terrace in need of modernisation', priceQualifier: null, features: [], rawType: 'Terraced' };
+  assert.equal(listingNeedsWork(card).flag, true, 'the card alone');
+  const quiet = { ...card, title: 'Three bedroom terrace' };
+  assert.equal(listingNeedsWork(quiet).flag, false);
+  const read = { ...quiet, needsWork: { flag: true, score: 3, phrases: ['requires_works'] } };
+  assert.equal(listingNeedsWork(read).flag, true, 'a page read folded in keeps the flag');
+  assert.equal(listingNeedsWork({ ...card, kind: 'rent' as const }).flag, false);
 });

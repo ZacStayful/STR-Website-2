@@ -15,10 +15,15 @@ import 'server-only';
  * Shared by the marketplace sweep (src/lib/marketplace/sweep-run.ts) and the
  * demand-led searches (src/lib/sourcing-demand/run.ts), so a listing is
  * screened the same way whichever job found it.
+ *
+ * Batch 17: while the Project hold is on (DealRules.project), a sale whose
+ * card says it needs work is decided before it is shown (src/lib/project/
+ * hold.ts): held on the shortlist in the Project stream, or retired as never
+ * a Project deal. A newcomer or a revived row alike.
  */
 import { runMetered, newActionId } from '../credit/context';
 import { areaCentroid } from '../market/area-centroids';
-import type { SourcedListing, SourcingQuery } from '../listing/sourcing';
+import { listingNeedsWork, type SourcedListing, type SourcingQuery } from '../listing/sourcing';
 import { fetchCohorts, sourcedPropertiesConfigured } from '../apis/propertydata-sourced';
 import { indexCohorts, lookupCohorts, type CohortMember } from '../listing/cohorts';
 import { buildDealRecord, feedStatusOf, qualifiesForMarketplace, type AreaCardLike, type DealRecord, type DealRules, type StoredRent } from './record';
@@ -29,10 +34,13 @@ import { nextCheckDueAt } from './cadence';
 import { REACTIVATABLE_REASONS, RETURNING_REASONS, type DealRow } from './types';
 import { chunk, loadDealsByUrls, priceChangeColumns, recordColumns, retireDeal, writeWithoutMissing, type Admin } from './server';
 import { serverFetchEnabled } from '../listing/fetch';
+import type { NeedsWork } from '../project/needs-work';
+import { projectHoldFor, type HoldDecision } from '../project/hold';
+import { projectFactsOf } from '../project/check-plan';
+import { COHORT_MAX_AGE_MS } from './cohorts-server';
 import type { Band } from '../listing/screen';
 import type { UnsuitableReason } from '../listing/suitability';
 
-const COHORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const COHORT_RADIUS_MILES = 10;
 const URL_CHUNK = 150;
 
@@ -47,10 +55,41 @@ export interface AbsorbCounters {
   repriced: number;
   retired: Partial<Record<string, number>>;
   reactivated: number;
+  /** Batch 17: of newDeals and reactivated, how many wait for their Project check. */
+  projectHeld: number;
 }
 
 export function emptyAbsorbCounters(): AbsorbCounters {
-  return { screened: {}, unsuitable: {}, newDeals: 0, shortlisted: 0, confirmed: 0, repriced: 0, retired: {}, reactivated: 0 };
+  return { screened: {}, unsuitable: {}, newDeals: 0, shortlisted: 0, confirmed: 0, repriced: 0, retired: {}, reactivated: 0, projectHeld: 0 };
+}
+
+/** A sale's renovation wording from its card (and any page read already folded into it). */
+function needsWorkOf(l: SourcedListing): NeedsWork | null {
+  if (l.kind !== 'sale') return null;
+  const nw = listingNeedsWork(l);
+  return nw.phrases.length > 0 ? nw : null;
+}
+
+/** The Project hold's decision for a listing coming into the pool (hold.ts); 'none' while the hold is off. */
+function holdFor(l: SourcedListing, priceAmount: number | null, rules: DealRules): HoldDecision {
+  const project = rules.project;
+  if (!project?.hold || !rules.checks?.enabled || l.kind !== 'sale') return { kind: 'none' };
+  return projectHoldFor(
+    {
+      kind: l.kind,
+      needsWork: needsWorkOf(l),
+      auction: l.auction,
+      fetchable: serverFetchEnabled(l.source),
+      pageExclusion: l.projectExclusion,
+      texts: [l.title, l.priceQualifier, ...(l.features ?? [])],
+      tenure: l.tenure,
+      yearsRemainingOnLease: l.yearsRemainingOnLease,
+      listedFlag: l.listedBuilding,
+      price: priceAmount,
+      facts: projectFactsOf(l),
+    },
+    project.settings,
+  );
 }
 
 function nowIso(): string {
@@ -148,11 +187,23 @@ export async function absorbListings(
       if (rec.suitability !== 'ok' && rec.suitability !== 'unknown') counters.unsuitable[rec.suitability] = (counters.unsuitable[rec.suitability] ?? 0) + 1;
       if (!qualifiesForMarketplace(rec) || feedGone) continue;
       const fetchable = serverFetchEnabled(l.source);
+      // Batch 17: a sale whose card says it needs work is a Project deal or nothing.
+      const hold = holdFor(l, rec.priceAmount, rules);
+      const needsWork = needsWorkOf(l);
+      if (hold.kind === 'retire') {
+        // Recorded as retired, so the decision is seen on /admin/deals and never revisited.
+        inserts.push({ canonical_url: l.canonicalUrl, ...recordColumns(l, rec), needs_work: needsWork, photos: l.photo ? [l.photo] : null, status: 'retired', retired_reason: hold.reason, retired_at: stamp, first_seen_at: firstSeen.get(l.canonicalUrl) ?? stamp, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: null, created_at: stamp, updated_at: stamp });
+        counters.retired[hold.reason] = (counters.retired[hold.reason] ?? 0) + 1;
+        continue;
+      }
       // Part B: with the checks on, a newcomer waits on the shortlist; next_check_due_at is then when it is dropped unchecked.
       const shortlist = Boolean(checks?.enabled);
       inserts.push({
         canonical_url: l.canonicalUrl,
         ...recordColumns(l, rec),
+        ...(needsWork ? { needs_work: needsWork } : {}),
+        // Held for its Project check: the same shortlist, in the Project stream.
+        ...(hold.kind === 'hold' ? { stream: 'project' } : {}),
         photos: l.photo ? [l.photo] : null,
         // Zoopla is never fetched: it goes live on the feed with a placeholder photo.
         status: shortlist ? 'pending_check' : fetchable ? 'pending_verify' : 'live',
@@ -165,6 +216,7 @@ export async function absorbListings(
         updated_at: stamp,
       });
       if (shortlist) counters.shortlisted += 1;
+      if (hold.kind === 'hold') counters.projectHeld += 1;
       continue;
     }
     await reconcileDeal(admin, deal, l, build, feedGone, now, counters, tag, rules);
@@ -194,17 +246,30 @@ async function reconcileDeal(admin: Admin, deal: DealRow, l: SourcedListing, bui
     const returning = Boolean(reason && RETURNING_REASONS.has(reason));
     if (reason && (REACTIVATABLE_REASONS.has(reason) || returning) && qualifiesForMarketplace(rec) && !feedGone) {
       const fetchable = serverFetchEnabled(l.source);
-      // Part B: without a check still good for it, a revived deal waits on the shortlist like a newcomer.
-      const shortlist = Boolean(checks?.enabled) && !check;
+      // Batch 17: a revived sale whose card says it needs work is decided as a newcomer is.
+      const hold = holdFor(l, rec.priceAmount, rules);
+      if (hold.kind === 'retire') {
+        if (reason !== hold.reason) {
+          const { error } = await admin.from('marketplace_deals').update({ retired_reason: hold.reason, retired_at: stamp, updated_at: stamp }).eq('canonical_url', deal.canonical_url).eq('status', 'retired');
+          if (error) console.error(`[${tag}] project retire failed:`, error.message);
+        }
+        count(hold.reason);
+        return;
+      }
+      const held = hold.kind === 'hold';
+      // Part B: without a check still good for it, a revived deal waits on the shortlist like a newcomer. Held for its Project check it waits whatever its check (the Project job needs one).
+      const shortlist = (Boolean(checks?.enabled) && !check) || held;
       // The price may have moved while it was off the market: record it, as any reprice is.
       const { columns: priceCols } = priceChangeColumns(deal, rec, stamp);
-      const revive = { ...recordColumns(l, rec), ...priceCols, status: shortlist ? 'pending_check' : fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: shortlist && checks ? shortlistExpiryAt(now, checks) : stamp, check_failures: 0, updated_at: stamp };
+      const needsWork = needsWorkOf(l);
+      const revive = { ...recordColumns(l, rec), ...priceCols, ...(needsWork ? { needs_work: needsWork } : {}), ...(held ? { stream: 'project' } : {}), status: shortlist ? 'pending_check' : fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: shortlist && checks ? shortlistExpiryAt(now, checks) : stamp, check_failures: 0, updated_at: stamp };
       // A database without the Batch 6 columns (revived_at, revived_from) or Batch 16's (stream) still revives the deal: writeWithoutMissing drops what it lacks.
       const { error } = await writeWithoutMissing(returning ? { ...revive, revived_at: stamp, revived_from: reason } : revive, (columns) => admin.from('marketplace_deals').update(columns).eq('canonical_url', deal.canonical_url), tag);
       if (error) console.error(`[${tag}] reactivate failed:`, error.message);
       else {
         counters.reactivated += 1;
         if (shortlist) counters.shortlisted += 1;
+        if (held) counters.projectHeld += 1;
       }
     }
     return;
