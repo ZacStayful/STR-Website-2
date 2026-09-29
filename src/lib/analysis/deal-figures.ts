@@ -12,13 +12,13 @@
  * Pure: no server-only, relative `.ts` imports only.
  */
 
-import { purchaseDeal, rentToRentDeal, monthlyCashflow, type CashflowMonth } from '../listing/deal.ts';
+import { atCurrentMortgage, DEFAULT_COSTS, purchaseDeal, rentToRentDeal, monthlyCashflow, type CashflowMonth } from '../listing/deal.ts';
 import { billsFromCouncilTax, type CouncilTaxFigure } from '../listing/bills.ts';
 import { futureValueRange } from '../listing/growth.ts';
 import { DEFAULT_FINANCE_GOALS, type FinanceGoals } from '../market/goals.ts';
 import type { LiveMortgageRate, MortgageRateInfo } from '../listing/mortgage-rate.ts';
 import type { StampDutyFigure, TaxCountry } from '../listing/stamp-duty.ts';
-import type { DealResult, FutureValueRange, OutcodeGrowth, ShortLetData } from '../types.ts';
+import type { AnalysisResult, DealResult, FutureValueRange, OutcodeGrowth, ShortLetData } from '../types.ts';
 
 export interface DealFiguresInput {
   shortLet: Pick<ShortLetData, 'annualRevenue' | 'averageDailyRate' | 'monthlyRevenue'>;
@@ -70,4 +70,32 @@ export function dealFigures(i: DealFiguresInput): DealFigures {
   const fixedPcm = deal?.kind === 'rent-to-rent' ? deal.advertisedRentPcm : deal?.kind === 'purchase' ? deal.mortgageMonthly : 0;
   const cashflow = i.shortLet.annualRevenue > 0 ? monthlyCashflow(i.shortLet.monthlyRevenue, fixedPcm, { billsPcm: bills.billsPcm }) : null;
   return { deal, cashflow, futureValue };
+}
+
+/**
+ * A saved analysis at the current mortgage type (Batch 16b). Reports saved
+ * before the type existed carry a repayment deal and a month-by-month cash
+ * flow written with its payment; this refreshes the deal (listing/deal.ts
+ * atCurrentMortgage) and rebuilds the cash flow with the new fixed outgoing,
+ * exactly as dealFigures wrote it. Unchanged input comes back as the same
+ * object, so a current report costs nothing. Every reader of a stored
+ * result (the report page, the PDFs, the reports API and MCP) goes through
+ * it, so no screen shows a repayment figure beside an interest-only one.
+ */
+export function atCurrentMortgageResult<T extends Pick<AnalysisResult, 'deal' | 'cashflow' | 'shortLet'>>(result: T): T {
+  const stored = result.deal;
+  if (!stored) return result;
+  const deal = atCurrentMortgage(stored);
+  if (deal === stored || deal.kind !== 'purchase') return result;
+  const fixedPcm = deal.mortgageMonthly;
+  const billsPcm = deal.billsPcm ?? DEFAULT_COSTS.billsPcm;
+  const months = result.shortLet?.monthlyRevenue;
+  let cashflow = result.cashflow ?? null;
+  if (cashflow && Array.isArray(months) && months.length >= 12) cashflow = monthlyCashflow(months, fixedPcm, { billsPcm });
+  else if (cashflow)
+    cashflow = cashflow.map((m) => {
+      const net = m.revenue - m.operating - fixedPcm;
+      return { ...m, fixed: Math.round(fixedPcm), net: Math.round(net), underwater: net < 0 };
+    });
+  return { ...result, deal, cashflow };
 }

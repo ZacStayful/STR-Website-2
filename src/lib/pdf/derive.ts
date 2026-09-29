@@ -3,6 +3,8 @@ import { directBookingScore as computeDirectBookingScore, overallRiskScore100, r
 import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./amenities.ts";
 import { splitAddress, formatIssued } from "./format.ts";
 import { liveMortgageRateLabel } from "../listing/mortgage-rate.ts";
+import { atCurrentMortgage } from "../listing/deal.ts";
+import { atCurrentMortgageResult } from "../analysis/deal-figures.ts";
 import { diligenceNotes } from "../analysis/due-diligence.ts";
 import { futureValueSentence } from "../listing/growth.ts";
 import { basisLine, mostYouCanPayForDeal } from "../marketplace/most-you-can-pay.ts";
@@ -754,7 +756,9 @@ export function buildPdfDiligence(result: AnalysisResult): PdfDiligence | undefi
 }
 
 /** Builds the deal page data from the listing-link additions on a result. */
-export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
+export function buildPdfDeal(stored: AnalysisResult): PdfDeal | undefined {
+  // A report saved before Batch 16b reads at the current (interest-only) mortgage, its months rebuilt.
+  const result = atCurrentMortgageResult(stored);
   const d = result.deal;
   if (!d) return undefined;
   const cashflow = (result.cashflow ?? []).map((m) => ({ month: m.month, revenue: m.revenue, operating: m.operating, fixed: m.fixed, net: m.net }));
@@ -768,7 +772,8 @@ export function buildPdfDeal(result: AnalysisResult): PdfDeal | undefined {
  * has no monthly series). `house`: a public copy, so "most you can pay" is
  * worked on the house figures, never the sharer's own.
  */
-export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: string | null, cashflow: PdfDeal["cashflow"], opts: { house?: boolean } = {}): PdfDeal {
+export function pdfDealFrom(stored: NonNullable<AnalysisResult["deal"]>, sourceUrl: string | null, cashflow: PdfDeal["cashflow"], opts: { house?: boolean } = {}): PdfDeal {
+  const d = atCurrentMortgage(stored);
   const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
   // Batch 14: the most you can pay to hit the monthly profit, on this deal's own income.
   const payMetric = () => {
@@ -784,12 +789,16 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
   if (d.kind === "purchase") {
     const taxName = d.stampDutyName ?? "SDLT";
     const taxWhere = taxName === "LBTT" ? "Scotland's" : taxName === "LTT" ? "Wales's" : "the England and Northern Ireland";
+    // Batch 16b: interest-only is the house mortgage; the term only reads on a repayment one.
+    const interestOnly = d.mortgageType !== "repayment";
+    const term = interestOnly ? "" : ` over ${d.termYears} years`;
+    const paid = interestOnly ? ", interest-only: you pay the interest each month and the loan is repaid when you sell or refinance" : "";
     const mortgage =
       d.mortgageRateSource === "live" && d.mortgageRateLive
-        ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at the market ${liveMortgageRateLabel(d.mortgageRateLive)}`
+        ? `mortgage assumes a ${d.depositPct}% deposit${term} at the market ${liveMortgageRateLabel(d.mortgageRateLive)}${paid}`
         : d.mortgageRateSource === "default"
-          ? `mortgage assumes a ${d.depositPct}% deposit over ${d.termYears} years at ${d.mortgageRatePct}%, Stayful's standing assumption (no market average was available)`
-          : "mortgage assumes the deposit, rate and term in your Stayful goal profile";
+          ? `mortgage assumes a ${d.depositPct}% deposit${term} at ${d.mortgageRatePct}%, Stayful's standing assumption (no market average was available)${paid}`
+          : `mortgage assumes the deposit${interestOnly ? "" : ", term"} and rate in your Stayful goal profile${paid}`;
     const councilTax = d.councilTax ? `, of which £${Math.round(d.councilTax.annual / 12)} is band ${d.councilTax.band} council tax` : "";
     return {
       kind: "purchase",
@@ -798,7 +807,7 @@ export function pdfDealFrom(d: NonNullable<AnalysisResult["deal"]>, sourceUrl: s
       metrics: [
         { label: "Gross yield", value: `${d.grossYieldPct}%`, sub: `on ${gbp(d.askingPrice)}` },
         { label: "Net yield", value: `${d.netYieldPct}%`, sub: "after running costs" },
-        { label: "Monthly cashflow", value: `${d.cashflowMonthly < 0 ? "-" : ""}${gbp(Math.abs(d.cashflowMonthly))}`, sub: `after ${gbp(d.mortgageMonthly)} mortgage` },
+        { label: "Monthly cashflow", value: `${d.cashflowMonthly < 0 ? "-" : ""}${gbp(Math.abs(d.cashflowMonthly))}`, sub: `after ${gbp(d.mortgageMonthly)} ${interestOnly ? "interest-only mortgage" : "mortgage"}` },
         { label: "Cash on cash", value: `${d.cashOnCashPct}%`, sub: `on ${gbp(d.cashRequired)} in` },
         { label: "Stamp duty", value: gbp(d.stampDuty), sub: `${taxName}, additional-property rate${d.stampDutySource === "propertydata" ? " (live)" : ""}` },
         { label: "Setup budget", value: gbp(d.setupCost) },

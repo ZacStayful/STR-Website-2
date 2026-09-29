@@ -36,7 +36,7 @@ export type MessageField = (typeof MESSAGE_FIELDS)[number];
  * figure is missing). The code decides which line is shown, so these are
  * always filled when their line appears.
  */
-export const OFFER_FIELDS = ['targetYield', 'targetMargin', 'targetCeiling', 'opening', 'low', 'high', 'motivated', 'timeOnMarket', 'reductions', 'minProfit', 'depositPct', 'mortgageRate', 'termYears'] as const;
+export const OFFER_FIELDS = ['targetYield', 'targetMargin', 'targetCeiling', 'opening', 'low', 'high', 'motivated', 'timeOnMarket', 'reductions', 'minProfit', 'depositPct', 'mortgageRate', 'termYears', 'mortgageTerms'] as const;
 export type OfferField = (typeof OFFER_FIELDS)[number];
 
 export type Fields = Partial<Record<string, string | null>>;
@@ -87,7 +87,8 @@ export interface OfferWording {
   targetPartAtAsking: PerKind;
   historyPart: { ageAndCuts: string; ageOnly: string };
   historyPartTop: { ageAndCuts: string; ageOnly: string };
-  targetNote: PerKind;
+  /** `purchaseCash`: the member buys with cash, so no deposit or rate is named (Batch 16b). */
+  targetNote: PerKind & { purchaseCash: string };
   goalsLink: string;
   missing: {
     noAsking: string;

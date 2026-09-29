@@ -17,6 +17,7 @@
 
 import { isBudget, type Budget } from './filters.ts';
 import { AREA_META } from './areas.ts';
+import { DEFAULT_FINANCE } from '../listing/deal.ts';
 
 export type Priority = 0 | 1 | 2 | 3; // not important → essential
 export type Management = 'self' | 'managed';
@@ -54,7 +55,14 @@ export interface FinanceGoals {
   targetMarginPcm: number; // 500
 }
 
-export const DEFAULT_FINANCE_GOALS: FinanceGoals = { depositPct: 25, mortgageRatePct: 5.5, termYears: 25, targetYieldPct: 10, targetMarginPcm: 500 };
+/** The house figures: listing/deal.ts DEFAULT_FINANCE's five member fields (the mortgage type is not a goal; it lives there). */
+export const DEFAULT_FINANCE_GOALS: FinanceGoals = {
+  depositPct: DEFAULT_FINANCE.depositPct,
+  mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct,
+  termYears: DEFAULT_FINANCE.termYears,
+  targetYieldPct: DEFAULT_FINANCE.targetYieldPct,
+  targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm,
+};
 
 /** What the daily deal-sourcing digest should look for. */
 export type SourcingKind = 'sale' | 'rent' | 'both';

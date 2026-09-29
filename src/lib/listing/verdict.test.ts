@@ -33,12 +33,27 @@ test('a purchase that clears the member’s monthly profit works, with the most 
   const v = dealVerdict({ kind: 'sale', price: { amount: 150_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(31_200, 142, 61) });
   assert.equal(v.tone, 'works');
   assert.equal(v.headline, 'Works at £150,000');
-  assert.equal(v.sentence, '£411 a month left after the mortgage, against your £300 target (20.8% gross yield).');
-  assert.equal(v.ceiling, 'The most you can pay to make £300 a month is about £174,000.');
+  // Interest-only (Batch 16b): £516 a month on the £112,500 loan leaves £586 of the £1,102 net operating.
+  assert.equal(v.sentence, '£586 a month left after the mortgage, against your £300 target (20.8% gross yield).');
+  assert.equal(v.ceiling, 'The most you can pay to make £300 a month is about £233,000.');
+  assert.equal(v.keys[2].sub, 'after a £516 interest-only mortgage');
   assert.equal(v.number, '20.8%');
   assert.equal(v.keys.length, 4);
   assert.equal(v.keys[3].value, 'None required');
-  assert.ok(v.track && v.track.me === 411 && v.track.target === 300 && v.track.unit === 'gbp');
+  assert.ok(v.track && v.track.me === 586 && v.track.target === 300 && v.track.unit === 'gbp');
+});
+
+test('a listing checked before Batch 16b (a repayment deal with no type) reads at the interest-only mortgage', () => {
+  const old = { ...purchaseDeal(150_000, { grossRevenue: 31_200, adr: 142, bedrooms: 2, finance: { mortgageType: 'repayment' } }), minProfitPcm: 300 };
+  delete (old as { mortgageType?: string }).mortgageType;
+  assert.ok(old.cashflowMonthly < 500, `saved on the repayment formula: £${old.cashflowMonthly}`);
+  const v = dealVerdict({ kind: 'sale', price: { amount: 150_000, period: 'total' }, bedrooms: 2, deal: old, quick: quickFor(31_200, 142, 61) });
+  assert.equal(v.sentence, '£586 a month left after the mortgage, against your £300 target (20.8% gross yield).');
+  assert.equal(v.ceiling, 'The most you can pay to make £300 a month is about £233,000.');
+  assert.equal(v.keys[2].sub, 'after a £516 interest-only mortgage');
+  // The same through the quick estimate's stored deal.
+  const viaQuick = dealVerdict({ kind: 'sale', price: { amount: 150_000, period: 'total' }, bedrooms: 2, deal: null, quick: quickFor(31_200, 142, 61, { deal: old }) });
+  assert.equal(viaQuick.sentence, v.sentence);
 });
 
 test('a purchase that makes money but less than the target is tight, and names the most to pay', () => {
@@ -46,8 +61,8 @@ test('a purchase that makes money but less than the target is tight, and names t
   const v = dealVerdict({ kind: 'sale', price: { amount: 220_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(31_200, 142, 61) });
   assert.equal(v.tone, 'tight');
   assert.equal(v.headline, 'Tight at £220,000');
-  assert.match(v.sentence, /£89 a month left after the mortgage, under your £500 target \(14\.2% gross yield\)/);
-  assert.match(v.sentence, /The most you can pay to make £500 a month is about £130,000\./);
+  assert.match(v.sentence, /£346 a month left after the mortgage, under your £500 target \(14\.2% gross yield\)/);
+  assert.match(v.sentence, /The most you can pay to make £500 a month is about £175,000\./);
   assert.equal(v.keys[2].tone, 'tight');
 });
 
@@ -55,7 +70,7 @@ test('a 9% yield that loses money every month does not work', () => {
   const deal = purchaseDeal(185_000, { grossRevenue: 16_800, adr: 108, bedrooms: 2 });
   const v = dealVerdict({ kind: 'sale', price: { amount: 185_000, period: 'total' }, bedrooms: 2, deal, quick: quickFor(16_800, 108, 52) });
   assert.equal(v.tone, 'no');
-  assert.match(v.sentence, /£374 a month short after the mortgage/);
+  assert.match(v.sentence, /£158 a month short after the mortgage/);
   assert.equal(v.keys[2].tone, 'no');
   for (const line of [v.sentence, v.ceiling ?? '']) assert.ok(!/value|worth|valuation/i.test(line), line);
 });

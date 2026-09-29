@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import type { AnalysisResult } from '../types';
+import { atCurrentMortgageResult } from '../analysis/deal-figures';
 
 /**
  * Reading a member's OWN analyser history for the API.
@@ -97,5 +98,6 @@ export async function getReport(userId: string, id: string): Promise<ReportDetai
     .maybeSingle();
   if (!data) return null;
   const row = data as unknown as Row;
-  return { ...summary(row), result: row.result };
+  // A report saved before Batch 16b reads at the current (interest-only) mortgage.
+  return { ...summary(row), result: row.result ? atCurrentMortgageResult(row.result) : row.result };
 }

@@ -496,7 +496,7 @@ function dealScore(d: Deal | null): number {
 
 export function describeDeal(d: Deal): string {
   const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
-  if (d.kind === 'purchase') return `est. ${gbp(d.grossRevenue)}/yr · ${d.grossYieldPct.toFixed(1)}% gross yield · ${gbp(d.cashflowMonthly)}/mo after mortgage`;
+  if (d.kind === 'purchase') return `est. ${gbp(d.grossRevenue)}/yr · ${d.grossYieldPct.toFixed(1)}% gross yield · ${gbp(d.cashflowMonthly)}/mo after ${d.mortgageType === 'repayment' ? 'mortgage' : 'an interest-only mortgage'}`;
   return `est. ${gbp(d.grossRevenue)}/yr · ${gbp(d.monthlyMargin)}/mo margin after rent · breakeven ${d.breakevenOccupancyPct === null ? 'n/a' : `${Math.round(d.breakevenOccupancyPct)}% occupancy`}`;
 }
 

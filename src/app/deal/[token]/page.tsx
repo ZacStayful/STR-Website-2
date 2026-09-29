@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { sharedListingByToken } from "@/lib/listing/share";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
-import type { Deal } from "@/lib/listing/deal";
+import { MORTGAGE_NOTE, type Deal } from "@/lib/listing/deal";
 import { basisLine, mostYouCanPayForDeal } from "@/lib/marketplace/most-you-can-pay";
 
 export const dynamic = "force-dynamic";
@@ -62,7 +62,7 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
                 <>
                   <Tile label="Gross yield" value={`${d.grossYieldPct}%`} />
                   <Tile label="Net yield" value={`${d.netYieldPct}%`} sub="after running costs" />
-                  <Tile label="Monthly cashflow" value={`${d.cashflowMonthly < 0 ? "−" : ""}${gbp(Math.abs(d.cashflowMonthly))}`} sub={`after ${gbp(d.mortgageMonthly)} mortgage`} />
+                  <Tile label="Monthly cashflow" value={`${d.cashflowMonthly < 0 ? "−" : ""}${gbp(Math.abs(d.cashflowMonthly))}`} sub={`after ${gbp(d.mortgageMonthly)} ${d.mortgageType === "repayment" ? "mortgage" : "interest-only mortgage"}`} />
                   <Tile label="Cash on cash" value={`${d.cashOnCashPct}%`} sub={`on ${gbp(d.cashRequired)} in`} />
                   <Tile label="Stamp duty" value={gbp(d.stampDuty)} />
                   <Tile label="Setup budget" value={gbp(d.setupCost)} />
@@ -87,7 +87,7 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
         )}
 
         <p className="mt-6 text-xs text-[#7a8274]">
-          {est ? `${est.note}. ` : ""}Estimates from Stayful Intelligence and its data partners. Running costs assume 15% platform fees, 15% management, 18% cleaning and {gbp(d?.billsPcm ?? 250)} a month bills. Not financial advice.
+          {est ? `${est.note}. ` : ""}Estimates from Stayful Intelligence and its data partners. Running costs assume 15% platform fees, 15% management, 18% cleaning and {gbp(d?.billsPcm ?? 250)} a month bills.{d?.kind === "purchase" && d.mortgageType !== "repayment" ? ` ${MORTGAGE_NOTE(d.mortgageRatePct)}` : ""} Not financial advice.
         </p>
         <div className="mt-8 rounded-2xl bg-[#2e3d2b] p-5 text-white">
           <p className="text-lg font-semibold">Want this for any listing?</p>

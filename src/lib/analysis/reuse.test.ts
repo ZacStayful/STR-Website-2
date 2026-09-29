@@ -34,7 +34,7 @@ test('nothing about the member who ran it is kept', () => {
   for (const k of MEMBER_FIELDS) assert.equal(k in shared.result, false, `${k} must not be kept`);
   const text = JSON.stringify(shared.result);
   // Their deposit, rate, term and targets only ever lived in their deal.
-  for (const f of ['depositPct', 'mortgageRatePct', 'termYears', 'targetYieldPct', 'targetMarginPcm', 'report-of-member-a']) assert.equal(text.includes(f), false, `${f} leaked`);
+  for (const f of ['depositPct', 'mortgageRatePct', 'termYears', 'mortgageType', 'targetYieldPct', 'targetMarginPcm', 'report-of-member-a']) assert.equal(text.includes(f), false, `${f} leaked`);
 });
 
 test('what the providers said about the property is kept', () => {

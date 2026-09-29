@@ -13,7 +13,8 @@
  *
  * Pure: no network, no database, no `server-only`.
  */
-import { DEFAULT_FINANCE } from '../listing/deal.ts';
+import { DEFAULT_FINANCE, type MortgageType } from '../listing/deal.ts';
+import { mortgageTermsLabel } from '../marketplace/most-you-can-pay.ts';
 import type { PipelineStatus } from '../listing/pipeline.ts';
 import { NEXT_STEPS } from './next-steps.ts';
 import { fillTemplate } from './render.ts';
@@ -103,7 +104,9 @@ export interface ViewInput {
   /** The computed offer range, at the Offer stage. */
   offer: OfferRange | null;
   /** The member's targets. Batch 14: the deposit, rate and term say what "most you can pay" was worked at (house figures when absent). */
-  finance: { targetYieldPct: number; targetMarginPcm: number; depositPct?: number; mortgageRatePct?: number; termYears?: number };
+  finance: { targetYieldPct: number; targetMarginPcm: number; depositPct?: number; mortgageRatePct?: number; termYears?: number; mortgageType?: MortgageType };
+  /** They buy with cash (Batch 14): the offer was worked with nothing borrowed, so the note names no deposit or rate. */
+  cashBuyer?: boolean;
   now: Date;
   content?: NextStepsContent;
 }
@@ -140,6 +143,8 @@ function offerView(c: NextStepsContent, kind: StepKind, range: OfferRange, input
     // A rate reads to the hundredth: 4.75%, not 4.8%.
     mortgageRate: `${Math.round((input.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct) * 100) / 100}%`,
     termYears: String(input.finance.termYears ?? DEFAULT_FINANCE.termYears),
+    // Batch 16b: "interest-only", or "over 25 years" on a repayment mortgage.
+    mortgageTerms: mortgageTermsLabel({ termYears: input.finance.termYears ?? DEFAULT_FINANCE.termYears, mortgageType: input.finance.mortgageType ?? DEFAULT_FINANCE.mortgageType }),
   };
 
   const missingLine: Record<OfferMissing, string> = {
@@ -172,7 +177,7 @@ function offerView(c: NextStepsContent, kind: StepKind, range: OfferRange, input
   }
   const usesTarget = range.target !== null || range.missing.includes('tooFarBelow') || range.missing.includes('noMargin') || range.missing.includes('noPrice');
   // Which target the figure used (the reasons for no figure already say it).
-  if (range.show && range.target) notes.unshift(fillTemplate(o.targetNote[k], fields));
+  if (range.show && range.target) notes.unshift(fillTemplate(k === 'purchase' && input.cashBuyer ? o.targetNote.purchaseCash : o.targetNote[k], fields));
 
   return {
     title: o.title,

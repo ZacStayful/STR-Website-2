@@ -153,6 +153,7 @@ export async function nextStepFor(input: { itemKey: string; stage: PipelineStatu
     ticks: ctx.ticks.get(input.itemKey) ?? new Set(),
     offer,
     finance: ctx.finance,
+    cashBuyer: ctx.cashBuyer,
     now,
   });
 }

@@ -5,7 +5,7 @@ import { Calculator, Info } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, type FinanceDefaults, type PurchaseDeal, type RentToRentDeal } from '@/lib/listing/deal';
+import { purchaseDeal, rentToRentDeal, DEFAULT_FINANCE, MORTGAGE_NOTE, type FinanceDefaults, type PurchaseDeal, type RentToRentDeal } from '@/lib/listing/deal';
 import type { StampDutyFigure } from '@/lib/listing/stamp-duty';
 import { liveMortgageRateLabel } from '@/lib/listing/mortgage-rate';
 import { futureValueSentence } from '@/lib/listing/growth';
@@ -48,7 +48,7 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, future
   // Batch 14: the member's minimum monthly profit the report was worked at (older reports: the £500 default).
   const initialFinance: FinanceDefaults =
     deal.kind === 'purchase'
-      ? { depositPct: deal.depositPct, mortgageRatePct: deal.mortgageRatePct, termYears: deal.termYears, targetYieldPct: deal.targetYieldPct, targetMarginPcm: deal.minProfitPcm ?? DEFAULT_FINANCE.targetMarginPcm }
+      ? { depositPct: deal.depositPct, mortgageRatePct: deal.mortgageRatePct, termYears: deal.termYears, targetYieldPct: deal.targetYieldPct, targetMarginPcm: deal.minProfitPcm ?? DEFAULT_FINANCE.targetMarginPcm, mortgageType: deal.mortgageType ?? DEFAULT_FINANCE.mortgageType }
       : { ...DEFAULT_FINANCE, targetMarginPcm: deal.minProfitPcm ?? deal.targetMarginPcm };
   const [finance, setFinance] = useState<FinanceDefaults>(initialFinance);
   const [price, setPrice] = useState(deal.kind === 'purchase' ? deal.askingPrice : deal.advertisedRentPcm);
@@ -120,7 +120,7 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, future
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Gross yield" value={`${live.grossYieldPct}%`} sub={`on ${gbp(live.askingPrice)}`} tone={live.grossYieldPct >= finance.targetYieldPct ? 'good' : undefined} />
               <Stat label="Net yield" value={`${live.netYieldPct}%`} sub="after running costs" />
-              <Stat label="Monthly cashflow" value={gbpSigned(live.cashflowMonthly)} sub={`after ${gbp(live.mortgageMonthly)} mortgage`} tone={live.cashflowMonthly >= 0 ? 'good' : 'bad'} />
+              <Stat label="Monthly cashflow" value={gbpSigned(live.cashflowMonthly)} sub={`after ${gbp(live.mortgageMonthly)} ${live.mortgageType === 'repayment' ? 'mortgage' : 'interest-only mortgage'}`} tone={live.cashflowMonthly >= 0 ? 'good' : 'bad'} />
               <Stat label="Cash on cash" value={`${live.cashOnCashPct}%`} sub={`on ${gbp(live.cashRequired)} in`} />
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -137,6 +137,7 @@ export function DealPanel({ deal, grossRevenue, adr, bedrooms, setupCost, future
               <Field id="deal-bills" label="Bills / month" value={bills} onChange={setBills} suffix="£" step={25} min={0} hint={billsHint} />
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground">Most you can pay: {basisLine(pay).replace(/^For/, 'for')}.</p>
+            {finance.mortgageType !== 'repayment' && <p className="mt-1 text-[11px] text-muted-foreground">{MORTGAGE_NOTE(finance.mortgageRatePct)}</p>}
             {futureValue && (
               <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{futureValueSentence(futureValue)}</p>
             )}

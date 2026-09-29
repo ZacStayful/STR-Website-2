@@ -11,7 +11,7 @@ import { describeBand, formatOpenPrice, ladderBandIndex } from "@/lib/marketplac
 import { sweepEnabled } from "@/lib/marketplace/sweep-run";
 import { recheckEnabled } from "@/lib/marketplace/recheck-run";
 import { SOURCE_HOURLY_CAPS } from "@/lib/marketplace/cadence";
-import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction } from "./actions";
+import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction } from "./actions";
 import { R2R_MEDIUM_PROFIT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { latestLowEntryRuns, lowEntrySearchEnabled } from "@/lib/deal-quality/low-entry-run";
 import { weekSpentPence } from "@/lib/deal-quality/low-entry-plan";
@@ -357,6 +357,18 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
           <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Count unchecked live deals</button>
           <button type="submit" name="mode" value="retire" className="rounded-md border border-destructive px-4 py-2 text-sm font-medium text-destructive hover:bg-muted">Retire every unchecked live deal</button>
           <span className="text-xs text-muted-foreground">Retiring takes them off the grid now; members who opened one keep it. Count first.</span>
+        </form>
+      </section>
+
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Interest-only mortgage: the stored deals</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Every purchase deal now reads at an interest-only mortgage (you pay the interest each month; the loan is repaid when you sell or refinance). Deals saved before the change carry the old repayment figures in their stored JSON; every screen already refreshes them as it reads, and this one-off rewrites the stored copies to match (marketplace deals, picks sent, Explorer checks). Nothing else on a row changes. The dry run is the before/after report: rows to change, the live sale deals on both formulas, and five worked examples. No spend; a run that runs out of time carries on when pressed again.
+        </p>
+        <form action={runMortgageBackfillAction} className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry-run the interest-only backfill</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run the interest-only backfill</button>
+          <span className="text-xs text-muted-foreground">Dry-run first; the report and the five examples show in the box at the top.</span>
         </form>
       </section>
 

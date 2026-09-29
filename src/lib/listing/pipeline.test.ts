@@ -38,6 +38,18 @@ test('toCheckedListingRow trims a stored row and rejects junk', () => {
   assert.deepEqual(r.price, { amount: 100, period: 'night' });
   assert.equal(r.status, 'offer');
   assert.equal(toCheckedListingRow({}), null);
+  // Batch 16b: a deal saved on the repayment formula (no type) reads at the interest-only mortgage, in both places it is stored.
+  const oldDeal = { ...purchaseDeal(220_000, { grossRevenue: 30_000, adr: 150, bedrooms: 2, setupCost: 10_000, finance: { mortgageType: 'repayment' } }) };
+  delete (oldDeal as { mortgageType?: string }).mortgageType;
+  const now = purchaseDeal(220_000, { grossRevenue: 30_000, adr: 150, bedrooms: 2, setupCost: 10_000 });
+  const old = toCheckedListingRow({ id: 'y', canonical_url: 'u', source: 'rightmove', kind: 'sale', snapshot: { title: 'T' }, deal: oldDeal, quick_estimate: { deal: oldDeal, limited: false } })!;
+  assert.equal(old.deal?.kind === 'purchase' ? old.deal.mortgageType : null, 'interest_only');
+  assert.equal(old.deal?.kind === 'purchase' ? old.deal.mortgageMonthly : null, now.mortgageMonthly);
+  assert.equal(old.quick?.deal?.kind === 'purchase' ? old.quick.deal.mortgageMonthly : null, now.mortgageMonthly);
+  assert.equal(old.quick?.deal?.kind === 'purchase' ? old.quick.deal.cashflowMonthly : null, now.cashflowMonthly);
+  // A current deal is passed through as the same object.
+  const cur = toCheckedListingRow({ id: 'z', canonical_url: 'u', source: 'rightmove', kind: 'sale', snapshot: { title: 'T' }, deal: now })!;
+  assert.equal(cur.deal, now);
   assert.equal(isPipelineStatus('viewing'), true);
   assert.equal(isPipelineStatus('sold'), false);
 });

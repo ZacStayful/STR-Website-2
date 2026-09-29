@@ -15,7 +15,7 @@ import { parseMarketGoals } from "@/lib/market/goals";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { BAND_LABELS, parseScreening } from "@/lib/listing/screen";
 import { checkOf } from "@/lib/deal-quality/checks";
-import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE, type Deal } from "@/lib/listing/deal";
+import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE, MORTGAGE_NOTE, ratePctLabel, type Deal } from "@/lib/listing/deal";
 import { countryForPostcode } from "@/lib/listing/stamp-duty";
 import { areaRevenueFor } from "@/lib/listing/sourcing";
 import { parseStoredDeal } from "@/lib/marketplace/record";
@@ -387,13 +387,6 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     </div>
                   ))}
                 </dl>
-                {pay && !numbers && (
-                  <div className="mt-3 rounded-lg bg-muted/50 p-3">
-                    <p className="text-base font-bold text-foreground">{payLine(pay)}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{basisLine(pay)}</p>
-                    {payGap && <p className={"mt-1 text-xs font-semibold " + (payGap.startsWith("Within") ? "text-primary" : "text-destructive")}>{payGap}</p>}
-                  </div>
-                )}
                 <p className="mt-2 text-[11px] text-muted-foreground">Area estimates at your figures. A Full analysis works them out exactly for this property.</p>
               </section>
             )}
@@ -425,10 +418,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 <p className="mt-2 text-xs text-muted-foreground">
                   {model.kind === "purchase"
                     ? model.auction
-                      ? `Guide ${gbp(model.auction.guide)}, modelled at ${gbp(model.askingPrice)} (the guide plus the usual uplift), bought on a ${model.auction.bridgingMonths}-month bridging loan and refinanced onto a mortgage at a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit and ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `
+                      ? `Guide ${gbp(model.auction.guide)}, modelled at ${gbp(model.askingPrice)} (the guide plus the usual uplift), bought on a ${model.auction.bridgingMonths}-month bridging loan and refinanced onto ${mortgageClause(model, "lot")} `
                       : cashBuyerOf(goals)
                         ? `At ${gbp(model.askingPrice)}, bought with cash. `
-                        : `At ${gbp(model.askingPrice)} with a ${goals?.finance.depositPct ?? DEFAULT_FINANCE.depositPct}% deposit at ${goals?.finance.mortgageRatePct ?? DEFAULT_FINANCE.mortgageRatePct}%. `
+                        : `At ${gbp(model.askingPrice)} with a ${model.depositPct}% deposit ${mortgageClause(model, "purchase")} `
                     : `At ${gbp(model.advertisedRentPcm)} pcm rent. `}
                   <Link href="/profile" className="underline-offset-4 hover:underline">Change your figures on your profile</Link>. Figures that rest on the area’s short-let income are ranges.
                 </p>
@@ -439,7 +432,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                       <Fig label="Cash flow / mo" value={range?.kind === "purchase" ? range.label.replace(/\/mo$/, "") : gbpRange(model.cashflowMonthly)} />
                       <Fig label="Cash on cash" value={pctRange(model.cashOnCashPct)} />
                       <Fig label="Cash in" value={gbp(model.cashRequired)} sub={model.auction ? `on the bridge: deposit, ${gbp(model.stampDuty)} tax, premium, fees, setup` : `incl. ${gbp(model.stampDuty)} stamp duty`} />
-                      <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} sub={model.auction ? "after the refinance" : undefined} />
+                      <Fig label="Mortgage / mo" value={gbp(model.mortgageMonthly)} sub={model.mortgageType === "repayment" ? (model.auction ? "after the refinance" : undefined) : model.auction ? "after the refinance, interest only" : "interest only"} />
                       <Fig label="Net operating / yr" value={gbpRange(model.netOperating, 100)} />
                       {/* Batch 16, Part E: the bridging finance an auction lot is bought on. */}
                       {model.auction && (
@@ -517,6 +510,21 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       </div>
     </main>
   );
+}
+
+/**
+ * Batch 16b: how the model's mortgage is paid, for the "If you bought it"
+ * sentence. Interest-only carries the note (you pay the interest each month;
+ * the loan is repaid when you sell or refinance); a repayment mortgage names
+ * its term. The model was built at the member's own finance (a cash buyer
+ * never reaches here), so the deal's fields are the right ones to print.
+ */
+function mortgageClause(model: Extract<Deal, { kind: "purchase" }>, what: "purchase" | "lot"): string {
+  const rate = ratePctLabel(model.mortgageRatePct);
+  if (model.mortgageType === "repayment") return what === "lot" ? `a repayment mortgage at a ${model.depositPct}% deposit and ${rate} over ${model.termYears} years.` : `at ${rate} over ${model.termYears} years.`;
+  const note = MORTGAGE_NOTE(model.mortgageRatePct);
+  const lower = note[0].toLowerCase() + note.slice(1);
+  return what === "lot" ? `an ${lower.replace("interest-only mortgage at", `interest-only mortgage at a ${model.depositPct}% deposit and`)}` : `on an ${lower}`;
 }
 
 function Fig({ label, value, sub }: { label: string; value: string; sub?: string }) {

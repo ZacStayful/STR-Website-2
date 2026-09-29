@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPdfDeal, buildPdfDiligence, deriveReportData } from './derive.ts';
 import { sampleAnalysis } from './__fixtures__/sample.ts';
+import { monthlyCashflow, monthlyMortgage, type PurchaseDeal } from '../listing/deal.ts';
 
 // This module was untestable until its `@/lib/scores` import became relative:
 // node --test cannot resolve the alias.
@@ -152,6 +153,31 @@ test('the due diligence page exists only when the registers said something', () 
   const deal = buildPdfDeal(r);
   assert.ok(deal?.note.includes('band D council tax'));
   assert.ok(deal?.metrics.some((m) => m.label === 'Stamp duty' && m.sub?.includes('(live)')));
+});
+
+// Batch 16b: the deal page says the mortgage is interest-only, and a report
+// saved on the repayment formula prints the same figures as a fresh one.
+test('the deal page describes an interest-only mortgage, for old and new reports alike', () => {
+  const r = sampleAnalysis({ withDiligence: true });
+  const now = buildPdfDeal(r)!;
+  assert.ok(now.note.includes('interest-only: you pay the interest each month and the loan is repaid when you sell or refinance'), now.note);
+  assert.ok(!now.note.includes('over 25 years'), now.note);
+  const cashflowNow = now.metrics.find((m) => m.label === 'Monthly cashflow')!;
+  assert.match(cashflowNow.sub!, /after £[\d,]+ interest-only mortgage/);
+  // The same report as it was saved before the type existed: a repayment payment and months written with it.
+  const d = r.deal as PurchaseDeal & { basis: 'asking-price' };
+  assert.equal(d.kind, 'purchase');
+  const oldMortgage = Math.round(monthlyMortgage(d.askingPrice * (1 - d.depositPct / 100), d.mortgageRatePct, d.termYears));
+  const old = { ...d, mortgageMonthly: oldMortgage, cashflowMonthly: Math.round(d.netOperating / 12 - oldMortgage) };
+  delete old.mortgageType;
+  assert.ok(oldMortgage > d.mortgageMonthly);
+  const before = buildPdfDeal({ ...r, deal: old, cashflow: monthlyCashflow(r.shortLet.monthlyRevenue, oldMortgage, { billsPcm: d.billsPcm }) })!;
+  assert.deepEqual(before.metrics, now.metrics);
+  assert.equal(before.note, now.note);
+  // Its months are rebuilt with the interest-only payment (the fresh sample carries no monthly series to compare).
+  const expected = monthlyCashflow(r.shortLet.monthlyRevenue, d.mortgageMonthly, { billsPcm: d.billsPcm }).map((m) => ({ month: m.month, revenue: m.revenue, operating: m.operating, fixed: m.fixed, net: m.net }));
+  assert.deepEqual(before.cashflow, expected);
+  assert.equal(before.cashflow[0].fixed, d.mortgageMonthly);
 });
 
 test('a High flood band and a listed neighbour are called out', () => {
