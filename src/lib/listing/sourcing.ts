@@ -16,7 +16,9 @@ import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
 import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
-import type { MarketGoals } from '../market/goals.ts';
+import type { DealType, MarketGoals } from '../market/goals.ts';
+import { mergeNeedsWork, needsWorkFrom, NO_NEEDS_WORK, type NeedsWork } from '../project/needs-work.ts';
+import type { ExclusionReason } from '../project/exclusions.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
 import type { Motivation } from './motivation.ts';
@@ -68,6 +70,34 @@ export interface SourcedListing {
   addedOrReduced?: string | null;
   /** Keyed digest of the marketing agent. Never the name — see crypto/agent.ts. */
   agentHash?: string | null;
+  /**
+   * Batch 17 (bugs 3 and 4: these were dropped at the merge). From the page
+   * when it has been read; absent or null otherwise. Years left on the lease
+   * make the "short lease" motivation signal fire (bug 2).
+   */
+  yearsRemainingOnLease?: number | null;
+  councilTaxBand?: string | null;
+  /** Batch 17: renovation wording (our phrase keys only), the card's text merged with the page's once read. */
+  needsWork?: NeedsWork | null;
+  /** Batch 17: the first reason it can never be a Project deal, from the page (null: none; absent: not read). */
+  projectExclusion?: ExclusionReason | null;
+  listedBuilding?: boolean | null;
+  floorAreaSqft?: number | null;
+}
+
+/**
+ * Batch 17: the needs-work flag a search result's own card text carries
+ * (title, price qualifier, features): free, before any page is read.
+ */
+export function cardNeedsWork(l: Pick<SourcedListing, 'kind' | 'title' | 'priceQualifier' | 'features' | 'rawType'>): NeedsWork {
+  if (l.kind !== 'sale') return NO_NEEDS_WORK;
+  return needsWorkFrom(l.title, l.rawType ?? null, l.priceQualifier ?? null, ...(l.features ?? []));
+}
+
+/** A sale's renovation wording: its card's, with the page's once a read has been folded in (mergeSnapshotIntoListing). */
+export function listingNeedsWork(l: Pick<SourcedListing, 'kind' | 'title' | 'priceQualifier' | 'features' | 'rawType' | 'needsWork'>): NeedsWork {
+  if (l.kind !== 'sale') return NO_NEEDS_WORK;
+  return mergeNeedsWork(l.needsWork ?? null, cardNeedsWork(l));
 }
 
 export interface SourcingQuery {
@@ -95,6 +125,32 @@ export function budgetBounds(budget: MarketGoals['budget']): { min: number | nul
     default:
       return { min: null, max: null };
   }
+}
+
+/**
+ * Batch 17: the price band a profile's sale searches cover. The budget for
+ * Short-let, the project budget (before works) for BRRR, the two together
+ * when both are chosen: each candidate is then held to its own type's band
+ * (withinTypeBudget). A profile that has not answered the deal types keeps
+ * its budget, as before.
+ */
+export function saleBoundsForGoals(goals: MarketGoals): { min: number | null; max: number | null } {
+  const types = goals.dealTypes ?? [];
+  if (!types.includes('brrr')) return budgetBounds(goals.budget);
+  const project = budgetBounds(goals.brrr.budget);
+  if (!types.includes('buy_str')) return project;
+  const buy = budgetBounds(goals.budget);
+  return {
+    min: buy.min === null || project.min === null ? null : Math.min(buy.min, project.min),
+    max: buy.max === null || project.max === null ? null : Math.max(buy.max, project.max),
+  };
+}
+
+/** Whether a sale's asking price sits in its own deal type's band (a rental, or no price: yes). */
+export function withinTypeBudget(price: number | null, type: DealType, goals: MarketGoals | null): boolean {
+  if (!goals || type === 'r2r' || price === null) return true;
+  const b = budgetBounds(type === 'brrr' ? goals.brrr.budget : goals.budget);
+  return (b.min === null || price >= b.min) && (b.max === null || price <= b.max);
 }
 
 export interface AreaRef {
@@ -143,11 +199,17 @@ export function queryKey(kind: SourcingKind, area: string, minPrice: number | nu
   return `${kind}|${area.toUpperCase()}|${minPrice ?? ''}|${maxPrice ?? ''}|${minBedrooms ?? ''}`;
 }
 
+/** The postcode area a query key searched ("sale|LS|…" → "LS"), or null for any other key. */
+export function queryKeyArea(key: string | null | undefined): string | null {
+  const area = typeof key === 'string' ? key.split('|')[1] : undefined;
+  return area && /^[A-Z]{1,2}$/.test(area) ? area : null;
+}
+
 /** The searches one member's goals translate into (shared across members by key). */
 export function queriesForGoals(goals: MarketGoals, savedAreas: string[], areas: AreaRef[]): SourcingQuery[] {
   const kinds: SourcingKind[] = goals.sourcingKind === 'both' ? ['sale', 'rent'] : [goals.sourcingKind];
   const minBedrooms = goals.bedrooms ?? null;
-  const bounds = budgetBounds(goals.budget);
+  const bounds = saleBoundsForGoals(goals);
   const out: SourcingQuery[] = [];
   for (const a of areasForGoals(goals, savedAreas, areas)) {
     for (const kind of kinds) {

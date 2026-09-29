@@ -168,6 +168,13 @@ test('an address is not evidence', () => {
   assert.ok(fired({ text: 'Probate granted, vacant possession' }).includes('probate'));
 });
 
+test('Batch 17 (bug 2): a marketplace deal’s short lease fires once the page’s years are carried', () => {
+  const judged = (years: number | null) => motivationFromListing(listing({ yearsRemainingOnLease: years }), { thresholdDays: 150, areaMedianDays: null, now: NOW }).fired;
+  assert.ok(judged(62).includes('short_lease'));
+  assert.ok(!judged(null).includes('short_lease'));
+  assert.ok(!judged(120).includes('short_lease'));
+});
+
 test('a short lease is only short when it is stated and short', () => {
   assert.ok(fired({ yearsRemainingOnLease: 62 }).includes('short_lease'));
   assert.ok(!fired({ yearsRemainingOnLease: 120 }).includes('short_lease'));

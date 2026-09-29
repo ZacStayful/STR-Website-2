@@ -5,6 +5,8 @@ import { areaMetaForCode } from "@/lib/market/areas";
 import { describeType, priceLine } from "@/lib/marketplace/grid";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { profitRange, rangeCaption, upliftTag } from "@/lib/marketplace/profit-range";
+import { kindWordFor, projectNumbersFor, projectOf, projectSummary } from "@/lib/project/display";
+import type { ProjectNumbers } from "@/lib/project/headline";
 import { BasicVsDetailed } from "@/app/deals/_components/BasicVsDetailed";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { photoUrlFor } from "@/lib/marketplace/queries";
@@ -40,11 +42,15 @@ async function load(token: string) {
   // Batch 10: the profit as an area-estimate range at the house finance (a public page knows nobody's own).
   const widths = (await getBillingSettings()).dealPricing.profitRangePct;
   const range = state === "card" ? profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths }) : null;
+  // Batch 17: a Project deal's own numbers, at the house finance, numbers only.
+  const project = state === "card" ? projectOf(card) : null;
+  const pn = project ? projectNumbersFor(card, project, null, widths) : null;
   return {
     card,
     state,
     now,
     range,
+    pn,
     join: joinPath(shared.referralCode),
     // In early access: the area and nothing narrower.
     place: state === "card" ? where : (area?.name ?? ""),
@@ -81,7 +87,7 @@ export default async function SharedDealPage({ params }: Params) {
   const v = await load(token);
   if (!v) notFound();
   const { card, state, now } = v;
-  const kind = card.kind === "rent" ? "Rent-to-rent" : "To buy";
+  const kind = kindWordFor(card);
 
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
@@ -100,7 +106,7 @@ export default async function SharedDealPage({ params }: Params) {
             <p className="mt-2 text-sm text-[#7a8274]">A new short-let deal{v.place ? ` in ${v.place}` : ""}. Stayful members are seeing it now.</p>
           </section>
         ) : (
-          <SharedCard card={card} kind={kind} where={v.place} photoUrl={v.photoUrl} now={now} range={v.range} />
+          <SharedCard card={card} kind={kind} where={v.place} photoUrl={v.photoUrl} now={now} range={v.range} pn={v.pn} />
         )}
 
         <Link href={v.join} className="mt-6 block rounded-xl bg-[#2e3d2b] px-5 py-3 text-center text-base font-semibold text-white hover:opacity-90">
@@ -112,8 +118,8 @@ export default async function SharedDealPage({ params }: Params) {
   );
 }
 
-function SharedCard({ card, kind, where, photoUrl, now, range }: { card: NonNullable<Awaited<ReturnType<typeof load>>>["card"]; kind: string; where: string; photoUrl: string | null; now: Date; range: ReturnType<typeof profitRange> }) {
-  const uplift = card.kind === "sale" ? upliftTag(card.uplift_pct) : null;
+function SharedCard({ card, kind, where, photoUrl, now, range, pn }: { card: NonNullable<Awaited<ReturnType<typeof load>>>["card"]; kind: string; where: string; photoUrl: string | null; now: Date; range: ReturnType<typeof profitRange>; pn: ProjectNumbers | null }) {
+  const uplift = card.kind === "sale" && !pn ? upliftTag(card.uplift_pct) : null;
   const price = priceLine(card);
   const type = describeType(card);
   const motivation = motivationLine(card, now);
@@ -130,10 +136,14 @@ function SharedCard({ card, kind, where, photoUrl, now, range }: { card: NonNull
       </div>
       <div className="p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-2xl font-bold">{range?.label ?? "—"}</p>
+          <p className="text-2xl font-bold">{pn ? (pn.range?.label ?? pn.valueAdded) : (range?.label ?? "—")}</p>
           {price && <p className="text-lg font-semibold">{price}</p>}
         </div>
-        <p className="text-sm text-[#7a8274]">{rangeCaption(card.check_comps)}{range ? ` · ${range.basis}` : ""}{uplift ? ` · ${uplift}` : ""}</p>
+        {pn ? (
+          <p className="text-sm text-[#7a8274]">{pn.range ? `${pn.caption} · profit after works · ` : ""}{projectSummary(pn)}</p>
+        ) : (
+          <p className="text-sm text-[#7a8274]">{rangeCaption(card.check_comps)}{range ? ` · ${range.basis}` : ""}{uplift ? ` · ${uplift}` : ""}</p>
+        )}
         {where && <p className="mt-2 text-base font-medium">{where}</p>}
         {motivation.length > 0 && <p className="text-sm font-medium text-[#5d8156]">{motivation.join(" · ")}</p>}
         {type && <p className="text-sm text-[#7a8274]">{type}</p>}

@@ -385,6 +385,81 @@ repayment figure beside an interest-only one. Once, after deploying:
    it runs out of time; a second run finds nothing). Recorded in
    `marketplace_runs` as `mortgage_backfill`.
 
+### 13. Project deals, and "Which deals do you want to see?" (Batch 17)
+
+Two things arrive together. Every saved profile answers **"Which deals do
+you want to see?"** (Short-let, BRRR, Rent-to-rent; Buy to let shows as
+"Coming soon" and cannot be chosen), each chosen type with its own money
+question, and Today's 5 become a mix of the chosen types (2 / 2 / 1 for
+all three, 3 / 2 for two, shifting with Keeps; `billing_settings.today_mix`).
+And a sale whose own words say it needs work can become a **Project (BRRR)
+deal**: held for its comparables check and then a photo check (Claude,
+within a daily allowance), costed as a guide, valued after works against
+nearby sold prices, and shown only when the value added (value after works
+less the price and the works at the high end) is at least £15,000 and 10%
+of the value. Everything that decides it is a setting (`project_*` rows,
+defaults in `src/lib/project/config.ts`). In this order:
+
+1. **Run `supabase/schema.sql`:** the "Batch 17: project deals" section,
+   after Batch 16's (and Batch 14's and 15's if the database is still
+   without them). Additive and idempotent: `marketplace_deals.needs_work`
+   and `.project`, two partial indexes, four private tables
+   (`project_checks`, `project_prep`, `project_estimates`,
+   `project_member_figures`: row-level security on, no policies), the
+   `project_claim_check` function (service role only) and seven settings
+   rows, `project_checks.enabled` among them **off**. Nothing is added to
+   `ACCESS_COLUMNS`, and the new columns are in neither `DEAL_COLUMNS` nor
+   `CARD_COLUMNS`: each is read with its own tolerant select, so the site
+   keeps working before the section is run, but nothing Project-related
+   happens until it is. The deal types need no column (they live in the
+   profile's goals JSON).
+2. **Check the keys:** `ANTHROPIC_API_KEY` (the photo check) and
+   `PROPERTYDATA_API_KEY` (sold prices, listed-building and
+   conservation-area checks) on Production and Preview. The Project checks
+   panel on `/admin/deals` says when either is missing. The new unit costs
+   (sold prices 2.5p a call; the photo check's own input and output token
+   rates) are read from the code's seed until "Re-seed missing rows" on
+   `/admin/billing` adds them to the table for editing.
+3. **Move existing profiles onto deal types:** `/admin/profiles` → "Deal
+   types" → Dry run (every profile's before and after; no address or email),
+   then Run, then Run again: the second run must write nothing.
+   `/api/internal/deal-types-backfill?dry=1` is the same dry run. Profiles
+   with nothing to go on meet the question on their next visit, and until
+   then see Short-let and Rent-to-rent, never BRRR.
+4. **A week of dry runs, the Project checks still off.** They need Batch
+   16's checks on first (`DEAL_CHECKS_ENABLED=true`, section 11): a Project
+   candidate waits on the same shortlist for its comparables check. Each
+   day, "Dry-run the Project checks" on `/admin/deals` (or
+   `/api/internal/project-checks?dry=1`): the day's allowance and spend,
+   what waits, and what a pass would do. Asks nothing, writes nothing.
+5. **Confirm the sold-price reply once** (one credit, about 2.5p):
+   `curl "https://api.propertydata.co.uk/sold-prices?key=$PROPERTYDATA_API_KEY&postcode=OX3+9DW&type=terraced_house&max_age=24&points=100"`.
+   `parseSoldPrices` (`src/lib/apis/propertydata-parse.ts`) reads
+   `data.raw_data[]`, each sale with `price`, `date` and either `distance`
+   or `lat` / `lng`. If the reply is shaped differently, stop here and send
+   it on (without the key): every candidate would otherwise end
+   "too few sold prices" and never become a Project deal.
+6. **Switch on, small:** tick "Project checks on" on `/admin/deals` and set
+   "Project photo checks a day" to 1. The crons
+   (`/api/internal/project-checks`, every ten minutes 04:25–05:55 UTC) then
+   make at most one photo check a pass, within the day's allowance and the
+   250p spend line (photo checks, sold prices and planning checks
+   together); all of it is house spend, never a member's credit. Check the
+   spend line on `/admin/deals` and the outcomes on `/admin/deals/projects`
+   for a few days, then set the allowance back to 5.
+7. **Bring the live deals through once:** in the same panel, "Dry-run the
+   live-deal backfill" (counts and examples: area, bedrooms, type, the
+   phrases, the decision; never an address; every example on
+   `/admin/deals/projects`), then "Run the live-deal backfill" (it refuses
+   while the Project checks are off). Sales already live whose words say
+   they need work go back on the shortlist for their Project check, or are
+   retired as a newcomer would be. `/api/internal/project-backfill?dry=1`
+   is the same; a run that runs out of time carries on when pressed again.
+
+Members' own working on a Project deal (edit, save, lock) is free and
+private to them: a teammate never sees it, and a Full analysis report
+shows the reader's own locked figures beside ours without storing them.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,

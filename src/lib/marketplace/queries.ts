@@ -14,11 +14,13 @@ import 'server-only';
  */
 import { unstable_cache } from 'next/cache';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { CARD_COLUMNS, PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
+import { CARD_COLUMNS, PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, typeClauseFor, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
 import { dealVisible, type DealVisibility } from './visibility';
 import { reactionFilter, type ReactionFilter } from './reactions';
+import { dealTypeOf, type DealType } from '../profile/deal-types';
+import { parseProjectCard, type ProjectCardData } from '../project/headline';
 
 export interface DealPage {
   cards: DealCard[];
@@ -31,6 +33,34 @@ const EMPTY: DealPage = { cards: [], total: 0, page: 1, pages: 0 };
 
 type Admin = ReturnType<typeof createAdminClient>;
 
+/**
+ * Batch 17's marketplace_deals.project (a Project deal's card numbers). The
+ * column comes with the schema section; until it is run a read that names it
+ * fails, so the first such failure is remembered and every read after it goes
+ * without: there are no Project deals yet, and every sale is Short-let. It
+ * is never in CARD_COLUMNS for the same reason (read it with projectCardsFor).
+ */
+let projectColumnMissing = false;
+
+/** Whether the error is the project column not being there yet; remembered when it is. */
+export function isMissingProjectColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  const message = error.message ?? '';
+  const hit = /project/.test(message) && (error.code === '42703' || error.code === 'PGRST204' || /does not exist|could not find/i.test(message));
+  if (hit && !projectColumnMissing) {
+    projectColumnMissing = true;
+    console.warn('[marketplace] marketplace_deals.project is not there yet (the Batch 17 schema section not run?): reading without it');
+  }
+  return hit;
+}
+
+/** A read built by `run`, run again once without the project column when that was the failure. */
+async function tolerant<R extends { error: { code?: string; message?: string } | null }>(run: () => PromiseLike<R>): Promise<R> {
+  const res = await run();
+  if (res.error && isMissingProjectColumn(res.error)) return run();
+  return res;
+}
+
 interface QueryOptions {
   /** The member's Keep / Pass view (reactions.ts reactionFilter), or null for none. */
   reaction: ReactionFilter | null;
@@ -40,6 +70,8 @@ interface QueryOptions {
   earlyAfter?: string;
   /** Columns read on top of the card's, for a server-side caller that never sends them to a page (the Today ranking). */
   extraColumns?: string;
+  /** Batch 17: read the project column too (while it exists). */
+  withProject?: boolean;
 }
 
 /**
@@ -49,7 +81,8 @@ interface QueryOptions {
  * here and nowhere else.
  */
 function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, opts: QueryOptions) {
-  const columns = opts.countOnly ? 'id' : `${CARD_COLUMNS}, photo${opts.extraColumns ? `, ${opts.extraColumns}` : ''}`;
+  const extra = [opts.extraColumns, opts.withProject && !projectColumnMissing ? 'project' : null].filter(Boolean).join(', ');
+  const columns = opts.countOnly ? 'id' : `${CARD_COLUMNS}, photo${extra ? `, ${extra}` : ''}`;
   let q = admin
     .from('marketplace_deals')
     .select(opts.reaction ? `${columns}, ${opts.reaction.embed}` : columns, { count: 'exact', head: opts.countOnly })
@@ -62,6 +95,16 @@ function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, op
   if (opts.earlyAfter) q = q.or(`live_since.is.null,live_since.gt.${opts.earlyAfter}`);
   else if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
+  // Batch 17: the deal types shown (Browse's type filter, Today's per-type pools).
+  const types = typeClauseFor(f.types ?? [], !projectColumnMissing, f.brrrLightOnly === true);
+  if (types?.none) q = q.in('id', []);
+  else if (types) {
+    if (types.kind) q = q.eq('kind', types.kind);
+    if (types.project === 'null') q = q.is('project', null);
+    else if (types.project === 'not_null') q = q.not('project', 'is', null);
+    else if (types.project === 'light') q = q.eq('project->>level', 'light');
+    if (types.or) q = q.or(types.or);
+  }
   if (f.areas.length > 0) q = q.in('postcode_area', f.areas);
   if (f.beds === '4+') q = q.gte('bedrooms', 4);
   else if (f.beds !== 'any') q = q.eq('bedrooms', Number(f.beds));
@@ -107,7 +150,7 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility, memb
     return dealsQuery(admin, f, visibility, { reaction, countOnly: false }).range(from, from + PAGE_SIZE - 1);
   };
   let page = f.page;
-  let res = await run(page);
+  let res = await tolerant(() => run(page));
   if (res.error && reaction && !pastTheEnd(res.error)) {
     // deal_reactions not there yet (schema not run, or PostgREST's cache is
     // behind): the whole grid must not go blank over it. Kept and passed
@@ -118,7 +161,7 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility, memb
     res = await run(page);
   }
   if (page > 1 && (pastTheEnd(res.error) || (!res.error && (res.data?.length ?? 0) === 0))) {
-    const { count } = await dealsQuery(admin, f, visibility, { reaction, countOnly: true });
+    const { count } = await tolerant(() => dealsQuery(admin, f, visibility, { reaction, countOnly: true }));
     const last = Math.max(1, Math.ceil((count ?? 0) / PAGE_SIZE));
     if (last < page) {
       page = last;
@@ -134,18 +177,32 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility, memb
     void _r;
     return { ...card, has_photo: Boolean(photo) };
   });
-  return { cards, total, page, pages: Math.ceil(total / PAGE_SIZE) };
+  return { cards: await withProjectCards(cards), total, page, pages: Math.ceil(total / PAGE_SIZE) };
 }
 
 /** How many deals match these filters in another view (e.g. how many of them this member passed). Null when it cannot be read. */
 export async function countDeals(f: DealFilters, visibility: DealVisibility, member: { userId: string | null }): Promise<number | null> {
   if (!hasServiceRole()) return null;
-  const { count, error } = await dealsQuery(createAdminClient(), f, visibility, { reaction: reactionFilter(f.view, member.userId), countOnly: true });
+  const { count, error } = await tolerant(() => dealsQuery(createAdminClient(), f, visibility, { reaction: reactionFilter(f.view, member.userId), countOnly: true }));
   if (error) {
     console.warn('[marketplace] countDeals failed:', error.message);
     return null;
   }
   return count ?? 0;
+}
+
+/** Batch 17: a count over several filters (one per deal type), summed; null when none could be read. */
+export async function countDealsAcross(filters: readonly DealFilters[], visibility: DealVisibility, member: { userId: string | null }): Promise<number | null> {
+  const counts = await Promise.all(filters.map((f) => countDeals(f, visibility, member)));
+  const read = counts.filter((n): n is number => n !== null);
+  return read.length === 0 ? null : read.reduce((a, b) => a + b, 0);
+}
+
+/** Batch 17: the early-access count over several filters, summed; null when none could be read. */
+export async function earlyAccessCountAcross(filters: readonly DealFilters[], visibility: DealVisibility): Promise<number | null> {
+  const counts = await Promise.all(filters.map((f) => earlyAccessCount(f, visibility)));
+  const read = counts.filter((n): n is number => n !== null);
+  return read.length === 0 ? null : read.reduce((a, b) => a + b, 0);
 }
 
 /**
@@ -155,8 +212,9 @@ export async function countDeals(f: DealFilters, visibility: DealVisibility, mem
  * is real. Null when there is no window for this account or it cannot be read.
  */
 export async function earlyAccessCount(f: DealFilters, visibility: DealVisibility): Promise<number | null> {
-  if (!hasServiceRole() || !visibility.cutoffIso) return null;
-  const { count, error } = await dealsQuery(createAdminClient(), f, visibility, { reaction: null, countOnly: true, earlyAfter: visibility.cutoffIso });
+  const cutoff = visibility.cutoffIso;
+  if (!hasServiceRole() || !cutoff) return null;
+  const { count, error } = await tolerant(() => dealsQuery(createAdminClient(), f, visibility, { reaction: null, countOnly: true, earlyAfter: cutoff }));
   if (error) {
     console.warn('[marketplace] earlyAccessCount failed:', error.message);
     return null;
@@ -167,7 +225,7 @@ export async function earlyAccessCount(f: DealFilters, visibility: DealVisibilit
 /** What the Today ranking reads on top of the card: deal figures, the short-let pre-check, the screening. None is an address or a link. */
 const RANKING_COLUMNS = 'deal, suitability, screening';
 
-export type RankingRow = DealCard & { deal: unknown; suitability: unknown; screening: unknown };
+export type RankingRow = DealCard & { deal: unknown; suitability: unknown; screening: unknown; project?: unknown };
 
 /**
  * The pool the Today screen ranks for one member: the grid's own query
@@ -182,12 +240,12 @@ export async function rankingPool(f: DealFilters, visibility: DealVisibility, me
   const admin = createAdminClient();
   const filters: DealFilters = { ...f, view: 'all', sort: 'profit', page: 1 };
   let reaction = reactionFilter('all', member.userId);
-  const run = () => dealsQuery(admin, filters, visibility, { reaction, countOnly: false, extraColumns: RANKING_COLUMNS }).range(0, Math.max(0, limit - 1));
-  let res = await run();
+  const run = () => dealsQuery(admin, filters, visibility, { reaction, countOnly: false, extraColumns: RANKING_COLUMNS, withProject: true }).range(0, Math.max(0, limit - 1));
+  let res = await tolerant(run);
   if (res.error && reaction) {
     console.error('[marketplace] rankingPool reaction filter failed:', res.error.message);
     reaction = null;
-    res = await run();
+    res = await tolerant(run);
   }
   if (res.error) {
     console.error('[marketplace] rankingPool failed:', res.error.message);
@@ -211,12 +269,105 @@ export async function rankingPool(f: DealFilters, visibility: DealVisibility, me
 export async function browsePool(f: DealFilters, visibility: DealVisibility, limit: number, extraColumns: string): Promise<DealCard[] | null> {
   if (!hasServiceRole()) return null;
   const filters: DealFilters = { ...f, view: 'all', sort: 'profit', page: 1 };
-  const res = await dealsQuery(createAdminClient(), filters, visibility, { reaction: null, countOnly: false, extraColumns }).range(0, Math.max(0, limit - 1));
+  const res = await tolerant(() => dealsQuery(createAdminClient(), filters, visibility, { reaction: null, countOnly: false, extraColumns, withProject: true }).range(0, Math.max(0, limit - 1)));
   if (res.error) {
     console.error('[marketplace] browsePool failed:', res.error.message);
     return null;
   }
   return ((res.data ?? []) as unknown as (DealCard & { photo: string | null })[]).map(({ photo, ...row }) => ({ ...row, has_photo: Boolean(photo) }));
+}
+
+const TYPE_CHUNK = 150;
+
+/**
+ * Batch 17: each deal's type by id — Rent-to-rent for a rental, BRRR for a
+ * sale with a Project estimate, Short-let for any other sale. Until the
+ * schema section is run every sale is Short-let. Deals it cannot read are
+ * absent.
+ */
+export async function dealTypesByIds(ids: readonly string[]): Promise<Map<string, DealType>> {
+  const out = new Map<string, DealType>();
+  if (!hasServiceRole() || ids.length === 0) return out;
+  const admin = createAdminClient();
+  const list = [...new Set(ids)];
+  for (let i = 0; i < list.length; i += TYPE_CHUNK) {
+    const some = list.slice(i, i + TYPE_CHUNK);
+    const res = await tolerant(() => admin.from('marketplace_deals').select(projectColumnMissing ? 'id, kind' : 'id, kind, project').in('id', some));
+    if (res.error) {
+      console.warn('[marketplace] deal types unreadable:', res.error.message);
+      continue;
+    }
+    for (const r of (res.data ?? []) as unknown as { id: string; kind: string; project?: unknown }[]) out.set(r.id, dealTypeOf(r));
+  }
+  return out;
+}
+
+/**
+ * Batch 17: of these listing URLs, the Project (BRRR) deals and their card
+ * numbers, so the daily pick keeps to a profile's chosen types and judges a
+ * project as one. Empty until the schema section is run (there are no
+ * Project deals yet); null when it cannot be read, and the caller then sends
+ * a sale only to a profile that takes both kinds of sale, rather than risk
+ * the wrong type.
+ */
+export async function projectCardsByUrl(urls: readonly string[], opts: { liveOnly?: boolean } = {}): Promise<Map<string, ProjectCardData> | null> {
+  const out = new Map<string, ProjectCardData>();
+  if (!hasServiceRole() || urls.length === 0 || projectColumnMissing) return out;
+  const admin = createAdminClient();
+  const list = [...new Set(urls)];
+  for (let i = 0; i < list.length; i += TYPE_CHUNK) {
+    let q = admin.from('marketplace_deals').select('canonical_url, project').in('canonical_url', list.slice(i, i + TYPE_CHUNK)).not('project', 'is', null);
+    // A card stays on a row that leaves live (retired after a re-cost, held again): only a live row is a Project deal now.
+    if (opts.liveOnly) q = q.eq('status', 'live');
+    const { data, error } = await q;
+    if (error) {
+      if (isMissingProjectColumn(error)) return out;
+      console.error('[marketplace] project deals unreadable:', error.message);
+      return null;
+    }
+    for (const r of (data ?? []) as { canonical_url: string; project: unknown }[]) {
+      const card = parseProjectCard(r.project);
+      if (card) out.set(r.canonical_url, card);
+    }
+  }
+  return out;
+}
+
+/**
+ * Batch 17: the Project card numbers (card-safe: numbers only, never a line,
+ * a reason or a photo) for these deals, by id; only the Project deals among
+ * them. Empty until the schema section is run.
+ */
+export async function projectCardsFor(ids: readonly string[]): Promise<Map<string, ProjectCardData>> {
+  const out = new Map<string, ProjectCardData>();
+  if (!hasServiceRole() || ids.length === 0 || projectColumnMissing) return out;
+  const admin = createAdminClient();
+  const list = [...new Set(ids)];
+  for (let i = 0; i < list.length; i += TYPE_CHUNK) {
+    const { data, error } = await admin.from('marketplace_deals').select('id, project').in('id', list.slice(i, i + TYPE_CHUNK)).not('project', 'is', null);
+    if (error) {
+      if (!isMissingProjectColumn(error)) console.warn('[marketplace] project cards unreadable:', error.message);
+      return out;
+    }
+    for (const r of (data ?? []) as { id: string; project: unknown }[]) {
+      const card = parseProjectCard(r.project);
+      if (card) out.set(r.id, card);
+    }
+  }
+  return out;
+}
+
+/**
+ * Batch 17: the cards with their Project numbers attached (card-safe: numbers
+ * only), for every surface that prints a range. The rest come back as they
+ * were; so do all of them until the schema section is run.
+ */
+export async function withProjectCards<T extends { id: string; kind?: string }>(cards: T[]): Promise<(T & { project?: ProjectCardData | null })[]> {
+  const sales = cards.filter((c) => c.kind === undefined || c.kind === 'sale');
+  if (sales.length === 0) return cards;
+  const projects = await projectCardsFor(sales.map((c) => c.id));
+  if (projects.size === 0) return cards;
+  return cards.map((c) => (projects.has(c.id) ? { ...c, project: projects.get(c.id)! } : c));
 }
 
 /**
@@ -235,7 +386,7 @@ export async function dealCardsByIds(ids: string[], visibility: DealVisibility):
   for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) {
     if (dealVisible(card.live_since ?? null, visibility.cutoffIso)) byId.set(card.id, { ...card, has_photo: Boolean(photo) });
   }
-  return ids.map((id) => byId.get(id)).filter((c): c is DealCard => c !== undefined);
+  return withProjectCards(ids.map((id) => byId.get(id)).filter((c): c is DealCard => c !== undefined));
 }
 
 export interface AreaCount {
@@ -369,6 +520,9 @@ async function teaserUncached(code: string, cutoffIso: string | null): Promise<A
     const byId = new Map(((extra ?? []) as { id: string; screening_gross: string | null; screening_confidence: string | null; check_comps: string | null }[]).map((r) => [r.id, r]));
     // Batch 16: the check's comparables count too (a count, never where), for the "based on N similar Airbnbs nearby" caption.
     for (const r of top) Object.assign(r, { screening_gross: byId.get(r.id)?.screening_gross ?? null, screening_confidence: byId.get(r.id)?.screening_confidence ?? null, check_comps: byId.get(r.id)?.check_comps ?? null });
+    // Batch 17: a Project deal among them shows its own numbers (read on its own: the column may not be there yet).
+    const projects = await projectCardsFor(top.map((r) => r.id));
+    for (const r of top) if (projects.has(r.id)) Object.assign(r, { project: projects.get(r.id)! });
   }
   return {
     code,

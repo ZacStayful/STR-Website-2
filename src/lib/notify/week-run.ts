@@ -30,7 +30,11 @@ import { parseMarketGoals } from '../market/goals';
 import { hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from '../access';
 import { isAdminEmail } from '../admin';
 import { getBillingSettings } from '../credit/unit-costs';
-import { filtersForGoals } from '../today/candidates';
+import { filtersForType } from '../today/type-filters';
+import { typesShown } from '../profile/deal-types';
+import { parseAboutYou } from '../profile/about';
+import { isMissingProjectColumn } from '../marketplace/queries';
+import type { MarketGoals } from '../market/goals';
 import { parseHistory } from '../listing/recheck';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
@@ -44,7 +48,7 @@ import { allProfilesFor } from '../profiles/server';
 import { labelFor, labelsShown, profileLinks, seatsFor, type SavedProfile } from '../profiles/rules';
 import { profileTagsFor } from '../profiles/deal-tags';
 import { GOALS_EDITOR_HREF } from '../nav';
-import { cardRangeLine } from '../marketplace/profit-range';
+import { rangeLineFor } from '../project/display';
 import { memberFinance } from '../marketplace/most-you-can-pay';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -58,6 +62,8 @@ type ProfileRow = PaidTierAccount & {
   id: string;
   email: string | null;
   market_goals: unknown;
+  /** Batch 17: the roles ticked, for a profile not yet on deal types. */
+  about_you?: unknown;
   alert_weekly: boolean | null;
   alert_missed?: boolean | null;
   alert_tracked?: boolean | null;
@@ -98,11 +104,11 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       if (opts.onlyUserIds) q = q.in('id', opts.onlyUserIds);
       return q.order('id', { ascending: true }).range(from, from + PAGE - 1);
     };
-    let res = await run(`id, email, market_goals, alert_weekly, alert_missed, alert_tracked, ${PAID_TIER_COLUMNS}`);
+    let res = await run(`id, email, market_goals, about_you, alert_weekly, alert_missed, alert_tracked, ${PAID_TIER_COLUMNS}`);
     if (res.error && newSwitches) {
       console.warn('[your-week] new switch columns unreadable (schema behind?); sections 1 and 2 off:', res.error.message);
       newSwitches = false;
-      res = await run(`id, email, market_goals, alert_weekly, ${PAID_TIER_COLUMNS}`);
+      res = await run(`id, email, market_goals, about_you, alert_weekly, ${PAID_TIER_COLUMNS}`);
     }
     if (res.error) return { status: 500, body: { error: `profiles read failed: ${res.error.message}` } };
     profiles.push(...((res.data ?? []) as unknown as ProfileRow[]));
@@ -144,15 +150,23 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
   const went: WentDeal[] = [];
   {
     const earliest = new Date(now.getTime() - MAX_WINDOW_MS).toISOString();
+    // Batch 17: a Project deal's numbers tell its type; without the column yet, every sale is Short-let.
+    let withProject = true;
     for (let from = 0; ; from += PAGE) {
-      const { data, error } = await admin
-        .from('marketplace_deals')
-        .select('id, kind, postcode_area, town, bedrooms, price_amount, price_period, raw_type, tenure, annual_profit, uplift_pct, listed_date, first_seen_at, live_since, retired_reason, retired_at, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence')
-        .eq('status', 'retired')
-        .in('retired_reason', [...WENT_REASONS])
-        .gte('retired_at', earliest)
-        .order('retired_at', { ascending: true })
-        .range(from, from + PAGE - 1);
+      const read = () =>
+        admin
+          .from('marketplace_deals')
+          .select(`id, kind, postcode_area, town, bedrooms, price_amount, price_period, raw_type, tenure, annual_profit, uplift_pct, listed_date, first_seen_at, live_since, retired_reason, retired_at, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence${withProject ? ', project' : ''}`)
+          .eq('status', 'retired')
+          .in('retired_reason', [...WENT_REASONS])
+          .gte('retired_at', earliest)
+          .order('retired_at', { ascending: true })
+          .range(from, from + PAGE - 1);
+      let { data, error } = await read();
+      if (error && withProject && isMissingProjectColumn(error)) {
+        withProject = false;
+        ({ data, error } = await read());
+      }
       if (error) {
         console.error('[your-week] went deals read failed:', error.message);
         break;
@@ -204,6 +218,9 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
   // Every profile row (Batch 13); unreadable (schema not run): one profile each, as before.
   const profileRows = await allProfilesFor(admin, ids);
 
+  // Batch 17: a profile's searches, one per deal type it is shown, each on its own money answer.
+  const searchesFor = (goals: MarketGoals | null, areas: readonly string[], p: ProfileRow) => typesShown({ goals, about: parseAboutYou(p.about_you) }).map((t) => filtersForType(goals, areas, t));
+
   // ── Per member: decide each section ──
   type Plan = { p: ProfileRow; since: string; missed: ReturnType<typeof missedFor> | null; byProfile: ProfileMissed[] | null; profileOf: Map<string, SavedProfile>; areas: ReturnType<typeof digestChanges> | null; rows: SavedRow[]; free: number | null };
   const plans: Plan[] = profiles.map((p) => {
@@ -220,14 +237,14 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       const withGoals = seats.filter((s) => s.profile?.goals);
       for (const s of withGoals) if (s.heading) profileOf.set(s.heading, s.profile!);
       byProfile = missedByProfile(
-        withGoals.map((s) => ({ heading: s.heading, filters: filtersForGoals(s.profile!.goals, s.profile!.areas), figureFor: (d: WentDeal) => cardRangeLine(d, memberFinance(s.profile!.goals), rangeWidths) })),
+        withGoals.map((s) => ({ heading: s.heading, filters: searchesFor(s.profile!.goals, s.profile!.areas, p), figureFor: (d: WentDeal) => rangeLineFor(d, memberFinance(s.profile!.goals), rangeWidths) })),
         { deals: went, seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free },
       );
       missed = missedTotal(byProfile);
     } else if (wantMissed && seats.length > 0) {
       const goals = parseMarketGoals(p.market_goals);
       // No goals, no honest "matching you" (Q10).
-      missed = goals ? missedFor({ deals: went, filters: filtersForGoals(goals, rows.map((r) => r.postcode_area)), seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free }) : null;
+      missed = goals ? missedFor({ deals: went, filters: searchesFor(goals, rows.map((r) => r.postcode_area), p), seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free }) : null;
     }
     const areas = on(p.alert_weekly) && areasReadable && rows.length > 0 ? digestChanges(rows, cardByCode, trendByCode) : null;
     return { p, since, missed, byProfile, profileOf, areas, rows, free };
@@ -308,7 +325,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       recap,
       areas: pl.areas,
       unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
-      figureFor: (d) => cardRangeLine(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths),
+      figureFor: (d) => rangeLineFor(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths),
     });
     const areaChanges = pl.areas?.length ?? 0;
     if (!built) {

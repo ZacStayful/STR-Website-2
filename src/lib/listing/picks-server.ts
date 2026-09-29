@@ -9,6 +9,8 @@ import { parseStoredRelaxation, type StoredRelaxation } from './relax';
 import { parseMotivation, type Motivation } from './motivation';
 import { parseScreening, screeningScore, type Screening } from './screen';
 import { parseMarketGoals } from '../market/goals';
+import { parseAboutYou } from '../profile/about';
+import { typeFromPickReasons, withAddedType, type DealType } from '../profile/deal-types';
 import { setNotification } from '../notifications/server';
 import type { ResponseRow } from './picks-patterns';
 
@@ -246,6 +248,39 @@ export async function recordReaction(where: { token: string } | { id: string; us
   const { error } = await q;
   if (error) console.error('[picks] reaction update failed:', error.message);
   return !error;
+}
+
+/**
+ * "I want rent-to-rent, not to buy" (or the reverse) on a pick's form adds
+ * that deal type to the profile the pick was made for (Batch 17, Q25), and
+ * the member's Today and daily email start showing it from the next choose.
+ * The pick's own profile, or the active one for a pick from before saved
+ * profiles; a profile since deleted changes nothing. Returns what changed,
+ * for the activity log, or null.
+ */
+export async function addTypeFromPickFeedback(where: { token: string } | { id: string; userId: string }, reasons: unknown): Promise<{ userId: string; profileId: string | null; added: DealType } | null> {
+  const type = typeFromPickReasons(cleanReasons(reasons));
+  if (!type || !hasServiceRole()) return null;
+  const pick = 'token' in where ? await pickByToken(where.token) : await pickForMember(where.id, where.userId);
+  if (!pick) return null;
+  const admin = createAdminClient();
+  const own = await pickProfileRow(admin, pick.id, pick.userId);
+  if (own === 'gone') return null;
+  const { data: member } = await admin.from('profiles').select('market_goals, about_you').eq('id', pick.userId).maybeSingle();
+  const row = member as { market_goals?: unknown; about_you?: unknown } | null;
+  const inactive = own !== null && !own.isActive;
+  const goals = parseMarketGoals(inactive ? own.criteria : row?.market_goals);
+  const next = withAddedType({ goals, about: parseAboutYou(row?.about_you) }, type);
+  if (!next) return null;
+  const nowIso = new Date().toISOString();
+  const { error } = inactive
+    ? await admin.from('search_profiles').update({ criteria: next, updated_at: nowIso }).eq('id', own.id).eq('user_id', pick.userId)
+    : await admin.from('profiles').update({ market_goals: next, market_goals_updated_at: nowIso }).eq('id', pick.userId);
+  if (error) {
+    console.error('[picks] deal type add failed:', error.message);
+    return null;
+  }
+  return { userId: pick.userId, profileId: own?.id ?? null, added: type };
 }
 
 /**

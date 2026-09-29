@@ -13,7 +13,9 @@ const OPTS = { ...ELIG, ...AREAS };
 /** Coalville, LE67: LE 15 mi, DE 19, WS 23, CV 28, B 29, NG 30, ST 34 (area centroids). */
 const COALVILLE = { postcode: 'LE67 3AB', lat: 52.7229, lng: -1.3706 };
 
-const goals = (over: Partial<MarketGoals> = {}): MarketGoals => ({ ...DEFAULT_GOALS, ...over });
+/** A profile's goals; its deal types follow the kind it searches unless given (Batch 17: the types decide the kinds). */
+const TYPES_OF: Record<MarketGoals['sourcingKind'], MarketGoals['dealTypes']> = { sale: ['buy_str'], rent: ['r2r'], both: ['buy_str', 'r2r'] };
+const goals = (over: Partial<MarketGoals> = {}): MarketGoals => ({ ...DEFAULT_GOALS, ...over, dealTypes: over.dealTypes !== undefined ? over.dealTypes : TYPES_OF[over.sourcingKind ?? 'sale'] });
 const member = (id: string, over: Partial<DemandMember> = {}): DemandMember => ({ id, email: `${id}@example.com`, lastSeenAt: seen(1), payerId: id, paying: false, unitAreas: [], switchedOff: false, ...over });
 const profile = (memberId: string, g: MarketGoals | null, areas: string[] = [], profileId: string | null = `${memberId}-p`): DemandProfile => ({ memberId, profileId, goals: g, areas });
 
@@ -81,6 +83,13 @@ test('profileAreas: never more than the per-profile cap, chosen and unit areas f
 test('kindsOf and typeOf', () => {
   assert.deepEqual(kindsOf(goals({ sourcingKind: 'both' })), ['sale', 'rent']);
   assert.deepEqual(kindsOf(goals({ sourcingKind: 'rent' })), ['rent']);
+  // Batch 17: the deal types decide; BRRR is a sale search.
+  assert.deepEqual(kindsOf(goals({ dealTypes: ['brrr'] })), ['sale']);
+  assert.deepEqual(kindsOf(goals({ dealTypes: ['brrr', 'r2r'] })), ['sale', 'rent']);
+  // Not yet on types: the roles ticked, else what an unanswered profile is shown (Q22).
+  assert.deepEqual(kindsOf(goals({ dealTypes: null }), ['r2r']), ['rent']);
+  assert.deepEqual(kindsOf(goals({ dealTypes: null }), ['investor']), ['sale']);
+  assert.deepEqual(kindsOf(goals({ dealTypes: null })), ['sale', 'rent']);
   const flatBuyer = goals({ buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'flat' } });
   assert.equal(typeOf(flatBuyer, 'sale'), 'flat');
   assert.equal(typeOf(flatBuyer, 'rent'), 'any', 'rent-to-rent has no type answer');
@@ -160,7 +169,7 @@ test('demandScore and areaScores: paying members weigh more in the order, and an
   assert.equal(demandScore({ members: new Set(['a', 'b', 'c']), paying: new Set(['a']) }, 2), 4);
   assert.equal(demandScore({ members: new Set(['a', 'b', 'c']), paying: new Set(['a']) }, 1), 3);
   const g = goals({ where: 'areas' });
-  const d = buildDemand([member('a', { paying: true }), member('b')], [profile('a', { ...g, sourcingKind: 'rent' }, ['LE']), profile('b', g, ['LE'])], OPTS);
+  const d = buildDemand([member('a', { paying: true }), member('b')], [profile('a', goals({ where: 'areas', sourcingKind: 'rent' }), ['LE']), profile('b', g, ['LE'])], OPTS);
   assert.deepEqual([...areaScores(d, 2)], [['LE', 2]]);
 });
 

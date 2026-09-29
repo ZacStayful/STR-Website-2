@@ -102,8 +102,9 @@ export function leaningsFor(p: TailoringProfile): Leanings {
     steady: a.risk === 'avoid' || a.dealsDone === '0',
     bold: a.risk === 'go',
     operations: [...new Set([...unitAreas, ...operatingAreas])],
-    manager: g?.path === 'manage',
-    sourcer: g?.path === 'source',
+    // The roles ticked (Batch 17): the path no longer decides.
+    manager: a.roles.includes('manager'),
+    sourcer: a.roles.includes('sourcer'),
     feeRoom: g && asked(p, 'sourcing_fee') && g.sourcer.sourcingFee ? TAILORING.sourcingFeeRoom[g.sourcer.sourcingFee] : null,
     signals: p.signals,
   };

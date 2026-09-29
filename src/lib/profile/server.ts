@@ -33,7 +33,8 @@ import { areaCodeFrom } from '../market/lead-goals';
 import { parseAboutYou } from './about';
 import { applyAnswer, clearAnswer, emptyAnswers, questionById, questionsFor, SECTION_TOKENS, type Answers, type QuestionId, type WhereAnswer } from './questions';
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type AnsweredMap, type Progress, type QuizRecord } from './state';
-import { profileFilters } from './matching';
+import { profileFilters, profileFiltersByType } from './matching';
+import { typesShown } from './deal-types';
 import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIND, type CreditDecision } from './credit';
 import { rewardEligibility, type Eligibility } from '../today/checklist';
 import { grant, InsufficientCreditError } from '../credit/ledger';
@@ -41,10 +42,10 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { startAction } from '../credit/action';
 import { runMetered } from '../credit/context';
 import { geocodePostcode } from '../apis/geocode';
-import { countDeals, listDeals, photoUrlFor } from '../marketplace/queries';
+import { countDealsAcross, listDeals, photoUrlFor } from '../marketplace/queries';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { areaDealView, type AreaDealView } from '../marketplace/grid';
-import { cardRangeLine } from '../marketplace/profit-range';
+import { rangeLineFor } from '../project/display';
 import { quizPathFor } from '../auth/landing';
 import { logActivity } from '../activity/log';
 import { todayKey } from '../today/day';
@@ -365,7 +366,9 @@ export async function matchCountFor(p: { userId: string; email: string | null; a
   const must = await mustHaveCountFor({ userId: p.userId, email: p.email, tailoring }).catch(() => null);
   if (must !== null) return must;
   const visibility = await dealVisibilityFor(p.userId, isAdminEmail(p.email));
-  return countDeals(profileFilters(p.answers.goals, p.answers.savedAreas), visibility, { userId: p.userId });
+  // Batch 17: each deal type the profile is shown, on its own money answer, summed (as Today counts).
+  const types = typesShown({ goals: p.answers.goals, about: p.answers.about });
+  return countDealsAcross(profileFiltersByType(p.answers.goals, p.answers.savedAreas, types), visibility, { userId: p.userId });
 }
 
 /** The count for a "where" answer that has not been saved yet (the slider moving). */
@@ -393,10 +396,11 @@ export async function sampleMatches(p: { userId: string; email: string | null; l
   if (!s) return [];
   const [visibility, settings] = await Promise.all([dealVisibilityFor(p.userId, isAdminEmail(p.email)), getBillingSettings()]);
   const now = new Date();
-  const page = await listDeals(profileFilters(s.answers.goals, s.answers.savedAreas), visibility, { userId: p.userId });
+  // Batch 17: only the deal types the profile is shown.
+  const page = await listDeals({ ...profileFilters(s.answers.goals, s.answers.savedAreas), types: typesShown({ goals: s.answers.goals, about: s.answers.about }) }, visibility, { userId: p.userId });
   return page.cards.slice(0, p.limit ?? 2).map((card) => ({
     ...areaDealView(card, photoUrlFor(card, now), now, settings.dealPricing.profitRangePct),
-    range: cardRangeLine(card, s.answers.goals.finance, settings.dealPricing.profitRangePct),
+    range: rangeLineFor(card, s.answers.goals.finance, settings.dealPricing.profitRangePct),
   }));
 }
 

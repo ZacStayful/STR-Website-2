@@ -74,7 +74,7 @@ test('deal sourcers: room below the typical price, the motivated-seller signal, 
 });
 
 test('management companies: revenue, distance to their units, local competition; occupancy when competition is unknown', () => {
-  const manager = profile({ path: 'manage', manager: { ...DEFAULT_GOALS.manager, operatingAreas: ['NG'] } });
+  const manager = profile({ path: 'manage', manager: { ...DEFAULT_GOALS.manager, operatingAreas: ['NG'] } }, { roles: ['manager'] });
   assert.deepEqual(shown(numbersForCard(card(), manager, area, NOW)), ['Short-let revenue: £25,500–£34,500/yr', 'From your units: Same area', 'Competition: Opportunity']);
   const derby = numbersForCard(card({ postcode_area: 'DE' }), manager, area, NOW)!;
   assert.deepEqual(derby.map((x) => x.key), ['revenue', 'distance', 'occupancy']);
@@ -104,4 +104,33 @@ test('withTailoring: Today gives an untailored member the plain why-line only; "
   const best = profile({ path: 'buy', where: 'near_plus_best', home: { postcode: 'DE1 1AA', lat: 52.92, lng: -1.47 }, maxDistanceMiles: 10 });
   assert.equal(withTailoring(views, [card()], best, null, NOW, { why: true }).get('d1')!.explanation?.elsewhere, true);
   assert.equal(withTailoring(views, [card()], best, null, NOW).get('d1')!.explanation?.elsewhere, false);
+});
+
+// ── Batch 17: the numbers follow the deal's own type (Q23) ──
+
+const PROJECT = { v: 1, level: 'full', price: 70_000, bedrooms: 3, worksLow: 26_620, worksHigh: 39_710, value: 127_800, valueAdded: 18_090, valueAddedPct: 14.2, ceilingApplied: false, months: 4, cashLow: 74_766, cashHigh: 87_856, moneyLeftInLow: 27_916, moneyLeftInHigh: 41_006, refinancePct: 75, estimatedAt: AT };
+const projectCard = (over: Partial<DealCard> = {}) => ({ ...card({ price_amount: 70_000, screening_gross: '24000', ...over }), project: PROJECT }) as DealCard;
+
+test('a Project deal shows the project’s numbers to everyone, sourcers and managers too', () => {
+  const investor = profile({ dealTypes: ['brrr'] }, { roles: ['investor'] });
+  const n = numbersForCard(projectCard(), investor, area, NOW)!;
+  assert.deepEqual(n.map((x) => x.key), ['works', 'valueAdded', 'afterWorks']);
+  assert.equal(n[0].value, '~£27k–£40k');
+  assert.equal(n[1].value, '£18k');
+  assert.equal(n[2].label, 'After works / month');
+  for (const roles of [['sourcer'], ['manager']] as AboutYou['roles'][]) assert.equal(roleFor(profile({ dealTypes: ['brrr'] }, { roles }), 'brrr'), 'brrr', roles.join());
+  // The Funding blocker puts the project's own cash first, as a range (Q26).
+  const funding = numbersForCard(projectCard(), profile({ dealTypes: ['brrr'] }, { roles: ['investor'], blocker: 'funding' }), area, NOW)!;
+  assert.deepEqual(shown(funding).slice(0, 1), ['Cash in: £75k–£88k']);
+});
+
+test('sourcers and managers keep their own numbers on other deals, unless they also invest or run rent-to-rent (Q23 a)', () => {
+  assert.equal(roleFor(profile({}, { roles: ['sourcer'] }), 'buy_str'), 'source');
+  assert.equal(roleFor(profile({}, { roles: ['sourcer'] }), 'r2r'), 'source');
+  assert.equal(roleFor(profile({}, { roles: ['manager'] }), 'buy_str'), 'manage');
+  assert.equal(roleFor(profile({}, { roles: ['sourcer', 'investor'] }), 'buy_str'), 'buy_cashflow');
+  assert.equal(roleFor(profile({}, { roles: ['manager', 'r2r'] }), 'r2r'), 'r2r');
+  assert.equal(roleFor(profile({}, { roles: ['investor'] }), 'r2r'), 'r2r', 'an investor looking at a rental reads it as a rental');
+  // Answered before the roles question: the old path decides, as before.
+  assert.equal(roleFor(profile({ path: 'source' }, { roles: [] }), 'sale'), 'source');
 });

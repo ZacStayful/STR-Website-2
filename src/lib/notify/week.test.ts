@@ -173,3 +173,20 @@ test('saved profiles: a recap line names its profile only when given one', () =>
   const items = s.blocks[0].type === 'items' ? s.blocks[0].items : [];
   assert.deepEqual(items.map((i) => i.lines), [['Now sold', 'For Client: JS'], ['Now sold']]);
 });
+
+test('Batch 17: "missed" keeps to the profile’s deal types, each on its own search, a deal counted once', () => {
+  const project = { v: 1, level: 'full', price: 90_000, bedrooms: 3, worksLow: 20_000, worksHigh: 30_000, value: 150_000, valueAdded: 30_000, valueAddedPct: 20, months: 4, cashLow: 60_000, cashHigh: 70_000 };
+  const leedsSale: DealFilters = { ...DEFAULT_FILTERS, kind: 'sale', areas: ['LS'] };
+  const bl = went({ id: 'bl', kind: 'sale', price_amount: 150_000, price_period: 'total', retired_reason: 'sold' });
+  const brrr = went({ id: 'brrr', kind: 'sale', price_amount: 90_000, price_period: 'total', retired_reason: 'sold', project });
+  assert.equal(matchesFilters(brrr, { ...leedsSale, types: ['buy_str'] }), false, 'a Project deal is never a Short-let miss');
+  assert.equal(matchesFilters(bl, { ...leedsSale, types: ['buy_str'] }), true);
+  assert.equal(matchesFilters(brrr, { ...leedsSale, types: ['brrr'] }), true);
+  assert.equal(matchesFilters(brrr, { ...leedsSale, types: ['brrr'], brrrLightOnly: true }), false, 'a light-refresh answer: full projects are not missed');
+  assert.equal(matchesFilters(went(), { ...leedsRent, types: ['r2r'] }), true);
+  const searches = [{ ...leedsSale, types: ['buy_str'] }, { ...leedsSale, types: ['brrr'] }, { ...leedsRent, types: ['r2r'] }] as DealFilters[];
+  const m = missedFor({ deals: [bl, brrr, went()], filters: searches, seen: new Set(), since: SINCE, freeDelayHours: null });
+  assert.equal(m.total, 3);
+  const blOnly = missedFor({ deals: [bl, brrr, went()], filters: [searches[0]], seen: new Set(), since: SINCE, freeDelayHours: null });
+  assert.deepEqual(blOnly.matched, ['bl'], 'never an unchosen type');
+});

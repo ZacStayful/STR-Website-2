@@ -21,7 +21,7 @@ export function SampleDeals({ deals }: { deals: SampleDeal[] }) {
               <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{d.source === "zoopla" ? "Photo on the listing" : "Photo coming"}</div>
             )}
             <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-              <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{d.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+              <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{d.label}</span>
               {d.tags.map((t) => (
                 <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">
                   {t}

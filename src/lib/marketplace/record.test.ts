@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDealRecord, qualifiesForMarketplace, townFrom, feedStatusOf, mergeSnapshotIntoListing, snapshotFromDeal, areaRentKey, parseStoredDeal, type AreaCardLike } from './record.ts';
-import type { SourcedListing } from '../listing/sourcing.ts';
+import { cardNeedsWork, type SourcedListing } from '../listing/sourcing.ts';
 import { R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
 import type { ListingSnapshot } from '../listing/types.ts';
 
@@ -223,4 +223,29 @@ test('a check on a listing with no area card still screens it (no card, no area 
   assert.equal(rec.band, 'unqualified');
   assert.equal(rec.screening.grossRevenue?.source, 'checked');
   assert.equal(rec.stream, 'r2r');
+});
+
+test('Batch 17 (bugs 3–4): the merge keeps the lease, the council tax band and the project facts', () => {
+  const card = listing({ features: ['In need of modernisation'], needsWork: { flag: true, score: 3, phrases: ['in_need_of_works'] } });
+  const page: ListingSnapshot = { ...snapshot, yearsRemainingOnLease: 72, councilTaxBand: 'B', needsWork: { flag: true, score: 2, phrases: ['dated'] }, projectExclusion: 'short_lease', listedBuilding: false, floorAreaSqft: 818 };
+  const merged = mergeSnapshotIntoListing(card, page);
+  assert.equal(merged.yearsRemainingOnLease, 72);
+  assert.equal(merged.councilTaxBand, 'B');
+  assert.deepEqual(merged.needsWork?.phrases, ['in_need_of_works', 'dated'], 'the card’s and the page’s wording together');
+  assert.equal(merged.needsWork?.score, 5);
+  assert.equal(merged.projectExclusion, 'short_lease');
+  assert.equal(merged.listedBuilding, false);
+  assert.equal(merged.floorAreaSqft, 818);
+  // A page parsed before Batch 17 carries none of it: nothing invented.
+  const old = mergeSnapshotIntoListing(listing(), snapshot);
+  assert.equal(old.yearsRemainingOnLease, null);
+  assert.equal(old.needsWork, null);
+  assert.equal(old.projectExclusion, null);
+});
+
+test('Batch 17: a search card’s own words flag it as needing work, free; a rental never is', () => {
+  assert.equal(cardNeedsWork(listing({ title: '3 bed house in need of modernisation', features: [] })).flag, true);
+  assert.equal(cardNeedsWork(listing({ title: '3 bed house', features: ['Cash buyers only'] })).flag, true);
+  assert.equal(cardNeedsWork(listing({ title: '3 bed house', features: ['Ideal for investors'] })).flag, false, 'a weight-1 phrase only ranks');
+  assert.equal(cardNeedsWork(listing({ kind: 'rent', title: 'Flat in need of modernisation' })).flag, false);
 });

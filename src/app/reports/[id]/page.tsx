@@ -7,6 +7,9 @@ import { payerFor } from "@/lib/team";
 import { quoterFor } from "@/lib/credit/quote-server";
 import { enhancedEnabled } from "@/lib/analysis/run";
 import type { AnalysisResult } from "@/lib/types";
+import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
+import { parseReportProject } from "@/lib/project/report";
+import { reportProjectMineFor } from "@/lib/project/report-server";
 
 export const metadata: Metadata = {
   title: "Saved report — Stayful Intelligence",
@@ -29,16 +32,15 @@ export default async function SavedReportPage({ params }: { params: Promise<{ id
   const analysedAt = (meta?.analysed_at as string | null | undefined) ?? null;
 
   let pmi = null;
-  if (dealId && !result.secondOpinion && enhancedEnabled(true)) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      const { payerId } = await payerFor(user.id);
-      const quoter = await quoterFor(payerId, isAdminEmail(user.email));
-      pmi = quoter.label(quoter.pricing.pmiAddonPence);
-    }
+  // Batch 17: a Project deal's report shows the reader's own locked figures beside ours, read now and never stored on the report.
+  const hasProject = Boolean(dealId && parseReportProject(result.project));
+  const user = dealId && ((!result.secondOpinion && enhancedEnabled(true)) || hasProject) ? (await supabase.auth.getUser()).data.user : null;
+  if (user && dealId && !result.secondOpinion && enhancedEnabled(true)) {
+    const { payerId } = await payerFor(user.id);
+    const quoter = await quoterFor(payerId, isAdminEmail(user.email));
+    pmi = quoter.label(quoter.pricing.pmiAddonPence);
   }
+  const projectMine = user && dealId && hasProject && hasServiceRole() ? await reportProjectMineFor(createAdminClient(), user.id, dealId) : null;
 
-  return <EstimatePage initialResult={{ ...result, reportId: id }} savedAnalysis={dealId ? { dealId, analysedAt, pmi } : undefined} />;
+  return <EstimatePage initialResult={{ ...result, reportId: id }} savedAnalysis={dealId ? { dealId, analysedAt, pmi, projectMine } : undefined} />;
 }

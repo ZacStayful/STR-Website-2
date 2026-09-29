@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { QUESTIONS, answerLabel, applyAnswer, clearAnswer, currentValue, emptyAnswers, imageOf, moneyQuestionFor, optionsOf, questionsFor, text, type Answers, type QuestionId } from './questions.ts';
+import { QUESTIONS, answerLabel, applyAnswer, clearAnswer, currentValue, emptyAnswers, imageOf, moneyQuestionsFor, optionsOf, questionsFor, text, type Answers, type QuestionId } from './questions.ts';
 import { DEFAULT_GOALS, GOAL_OPTIONS } from '../market/goals.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT } from './about.ts';
 import { QUIZ_IMAGES } from './images.ts';
@@ -34,12 +34,12 @@ test('every question has an id, a why line, a photo or answer cards, and a short
   }
 });
 
-test('the three mandatory questions are the only ones without "Not sure", and every option value is stored as given', () => {
+test('the mandatory questions are the only ones without "Not sure", and every option value is stored as given', () => {
   const mandatory = QUESTIONS.filter((q) => q.mandatory).map((q) => q.id).sort();
-  assert.deepEqual(mandatory, ['budget', 'exploring_pick', 'main_role', 'max_rent', 'roles', 'where'].sort(), 'which describes you (and its follow-ups), where, and the money question for each path');
+  assert.deepEqual(mandatory, ['brrr_budget', 'budget', 'deal_types', 'max_rent', 'roles', 'where'].sort(), 'which describes you, which deals, where, and one money question per deal type');
   // Every single-choice option round-trips through applyAnswer and reads back with its label.
   for (const q of QUESTIONS) {
-    if (q.kind !== 'single' || q.id === 'main_role') continue;
+    if (q.kind !== 'single') continue;
     const base: Answers = { ...fresh(), goals: { ...DEFAULT_GOALS, path: 'buy' }, about: { ...DEFAULT_ABOUT, roles: ['investor'], mainRole: 'investor' } };
     for (const o of optionsOf(q, base)) {
       const r = applyAnswer(q.id, o.value, base);
@@ -51,16 +51,16 @@ test('the three mandatory questions are the only ones without "Not sure", and ev
   }
 });
 
-test('the questions a member gets follow their path, in order, with the money question third', () => {
+test('the questions a profile gets follow its deal types, with the money question for each', () => {
   let a = fresh();
-  assert.deepEqual(questionsFor(a).slice(0, 2).map((q) => q.id), ['roles', 'where'], 'nothing path-specific until they say what they do');
+  assert.deepEqual(questionsFor(a).slice(0, 3).map((q) => q.id), ['roles', 'deal_types', 'where'], 'nothing type-specific until they say');
   a = answer(a, 'roles', ['investor']);
-  assert.equal(a.goals.path, 'buy');
-  assert.equal(a.goals.sourcingKind, 'sale');
+  assert.equal(a.goals.sourcingKind, 'sale', 'an investor maps to Short-let until they choose');
+  a = answer(a, 'deal_types', ['buy_str']);
   const ids = questionsFor(a).map((q) => q.id);
-  assert.deepEqual(ids.slice(0, 3), ['roles', 'where', 'budget']);
+  assert.deepEqual(ids.slice(0, 4), ['roles', 'deal_types', 'where', 'budget']);
   assert.ok(ids.includes('cash_available') && ids.includes('leasehold'), 'the buying section');
-  assert.ok(!ids.includes('setup_budget') && !ids.includes('source_for') && !ids.includes('units_managed'), 'no other section');
+  assert.ok(!ids.includes('setup_budget') && !ids.includes('brrr_work') && !ids.includes('units_managed'), 'no other section');
   assert.ok(!ids.includes('unit_areas'), 'unit areas only once they say they run some');
   a = answer(a, 'units_now', '3-5');
   assert.ok(questionsFor(a).some((q) => q.id === 'unit_areas'));
@@ -69,28 +69,64 @@ test('the questions a member gets follow their path, in order, with the money qu
   assert.deepEqual(a.about.unitAreas, []);
 });
 
-test('two roles ask for the main one; "just exploring" asks what sounds interesting', () => {
-  let a = answer(fresh(), 'roles', ['investor', 'sourcer']);
-  assert.equal(a.goals.path, null);
-  assert.deepEqual(questionsFor(a).slice(0, 3).map((q) => q.id), ['roles', 'main_role', 'where']);
-  assert.deepEqual(optionsOf(QUESTIONS.find((q) => q.id === 'main_role')!, a).map((o) => o.value), ['investor', 'sourcer']);
-  assert.equal(applyAnswer('main_role', 'manager', a).ok, false, 'must be one they ticked');
-  a = answer(a, 'main_role', 'sourcer');
-  assert.equal(a.goals.path, 'source');
+test('"All of them" ticks every type; the kind searched follows; nothing is required but at least one', () => {
+  let a = answer(fresh(), 'roles', ['investor']);
+  assert.equal(applyAnswer('deal_types', [], a).ok, false);
+  assert.equal(applyAnswer('deal_types', ['nonsense'], a).ok, false);
+  a = answer(a, 'deal_types', ['all']);
+  assert.deepEqual(a.goals.dealTypes, ['buy_str', 'brrr', 'r2r']);
   assert.equal(a.goals.sourcingKind, 'both');
-  assert.equal(moneyQuestionFor(a.goals.path), 'budget');
-  assert.ok(questionsFor(a).some((q) => q.id === 'source_for'));
-  assert.ok(!questionsFor(a).some((q) => q.id === 'client_rent'), 'clients’ rent only once they source for operators');
-  a = answer(a, 'source_for', 'r2r');
+  assert.equal(answerLabel('deal_types', a), 'All of them');
+  assert.deepEqual(moneyQuestionsFor(a.goals.dealTypes!), ['budget', 'brrr_budget', 'max_rent']);
+  const ids = questionsFor(a).map((q) => q.id);
+  for (const id of ['budget', 'brrr_budget', 'max_rent', 'brrr_work', 'cash_available', 'setup_budget'] as QuestionId[]) assert.ok(ids.includes(id), id);
+  assert.equal(ids.filter((id) => id === 'cash_available').length, 1, 'shared follow-ups once');
+  a = answer(a, 'deal_types', ['r2r']);
   assert.equal(a.goals.sourcingKind, 'rent');
-  assert.ok(questionsFor(a).some((q) => q.id === 'client_rent'));
+  assert.equal(answerLabel('deal_types', a), 'Rent-to-rent');
+  assert.deepEqual(currentValue('deal_types', a), ['r2r']);
+});
 
-  let e = answer(fresh(), 'roles', ['exploring']);
-  assert.deepEqual(questionsFor(e).slice(0, 3).map((q) => q.id), ['roles', 'exploring_pick', 'where']);
-  e = answer(e, 'exploring_pick', 'r2r');
-  assert.equal(e.goals.path, 'r2r');
-  assert.equal(moneyQuestionFor(e.goals.path), 'max_rent');
-  assert.deepEqual(questionsFor(e).slice(0, 4).map((q) => q.id), ['roles', 'exploring_pick', 'where', 'max_rent']);
+test('the question count per combination (the plan’s table), plus the role sections', () => {
+  const count = (types: string[], roles: string[] = ['investor']) => questionsFor(answer(answer(fresh(), 'roles', roles), 'deal_types', types)).length;
+  assert.equal(count(['buy_str']), 21);
+  assert.equal(count(['brrr']), 22);
+  assert.equal(count(['r2r']), 17);
+  assert.equal(count(['buy_str', 'brrr']), 23);
+  assert.equal(count(['buy_str', 'r2r']), 28);
+  assert.equal(count(['brrr', 'r2r']), 29);
+  assert.equal(count(['all']), 30);
+  assert.equal(count(['buy_str'], ['investor', 'sourcer']), 24, 'sourcing adds 3');
+  assert.equal(count(['buy_str'], ['manager']), 25, 'management adds 4');
+});
+
+test('roles no longer pick a path: sourcers and managers get their sections, and money questions in their words', () => {
+  let s = answer(fresh(), 'roles', ['sourcer']);
+  assert.deepEqual(s.about.roles, ['sourcer']);
+  s = answer(s, 'deal_types', ['buy_str', 'r2r']);
+  const ids = questionsFor(s).map((q) => q.id);
+  assert.ok(ids.includes('sourcing_fee') && ids.includes('motivated_sellers'));
+  assert.ok(!ids.includes('units_managed'));
+  const q = (id: QuestionId) => QUESTIONS.find((x) => x.id === id)!;
+  assert.equal(text(q('budget').title, s), 'What do your clients typically spend?');
+  assert.equal(text(q('max_rent').title, s), 'What’s the most rent your clients would pay a landlord each month?');
+  const both = answer(s, 'roles', ['investor', 'sourcer']);
+  assert.equal(text(q('budget').title, both), 'What’s your budget?', 'anyone who also invests answers for themselves');
+  const m = answer(answer(fresh(), 'roles', ['manager']), 'deal_types', ['buy_str']);
+  assert.equal(text(q('budget').title, m), 'What’s the budget for deals you take on?');
+  assert.ok(questionsFor(m).some((x) => x.id === 'looking_for'));
+});
+
+test('BRRR: the project budget and how much work, stored on their own', () => {
+  let a = answer(answer(fresh(), 'roles', ['investor']), 'deal_types', ['brrr']);
+  a = answer(a, 'brrr_budget', 'u200');
+  assert.equal(a.goals.brrr.budget, 'u200');
+  assert.equal(a.goals.budget, null, 'the short-let budget is its own answer');
+  assert.equal(answerLabel('brrr_budget', a), 'Under £200k');
+  a = answer(a, 'brrr_work', 'either');
+  assert.equal(a.goals.brrr.work, 'either');
+  assert.equal(answerLabel('brrr_work', a), 'Either');
+  assert.equal(clearAnswer('brrr_work', a).goals.brrr.work, null);
 });
 
 test('where: near needs a postcode and a radius, areas need areas, anywhere needs nothing', () => {
@@ -147,7 +183,10 @@ test('money, rent, finance and profit are checked and read back', () => {
   a = answer(a, 'min_profit', '800');
   assert.equal(a.goals.finance.targetMarginPcm, 800);
   assert.equal(answerLabel('min_profit', a), '£800 a month');
-  assert.equal(answerLabel('r2r_min_profit', a), '£800 a month', 'the same field for both paths');
+  assert.equal(answerLabel('r2r_min_profit', a), null, 'the rent-to-rent minimum is its own answer now');
+  a = answer(a, 'r2r_min_profit', 650);
+  assert.equal(a.goals.r2r.minMarginPcm, 650);
+  assert.equal(a.goals.finance.targetMarginPcm, 800, 'and never overwrites the buyer’s');
 });
 
 test('the two mirrors: time sets management, risk sets risk appetite; "Not sure" puts them back', () => {
@@ -172,7 +211,7 @@ test('"Not sure" clears every optional answer and leaves the mandatory ones alon
     const cleared = clearAnswer(q.id, a);
     const v = currentValue(q.id, cleared);
     if (q.kind === 'finance') assert.deepEqual(v, { depositPct: 25, mortgageRatePct: 5.5 }, q.id);
-    else if (q.kind === 'profit') assert.equal(v, 500, q.id);
+    else if (q.id === 'min_profit') assert.equal(v, 500, q.id);
     else if (q.id === 'motivated_sellers') assert.equal(v, 'off');
     else assert.equal(v, null, q.id);
   }

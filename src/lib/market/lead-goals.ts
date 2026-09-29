@@ -8,7 +8,7 @@
  *
  * Pure, so the mapping is tested rather than trusted.
  */
-import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from './goals.ts';
+import { DEFAULT_GOALS, parseMarketGoals, type DealType, type MarketGoals } from './goals.ts';
 import { AREA_META, areaMetaForSlug } from './areas.ts';
 import type { Budget } from './filters.ts';
 
@@ -83,6 +83,8 @@ export function bedroomsFrom(v: unknown): 1 | 2 | 3 | 4 | null {
   return n >= 4 ? 4 : (n as 1 | 2 | 3);
 }
 
+const TYPES_FOR_KIND: Record<MarketGoals['sourcingKind'], DealType[]> = { sale: ['buy_str'], rent: ['r2r'], both: ['buy_str', 'r2r'] };
+
 export function kindFrom(v: unknown): MarketGoals['sourcingKind'] {
   const s = str(v).toLowerCase();
   if (/both|either|open/.test(s)) return 'both';
@@ -102,6 +104,8 @@ export function parseLeadGoals(form: LeadForm): LeadGoals {
     budget: budgetFrom(form.budget),
     bedrooms: bedroomsFrom(form.bedrooms),
     sourcingKind: kindFrom(form.kind),
+    // Batch 17: a kind the form gave is the lead's deal types; none given, the question is asked on their first visit.
+    dealTypes: str(form.kind) ? TYPES_FOR_KIND[kindFrom(form.kind)] : null,
     maxRentPcm: Number.isFinite(maxRent) && maxRent > 0 ? Math.round(maxRent) : null,
   }) ?? DEFAULT_GOALS;
   return { goals, areaCode };

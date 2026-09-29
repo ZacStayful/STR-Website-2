@@ -20,10 +20,10 @@ export const QUIZ_IMAGES = {
   done: '10-bold-maximalist-unicorn',
   // Section A: about you
   roles: '02-flat-living-blue-wall-dining',
-  main_role: '02-flat-living-blue-wall-dining',
-  exploring_pick: '17-bright-modern-living',
+  deal_types: '17-bright-modern-living',
   where: 'map',
   budget_buy: '09-bold-maximalist-living-kitchen',
+  brrr_budget: '13-terraced-house-living-fireplace',
   budget_source: '15-house-living-marble-wallpaper',
   budget_manage: '15-house-living-marble-wallpaper',
   max_rent: '02-flat-living-blue-wall-dining',
@@ -57,8 +57,7 @@ export const QUIZ_IMAGES = {
   break_even: '03-bedroom-sage-green',
   payback: '12-compact-kitchen',
   furnished: '11-compact-studio-living',
-  // Section D: deal sourcer
-  source_for: '07-large-living-geometric-wall',
+  // Section D: deal sourcer (their clients' rent is the max rent question in their words)
   client_rent: '02-flat-living-blue-wall-dining',
   sourcing_fee: '09-bold-maximalist-living-kitchen',
   deals_per_month: '01-flat-living-geometric-wall',

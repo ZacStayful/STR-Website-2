@@ -75,3 +75,16 @@ test('asking for an absent section degrades rather than throwing', () => {
   assert.equal(nav.index, 0);
   assert.equal(nav.label, '');
 });
+
+test('a Project deal\'s project follows the deal it changes, ahead of due diligence and the plan', () => {
+  const secs = sectionsFor({ setup: true, deal: true, diligence: true, project: true });
+  const ids = secs.map((s) => s.id);
+  assert.equal(secs.length, 9);
+  assert.equal(ids.indexOf('project'), ids.indexOf('deal') + 1);
+  assert.ok(ids.indexOf('project') < ids.indexOf('diligence'));
+  assert.equal(ids[ids.length - 1], 'plan');
+  assert.equal(stamp(navFor(secs, 'project')), '07 / 09 — THE PROJECT');
+  // Every other report is numbered as before.
+  assert.equal(sectionsFor({ setup: true, deal: true, diligence: true }).some((s) => s.id === 'project'), false);
+  assert.equal(sectionsFor({ setup: true, deal: true, diligence: true }).length, 8);
+});

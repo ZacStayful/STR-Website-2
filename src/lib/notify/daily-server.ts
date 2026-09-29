@@ -17,9 +17,11 @@ import type { createAdminClient } from '../supabase/admin';
 import { todaySelection, type MemberContext } from '../today/selection';
 import { displayOrder, todayKey, TODAY_SIZE } from '../today/day';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
+import { projectCardsFor } from '../marketplace/queries';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { payersFor, type Payer } from '../team';
 import { seatKey } from '../profiles/rules';
+import { dealTypeOf, type DealType } from '../profile/deal-types';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -110,6 +112,12 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
     if (error) console.warn('[notify] today cards read failed:', error.message);
     for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) cards.set(card.id, { ...card, has_photo: Boolean(photo) });
   }
+  // Batch 17: a Project teaser shows its own numbers and label.
+  const projects = await projectCardsFor([...cards.values()].filter((c) => c.kind === 'sale').map((c) => c.id));
+  for (const [id, project] of projects) {
+    const card = cards.get(id);
+    if (card) cards.set(id, { ...card, project });
+  }
   const answered = new Map<string, Set<string>>();
   const withLists = [...new Set(members.filter((m) => (lists.get(planKey(m))?.stored.length ?? 0) > 0).map((m) => m.userId))];
   for (let i = 0; i < withLists.length; i += ID_CHUNK) {
@@ -139,8 +147,15 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
  * The teasers, in /today's order with the pick left out: the stored list
  * through displayOrder, then only deals still live and visible to this
  * member now — dealCardsByIds' rule, applied to the prefetched cards.
+ * Batch 17: with the pick's deal type, the pick makes room from the type the
+ * day holds most of, as /today does, so the email keeps the same mix.
  */
-export function teasersFrom(plan: TodayPlan, pickDealId: string | null, visibility: DealVisibility): DealCard[] {
-  const order = displayOrder(plan.stored, pickDealId, plan.answered, TODAY_SIZE).filter((id) => id !== pickDealId);
+export function teasersFrom(plan: TodayPlan, pickDealId: string | null, visibility: DealVisibility, pickType: DealType | null = null): DealCard[] {
+  const typeOf = (id: string): DealType | null => {
+    if (id === pickDealId) return pickType;
+    const card = plan.cards.get(id);
+    return card ? dealTypeOf(card) : null;
+  };
+  const order = displayOrder(plan.stored, pickDealId, plan.answered, TODAY_SIZE, pickDealId ? typeOf : undefined).filter((id) => id !== pickDealId);
   return order.map((id) => plan.cards.get(id)).filter((c): c is DealCard => c !== undefined && dealVisible(c.live_since ?? null, visibility.cutoffIso));
 }

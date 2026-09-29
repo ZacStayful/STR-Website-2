@@ -69,6 +69,7 @@ const MISSES: Record<CriterionKey, string> = {
   location: 'it is outside where you look',
   budget: 'it is outside your budget',
   cash: 'it needs more cash than you said you have',
+  work: 'it is a full project and you asked for a light refresh',
   rent: 'the rent is over your limit',
   profit: 'it falls short of your minimum profit',
   bedrooms: 'it has a different number of bedrooms',
@@ -279,7 +280,8 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
   // ── The day's list ──
   const ranked = rankForMember(exact, feedback, rules, { depth: Math.max(1, exact.length), mode }).ranked;
   const ordered = tailoredOrder(ranked, judged, bonus);
-  const holdBack = leanings.steady && !leanings.bold;
+  // A BRRR list is all projects, chosen as such (Batch 17): nothing to hold back.
+  const holdBack = leanings.steady && !leanings.bold && !(input.types?.length === 1 && input.types[0] === 'brrr');
   let fresh: TodayCandidate[] = [];
   if (need > 0 && wants.localAreas && current.length === 0) {
     const local = wants.localAreas;
@@ -298,15 +300,17 @@ export async function chooseTailored(input: ChooseInput, p: TailoringProfile, re
     }
     list.push(...queue);
     const dealIds = list.slice(0, TODAY_SIZE);
+    const top = fresh[0] as (TodayCandidate & { fit?: number }) | undefined;
+    const best = top ? (top.fit ?? 0) + (bonus.get(top.dealId) ?? 0) : null;
     // Only an answered or opened card stays without meeting the must-haves
     // (re-choosing). A list of nothing else is still the closest match, and
     // says so; otherwise the short-day line counts only the ones that meet them.
     const meeting = dealIds.filter((id) => meetsMusts.has(id)).length;
     if (meeting === 0) {
       const misses = judged.get(dealIds[0])?.mustFails ?? [];
-      return { dealIds, nearMiss: true, advice: misses.length > 0 ? mustMissAdvice(misses) : null, mustMatches, capped };
+      return { dealIds, nearMiss: true, advice: misses.length > 0 ? mustMissAdvice(misses) : null, mustMatches, capped, best };
     }
-    return { dealIds, nearMiss: false, advice: shortListAdvice(meeting), mustMatches, capped };
+    return { dealIds, nearMiss: false, advice: shortListAdvice(meeting), mustMatches, capped, best };
   }
 
   // ── Nothing meets the must-haves: the closest, and what it misses ──

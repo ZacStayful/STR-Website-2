@@ -6,7 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { safeInternalPath } from '@/lib/safe-path';
 import { GOALS_EDITOR_HREF } from '@/lib/nav';
 import { createProfile, deleteProfile, renameProfile, setProfilePaused, switchProfile } from '@/lib/profiles/server';
-import { isProfilePath } from '@/lib/profiles/rules';
+import { typesFromForm } from '@/lib/profiles/rules';
 
 /**
  * Saved profiles: every change is the signed-in member's own. Ids come from
@@ -66,12 +66,11 @@ export async function editProfileAction(formData: FormData): Promise<void> {
  */
 export async function createProfileAction(formData: FormData): Promise<void> {
   const userId = await member();
-  const path = field(formData, 'path');
   const out = await createProfile({
     userId,
     name: field(formData, 'name'),
     copyFrom: field(formData, 'copy_from') || null,
-    path: isProfilePath(path) ? path : null,
+    types: typesFromForm(formData.getAll('types')),
     forClient: field(formData, 'for_client') === '1',
   });
   if (!out.ok) back('error', out.error);

@@ -38,7 +38,7 @@ export const OPENS_WITH_FETCH_PER_HOUR = 20;
 
 export type OpenOutcome =
   | { ok: true; alreadyOpen: boolean; verifiedVia: VerifiedVia | null; chargedBasePence: number }
-  | { ok: false; code: 'missing' | 'gone' | 'just_gone' | 'checking' | 'insufficient_credit' | 'rate_limited' | 'failed'; requiredPence?: number; availablePence?: number };
+  | { ok: false; code: 'missing' | 'gone' | 'just_gone' | 'checking' | 'held' | 'insufficient_credit' | 'rate_limited' | 'failed'; requiredPence?: number; availablePence?: number };
 
 const OPEN_COLUMNS = 'id, user_id, canonical_url, deal_id, status, opened_at, charged_base_pence, transaction_id, verified_via, status_at_open, band_at_open, annual_profit_at_open, checked_listing_id, saved_at, fetched';
 
@@ -87,6 +87,8 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
   if (!dealVisible(deal.live_since, input.visibility.cutoffIso)) return { ok: false, code: 'missing' };
   if (deal.status === 'retired') return { ok: false, code: 'gone' };
   if (deal.status === 'pending_verify') return { ok: false, code: 'checking' };
+  // On the shortlist for its own check (Batch 16), or its Project check (Batch 17): not yet a deal to open.
+  if (deal.status === 'pending_check') return { ok: false, code: 'held' };
 
   // ── Price and balance, before any fetch ──
   const settings = await getBillingSettings();

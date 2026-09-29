@@ -35,12 +35,14 @@ import { buildDealRecord, qualifiesForMarketplace } from '../marketplace/record'
 import { DEAL_COLUMNS, loadScreenContext, loadSourcedListings, recordColumns, retireDeal, revalidateDeals, writeWithoutMissing, type Admin, type ScreenContext } from '../marketplace/server';
 import { nextCheckDueAt } from '../marketplace/cadence';
 import type { DealRow } from '../marketplace/types';
-import { STREAMS, streamOfRow, type Stream } from './streams';
+import { DAY_STREAMS, perStream, STREAMS, streamOfRow, type Stream } from './streams';
+import { projectStreamUrls } from '../project/read-server';
 import { dealChecksEnabled, readDealQualitySettings, type DealQualitySettings } from './settings-server';
 import { DEAL_CHECK_VARIANT, incomeFromComps, searchDealComps } from './search';
 import {
   allocateSlots,
   callAffordable,
+  checkOf,
   checkOutcome,
   daySpend,
   DEAL_CHECKS_ACTION,
@@ -158,7 +160,9 @@ export async function checkDeal(deal: DealRow, listing: SourcedListing, cc: Chec
     }
     const check = storedCheckFrom({ ...figures, confidence }, search, { bedrooms, kind: listing.kind }, cc.via, now);
     const card = (listing.postcodeArea ? ctx.cardByCode.get(listing.postcodeArea) : null) ?? (deal.postcode_area ? ctx.cardByCode.get(deal.postcode_area) : null) ?? null;
-    const rec = buildDealRecord(listing, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, now });
+    // Batch 17 (bug 1): the cached cohorts, so the rebuilt record keeps its motivated-seller signals.
+    const cohort = ctx.cohorts ? await ctx.cohorts.find(listing, deal.postcode_area, deal.canonical_url) : null;
+    const rec = buildDealRecord(listing, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, cohort, now });
     const withFigure = { ...found, confidence: check.confidence, comps: check.compCount, gross: check.gross };
     if (checkOutcome(true, qualifiesForMarketplace(rec)) === 'unqualified') {
       await retireDeal(admin, deal.canonical_url, 'unqualified', now);
@@ -166,9 +170,12 @@ export async function checkDeal(deal: DealRow, listing: SourcedListing, cc: Chec
     }
     const fetchable = serverFetchEnabled(listing.source);
     // A shortlisted deal goes on to its entry page read (or straight live where the source is never fetched); a live deal stays as it is with its new figure.
-    const advance = deal.status === 'pending_check';
+    // Batch 17: a Project candidate stays shortlisted with its check, for the Project photo check (src/lib/project/check-run.ts).
+    const advance = deal.status === 'pending_check' && stream !== 'project';
     const update: Record<string, unknown> = {
       ...recordColumns(listing, rec),
+      // Batch 17: the record's own stream is never 'project'; a held candidate keeps it.
+      ...(stream === 'project' ? { stream: 'project' } : {}),
       updated_at: nowIso,
       ...(advance
         ? { status: fetchable ? 'pending_verify' : 'live', next_check_due_at: fetchable ? nowIso : nextCheckDueAt(listing.kind, rec.annualProfit, now), check_failures: 0, last_seen_at: nowIso }
@@ -185,7 +192,7 @@ export async function checkDeal(deal: DealRow, listing: SourcedListing, cc: Chec
     if (delErr) console.error(`[${cc.tag}] report row replace failed:`, delErr.message);
     const { error: insErr } = await admin.from('analyser_reports').insert(row);
     if (insErr) console.error(`[${cc.tag}] report row write failed:`, insErr.message);
-    return { ...withFigure, outcome: advance ? (fetchable ? 'pending_verify' : 'live') : 'live' };
+    return { ...withFigure, outcome: advance ? (fetchable ? 'pending_verify' : 'live') : deal.status === 'pending_check' ? 'held' : 'live' };
   });
 }
 
@@ -241,19 +248,28 @@ export async function loadTodayRuns(admin: Admin, dayStart: Date): Promise<DaySp
   if (error) {
     // Unreadable: plan as if the whole cap were spent, which is the safe side.
     console.warn('[deal-checks] run history unreadable:', error.message);
-    return { runs: 0, checked: { top60: 0, low_entry: 0, r2r: 0 }, pence: Number.POSITIVE_INFINITY };
+    return { runs: 0, checked: perStream(() => 0), pence: Number.POSITIVE_INFINITY };
   }
   return daySpend(((data ?? []) as { started_at: string; summary: unknown }[]).map((r) => ({ startedAt: r.started_at, summary: r.summary })), dayStart);
 }
 
-/** The shortlist: every deal waiting for its check, most profitable first. */
+/**
+ * The shortlist: every deal waiting for its check, most profitable first.
+ * Batch 17: a row held for its Project check carries stream 'project' (read
+ * on its own: the column is not in DEAL_COLUMNS), and only those still
+ * without a check of their own wait here; the rest wait on the Project job.
+ */
 export async function loadShortlist(admin: Admin): Promise<DealRow[] | null> {
-  const { data, error } = await admin.from('marketplace_deals').select(DEAL_COLUMNS).eq('status', 'pending_check').lt('check_failures', MAX_CHECK_ATTEMPTS).order('annual_profit', { ascending: false, nullsFirst: false }).limit(2000);
+  const [{ data, error }, project] = await Promise.all([
+    admin.from('marketplace_deals').select(DEAL_COLUMNS).eq('status', 'pending_check').lt('check_failures', MAX_CHECK_ATTEMPTS).order('annual_profit', { ascending: false, nullsFirst: false }).limit(2000),
+    projectStreamUrls(admin),
+  ]);
   if (error) {
     console.error('[deal-checks] shortlist unreadable:', error.message);
     return null;
   }
-  return (data ?? []) as unknown as DealRow[];
+  const rows = (data ?? []) as unknown as DealRow[];
+  return rows.flatMap((r) => (project.has(r.canonical_url) ? (checkOf(r.screening) ? [] : [{ ...r, stream: 'project' as const }]) : [r]));
 }
 
 async function recordRun(admin: Admin, kind: string, startedAt: Date, summary: Record<string, unknown>): Promise<void> {
@@ -303,13 +319,18 @@ export async function runDealChecks(opts: ChecksRunOptions): Promise<ChecksRunRe
 
   const shortlist = await loadShortlist(admin);
   if (!shortlist) return done({ status: 500, body: { error: 'Could not read the shortlist' } });
-  const byStream = { top60: [] as DealRow[], low_entry: [] as DealRow[], r2r: [] as DealRow[] } as Record<Stream, DealRow[]>;
+  const byStream = perStream((): DealRow[] => []);
   for (const row of shortlist) byStream[streamOfRow(row, settings.lowEntry)].push(row);
-  const waiting = { top60: byStream.top60.length, low_entry: byStream.low_entry.length, r2r: byStream.r2r.length } as Record<Stream, number>;
-  const checkedToday = STREAMS.reduce((n, st) => n + spent.checked[st], 0);
-  const left = Math.max(0, Math.min(s.perDay - checkedToday, MAX_PER_RUN, Math.floor(opts.max ?? Number.POSITIVE_INFINITY)));
-  const slots = allocateSlots(s.split, waiting, left);
-  const chosen = { top60: shortlistOrder(byStream.top60).slice(0, slots.top60), low_entry: shortlistOrder(byStream.low_entry).slice(0, slots.low_entry), r2r: shortlistOrder(byStream.r2r).slice(0, slots.r2r) } as Record<Stream, DealRow[]>;
+  const waiting = perStream((st) => byStream[st].length);
+  // Batch 17: the Project stream's checks are its own count, on top of the day's (DAY_STREAMS).
+  const checkedToday = DAY_STREAMS.reduce((n, st) => n + spent.checked[st], 0);
+  const runMax = Math.min(MAX_PER_RUN, Math.floor(opts.max ?? Number.POSITIVE_INFINITY));
+  const left = Math.max(0, Math.min(s.perDay - checkedToday, runMax));
+  const dayOnly = allocateSlots(s.split, waiting, left);
+  const dayAllocated = DAY_STREAMS.reduce((n, st) => n + dayOnly[st], 0);
+  const projectLeft = Math.max(0, Math.min(s.split.project - spent.checked.project, runMax - dayAllocated));
+  const slots = allocateSlots(s.split, waiting, left, projectLeft);
+  const chosen = perStream((st) => shortlistOrder(byStream[st]).slice(0, slots[st]));
   const plan = interleave(chosen);
   const capLeft = Math.max(0, Math.round((s.dailyCapPence - spent.pence) * 100) / 100);
 
@@ -324,6 +345,7 @@ export async function runDealChecks(opts: ChecksRunOptions): Promise<ChecksRunRe
     checkedBefore: spent.checked,
     capLeftPence: Number.isFinite(capLeft) ? capLeft : 0,
     checksLeft: left,
+    projectChecksLeft: projectLeft,
     waiting,
     slots,
     expired: opts.dry ? expiring ?? 0 : expired,
@@ -366,7 +388,7 @@ export async function runDealChecks(opts: ChecksRunOptions): Promise<ChecksRunRe
   if (stop.by === null && results.length < plan.length) stop.by = outOfCap() ? 'cap' : 'time';
   const stoppedBy = stop.by;
 
-  const checked = { top60: 0, low_entry: 0, r2r: 0 } as Record<Stream, number>;
+  const checked = perStream(() => 0);
   const outcomes: Record<string, number> = {};
   for (const r of results) {
     outcomes[r.outcome] = (outcomes[r.outcome] ?? 0) + 1;
@@ -427,7 +449,7 @@ export async function checksView(admin: Admin, settings: DealQualitySettings, no
     admin.from('marketplace_runs').select('rawCostPence:summary->rawCostPence').eq('kind', DEAL_RECHECK_KIND).eq('dry', false).limit(1000),
   ]);
   if (!shortlist) return null;
-  const waiting = { top60: 0, low_entry: 0, r2r: 0 } as Record<Stream, number>;
+  const waiting = perStream(() => 0);
   for (const row of shortlist) waiting[streamOfRow(row, settings.lowEntry)] += 1;
   const recheckSpent = ((recheckRuns.data ?? []) as { rawCostPence: unknown }[]).reduce((n, r) => n + (num(r.rawCostPence) ?? 0), 0);
   return {

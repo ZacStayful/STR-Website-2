@@ -1,10 +1,10 @@
 import type { ListingSnapshot } from '../types.ts';
 import { scriptJsonById, metaContent, titleOf, parsePrice, findPostcode, findOutcode } from '../html.ts';
-import { toNum, toStr, statusFromText, baseSnapshot, type ParseContext } from './shared.ts';
+import { toNum, toStr, statusFromText, baseSnapshot, addProjectFacts, floorAreaSqftFrom, leaseYearsFrom, SNAPSHOT_PHOTO_LIMIT, type ParseContext } from './shared.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
 import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
-export const ONTHEMARKET_PARSER_VERSION = 1;
+export const ONTHEMARKET_PARSER_VERSION = 2;
 
 interface OtmProperty {
   id?: unknown;
@@ -27,6 +27,11 @@ interface OtmProperty {
   description?: unknown;
   'full-description'?: unknown;
   summary?: unknown;
+}
+
+/** The page's property JSON (Batch 17's photo check reads its images and floorplans). */
+export function onTheMarketProperty(html: string): (OtmProperty & { floorplans?: unknown }) | null {
+  return reduxState(html)?.property ?? null;
 }
 
 function reduxState(html: string): { property?: OtmProperty; metadata?: { dataLayer?: Record<string, unknown> } } | null {
@@ -83,7 +88,12 @@ export function parseOnTheMarket(html: string, ctx: ParseContext): ListingSnapsh
     const t = toStr(k?.title)?.toLowerCase() ?? '';
     const v = toStr(k?.value);
     if (!v) continue;
-    if (t.startsWith('tenure')) snap.tenure = v.split('|')[0].trim().toLowerCase();
+    if (t.startsWith('tenure')) {
+      snap.tenure = v.split('|')[0].trim().toLowerCase();
+      // "Leasehold | 976 yrs left": the years left were dropped before Batch 17.
+      const years = leaseYearsFrom(v);
+      if (years !== null) snap.yearsRemainingOnLease = years;
+    }
     if (t.startsWith('council tax')) snap.councilTaxBand = v.replace(/^band\s*/i, '').trim();
   }
   if (!snap.councilTaxBand) {
@@ -102,10 +112,15 @@ export function parseOnTheMarket(html: string, ctx: ParseContext): ListingSnapsh
     snap.sharedOwnership = /shared ownership/i.test([description, snap.price?.qualifier ?? '', ...keyLines].join(' '));
     snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features, ...keyLines].join('. '));
     snap.auction = AUCTION_WORDING.test([description, snap.price?.qualifier ?? '', ...snap.features, ...keyLines].join(' | '));
-  }
+    // "Tenure: Leasehold (975 years remaining)" in the features; the floor area where it is stated.
+    if (snap.yearsRemainingOnLease === undefined) snap.yearsRemainingOnLease = leaseYearsFrom(...snap.features, ...keyLines) ?? undefined;
+    snap.floorAreaSqft = floorAreaSqftFrom(...keyLines, ...snap.features, description) ?? undefined;
+    // Batch 17: the needs-work flag and the exclusions, from the same words (then dropped).
+    addProjectFacts(snap, [description, ...keyLines].join(' | '));
+  } else addProjectFacts(snap, '');
 
   const images = Array.isArray(p?.images) ? (p.images as { largeUrl?: unknown; url?: unknown }[]) : [];
-  snap.photos = images.map((i) => toStr(i?.largeUrl) ?? toStr(i?.url)).filter((u): u is string => Boolean(u)).slice(0, 6);
+  snap.photos = images.map((i) => toStr(i?.largeUrl) ?? toStr(i?.url)).filter((u): u is string => Boolean(u)).slice(0, SNAPSHOT_PHOTO_LIMIT);
   if (snap.photos.length === 0) {
     const og = metaContent(html, 'og:image');
     if (og) snap.photos.push(og);

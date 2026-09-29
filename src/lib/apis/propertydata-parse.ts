@@ -454,6 +454,63 @@ export function flagPossiblyListed(list: readonly ListedBuilding[]): boolean {
   return list.some((b) => b.distanceMiles !== null && b.distanceMiles <= LISTED_PROXIMITY_MILES);
 }
 
+// ─── /sold-prices (Batch 17) ────────────────────────────────────────
+// The sold prices near a postcode, for a Project deal's value ceiling. One
+// call reads up to 100 sales (`points`), of one type when asked; the API has
+// no radius parameter, so the radius steps are the caller's. Each sale's
+// distance is PropertyData's own ("distance", miles) when the row carries
+// one, else worked out from the row's coordinates against the subject's.
+// Addresses are read past and never kept: a sale is its price, date,
+// distance, type and bedrooms.
+
+/** PropertyData's `type` filter for sold prices. */
+export type PdSoldType = 'flat' | 'terraced_house' | 'semi-detached_house' | 'detached_house';
+
+export interface PdSoldSale {
+  price: number;
+  /** ISO date of the sale. */
+  date: string;
+  distanceMiles: number | null;
+  lat: number | null;
+  lng: number | null;
+  /** PropertyData's own words ("flat", "terraced_house", "semi-detached", "D"…); the caller maps it. */
+  type: string | null;
+  /** Known on a minority of sales. */
+  bedrooms: number | null;
+}
+
+const MILES_PER_KM = 0.621371;
+
+function milesBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const rad = (d: number) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h))) * MILES_PER_KM;
+}
+
+/** The sales, or null for an error reply. `from`: the subject, for sales without PropertyData's own distance. */
+export function parseSoldPrices(json: unknown, from?: { lat: number; lng: number } | null): PdSoldSale[] | null {
+  if (!pdOk(json)) return null;
+  const data = rec(json.data) ?? json;
+  const raw = Array.isArray(data.raw_data) ? data.raw_data : Array.isArray(data.sales) ? data.sales : null;
+  if (!raw) return [];
+  const out: PdSoldSale[] = [];
+  for (const item of raw) {
+    const r = rec(item);
+    const price = num(r?.price);
+    const date = ukCalendarDate(r?.date ?? r?.date_of_transfer ?? r?.sold_date);
+    if (price === null || price <= 0 || !date) continue;
+    const lat = num(r?.lat ?? r?.latitude);
+    const lng = num(r?.lng ?? r?.lon ?? r?.longitude);
+    const given = num(r?.distance);
+    const distanceMiles = given !== null && given >= 0 ? given : lat !== null && lng !== null && from ? milesBetween(from, { lat, lng }) : null;
+    const beds = num(r?.bedrooms);
+    out.push({ price, date, distanceMiles, lat, lng, type: str(r?.type ?? r?.property_type), bedrooms: beds !== null && beds > 0 && beds < 20 ? Math.round(beds) : null });
+  }
+  return out;
+}
+
 // ─── /demand and /demand-rent ───────────────────────────────────────
 
 export type DemandKind = 'sale' | 'rent';

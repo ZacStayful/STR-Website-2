@@ -17,6 +17,8 @@
 import { dealVisible } from './visibility.ts';
 import { describeType, type DealCard } from './grid.ts';
 import { rangeCaption } from './profit-range.ts';
+import { projectOf } from '../project/display.ts';
+import { valueAddedLabel } from '../project/headline.ts';
 
 export type ShareState = 'gone' | 'members_only' | 'card';
 
@@ -56,5 +58,8 @@ export function shareTitle(card: DealCard, where: string, state: ShareState, ran
   const place = where || 'the UK';
   if (state === 'members_only') return `A new short-let deal in ${place} — available to members`;
   const type = describeType(card);
+  // Batch 17: a Project deal leads with what the works add (numbers only, as the card).
+  const project = projectOf(card);
+  if (project) return [`Project · ${valueAddedLabel(project.valueAdded)}`, type || null, where || null].filter(Boolean).join(' · ');
   return [rangeLabel ? `${rangeLabel} ${rangeCaption(card.check_comps)}` : null, type || null, where || null].filter(Boolean).join(' · ') || 'A short-let deal on Stayful';
 }

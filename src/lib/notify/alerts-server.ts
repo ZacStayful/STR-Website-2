@@ -16,6 +16,7 @@ import { parseMarketGoals, type MarketGoals } from '../market/goals';
 import { alertGapLine, cashBuyerOf, memberFinance, mostYouCanPay } from '../marketplace/most-you-can-pay';
 import { widthFor } from '../marketplace/profit-range';
 import { getBillingSettings } from '../credit/unit-costs';
+import { projectCardsFor } from '../marketplace/queries';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -115,7 +116,11 @@ export async function pendingChanges(admin: Admin, userIds: readonly string[], n
  * Best effort: without it the email is exactly as before.
  */
 async function attachPayGaps(admin: Admin, out: Map<string, Settled>, incomes: ReadonlyMap<string, { kind: 'sale' | 'rent'; grossRevenue: string | number | null; confidence: string | null; bedrooms: number | null }>): Promise<void> {
-  const drops = [...out.entries()].flatMap(([userId, s]) => s.changes.filter((c) => c.alertType === 'price_drop' && c.dealId && incomes.has(c.dealId)).map((c) => ({ userId, c })));
+  const all = [...out.entries()].flatMap(([userId, s]) => s.changes.filter((c) => c.alertType === 'price_drop' && c.dealId && incomes.has(c.dealId)).map((c) => ({ userId, c })));
+  if (all.length === 0) return;
+  // Batch 17: "most you can pay" assumes a finished house, so a Project deal never gets the gap line.
+  const projects = await projectCardsFor([...new Set(all.map((d) => d.c.dealId!))]);
+  const drops = all.filter((d) => !projects.has(d.c.dealId!));
   if (drops.length === 0) return;
   const profileIds = [...new Set(drops.map((d) => d.c.profileId).filter((x): x is string => Boolean(x)))];
   const userIds = [...new Set(drops.filter((d) => !d.c.profileId).map((d) => d.userId))];

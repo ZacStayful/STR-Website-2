@@ -29,6 +29,8 @@ import type { DealFilters } from '../marketplace/grid.ts';
 import { applyKindFeedback, buildCandidate, CLOSEST_ADVICE, dealKey, filtersForGoals, nearestAreas, nearestOutside, orderForToday, referencePoint, WIDEN_AREA_ADVICE, type Built, type CandidateContext, type PoolRow, type TodayCandidate } from './candidates.ts';
 import { TODAY_SIZE } from './day.ts';
 import type { TailoringProfile } from '../tailoring/profile.ts';
+import type { DealType } from '../profile/deal-types.ts';
+import type { TodayMixSettings } from './mix.ts';
 
 /** Rows of the pool read for ranking: the best-profit end of what matches. */
 export const POOL_LIMIT = 1000;
@@ -43,6 +45,8 @@ export interface TodayChoice {
   dealIds: string[];
   nearMiss: boolean;
   advice: string | null;
+  /** How strong the day's best match is (its fit): what Today's mix compares types by (Batch 17). */
+  best?: number | null;
 }
 
 /** What choosing reads. The server wires these to the database (selection.ts); the tests to fixtures. */
@@ -51,6 +55,8 @@ export interface ChooseReads {
   pool: (filters: DealFilters, limit: number) => Promise<PoolRow[]>;
   /** The full stored listing of each deal, by deal id (deals with none are absent). Server-side only. */
   fullListings: (dealIds: string[]) => Promise<Map<string, SourcedListing>>;
+  /** Batch 17: each deal's type (for a re-choose of a mixed list); deals it cannot read are absent. */
+  dealTypes?: (dealIds: string[]) => Promise<Map<string, DealType>>;
 }
 
 export interface ChooseInput {
@@ -65,6 +71,15 @@ export interface ChooseInput {
   now: Date;
   /** The profile's tailoring (Batch 14); absent or untailored: chosen exactly as before. */
   tailoring?: TailoringProfile | null;
+  /**
+   * Batch 17: the deal types this profile is shown (typesShown), each chosen
+   * on its own and mixed (mix.ts). Absent: one list from the whole pool, as
+   * before.
+   */
+  types?: readonly DealType[];
+  /** Keeps of each type on this profile inside the mix's window. */
+  typeKeeps?: Partial<Record<DealType, number>>;
+  mix?: TodayMixSettings;
 }
 
 export async function chooseTodayFrom(input: ChooseInput, reads: ChooseReads): Promise<TodayChoice> {
@@ -90,7 +105,7 @@ export async function chooseTodayFrom(input: ChooseInput, reads: ChooseReads): P
   const exact = pool.filter((b) => b.fails.length === 0).map((b) => b.candidate);
   const ranked = rankForMember(exact, feedback, rules, { depth: DEPTH, mode }).ranked;
   const top = await withFullListings(reads, orderForToday(ranked), feedback, rules);
-  if (top.length > 0) return { dealIds: top.slice(0, TODAY_SIZE).map((c) => c.dealId), nearMiss: false, advice: null };
+  if (top.length > 0) return { dealIds: top.slice(0, TODAY_SIZE).map((c) => c.dealId), nearMiss: false, advice: null, best: top[0].fit };
 
   // ── Nothing matched: the closest thing, and what to change ──
   // First inside their own areas, with the budget lifted: a row failing only

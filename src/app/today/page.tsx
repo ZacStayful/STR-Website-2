@@ -6,11 +6,12 @@ import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { parseMarketGoals } from "@/lib/market/goals";
-import { countDeals, dealCardsByIds, earlyAccessCount, openedDealIds, photoUrlFor, recordShown } from "@/lib/marketplace/queries";
+import { countDealsAcross, dealCardsByIds, dealTypesByIds, earlyAccessCountAcross, openedDealIds, photoUrlFor, recordShown } from "@/lib/marketplace/queries";
 import { earlyAccessBanner, earlyAccessFor } from "@/lib/marketplace/early-access";
 import { reactionsFor } from "@/lib/marketplace/reactions-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
-import { filtersForGoals } from "@/lib/today/candidates";
+import { filtersForType } from "@/lib/today/type-filters";
+import { typesShown } from "@/lib/profile/deal-types";
 import { displayOrder, greeting, matchLine, todayKey, todayStart, TODAY_SIZE } from "@/lib/today/day";
 import { todaySelection, todaysPick, widenOptionsFor, type TodaysPick } from "@/lib/today/selection";
 import { syncChecklist } from "@/lib/today/checklist-server";
@@ -80,18 +81,19 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const profile = profileRes.data as { full_name: string | null; market_goals: unknown } | null;
   const goals = parseMarketGoals(profile?.market_goals ?? null);
   const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
-  // The search the member's goals point at: the same one /deals counts, so "N match" and the cards agree.
-  const filters = filtersForGoals(goals, savedAreas);
-
   // Batch 14: the profile's tailoring, read by the same loader as the daily runs.
   const tailoringReady = paused ? Promise.resolve(null) : tailoringForMember(user.id, active, goals, savedAreas, now);
+  // The search the member's goals point at, one per deal type the profile is
+  // shown (Batch 17): the same searches Today chooses from, so "N match" and
+  // the cards agree, and a type the profile did not choose is never counted.
+  const filtersReady = tailoringReady.then((t) => typesShown({ goals, about: t?.about ?? null }).map((type) => filtersForType(goals, savedAreas, type)));
 
   const [selection, pick, count, waiting, checklist, priceLine, tailoring, promptStates, ownsLeads] = await Promise.all([
     // A paused profile has no daily deals: no list, no pick, until it is resumed.
     paused ? Promise.resolve(null) : tailoringReady.then((tailoring) => todaySelection({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, now)),
     paused ? Promise.resolve(null) : todaysPick(user.id, now, profileId),
-    countDeals(filters, visibility, { userId: user.id }),
-    visibility.tier === "free" ? earlyAccessCount(filters, visibility) : Promise.resolve(null),
+    filtersReady.then((filters) => countDealsAcross(filters, visibility, { userId: user.id })),
+    visibility.tier === "free" ? filtersReady.then((filters) => earlyAccessCountAcross(filters, visibility)) : Promise.resolve(null),
     // The first-week checklist, brought up to date now: any "+£1" it shows is marked seen.
     syncChecklist(user.id, { markSeen: true, now }),
     paused ? profilePriceLineFor(user.id, adminUser) : Promise.resolve(null),
@@ -118,14 +120,16 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const short = selection !== null && usesTailoring(tailoring) && onDay.length < TODAY_SIZE;
   // A near miss is on the list without meeting them; the pick was chosen with them.
   const widenCount = onDay.length - (selection?.nearMiss ? stored.filter((id) => id !== pickDealId).length : 0);
-  const [answered, widen] = await Promise.all([
+  const [answered, widen, typeOf] = await Promise.all([
     reactionsFor(user.id, onDay),
     short ? widenOptionsFor({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, onDay, now) : Promise.resolve([]),
+    // Batch 17: the pick makes room from the most shown type, so the day's mix holds.
+    pickDealId && stored.length >= TODAY_SIZE ? dealTypesByIds(onDay) : Promise.resolve(null),
   ]);
   if (short && widen.length > 0) {
     logActivity(user.id, "tailoring_widen_shown", { profileId, extras: { step: "shown", options: widen.length }, dedupeKey: `tailoring_widen_shown:${profileId ?? "member"}:${todayKey(now)}` });
   }
-  const order = displayOrder(stored, pickDealId, new Set(answered.keys()));
+  const order = displayOrder(stored, pickDealId, new Set(answered.keys()), TODAY_SIZE, typeOf ? (id) => typeOf.get(id) ?? null : undefined);
   const cards = await dealCardsByIds(order, visibility);
   const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }), getAreaCardsWithin(AREA_WAIT_MS)]);
   // Batch 14: the three numbers for this member's role and goal.

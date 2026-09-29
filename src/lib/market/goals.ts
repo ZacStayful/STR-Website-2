@@ -133,6 +133,22 @@ export function thresholdDaysFor(g: MotivationGoals, kind: 'sale' | 'rent'): num
 export const GOAL_OPTIONS = {
   /** What the member does with deals: sets sourcingKind and which questions are asked. */
   path: ['buy', 'r2r', 'source', 'manage'],
+  /**
+   * Batch 17: "Which deals do you want to see?", per profile and multi-select,
+   * in the question's own order. What decides the deal types a profile is
+   * shown (src/lib/profile/deal-types.ts); sourcingKind follows from it.
+   *
+   *   buy_str  Short-let: buy it and run it as a holiday let
+   *   brrr     BRRR: buy, refurb, refinance (a Project deal)
+   *   r2r      Rent-to-rent
+   *   btl      Buy to let (long-term tenants): declared, NOT available yet
+   *            (AVAILABLE_DEAL_TYPES below). Batch 28 switches it on.
+   *
+   * Reserved for later, not a type yet: 'hmo'.
+   */
+  dealTypes: ['buy_str', 'brrr', 'r2r', 'btl'],
+  /** Batch 17: "How much work would you take on?" for BRRR (it replaced Condition). */
+  brrrWork: ['light', 'full', 'either'],
   /** Where to look: near home, chosen areas, anywhere, or near home plus the best elsewhere. */
   where: ['near', 'areas', 'anywhere', 'near_plus_best'],
   // Investor buying
@@ -177,7 +193,25 @@ export interface BuyerGoals {
   restrictedAreas: GoalOption<'restrictedAreas'> | null;
 }
 
+export type DealType = GoalOption<'dealTypes'>;
+
+/**
+ * The deal types a profile can choose and hold today: the one list the
+ * "Coming soon" state comes from. Buy to let (long-term tenants) is declared
+ * but not here, so the question shows it greyed out, "All of them" means
+ * these three, a stored 'btl' is dropped when read, and nothing sources,
+ * ranks or shows it. Batch 28 switches it on by adding it here.
+ */
+export const AVAILABLE_DEAL_TYPES: readonly DealType[] = ['buy_str', 'brrr', 'r2r'];
+
 export interface R2rGoals {
+  /**
+   * Batch 17: the rent-to-rent minimum profit, £ a month. It used to share
+   * finance.targetMarginPcm with the buyer's minimum profit, so a member doing
+   * both had one answer overwrite the other; null until answered here, when
+   * readers fall back to the shared figure.
+   */
+  minMarginPcm: number | null;
   setupBudget: GoalOption<'setupBudget'> | null;
   dealStructure: GoalOption<'dealStructure'> | null;
   breakEvenOccupancyPct: (typeof BREAK_EVEN_OPTIONS)[number] | null;
@@ -189,6 +223,13 @@ export interface SourcerGoals {
   sourceFor: GoalOption<'sourceFor'> | null;
   sourcingFee: GoalOption<'sourcingFee'> | null;
   dealsPerMonth: GoalOption<'dealsPerMonth'> | null;
+}
+
+/** Batch 17: the BRRR answers. */
+export interface BrrrGoals {
+  /** "What's the most you'd pay for a project, before works?" (the buy budget's four bands). */
+  budget: Exclude<Budget, 'any'> | null;
+  work: GoalOption<'brrrWork'> | null;
 }
 
 export interface ManagerGoals {
@@ -209,7 +250,7 @@ export interface MarketGoals {
   management: Management;
   riskAppetite: RiskAppetite;
   finance: FinanceGoals;
-  /** Buy-to-let (sale), rent-to-rent (rent) or both. Default sale. */
+  /** The listing kinds searched: sales (short-let purchases and BRRR), rentals (rent-to-rent) or both. Default sale. Batch 17: follows the deal types. */
   sourcingKind: SourcingKind;
   /** Rent-to-rent ceiling (£ pcm) for the daily pick's rent searches; null = no bound. */
   maxRentPcm: number | null;
@@ -224,12 +265,17 @@ export interface MarketGoals {
   r2r: R2rGoals;
   sourcer: SourcerGoals;
   manager: ManagerGoals;
+  // ── Batch 17 ──
+  /** The deal types this profile wants to see; null until the question is answered (deal-types.ts maps older answers). */
+  dealTypes: DealType[] | null;
+  brrr: BrrrGoals;
 }
 
 export const DEFAULT_BUYER_GOALS: BuyerGoals = { cashAvailable: null, funding: null, entity: null, mainGoal: null, propertyType: null, condition: null, leaseholdOk: null, restrictedAreas: null };
-export const DEFAULT_R2R_GOALS: R2rGoals = { setupBudget: null, dealStructure: null, breakEvenOccupancyPct: null, paybackMonths: null, furnished: null };
+export const DEFAULT_R2R_GOALS: R2rGoals = { minMarginPcm: null, setupBudget: null, dealStructure: null, breakEvenOccupancyPct: null, paybackMonths: null, furnished: null };
 export const DEFAULT_SOURCER_GOALS: SourcerGoals = { sourceFor: null, sourcingFee: null, dealsPerMonth: null };
 export const DEFAULT_MANAGER_GOALS: ManagerGoals = { unitsManaged: null, operatingAreas: [], lookingFor: null, growthTarget: null };
+export const DEFAULT_BRRR_GOALS: BrrrGoals = { budget: null, work: null };
 
 export const DEFAULT_GOALS: MarketGoals = {
   version: 2,
@@ -250,6 +296,8 @@ export const DEFAULT_GOALS: MarketGoals = {
   r2r: DEFAULT_R2R_GOALS,
   sourcer: DEFAULT_SOURCER_GOALS,
   manager: DEFAULT_MANAGER_GOALS,
+  dealTypes: null,
+  brrr: DEFAULT_BRRR_GOALS,
 };
 
 export const SOURCING_KIND_LABELS: Record<SourcingKind, string> = { sale: 'Properties to buy', rent: 'Properties to rent (rent-to-rent)', both: 'Both' };
@@ -357,7 +405,9 @@ export function parseBuyerGoals(raw: unknown): BuyerGoals {
 
 export function parseR2rGoals(raw: unknown): R2rGoals {
   const r = obj(raw);
+  const margin = r.minMarginPcm === null || r.minMarginPcm === undefined || r.minMarginPcm === '' ? Number.NaN : Number(r.minMarginPcm);
   return {
+    minMarginPcm: Number.isFinite(margin) && margin >= 0 && margin <= 20000 ? margin : null,
     setupBudget: goalOption('setupBudget', r.setupBudget),
     dealStructure: goalOption('dealStructure', r.dealStructure),
     breakEvenOccupancyPct: numberOption(BREAK_EVEN_OPTIONS, r.breakEvenOccupancyPct),
@@ -369,6 +419,20 @@ export function parseR2rGoals(raw: unknown): R2rGoals {
 export function parseSourcerGoals(raw: unknown): SourcerGoals {
   const s = obj(raw);
   return { sourceFor: goalOption('sourceFor', s.sourceFor), sourcingFee: goalOption('sourcingFee', s.sourcingFee), dealsPerMonth: goalOption('dealsPerMonth', s.dealsPerMonth) };
+}
+
+/** The chosen deal types in the question's order, duplicates and unknowns dropped; null when none (never answered). */
+/** The stored types: available ones only (a 'btl' cannot be held while it is coming soon), in the question's order. */
+export function parseDealTypes(raw: unknown): DealType[] | null {
+  if (!Array.isArray(raw)) return null;
+  const set = new Set(raw.filter((v) => (AVAILABLE_DEAL_TYPES as readonly unknown[]).includes(v)) as DealType[]);
+  const out = GOAL_OPTIONS.dealTypes.filter((t) => set.has(t));
+  return out.length > 0 ? out : null;
+}
+
+export function parseBrrrGoals(raw: unknown): BrrrGoals {
+  const b = obj(raw);
+  return { budget: isBudget(b.budget) && b.budget !== 'any' ? b.budget : null, work: goalOption('brrrWork', b.work) };
 }
 
 export function parseManagerGoals(raw: unknown): ManagerGoals {
@@ -433,6 +497,8 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
     r2r: parseR2rGoals(o.r2r),
     sourcer: parseSourcerGoals(o.sourcer),
     manager: parseManagerGoals(o.manager),
+    dealTypes: parseDealTypes(o.dealTypes),
+    brrr: parseBrrrGoals(o.brrr),
   };
 }
 

@@ -107,6 +107,7 @@ export type AnalysisErrorCode =
   | 'gone'
   | 'just_gone'
   | 'checking'
+  | 'held'
   | 'rate_limited'
   | 'expired'
   | 'incomplete'
@@ -127,6 +128,7 @@ const MESSAGES: Record<AnalysisErrorCode, string> = {
   gone: 'This deal is no longer on the market. Nothing was charged.',
   just_gone: 'This one has just gone off the market. Nothing was charged.',
   checking: 'We’re checking this listing is still on the market. Nothing was charged; try again shortly.',
+  held: 'We’re still checking this one before it goes live. Nothing was charged; try again tomorrow.',
   rate_limited: 'You’ve opened a lot of deals in the last hour. Give it a few minutes and try again. Nothing was charged.',
   expired: 'This Full analysis wasn’t started in time. Nothing was charged for it; start it again from the deal.',
   incomplete: 'We couldn’t get short-let figures for this property just now, so the Full analysis wasn’t charged. Please try again later.',
@@ -169,6 +171,7 @@ export function analysisHttpStatus(code: AnalysisErrorCode): number {
     case 'running':
     case 'price_changed':
     case 'checking':
+    case 'held':
       return 409;
     default:
       return 500;

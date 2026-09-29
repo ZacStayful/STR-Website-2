@@ -24,6 +24,7 @@
  */
 import { describeType, headlineFigure, priceLine, type DealCard } from '../marketplace/grid.ts';
 import { motivationLine } from '../marketplace/motivation-line.ts';
+import { kindWordFor } from '../project/display.ts';
 import { dealVisible } from '../marketplace/visibility.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { formatListingPrice } from '../listing/format.ts';
@@ -121,7 +122,8 @@ export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Dat
   const first = [priceLine(card), placeOf(card)].filter((x): x is string => Boolean(x)).join(' · ');
   const type = describeType(card);
   const why = motivationLine({ kind: card.kind, motivation: card.motivation, price_history: card.price_history, listed_date: card.listed_date }, now);
-  const kindWord = card.kind === 'rent' ? 'Rent-to-rent' : 'To buy';
+  // Batch 17: "Project" for a Project deal.
+  const kindWord = kindWordFor(card);
   const title = figure ?? kindWord;
   const answers = extras.answers;
   return {

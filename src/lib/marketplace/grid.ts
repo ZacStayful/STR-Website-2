@@ -7,8 +7,11 @@ import { AREA_META } from '../market/areas.ts';
 import type { Beds } from '../market/filters.ts';
 import type { ListingSource } from '../listing/types.ts';
 import type { SourcingKind } from '../listing/sourcing.ts';
+import { AVAILABLE_DEAL_TYPES, type DealType } from '../market/goals.ts';
 import type { ConfirmedVia, DealStatus } from './types.ts';
 import { profitRange, rangeCaption, upliftTag } from './profit-range.ts';
+import type { ProjectCardData } from '../project/headline.ts';
+import { kindWordFor, projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
 /** 'best' (Batch 14, the default): "Best for you", the member's own order (src/lib/tailoring/browse.ts). */
@@ -23,6 +26,18 @@ export type DealView = 'all' | 'kept' | 'passed';
 
 export interface DealFilters {
   kind: DealKindFilter;
+  /**
+   * Batch 17: the deal types shown (Short-let / BRRR / Rent-to-rent); empty
+   * for all of them. Browse defaults it to the profile's chosen types; the
+   * URL's `type=all` is "All types".
+   */
+  types: DealType[];
+  /**
+   * Batch 17: BRRR deals only at light-refresh level (a "Light refresh"
+   * answer on the untailored path, Q24). Never from the URL; a tailored
+   * profile judges the level as a must-have it can switch instead.
+   */
+  brrrLightOnly?: boolean;
   /** Postcode area codes, uppercase, validated against AREA_META. */
   areas: string[];
   beds: Beds;
@@ -40,7 +55,7 @@ export interface DealFilters {
 export const PAGE_SIZE = 24;
 export const MAX_PAGE = 500;
 
-export const DEFAULT_FILTERS: DealFilters = { kind: 'both', areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'best', view: 'all', page: 1 };
+export const DEFAULT_FILTERS: DealFilters = { kind: 'both', types: [], areas: [], beds: 'any', minPrice: null, maxPrice: null, minProfit: null, minUplift: null, sort: 'best', view: 'all', page: 1 };
 
 export const SORT_LABELS: Record<DealSort, string> = { best: 'Best for you', profit: 'Highest profit', uplift: 'Highest uplift', newest: 'Newest', price: 'Lowest price' };
 export const KIND_LABELS: Record<DealKindFilter, string> = { both: 'Buy or rent', sale: 'To buy', rent: 'Rent-to-rent' };
@@ -59,6 +74,80 @@ function num(v: string | string[] | undefined, min: number, max: number): number
   return Math.min(Math.max(Math.round(n), min), max);
 }
 
+/** The types Browse can filter on: the available ones (a coming-soon type is never shown). */
+const TYPE_VALUES: readonly DealType[] = AVAILABLE_DEAL_TYPES;
+
+/** The URL's "All types" (Browse's one-click way past the profile's own types). */
+export const ALL_TYPES_PARAM = 'all';
+
+/**
+ * `type=buy_str,r2r` (or repeated): the known types in the question's order.
+ * `type=all` is every type, so it survives the round trip: an empty list is
+ * "not chosen here", which Browse fills with the profile's own types.
+ */
+export function typesParam(v: string | string[] | undefined): DealType[] {
+  const list = (Array.isArray(v) ? v : v ? v.split(',') : []).map((x) => x.trim());
+  if (list.includes(ALL_TYPES_PARAM)) return [...TYPE_VALUES];
+  return TYPE_VALUES.filter((t) => list.includes(t));
+}
+
+/**
+ * Browse's filters (Batch 17, Q29). With no `type` in the URL: an older
+ * `kind=` link keeps meaning what it said (to buy: Short-let and BRRR;
+ * rent-to-rent: Rent-to-rent), and otherwise the profile's own types, every
+ * type once all three are chosen. The kind is then folded into the types, so
+ * the filter bar shows the one thing the grid is filtered on.
+ */
+export function browseFilters(parsed: DealFilters, typeInUrl: boolean, profileTypes: readonly DealType[]): DealFilters {
+  if (typeInUrl) return parsed;
+  if (parsed.kind === 'sale') return { ...parsed, kind: 'both', types: ['buy_str', 'brrr'] };
+  if (parsed.kind === 'rent') return { ...parsed, kind: 'both', types: ['r2r'] };
+  const own = TYPE_VALUES.filter((t) => profileTypes.includes(t));
+  return { ...parsed, types: own.length === TYPE_VALUES.length ? [] : own };
+}
+
+/** The listing kind these types cover, for figures kept by kind (the area counts). */
+export function kindOfTypes(types: readonly DealType[]): DealKindFilter {
+  const sale = types.length === 0 || types.includes('buy_str') || types.includes('brrr');
+  const rent = types.length === 0 || types.includes('r2r');
+  return sale && rent ? 'both' : rent ? 'rent' : 'sale';
+}
+
+/**
+ * The deal-types filter as query clauses (Batch 17). A rental is
+ * Rent-to-rent; a sale with a Project estimate (marketplace_deals.project) is
+ * BRRR; any other sale Short-let. `projectColumn` false: the schema section
+ * has not been run, so there are no Project deals and every sale is Buy and
+ * let. `lightOnly`: of the Project deals, the light refreshes only. Null: no
+ * filter. `none`: nothing can match.
+ */
+export type TypeClause = { none: true } | { none?: false; kind?: 'sale' | 'rent'; project?: 'null' | 'not_null' | 'light'; or?: string };
+
+const LIGHT = 'project->>level.eq.light';
+
+export function typeClauseFor(types: readonly DealType[], projectColumn: boolean, lightOnly = false): TypeClause | null {
+  // Only available types are ever shown: a list naming none of them matches nothing.
+  const set = new Set(types.length === 0 ? TYPE_VALUES : types.filter((t) => TYPE_VALUES.includes(t)));
+  if (set.size === 0) return { none: true };
+  const bl = set.has('buy_str');
+  const brrr = set.has('brrr') && projectColumn;
+  const r2r = set.has('r2r');
+  if (!projectColumn) {
+    if (bl && r2r) return null;
+    if (bl) return { kind: 'sale' };
+    if (r2r) return { kind: 'rent' };
+    return { none: true };
+  }
+  const light = brrr && lightOnly;
+  if (bl && brrr && r2r) return light ? { or: `project.is.null,${LIGHT}` } : null;
+  if (bl && brrr) return light ? { kind: 'sale', or: `project.is.null,${LIGHT}` } : { kind: 'sale' };
+  if (bl && r2r) return { project: 'null' };
+  if (brrr && r2r) return { or: `kind.eq.rent,${light ? LIGHT : 'project.not.is.null'}` };
+  if (bl) return { kind: 'sale', project: 'null' };
+  if (brrr) return { kind: 'sale', project: light ? 'light' : 'not_null' };
+  return { kind: 'rent' };
+}
+
 /** Every value is whitelisted or clamped; junk falls back to the default rather than erroring. */
 export function parseDealFilters(raw: Raw): DealFilters {
   const kind = first(raw.kind);
@@ -73,6 +162,7 @@ export function parseDealFilters(raw: Raw): DealFilters {
   const maxPrice = num(raw.maxPrice, 0, 50_000_000);
   return {
     kind: kind === 'sale' || kind === 'rent' ? kind : 'both',
+    types: typesParam(raw.type),
     areas: [...new Set(areaList)],
     beds: beds === '1' || beds === '2' || beds === '3' || beds === '4+' ? beds : 'any',
     minPrice,
@@ -89,6 +179,7 @@ export function parseDealFilters(raw: Raw): DealFilters {
 export function filtersToSearch(f: Partial<DealFilters>): string {
   const p = new URLSearchParams();
   if (f.kind && f.kind !== 'both') p.set('kind', f.kind);
+  if (f.types && f.types.length > 0) p.set('type', f.types.length >= TYPE_VALUES.length ? ALL_TYPES_PARAM : f.types.join(','));
   if (f.areas && f.areas.length > 0) p.set('areas', f.areas.join(','));
   if (f.beds && f.beds !== 'any') p.set('beds', f.beds);
   if (f.minPrice) p.set('minPrice', String(f.minPrice));
@@ -189,6 +280,12 @@ export interface DealCard {
   deal_auction?: string | null;
   /** CARD_COLUMNS only (Batch 16, Part C): the comparables the deal's own check kept, when it has one (a count, never where). Null on the area's average. */
   check_comps?: string | number | null;
+  /**
+   * Batch 17: a Project deal's card numbers (marketplace_deals.project, numbers
+   * only), attached by the readers (queries.ts withProjectCards); never in
+   * CARD_COLUMNS, so the site works before the schema section is run.
+   */
+  project?: ProjectCardData | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -210,9 +307,11 @@ function agoWords(iso: string, now: Date): string {
   return days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
-export function badgesFor(card: Pick<DealCard, 'first_seen_at' | 'reduced_at' | 'last_checked_live_at' | 'last_confirmed_at' | 'last_confirmed_via'>, now: Date = new Date()): Badges {
+export function badgesFor(card: Pick<DealCard, 'first_seen_at' | 'reduced_at' | 'last_checked_live_at' | 'last_confirmed_at' | 'last_confirmed_via'> & Partial<Pick<DealCard, 'kind' | 'live_since' | 'project'>>, now: Date = new Date()): Badges {
   const tags: Badges['tags'] = [];
-  const seen = new Date(card.first_seen_at).getTime();
+  // Batch 17: a Project deal waits for its check before it goes live, so it is new from when it went live.
+  const project = card.kind !== undefined && projectOf({ kind: card.kind, project: card.project }) !== null;
+  const seen = new Date(project && card.live_since ? card.live_since : card.first_seen_at).getTime();
   if (Number.isFinite(seen) && now.getTime() - seen < DAY_MS) tags.push('New today');
   const reduced = card.reduced_at ? new Date(card.reduced_at).getTime() : NaN;
   if (Number.isFinite(reduced) && now.getTime() - reduced < 14 * DAY_MS) tags.push('Reduced');
@@ -273,6 +372,8 @@ export function headlineFigure(card: Pick<DealCard, 'kind' | 'annual_profit' | '
 export interface AreaDealView {
   id: string;
   kind: SourcingKind;
+  /** Batch 17: the kind badge: "To buy", "Rent-to-rent" or "Project". */
+  label: string;
   /** "Acomb · YO24" */
   where: string;
   type: string;
@@ -304,10 +405,18 @@ export function areaDealView(card: DealCard, photoUrl: string | null, now: Date 
   const badges = badgesFor(card, now);
   const range = widths ? profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths }) : null;
   const uplift = card.kind === 'sale' ? upliftTag(card.uplift_pct) : null;
-  const figure = widths ? { big: range?.label ?? '—', small: [`${rangeCaption(card.check_comps)}${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') } : headlineFigure(card);
+  // Batch 17: a Project deal leads with its profit after works, then the works and the value added.
+  const project = widths ? projectOf(card) : null;
+  const pn = project && widths ? projectNumbersFor(card, project, null, widths) : null;
+  const figure = pn
+    ? { big: pn.range?.label ?? pn.valueAdded, small: [pn.range ? `${pn.caption}, after works` : null, projectSummary(pn)].filter(Boolean).join(' · ') }
+    : widths
+      ? { big: range?.label ?? '—', small: [`${rangeCaption(card.check_comps)}${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') }
+      : headlineFigure(card);
   return {
     id: card.id,
     kind: card.kind,
+    label: kindWordFor(card),
     where: [card.town, card.outcode].filter(Boolean).join(' · '),
     type: describeType(card),
     price: priceLine(card),

@@ -1,10 +1,10 @@
 import type { ListingSnapshot } from '../types.ts';
 import { scriptJsonById, metaContent, titleOf, parsePrice, findPostcode, findOutcode, findNode } from '../html.ts';
-import { toNum, toStr, strArray, statusFromText, baseSnapshot, type ParseContext } from './shared.ts';
+import { toNum, toStr, strArray, statusFromText, baseSnapshot, addProjectFacts, floorAreaSqftFrom, leaseYearsFrom, type ParseContext } from './shared.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
 import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
-export const ZOOPLA_PARSER_VERSION = 1;
+export const ZOOPLA_PARSER_VERSION = 2;
 
 /**
  * Zoopla blocks server fetches, so in practice this parser runs on pages the
@@ -64,7 +64,12 @@ export function parseZoopla(html: string, ctx: ParseContext): ListingSnapshot | 
     snap.sharedOwnership = /shared ownership/i.test([description, ...snap.features].join(' '));
     snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features].join('. '));
     snap.auction = AUCTION_WORDING.test([description, snap.price?.qualifier ?? '', ...snap.features].join(' | '));
-  }
+    const years = leaseYearsFrom(...snap.features, description);
+    if (years !== null) snap.yearsRemainingOnLease = years;
+    snap.floorAreaSqft = floorAreaSqftFrom(...snap.features, description) ?? undefined;
+    // Batch 17: the needs-work flag and the exclusions, from the same words (then dropped).
+    addProjectFacts(snap, description);
+  } else addProjectFacts(snap, '');
   const og = metaContent(html, 'og:image');
   if (og) snap.photos.push(og);
   snap.status = statusFromText(toStr(listing?.listingStatus)?.replace(/_/g, ' ')) ?? statusFromText(snap.title) ?? 'available';

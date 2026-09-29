@@ -56,6 +56,7 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'propertydata', unit: 'flood_risk', label: 'PropertyData /flood-risk', unitCostPence: 2.5, notes: '1 credit' },
   { provider: 'propertydata', unit: 'conservation_area', label: 'PropertyData /conservation-area', unitCostPence: 2.5, notes: '1 credit' },
   { provider: 'propertydata', unit: 'listed_buildings', label: 'PropertyData /listed-buildings', unitCostPence: 2.5, notes: '1 credit' },
+  { provider: 'propertydata', unit: 'sold_prices', label: 'PropertyData /sold-prices', unitCostPence: 2.5, notes: '1 credit (Batch 17: a Project deal’s value ceiling)' },
   { provider: 'propertydata', unit: 'green_belt', label: 'PropertyData /green-belt', unitCostPence: 2.5, notes: '1 credit' },
   { provider: 'propertydata', unit: 'aonb', label: 'PropertyData /aonb', unitCostPence: 2.5, notes: '1 credit' },
   { provider: 'propertydata', unit: 'national_park', label: 'PropertyData /national-park', unitCostPence: 2.5, notes: '1 credit' },
@@ -86,6 +87,14 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'anthropic', unit: 'output_token', label: 'Anthropic output token (Opus 4.8)', unitCostPence: (25 * USD) / 1_000_000, notes: '$25 per MTok' },
   { provider: 'anthropic', unit: 'cache_read_token', label: 'Anthropic cache read token', unitCostPence: (0.5 * USD) / 1_000_000, notes: '10% of input' },
   { provider: 'anthropic', unit: 'cache_write_token', label: 'Anthropic cache write token', unitCostPence: (6.25 * USD) / 1_000_000, notes: '125% of input' },
+  // Batch 17: the Project photo check is metered at its own model's rates
+  // (PHOTO_CHECK_MODEL, src/lib/project/photo-check-usage.ts; the rows above
+  // are 25% dearer). A refusal re-run on the server-side fallback is metered
+  // at the model that answered.
+  { provider: 'anthropic', unit: 'opus55_input_token', label: 'Anthropic input token (Opus 5.5)', unitCostPence: (4 * USD) / 1_000_000, notes: '$4 per MTok' },
+  { provider: 'anthropic', unit: 'opus55_output_token', label: 'Anthropic output token (Opus 5.5)', unitCostPence: (20 * USD) / 1_000_000, notes: '$20 per MTok, thinking included' },
+  { provider: 'anthropic', unit: 'sonnet55_input_token', label: 'Anthropic input token (Sonnet 5.5)', unitCostPence: (2 * USD) / 1_000_000, notes: '$2 per MTok' },
+  { provider: 'anthropic', unit: 'sonnet55_output_token', label: 'Anthropic output token (Sonnet 5.5)', unitCostPence: (10 * USD) / 1_000_000, notes: '$10 per MTok, thinking included' },
   // ── ElevenLabs turbo: Creator plan ≈ $22 per 100k characters ──
   { provider: 'elevenlabs', unit: 'character', label: 'ElevenLabs speech (per character)', unitCostPence: (22 * USD) / 100_000, notes: 'Creator plan; turbo models bill 0.5 credit/char on some tiers — reconcile' },
   // ── Twilio SMS (house spend: texts are free to members, never charged) ──

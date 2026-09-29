@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { chargeOrder, checkName, labelFor, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile } from './rules.ts';
+import { chargeOrder, checkName, labelFor, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile, typesFromForm } from './rules.ts';
 
 const p = (over: Partial<{ id: string; name: string; isActive: boolean; createdAt: string; pausedAt: string | null; deletedAt: string | null }> = {}) => ({
   id: over.id ?? 'a',
@@ -54,14 +54,15 @@ test('labels show from two live profiles, or once one was deleted', () => {
   assert.equal(profileLabel({ name: 'Client: JS', deletedAt: '2026-09-01T00:00:00Z' }), 'Client: JS (deleted profile)');
 });
 
-test('a new profile copies the criteria and points them at the chosen path', () => {
-  const buy = { ...DEFAULT_GOALS, path: 'buy' as const, sourcingKind: 'sale' as const, budget: '200-350' as const };
-  assert.equal(criteriaForNewProfile(buy, 'buy'), buy);
-  const r2r = criteriaForNewProfile(buy, 'r2r')!;
-  assert.equal(r2r.path, 'r2r');
-  assert.equal(r2r.sourcingKind, 'rent');
+test('a new profile copies the criteria and shows the deal types ticked (Batch 17)', () => {
+  const buy = { ...DEFAULT_GOALS, path: 'buy' as const, sourcingKind: 'sale' as const, budget: '200-350' as const, dealTypes: ['buy_str' as const] };
+  assert.equal(criteriaForNewProfile(buy, []), buy, 'nothing ticked: the copy as it is');
+  const r2r = criteriaForNewProfile(buy, ['r2r', 'brrr'])!;
+  assert.deepEqual(r2r.dealTypes, ['brrr', 'r2r']);
+  assert.equal(r2r.sourcingKind, 'both');
   assert.equal(r2r.budget, '200-350', 'everything else is copied');
-  assert.equal(criteriaForNewProfile(null, 'buy'), null);
+  assert.equal(criteriaForNewProfile(null, ['buy_str']), null);
+  assert.deepEqual(typesFromForm(['r2r', 'nonsense', 'buy_str', 'r2r']), ['buy_str', 'r2r']);
 });
 
 test('the price line names the profile and keeps the member’s own price', () => {

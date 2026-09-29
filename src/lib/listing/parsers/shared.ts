@@ -1,4 +1,6 @@
 import type { ListingSnapshot, ListingSource, ListingStatus } from '../types.ts';
+import { needsWorkFrom } from '../../project/needs-work.ts';
+import { exclusionFor } from '../../project/exclusions.ts';
 
 export interface ParseContext {
   id: string;
@@ -35,6 +37,13 @@ export function statusFromText(text: string | null | undefined): ListingStatus |
   if (/\bsold\b/.test(t)) return 'sold';
   return null;
 }
+
+/**
+ * How many photo URLs a snapshot keeps (the listing's own, shown after an
+ * open). Batch 17's photo check reads more from a fresh page instead
+ * (photos.ts), so the stored snapshot never grows.
+ */
+export const SNAPSHOT_PHOTO_LIMIT = 6;
 
 export function baseSnapshot(source: ListingSource, ctx: ParseContext, parserVersion: number): ListingSnapshot {
   return {
@@ -108,4 +117,52 @@ export function parseListingUpdate(
   const d = new Date(`${base}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + shift);
   return { reason, on: d.toISOString().slice(0, 10) };
+}
+
+// ── Batch 17: what a sale's page says about the work it needs ──
+
+/**
+ * Years left on a lease from the portal's wording: "976 yrs left" (an
+ * OnTheMarket key-info line), "(975 years remaining)", "90 years remaining on
+ * the lease". Null when no line says how many remain (a lease's original term
+ * is not what is left).
+ */
+export function leaseYearsFrom(...texts: (string | null | undefined)[]): number | null {
+  for (const t of texts) {
+    const m = t ? /(\d{1,4}(?:,\d{3})?)\s*(?:yrs?|years?)\s*(?:left|remaining|unexpired)/i.exec(t) : null;
+    if (!m) continue;
+    const n = Number(m[1].replace(/,/g, ''));
+    if (Number.isInteger(n) && n > 0 && n <= 9999) return n;
+  }
+  return null;
+}
+
+const SQ_M_TO_FT = 10.7639;
+
+/**
+ * The floor area the portal states, in square feet: "818 sq ft", "1,050 sq.
+ * ft.", "76 sq m", "76m²". The first plausible one (150–20,000 sq ft); null
+ * otherwise. Only ever used to scale the rewire estimate.
+ */
+export function floorAreaSqftFrom(...texts: (string | null | undefined)[]): number | null {
+  for (const t of texts) {
+    if (!t) continue;
+    const ft = /(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?\s*(?:sq\.?\s*ft|sqft|sq\.?\s*feet|square\s+f(?:ee|oo)t)\b/i.exec(t);
+    const m = ft ? null : /(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?\s*(?:sq\.?\s*m(?:etres?|eters?)?\b|sqm\b|m²|square\s+met(?:re|er)s?)/i.exec(t);
+    const value = ft ? Number(ft[1].replace(/,/g, '')) : m ? Math.round(Number(m[1].replace(/,/g, '')) * SQ_M_TO_FT) : null;
+    if (value !== null && Number.isFinite(value) && value >= 150 && value <= 20_000) return value;
+  }
+  return null;
+}
+
+/**
+ * A sale's project facts, from the page's own words (the description is read
+ * here and dropped, as the auction flag's is): our needs-work phrase keys and
+ * the first reason it can never be a Project deal. Rentals get neither.
+ */
+export function addProjectFacts(snap: ListingSnapshot, description: string): void {
+  if (snap.kind !== 'sale') return;
+  const texts = [description, snap.title, snap.price?.qualifier ?? '', snap.tenure ?? '', ...snap.features];
+  snap.needsWork = needsWorkFrom(...texts);
+  snap.projectExclusion = exclusionFor({ texts, tenure: snap.tenure ?? null, yearsRemainingOnLease: snap.yearsRemainingOnLease ?? null, listedFlag: snap.listedBuilding ?? null });
 }

@@ -20,7 +20,7 @@ export function orderPicks<C extends PickCandidateLike & { fit: number; precheck
   const area = areaLookup(cards);
   const keys = new Map(
     ranked.map((c) => {
-      const f = factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0, fired: c.motivation?.fired });
+      const f = factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0, fired: c.motivation?.fired }, c.project ?? null);
       const { judgement, figures } = judgeDeal(f, p, wants);
       const bonus = bonusOf(adjustmentsFor(f, figures, leanings, area(f.area, f.bedrooms)));
       return [c, orderKey(c, judgement, bonus, c.screening?.surplus ?? null, c.listing.canonicalUrl)] as const;

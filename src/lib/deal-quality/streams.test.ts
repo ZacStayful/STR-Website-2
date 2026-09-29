@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cashLine, isStream, shortMoney, streamFor, streamOfRow, STREAMS } from './streams.ts';
+import { cashLine, DAY_STREAMS, isStream, perStream, shortMoney, streamFor, streamOfRow, STREAMS } from './streams.ts';
 import { DEFAULT_LOW_ENTRY } from './config.ts';
 import { auctionDeal, purchaseDeal, rentToRentDeal } from '../listing/deal.ts';
 
@@ -35,7 +35,8 @@ test('a stored row keeps its stream column, or is worked out from the deal it ca
   assert.equal(streamOfRow({ kind: 'sale', deal: { kind: 'purchase', cashRequired: 99_000 } }, DEFAULT_LOW_ENTRY), 'top60');
   assert.equal(streamOfRow({ kind: 'sale', deal: { kind: 'purchase', cashRequired: 'abc' } }, DEFAULT_LOW_ENTRY), 'top60');
   assert.equal(streamOfRow({ kind: 'rent', deal: null }, DEFAULT_LOW_ENTRY), 'r2r');
-  assert.deepEqual(STREAMS, ['top60', 'low_entry', 'r2r']);
+  assert.deepEqual(STREAMS, ['top60', 'low_entry', 'r2r', 'project']);
+  assert.equal(streamOfRow({ kind: 'sale', stream: 'project', deal: null }, DEFAULT_LOW_ENTRY), 'project', 'Batch 17: set only by the Project hold, kept from the column');
   assert.ok(isStream('r2r') && !isStream('R2R') && !isStream(null));
 });
 
@@ -51,4 +52,13 @@ test('"£38k cash in" and "£12k to start", to the nearest thousand', () => {
   assert.equal(cashLine('sale', null), null);
   assert.equal(cashLine('sale', 0), null);
   assert.equal(cashLine('rent', 'abc'), null);
+});
+
+test('Batch 17: the day’s checks are shared by Batch 16’s three streams; the Project stream counts on its own', () => {
+  assert.deepEqual(DAY_STREAMS, ['top60', 'low_entry', 'r2r']);
+  assert.deepEqual(perStream(() => 0), { top60: 0, low_entry: 0, r2r: 0, project: 0 });
+  assert.deepEqual(perStream((s) => s.length), { top60: 5, low_entry: 9, r2r: 3, project: 7 });
+  // The record never puts a deal in the Project stream: only the hold does.
+  assert.notEqual(streamOfRow({ kind: 'sale', deal: { kind: 'purchase', cashRequired: 90_000 } }, { maxCashIn: 40_000 }), 'project');
+  assert.equal(streamOfRow({ kind: 'sale', stream: 'project', deal: null }, { maxCashIn: 40_000 }), 'project');
 });

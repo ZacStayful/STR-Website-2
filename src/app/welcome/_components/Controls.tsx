@@ -23,14 +23,19 @@ export function PrimaryButton({ children, onClick, disabled, type = "button" }: 
 /** One big tap card. With a photo it is a picture card (the risk and property-type questions). */
 function ChoiceCard({ option, on, onClick, disabled }: { option: Option; on: boolean; onClick: () => void; disabled?: boolean }) {
   const photo = option.image && option.image !== "plain" ? option.image : null;
+  // Batch 17: an option that is coming soon is shown greyed out and can never be chosen.
+  const soon = option.soon ?? null;
   return (
-    <button type="button" onClick={onClick} disabled={disabled} aria-pressed={on} className={`${CARD} ${on ? ON : OFF}`}>
+    <button type="button" onClick={soon ? undefined : onClick} disabled={disabled || soon !== null} aria-pressed={soon ? false : on} aria-disabled={soon ? true : undefined} className={`${CARD} ${soon ? `${OFF} cursor-not-allowed opacity-50` : on ? ON : OFF}`}>
       {photo && (
         <div className="-mx-1 mb-2">
           <QuizPhoto image={photo} compact />
         </div>
       )}
-      <span className="block text-base font-semibold text-foreground">{option.label}</span>
+      <span className="flex flex-wrap items-center gap-2 text-base font-semibold text-foreground">
+        {option.label}
+        {soon && <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{soon}</span>}
+      </span>
       {option.help ? <span className="mt-0.5 block text-sm text-muted-foreground">{option.help}</span> : null}
     </button>
   );
@@ -49,13 +54,26 @@ export function SingleChoice({ options, value, onPick, busy }: { options: readon
 }
 
 /** Tick all that apply, then Continue. */
-export function MultiChoice({ options, value, onSubmit, busy }: { options: readonly Option[]; value: string[]; onSubmit: (values: string[]) => void; busy: boolean }) {
-  const [picked, setPicked] = useState<string[]>(value);
-  const toggle = (v: string) => setPicked((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]));
+/**
+ * Tick all that apply. `allValue`: the option that ticks every other one
+ * ("All of them"); it reads as ticked when they all are, and never goes
+ * into the answer itself.
+ */
+export function MultiChoice({ options, value, onSubmit, busy, allValue }: { options: readonly Option[]; value: string[]; onSubmit: (values: string[]) => void; busy: boolean; allValue?: string }) {
+  // "All of them" ticks every option that can be chosen: never one that is coming soon.
+  const soon = new Set(options.filter((o) => o.soon).map((o) => o.value));
+  const others = options.filter((o) => o.value !== allValue && !soon.has(o.value)).map((o) => o.value);
+  const [picked, setPicked] = useState<string[]>(value.filter((v) => v !== allValue && !soon.has(v)));
+  const allOn = allValue !== undefined && others.length > 0 && others.every((v) => picked.includes(v));
+  const toggle = (v: string) => {
+    if (soon.has(v)) return;
+    if (allValue !== undefined && v === allValue) return setPicked(allOn ? [] : others);
+    setPicked((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]));
+  };
   return (
     <div className="space-y-3">
       {options.map((o) => (
-        <ChoiceCard key={o.value} option={o} on={picked.includes(o.value)} onClick={() => toggle(o.value)} disabled={busy} />
+        <ChoiceCard key={o.value} option={o} on={o.value === allValue ? allOn : picked.includes(o.value)} onClick={() => toggle(o.value)} disabled={busy} />
       ))}
       <PrimaryButton onClick={() => onSubmit(picked)} disabled={busy || picked.length === 0}>
         Continue

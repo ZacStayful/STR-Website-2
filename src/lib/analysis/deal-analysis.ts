@@ -69,6 +69,7 @@ import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, t
 import { logActivity, recordActivity } from '../activity/log';
 import { activeProfileIdOf } from '../profiles/server';
 import { reminderEvent } from './take-up';
+import { reportProjectFor } from '../project/report-server';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -285,6 +286,8 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
     if (!dealVisible(deal.live_since, visibility.cutoffIso)) return fail('missing');
     if (deal.status === 'retired') return fail('gone');
     if (deal.status === 'pending_verify') return fail('checking');
+    // On the shortlist for its own check (Batch 16), or its Project check (Batch 17): nothing to analyse yet.
+    if (deal.status === 'pending_check') return fail('held');
   }
   const withPmi = Boolean(input.withPmi);
   if (withPmi && !enhancedEnabled(true)) return fail('pmi_unavailable');
@@ -547,6 +550,11 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
       if (storeErr) console.error('[deal-analysis] saved analysis write failed:', storeErr.message);
       else analysisId = String(stored.id);
     }
+
+    // Batch 17: a Project deal's report carries our estimate (its reasons, never its photos). The member's
+    // own locked figures are read with the report, for whoever reads it, and never stored on it.
+    const project = await reportProjectFor(admin, deal, { grossRevenue: result.shortLet?.annualRevenue ?? null }, finance);
+    if (project) result.project = project;
 
     // ── The buyer's own report ──
     progress('saving', 95, 'Saving your Full analysis...');

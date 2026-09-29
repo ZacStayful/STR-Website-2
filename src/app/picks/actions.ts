@@ -6,7 +6,7 @@ import { isAdminEmail } from '@/lib/admin';
 import { parseMarketGoals } from '@/lib/market/goals';
 import { cleanReasons } from '@/lib/listing/picks';
 import { checkListingForMember } from '@/lib/listing/server';
-import { pickForMember, recordReaction, markPickSaved, pickProfileRow } from '@/lib/listing/picks-server';
+import { addTypeFromPickFeedback, pickForMember, recordReaction, markPickSaved, pickProfileRow } from '@/lib/listing/picks-server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { myDealsFocusPath } from '@/lib/listing/return-path';
 import { logActivity } from '@/lib/activity/log';
@@ -62,6 +62,9 @@ export async function reactToPickAction(formData: FormData): Promise<void> {
   const reaction = formData.get('reaction') === 'yes' ? 'yes' : 'no';
   await recordReaction({ id, userId: user.id }, { reaction, source: 'form', reasons: formData.getAll('reasons').map(String), comment: formData.get('comment') });
   logActivity(user.id, 'pick_feedback', { extras: { answer: reaction, reasons: reaction === 'no' ? cleanReasons(formData.getAll('reasons')) : undefined } });
+  // Batch 17 (Q25): "I want rent-to-rent, not to buy" adds the type to the pick's profile.
+  const added = reaction === 'no' ? await addTypeFromPickFeedback({ id, userId: user.id }, formData.getAll('reasons')) : null;
+  if (added) logActivity(user.id, 'profile_edited', { profileId: added.profileId, extras: { question: 'deal_types', via: 'pick_feedback', added: added.added } });
   const tab = String(formData.get('tab') ?? '');
   redirect(tab ? `/picks?tab=${encodeURIComponent(tab)}` : '/picks');
 }

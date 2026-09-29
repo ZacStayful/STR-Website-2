@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import type { MarketGoals } from '../market/goals.ts';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { budgetBounds, describeDeal, queryKey, type SourcedListing, type SourcedPick, type SourcingKind, type SourcingQuery } from './sourcing.ts';
+import { describeDeal, queryKey, saleBoundsForGoals, type SourcedListing, type SourcedPick, type SourcingKind, type SourcingQuery } from './sourcing.ts';
 import { formatListingPrice } from './format.ts';
 import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
@@ -107,7 +107,7 @@ export function topScoredAreas<C extends HouseAreaCard>(cards: C[], limit: numbe
 export function houseQueries(cards: HouseAreaCard[], goals: MarketGoals | null, limit = HOUSE_AREAS): SourcingQuery[] {
   const g = goals ?? DEFAULT_GOALS;
   const kinds: SourcingKind[] = goals ? (g.sourcingKind === 'both' ? ['sale', 'rent'] : [g.sourcingKind]) : ['sale', 'rent'];
-  const bounds = goals ? budgetBounds(g.budget) : { min: null, max: null };
+  const bounds = goals ? saleBoundsForGoals(g) : { min: null, max: null };
   const minBedrooms = goals ? g.bedrooms ?? null : null;
   const areas = topScoredAreas(cards, limit);
   const out: SourcingQuery[] = [];
@@ -150,8 +150,8 @@ export const PICK_REASONS = [
   { key: 'needs_work', label: 'Needs too much work', group: 'type', effect: 'we skip renovation projects and auctions' },
   { key: 'not_str_suitable', label: 'Could not be run as a short let', group: 'type', effect: 'we tighten the short-let checks' },
   { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send properties that beat this one against a long-term let' },
-  { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we switch you to rentals' },
-  { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we switch you to sales' },
+  { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we add rent-to-rent deals to this profile' },
+  { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we add short-let deals to buy to this profile' },
   { key: 'seen_it', label: 'Already seen it', group: 'other', effect: null },
 ] as const;
 
@@ -361,6 +361,22 @@ export function feedbackRules(feedback: PickFeedback[]): AppliedRules {
   return r;
 }
 
+/**
+ * The member's answers without "I want rent-to-rent, not to buy" and the
+ * reverse (Batch 17, Q25): those now add the deal type to the profile when
+ * they are given (picks-server.ts addTypeFromPickFeedback), so the searches
+ * and Today never switch kind on them. Everything else stays.
+ */
+export function withoutKindFlips(feedback: readonly PickFeedback[]): PickFeedback[] {
+  return withoutReasons(feedback, ['want_r2r', 'want_buy']);
+}
+
+/** The member's answers with these reasons taken out; everything else stays. */
+export function withoutReasons(feedback: readonly PickFeedback[], keys: readonly PickReason[]): PickFeedback[] {
+  const drop = new Set<string>(keys);
+  return feedback.map((f) => (f.reasons.some((r) => drop.has(r)) ? { ...f, reasons: f.reasons.filter((r) => !drop.has(r)) } : f));
+}
+
 /** True when this reason is actually changing what the member is sent. */
 export function ruleApplied(rules: AppliedRules, reason: PickReason): boolean {
   return !rules.cancelled.includes(reason) && !rules.inert.includes(reason);
@@ -388,7 +404,7 @@ export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedb
  * the member already said no to. Each rule is per kind where the rejected
  * pick's kind is known (a purchase budget is not a rent ceiling).
  */
-export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null; screening?: Screening | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
+export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null; screening?: Screening | null; project?: unknown }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
   return candidates.filter((c) => {
     const l = c.listing;
     const amount = l.price ? (l.kind === 'rent' ? (l.price.period === 'pw' ? (l.price.amount * 52) / 12 : l.price.amount) : l.price.amount) : null;
@@ -410,7 +426,8 @@ export function applyCandidateFeedback<C extends { listing: SourcedListing; deal
     const kind = propertyKind(l.rawType, l.title);
     if (rules.noFlats && kind !== 'house') return false;
     if (rules.noHouses && kind !== 'flat') return false;
-    if (rules.noWork && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
+    // A Project (BRRR) deal needs work by definition, and the profile chose it (Batch 17).
+    if (rules.noWork && !c.project && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
     const need = rules.minReturn[l.kind];
     if (need !== undefined) {
       // Same metric on both sides: the floor came from a screening, so it is
@@ -478,6 +495,13 @@ export interface PickEmailInput {
    */
   range?: { label: string; basis: string } | null;
   /**
+   * Batch 17: a Project deal's own line ("£550–£750/mo after works · … ·
+   * £22k value added · Works ~£14k–£26k · £45k–£58k cash in") and its value
+   * added for the subject. When given, the pick is a Project: it is called
+   * one, and its value added leads instead of the long-let uplift.
+   */
+  project?: { line: string; valueAdded: string } | null;
+  /**
    * Saved profiles (Batch 13): "See today's 5" and "Edit my filter" for the
    * profile this pick is for, through the switch route when it is not the
    * active one (profileLinks in src/lib/profiles/rules.ts).
@@ -485,9 +509,11 @@ export interface PickEmailInput {
   profileLinks?: { today: string; edit: string } | null;
 }
 
-export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null } | null) {
+export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null; project?: boolean } | null) {
   const base = siteUrl.replace(/\/$/, '');
-  const more = deal ? `${base}/deals?kind=${deal.kind}${deal.area ? `&areas=${encodeURIComponent(deal.area)}` : ''}${deal.bedrooms ? `&beds=${deal.bedrooms >= 4 ? '4%2B' : deal.bedrooms}` : ''}` : null;
+  // Batch 17: by the deal's own type, so "more like this" is a Short-let deal's kind of deal and not every sale.
+  const type = deal ? (deal.kind === 'rent' ? 'r2r' : deal.project ? 'brrr' : 'buy_str') : null;
+  const more = deal ? `${base}/deals?type=${type}${deal.area ? `&areas=${encodeURIComponent(deal.area)}` : ''}${deal.bedrooms ? `&beds=${deal.bedrooms >= 4 ? '4%2B' : deal.bedrooms}` : ''}` : null;
   return {
     /** The deal sheet on the marketplace, when the pick came from the pool. */
     deal: deal ? `${base}/deals/${deal.dealId}` : null,
@@ -546,16 +572,17 @@ export function describeMotivation(m: Motivation | null | undefined, limit = 3):
 export function pickSection(input: PickEmailInput): { section: Section; subject: string; headline: string; eyebrow: string; unsubscribe: Unsubscribe; links: ReturnType<typeof pickLinks> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
-  const plain = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
+  const plain = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms, project: l.kind === 'sale' && Boolean(input.project) } : null);
   const links = input.profileLinks ? { ...plain, today: input.profileLinks.today, filter: input.profileLinks.edit } : plain;
-  const kindWord = l.kind === 'rent' ? 'rent-to-rent' : 'to buy';
+  const project = l.kind === 'sale' ? input.project ?? null : null;
+  const kindWord = l.kind === 'rent' ? 'rent-to-rent' : project ? 'project' : 'to buy';
   const sc = input.screening && input.screening.band !== 'insufficient-data' ? input.screening : null;
   // The subject leads on the screening where there is one: "42% above a long let"
   // is the thing the member is deciding on, and it keeps the subject line and the
   // body telling one story rather than two.
   const range = input.range ?? null;
   const scHeadline = sc ? (sc.kind === 'purchase' ? `${sc.upliftPct}% above a long let` : range ? `${range.label} profit` : `£${Math.round(sc.annualProfit!).toLocaleString('en-GB')}/yr profit`) : null;
-  const figure = scHeadline ?? (range ? range.label : pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
+  const figure = project ? project.valueAdded : scHeadline ?? (range ? range.label : pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
   const what = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}`;
   const subject = `Today's pick ${kindWord}: ${what}${figure ? ` · ${figure}` : ''}`;
   const headline = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}${kindWord} in ${pick.areaName}${figure ? `, ${figure}` : ''}`;
@@ -563,7 +590,7 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   const work = sc && !range ? screeningWorking(sc) : [];
   const scVerdict = sc ? (range ? BAND_LABELS[sc.band] : `${BAND_LABELS[sc.band]} — ${sc.reason}`) : null;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
-  const dealLine = range ? `${range.label} · ${rangeCaption(sc?.check?.compCount)}, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
+  const dealLine = project ? project.line : range ? `${range.label} · ${rangeCaption(sc?.check?.compCount)}, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
   const motivationLine = describeMotivation(pick.motivation ?? null);
   // Said first and said plainly. A near miss presented as a match is a small
   // lie that costs more trust than the empty day it was avoiding.

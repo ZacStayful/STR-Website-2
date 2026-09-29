@@ -23,6 +23,7 @@ function fakeClient(overrides: Partial<PdClient> = {}): PdClient & { calls: stri
     floodRisk: log('floodRisk', { level: 'Low' }),
     designation: log('designation', { inside: false, name: null }),
     listedBuildings: log('listedBuildings', []),
+    soldPrices: log('soldPrices', [{ price: 150_000, date: '2026-03-01', distanceMiles: 0.4, lat: null, lng: null, type: 'terraced_house', bedrooms: 3 }]),
     demand: log('demand', { kind: 'rent' as const, total: 1, perMonth: 1, turnoverPct: 1, monthsOfInventory: 1, daysOnMarket: 10, rating: 'Balanced market' }),
     keyStats: log('keyStats', [{ outcode: 'BN1', avgPrice: 1, avgPricePsf: 1, avgRentWeekly: 1, avgYieldPct: 1, growth1y: 1, growth3y: 1, growth5y: 1, growth7y: 1, salesPerMonth: 1, turnoverPct: 1 }]),
     ...overrides,
@@ -159,4 +160,18 @@ test('the designation questions ask for their own field and demand for its own k
   await resolveQuestion(deps, q.pdDemandSale, { outcode: 'X1' }, ctx);
   await resolveQuestion(deps, q.pdDemandRent, { outcode: 'X1' }, ctx);
   assert.deepEqual(seen, ['conservation_area', 'green_belt', 'aonb', 'national_park', 'sale', 'rent']);
+});
+
+test('Batch 17: sold prices are asked once per postcode, type and window, then served from the cache for 30 days', async () => {
+  const client = fakeClient();
+  const q = pdQuestions(client);
+  const deps = { store: memoryStore(), ledger: memoryLedger(), enabled };
+  const a = await resolveQuestion(deps, q.pdSoldPrices, { postcode: 'yo17 9ab', type: 'terraced_house', maxAgeMonths: 24, from: { lat: 54.1, lng: -0.8 } }, { mode: 'cron' });
+  const b = await resolveQuestion(deps, q.pdSoldPrices, { postcode: 'YO17 9AB', type: 'terraced_house', maxAgeMonths: 24, from: null }, { mode: 'cron' });
+  const other = await resolveQuestion(deps, q.pdSoldPrices, { postcode: 'YO17 9AB', type: 'flat', maxAgeMonths: 24 }, { mode: 'cron' });
+  assert.equal(a.cached, false);
+  assert.equal(b.cached, true, 'the subject’s point is not part of the key');
+  assert.equal(other.cached, false, 'another type is another question');
+  assert.equal(client.calls.filter((c) => c === 'soldPrices').length, 2);
+  assert.equal(a.value?.[0].price, 150_000);
 });

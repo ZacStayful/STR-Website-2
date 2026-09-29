@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF } from "@/lib/nav";
 import { MIN_MONTHS_RANGE, MIN_WEEKS_RANGE, MOTIVATION_MODE_LABELS, PRIORITY_LABELS, type MotivationMode, type Priority } from "@/lib/market/goals";
-import { answerLabel, questionsFor, SECTION_TITLES, PATH_LABELS, type SectionId } from "@/lib/profile/questions";
+import { answerLabel, questionsFor, SECTION_TITLES, type SectionId } from "@/lib/profile/questions";
+import { describeTypes } from "@/lib/profile/deal-types";
 import { matchLabel } from "@/lib/profile/matching";
 import { minutesLeftLabel, pillLabel } from "@/lib/profile/state";
 import { creditViewFor, matchCountFor, profileSummaryFor } from "@/lib/profile/server";
@@ -88,7 +89,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
               </Link>
             </p>
           )}
-          <p className="mt-1 text-sm text-muted-foreground">{progress.path ? `${PATH_LABELS[progress.path]}. ` : ""}Every answer here shapes the deals we show you. Tap one to change it{progress.complete ? "" : ", or carry on where you left off"}.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{progress.types.length > 0 ? `Deals you want: ${describeTypes(progress.types)}. ` : ""}Every answer here shapes the deals we show you. Tap one to change it{progress.complete ? "" : ", or carry on where you left off"}.</p>
           {first(params.mode) === "1" && (
             <p role="status" className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
               Saved. Today’s deals for this profile now follow it.

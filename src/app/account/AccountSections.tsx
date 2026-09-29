@@ -4,6 +4,7 @@ import { formatGbp } from "@/lib/credit/pricing";
 import { SEAT_PRICE_PENCE } from "@/lib/team/rules";
 import { ACCOUNT_MORE, GOALS_EDITOR_HREF, type AccountMoreKey } from "@/lib/nav";
 import { signOutAction } from "../(auth)/actions";
+import { describeTypes } from "@/lib/profile/deal-types";
 
 /**
  * The parts of Account after the plan and billing (Batch 11): notifications,
@@ -69,7 +70,7 @@ export function NotificationsSection() {
  */
 export function GoalsSection({ goals }: { goals: MarketGoals | null }) {
   // describeGoals never says whether they buy or rent, so that chip leads, as on /picks.
-  const chips = goals ? [goals.sourcingKind === "both" ? "Buy or rent-to-rent" : goals.sourcingKind === "rent" ? "Rent-to-rent" : "To buy", ...describeGoals(goals)] : [];
+  const chips = goals ? [goals.dealTypes && goals.dealTypes.length > 0 ? describeTypes(goals.dealTypes) : goals.sourcingKind === "both" ? "Buy or rent-to-rent" : goals.sourcingKind === "rent" ? "Rent-to-rent" : "To buy", ...describeGoals(goals)] : [];
   return (
     <section className={CARD}>
       <h2 className="text-base font-semibold">What you’re looking for</h2>

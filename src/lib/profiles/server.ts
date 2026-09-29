@@ -31,7 +31,7 @@ import { logActivity } from '../activity/log';
 import { quoterFor } from '../credit/quote-server';
 import { dailyDealsLineFor } from '../listing/daily-deals';
 import { copyFilterModes } from '../tailoring/modes-server';
-import type { ProfilePath } from '../market/goals';
+import type { DealType } from '../market/goals';
 import {
   checkName,
   criteriaForNewProfile,
@@ -254,7 +254,7 @@ function own(view: ProfilesView, id: string): SavedProfile | null {
   return view.live.find((p) => p.id === id) ?? null;
 }
 
-export async function createProfile(input: { userId: string; name: unknown; copyFrom: string | null; path: ProfilePath | null; forClient: boolean }): Promise<ProfileOutcome> {
+export async function createProfile(input: { userId: string; name: unknown; copyFrom: string | null; types: DealType[]; forClient: boolean }): Promise<ProfileOutcome> {
   const view = await profilesFor(input.userId);
   if (!view.readable) return fail('Saved profiles are not available yet. Please try again shortly.');
   if (view.teamMember) return fail('Team members use the team’s profile.');
@@ -266,9 +266,10 @@ export async function createProfile(input: { userId: string; name: unknown; copy
     p: {
       user: input.userId,
       name: name.name,
-      criteria: criteriaForNewProfile(source?.goals ?? null, input.path),
+      criteria: criteriaForNewProfile(source?.goals ?? null, input.types),
       areas: source?.areas ?? [],
-      answered: source?.answered ?? {},
+      // The types ticked here are this profile's answer to "Which deals do you want to see?".
+      answered: source && input.types.length > 0 ? { ...source.answered, deal_types: { at: new Date().toISOString(), notSure: false } } : (source?.answered ?? {}),
       for_client: input.forClient,
       copied_from: source?.id ?? null,
     },
@@ -282,7 +283,7 @@ export async function createProfile(input: { userId: string; name: unknown; copy
   const id = String(data);
   // Batch 14: the must-have / nice-to-have switches come with the copy.
   if (source) await copyFilterModes(source.id, id);
-  logActivity(input.userId, 'saved_profile_created', { profileId: id, extras: { copied: Boolean(source), for_client: input.forClient, path: input.path ?? null } });
+  logActivity(input.userId, 'saved_profile_created', { profileId: id, extras: { copied: Boolean(source), for_client: input.forClient, deal_types: input.types.length > 0 ? input.types.join(',') : null } });
   return { ok: true, id };
 }
 

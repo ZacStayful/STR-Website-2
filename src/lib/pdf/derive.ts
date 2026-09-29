@@ -13,6 +13,9 @@ import { bandPositions, beatTargets, earningsRangeOf, estimatePosition, MIN_TOP_
 import { readLocalTrend, trendShort } from "../comps/local-trend.ts";
 import { comparablesSourceLine, readListingsNearby } from "../comps/nearby.ts";
 import { readMonthlyOccupancy, readStayProfile, reportAvgStayNights, turnoversByMonth } from "../comps/stays.ts";
+import { GARDEN_NOTE, LEVEL_LABELS } from "../project/costing.ts";
+import { VALUE_DISCLAIMER, WORKS_DISCLAIMER } from "../project/headline.ts";
+import { mineVersusOurs, parseReportProject, quantityLabel, spanLabel, valueBasis, type ReportProjectMine } from "../project/report.ts";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -128,6 +131,24 @@ export interface PdfDiligence {
   notes: string[];
 }
 
+/** The project page (Batch 17): a Project deal's works, value after works and finance, and the reader's own locked figures. */
+export interface PdfProjectFigure {
+  label: string;
+  value: string;
+  sub: string | null;
+}
+
+export interface PdfProject {
+  /** "Full project · estimated 29 September 2026". */
+  heading: string;
+  metrics: PdfProjectFigure[];
+  lines: { label: string; quantity: string; cost: string; status: "NEEDED" | "CAN'T TELL"; reason: string | null }[];
+  worksNote: string;
+  money: PdfProjectFigure[];
+  mine: { line: string; metrics: PdfProjectFigure[] } | null;
+  disclaimer: string;
+}
+
 export interface PdfReportData {
   property: {
     address: string;
@@ -156,6 +177,8 @@ export interface PdfReportData {
   deal?: PdfDeal;
   /** Present only when the analysis carried any register data. */
   diligence?: PdfDiligence;
+  /** Present only on a Project deal's Full analysis. */
+  project?: PdfProject;
   overview: {
     grossRevenue: number;
     netRevenue: number;
@@ -834,5 +857,59 @@ export function pdfDealFrom(stored: NonNullable<AnalysisResult["deal"]>, sourceU
     ],
     cashflow,
     note: `Rent-to-rent needs the landlord's written consent to sub-let, a lease that allows it and the lender's and insurer's agreement, and must follow the council's short-let rules. Figures use this report's gross revenue less 15% platform fees, 15% management, 18% cleaning and £${bills} a month bills${d.councilTax ? ` (band ${d.councilTax.band} council tax included)` : ""}. Not financial advice.`,
+  };
+}
+
+const pounds = (n: number): string => `${n < 0 ? "−" : ""}£${Math.abs(Math.round(n)).toLocaleString("en-GB")}`;
+
+/**
+ * The project page, from the estimate a Project deal's Full analysis stored
+ * (src/lib/project/report.ts), with the reader's own locked figures when
+ * they have some (read for them when the report is, never stored on it).
+ * Undefined on every other report, so its page count is unchanged.
+ */
+export function buildPdfProject(result: AnalysisResult, mine: ReportProjectMine | null = null): PdfProject | undefined {
+  const p = parseReportProject(result.project);
+  if (!p) return undefined;
+  const f = p.finance;
+  const estimated = new Date(p.estimatedAt);
+  const when = Number.isFinite(estimated.getTime()) ? ` · estimated ${new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", day: "numeric", month: "long", year: "numeric" }).format(estimated)}` : "";
+  const metrics: PdfProjectFigure[] = [
+    { label: "Works", value: spanLabel(p.works), sub: `with ${p.works.contingencyPct}% contingency` },
+    { label: "Value after works", value: pounds(p.value), sub: valueBasis(p) },
+    { label: "Value added", value: pounds(p.valueAdded), sub: `${p.valueAddedPct.toFixed(1)}% of the value, works at the high end` },
+    { label: "Cash needed", value: spanLabel(f.cash), sub: f.bridge ? `on a bridge, ${f.months} months of works` : `${f.months} months of works` },
+  ];
+  if (f.refinance) metrics.push({ label: "Money left in", value: spanLabel(f.refinance.moneyLeftIn), sub: `after refinancing at ${f.refinance.pct}% of the value` });
+  if (p.profitAfterWorksPcm !== null) metrics.push({ label: "Profit after works", value: `${pounds(p.profitAfterWorksPcm)}/mo`, sub: f.refinance ? "this report's income and finance, after the refinance" : "this report's income and finance" });
+  const money: PdfProjectFigure[] = [
+    { label: "Asking price", value: pounds(f.price), sub: null },
+    { label: f.taxName === "SDLT" ? "Stamp duty" : f.taxName, value: pounds(f.stampDuty), sub: null },
+    { label: "Buying costs", value: pounds(f.buyingCosts), sub: f.bridge ? "legal, survey, the bridge's valuation" : "legal and survey" },
+    { label: "Holding", value: spanLabel(f.holding), sub: `${f.months} months: bills${f.bridge ? " and interest" : ""}` },
+    { label: "Furnishing and setup", value: pounds(f.furnishing), sub: null },
+    { label: "Total in", value: spanLabel(f.totalIn), sub: null },
+  ];
+  if (f.bridge) money.push({ label: "Bridging loan", value: pounds(f.bridge.loan), sub: `${f.bridge.ltvPct}% of the price at ${f.bridge.monthlyPct}% a month; works in cash` });
+  if (f.refinance) money.push({ label: "Refinance", value: pounds(f.refinance.loan), sub: `${f.refinance.pct}% of the value after works` });
+  const notNeeded = p.notNeeded.length > 0 ? ` Not needed from the photos: ${p.notNeeded.map((l) => l.toLowerCase()).join(", ")}.` : "";
+  return {
+    heading: `${LEVEL_LABELS[p.level]}${when}`,
+    metrics,
+    lines: p.lines.map((l) => ({ label: l.label, quantity: quantityLabel(l), cost: pounds(l.cost), status: l.status === "needed" ? "NEEDED" : "CAN'T TELL", reason: l.reason })),
+    worksNote: `Clearly needed ${pounds(p.works.neededLines)} and can't tell ${pounds(p.works.cantTellLines)}, before contingency; can't-tell lines are counted at the high end.${notNeeded} ${GARDEN_NOTE}`,
+    money,
+    mine: mine
+      ? {
+          line: mineVersusOurs(p, mine),
+          metrics: [
+            { label: "Your works", value: spanLabel(mine.works), sub: `ours ${spanLabel(p.works)}` },
+            { label: "Your value added", value: pounds(mine.valueAdded), sub: `ours ${pounds(p.valueAdded)}` },
+            { label: "Your cash needed", value: spanLabel(mine.cash), sub: `ours ${spanLabel(f.cash)}` },
+            ...(mine.moneyLeftIn ? [{ label: "Your money left in", value: spanLabel(mine.moneyLeftIn), sub: f.refinance ? `ours ${spanLabel(f.refinance.moneyLeftIn)}` : null }] : []),
+          ],
+        }
+      : null,
+    disclaimer: `${WORKS_DISCLAIMER} ${VALUE_DISCLAIMER}`,
   };
 }

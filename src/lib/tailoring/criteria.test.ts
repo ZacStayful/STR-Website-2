@@ -96,9 +96,15 @@ test('minimum profit: only a real answer sets it, and it is judged on the low en
   assert.deepEqual(memberFigures(f, p).range, range);
   assert.equal(keys(p, f).profit, `must:${range.lowPcm >= 300 ? 'pass' : 'fail'}`);
   assert.equal(keys(p, sale({ grossRevenue: null })).profit, 'must:unknown');
-  // A rent-to-rent answer judges on the rent-to-rent path.
-  assert.equal(wantsFor(profile({ path: 'r2r', finance }, { answered: { r2r_min_profit: real } })).minProfit, 300);
+  // A rent-to-rent answer is its own (Batch 17): it judges rentals, never sales.
+  const r2r = wantsFor(profile({ path: 'r2r', finance }, { answered: { r2r_min_profit: real } }));
+  assert.equal(r2r.minProfitR2r, 300, 'answered before the split, the one figure stands for both');
+  assert.equal(r2r.minProfit, null);
+  assert.equal(wantsFor(profile({ path: 'r2r', finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 900 } }, { answered: { r2r_min_profit: real } })).minProfitR2r, 900);
   assert.equal(wantsFor(profile({ path: 'r2r', finance }, { answered: { min_profit: real } })).minProfit, null, 'the buying question is not asked there');
+  const both = profile({ dealTypes: ['buy_str', 'r2r'], finance, r2r: { ...DEFAULT_GOALS.r2r, minMarginPcm: 100_000 } }, { answered: { min_profit: real, r2r_min_profit: real } });
+  assert.equal(keys(both, rental()).profit, 'must:fail', 'a rental on the rent-to-rent minimum');
+  assert.notEqual(keys(both, f).profit, 'must:fail', 'a sale on the buyer’s, not overwritten');
 });
 
 test('a cash buyer: no mortgage in their range or their cash needed, so the must-have agrees with "Most you can pay"', () => {
@@ -147,9 +153,9 @@ test('modes: the member’s switch wins, and motivated sellers follow the answer
   assert.equal(keys(p, sale({ motivationQualifies: false })).motivation, 'must:fail', 'no evidence is a miss, as it always was');
 });
 
-test('buyer answers left on another path judge nothing', () => {
-  const sourcer = profile({ path: 'source', sourcingKind: 'both', buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'flat', leaseholdOk: 'no', cashAvailable: 'u30' } });
-  assert.deepEqual(keys(sourcer, sale()), {});
+test('buyer answers left on a profile that no longer buys judge nothing', () => {
+  const r2rOnly = profile({ dealTypes: ['r2r'], sourcingKind: 'rent', buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'flat', leaseholdOk: 'no', cashAvailable: 'u30' } });
+  assert.deepEqual(keys(r2rOnly, sale()), {});
 });
 
 test('the judgement counts what the order and the match % read', () => {
@@ -186,8 +192,8 @@ test('a marketplace row as facts: rent a week in pcm, the area upper-cased, tenu
 test('the switches the profile page offers are the checks the answers make', () => {
   const p = profile({ path: 'buy', budget: 'u200', where: 'areas', bedrooms: 2, buyer: { ...DEFAULT_GOALS.buyer, propertyType: 'either', leaseholdOk: 'no', restrictedAreas: 'warn' } }, {}, ['NG']);
   assert.deepEqual([...activeCriteria(wantsFor(p))].sort(), ['bedrooms', 'budget', 'leasehold', 'location']);
-  assert.equal(criterionForQuestion('client_rent'), 'rent');
-  assert.equal(criterionForQuestion('condition'), null);
+  assert.equal(criterionForQuestion('max_rent'), 'rent');
+  assert.equal(criterionForQuestion('furnished'), null);
 });
 
 test('the daily pick meets a tailored profile’s must-haves; an untailored one is not tested', () => {
@@ -196,4 +202,66 @@ test('the daily pick meets a tailored profile’s must-haves; an untailored one 
   const listing = (amount: number) => ({ source: 'rightmove' as const, id: 'l', canonicalUrl: 'https://x/l', kind: 'sale' as const, title: 'House', address: null, postcode: null, outcode: 'NG7', postcodeArea: 'NG', lat: null, lng: null, bedrooms: 3, bathrooms: null, price: { amount, period: 'total' as const }, rawType: 'Terraced house', photo: null });
   assert.equal(test({ listing: listing(150_000), deal: null }), true);
   assert.equal(test({ listing: listing(250_000), deal: null }), false);
+});
+
+// ── Batch 17: each deal judged as its own type ──
+
+const PROJECT = { v: 1 as const, level: 'full' as const, price: 70_000, bedrooms: 3, worksLow: 26_620, worksHigh: 39_710, value: 127_800, valueAdded: 18_090, valueAddedPct: 14.2, ceilingApplied: false, months: 4, cashLow: 74_766, cashHigh: 87_856, moneyLeftInLow: 27_916, moneyLeftInHigh: 41_006, refinancePct: 75, estimatedAt: AT };
+const brrrDeal = (over: Partial<DealFacts> = {}): DealFacts => sale({ amount: 70_000, dealType: 'brrr', project: PROJECT, needsWork: true, ...over });
+const typed = (g: Partial<MarketGoals>, answered: TailoringProfile['answered'] = {}) => profile({ dealTypes: ['buy_str', 'brrr'], ...g }, { answered: { deal_types: real, ...answered } });
+
+test('a BRRR deal is judged on the project budget, before works; a Short-let deal on the budget', () => {
+  const p = typed({ budget: '200-350', brrr: { budget: 'u200', work: null } });
+  assert.equal(keys(p, brrrDeal()).budget, 'must:pass', '£70k inside the project budget');
+  assert.equal(keys(p, sale({ amount: 70_000 })).budget, 'must:fail', 'the same price is under the buy budget');
+  assert.equal(keys(p, brrrDeal({ amount: 240_000 })).budget, 'must:fail');
+  const noProjectBudget = typed({ budget: '200-350', brrr: { budget: null, work: null } });
+  assert.equal(keys(noProjectBudget, brrrDeal()).budget, undefined, 'no project budget, no check: the buy budget never judges a project');
+});
+
+test('a BRRR deal’s profit is after the works (after the refinance on a full project), low end, against the buyer’s minimum', () => {
+  const p = typed({ finance: { ...DEFAULT_GOALS.finance, targetMarginPcm: 400 } }, { min_profit: real });
+  const fig = memberFigures(brrrDeal(), p);
+  assert.ok(fig.range);
+  assert.equal(fig.range!.basis, 'short-let profit after the works');
+  // The refinance mortgage is on 75% of the value after works, not the price.
+  const onPrice = memberFigures(sale({ amount: 70_000 }), p).range!;
+  assert.ok(fig.range!.midPcm < onPrice.midPcm, 'a bigger loan after the refinance leaves less each month');
+  const verdict = fig.range!.lowPcm >= 400 ? 'must:pass' : 'must:fail';
+  assert.equal(keys(p, brrrDeal()).profit, verdict);
+  assert.equal(fig.cashRequired, PROJECT.cashLow, 'cash needed: the clearly needed works (unknown works never remove a deal)');
+  assert.equal(fig.cashOnCashPct, null);
+  // No income figure: the profit is unknown, never guessed.
+  assert.equal(keys(p, brrrDeal({ grossRevenue: null })).profit, 'must:unknown');
+});
+
+test('"How much work?" Light refresh matches light projects only; Full project and Either match both (Q24)', () => {
+  const light = typed({ brrr: { budget: null, work: 'light' } }, { brrr_work: real });
+  assert.equal(keys(light, brrrDeal()).work, 'must:fail', 'a full project for a light-refresh answer');
+  assert.equal(keys(light, brrrDeal({ project: { ...PROJECT, level: 'light' } })).work, 'must:pass');
+  assert.equal(keys(light, sale()).work, undefined, 'a Short-let deal is never judged on it');
+  for (const work of ['full', 'either'] as const) {
+    const p = typed({ brrr: { budget: null, work } }, { brrr_work: real });
+    assert.equal(keys(p, brrrDeal()).work, undefined, `${work}: both levels, so no check`);
+    assert.equal(activeCriteria(wantsFor(p)).has('work'), false);
+  }
+  assert.equal(activeCriteria(wantsFor(light)).has('work'), true);
+  assert.equal(criterionForQuestion('brrr_work'), 'work');
+  assert.equal(criterionForQuestion('brrr_budget'), 'budget');
+  // A profile that no longer wants BRRR is not judged on its old answer.
+  const gone = profile({ dealTypes: ['r2r'], brrr: { budget: null, work: 'light' } }, { answered: { deal_types: real, brrr_work: real } });
+  assert.equal(wantsFor(gone).brrrWork, null);
+});
+
+test('a pool row with a Project estimate reads as a BRRR deal; without, as its kind', () => {
+  const row = { kind: 'sale' as const, postcode_area: 'yo', bedrooms: 3, price_amount: 70_000, price_period: 'total', raw_type: 'End of terrace', tenure: 'Freehold', screening_gross: '24000', screening_confidence: 'medium', check_comps: null };
+  const f = factsFromRow({ ...row, project: PROJECT }, null, { qualifies: undefined, score: 0 });
+  assert.equal(f.dealType, 'brrr');
+  assert.equal(f.needsWork, true);
+  assert.equal(f.project?.worksHigh, 39_710);
+  const plain = factsFromRow(row, null, { qualifies: undefined, score: 0 });
+  assert.equal(plain.dealType, 'buy_str');
+  assert.equal(plain.project, null);
+  assert.equal(factsFromRow({ ...row, project: { junk: true } }, null, { qualifies: undefined, score: 0 }).dealType, 'buy_str', 'an unusable estimate is not a Project deal');
+  assert.equal(factsFromRow({ ...row, kind: 'rent', price_period: 'pcm', price_amount: 900, project: PROJECT }, null, { qualifies: undefined, score: 0 }).dealType, 'r2r');
 });

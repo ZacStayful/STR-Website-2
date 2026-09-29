@@ -51,8 +51,8 @@ export interface DealChecksSettings {
   perDay: number;
   /** Provider spend on checks a UK day, raw pence. */
   dailyCapPence: number;
-  /** Check slots a day by stream; spare slots pass to the other streams in this order. */
-  split: { top60: number; low_entry: number; r2r: number };
+  /** Check slots a day by stream; spare slots pass to the other streams in this order. Batch 17: `project`, the Project candidates' comparables. */
+  split: { top60: number; low_entry: number; r2r: number; project: number };
   /** Airbtics calls one check may make. */
   maxCallsPerCheck: number;
   /** A check's income stays good for re-screening a repriced or revived deal this many days. */
@@ -80,7 +80,7 @@ export const DEFAULT_DEAL_CONFIDENCE: DealConfidenceSettings = {
 export const DEFAULT_DEAL_CHECKS: DealChecksSettings = {
   perDay: 20,
   dailyCapPence: 100,
-  split: { top60: 6, low_entry: 8, r2r: 6 },
+  split: { top60: 6, low_entry: 8, r2r: 6, project: 5 },
   maxCallsPerCheck: 3,
   validDays: 180,
   shortlistExpiryDays: 7,
@@ -203,6 +203,7 @@ export function parseDealChecks(raw: unknown): DealChecksSettings {
     top60: { min: 0, max: 500, whole: true },
     low_entry: { min: 0, max: 500, whole: true },
     r2r: { min: 0, max: 500, whole: true },
+    project: { min: 0, max: 500, whole: true },
   });
   return { ...base, split };
 }

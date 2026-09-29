@@ -20,11 +20,15 @@ import { storedAreaRentTable } from '../broker/providers/internal';
 import { getBillingSettings } from '../credit/unit-costs';
 import { buildDealRecord, mergeSnapshotIntoListing, qualifiesForMarketplace, type AreaCardLike, type DealRecord, type DealRules, type StoredRent } from './record';
 import { dealChecksEnabled, readDealQualitySettings } from '../deal-quality/settings-server';
-import { checkOf, validCheckFor } from '../deal-quality/checks';
+import { checkOf, shortlistExpiryAt, validCheckFor } from '../deal-quality/checks';
 import { DEFAULT_DEAL_CHECKS } from '../deal-quality/config';
 import { retiredReasonFor } from './status';
 import { nextCheckDueAt, FAILED_CHECK_RETRY_MS, MAX_ENTRY_FAILURES } from './cadence';
 import type { DealRow, RetiredReason } from './types';
+import { cachedCohortLookup, type CohortLookup } from './cohorts-server';
+import { projectChecksOn, readProjectSettings } from '../project/settings-server';
+import { projectHoldFor } from '../project/hold';
+import { projectFactsOf } from '../project/check-plan';
 
 export const DEALS_TAG = 'marketplace-deals';
 
@@ -49,14 +53,26 @@ export interface ScreenContext {
   r2rBar: number;
   /** Batch 16: the auction terms and the low-entry bar every record is built under. */
   rules: DealRules;
+  /** Batch 17 (bug 1): the cached motivated-seller cohorts, so a rebuilt record keeps their signals. */
+  cohorts?: CohortLookup;
 }
 
-/** Batch 16's rules from billing_settings; the decided defaults when they cannot be read. */
+/**
+ * Batch 16's rules from billing_settings; the decided defaults when they
+ * cannot be read. Batch 17: the Project entry hold, with its settings (off
+ * whenever they cannot be read).
+ */
 export async function loadDealRules(): Promise<DealRules> {
   const enabled = dealChecksEnabled();
   try {
-    const q = await readDealQualitySettings(createAdminClient());
-    return { auctionTerms: q.auction, lowEntry: q.lowEntry, checks: { enabled, validDays: q.checks.validDays, shortlistExpiryDays: q.checks.shortlistExpiryDays } };
+    const admin = createAdminClient();
+    const [q, project] = await Promise.all([readDealQualitySettings(admin), readProjectSettings(admin)]);
+    return {
+      auctionTerms: q.auction,
+      lowEntry: q.lowEntry,
+      checks: { enabled, validDays: q.checks.validDays, shortlistExpiryDays: q.checks.shortlistExpiryDays },
+      project: { hold: projectChecksOn(project), settings: project },
+    };
   } catch (err) {
     console.warn('[marketplace] deal rules unreadable, using the defaults:', (err as Error)?.message ?? err);
     return { checks: { enabled, validDays: DEFAULT_DEAL_CHECKS.validDays, shortlistExpiryDays: DEFAULT_DEAL_CHECKS.shortlistExpiryDays } };
@@ -71,7 +87,13 @@ export async function loadScreenContext(snapshotWaitMs = 20_000): Promise<Screen
     return new Map<string, StoredRent>();
   });
   const [{ r2rQualifiedProfit: r2rBar }, rules] = await Promise.all([getBillingSettings(), loadDealRules()]);
-  return { cards, cardByCode: new Map(cards.map((c) => [c.code, c as AreaCardLike])), rentTable, r2rBar, rules };
+  let cohorts: CohortLookup | undefined;
+  try {
+    cohorts = cachedCohortLookup(createAdminClient());
+  } catch {
+    cohorts = undefined;
+  }
+  return { cards, cardByCode: new Map(cards.map((c) => [c.code, c as AreaCardLike])), rentTable, r2rBar, rules, cohorts };
 }
 
 /**
@@ -196,6 +218,8 @@ export async function retireDeal(admin: Admin, canonicalUrl: string, reason: Ret
 
 export type LiveOutcome =
   | { kind: 'live'; deal: DealRow; listing: SourcedListing; snapshot: ListingSnapshot }
+  /** Batch 17: its page says it needs work, so it waits for its Project check instead of going live. */
+  | { kind: 'held' }
   | { kind: 'retired'; reason: RetiredReason }
   | { kind: 'paused' }
   | { kind: 'failed'; code: string };
@@ -223,6 +247,11 @@ export function priceChangeColumns(deal: DealRow, rec: DealRecord, nowIso: strin
  * it has gone or cannot be short let, re-screen it at the page's price, and
  * otherwise mark it live and checked. Shared by the hourly recheck and the
  * paid open, so the two can never disagree about what a page means.
+ *
+ * Batch 17: the rebuilt record keeps its motivated-seller cohort signals
+ * (bug 1), and a sale on its entry read (pending_verify) whose page says it
+ * needs work goes to the Project hold instead of live (hold.ts), while the
+ * hold is on. A live deal is never flipped by a recheck.
  */
 export async function applyLiveResult(admin: Admin, deal: DealRow, listing: SourcedListing, res: ResolveOutcome, ctx: ScreenContext, now: Date = new Date()): Promise<LiveOutcome> {
   const nowIso = now.toISOString();
@@ -259,15 +288,43 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   const card = (merged.postcodeArea ? ctx.cardByCode.get(merged.postcodeArea) : null) ?? (deal.postcode_area ? ctx.cardByCode.get(deal.postcode_area) : null) ?? null;
   // Batch 16: a check still good for the listing the page describes keeps its figure; otherwise the area figures, as before.
   const check = validCheckFor(checkOf(deal.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
-  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, now });
+  const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, deal.postcode_area, deal.canonical_url) : null;
+  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, cohort, now });
   if (!qualifiesForMarketplace(rec)) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
     return { kind: 'retired', reason: 'unqualified' };
   }
+  const project = ctx.rules.project;
+  const hold =
+    project?.hold && deal.status === 'pending_verify' && merged.kind === 'sale'
+      ? projectHoldFor(
+          {
+            kind: 'sale',
+            needsWork: merged.needsWork,
+            auction: merged.auction,
+            fetchable: true,
+            pageExclusion: merged.projectExclusion ?? null,
+            texts: [],
+            tenure: merged.tenure,
+            yearsRemainingOnLease: merged.yearsRemainingOnLease,
+            listedFlag: merged.listedBuilding,
+            price: rec.priceAmount,
+            facts: projectFactsOf(merged),
+          },
+          project.settings,
+        )
+      : { kind: 'none' as const };
+  if (hold.kind === 'retire') {
+    await retireDeal(admin, deal.canonical_url, hold.reason, now);
+    return { kind: 'retired', reason: hold.reason };
+  }
+  const held = hold.kind === 'hold';
   const { columns: priceCols } = priceChangeColumns(deal, rec, nowIso);
   const update: Record<string, unknown> = {
     ...recordColumns(merged, rec),
     ...priceCols,
+    // Batch 17: the renovation wording (our phrase keys) for the Project ranking; written where the column exists.
+    ...(merged.kind === 'sale' ? { needs_work: merged.needsWork && merged.needsWork.phrases.length > 0 ? merged.needsWork : null } : {}),
     photos: s.photos.length > 0 ? s.photos : (deal.photos ?? null),
     status: 'live',
     last_seen_at: nowIso,
@@ -278,9 +335,22 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
     check_requested_at: null,
     check_failures: 0,
     updated_at: nowIso,
+    // Batch 17: held for its Project check instead (on Batch 16's shortlist, until its expiry), keeping its comparables check.
+    ...(held
+      ? {
+          status: 'pending_check',
+          stream: 'project',
+          next_check_due_at: shortlistExpiryAt(now, { shortlistExpiryDays: ctx.rules.checks?.shortlistExpiryDays ?? DEFAULT_DEAL_CHECKS.shortlistExpiryDays }),
+        }
+      : {}),
   };
-  const { data, error } = await writeWithoutMissing(update, (u) => admin.from('marketplace_deals').update(u).eq('canonical_url', deal.canonical_url).select(DEAL_COLUMNS).maybeSingle(), 'marketplace');
+  // Batch 17: the hold is written only while the row is as it was read (a sweep may have retired it meanwhile); the live write is as it always was.
+  const { data, error } = await writeWithoutMissing(update, (u) => {
+    const q = admin.from('marketplace_deals').update(u).eq('canonical_url', deal.canonical_url);
+    return (held ? q.eq('status', deal.status) : q).select(DEAL_COLUMNS).maybeSingle();
+  }, 'marketplace');
   if (error) console.error('[marketplace] live update failed:', error.message);
+  if (held) return error ? { kind: 'failed', code: 'write' } : data ? { kind: 'held' } : { kind: 'failed', code: 'changed' };
   return { kind: 'live', deal: ((data as unknown as DealRow | null) ?? { ...deal, ...(update as Partial<DealRow>) }) as DealRow, listing: merged, snapshot: s };
 }
 

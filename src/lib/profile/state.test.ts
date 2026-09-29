@@ -22,25 +22,28 @@ test('a new member: nothing answered, the first question next, the gate closed',
   assert.equal(p.next, 'roles');
   assert.equal(p.complete, false);
   assert.equal(p.mandatoryDone, false);
-  assert.deepEqual(p.mandatory, ['roles', 'where']);
+  assert.deepEqual(p.mandatory, ['roles', 'deal_types', 'where']);
+  assert.deepEqual(p.types, [], 'no deal types yet, and nothing throws');
   assert.ok(p.minutesLeft >= 1);
   assert.equal(pillLabel(p), 'Profile 0%');
 });
 
 test('answers move the bar, "Not sure" counts for the bar but not as real, and the last one completes it', () => {
   let a = answer(fresh(), 'roles', ['investor']);
+  a = answer(a, 'deal_types', ['buy_str']);
   a = answer(a, 'where', { mode: 'anywhere' });
   a = answer(a, 'budget', 'u200');
-  const marks: AnsweredMap = { roles: { at: AT, notSure: false }, where: { at: AT, notSure: false }, budget: { at: AT, notSure: false } };
+  const marks: AnsweredMap = { roles: { at: AT, notSure: false }, deal_types: { at: AT, notSure: false }, where: { at: AT, notSure: false }, budget: { at: AT, notSure: false } };
   let p = progress(a, quiz(marks));
-  assert.equal(p.mandatoryDone, true, 'the three mandatory answers open the app');
-  assert.deepEqual(p.mandatory, ['roles', 'where', 'budget']);
-  assert.equal(p.next, 'deals_done', 'straight on to question 4');
-  assert.equal(p.answered.length, 3);
-  assert.equal(p.real, 3);
+  assert.equal(p.mandatoryDone, true, 'the mandatory answers open the app');
+  assert.deepEqual(p.mandatory, ['roles', 'deal_types', 'where', 'budget']);
+  assert.deepEqual(p.types, ['buy_str']);
+  assert.equal(p.next, 'deals_done', 'straight on to question 5');
+  assert.equal(p.answered.length, 4);
+  assert.equal(p.real, 4);
   const total = questionsFor(a).length;
-  assert.equal(p.percent, Math.round((3 / total) * 100));
-  assert.equal(p.minutesLeft, Math.ceil(((total - 3) * SECONDS_PER_QUESTION) / 60));
+  assert.equal(p.percent, Math.round((4 / total) * 100));
+  assert.equal(p.minutesLeft, Math.ceil(((total - 4) * SECONDS_PER_QUESTION) / 60));
 
   for (const q of questionsFor(a)) marks[q.id] = marks[q.id] ?? { at: AT, notSure: q.id === 'bedrooms' };
   p = progress(a, quiz(marks));
@@ -66,14 +69,17 @@ test('a question that stops applying drops out of the count; marks for it are ig
   assert.ok(!none.answered.includes('unit_areas'));
 });
 
-test('the mandatory questions widen when a second role or "just exploring" needs a follow-up', () => {
-  const two = answer(fresh(), 'roles', ['investor', 'r2r']);
-  const p = progress(two, quiz({ roles: { at: AT, notSure: false }, where: { at: AT, notSure: false } }));
-  assert.deepEqual(p.mandatory, ['roles', 'main_role', 'where']);
+test('the mandatory questions are one money question per chosen type (Q27)', () => {
+  const marks: AnsweredMap = { roles: { at: AT, notSure: false }, deal_types: { at: AT, notSure: false }, where: { at: AT, notSure: false } };
+  const two = answer(answer(fresh(), 'roles', ['investor', 'r2r']), 'deal_types', ['buy_str', 'r2r']);
+  const p = progress(two, quiz(marks));
+  assert.deepEqual(p.mandatory, ['roles', 'deal_types', 'where', 'budget', 'max_rent']);
   assert.equal(p.mandatoryDone, false);
-  assert.equal(p.next, 'main_role');
+  assert.equal(p.next, 'budget');
+  const all = answer(two, 'deal_types', ['all']);
+  assert.deepEqual(progress(all, quiz(marks)).mandatory, ['roles', 'deal_types', 'where', 'budget', 'brrr_budget', 'max_rent'], 'All: three budgets, each asked once');
   const exploring = answer(fresh(), 'roles', ['exploring']);
-  assert.deepEqual(progress(exploring, EMPTY_QUIZ).mandatory, ['roles', 'exploring_pick', 'where']);
+  assert.deepEqual(progress(exploring, EMPTY_QUIZ).mandatory, ['roles', 'deal_types', 'where'], 'no follow-up role question any more');
 });
 
 test('a member from before the quiz is seeded from what they already told us', () => {
@@ -82,7 +88,8 @@ test('a member from before the quiz is seeded from what they already told us', (
   assert.deepEqual(answers.about.roles, ['investor']);
   assert.equal(answers.goals.path, 'buy');
   assert.equal(answers.goals.where, 'near');
-  assert.deepEqual(Object.keys(answered).sort(), ['bedrooms', 'budget', 'finance', 'roles', 'where']);
+  assert.deepEqual(Object.keys(answered).sort(), ['bedrooms', 'budget', 'deal_types', 'finance', 'roles', 'where']);
+  assert.deepEqual(answers.goals.dealTypes, ['buy_str']);
   assert.equal(answered.budget?.notSure, false);
   const p = progress(answers, quiz(answered));
   assert.equal(p.mandatoryDone, true, 'never blocked: they answered the welcome questions');
@@ -98,15 +105,16 @@ test('seeding: "not sure yet" on money counts as answered but not real; both kin
   assert.equal(r.answered.max_rent?.notSure, true);
   assert.equal(progress(r.answers, quiz(r.answered)).mandatoryDone, true);
 
-  const both = seedFromGoals(emptyAnswers(parseMarketGoals({ version: 1, sourcingKind: 'both' })!, null, []), NOW);
+  const both = seedFromGoals(emptyAnswers(parseMarketGoals({ version: 1, sourcingKind: 'both', finance: { targetMarginPcm: 700 } })!, null, []), NOW);
   assert.deepEqual(both.answers.about.roles, ['investor', 'r2r']);
-  assert.equal(both.answers.about.mainRole, null);
-  assert.equal(both.answers.goals.path, null);
+  assert.deepEqual(both.answers.goals.dealTypes, ['buy_str', 'r2r']);
   assert.equal(both.answers.goals.where, 'anywhere');
-  assert.equal(both.answered.budget, undefined, 'no money question until the main role is known');
+  assert.equal(both.answered.budget?.notSure, true, 'a money question per type, "not sure yet" as then');
+  assert.equal(both.answered.max_rent?.notSure, true);
+  assert.equal(both.answers.goals.r2r.minMarginPcm, 700, 'the one minimum they gave then is the rent-to-rent one too');
   const p = progress(both.answers, quiz(both.answered));
-  assert.equal(p.mandatoryDone, false);
-  assert.equal(p.next, 'main_role', 'the one thing the old questions never asked');
+  assert.equal(p.mandatoryDone, true);
+  assert.equal(p.next, 'deals_done');
 });
 
 test('quiz rows and marks are read tolerantly', () => {

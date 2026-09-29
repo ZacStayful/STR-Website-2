@@ -12,7 +12,7 @@ import { createAdminClient } from '../supabase/admin';
 import { FEEDBACK_WINDOW_MS, toPickFeedback } from '../listing/rank';
 import { parseScreening, type Screening } from '../listing/screen';
 import type { SourcedListing } from '../listing/sourcing';
-import type { PickFeedback } from '../listing/picks';
+import { withoutKindFlips, type PickFeedback } from '../listing/picks';
 import { mergeFeedback, type FeedbackEntry } from '../marketplace/reactions';
 import { dealFeedbackFor } from '../marketplace/reactions-server';
 
@@ -63,5 +63,6 @@ export async function feedbackForMember(admin: Admin, userId: string, now: Date 
     feedback: toPickFeedback(r, listings.get(r.canonical_url) ?? null, screening.get(r.canonical_url) ?? null),
   }));
   const grid = await dealFeedbackFor(admin, [userId], since, { byProfile: Boolean(profileId) });
-  return mergeFeedback(pickEntries, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []);
+  // Batch 17 (Q25): "rent-to-rent, not buying" added the type when it was given; it never switches Today's kind.
+  return withoutKindFlips(mergeFeedback(pickEntries, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []));
 }

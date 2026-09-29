@@ -396,7 +396,7 @@ export function registerTools(server: McpServer, access: ApiAccess): string[] {
           postcode: z.string().describe('UK postcode.'),
           bedrooms: z.number().int().min(1).max(20),
           guests: z.number().int().min(1).max(40).optional(),
-          purchasePrice: z.number().min(0).optional().describe('For the buy-to-let maths.'),
+          purchasePrice: z.number().min(0).optional().describe('The asking price, for the maths on buying it to run as a short let.'),
           rentPcm: z.number().min(0).optional().describe('Monthly rent, for a rent-to-rent deal instead.'),
         },
         annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },

@@ -11,12 +11,16 @@ import { ReasonChips } from "@/components/PickReasonChips";
 import { BAND_LABELS } from "@/lib/listing/screen";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { profitRange, rangeCaption, upliftTag, type ProfitRangeInput } from "@/lib/marketplace/profit-range";
+import { projectCardsByUrl } from "@/lib/marketplace/queries";
+import { projectNumbersFor, projectRangeLine } from "@/lib/project/display";
+import type { ProjectCardData } from "@/lib/project/headline";
 import { formatListingPrice } from "@/lib/listing/format";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { motivationLabel } from "@/lib/listing/motivation";
 import { myDealsFocusPath } from "@/lib/listing/return-path";
 import { NAV_TARGETS, GOALS_EDITOR_HREF } from "@/lib/nav";
 import { savePickAction, reactToPickAction } from "./actions";
+import { describeTypes } from "@/lib/profile/deal-types";
 
 export const metadata: Metadata = {
   title: "Daily picks — Stayful Intelligence",
@@ -61,6 +65,8 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
   if (!user) return null;
 
   const [picks, enabled, profileRes, settings] = await Promise.all([loadPicks(user.id), picksEnabled(user.id), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), getBillingSettings()]);
+  // Batch 17: a pick that is a Project deal shows its own numbers.
+  const projects = (await projectCardsByUrl(picks.filter((p) => p.kind !== "rent").map((p) => p.listing.canonicalUrl))) ?? new Map<string, ProjectCardData>();
   const goals = parseMarketGoals(profileRes.data?.market_goals);
   // Saved profiles (Batch 13): each pick says which profile it was for, once the member has two.
   const [saved, pickTags] = await Promise.all([profilesFor(user.id), pickProfileTags(user.id, picks.map((p) => p.id))]);
@@ -97,7 +103,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
                 {chips.map((c) => (
                   <span key={c} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{c}</span>
                 ))}
-                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{goals.sourcingKind === "both" ? "Buy or rent-to-rent" : goals.sourcingKind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{goals.dealTypes && goals.dealTypes.length > 0 ? describeTypes(goals.dealTypes) : goals.sourcingKind === "both" ? "Buy or rent-to-rent" : goals.sourcingKind === "rent" ? "Rent-to-rent" : "To buy"}</span>
               </p>
             </>
           ) : (
@@ -143,7 +149,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
         ) : (
           <ul className="space-y-3">
             {rows.map((p) => (
-              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={(profileOf(p.id)?.goals ?? goals)?.finance ?? null} widths={settings.dealPricing.profitRangePct} profileName={showProfiles && profileOf(p.id) ? profileLabel(profileOf(p.id)!) : null} />
+              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={(profileOf(p.id)?.goals ?? goals)?.finance ?? null} widths={settings.dealPricing.profitRangePct} profileName={showProfiles && profileOf(p.id) ? profileLabel(profileOf(p.id)!) : null} project={p.kind === "rent" ? null : projects.get(p.listing.canonicalUrl) ?? null} />
             ))}
           </ul>
         )}
@@ -152,12 +158,14 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
   );
 }
 
-function PickCard({ pick: p, tab, showReasons, finance, widths, profileName = null }: { pick: PickView; tab: Tab; showReasons: boolean; finance: ProfitRangeInput["finance"]; widths: ProfitRangeInput["widths"]; profileName?: string | null }) {
+function PickCard({ pick: p, tab, showReasons, finance, widths, profileName = null, project = null }: { pick: PickView; tab: Tab; showReasons: boolean; finance: ProfitRangeInput["finance"]; widths: ProfitRangeInput["widths"]; profileName?: string | null; project?: ProjectCardData | null }) {
   const l = p.listing;
   const price = l.price ? formatListingPrice(l.price) : null;
   // Batch 10: the profit as an area-estimate range at the member's finance; the exact figure comes with a Full analysis.
   const range = profitRange({ kind: p.kind === "rent" ? "rent" : "sale", priceAmount: l.price?.amount ?? null, pricePeriod: l.price?.period ?? null, bedrooms: l.bedrooms, grossRevenue: p.screening?.grossRevenue?.value ?? null, confidence: p.screening?.confidence ?? null, finance, widths });
-  const uplift = p.screening?.kind === "purchase" ? upliftTag(p.screening.upliftPct) : null;
+  const uplift = p.screening?.kind === "purchase" && !project ? upliftTag(p.screening.upliftPct) : null;
+  // Batch 17: a Project deal's own line: profit after works, value added, works, cash needed.
+  const projectLine = project ? projectRangeLine(projectNumbersFor({ screening_gross: p.screening?.grossRevenue?.value ?? null, screening_confidence: p.screening?.confidence ?? null, check_comps: p.screening?.check?.compCount ?? null }, project, finance, widths)) : null;
   return (
     <li className="rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap gap-4">
@@ -165,9 +173,9 @@ function PickCard({ pick: p, tab, showReasons, finance, widths, profileName = nu
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-foreground">{l.address ?? l.title}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), profileName ? `For ${profileName}` : null, p.kind === "rent" ? "Rent-to-rent" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
+            {[new Date(p.sentAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), profileName ? `For ${profileName}` : null, p.kind === "rent" ? "Rent-to-rent" : project ? "Project" : "To buy", l.bedrooms !== null ? `${l.bedrooms} bed` : null, l.rawType, price, p.areaName].filter(Boolean).join(" · ")}
           </p>
-          {range && <p className="mt-1 text-xs font-medium text-primary">{range.label} · {rangeCaption(p.screening?.check?.compCount)}, {range.basis}{uplift ? ` · ${uplift}` : ""}</p>}
+          {projectLine ? <p className="mt-1 text-xs font-medium text-primary">{projectLine}</p> : range && <p className="mt-1 text-xs font-medium text-primary">{range.label} · {rangeCaption(p.screening?.check?.compCount)}, {range.basis}{uplift ? ` · ${uplift}` : ""}</p>}
           {p.screening && p.screening.band !== "insufficient-data" && <p className="mt-1.5 text-xs font-semibold text-foreground">{BAND_LABELS[p.screening.band]}</p>}
           {p.motivation && p.motivation.fired.length > 0 && (
             <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Why this one">

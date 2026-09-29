@@ -11,6 +11,9 @@ import { formatPence } from "@/lib/credit/deal-pricing";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { rangeCaption, rangeFromScreening } from "@/lib/marketplace/profit-range";
 import { checkOf } from "@/lib/deal-quality/checks";
+import { parseScreening } from "@/lib/listing/screen";
+import { projectCardsFor } from "@/lib/marketplace/queries";
+import { kindWordFor, projectNumbersFor, projectRangeLine } from "@/lib/project/display";
 
 export const metadata: Metadata = { title: "Opened deals — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -26,6 +29,11 @@ const REASONS: Record<string, string> = {
   stale_unseen: "not seen for weeks",
   unverifiable: "could not be checked",
   admin: "removed by Stayful",
+  // Batch 17.
+  not_project: "the works no longer add enough value",
+  project_excluded: "ruled out as a project",
+  project_no_evidence: "too few sold prices to value it",
+  project_uncheckable: "its condition could not be checked",
 };
 
 /** Every deal the member has opened, live or gone. An open is forever. */
@@ -44,6 +52,8 @@ export default async function OpenedDealsPage() {
     const { data } = await createAdminClient().from("credit_transactions").select("id, amount_pence").in("id", txIds.slice(0, 500));
     for (const t of (data ?? []) as { id: number; amount_pence: number | string }[]) paid.set(Number(t.id), Math.abs(Number(t.amount_pence) || 0));
   }
+  // Batch 17: an opened Project deal shows its own numbers.
+  const projects = await projectCardsFor(rows.map((r) => r.deal?.id).filter((id): id is string => typeof id === "string"));
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -60,6 +70,9 @@ export default async function OpenedDealsPage() {
             {rows.map(({ open, deal }) => {
               const area = deal?.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
               const range = deal ? rangeFromScreening(deal, finance, settings.dealPricing.profitRangePct) : null;
+              const project = deal ? projects.get(deal.id) ?? null : null;
+              const sc = project && deal ? parseScreening(deal.screening) : null;
+              const projectLine = project && deal ? projectRangeLine(projectNumbersFor({ screening_gross: sc?.grossRevenue?.value ?? null, screening_confidence: sc?.confidence ?? null, check_comps: checkOf(deal.screening)?.compCount ?? null }, project, finance, settings.dealPricing.profitRangePct)) : null;
               // What the open itself cost. The daily pick under daily deals is linked to that day's charge but cost nothing itself: "included".
               const paidPence = open.transaction_id !== null && Number(open.charged_base_pence) > 0 ? paid.get(Number(open.transaction_id)) ?? null : null;
               const gone = deal?.status === "retired";
@@ -71,7 +84,7 @@ export default async function OpenedDealsPage() {
                         {deal ? [deal.town, area?.name && area.name !== deal.town ? area.name : null, deal.outcode].filter(Boolean).join(" · ") : "Deal"}
                       </Link>
                       <p className="text-xs text-muted-foreground">
-                        {[deal ? (deal.kind === "rent" ? "Rent-to-rent" : "To buy") : null, deal?.bedrooms ? `${deal.bedrooms} bed` : null, deal ? priceLine(deal) : null, range ? `${range.label} ${rangeCaption(deal ? checkOf(deal.screening)?.compCount : null)}` : null].filter(Boolean).join(" · ")}
+                        {[deal ? kindWordFor({ kind: deal.kind, project }) : null, deal?.bedrooms ? `${deal.bedrooms} bed` : null, deal ? priceLine(deal) : null, projectLine ?? (range ? `${range.label} ${rangeCaption(deal ? checkOf(deal.screening)?.compCount : null)}` : null)].filter(Boolean).join(" · ")}
                       </p>
                     </div>
                     <div className="text-right text-xs">

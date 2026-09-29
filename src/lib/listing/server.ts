@@ -42,8 +42,11 @@ async function writeSnapshot(snap: ListingSnapshot): Promise<void> {
 /**
  * Turns a pasted URL into a snapshot + analyser prefill. `html` is supplied
  * by the browser extension (Part 2) for sites we cannot fetch ourselves.
+ * `onHtml` (Batch 17) is handed the page when the server fetched it, for a
+ * caller that reads more of it than the snapshot keeps (the Project check's
+ * photos); it is never stored.
  */
-export async function resolveListing(url: string, opts: { html?: string; refresh?: boolean } = {}): Promise<ResolveOutcome> {
+export async function resolveListing(url: string, opts: { html?: string; refresh?: boolean; onHtml?: (html: string) => void } = {}): Promise<ResolveOutcome> {
   const detected = detectListingUrl(url);
   if (!detected) return { ok: false, code: 'unsupported_url', message: 'That does not look like a Rightmove, OnTheMarket, Zoopla, Airbnb or Booking.com listing page.', detected: null };
 
@@ -65,6 +68,7 @@ export async function resolveListing(url: string, opts: { html?: string; refresh
         return map[fetched.reason] ?? { ok: false, code: 'blocked', message: `${SOURCE_LABELS[detected.source]} did not let us read that page. Enter the details manually for now.`, detected };
       }
       html = fetched.html;
+      opts.onHtml?.(html);
     }
     snapshot = parseListing(detected.source, html, { id: detected.id, canonicalUrl: detected.canonicalUrl });
     if (!snapshot) {

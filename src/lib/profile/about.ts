@@ -132,6 +132,20 @@ export function pathFor(about: AboutYou): ProfilePath | null {
   }
 }
 
+/**
+ * The job a member's card numbers are read for (Batch 17, Q23): someone who
+ * only sources, or only manages, keeps the numbers their work runs on;
+ * anyone who also invests or runs rent-to-rent (or is just exploring) gets
+ * the numbers for each deal's own type. Management first, as before.
+ */
+export function jobRole(about: AboutYou | null | undefined): 'sourcer' | 'manager' | null {
+  const r = about?.roles ?? [];
+  if (r.includes('investor') || r.includes('r2r')) return null;
+  if (r.includes('manager')) return 'manager';
+  if (r.includes('sourcer')) return 'sourcer';
+  return null;
+}
+
 /** Hands-on and part-time members run it themselves; hands-off ones want a manager's fees in the numbers. */
 export const TIME_TO_MANAGEMENT: Record<AboutOption<'time'>, Management> = { hands_on: 'self', part_time: 'self', hands_off: 'managed' };
 

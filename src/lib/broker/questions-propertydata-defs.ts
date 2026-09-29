@@ -15,6 +15,8 @@ import {
   type KeyStatsRow,
   type ListedBuilding,
   type MortgageRates,
+  type PdSoldSale,
+  type PdSoldType,
   type RentValuation,
   type RentValuationOptions,
   type SaleValuation,
@@ -56,6 +58,8 @@ export interface PdClient {
   floodRisk(postcode: string): Promise<FloodRisk | null>;
   designation(postcode: string, field: DesignationField): Promise<Designation | null>;
   listedBuildings(postcode: string): Promise<ListedBuilding[] | null>;
+  /** Batch 17: up to 100 sales of this type near the postcode in the last `maxAgeMonths`. */
+  soldPrices(postcode: string, type: PdSoldType | null, maxAgeMonths: number, from: { lat: number; lng: number } | null): Promise<PdSoldSale[] | null>;
   demand(outcode: string, kind: DemandKind): Promise<DemandSnapshot | null>;
   keyStats(region: string): Promise<KeyStatsRow[] | null>;
 }
@@ -106,6 +110,15 @@ export interface RegionParams {
   region: string;
 }
 
+/** Batch 17: a Project deal's sold-price evidence: its postcode, type and window (the point fixes the distances). */
+export interface SoldPricesParams {
+  postcode: string;
+  type: PdSoldType | null;
+  maxAgeMonths: number;
+  /** The subject's own point, for sales PropertyData gives no distance for; never part of the key. */
+  from?: { lat: number; lng: number } | null;
+}
+
 export interface PdQuestions {
   pdFloorAreas: Question<PostcodeParams, FloorAreaEntry[]>;
   pdLongLetRent: Question<LongLetRentParams, LongLetRentAnswer>;
@@ -120,6 +133,7 @@ export interface PdQuestions {
   pdAonb: Question<PostcodeParams, Designation>;
   pdNationalPark: Question<PostcodeParams, Designation>;
   pdListedBuildings: Question<PostcodeParams, ListedBuilding[]>;
+  pdSoldPrices: Question<SoldPricesParams, PdSoldSale[]>;
   pdDemandSale: Question<OutcodeParams, DemandSnapshot>;
   pdDemandRent: Question<OutcodeParams, DemandSnapshot>;
   pdRegionKeyStats: Question<RegionParams, KeyStatsRow[]>;
@@ -214,6 +228,14 @@ export function pdQuestions(client: PdClient): PdQuestions {
     pdAonb: postcodeQuestion('pdAonb', TTL.pdPostcode, (postcode) => client.designation(postcode, 'aonb')),
     pdNationalPark: postcodeQuestion('pdNationalPark', TTL.pdPostcode, (postcode) => client.designation(postcode, 'national_park')),
     pdListedBuildings: postcodeQuestion('pdListedBuildings', TTL.pdPostcode, (postcode) => client.listedBuildings(postcode)),
+
+    // Batch 17: one call per postcode, type and window, cached 30 days; the
+    // radius steps and the bedrooms fallback are the costing's (project/value.ts).
+    pdSoldPrices: {
+      name: 'pdSoldPrices',
+      key: (p) => `${normalisePostcode(p.postcode)}|${p.type ?? 'any'}|${p.maxAgeMonths}`,
+      rungs: [{ provider: 'propertydata', level: 3, costPence: COST_PENCE.propertydataCall, ttlMs: TTL.pdSoldPrices, run: (p) => client.soldPrices(normalisePostcode(p.postcode), p.type, p.maxAgeMonths, p.from ?? null) }],
+    },
 
     pdDemandSale: {
       name: 'pdDemandSale',

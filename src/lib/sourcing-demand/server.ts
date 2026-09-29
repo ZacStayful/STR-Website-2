@@ -140,7 +140,7 @@ export async function loadDemandInputs(admin: Admin, settings: Pick<DemandSettin
     // A suspended seat cannot use the app on the owner's account, so it steers nothing.
     if (payer?.suspended) continue;
     kept.push(r);
-    members.push({ id: r.id, email: r.email, lastSeenAt: r.last_seen_at, payerId: payer?.payerId ?? r.id, paying: false, unitAreas: parseAboutYou(r.about_you)?.unitAreas ?? [], switchedOff: off.has(r.id) });
+    members.push({ id: r.id, email: r.email, lastSeenAt: r.last_seen_at, payerId: payer?.payerId ?? r.id, paying: false, unitAreas: parseAboutYou(r.about_you)?.unitAreas ?? [], roles: parseAboutYou(r.about_you)?.roles ?? [], switchedOff: off.has(r.id) });
   }
   const paying = await payingNow(admin, [...new Set(members.map((m) => m.payerId))]);
   for (const m of members) m.paying = paying.has(m.payerId);

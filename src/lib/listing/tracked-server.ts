@@ -25,6 +25,7 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { payerFor, teamOf } from '../team';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
+import { projectCardsFor } from '../marketplace/queries';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { loadSourcedListings } from '../marketplace/server';
@@ -137,7 +138,9 @@ async function loadCards(admin: Admin, ids: string[], urls: string[]): Promise<M
     ...(await chunked<Row>('deals by id', ids, (some) => admin.from('marketplace_deals').select(cols).in('id', some))),
     ...(await chunked<Row>('deals by url', urls, (some) => admin.from('marketplace_deals').select(cols).in('canonical_url', some))),
   ];
-  for (const { photo, ...card } of rows) out.set(card.id, { ...card, has_photo: Boolean(photo) });
+  // Batch 17: a Project deal carries its own numbers (read on its own: the column may not be there yet).
+  const projects = await projectCardsFor(rows.filter((r) => r.kind === 'sale').map((r) => r.id));
+  for (const { photo, ...card } of rows) out.set(card.id, { ...card, has_photo: Boolean(photo), ...(projects.has(card.id) ? { project: projects.get(card.id)! } : {}) });
   return out;
 }
 

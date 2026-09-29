@@ -14,14 +14,14 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from "../access";
 import { dealVisibility, dealVisible, PAID_VISIBILITY } from "../marketplace/visibility";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, withinTypeBudget, listingAge, medianAgeDays, rentPcm, areaRevenueFor, listingNeedsWork, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, addUnlocked, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, addUnlocked, withoutKindFlips, type PickBasis, type PickFeedback } from "./picks";
 import { rankForMember, toPickFeedback, FEEDBACK_WINDOW_MS } from "./rank";
 import { missedRowFor } from "./picks-paused";
 import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
@@ -44,7 +44,9 @@ import { capDay, newSendToken, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
-import { cardRangeLine, profitRange } from "../marketplace/profit-range";
+import { profitRange } from "../marketplace/profit-range";
+import { projectNumbersFor, projectRangeLine, rangeLineFor } from "../project/display";
+import type { ProjectCardData } from "../project/headline";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
 import { allProfilesFor } from "../profiles/server";
@@ -59,6 +61,10 @@ import type { TailoringProfile } from "../tailoring/profile";
 import { wantsActFast } from "../tailoring/about-prompts";
 import { sendParts } from "../tailoring/email-answers";
 import { memberFinance } from "../marketplace/most-you-can-pay";
+import { projectCardsByUrl } from "../marketplace/queries";
+import { projectChecksOn, readProjectSettings } from "../project/settings-server";
+import { projectClearedUrls } from "../project/read-server";
+import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -150,6 +156,12 @@ const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
 
+/** Batch 17: a Project pick's line and value added for its email, at the profile's finance. */
+function pickProjectLine(project: ProjectCardData, screening: { grossRevenue?: { value?: number | null } | null; confidence?: string | null; check?: { compCount?: number | null } | null } | null, finance: Parameters<typeof projectNumbersFor>[2], widths: Parameters<typeof projectNumbersFor>[3]): { line: string; valueAdded: string } {
+  const n = projectNumbersFor({ screening_gross: screening?.grossRevenue?.value ?? null, screening_confidence: screening?.confidence ?? null, check_comps: screening?.check?.compCount ?? null }, project, finance, widths);
+  return { line: projectRangeLine(n), valueAdded: n.valueAdded };
+}
+
 function maxQueries(): number {
   const n = Number(process.env.SOURCING_MAX_QUERIES_PER_RUN ?? 150);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 150;
@@ -200,7 +212,8 @@ interface Member {
 }
 
 type Candidate = { listing: SourcedListing; deal: ReturnType<typeof dealForSourced>; areaFit: number | null; areaName: string; motivation?: Motivation | null; motivationQualifies?: boolean; screening?: Screening | null };
-type Verdict = Exclude<Suitability, "unknown"> | "unverified" | "gone";
+/** Batch 17: "project", a sale whose page says it needs work while the Project hold is on: a Project deal or nothing. */
+type Verdict = Exclude<Suitability, "unknown"> | "unverified" | "gone" | "project";
 
 export interface RunOptions {
   /** Report who would get what; write and send nothing. */
@@ -266,6 +279,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // sheet and is charged the deal's ladder price, not the flat pick price.
   const settings = await getBillingSettings();
   const ladder = settings.dealOpenLadder;
+  // Batch 17: while the Project hold is on, a sale whose own words say it
+  // needs work is a Project deal or nothing: only a live Project deal (one
+  // that passed its check) is ever picked, never the listing as an ordinary sale.
+  const projectHold = projectChecksOn(await readProjectSettings(admin));
   // Before the new pricing date the pick is charged; from it, the day is (33p on a plan).
   const mode = dailyDealsMode(settings.dealPricing, new Date());
   const dailyPence = settings.dealPricing.todays5DailyPence;
@@ -375,7 +392,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const grid = await dealFeedbackFor(admin, ids, feedbackSince, { byProfile: tagged });
   const feedbackFor = (userId: string, profileId: string | null): PickFeedback[] => {
     const picked = (pickEntries.get(userId) ?? []).filter((x) => !profileId || x.profileId === profileId).map((x) => x.entry);
-    return mergeFeedback(picked, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []);
+    // Batch 17 (Q25): "rent-to-rent, not buying" added the type when it was given; the searches never switch kind on it.
+    return withoutKindFlips(mergeFeedback(picked, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []));
   };
 
   const members: Member[] = [];
@@ -474,7 +492,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // a broken product: the log line has to show whether members got nothing
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, notProject: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
   // Each seat's tailoring (Batch 14): the same loader the Today page uses, so
   // a list stored here is the one the page would have chosen. A failed read
   // leaves every seat untailored: chosen exactly as before.
@@ -564,6 +582,22 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       return null;
     }
     const rows = (data ?? []) as { canonical_url: string; id: string; live_since: string | null; screening: unknown }[];
+    // Batch 17: a Project deal waits for its check before it goes live, so it is
+    // new from when it went live, not from when the feed first had it.
+    if (query.kind === "sale") {
+      const { data: late, error: lateErr } = await admin
+        .from("marketplace_deals")
+        .select("canonical_url, id, live_since, screening")
+        .eq("status", "live")
+        .eq("kind", "sale")
+        .eq("postcode_area", query.area)
+        .not("project", "is", null)
+        .lt("first_seen_at", poolCutoffIso)
+        .gte("live_since", poolCutoffIso)
+        .limit(100);
+      // A database without the project column has no Project deals: nothing to add.
+      if (!lateErr) for (const r of (late ?? []) as typeof rows) if (!rows.some((x) => x.canonical_url === r.canonical_url)) rows.push(r);
+    }
     if (rows.length === 0) return null;
     const out: SourcedListing[] = [];
     for (const urls of chunk(rows.map((r) => r.canonical_url), URL_CHUNK)) {
@@ -628,6 +662,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // they passed it: a pool pick is an auto-open, and they would be charged for it.
   for (const [userId, urls] of grid.passedUrls) sentByUser.set(userId, new Set([...(sentByUser.get(userId) ?? []), ...urls]));
   const cutoff = Date.now() - NEW_WINDOW_MS;
+  // What counts as new: when the feed first had it, or for a live Project deal when it went live (Batch 17).
+  let isProjectDeal: (url: string) => boolean = () => false;
+  const newSince = (url: string): number => {
+    const live = isProjectDeal(url) ? urlToLiveSince.get(url) : null;
+    const t = live ? Date.parse(live) : Number.NaN;
+    return Number.isFinite(t) ? t : (firstSeen.get(url) ?? Date.now());
+  };
 
   // ── What a data provider already knows about these areas ──
   // Everything else in the motivation read is inferred. This is PropertyData
@@ -775,7 +816,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Pre-checked 'ok' listings rank ahead of 'unknown' ones (a leasehold flat
   // whose page has not been read yet) so the page reads go to listings that
   // are likely to pass.
-  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean; screening?: Screening | null };
+  // Batch 17: `project` rides along from the candidate (rankPicks spreads it), for a Project pick's email.
+  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean; screening?: Screening | null; project?: ProjectCardData | null };
   const ranked = new Map<string, Ranked[]>();
   const relaxationFor = new Map<string, Relaxation | null>();
 
@@ -808,8 +850,25 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const perUser: { user: string; profile?: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
   const seatOf = (m: Member) => (m.profile ? { profile: m.profile.id } : {});
   const candidateCount = new Map<string, number>();
+  // Batch 17: the pick is one of the profile's chosen deal types. A sale that
+  // is a Project deal is BRRR; any other sale Short-let; a rental
+  // Rent-to-rent. Unreadable: every sale might be a Project deal, so a sale
+  // goes only to a profile that takes both.
+  const candidateUrls = new Set(seenUrls);
+  for (const list of olderCandidates.values()) for (const l of list) candidateUrls.add(l.canonicalUrl);
+  const projects = await projectCardsByUrl([...candidateUrls], { liveOnly: true });
+  isProjectDeal = (url) => Boolean(projects?.has(url));
+  // Let go into the ordinary flow by the Project check (an auction lot, or its photos say ready to go): its wording no longer holds it back.
+  const cleared = projectHold ? await projectClearedUrls(admin, [...candidateUrls]) : new Set<string>();
+  const typeOfCandidate = (l: SourcedListing): DealType | null => (l.kind === "rent" ? "r2r" : projects === null ? null : projects.has(l.canonicalUrl) ? "brrr" : "buy_str");
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
+    // What this profile is shown (Q22: an unanswered one, Short-let + Rent-to-rent).
+    const types = typesShown({ goals: m.goals, about: tailoringBySeat.get(m.key)?.about ?? null });
+    const typeFits = (l: SourcedListing) => {
+      const t = typeOfCandidate(l);
+      return t === null ? types.includes("buy_str") && types.includes("brrr") : types.includes(t);
+    };
     // House picks have no filter, so no motivation read: there is no member
     // threshold to judge them against.
     const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
@@ -824,6 +883,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const nearMisses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[] = [];
     const consider = (l: SourcedListing, q: SourcingQuery, fromBackCatalogue: boolean) => {
       if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) return;
+      // Batch 17: never a deal type the profile did not choose.
+      if (!typeFits(l)) return;
+      // Batch 17: while the Project hold runs, a sale worded as needing work is only ever picked as a Project deal.
+      if (projectHold && l.kind === "sale" && l.auction !== true && !cleared.has(l.canonicalUrl) && !isProjectDeal(l.canonicalUrl) && listingNeedsWork(l).flag) return;
       // A pool deal still inside its early-access window is not for a member
       // whose account has never paid. Decided here, before anything is ranked,
       // so neither the alternates nor the daily cap can reach it later.
@@ -833,7 +896,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Every ordinary pick has to be new. The back-catalogue pool is the one
       // exception, because a listing that has been sitting for months is exactly
       // what its member asked for.
-      if (!fromBackCatalogue && (firstSeen.get(l.canonicalUrl) ?? Date.now()) < cutoff) return;
+      if (!fromBackCatalogue && newSince(l.canonicalUrl) < cutoff) return;
       seen.add(l.canonicalUrl);
       const precheck = suitabilityFromListing(l);
       if (precheck !== "ok" && precheck !== "unknown") {
@@ -847,7 +910,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // member the most.
       const fails: Dimension[] = [];
       if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) fails.push("bedrooms");
-      if (!withinQueryPrice(l, q)) fails.push("price");
+      // Each sale is held to its own type's band: the budget, or the project budget before works.
+      const type = typeOfCandidate(l);
+      if (!withinQueryPrice(l, q) || (type !== null && l.price?.period === "total" && !withinTypeBudget(l.price.amount, type, m.goals))) fails.push("price");
       const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
       const motivation = motiv
         ? motivationFromListing(l, {
@@ -877,6 +942,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const { screening, figures } = screenSourced(l, card ?? null, rentTable, settings.r2rQualifiedProfit, check);
       const candidate = {
         listing: l,
+        // Batch 17: a Project deal is judged as one (its budget, its profit after works).
+        project: l.kind === "sale" ? projects?.get(l.canonicalUrl) ?? null : null,
         deal: dealForSourced(l, figures, memberFinance(m.goals)),
         areaFit,
         areaName: card?.name ?? q.areaName,
@@ -1074,7 +1141,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const merged: SourcedListing = mergeSnapshotIntoListing(l, s);
       // Liveness before suitability: a sold or let-agreed listing is not a pick
       // however well it scores. The search card cannot know this — only the page can.
-      const verdict: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
+      const suitable: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
+      // Batch 17: the page says it needs work: a Project deal or nothing while the hold runs.
+      const verdict: Verdict = suitable === "ok" && projectHold && merged.kind === "sale" && merged.auction !== true && !cleared.has(l.canonicalUrl) && !isProjectDeal(l.canonicalUrl) && merged.needsWork?.flag ? "project" : suitable;
       const out = { verdict, listing: merged, snapshot: s, previousAgentHash };
       verdicts.set(l.canonicalUrl, out);
       summary.verified += 1;
@@ -1118,7 +1187,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // A listing from the back catalogue has usually dropped out of the feed
       // long ago, so "we could not read the page" is not good enough: it may
       // have sold months back. Only a page we actually read can clear it.
-      const fromBackCatalogue = (firstSeen.get(p.listing.canonicalUrl) ?? Date.now()) < cutoff;
+      const fromBackCatalogue = newSince(p.listing.canonicalUrl) < cutoff;
       const cardAloneWillDo = p.precheck === "ok" && !fromBackCatalogue;
       if (verdict === "ok" || (verdict === "unverified" && cardAloneWillDo)) {
         // The card could not see the description, the listing history or the let
@@ -1149,6 +1218,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
       if (verdict === "gone") {
         summary.gone += 1;
+        continue;
+      }
+      if (verdict === "project") {
+        summary.notProject += 1;
         continue;
       }
       reject(verdict);
@@ -1319,6 +1392,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             dealId: pickDealId,
             // Batch 10: the profit as a range at the profile's finance, never one figure.
             range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: memberFinance(m.goals), widths: settings.dealPricing.profitRangePct }),
+            // Batch 17: a Project deal's own numbers, at the profile's finance.
+            project: sending.project ? pickProjectLine(sending.project, sending.screening ?? null, memberFinance(m.goals), settings.dealPricing.profitRangePct) : null,
             profileLinks: links,
           });
           unsubscribe ??= section.unsubscribe;
@@ -1328,7 +1403,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
       // The rest of the profile's Today, in the order /today draws it.
       const plan = plans.get(m.key) ?? null;
-      let teasers = plan ? teasersFrom(plan, row?.dealId ?? null, visibility) : [];
+      // The pick's type, so it makes room from the type the day holds most of (as /today does).
+      const pickType: DealType | null = row ? (row.sending.listing.kind === "rent" ? "r2r" : isProjectDeal(row.sending.listing.canonicalUrl) ? "brrr" : "buy_str") : null;
+      let teasers = plan ? teasersFrom(plan, row?.dealId ?? null, visibility, pickType) : [];
       if (!row && teasers.length > 0 && mode === "per_day" && !m.admin) {
         // A profile with no pick today is charged for its Today alone: on what
         // it holds from the credit check, else on what the purse has left.
@@ -1359,7 +1436,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           advice: plan?.advice ?? null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
+          figureFor: (c) => rangeLineFor(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
         },
       });
     }

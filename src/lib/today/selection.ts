@@ -26,7 +26,9 @@ import type { MarketGoals } from '../market/goals';
 import type { SourcedListing } from '../listing/sourcing';
 import { formatListingPrice } from '../listing/format';
 import { loadPicks } from '../listing/picks-server';
-import { rankingPool } from '../marketplace/queries';
+import { dealTypesByIds, rankingPool } from '../marketplace/queries';
+import { typesShown, type DealType } from '../profile/deal-types';
+import { readTodayMix } from '../project/settings-server';
 import type { DealVisibility } from '../marketplace/visibility';
 import { usesTailoring, type TailoringProfile } from '../tailoring/profile';
 import type { TailoredOptions } from '../tailoring/today';
@@ -269,20 +271,51 @@ async function excludedFor(admin: Admin, member: MemberContext, day: string): Pr
   return out;
 }
 
+/** The deal types this member's profile is shown (Batch 17): its choice, its older answers mapped, or Short-let + Rent-to-rent. */
+export function typesFor(member: Pick<MemberContext, 'goals' | 'tailoring'>): DealType[] {
+  return typesShown({ goals: member.goals, about: member.tailoring?.about ?? null });
+}
+
 /**
- * Choosing itself is pure (choose.ts); this wires its reads to the database.
- * Feedback and the market snapshot are read first, in that order, as before.
+ * The Keeps of each deal type on this profile since `since` (Today's mix
+ * shifts toward them). The profile's own when it has one; the member's before
+ * Batch 13's column. Empty on any failure: the mix then starts where it
+ * starts.
+ */
+async function keepsByType(admin: Admin, member: MemberContext, since: Date): Promise<Partial<Record<DealType, number>>> {
+  let q = admin.from('deal_reactions').select('deal_id').eq('user_id', member.userId).eq('reaction', 'keep').gte('updated_at', since.toISOString()).limit(PAGE);
+  if (member.profileId) q = q.eq('profile_id', member.profileId);
+  const { data, error } = await q;
+  if (error) {
+    console.warn('[today] keeps by type unreadable:', error.message);
+    return {};
+  }
+  const types = await dealTypesByIds(((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id));
+  const out: Partial<Record<DealType, number>> = {};
+  for (const t of types.values()) out[t] = (out[t] ?? 0) + 1;
+  return out;
+}
+
+/**
+ * Choosing itself is pure (choose.ts, choose-day.ts); this wires its reads to
+ * the database. Feedback and the market snapshot are read first, in that
+ * order, as before. Batch 17: the profile's deal types, each chosen on its
+ * own and mixed (the mix's numbers and the Keeps it shifts on read here).
  */
 async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date, opts: TailoredOptions = {}): Promise<DayChoice> {
   const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
   // The market snapshot scores areas for fit. On a cold cache the page does
   // not wait for a rebuild: without it the deal's own figures carry the fit.
   const cards = await getAreaCardsWithin(AREA_WAIT_MS);
+  const types = typesFor(member);
+  const mix = await readTodayMix(admin);
+  const typeKeeps = types.length > 1 ? await keepsByType(admin, member, new Date(now.getTime() - mix.windowDays * 86_400_000)) : {};
   return chooseDay(
-    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null },
+    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null, types, typeKeeps, mix },
     {
       pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit),
       fullListings: (dealIds) => fullListingsFor(admin, dealIds),
+      dealTypes: (dealIds) => dealTypesByIds(dealIds),
     },
     opts,
   );
@@ -398,7 +431,8 @@ export async function widenOptionsFor(member: MemberContext, current: readonly s
     return await widenOptions(
       { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring },
       member.tailoring,
-      { pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit), fullListings: (dealIds) => fullListingsFor(admin, dealIds) },
+      // Batch 17: only the deal types this profile is shown can be added.
+      { pool: (filters, limit) => rankingPool({ ...filters, types: typesFor(member) }, member.visibility, { userId: member.userId }, limit), fullListings: (dealIds) => fullListingsFor(admin, dealIds) },
       current,
     );
   } catch (err) {

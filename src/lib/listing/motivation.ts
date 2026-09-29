@@ -312,7 +312,8 @@ export function motivationFromListing(l: SourcedListing, ctx: MotivationContext)
     age: ctx.age ?? cohortAge(ctx) ?? listingAge(l, ctx.firstSeenAt ?? null, now),
     addedOrReduced: l.addedOrReduced ?? null,
     listingUpdate: null,
-    yearsRemainingOnLease: null,
+    // Batch 17 (bug 2): carried from the page once it has been read, so a short lease fires on marketplace deals too.
+    yearsRemainingOnLease: l.yearsRemainingOnLease ?? null,
     letAvailableDate: null,
     minimumTermInMonths: null,
     hasAgent: null,

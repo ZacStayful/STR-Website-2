@@ -15,7 +15,8 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import { parseMarketGoals, sourcingKindFor, type MarketGoals, type ProfilePath } from '../market/goals.ts';
+import { parseMarketGoals, type DealType, type MarketGoals } from '../market/goals.ts';
+import { availableTypes, DEAL_TYPE_LONG_LABELS, DEAL_TYPES, isAvailableDealType, kindsFor } from '../profile/deal-types.ts';
 import { parseAnswered, type AnsweredMap } from '../profile/state.ts';
 import type { QuestionId } from '../profile/questions.ts';
 
@@ -32,17 +33,14 @@ export const CLIENT_PERMISSION_LINE = 'Only add a client’s details with their 
  * the member's own, shared by every profile. Every other answer belongs to
  * the profile it was given in. Switching keeps these marks as they are.
  */
-export const SHARED_QUESTION_IDS: readonly QuestionId[] = ['roles', 'main_role', 'exploring_pick', 'deals_done', 'units_now', 'unit_areas', 'time', 'next_deal', 'deals_wanted', 'blocker', 'risk'];
+export const SHARED_QUESTION_IDS: readonly QuestionId[] = ['roles', 'deals_done', 'units_now', 'unit_areas', 'time', 'next_deal', 'deals_wanted', 'blocker', 'risk'];
 
-export const PATH_CHOICES: readonly { value: ProfilePath; label: string }[] = [
-  { value: 'buy', label: 'Buying' },
-  { value: 'r2r', label: 'Rent-to-rent' },
-  { value: 'source', label: 'Sourcing for clients' },
-  { value: 'manage', label: 'Management company' },
-];
+/** "Which deals should this profile show?" when a profile is made (Batch 17: the deal types, not a path). */
+export const TYPE_CHOICES: readonly { value: DealType; label: string; soon: boolean }[] = DEAL_TYPES.map((t) => ({ value: t, label: DEAL_TYPE_LONG_LABELS[t], soon: !isAvailableDealType(t) }));
 
-export function isProfilePath(v: unknown): v is ProfilePath {
-  return PATH_CHOICES.some((c) => c.value === v);
+/** The ticked types from the form, in the question's order; unknown values dropped. */
+export function typesFromForm(values: readonly unknown[]): DealType[] {
+  return availableTypes(values.filter((v): v is DealType => (DEAL_TYPES as readonly unknown[]).includes(v)));
 }
 
 export interface SavedProfile {
@@ -196,15 +194,17 @@ export function profileLinks(siteUrl: string, profile: Pick<SavedProfile, 'id' |
 }
 
 /**
- * A new profile's criteria: a copy of the one it was made from, pointed at
- * the path the member chose ("What's this profile for?"), so the quiz asks
- * that path's questions for it. The search kind follows the path, as the
- * quiz sets it.
+ * A new profile's criteria: a copy of the one it was made from, showing the
+ * deal types the member ticked ("Which deals should this profile show?"), so
+ * the quiz asks those types' questions for it. The search kind follows the
+ * types, as the quiz sets it. None ticked: the copy as it is.
  */
-export function criteriaForNewProfile(source: MarketGoals | null, path: ProfilePath | null): MarketGoals | null {
+export function criteriaForNewProfile(source: MarketGoals | null, types: readonly DealType[]): MarketGoals | null {
   if (!source) return null;
-  if (!path || path === source.path) return source;
-  return { ...source, path, sourcingKind: sourcingKindFor(path, source.sourcer.sourceFor) };
+  // Only available types count (a coming-soon one is never held).
+  const chosen = availableTypes(types);
+  if (chosen.length === 0) return source;
+  return { ...source, dealTypes: chosen, sourcingKind: kindsFor(chosen) };
 }
 
 /** The price line shown before creating a profile and on its settings, from the member's own daily-deals line. */
