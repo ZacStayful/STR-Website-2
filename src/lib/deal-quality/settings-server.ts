@@ -27,3 +27,8 @@ export async function readDealQualitySettings(admin: Admin): Promise<DealQuality
     lowEntry: parseLowEntry(rows.get(LOW_ENTRY_KEY)),
   };
 }
+
+/** The daily checks' switch (Part B): OFF until DEAL_CHECKS_ENABLED=true. A dry run and the admin buttons work either way. */
+export function dealChecksEnabled(): boolean {
+  return process.env.DEAL_CHECKS_ENABLED === 'true';
+}

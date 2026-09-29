@@ -326,3 +326,22 @@ test("a stored screening round-trips, and anything else degrades to null", () =>
   assert.equal(parseScreening({ band: "qualified", kind: "spaceship" }), null);
   assert.equal(parseScreening("qualified"), null);
 });
+
+// ── Batch 16, Part B: the deal's own comparables check as the gross ──
+
+test('a checked gross sets the screening’s confidence; the rent only decides whether it qualifies', () => {
+  const checked: Figure = { value: 48_000, source: 'checked', confidence: 'high' };
+  const lowRent: Figure = { value: 1_200, source: 'estimated', confidence: 'low' };
+  const s = screenPurchase({ bedrooms: 3, grossRevenue: checked, marketRent: lowRent });
+  assert.equal(s.confidence, 'high', 'the range a member sees is built on the checked figure');
+  assert.equal(s.band, 'medium', 'the rent still decides the band');
+  const estimated: Figure = { value: 48_000, source: 'estimated', confidence: 'high' };
+  assert.equal(screenPurchase({ bedrooms: 3, grossRevenue: estimated, marketRent: lowRent }).confidence, 'low', 'an area estimate is as weak as its weakest input, as before');
+  const lowCheck: Figure = { value: 48_000, source: 'checked', confidence: 'low' };
+  assert.equal(screenPurchase({ bedrooms: 3, grossRevenue: lowCheck, marketRent: { value: 1_200, source: 'confirmed', confidence: 'high' } }).confidence, 'low');
+  const r2r = screenRentToRent({ bedrooms: 2, grossRevenue: { value: 40_000, source: 'checked', confidence: 'medium' }, marketRent: { value: 1_000, source: 'confirmed', confidence: 'high' } });
+  assert.equal(r2r.confidence, 'medium');
+  const working = screeningWorking(s);
+  assert.equal(working[0].value, '£48,000/yr (own comparables)');
+  assert.ok(working.some((w) => w.value.endsWith('(est.)')), 'the rent estimate is still marked');
+});

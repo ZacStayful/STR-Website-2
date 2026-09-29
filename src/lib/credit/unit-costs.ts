@@ -4,7 +4,7 @@ import { DEFAULT_SPEND_RATES, type SpendRates } from './pricing.ts';
 import { parseLadder, DEFAULT_DEAL_OPEN_LADDER, type DealOpenLadder } from '../marketplace/ladder.ts';
 import { DEFAULT_DEAL_PRICING, effectivePricingDate, parseDateSetting, parseDays, parsePence, parsePlanCredit, parseRangePct, type DealPricing } from './deal-pricing.ts';
 import { parseR2rBar, R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
-import { DEFAULT_LOW_ENTRY, LOW_ENTRY_KEY, parseLowEntry, type LowEntrySettings } from '../deal-quality/config.ts';
+import { DEAL_CHECKS_KEY, DEFAULT_DEAL_CHECKS, DEFAULT_LOW_ENTRY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '../deal-quality/config.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -58,6 +58,8 @@ export interface BillingSettings {
   areaRentDailyAttempts: number;
   /** Batch 16, Part F: the low-entry stream's bar and the nationwide search's limits (src/lib/deal-quality/config.ts). */
   lowEntry: LowEntrySettings;
+  /** Batch 16, Part B: the daily checks' limits (billing_settings.deal_checks); a re-screen reads validDays from here. */
+  dealChecks: DealChecksSettings;
 }
 
 export const DEFAULT_AREA_RENT_DAILY_ATTEMPTS = 40;
@@ -81,6 +83,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   r2rQualifiedProfit: R2R_QUALIFIED_PROFIT,
   areaRentDailyAttempts: DEFAULT_AREA_RENT_DAILY_ATTEMPTS,
   lowEntry: DEFAULT_LOW_ENTRY,
+  dealChecks: DEFAULT_DEAL_CHECKS,
 };
 
 /** Whole attempts from 0 to 1,000; anything else is the default. */
@@ -158,6 +161,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       r2rQualifiedProfit: parseR2rBar(kv.get('r2r_qualified_profit')),
       areaRentDailyAttempts: parseAttempts(kv.get('area_rent_daily_attempts')),
       lowEntry: parseLowEntry(kv.get(LOW_ENTRY_KEY)),
+      dealChecks: parseDealChecks(kv.get(DEAL_CHECKS_KEY)),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

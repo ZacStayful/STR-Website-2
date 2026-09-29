@@ -195,3 +195,32 @@ test('parseStoredDeal reads a stored deal back defensively', () => {
   assert.equal(parseStoredDeal({ kind: 'rent-to-rent', advertisedRentPcm: 900 }), null);
   assert.equal(parseStoredDeal('{"kind":"purchase"}'), null);
 });
+
+// ── Batch 16, Part B: a record built on the deal's own check ──
+
+test('with a check, the screening and the deal read the checked figures, and the check rides on the screening', () => {
+  const check = { checkedAt: '2026-09-25T03:45:00.000Z', via: 'daily' as const, gross: 60_000, adr: 210, occupancy: 0.72, compCount: 12, spreadPct: 15, confidence: 'high' as const, radiusKm: 0.8, calls: 1, pence: 5, bedrooms: 3, kind: 'sale' as const, locationClass: 'urban', kindRelaxed: false };
+  const rec = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW, check });
+  assert.equal(rec.screening.grossRevenue?.value, 60_000);
+  assert.equal(rec.screening.grossRevenue?.source, 'checked');
+  assert.equal(rec.screening.confidence, 'high', 'the check’s confidence, not the rent’s');
+  // 60,000 × 0.44 = 26,400 net; long-let net 12,960; costs 5,304 → surplus 8,136 → 62.8% uplift: qualified.
+  assert.equal(rec.band, 'qualified');
+  assert.equal(rec.annualProfit, 8_136);
+  assert.deepEqual(rec.screening.check, check);
+  assert.equal(rec.deal?.kind, 'purchase');
+  assert.equal((rec.deal as { grossRevenue: number }).grossRevenue, 60_000, 'the deal model reads the checked gross');
+  const without = buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW });
+  assert.equal(without.screening.grossRevenue?.value, 48_000, 'without a check, the area figure as before');
+  assert.equal(without.screening.check, undefined);
+  assert.equal(without.stream, rec.stream);
+});
+
+test('a check on a listing with no area card still screens it (no card, no area figure, but its own figure)', () => {
+  const check = { checkedAt: '2026-09-25T03:45:00.000Z', via: 'daily' as const, gross: 30_000, adr: 120, occupancy: 0.6, compCount: 8, spreadPct: 30, confidence: 'medium' as const, radiusKm: 2, calls: 2, pence: 10, bedrooms: 2, kind: 'rent' as const, locationClass: 'coastal', kindRelaxed: true };
+  const rec = buildDealRecord(listing({ kind: 'rent', bedrooms: 2, price: { amount: 900, period: 'pcm' } }), { card: null, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: '2026-09-21T00:00:00Z', now: NOW, check });
+  // 30,000 × 0.44 = 13,200; rent 10,800; costs 4,704 → −2,304: unqualified, but banded on its own figure rather than "no data".
+  assert.equal(rec.band, 'unqualified');
+  assert.equal(rec.screening.grossRevenue?.source, 'checked');
+  assert.equal(rec.stream, 'r2r');
+});

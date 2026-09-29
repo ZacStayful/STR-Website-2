@@ -19,7 +19,9 @@ import type { AreaCardData } from '../market/explorer';
 import { storedAreaRentTable } from '../broker/providers/internal';
 import { getBillingSettings } from '../credit/unit-costs';
 import { buildDealRecord, mergeSnapshotIntoListing, qualifiesForMarketplace, type AreaCardLike, type DealRecord, type DealRules, type StoredRent } from './record';
-import { readDealQualitySettings } from '../deal-quality/settings-server';
+import { dealChecksEnabled, readDealQualitySettings } from '../deal-quality/settings-server';
+import { checkOf, validCheckFor } from '../deal-quality/checks';
+import { DEFAULT_DEAL_CHECKS } from '../deal-quality/config';
 import { retiredReasonFor } from './status';
 import { nextCheckDueAt, FAILED_CHECK_RETRY_MS, MAX_ENTRY_FAILURES } from './cadence';
 import type { DealRow, RetiredReason } from './types';
@@ -51,12 +53,13 @@ export interface ScreenContext {
 
 /** Batch 16's rules from billing_settings; the decided defaults when they cannot be read. */
 export async function loadDealRules(): Promise<DealRules> {
+  const enabled = dealChecksEnabled();
   try {
     const q = await readDealQualitySettings(createAdminClient());
-    return { auctionTerms: q.auction, lowEntry: q.lowEntry };
+    return { auctionTerms: q.auction, lowEntry: q.lowEntry, checks: { enabled, validDays: q.checks.validDays, shortlistExpiryDays: q.checks.shortlistExpiryDays } };
   } catch (err) {
     console.warn('[marketplace] deal rules unreadable, using the defaults:', (err as Error)?.message ?? err);
-    return {};
+    return { checks: { enabled, validDays: DEFAULT_DEAL_CHECKS.validDays, shortlistExpiryDays: DEFAULT_DEAL_CHECKS.shortlistExpiryDays } };
   }
 }
 
@@ -254,7 +257,9 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
     return { kind: 'retired', reason: 'unsuitable' };
   }
   const card = (merged.postcodeArea ? ctx.cardByCode.get(merged.postcodeArea) : null) ?? (deal.postcode_area ? ctx.cardByCode.get(deal.postcode_area) : null) ?? null;
-  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, firstSeenAt: deal.first_seen_at, now });
+  // Batch 16: a check still good for the listing the page describes keeps its figure; otherwise the area figures, as before.
+  const check = validCheckFor(checkOf(deal.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
+  const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, now });
   if (!qualifiesForMarketplace(rec)) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
     return { kind: 'retired', reason: 'unqualified' };

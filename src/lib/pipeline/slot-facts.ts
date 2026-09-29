@@ -22,7 +22,7 @@ export interface CardFacts {
   first_seen_at: string | null;
   price_history?: unknown;
   motivation?: unknown;
-  status: 'live' | 'retired' | 'pending_verify';
+  status: 'live' | 'retired' | 'pending_verify' | 'pending_check';
   retired_reason?: string | null;
   last_confirmed_at?: string | null;
   postcode_area: string | null;

@@ -5,8 +5,13 @@
 import type { SourcingKind } from '../listing/sourcing.ts';
 import type { ListingSource } from '../listing/types.ts';
 
-/** pending_verify: qualified on the feed, waiting for its first page fetch (photo + live status). */
-export type DealStatus = 'pending_verify' | 'live' | 'retired';
+/**
+ * pending_check   qualified on the area's figures, waiting on the shortlist for its own
+ *                 comparables check (Batch 16, Part B); invisible to members
+ * pending_verify  qualified, waiting for its first page fetch (photo + live status)
+ * live            on the grid
+ */
+export type DealStatus = 'pending_check' | 'pending_verify' | 'live' | 'retired';
 
 export type RetiredReason =
   | 'sold'
@@ -18,10 +23,14 @@ export type RetiredReason =
   | 'stale_listed'
   | 'stale_unseen'
   | 'unverifiable'
-  | 'admin';
+  | 'admin'
+  /** Batch 16: the check found too few similar homes within the widest radius. Never shown, never revived. */
+  | 'insufficient_data'
+  /** Batch 16: dropped from the shortlist unchecked (expired, or retired by the admin button); revived like unqualified. */
+  | 'unchecked';
 
 /** Retirements the sweep may undo when the listing is back in the feed and qualifies again. */
-export const REACTIVATABLE_REASONS: ReadonlySet<RetiredReason> = new Set<RetiredReason>(['unqualified', 'stale_listed', 'stale_unseen', 'unverifiable']);
+export const REACTIVATABLE_REASONS: ReadonlySet<RetiredReason> = new Set<RetiredReason>(['unqualified', 'stale_listed', 'stale_unseen', 'unverifiable', 'unchecked']);
 
 /**
  * Retirements that mean the listing went (Batch 6): back in the feed without

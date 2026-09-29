@@ -12,7 +12,9 @@ import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { parseR2rBar } from '@/lib/listing/screen';
 import { retireDeal, revalidateDeals } from '@/lib/marketplace/server';
 import { runLowEntrySearch } from '@/lib/deal-quality/low-entry-run';
-import { LOW_ENTRY_KEY, parseLowEntry, type LowEntrySettings } from '@/lib/deal-quality/config';
+import { runDealChecks } from '@/lib/deal-quality/checks-run';
+import { retireUncheckedLive, runDealRecheck } from '@/lib/deal-quality/recheck-comps-run';
+import { DEAL_CHECKS_KEY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '@/lib/deal-quality/config';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -94,6 +96,64 @@ export async function updateLowEntryAction(formData: FormData): Promise<void> {
   if ((Object.keys(next) as (keyof LowEntrySettings)[]).some((k) => parsed[k] !== next[k])) redirect('/admin/deals?msg=bad_low_entry');
   await updateBillingSetting(LOW_ENTRY_KEY, parsed);
   redirect('/admin/deals?msg=low_entry_saved');
+}
+
+// ── Batch 16, Part B: the daily paid checks ──
+
+/** The dry run keeps its list (the cookie drops arrays) as one line. */
+function withList(body: Record<string, unknown>): Record<string, unknown> {
+  return { ...body, ...(Array.isArray(body.wouldCheck) ? { wouldCheck: (body.wouldCheck as string[]).join(' | ') } : {}) };
+}
+
+/** "Dry run" lists the day's slots and what would be checked, spending nothing; "Run" makes one pass now, whatever DEAL_CHECKS_ENABLED says. House spend. */
+export async function runDealChecksAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runDealChecks({ dry, triggeredBy: user.email ?? 'admin' });
+  await finish(dry ? 'deal-checks-dry' : 'deal-checks', withList(result.body as Record<string, unknown>));
+}
+
+/** The one-off re-check of live deals: "Dry run" counts and lists what it would check first; "Run" carries on where the last run stopped, within the ceiling. */
+export async function runDealRecheckAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runDealRecheck({ dry, triggeredBy: user.email ?? 'admin' });
+  await finish(dry ? 'deal-recheck-dry' : 'deal-recheck', withList(result.body as Record<string, unknown>));
+}
+
+/** Retires every live deal that has no check of its own as `unchecked`; the next sweep revives it onto the shortlist. "Dry run" only counts. */
+export async function retireUncheckedAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'retire';
+  const result = await retireUncheckedLive({ dry, triggeredBy: user.email ?? 'admin' });
+  await finish(dry ? 'retire-unchecked-dry' : 'retire-unchecked', result.body as Record<string, unknown>);
+}
+
+/**
+ * billing_settings.deal_checks from the form: whole numbers within the
+ * bounds in src/lib/deal-quality/config.ts. A value the bounds refuse is
+ * reported, never quietly replaced by the default.
+ */
+export async function updateDealChecksAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const whole = (name: string) => {
+    const raw = String(formData.get(name) ?? '').replace(/[£,\s]/g, '');
+    return /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  };
+  const next: DealChecksSettings = {
+    perDay: whole('perDay'),
+    dailyCapPence: whole('dailyCapPence'),
+    split: { top60: whole('splitTop60'), low_entry: whole('splitLowEntry'), r2r: whole('splitR2r') },
+    maxCallsPerCheck: whole('maxCallsPerCheck'),
+    validDays: whole('validDays'),
+    shortlistExpiryDays: whole('shortlistExpiryDays'),
+    recheckCeilingPence: whole('recheckCeilingPence'),
+  };
+  const parsed = parseDealChecks(next);
+  const same = (['perDay', 'dailyCapPence', 'maxCallsPerCheck', 'validDays', 'shortlistExpiryDays', 'recheckCeilingPence'] as const).every((k) => parsed[k] === next[k]) && parsed.split.top60 === next.split.top60 && parsed.split.low_entry === next.split.low_entry && parsed.split.r2r === next.split.r2r;
+  if (!same) redirect('/admin/deals?msg=bad_deal_checks');
+  await updateBillingSetting(DEAL_CHECKS_KEY, parsed);
+  redirect('/admin/deals?msg=deal_checks_saved');
 }
 
 export async function retireDealAction(formData: FormData): Promise<void> {

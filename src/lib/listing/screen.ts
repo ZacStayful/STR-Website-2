@@ -36,6 +36,7 @@
  * Pure: no network, no database, no `server-only`, so it runs under `node --test`.
  */
 import type { SourcingKind } from './sourcing.ts';
+import type { StoredCheck } from '../deal-quality/checks.ts';
 import { nationalRentFor } from '../market/rent-ladder.ts';
 
 // ── The constants ──
@@ -166,7 +167,12 @@ export function isBand(v: unknown): v is Band {
   return typeof v === 'string' && (BAND_ORDER as string[]).includes(v);
 }
 
-export type FigureSource = 'confirmed' | 'estimated';
+/**
+ * confirmed   the listing's own figure (an advertised rent)
+ * estimated   the area's average for this size, or the national rent ladder
+ * checked     the property's own Airbnb comparables (Batch 16: a deal check)
+ */
+export type FigureSource = 'confirmed' | 'estimated' | 'checked';
 export type Confidence = 'high' | 'medium' | 'low';
 
 /** One input figure, and how much it should be trusted. Never present an estimate as confirmed. */
@@ -181,6 +187,16 @@ const CONFIDENCE_ORDER: Confidence[] = ['low', 'medium', 'high'];
 /** The weaker of two confidences — a result is only as good as its worst input. */
 export function lowerConfidence(a: Confidence, b: Confidence): Confidence {
   return CONFIDENCE_ORDER.indexOf(a) <= CONFIDENCE_ORDER.indexOf(b) ? a : b;
+}
+
+/**
+ * A screening is as sure as its weakest input — except when the gross is
+ * the property's own comparables check (Batch 16): the range a member sees
+ * is built on that figure, and the rent only decides whether the deal
+ * qualifies, so the check's confidence is the screening's.
+ */
+export function screeningConfidence(gross: Figure, rent: Figure): Confidence {
+  return gross.source === 'checked' ? gross.confidence : lowerConfidence(gross.confidence, rent.confidence);
 }
 
 // ── The result ──
@@ -206,6 +222,12 @@ interface ScreeningBase {
   /** True when ABSOLUTE_QUALIFIED_SURPLUS is what earned `qualified`. */
   byAbsolute: boolean;
   reason: string;
+  /**
+   * Batch 16: the deal's own comparables check the gross came from, kept
+   * on the screening so every later re-screen can build on it while it is
+   * good (src/lib/deal-quality/checks.ts). Absent on an area-figure screening.
+   */
+  check?: StoredCheck | null;
 }
 
 export interface PurchaseScreening extends ScreeningBase {
@@ -287,7 +309,7 @@ export function screenPurchase(input: ScreenInput): PurchaseScreening {
   const upliftPct = round1((surplus / ltlNet) * 100);
   const requiredGross = round(((1 + BUY_QUALIFIED_UPLIFT_PCT / 100) * ltlNet + fixedCosts) / STR_NET_MULTIPLE);
   const shortfall = round(gross.value) - requiredGross;
-  const confidence = lowerConfidence(gross.confidence, rent.confidence);
+  const confidence = screeningConfidence(gross, rent);
 
   const byPct = upliftPct >= BUY_QUALIFIED_UPLIFT_PCT;
   const byAbsolute = !byPct && surplus >= ABSOLUTE_QUALIFIED_SURPLUS;
@@ -337,7 +359,7 @@ export function screenRentToRent(input: ScreenInput, opts: ScreenOptions = {}): 
   const requiredGross = round((annualRent + fixedCosts + bar) / STR_NET_MULTIPLE);
   const shortfall = round(gross.value) - requiredGross;
   const revenueMultiple = round2(gross.value / annualRent);
-  const confidence = lowerConfidence(gross.confidence, rent.confidence);
+  const confidence = screeningConfidence(gross, rent);
 
   const byProfit = annualProfit >= bar;
   // Intentionally redundant: £20,000 already clears the bar. Kept so both
@@ -415,13 +437,18 @@ export function marketRentFor(input: MarketRentInput): { figure: Figure; tier: R
 }
 
 /**
- * Short-let revenue as a screening input. Always an estimate — the finder never
- * has a property-specific figure — so the only question is whether it is for this
- * property's size or a blend across the area.
+ * Short-let revenue from the area's figures as a screening input: an estimate,
+ * for this property's size or a blend across the area. (The property's own
+ * figure, when it has been checked, is checkedGrossFigure.)
  */
 export function grossRevenueFor(grossRevenue: number | null, exactBedroomMatch: boolean): Figure | null {
   if (!grossRevenue || grossRevenue <= 0) return null;
   return { value: grossRevenue, source: 'estimated', confidence: exactBedroomMatch ? 'medium' : 'low' };
+}
+
+/** Short-let revenue from the deal's own comparables check (Batch 16): its figure at its own confidence. */
+export function checkedGrossFigure(check: Pick<StoredCheck, 'gross' | 'confidence'>): Figure {
+  return { value: check.gross, source: 'checked', confidence: check.confidence };
 }
 
 /** Screens a listing by its kind: a sale is a purchase, a rental is rent-to-rent. */
@@ -461,7 +488,7 @@ export function screeningScore(s: Screening | null | undefined): number | null {
  */
 export function screeningWorking(s: Screening): { label: string; value: string }[] {
   if (s.band === 'insufficient-data') return [];
-  const mark = (f: Figure | null) => (f && f.source === 'estimated' ? ' (est.)' : '');
+  const mark = (f: Figure | null) => (f && f.source === 'estimated' ? ' (est.)' : f && f.source === 'checked' ? ' (own comparables)' : '');
   const out: { label: string; value: string }[] = [
     { label: 'Short-let revenue', value: `${gbp(s.grossRevenue!.value)}/yr${mark(s.grossRevenue)}` },
     { label: 'Short-let net', value: `${gbp(s.strNet!)}/yr` },

@@ -45,7 +45,7 @@ export interface TrackedDealFacts {
   kind: 'sale' | 'rent';
   postcodeArea: string | null;
   price: { amount: number; period: string } | null;
-  status: 'live' | 'retired' | 'pending_verify';
+  status: 'live' | 'retired' | 'pending_verify' | 'pending_check';
 }
 
 export interface TrackedPipelineInput extends CheckedListingRow {

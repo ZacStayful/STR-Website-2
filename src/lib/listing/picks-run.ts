@@ -29,6 +29,7 @@ import { dealFeedbackFor } from "../marketplace/reactions-server";
 import { isSendable, parseScreening, type Band, type Screening } from "./screen";
 import { storedAreaRentTable } from "../broker/providers/internal";
 import { screenSourced, mergeSnapshotIntoListing } from "../marketplace/record";
+import { checkOf, validCheckFor, type StoredCheck } from "../deal-quality/checks";
 import { openPricePence } from "../marketplace/ladder";
 import { getBillingSettings } from "../credit/unit-costs";
 import { resolveListing } from "./server";
@@ -546,10 +547,12 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const seenUrls = new Set<string>();
   const urlToDealId = new Map<string, string>();
   const urlToLiveSince = new Map<string, string | null>();
+  // Batch 16: the deal's own comparables check, when the row carries one, so the pick is screened on it.
+  const urlToCheck = new Map<string, StoredCheck | null>();
   const poolFor = async (query: SourcingQuery): Promise<SourcedListing[] | null> => {
     const { data, error } = await admin
       .from("marketplace_deals")
-      .select("canonical_url, id, live_since")
+      .select("canonical_url, id, live_since, screening")
       .eq("status", "live")
       .eq("kind", query.kind)
       .eq("postcode_area", query.area)
@@ -560,7 +563,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       console.error("[sourcing] pool read failed:", error.message);
       return null;
     }
-    const rows = (data ?? []) as { canonical_url: string; id: string; live_since: string | null }[];
+    const rows = (data ?? []) as { canonical_url: string; id: string; live_since: string | null; screening: unknown }[];
     if (rows.length === 0) return null;
     const out: SourcedListing[] = [];
     for (const urls of chunk(rows.map((r) => r.canonical_url), URL_CHUNK)) {
@@ -570,6 +573,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     for (const r of rows) {
       urlToDealId.set(r.canonical_url, r.id);
       urlToLiveSince.set(r.canonical_url, r.live_since);
+      urlToCheck.set(r.canonical_url, checkOf(r.screening));
     }
     return out;
   };
@@ -869,7 +873,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // recommending, against what the same property would make on a long let?
       // One helper shared with the marketplace and the screening report, so
       // the gate, the pool and the report can never disagree.
-      const { screening, figures } = screenSourced(l, card ?? null, rentTable, settings.r2rQualifiedProfit);
+      const check = validCheckFor(urlToCheck.get(l.canonicalUrl) ?? null, l, settings.dealChecks.validDays, runNow);
+      const { screening, figures } = screenSourced(l, card ?? null, rentTable, settings.r2rQualifiedProfit, check);
       const candidate = {
         listing: l,
         deal: dealForSourced(l, figures, memberFinance(m.goals)),

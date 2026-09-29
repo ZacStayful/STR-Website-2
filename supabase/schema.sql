@@ -1643,10 +1643,12 @@ create table if not exists public.marketplace_deals (
   price_history jsonb not null default '[]'::jsonb,
   reduced_at timestamptz,
   listed_date timestamptz,
-  -- pending_verify: qualified on the feed, waiting for its first page fetch,
-  -- which supplies the photo and the live status. live: on the grid.
+  -- pending_check: qualified on the area's figures, waiting on the shortlist
+  -- for its own comparables check (Batch 16). pending_verify: qualified,
+  -- waiting for its first page fetch, which supplies the photo and the live
+  -- status. live: on the grid.
   status text not null default 'pending_verify',
-  retired_reason text,                       -- sold | under_offer | let_agreed | removed | unqualified | unsuitable | stale_listed | stale_unseen | unverifiable | admin
+  retired_reason text,                       -- sold | under_offer | let_agreed | removed | unqualified | unsuitable | stale_listed | stale_unseen | unverifiable | admin | insufficient_data | unchecked (Batch 16)
   retired_at timestamptz,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
@@ -4316,5 +4318,29 @@ set stream = case
 end
 where stream is null;
 -- marketplace_runs.kind also takes 'low_entry_search' (src/lib/deal-quality/low-entry-run.ts).
+
+-- ── The daily paid checks (Part B; src/lib/deal-quality/checks.ts, checks-run.ts, recheck-comps-run.ts) ──
+-- No new column. A qualifying listing now waits as marketplace_deals.status
+-- 'pending_check' (the shortlist: invisible to members, like pending_verify)
+-- for its own Airbnb comparables check; the check it gets is kept on the
+-- deal's own screening (screening.check: gross, adr, occupancy, compCount,
+-- spreadPct, confidence, radiusKm, calls, pence, checkedAt, bedrooms, kind),
+-- so every later re-screen builds on it while it is good, and a database
+-- that has not run this section still takes every row. While a deal is
+-- shortlisted, next_check_due_at is when it is dropped unchecked and
+-- check_failures counts its failed searches (three retire it as
+-- unverifiable). Two more retired_reason values: 'insufficient_data' (too
+-- few similar homes within the widest radius: never shown, never revived)
+-- and 'unchecked' (dropped from the shortlist, or retired by the admin
+-- button; revived onto the shortlist like unqualified). marketplace_runs.kind
+-- also takes 'deal_checks' (the nightly job) and 'deal_recheck' (the one-off
+-- re-check of live deals, and the retire-unchecked button), each with who
+-- ran it; today's runs are what the day's cap is read from. A check also
+-- writes an analyser_reports row with source 'deal_comps', keyed on the deal
+-- id (request_id) so a re-check replaces it, carrying the outward code only
+-- (never the full postcode, the address or the listing): those rows feed the
+-- area and district figures and stay out of the single-postcode figure
+-- (src/lib/market/quality.ts).
+create index if not exists marketplace_deals_shortlist_idx on public.marketplace_deals (annual_profit desc) where status = 'pending_check';
 
 notify pgrst, 'reload schema';
