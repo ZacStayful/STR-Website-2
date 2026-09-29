@@ -132,6 +132,11 @@ export const ACTIVITY_KINDS = {
   announcement_clicked: inApp('Opened an announcement'),
   feedback_email_click: recordOnly('Opened their feedback from a status email'),
 
+  // Batch 19: a signed-in member's cookie choice (src/lib/tracking). The
+  // choice and where it was made only. Recorded, never weekly active: the
+  // proof of consent itself is consent_records.
+  cookie_choice: recordOnly('Made a cookie choice'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),

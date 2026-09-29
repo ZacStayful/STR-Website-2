@@ -67,3 +67,9 @@ test("Batch 18's kinds: taps count towards weekly active, what is only shown or 
     assert.equal(isCounted(k), false, k);
   }
 });
+
+test("Batch 19's cookie choice is recorded but can never count towards weekly active", () => {
+  assert.equal(isActivityKind('cookie_choice'), true);
+  assert.equal(isQualifying('cookie_choice'), false);
+  assert.equal(isCounted('cookie_choice'), false);
+});

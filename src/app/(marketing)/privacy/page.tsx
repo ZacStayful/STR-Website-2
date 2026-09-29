@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { siteUrl } from "@/lib/url";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
+import { TRACKING } from "@/lib/tracking/config";
 
 export const metadata: Metadata = {
   title: "Privacy policy — Stayful Intelligence",
@@ -11,6 +12,9 @@ export const metadata: Metadata = {
 
 const LAST_UPDATED = "29 September 2026";
 
+/** How long a cookie choice is remembered, in months, as the config sets it. */
+const CONSENT_MONTHS = Math.round(TRACKING.consentDays / 30.4);
+
 /**
  * The privacy policy, from the legal drafts of 27 September 2026 (section A),
  * as decided for Batch 10: Twilio named for text messages and the referral
@@ -19,6 +23,9 @@ const LAST_UPDATED = "29 September 2026";
  * not in the repository; the profiles page links to it (#other-people).
  * "Bug reports and ideas" was added with feedback (Batch 18); the 90 days is
  * the default of feedback_screenshot_retention_days (src/lib/feedback).
+ * Cookies and Meta were added with ads measurement (Batch 19), as approved for
+ * it; the months and days are read from src/lib/tracking/config.ts, so the
+ * page always says what the site does.
  */
 export default function PrivacyPage() {
   return (
@@ -71,6 +78,7 @@ export default function PrivacyPage() {
           <li>Monday.com (our customer records)</li>
           <li>Anthropic and ElevenLabs (AI written and spoken summaries, only when you use those features; property details only)</li>
           <li>Google Maps (address and map lookups)</li>
+          <li>Meta Platforms Ireland Ltd (measuring our Facebook ads — only if you choose Accept on our cookie banner)</li>
         </ul>
         <p>
           Our property data providers (for example PropertyData, Airbtics and PMI) receive property addresses and details, not your personal details. Some of these companies may process data outside the UK; where they do, we rely on approved safeguards such as the UK International Data Transfer Agreement or adequacy regulations.
@@ -89,7 +97,12 @@ export default function PrivacyPage() {
         </p>
 
         <h2 id="cookies">Cookies</h2>
-        <p>We use essential cookies to keep you signed in and secure, and to credit referral links.</p>
+        <p>We use essential cookies to keep you signed in, keep the service secure, remember your cookie choice (for {CONSENT_MONTHS} months) and credit referral links.</p>
+        <p>
+          If you choose Accept on our cookie banner, we also use Meta&apos;s pixel and share limited information with Meta Platforms Ireland Ltd so we can measure and improve our Facebook ads: the pages you visit (the page address only, never what comes after it), and when you sign up, finish your profile, run your first report, subscribe or top up, that it happened, with scrambled (hashed) copies of your email address and your account number with us, the amount for payments, and your IP address and browser type. We also remember which ad or link brought you here in a cookie for {TRACKING.attributionDays} days, so the right ad is credited if you sign up later.
+        </p>
+        <p>When you create an account we record which ad or link brought you (the tags on the link and the website you came from). This stays with us and is not shared.</p>
+        <p>You can change your choice at any time from Cookie settings at the bottom of any page.</p>
 
         <h2 id="changes">Changes</h2>
         <p>We&apos;ll tell you by email before any significant change to this policy. See also our <Link href="/terms">terms of service</Link>.</p>
