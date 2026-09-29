@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/lib/icons";
 import { DemoFrame, type DemoStage } from "./DemoFrame";
 
@@ -14,6 +15,7 @@ const LOADING_STEPS = [
 ];
 
 export function Hero({ children }: { children?: React.ReactNode }) {
+  const router = useRouter();
   const [postcode, setPostcode] = useState("");
   const [stage, setStage] = useState<DemoStage>("idle");
   const [progress, setProgress] = useState(0);
@@ -48,7 +50,8 @@ export function Hero({ children }: { children?: React.ReactNode }) {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    window.location.href = "/signup";
+    // In-app, so the ad that brought them here is still known at sign-up (Batch 19).
+    router.push("/signup");
   };
 
   const reset = () => {

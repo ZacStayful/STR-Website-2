@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Icon } from "@/lib/icons";
 
@@ -14,9 +15,9 @@ export function SubscribeButton({ planCode, label, className, signedIn, signupHr
 
   if (!signedIn) {
     return (
-      <a href={`${signupHref}${signupHref.includes("?") ? "&" : "?"}plan=${encodeURIComponent(planCode)}`} className={className} style={{ width: "100%", justifyContent: "center" }}>
+      <Link href={`${signupHref}${signupHref.includes("?") ? "&" : "?"}plan=${encodeURIComponent(planCode)}`} className={className} style={{ width: "100%", justifyContent: "center" }}>
         {label} <Icon name="arrow" size={14} />
-      </a>
+      </Link>
     );
   }
 

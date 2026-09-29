@@ -11,6 +11,10 @@ type SearchParams = Promise<{ redirect?: string; error?: string; email?: string 
 // /auth/callback and /auth/confirm send their failure reason here.
 function errorMessage(error: string | undefined): string | null {
   if (!error) return null
+  if (error === 'confirmed_elsewhere') return 'Your email is confirmed — sign in to continue.'
+  if (error === 'other_device') {
+    return 'That link was opened on a different device or browser from the one it was sent from. Email yourself a fresh one below, and open it here.'
+  }
   if (error === 'link_expired' || /expired|invalid|already/i.test(error)) {
     return 'That sign-in link has expired or has already been used. Email yourself a fresh one below.'
   }
@@ -24,6 +28,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
   const { redirect, error, email } = await searchParams
   const redirectTo = safeInternalPath(redirect, '')
   const notice = errorMessage(error)
+  // An email confirmed from a link opened on another device: good news, not an error.
+  const noticeTone = error === 'confirmed_elsewhere' ? 'border-border bg-muted text-foreground' : 'border-destructive/30 bg-destructive/5 text-destructive'
   const prefill = typeof email === 'string' && email.includes('@') ? email : ''
 
   return (
@@ -34,7 +40,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
       </p>
 
       {notice ? (
-        <p className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{notice}</p>
+        <p className={`mt-4 rounded-lg border px-3 py-2 text-sm ${noticeTone}`}>{notice}</p>
       ) : null}
 
       <div className="mt-6">

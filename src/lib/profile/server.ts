@@ -48,6 +48,7 @@ import { areaDealView, type AreaDealView } from '../marketplace/grid';
 import { rangeLineFor } from '../project/display';
 import { quizPathFor } from '../auth/landing';
 import { logActivity } from '../activity/log';
+import { logConversion } from '../meta/conversions';
 import { todayKey } from '../today/day';
 import { mustHaveCountFor, rechooseForMember, tailoringPreview } from '../tailoring/server';
 
@@ -270,7 +271,11 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   if (input.editing) logActivity(userId, 'profile_edited', { extras });
   else logActivity(userId, input.notSure ? 'profile_not_sure' : 'profile_answered', { extras });
   if (!s.progress.mandatoryDone && prog.mandatoryDone) logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
-  if (!s.quiz.completedAt && prog.complete) logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
+  if (!s.quiz.completedAt && prog.complete) {
+    logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
+    // Batch 19: Meta's ProfileComplete, at the first completion (the £5 may come later, or never).
+    await logConversion({ name: 'ProfileComplete', userId });
+  }
 
   // Batch 14: today's list follows the answer (after the response: it never holds the quiz up, and never charges).
   after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered }).then(() => undefined));

@@ -10,6 +10,8 @@ import { createCheckoutSession, returnUrl } from '@/lib/stripe/checkout';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { cardNeedsUpdateEmail } from '@/lib/email/billing';
 import { logActivity } from '@/lib/activity/log';
+import { logConversion } from '@/lib/meta/conversions';
+import { clientDetails } from '@/lib/tracking/request';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,6 +65,8 @@ export async function POST(request: Request) {
           // The webhook will also arrive; grantTopup is idempotent on pi id.
           await grantTopup(member.id, amount, `pi:${pi.id}`, { email: member.email });
           logActivity(member.id, 'topup', { dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
+          // Batch 19: Meta's Purchase, with the member's own browser (the webhook's copy is the same key: one is sent).
+          await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: amount, currency: pi.currency }, details: clientDetails(request.headers) });
           const bal = await getBalance(member.id);
           return Response.json({ ok: true, balancePence: bal.totalPence, via: 'saved_card' });
         }

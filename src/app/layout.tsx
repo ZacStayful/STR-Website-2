@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { interVariable } from "@/lib/fonts";
+import { bannerEnabled, metaPixelId, pixelEnabled } from "@/lib/meta/env";
+import { TrackingRoot } from "@/components/tracking/TrackingRoot";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -24,7 +26,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${interVariable} font-sans antialiased`}>{children}</body>
+      <body className={`${interVariable} font-sans antialiased`}>
+        {children}
+        {/* Batch 19: cookie consent and Meta measurement. After the page, so the page reads its own address first. */}
+        <TrackingRoot bannerOn={bannerEnabled()} pixelId={pixelEnabled() ? metaPixelId() : null} />
+      </body>
     </html>
   );
 }

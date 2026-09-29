@@ -13,6 +13,7 @@ import { planForPriceId, topupPenceForPriceId, type Env } from './prices.ts';
 import { subscriptionStateFromStripe } from '../subscription.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
+import type { InvoiceFacts, TopupFacts } from '../meta/events.ts';
 
 export interface WebhookUser {
   id: string;
@@ -66,8 +67,19 @@ export interface WebhookDeps {
    * must swallow their own errors.
    */
   logActivity?(input: WebhookActivity): Promise<unknown>;
+  /**
+   * Meta's Subscribe and Purchase (Batch 19, src/lib/meta/conversions.ts):
+   * the facts go in, and it decides whether they count. Recorded once per
+   * key, so a redelivery, or a top-up's two events, is one conversion.
+   * Optional; implementations must swallow their own errors.
+   */
+  recordConversion?(input: WebhookConversion): Promise<unknown>;
   log?: (msg: string) => void;
 }
+
+export type WebhookConversion =
+  | { name: 'Subscribe'; userId: string; eventId: string | null; invoice: InvoiceFacts }
+  | { name: 'Purchase'; userId: string; eventId: string; paymentIntentId: string; topup: TopupFacts };
 
 export interface WebhookActivity {
   userId: string;
@@ -212,6 +224,15 @@ async function logTopupActivity(deps: WebhookDeps, userId: string, paymentIntent
   }
 }
 
+async function recordMetaConversion(deps: WebhookDeps, input: WebhookConversion): Promise<void> {
+  if (!deps.recordConversion) return;
+  try {
+    await deps.recordConversion(input);
+  } catch {
+    // Measuring an ad never fails a delivery.
+  }
+}
+
 export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult> {
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`));
@@ -277,6 +298,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         if (pi?.metadata?.kind === 'topup' || session.metadata?.kind === 'topup') {
           if (amount > 0) await deps.grantTopup(user.id, amount, `pi:${piId}`, user.email ?? email);
           if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
+          // Meta's Purchase: payment_intent.succeeded carries the same key, so one is recorded.
+          if (amount > 0) await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: piId, paymentIntentId: piId, topup: { kind: 'topup', auto: pi?.metadata?.auto ?? session.metadata?.auto ?? null, amountPence: amount, currency: pi?.currency ?? session.currency ?? null } });
         }
       }
       return { handled: true };
@@ -293,6 +316,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       const amount = Number(pi.metadata.amount_pence ?? pi.amount_received ?? pi.amount) || pi.amount_received || pi.amount;
       const granted = await deps.grantTopup(user.id, amount, `pi:${pi.id}`, user.email);
       await logTopupActivity(deps, user.id, pi.id, amount, pi.metadata?.auto === '1');
+      // Meta's Purchase (never an automatic top-up; Checkout's event carries the same key).
+      await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: pi.metadata?.kind, auto: pi.metadata?.auto, amountPence: amount, currency: pi.currency } });
       return { handled: true, note: granted ? 'top-up granted' : 'already granted' };
     }
 
@@ -355,6 +380,19 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         } else {
           await deps.grantPlanCycle(user.id, planCode, `inv:${invoice.id}`, periodEnd, user.email);
         }
+        // Meta's Subscribe: the member's first paid invoice of a subscription started after tracking began.
+        await recordMetaConversion(deps, {
+          name: 'Subscribe',
+          userId: user.id,
+          eventId: invoice.id ?? null,
+          invoice: {
+            amountPaid: invoice.amount_paid,
+            totalExcludingTax: invoice.total_excluding_tax,
+            billingReason: reason,
+            currency: invoice.currency,
+            subscriptionStartedAt: sub ? isoFromUnix(sub.start_date) : reason === 'subscription_create' ? isoFromUnix(invoice.created) : null,
+          },
+        });
         return { handled: true, note: `plan cycle granted (${reason ?? 'unspecified'})` };
       }
       if (reason === 'subscription_update') {

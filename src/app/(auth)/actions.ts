@@ -7,6 +7,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
 import { safeInternalPath } from '@/lib/safe-path'
 import { postAuthPath } from '@/lib/auth/landing'
+import { onEmailSignup, onSignIn } from '@/lib/tracking/signup-server'
 
 export type AuthState = { error: string | null }
 // For flows that show a success message in place (resend, reset request) as
@@ -19,8 +20,14 @@ function getSiteUrl(): string {
 
 // Where an email link lands. The callback applies the landing rule
 // (src/lib/auth/landing.ts), so only an explicit destination is carried.
-function callbackUrl(next: string): string {
-  return `${getSiteUrl()}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`
+// `confirm` marks a sign-up confirmation link, so a confirmation opened on
+// another device can say the address is confirmed (Batch 19).
+function callbackUrl(next: string, confirm = false): string {
+  const params = new URLSearchParams()
+  if (next) params.set('next', next)
+  if (confirm) params.set('confirm', '1')
+  const query = params.toString()
+  return `${getSiteUrl()}/auth/callback${query ? `?${query}` : ''}`
 }
 
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -33,9 +40,13 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
   }
 
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) return { error: error.message }
+
+  // Batch 19: this device's cookie choice becomes the member's (e.g. the first
+  // sign-in after confirming the email on another device).
+  if (data.user) await onSignIn({ user: data.user, carried: null, next: redirectTo })
 
   redirect(postAuthPath(redirectTo))
 }
@@ -67,11 +78,11 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   }
 
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo: callbackUrl(next),
+      emailRedirectTo: callbackUrl(next, true),
       data: {
         full_name: fullName,
         mobile: normalisedMobile,
@@ -96,6 +107,21 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   // A login made to accept a team invite is not a trial signup: the team
   // pays for it, and the sales board should not chase it.
   const joiningTeam = next.startsWith('/team/join') && (await hasOpenInvite(email))
+
+  // Batch 19: the cookie choice (or the Meta pixel checkbox) and which ad or
+  // link brought them, saved with the new account now, so confirming the
+  // email on another device loses neither. An address that is already
+  // registered gets a stand-in user with no identities: nothing to record.
+  if (data.user && (data.user.identities?.length ?? 0) > 0) {
+    await onEmailSignup({
+      userId: data.user.id,
+      teamInvite: joiningTeam,
+      carried: String(formData.get('attr') ?? '') || null,
+      consentTicked: formData.get('meta_consent') === 'on',
+      signedIn: data.session !== null,
+    })
+  }
+
   if (!joiningTeam) after(async () => {
     try {
       await ensureEnquiry({
@@ -134,7 +160,7 @@ export async function resendConfirmationAction(
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email,
-    options: { emailRedirectTo: callbackUrl(next) },
+    options: { emailRedirectTo: callbackUrl(next, true) },
   })
 
   if (error) return { error: error.message, success: null }

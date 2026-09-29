@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+import { CookieSettingsLink } from "@/components/tracking/CookieSettingsLink";
 
 export function Footer() {
   return (
@@ -50,6 +51,7 @@ export function Footer() {
             <div className="v3-footer-h">Legal</div>
             <Link href="/terms">Terms of service</Link>
             <Link href="/privacy">Privacy policy</Link>
+            <CookieSettingsLink variant="marketing" />
           </div>
         </div>
 
