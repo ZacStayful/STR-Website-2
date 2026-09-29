@@ -26,6 +26,18 @@ test('dots are fine inside a name or the query, not as a path segment', () => {
   assert.equal(safeInternalPath('/a/..b', '/estimate'), '/a/..b');
 });
 
+test('an escaped dot, slash or backslash cannot slip one past', () => {
+  for (const bad of ['/%2e%2e//evil.com', '/%2E%2E/%2e%2e//evil.com', '/a/%2e/b', '/a/%2e%2e', '/%2f%2fevil.com', '/%2F/evil.com', '/%5c/evil.com', '/a/%5Cb', '/%0a/evil.com', '/%09/evil.com', '/%E2%9C']) {
+    assert.equal(safeInternalPath(bad, '/estimate'), '/estimate', bad);
+  }
+});
+
+test('escapes that are only characters in a name are fine', () => {
+  for (const ok of ['/markets/St%20Albans', '/deals/abc%2Edef', '/reports/%E2%9C%93', '/markets?next=%2F%2Fevil.com']) {
+    assert.equal(safeInternalPath(ok, '/estimate'), ok, ok);
+  }
+});
+
 test('whatever it returns resolves on our own site', () => {
   const origin = 'https://intelligence.stayful.co.uk';
   for (const raw of ['/today', '/\t/evil.com', '/%09/evil.com', '/%2F%2Fevil.com', '/ /evil.com', '/..//evil.com', '/./\t/evil.com']) {

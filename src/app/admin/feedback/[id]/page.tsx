@@ -81,7 +81,8 @@ export default async function AdminFeedbackReportPage({ params }: { params: Prom
     ["Browser", <span key="ua" className="break-all text-xs text-muted-foreground">{ctx.userAgent ?? "—"}</span>],
     ["Email to admin", r.adminEmailedAt ? `sent ${when(r.adminEmailedAt)}` : "not sent yet (the daily run retries it)"],
   ];
-  const hasFailed = r.statusEmails.some((e) => e.state === "failed" || e.state === "claimed");
+  // Retry resends the current status only: an older status's failed email stays in the list below, as history.
+  const hasFailed = r.statusEmails.some((e) => e.status === r.status && (e.state === "failed" || e.state === "claimed"));
 
   return (
     <main className="min-h-screen bg-background">

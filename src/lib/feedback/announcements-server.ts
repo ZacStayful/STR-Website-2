@@ -115,21 +115,34 @@ export async function recordBannerEvent(userId: string, action: BannerAction, ra
   const ids = wanted.filter((id) => liveIds.has(id));
   if (ids.length === 0) return false;
   const at = now.toISOString();
+  // shown_at only ever means "was on their screen": set it where it is missing.
+  const markShown = (only: string[]) => admin.from('announcement_views').update({ shown_at: at }).eq('user_id', userId).in('announcement_id', only).is('shown_at', null);
   if (action === 'shown') {
-    const { error } = await admin.from('announcement_views').upsert(ids.map((id) => ({ announcement_id: id, user_id: userId })), { onConflict: 'announcement_id,user_id', ignoreDuplicates: true });
+    const { error } = await admin.from('announcement_views').upsert(ids.map((id) => ({ announcement_id: id, user_id: userId, shown_at: at })), { onConflict: 'announcement_id,user_id', ignoreDuplicates: true });
     if (error) return false;
+    await markShown(ids);
     for (const id of ids) logActivity(userId, 'announcement_shown', { dedupeKey: activityKey.shown(id) });
     return true;
   }
   if (action === 'dismiss') {
-    const { error } = await admin.from('announcement_views').upsert(ids.map((id) => ({ announcement_id: id, user_id: userId, dismissed_at: at })), { onConflict: 'announcement_id,user_id' });
+    // Only the ones not dismissed yet (another tab may have): a second
+    // Dismiss changes nothing and logs nothing. Folded ones never on screen
+    // are dismissed too, without being counted as shown.
+    const { data: seen, error: seenError } = await admin.from('announcement_views').select('announcement_id, dismissed_at').eq('user_id', userId).in('announcement_id', ids);
+    if (seenError) return false;
+    const done = new Set(((seen ?? []) as { announcement_id: string; dismissed_at: string | null }[]).filter((v) => v.dismissed_at).map((v) => v.announcement_id));
+    const fresh = ids.filter((id) => !done.has(id));
+    if (fresh.length === 0) return true;
+    const { error } = await admin.from('announcement_views').upsert(fresh.map((id) => ({ announcement_id: id, user_id: userId, dismissed_at: at })), { onConflict: 'announcement_id,user_id' });
     if (error) return false;
-    logActivity(userId, 'announcement_dismissed', { extras: { count: ids.length } });
+    logActivity(userId, 'announcement_dismissed', { extras: { count: fresh.length } });
     return true;
   }
   const id = ids[0];
   const { error } = await admin.from('announcement_views').upsert({ announcement_id: id, user_id: userId, clicked_at: at }, { onConflict: 'announcement_id,user_id' });
   if (error) return false;
+  // It was on screen to be tapped, even if its "shown" never arrived.
+  await markShown([id]);
   logActivity(userId, 'announcement_clicked', { dedupeKey: activityKey.clicked(id) });
   return true;
 }
@@ -211,21 +224,25 @@ export async function saveAnnouncement(draft: AnnouncementDraft, id: string | nu
 
 /**
  * Publishes: live from now for every member who joined before now. A live
- * one is left as it is (a second press changes nothing); one taken down is
- * published again from now.
+ * one is left as it is (a second press changes nothing); one taken down, or
+ * past its days, is published again from now.
  */
 export async function publishAnnouncement(id: string): Promise<{ ok: boolean; message: string }> {
   if (!hasServiceRole()) return { ok: false, message: 'The service role key is not set.' };
   const admin = createAdminClient();
   const now = new Date().toISOString();
   const values = { published_at: now, unpublished_at: null, updated_at: now };
-  // A draft, or else one taken down: two plain conditional updates rather
-  // than one or(), which PostgREST applies again to the rows an update
-  // returns (they lack its columns, so the update fails every time).
+  // Past its days, a published one shows to nobody, so it can be published again too.
+  const { announcementMaxAgeDays } = await feedbackSettings();
+  const endedBefore = new Date(Date.now() - announcementMaxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+  // A draft, one taken down, or one past its days: plain conditional updates
+  // rather than one or(), which PostgREST applies again to the rows an
+  // update returns (they lack its columns, so the update fails every time).
   let published = false;
-  for (const only of ['draft', 'taken_down'] as const) {
+  for (const only of ['draft', 'taken_down', 'ended'] as const) {
     const base = admin.from('announcements').update(values).eq('id', id);
-    const { data, error } = await (only === 'draft' ? base.is('published_at', null) : base.not('unpublished_at', 'is', null)).select('id');
+    const query = only === 'draft' ? base.is('published_at', null) : only === 'taken_down' ? base.not('unpublished_at', 'is', null) : base.is('unpublished_at', null).lt('published_at', endedBefore);
+    const { data, error } = await query.select('id');
     if (error) return { ok: false, message: `Could not publish: ${error.message}` };
     published = (data ?? []).length > 0;
     if (published) break;

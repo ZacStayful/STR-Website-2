@@ -5,6 +5,7 @@ import { sendEmail } from '../email/send';
 import { statusEmail, type FeedbackEmail } from '../email/feedback';
 import { siteUrl } from '../url';
 import {
+  ADMIN_EMAIL_RETRY_AFTER_MINUTES,
   ADMIN_PAGE_SIZE,
   ADMIN_WEEKS,
   LIMITS,
@@ -26,6 +27,7 @@ import {
   reportTotals,
   statusRecipients,
   weeklySubmissions,
+  type Recipient,
   type RecipientReport,
   type ReportContext,
   type ReportFacts,
@@ -72,14 +74,25 @@ export interface AdminOverview {
   pages: number;
 }
 
-async function emailsFor(admin: Admin, userIds: string[]): Promise<Map<string, { email: string | null; name: string | null }>> {
-  const out = new Map<string, { email: string | null; name: string | null }>();
+/**
+ * Members' email and name, by id. `failed`: a read went wrong, so a member
+ * missing from `people` may still have an address (never treat them as
+ * having none: that would mark their status email skipped for good).
+ */
+async function emailsFor(admin: Admin, userIds: string[]): Promise<{ people: Map<string, { email: string | null; name: string | null }>; failed: boolean }> {
+  const people = new Map<string, { email: string | null; name: string | null }>();
+  let failed = false;
   const ids = [...new Set(userIds)];
   for (let i = 0; i < ids.length; i += 100) {
-    const { data } = await admin.from('profiles').select('id, email, full_name').in('id', ids.slice(i, i + 100));
-    for (const p of (data ?? []) as { id: string; email: string | null; full_name: string | null }[]) out.set(p.id, { email: p.email, name: p.full_name });
+    const { data, error } = await admin.from('profiles').select('id, email, full_name').in('id', ids.slice(i, i + 100));
+    if (error) {
+      console.error('[feedback] could not read members’ email addresses:', error.message);
+      failed = true;
+      continue;
+    }
+    for (const p of (data ?? []) as { id: string; email: string | null; full_name: string | null }[]) people.set(p.id, { email: p.email, name: p.full_name });
   }
-  return out;
+  return { people, failed };
 }
 
 /** The top of /admin/feedback: totals, weeks, and one page of the list. Never throws. */
@@ -107,7 +120,7 @@ export async function loadAdminOverview(opts: { kind: ReportKind | null; status:
     const { data, error, count } = await q.order('created_at', { ascending: false }).range(from, from + ADMIN_PAGE_SIZE - 1);
     if (error) return { ...empty, status: 'failed', message: error.message };
     const rows = (data ?? []) as { id: string; ref: number; kind: ReportKind; status: ReportStatus; duplicate_of: string | null; body: string; screenshot_count: number; created_at: string; user_id: string; context: Partial<ReportContext> | null; admin_emailed_at: string | null }[];
-    const [people, originals] = await Promise.all([
+    const [{ people }, originals] = await Promise.all([
       emailsFor(admin, rows.map((r) => r.user_id)),
       (async () => {
         const ids = [...new Set(rows.map((r) => r.duplicate_of).filter((v): v is string => Boolean(v)))];
@@ -116,7 +129,7 @@ export async function loadAdminOverview(opts: { kind: ReportKind | null; status:
         return new Map(((o ?? []) as { id: string; ref: number }[]).map((x) => [x.id, x.ref]));
       })(),
     ]);
-    const due = now.getTime() - 10 * 60_000;
+    const due = now.getTime() - ADMIN_EMAIL_RETRY_AFTER_MINUTES * 60_000;
     const total = count ?? rows.length;
     return {
       status: 'ok',
@@ -195,14 +208,14 @@ export async function loadAdminReport(id: string): Promise<{ status: LoadStatus;
   const shotRows = (shots.data ?? []) as { id: string; path: string; bytes: number; deleted_at: string | null }[];
   const dupRows = (dups.data ?? []) as { id: string; ref: number; user_id: string; created_at: string }[];
   const family = [r.id, ...dupRows.map((d) => d.id)];
-  const [urls, people, emails] = await Promise.all([
+  const [urls, { people }, emails] = await Promise.all([
     signedScreenshotUrls(shotRows.filter((s) => !s.deleted_at).map((s) => s.path)),
     emailsFor(admin, [r.user_id, ...dupRows.map((d) => d.user_id)]),
     admin.from('feedback_status_emails').select('report_id, user_id, status, state, sent_at, error').in('report_id', family).order('claimed_at', { ascending: true }),
   ]);
   const refOf = new Map<string, number>([[r.id, r.ref], ...dupRows.map((d) => [d.id, d.ref] as [string, number])]);
   const emailRows = (emails.data ?? []) as { report_id: string; user_id: string; status: EmailedStatus; state: string; sent_at: string | null; error: string | null }[];
-  const extraPeople = await emailsFor(admin, emailRows.map((e) => e.user_id).filter((u) => !people.has(u)));
+  const { people: extraPeople } = await emailsFor(admin, emailRows.map((e) => e.user_id).filter((u) => !people.has(u)));
   const who = (u: string) => people.get(u) ?? extraPeople.get(u);
   return {
     status: 'ok',
@@ -245,14 +258,41 @@ interface FamilyRow {
 
 const FAMILY_COLUMNS = 'id, ref, user_id, kind, body, status, status_message, duplicate_of, created_at';
 
-async function recipientReports(admin: Admin, rows: FamilyRow[]): Promise<RecipientReport[]> {
-  const people = await emailsFor(admin, rows.map((r) => r.user_id));
+/** Each report's reporter, as a status email needs them. Null when their addresses could not be read. */
+async function recipientReports(admin: Admin, rows: FamilyRow[]): Promise<RecipientReport[] | null> {
+  const { people, failed } = await emailsFor(admin, rows.map((r) => r.user_id));
+  if (failed) return null;
   return rows.map((r) => {
     const p = people.get(r.user_id);
     const first = p?.name?.trim().split(/\s+/)[0] ?? null;
     return { id: r.id, ref: r.ref, userId: r.user_id, email: p?.email ?? null, firstName: first && first.length <= 40 ? first : null, kind: r.kind, body: r.body, createdAt: r.created_at };
   });
 }
+
+/** Members already told `status` (sent, or skipped for want of an address) through any of these reports. Null when it could not be read. */
+async function toldAbout(admin: Admin, reportIds: string[], status: EmailedStatus): Promise<Set<string> | null> {
+  if (reportIds.length === 0) return new Set();
+  const { data, error } = await admin.from('feedback_status_emails').select('user_id').eq('status', status).in('state', ['sent', 'skipped']).in('report_id', reportIds);
+  if (error) {
+    console.error('[feedback] could not read who was told:', error.message);
+    return null;
+  }
+  return new Set(((data ?? []) as { user_id: string }[]).map((r) => r.user_id));
+}
+
+/**
+ * Who to tell about `status` on the root's group: each member once, never a
+ * member already told it through another of their reports in the group.
+ * Null when the addresses (or who was told) could not be read: then nothing
+ * may be claimed, or a member could be recorded as having no address.
+ */
+async function recipientsFor(admin: Admin, root: FamilyRow, others: FamilyRow[], groupIds: string[], status: EmailedStatus): Promise<Recipient[] | null> {
+  const [rootR, otherR, told] = await Promise.all([recipientReports(admin, [root]), recipientReports(admin, others), toldAbout(admin, groupIds, status)]);
+  if (!rootR || !otherR || !told) return null;
+  return statusRecipients(rootR[0], otherR, told);
+}
+
+const UNREADABLE = 'The members’ email addresses could not be read just now, so nothing was saved or sent. Try again in a moment.';
 
 export interface RecipientPreview {
   ref: number;
@@ -281,13 +321,17 @@ function statusMail(r: RecipientReport, status: EmailedStatus, message: string |
  * told, or is being told right now. Stops after SEND_TIME_BUDGET_MS and
  * says how many are left, so a press again finishes the job.
  */
-async function sendStatusEmails(admin: Admin, recipients: { report: RecipientReport; skip: boolean }[], status: EmailedStatus, message: string | null): Promise<SendSummary> {
+async function sendStatusEmails(admin: Admin, recipients: Recipient[], status: EmailedStatus, message: string | null): Promise<SendSummary> {
   const started = Date.now();
   const summary: SendSummary = { sent: 0, failed: 0, skipped: 0, already: 0, remaining: 0 };
-  for (const [i, { report: r, skip }] of recipients.entries()) {
+  for (const [i, { report: r, skip, told }] of recipients.entries()) {
     if (Date.now() - started > SEND_TIME_BUDGET_MS) {
       summary.remaining = recipients.length - i;
       break;
+    }
+    if (told) {
+      summary.already += 1;
+      continue;
     }
     const { data: claimed, error } = await admin.rpc('feedback_status_claim', { p: { report: r.id, user: r.userId, status, message: message ?? '', stale_seconds: STATUS_CLAIM_STALE_SECONDS } });
     if (error) {
@@ -325,12 +369,12 @@ async function familyOf(admin: Admin, rootId: string): Promise<{ root: FamilyRow
   return { root: rows.find((r) => r.id === rootId) ?? null, dups: rows.filter((r) => r.id !== rootId) };
 }
 
-async function previewFor(admin: Admin, recipients: { report: RecipientReport; skip: boolean }[], status: EmailedStatus, message: string | null): Promise<{ recipients: RecipientPreview[]; email: FeedbackEmail | null }> {
+async function previewFor(admin: Admin, recipients: Recipient[], status: EmailedStatus, message: string | null): Promise<{ recipients: RecipientPreview[]; email: FeedbackEmail | null }> {
   const { data } = await admin.from('feedback_status_emails').select('report_id, state').eq('status', status).in('report_id', recipients.map((r) => r.report.id));
   const state = new Map(((data ?? []) as { report_id: string; state: string }[]).map((e) => [e.report_id, e.state]));
-  const out: RecipientPreview[] = recipients.map(({ report: r, skip }) => {
+  const out: RecipientPreview[] = recipients.map(({ report: r, skip, told }) => {
     const s = state.get(r.id);
-    const outcome: RecipientPreview['outcome'] = s === 'sent' || s === 'skipped' ? 'already_told' : skip || !r.email ? 'no_email' : s ? 'retry' : 'send';
+    const outcome: RecipientPreview['outcome'] = told || s === 'sent' || s === 'skipped' ? 'already_told' : skip || !r.email ? 'no_email' : s ? 'retry' : 'send';
     return { ref: r.ref, email: r.email, outcome };
   });
   const firstToSend = recipients.find((r, i) => out[i].outcome === 'send' || out[i].outcome === 'retry') ?? recipients[0];
@@ -364,7 +408,8 @@ export async function changeStatus(input: { reportId: string; status: unknown; m
   if (!root) return { ok: false, message: 'That report could not be found.' };
   if (root.duplicate_of) return { ok: false, message: 'This is a duplicate: it follows its original. Change the original instead, or undo the duplicate first.' };
   const emails = isEmailedStatus(status);
-  const recipients = emails ? statusRecipients((await recipientReports(admin, [root]))[0], await recipientReports(admin, dups)) : [];
+  const recipients = emails ? await recipientsFor(admin, root, dups, [root.id, ...dups.map((d) => d.id)], status) : [];
+  if (!recipients) return { ok: false, message: UNREADABLE };
 
   if (input.dry) {
     if (!emails) return { ok: true, dry: true, recipients: [], email: null, emails: false };
@@ -389,7 +434,8 @@ export async function retryStatusEmails(reportId: string): Promise<StatusChange>
   const { root, dups } = await familyOf(admin, reportId);
   if (!root) return { ok: false, message: 'That report could not be found.' };
   if (!isEmailedStatus(root.status)) return { ok: false, message: 'Nothing to send: this status does not email anyone.' };
-  const recipients = statusRecipients((await recipientReports(admin, [root]))[0], await recipientReports(admin, dups));
+  const recipients = await recipientsFor(admin, root, dups, [root.id, ...dups.map((d) => d.id)], root.status);
+  if (!recipients) return { ok: false, message: UNREADABLE };
   return { ok: true, dry: false, summary: await sendStatusEmails(admin, recipients, root.status, root.status_message) };
 }
 
@@ -448,7 +494,9 @@ export async function markDuplicate(input: { reportId: string; ofRef: unknown; t
   const movedRows = (moved ?? []) as FamilyRow[];
   let summary: SendSummary | null = null;
   if (input.tell && isEmailedStatus(root.status) && movedRows.length > 0) {
-    const all = statusRecipients((await recipientReports(admin, [root]))[0], await recipientReports(admin, movedRows));
+    const { dups: group } = await familyOf(admin, root.id);
+    const all = await recipientsFor(admin, root, movedRows, [root.id, ...group.map((d) => d.id)], root.status);
+    if (!all) return { ok: true, message: `Marked a duplicate of #${root.ref}, but the members’ addresses could not be read, so nobody was told. Save the status on #${root.ref} again to tell them.`, summary: null };
     summary = await sendStatusEmails(admin, all.filter((r) => r.report.id !== root.id), root.status, root.status_message);
   }
   return { ok: true, message: `Marked a duplicate of #${root.ref}.`, summary };

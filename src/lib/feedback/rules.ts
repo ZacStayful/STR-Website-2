@@ -16,6 +16,7 @@ import { DEFAULT_SETTINGS, IMAGE, LIMITS, SETTING_BOUNDS, SETTING_KEYS, isReport
 import { sniffImage } from '../funnels/image.ts';
 import { recentWeeks, ukDay, ukWeekRange, ukWeekStart, weekLabel } from '../activity/week.ts';
 import { londonDayStart } from '../leads/search.ts';
+import { routedPath } from '../safe-path.ts';
 
 // ── Text ──
 
@@ -88,8 +89,14 @@ export function memberPath(raw: unknown): string | null {
   if (v.length === 0 || v.length > LIMITS.pathMax) return null;
   if (!/^\/[!-~]*$/.test(v) || v.startsWith('//') || v.includes('\\')) return null;
   const path = v.split(/[?#]/, 1)[0];
-  if (/(^|\/)\.{1,2}(\/|$)/.test(path)) return null;
-  if (/^\/api(\/|$)/i.test(path)) return null;
+  // As written and as routed: "/x/%2e%2e/api/y" and "/%61pi/y" both reach /api.
+  const routed = routedPath(path);
+  if (routed === null) return null;
+  for (const p of [path, routed]) {
+    if (p.startsWith('//') || /[\u0000-\u001f\u007f\\]/.test(p)) return null;
+    if (/(^|\/)\.{1,2}(\/|$)/.test(p)) return null;
+    if (/^\/api(\/|$)/i.test(p)) return null;
+  }
   return v;
 }
 
@@ -399,20 +406,24 @@ export interface Recipient {
   report: RecipientReport;
   /** No address to send to: recorded as skipped, never sent. */
   skip: boolean;
+  /** Already told this status through another of their reports in the group: not emailed again. */
+  told: boolean;
 }
 
 /**
  * One email per member for a status change on `root`: its reporter, and the
  * reporters of its duplicates, each quoting their own report (the root's
  * reporter their original; anyone else their earliest duplicate). A member
- * with no usable address is kept, to be recorded as skipped.
+ * with no usable address is kept, to be recorded as skipped. `told`: members
+ * already told this status through any report in the group (a report of
+ * theirs merged in later must not tell them twice).
  */
-export function statusRecipients(root: RecipientReport, duplicates: RecipientReport[]): Recipient[] {
+export function statusRecipients(root: RecipientReport, duplicates: RecipientReport[], told: ReadonlySet<string> = new Set()): Recipient[] {
   const byUser = new Map<string, RecipientReport>([[root.userId, root]]);
   for (const r of [...duplicates].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     if (!byUser.has(r.userId)) byUser.set(r.userId, r);
   }
-  return [...byUser.values()].map((report) => ({ report, skip: cleanEmail(report.email) === null }));
+  return [...byUser.values()].map((report) => ({ report, skip: cleanEmail(report.email) === null, told: told.has(report.userId) }));
 }
 
 // ── Admin sums ──

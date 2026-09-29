@@ -91,12 +91,17 @@ test('anything that could leave the site, or reach the API, is refused', () => {
     assert.equal(memberPath(bad), null, JSON.stringify(bad));
   }
   assert.equal(memberPath('/apiary'), '/apiary', 'only /api itself is the API');
+  // As routed: Next decodes the path, and the URL parser reads %2e as a dot.
+  for (const bad of ['/x/%2e%2e/api/feedback', '/%61pi/feedback', '/%41PI/x', '/%2E%2E/today', '/a/%2e/b', '/%2F%2Fevil.com', '/%09/evil.com', '/%5c/x', '/%E2%9C']) {
+    assert.equal(memberPath(bad), null, bad);
+  }
+  assert.equal(memberPath('/deals/abc%2Edef'), '/deals/abc%2Edef', 'an escaped dot inside a name is still a name');
   assert.equal(memberPath('/today?next=/api/x'), '/today?next=/api/x', 'the query is not a path');
 });
 
 test('whatever memberPath returns stays on our own site', () => {
   const origin = 'https://intelligence.stayful.co.uk';
-  for (const raw of ['/today', '/deals?x=//evil.com', '/my-deals#//evil.com', '/%2F%2Fevil.com', '/%09/evil.com']) {
+  for (const raw of ['/today', '/deals?x=//evil.com', '/my-deals#//evil.com', '/markets/St%20Albans']) {
     const p = memberPath(raw);
     assert.ok(p, raw);
     assert.equal(new URL(p, origin).origin, origin, raw);
@@ -315,6 +320,21 @@ test('one email per member, each quoting their own report', () => {
       ['D4', 'u3', true],
     ],
   );
+});
+
+test('a member already told this status through another report is not told again', () => {
+  const root = report('R', 'u1', '2026-09-01T10:00:00Z');
+  const dups = [report('X', 'u2', '2026-09-02T10:00:00Z'), report('D1', 'u2', '2026-09-03T10:00:00Z'), report('D5', 'u3', '2026-09-04T10:00:00Z')];
+  const out = statusRecipients(root, dups, new Set(['u2']));
+  assert.deepEqual(
+    out.map((r) => [r.report.id, r.told]),
+    [
+      ['R', false],
+      ['X', true],
+      ['D5', false],
+    ],
+  );
+  assert.ok(statusRecipients(root, dups).every((r) => !r.told), 'nobody is told-already by default');
 });
 
 // ── Admin sums ──

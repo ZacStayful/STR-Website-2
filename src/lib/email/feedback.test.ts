@@ -127,3 +127,8 @@ test('helpers', () => {
   assert.equal(ukDate('2026-09-28T23:30:00Z'), '29 September 2026', 'UK midnight has passed at 23:30 UTC in summer');
   assert.equal(ukDate('not a date'), 'not a date');
 });
+
+test('the admin email warns that a reply quotes the admin-only details to the member', () => {
+  const mail = adminReportEmail({ siteUrl: 'https://stayful.co.uk', reportId: 'r1', ref: 7, kind: 'bug', body: 'Broken', sentAt: '2026-09-28T10:00:00Z', memberEmail: 'a@b.co', memberName: null, planShort: 'Pro · team', plan: 'Team member of owner@x.co — Pro (paused)', profileName: null, page: '/today', device: 'Safari on iPhone', screen: null, appVersion: null, screenshots: { attached: 0, failed: 0 } });
+  for (const part of [mail.text, mail.html]) assert.match(part, /Your reply goes to the member, quoting this email: delete the details above \(plan, page, device\) before you send\./);
+});

@@ -136,6 +136,9 @@ export function FeedbackDialog() {
         const out = await prepareImage(file, limits.screenshotMaxMb * 1024 * 1024);
         if (out.ok) setImages((prev) => (prev.length < limits.maxScreenshots ? [...prev, out.image] : prev));
         else setImageError(out.error === "too_big" ? `That picture is over ${limits.screenshotMaxMb} MB. Try a screenshot instead.` : IMAGE_ERRORS[out.error]);
+      } catch {
+        // The browser could not draw it (memory, an odd format): say so and go on to the next.
+        setImageError(IMAGE_ERRORS.unreadable);
       } finally {
         setPreparing((n) => n - 1);
       }
@@ -154,7 +157,9 @@ export function FeedbackDialog() {
   };
 
   const trimmed = text.trim();
-  const canSend = phase === "form" && !limitReached && kind !== null && trimmed.length > 0 && preparing === 0;
+  // The limit can fall while a draft waits (admin turns screenshots off): the extra ones must go first.
+  const tooMany = images.length - limits.maxScreenshots;
+  const canSend = phase === "form" && !limitReached && kind !== null && trimmed.length > 0 && preparing === 0 && tooMany <= 0;
 
   const send = async () => {
     if (inFlight.current || !canSend || !kind) return;
@@ -198,6 +203,10 @@ export function FeedbackDialog() {
       }
       if (res.status === 429) setLimitReached(true);
       setError(res.status === 413 ? "That’s too much to send in one go. Please remove a screenshot and try again." : (data.message ?? "We couldn’t send that just now. Please try again."));
+      setPhase("form");
+    } catch {
+      // Getting the screenshots ready failed in the browser: the draft stays, and so does the Send button.
+      setError("We couldn’t get your screenshots ready to send. Please remove one and try again.");
       setPhase("form");
     } finally {
       inFlight.current = false;
@@ -292,7 +301,7 @@ export function FeedbackDialog() {
                 )}
               </div>
 
-              {limits.maxScreenshots > 0 && (
+              {(limits.maxScreenshots > 0 || images.length > 0) && (
                 <div>
                   <input
                     ref={fileRef}
@@ -304,7 +313,7 @@ export function FeedbackDialog() {
                     aria-hidden="true"
                     onChange={(e) => void addFiles(e.target.files)}
                   />
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${limits.maxScreenshots > 0 ? "" : "hidden"}`}>
                     <button
                       type="button"
                       onClick={() => fileRef.current?.click()}
@@ -336,6 +345,11 @@ export function FeedbackDialog() {
                         </li>
                       ))}
                     </ul>
+                  )}
+                  {tooMany > 0 && (
+                    <p className="mt-2 text-sm text-[#9a3412]" role="alert">
+                      {limits.maxScreenshots > 0 ? `We take up to ${limits.maxScreenshots} screenshots now. Please remove ${tooMany}.` : "We aren’t taking screenshots just now. Please remove them to send."}
+                    </p>
                   )}
                   {imageError && (
                     <p className="mt-2 text-sm text-[#9a3412]" role="alert">

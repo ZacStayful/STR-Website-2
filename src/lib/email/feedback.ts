@@ -99,7 +99,7 @@ export function adminReportEmail(input: AdminReportEmailInput): FeedbackEmail {
     '',
     `Open in admin: ${adminUrl}`,
     '',
-    'Reply to this email to answer the member. Screenshots are only in admin.',
+    'Your reply goes to the member, quoting this email: delete the details above (plan, page, device) before you send. Screenshots are only in admin.',
   ].join('\n');
   const row = ([k, v]: [string, string]) => `<tr><td style="padding:3px 16px 3px 0;color:#7a8274;vertical-align:top;white-space:nowrap">${esc(k)}</td><td style="padding:3px 0;vertical-align:top;word-break:break-word">${esc(v)}</td></tr>`;
   const html = `<div style="${WRAP}">
@@ -107,7 +107,7 @@ export function adminReportEmail(input: AdminReportEmailInput): FeedbackEmail {
   <div style="margin:12px 0 18px;padding:14px 16px;border-left:3px solid #5d8156;background:#f4f6ee">${paragraphs(input.body)}</div>
   <table role="presentation" style="border-collapse:collapse;font-size:14px">${rows.map(row).join('')}</table>
   <p style="margin:22px 0"><a href="${esc(adminUrl)}" style="${BUTTON}">Open in admin</a></p>
-  <p style="margin:0;font-size:12px;color:#7a8274">Reply to this email to answer the member. Screenshots are only in admin.</p>
+  <p style="margin:0;font-size:12px;color:#7a8274">Your reply goes to the member, quoting this email: delete the details above (plan, page, device) before you send. Screenshots are only in admin.</p>
 </div>`;
   return { subject, text, html };
 }

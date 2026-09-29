@@ -4796,18 +4796,23 @@ alter table public.announcements enable row level security;  -- no policies: ser
 revoke all on public.announcements from anon, authenticated;
 
 -- ── announcement_views: what each member was shown and did (src/lib/feedback/announcements-server.ts) ──
--- A row when the banner was first on their screen (never from a prefetch:
--- only the browser reports it). dismissed_at or clicked_at ("Take a look")
--- and it is never shown to them again. The admin page's views, dismissals
--- and click-through come from here.
+-- shown_at when the banner first had it on their screen (never from a
+-- prefetch: only the browser reports it). dismissed_at or clicked_at ("Take
+-- a look") and it is never shown to them again. The admin page's views,
+-- dismissals and click-through come from here.
 create table if not exists public.announcement_views (
   announcement_id uuid not null references public.announcements(id) on delete cascade,
   user_id uuid not null references public.profiles(id) on delete cascade,
-  shown_at timestamptz not null default now(),
+  shown_at timestamptz,
   dismissed_at timestamptz,
   clicked_at timestamptz,
   primary key (announcement_id, user_id)
 );
+-- A Dismiss also covers the ones folded under "N more", which were never
+-- seen, so a row can exist without shown_at. (A table made by an earlier
+-- draft of this section had it not null with a default.)
+alter table public.announcement_views alter column shown_at drop not null;
+alter table public.announcement_views alter column shown_at drop default;
 create index if not exists announcement_views_user_idx on public.announcement_views (user_id);
 alter table public.announcement_views enable row level security;  -- no policies: service role only
 revoke all on public.announcement_views from anon, authenticated;
@@ -4820,7 +4825,7 @@ create or replace function public.announcement_stats(p jsonb)
 returns jsonb language sql stable set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object('id', v.announcement_id, 'shown', v.shown, 'dismissed', v.dismissed, 'clicked', v.clicked)), '[]'::jsonb)
   from (
-    select announcement_id, count(*) as shown, count(dismissed_at) as dismissed, count(clicked_at) as clicked
+    select announcement_id, count(shown_at) as shown, count(dismissed_at) as dismissed, count(clicked_at) as clicked
     from public.announcement_views
     group by announcement_id
   ) v;
