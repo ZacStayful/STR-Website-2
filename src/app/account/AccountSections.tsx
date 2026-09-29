@@ -106,6 +106,7 @@ const MORE_NOTES: Record<AccountMoreKey, string | null> = {
   extension: null,
   markets: "area rankings & map",
   picks: "every property we have sent you",
+  feedback: "what you’ve sent us and where it’s got to",
 };
 
 /** The secondary doors, deliberately quieter than the cards above: no card, small type. */

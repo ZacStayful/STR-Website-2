@@ -8,8 +8,9 @@ import { payerFor, teamOf } from '../team';
 import { ACCESS_COLUMNS, accountStatus, planName } from '../access';
 import { activeProfileIdOf } from '../profiles/server';
 import { siteUrl } from '../url';
-import { ADMIN_EMAIL_RETRY_AFTER_MINUTES, ADMIN_EMAIL_RETRY_WITHIN_DAYS, type FeedbackSettings, type ReportKind } from './config';
+import { ADMIN_EMAIL_RETRY_AFTER_MINUTES, ADMIN_EMAIL_RETRY_WITHIN_DAYS, MEMBER_LIST_MAX, type FeedbackSettings, type ReportKind, type ReportStatus } from './config';
 import {
+  MEMBER_REPORT_COLUMNS,
   cleanHeader,
   deviceSummary,
   isSchemaMissing,
@@ -237,4 +238,54 @@ export async function unsentAdminEmails(now = new Date(), limit = 50): Promise<{
     return [];
   }
   return (data ?? []) as { id: string; ref: number }[];
+}
+
+// ── "Your feedback" (/account/feedback) ──
+
+export interface MemberReport {
+  id: string;
+  ref: number;
+  kind: ReportKind;
+  body: string;
+  /** A duplicate carries its original's status and message (copied when admin changes them). */
+  status: ReportStatus;
+  statusMessage: string | null;
+  statusChangedAt: string | null;
+  screenshotCount: number;
+  createdAt: string;
+}
+
+/**
+ * The member's own reports, newest first: their rows only, and only the
+ * columns in MEMBER_REPORT_COLUMNS, so admin's private note and the captured
+ * page and device can never reach them.
+ */
+export async function reportsFor(userId: string): Promise<{ status: 'ok' | 'schema_missing' | 'failed'; reports: MemberReport[] }> {
+  if (!hasServiceRole()) return { status: 'failed', reports: [] };
+  const { data, error } = await createAdminClient()
+    .from('feedback_reports')
+    .select(MEMBER_REPORT_COLUMNS)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(MEMBER_LIST_MAX);
+  if (error) {
+    if (isSchemaMissing(error)) return { status: 'schema_missing', reports: [] };
+    console.error('[feedback] could not read a member’s reports:', error.message);
+    return { status: 'failed', reports: [] };
+  }
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  return {
+    status: 'ok',
+    reports: rows.map((r) => ({
+      id: String(r.id),
+      ref: Number(r.ref),
+      kind: r.kind as ReportKind,
+      body: String(r.body ?? ''),
+      status: r.status as ReportStatus,
+      statusMessage: (r.status_message as string | null) ?? null,
+      statusChangedAt: (r.status_changed_at as string | null) ?? null,
+      screenshotCount: Number(r.screenshot_count ?? 0),
+      createdAt: String(r.created_at),
+    })),
+  };
 }

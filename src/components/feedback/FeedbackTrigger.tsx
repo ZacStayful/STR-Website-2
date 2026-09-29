@@ -6,9 +6,10 @@ import { openFeedback } from "@/lib/feedback/client";
 /**
  * A "Feedback" button (Batch 18): in the members' header beside the Profile
  * pill and the usage chip (a shortcut, not a nav item), and in the footer of
- * every members-only page. Either opens the page's one feedback form.
+ * every members-only page; a plain button on "Your feedback". Each opens the
+ * page's one feedback form.
  */
-export function FeedbackTrigger({ variant }: { variant: "header" | "footer" }) {
+export function FeedbackTrigger({ variant }: { variant: "header" | "footer" | "button" }) {
   if (variant === "header") {
     return (
       <button
@@ -20,6 +21,14 @@ export function FeedbackTrigger({ variant }: { variant: "header" | "footer" }) {
       >
         <MessageSquare aria-hidden="true" size={12} strokeWidth={2.5} />
         Feedback
+      </button>
+    );
+  }
+  if (variant === "button") {
+    return (
+      <button type="button" onClick={openFeedback} aria-haspopup="dialog" className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90">
+        <MessageSquare aria-hidden="true" size={16} />
+        Send feedback
       </button>
     );
   }

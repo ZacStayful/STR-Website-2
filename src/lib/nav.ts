@@ -118,6 +118,8 @@ export const ACCOUNT_MORE = {
   extension: { label: 'Browser extension', href: '/extension/connect' },
   markets: { label: 'Market Explorer', href: '/markets' },
   picks: { label: 'Daily picks', href: '/picks' },
+  // Batch 18: what the member has sent us, and where it has got to.
+  feedback: { label: 'Your feedback', href: '/account/feedback' },
 } as const;
 
 export type AccountMoreKey = keyof typeof ACCOUNT_MORE;
@@ -125,12 +127,13 @@ export type AccountMoreKey = keyof typeof ACCOUNT_MORE;
 /**
  * Which of them a person sees: Team only for someone who owns their account
  * (a member's team is the owner's to manage), Leads only while their team owns
- * a funnel (the nav's own rule), and the rest for everyone.
+ * a funnel (the nav's own rule), and the rest for everyone, "Your feedback"
+ * (Batch 18) included.
  */
 export function accountMoreLinks(p: { teamMember: boolean; teamOwnsFunnel: boolean }): AccountMoreKey[] {
   const keys: AccountMoreKey[] = [];
   if (!p.teamMember) keys.push('team');
   if (p.teamOwnsFunnel) keys.push('leads');
-  keys.push('extension', 'markets', 'picks');
+  keys.push('extension', 'markets', 'picks', 'feedback');
   return keys;
 }
