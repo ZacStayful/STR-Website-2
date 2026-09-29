@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
+import { releaseHeld } from '@/lib/meta/conversions';
 import { isChoice, isConsentSource, type DeviceConsent } from '@/lib/tracking/consent';
 import { clearTrackingCookies, deviceConsent, recordChoice, setDeviceConsent } from '@/lib/tracking/consent-server';
-import { isSameOriginJson } from '@/lib/tracking/request';
+import { clientDetails, isSameOriginJson } from '@/lib/tracking/request';
 import { TRACKING } from '@/lib/tracking/config';
 
 export const dynamic = 'force-dynamic';
@@ -17,7 +19,8 @@ export const dynamic = 'force-dynamic';
  * Records the proof (and, signed in, the member's saved choice), writes the
  * essential cookie again from the server (so Safari's 7-day cap on script-set
  * cookies does not apply), and on Reject clears the attribution cookie and
- * our _fbc. Never fails the page: the browser has already remembered the
+ * our _fbc; on a member's Accept, conversions held in the last hour are
+ * sent. Never fails the page: the browser has already remembered the
  * choice itself.
  */
 export async function POST(request: Request) {
@@ -48,9 +51,15 @@ export async function POST(request: Request) {
     /* signed out, or auth unavailable: the choice still counts for this device */
   }
 
-  await recordChoice({ visitorId: consent.visitorId, userId, choice, source, at: now });
+  const recorded = await recordChoice({ visitorId: consent.visitorId, userId, choice, source, at: now });
   await setDeviceConsent(consent);
   if (choice === 'reject') await clearTrackingCookies(request.headers.get('x-forwarded-host') ?? request.headers.get('host'));
+  // A member's Accept: their conversions held in the last hour are sent after all.
+  if (userId && recorded.member?.choice === 'accept') {
+    const memberId = userId;
+    const details = clientDetails(request.headers);
+    after(() => releaseHeld(memberId, details));
+  }
 
   return Response.json({ ok: true, choice, at: now.toISOString() });
 }

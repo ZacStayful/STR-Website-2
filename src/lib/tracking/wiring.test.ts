@@ -43,3 +43,29 @@ test('the Conversions API token is never read in browser code', () => {
     assert.doesNotMatch(read(path), /META_CAPI_ACCESS_TOKEN|capiToken|serverSendMode/, path);
   }
 });
+
+test('conversions in code already running after the response are awaited; request ones use logConversion', () => {
+  const analyse = read('src/app/api/analyse/route.ts');
+  assert.match(analyse, /await recordConversion\(\{ name: 'FirstReport'/);
+  const deal = read('src/lib/analysis/deal-analysis.ts');
+  const start = deal.indexOf('const [{ error: doneErr }] = await Promise.all([');
+  const awaited = deal.slice(start, deal.indexOf(']);', start));
+  assert.match(awaited, /recordConversion\(\{ name: 'FirstReport', userId: purchase\.buyer_id \}\)/, 'inside the awaited Promise.all');
+  assert.doesNotMatch(analyse + deal, /logConversion/);
+  assert.match(read('src/lib/stripe/deps.ts'), /recordConversion: \(c\) => recordConversion\(c\)/);
+  assert.match(read('src/lib/profile/server.ts'), /await logConversion\(\{ name: 'ProfileComplete', userId \}\)/);
+  assert.match(read('src/app/api/billing/topup/route.ts'), /await logConversion\(\{ name: 'Purchase'/);
+});
+
+test('sign-up and sign-in bring the cookie choice across first, then attribution, then CompleteRegistration', () => {
+  const src = read('src/lib/tracking/signup-server.ts');
+  for (const fn of ['export async function onEmailSignup', 'export async function onSignIn']) {
+    const body = src.slice(src.indexOf(fn), src.indexOf('\n}\n', src.indexOf(fn)));
+    const consent = Math.max(body.indexOf('attachDevice('), body.indexOf('recordChoice('));
+    const attribution = body.indexOf('saveAttribution(');
+    const conversion = body.indexOf("recordConversion({ name: 'CompleteRegistration'");
+    assert.ok(consent > 0 && attribution > consent && conversion > attribution, fn);
+  }
+  for (const path of ['src/app/auth/callback/route.ts', 'src/app/auth/confirm/route.ts', 'src/app/(auth)/actions.ts']) assert.match(read(path), /onSignIn\(/, path);
+  assert.match(read('src/app/(auth)/actions.ts'), /onEmailSignup\(/);
+});

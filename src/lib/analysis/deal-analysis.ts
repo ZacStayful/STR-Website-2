@@ -70,6 +70,7 @@ import { logActivity, recordActivity } from '../activity/log';
 import { activeProfileIdOf } from '../profiles/server';
 import { reminderEvent } from './take-up';
 import { reportProjectFor } from '../project/report-server';
+import { recordConversion } from '../meta/conversions';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
@@ -632,6 +633,8 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
         dedupeKey: `full_analysis:${purchase.id}`,
         extras: { via: purchase.opened_by_purchase ? 'one_tap' : 'upgrade', reused, pmi_ticked: purchase.with_pmi, pmi: pmiDelivered },
       }),
+      // Batch 19: Meta's FirstReport, once per account (no browser here: the member's last-seen details are used).
+      recordConversion({ name: 'FirstReport', userId: purchase.buyer_id }),
     ]);
     if (doneErr) console.error('[deal-analysis] complete update failed:', doneErr.message);
     return { ok: true, reportId, result, reused, chargedBasePence: charged };

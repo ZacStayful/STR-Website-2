@@ -14,6 +14,8 @@ import { reportAction } from '@/lib/credit/estimate';
 import { claimReportRun, releaseReportRun } from '@/lib/analysis/report-claim';
 import { analysisComplete } from '@/lib/analysis/reuse';
 import { actionSpend, refundAction } from '@/lib/credit/action';
+import { recordConversion } from '@/lib/meta/conversions';
+import { clientDetails } from '@/lib/tracking/request';
 
 // This route streams SSE while `runAnalysis` makes several sequential
 // external API calls; the default 10s function timeout (Hobby) would cut
@@ -274,6 +276,8 @@ export async function POST(request: Request) {
           });
           // Batch 9: the report run, once the member has it (never before, never twice).
           if (userId) await recordActivity(userId, 'report_run', { listingUrl: input.sourceListing?.url ?? null, dedupeKey: `report:${prepared.ctx.actionId}`, extras: { tier: prepared.reportKind === 'report_enhanced' ? 'enhanced' : 'standard', from: input.fromDeal ? 'deal' : input.sourceListing || input.checkedListingId ? 'listing' : 'address' } });
+          // Batch 19: Meta's FirstReport (once per account; awaited, as this runs after the response).
+          if (userId) await recordConversion({ name: 'FirstReport', userId, details: clientDetails(request.headers) });
 
           // Generate the PDF report and upload it to the user's enquiry row
           // (Monday "Reports" file column), matched by email. Awaited before

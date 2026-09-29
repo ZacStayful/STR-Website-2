@@ -112,6 +112,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
       teamInvite: joiningTeam,
       carried: String(formData.get('attr') ?? '') || null,
       consentTicked: formData.get('meta_consent') === 'on',
+      signedIn: data.session !== null,
     })
   }
 

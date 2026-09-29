@@ -3,7 +3,7 @@ import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { pixelEnabled, serverSendMode } from '@/lib/meta/env';
 import { hashEmail, hashExternalId } from '@/lib/meta/hash';
-import { metaExclusion, pendingForBrowser } from '@/lib/meta/conversions';
+import { metaExclusion, pendingForBrowser, releaseHeld } from '@/lib/meta/conversions';
 import { TRACKING } from '@/lib/tracking/config';
 import { reconcile, type MemberConsent } from '@/lib/tracking/consent';
 import { attachDevice, clearTrackingCookies, deviceConsent, memberConsentFor, refreshBrowserDetails, setDeviceConsent } from '@/lib/tracking/consent-server';
@@ -54,6 +54,12 @@ export async function POST(request: Request) {
   const side = reconcile(device, member);
   if (side === 'device' && device && device.choice !== member?.choice) {
     member = (await attachDevice(user.id, device)) ?? member;
+    // This device's Accept is now the member's: anything held in the last hour goes.
+    if (member?.choice === 'accept') {
+      const memberId = user.id;
+      const details = clientDetails(request.headers);
+      after(() => releaseHeld(memberId, details));
+    }
   } else if (side === 'member' && member && member.choice !== device?.choice) {
     await setDeviceConsent({ choice: member.choice, at: member.chosenAt, visitorId: device?.visitorId ?? randomUUID(), version: TRACKING.consentVersion });
     if (member.choice === 'reject') await clearTrackingCookies(request.headers.get('x-forwarded-host') ?? request.headers.get('host'));
