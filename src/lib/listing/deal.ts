@@ -19,15 +19,42 @@ import type { BillsSplit, CouncilTaxFigure } from './bills.ts';
 import type { MortgageRateInfo, MortgageRateSource, LiveMortgageRate } from './mortgage-rate.ts';
 import { auctionCash, auctionPrice, DEFAULT_AUCTION_TERMS, type AuctionMethod, type AuctionTerms } from '../deal-quality/auction.ts';
 
+/**
+ * How the purchase mortgage is paid (Batch 16b). Investors borrow
+ * interest-only: the monthly payment is the interest alone and the loan is
+ * repaid when the property is sold or refinanced. The repayment
+ * (amortising) formula is kept behind this setting; nothing selects it today.
+ */
+export type MortgageType = 'interest_only' | 'repayment';
+
 export interface FinanceDefaults {
   depositPct: number; // 25
   mortgageRatePct: number; // 5.5
+  /** Only the repayment formula reads it; kept so a stored answer is never lost. */
   termYears: number; // 25
   targetYieldPct: number; // 10
   targetMarginPcm: number; // 500
+  mortgageType: MortgageType; // interest_only
 }
 
-export const DEFAULT_FINANCE: FinanceDefaults = { depositPct: 25, mortgageRatePct: 5.5, termYears: 25, targetYieldPct: 10, targetMarginPcm: 500 };
+/**
+ * The house finance, and the ONE place the mortgage type is set. Every deal,
+ * range, ceiling, offer, report and PDF builds its finance as
+ * `{ ...DEFAULT_FINANCE, ...member }`, and a member's stored finance never
+ * carries a type (market/goals.ts parses five fields), so the type here is
+ * the type everywhere.
+ */
+export const DEFAULT_FINANCE: FinanceDefaults = { depositPct: 25, mortgageRatePct: 5.5, termYears: 25, targetYieldPct: 10, targetMarginPcm: 500, mortgageType: 'interest_only' };
+
+/** "5.5%", "5.29%": the rate as the notes print it. */
+export function ratePctLabel(ratePct: number): string {
+  return `${Number.isInteger(ratePct) ? ratePct : Math.round(ratePct * 100) / 100}%`;
+}
+
+/** The one sentence every surface uses to describe the purchase mortgage. */
+export function MORTGAGE_NOTE(ratePct: number): string {
+  return `Interest-only mortgage at ${ratePctLabel(ratePct)}: you pay the interest each month and the loan is repaid when you sell or refinance.`;
+}
 
 export interface CostRates {
   platformPct: number; // 0.15
@@ -58,6 +85,8 @@ export interface PurchaseDeal {
   depositPct: number;
   mortgageRatePct: number;
   termYears: number;
+  /** Which formula made `mortgageMonthly` (Batch 16b). Absent on rows saved before it: those were repayment. */
+  mortgageType?: MortgageType;
   // ── Added with the PropertyData deal accuracy work; absent on deals saved before it ──
   /** Which nation's transaction tax `stampDuty` is. */
   taxCountry?: TaxCountry;
@@ -144,13 +173,31 @@ function billsFor(input: DealInputs): CostRates {
   return { ...DEFAULT_COSTS, ...(input.bills ? { billsPcm: input.bills.billsPcm } : {}), ...input.costs };
 }
 
-/** Standard repayment mortgage payment. */
+/**
+ * Standard repayment (amortising) mortgage payment. Kept behind the
+ * `mortgageType` setting; `mortgagePayment` is what the deals call.
+ */
 export function monthlyMortgage(principal: number, annualRatePct: number, termYears: number): number {
   if (principal <= 0) return 0;
   const r = annualRatePct / 100 / 12;
   const n = Math.max(1, Math.round(termYears * 12));
   if (r === 0) return principal / n;
   return (principal * r) / (1 - Math.pow(1 + r, -n));
+}
+
+/** Interest-only mortgage payment: the loan × the annual rate ÷ 12. */
+export function interestOnlyMortgage(principal: number, annualRatePct: number): number {
+  if (principal <= 0) return 0;
+  return (principal * annualRatePct) / 100 / 12;
+}
+
+/**
+ * The monthly mortgage payment on a purchase, by the finance's mortgage type.
+ * The one function the deal maths, Batch 17's refinance and Batch 28's
+ * buy-to-let read; the inverse is maxPriceForProfit.
+ */
+export function mortgagePayment(principal: number, fin: Pick<FinanceDefaults, 'mortgageRatePct' | 'termYears' | 'mortgageType'>): number {
+  return fin.mortgageType === 'repayment' ? monthlyMortgage(principal, fin.mortgageRatePct, fin.termYears) : interestOnlyMortgage(principal, fin.mortgageRatePct);
 }
 
 function operatingCosts(grossRevenue: number, c: CostRates): number {
@@ -167,7 +214,7 @@ export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDe
   const setupCost = input.setupCost ?? defaultSetupCost(input.bedrooms);
   const deposit = askingPrice * (fin.depositPct / 100);
   const loan = askingPrice - deposit;
-  const mortgage = monthlyMortgage(loan, fin.mortgageRatePct, fin.termYears);
+  const mortgage = mortgagePayment(loan, fin);
   const cashRequired = deposit + stampDuty + setupCost;
   const cashflowMonthly = netOperating / 12 - mortgage;
   return {
@@ -188,6 +235,7 @@ export function purchaseDeal(askingPrice: number, input: DealInputs): PurchaseDe
     depositPct: fin.depositPct,
     mortgageRatePct: fin.mortgageRatePct,
     termYears: fin.termYears,
+    mortgageType: fin.mortgageType,
     taxCountry: sd.country,
     stampDutyName: sd.name,
     stampDutyEffectiveRatePct: sd.effectiveRatePct,
@@ -231,25 +279,59 @@ export function auctionDeal(guide: number, method: AuctionMethod, input: DealInp
 
 /**
  * The most a buyer can pay and still keep `minProfitPcm` a month after the
- * mortgage (Batch 14): the exact inverse of monthlyMortgage.
+ * mortgage (Batch 14): the exact inverse of mortgagePayment.
  *
  *   payment = net operating ÷ 12 − minimum profit     (≤ 0: no price does it)
- *   loan    = payment × (1 − (1 + r)^−n) ÷ r            (r = 0: payment × n)
+ *   loan    = payment ÷ r                              interest-only (r = 0: any price)
+ *           = payment × (1 − (1 + r)^−n) ÷ r           repayment (r = 0: payment × n)
  *   price   = loan ÷ (1 − deposit)
  *
  * A 100% deposit borrows nothing, so no price is too high for the profit:
- * `any`. Never 0 and never negative: `none` when no price leaves the profit.
- * Not rounded: the caller rounds down, so the rounded figure still clears it.
+ * `any`; so is a 0% interest-only rate. Never 0 and never negative: `none`
+ * when no price leaves the profit. Not rounded: the caller rounds down, so
+ * the rounded figure still clears it.
  */
-export function maxPriceForProfit(netOperatingAnnual: number, minProfitPcm: number, depositPct: number, ratePct: number, termYears: number): { price: number } | { none: true } | { any: true } {
+export function maxPriceForProfit(netOperatingAnnual: number, minProfitPcm: number, depositPct: number, ratePct: number, termYears: number, mortgageType: MortgageType = DEFAULT_FINANCE.mortgageType): { price: number } | { none: true } | { any: true } {
   const payment = netOperatingAnnual / 12 - minProfitPcm;
   if (!Number.isFinite(payment) || payment <= 0) return { none: true };
   if (depositPct >= 100) return { any: true };
   const r = ratePct / 100 / 12;
-  const n = Math.max(1, Math.round(termYears * 12));
-  const loan = r === 0 ? payment * n : (payment * (1 - Math.pow(1 + r, -n))) / r;
+  let loan: number;
+  if (mortgageType === 'repayment') {
+    const n = Math.max(1, Math.round(termYears * 12));
+    loan = r === 0 ? payment * n : (payment * (1 - Math.pow(1 + r, -n))) / r;
+  } else {
+    if (r <= 0) return { any: true };
+    loan = payment / r;
+  }
   const price = loan / (1 - Math.max(0, depositPct) / 100);
   return Number.isFinite(price) && price > 0 ? { price } : { none: true };
+}
+
+/**
+ * A stored deal at the current mortgage type (Batch 16b). Rows saved before
+ * the type existed were priced on a repayment mortgage; this rebuilds the
+ * three figures that depend on the payment from the fields every stored
+ * purchase deal carries, and stamps the type. Everything else is kept as
+ * saved (a lot's bridging cash, a report's basis and minimum profit), and a
+ * rent-to-rent or already-current deal comes back as the same object, and so
+ * does a row too old to carry the figures (nothing to rebuild from). Within
+ * £1 of a fresh purchaseDeal: the stored net operating is rounded.
+ */
+export function atCurrentMortgage<T extends Deal>(deal: T): T {
+  if (deal.kind !== 'purchase' || deal.mortgageType === DEFAULT_FINANCE.mortgageType) return deal;
+  if (![deal.askingPrice, deal.depositPct, deal.mortgageRatePct, deal.termYears, deal.netOperating, deal.cashRequired].every((n) => typeof n === 'number' && Number.isFinite(n))) return deal;
+  const fin = { mortgageRatePct: deal.mortgageRatePct, termYears: deal.termYears, mortgageType: DEFAULT_FINANCE.mortgageType };
+  const loan = deal.askingPrice * (1 - deal.depositPct / 100);
+  const mortgage = mortgagePayment(loan, fin);
+  const cashflowMonthly = deal.netOperating / 12 - mortgage;
+  return {
+    ...deal,
+    mortgageMonthly: Math.round(mortgage),
+    cashflowMonthly: Math.round(cashflowMonthly),
+    cashOnCashPct: deal.cashRequired > 0 ? round1(((cashflowMonthly * 12) / deal.cashRequired) * 100) : 0,
+    mortgageType: DEFAULT_FINANCE.mortgageType,
+  };
 }
 
 /** Highest price at which gross revenue / price still meets the target yield. */
