@@ -2,6 +2,8 @@ import Link from 'next/link'
 import { SignupForm } from './signup-form'
 import { GoogleButton } from '../google-button'
 import { safeInternalPath } from '@/lib/safe-path'
+import { bannerEnabled } from '@/lib/meta/env'
+import { deviceConsent } from '@/lib/tracking/consent-server'
 
 export const metadata = { title: 'Start your free trial · Stayful Intelligence' }
 
@@ -13,6 +15,8 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
   // Arriving from a team invite: this login is for joining someone's team,
   // which pays for it — no free-credit pitch.
   const joiningTeam = nextPath.startsWith('/team/join')
+  // Batch 19: the Meta pixel checkbox, never for a team invite (team seats are never measured).
+  const consent = bannerEnabled() && !joiningTeam ? { initialChoice: (await deviceConsent())?.choice ?? null } : null
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
       {joiningTeam ? (
@@ -32,7 +36,7 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
       )}
 
       <div className="mt-6">
-        <SignupForm next={nextPath} />
+        <SignupForm next={nextPath} consent={consent} />
       </div>
 
       <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">

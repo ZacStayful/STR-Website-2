@@ -22,6 +22,9 @@
  *
  * A signed-in member's lookup holds the banner back until it answers, so a
  * member who chose on another device is not asked again (memberLookupPending).
+ *
+ * Before tidying, each page's address is also read for sign-up attribution
+ * (touch.ts), kept in page memory whatever the choice.
  */
 import { CREDIT_CHANGED_EVENT } from '../credit/client';
 import { canSendNow, loadPixel, pixelState, revokePixel, sendConversion, sendPageView, silencePixel } from '../meta/pixel';
@@ -30,6 +33,7 @@ import { parseConsent, type Choice } from './consent';
 import { CONSENT_CHANGED_EVENT, clearMetaCookies, hasSessionCookie, isFramed, notifyConsentChanged, readConsentRaw } from './browser';
 import { parseBrowserConversion, parseMeAnswer, type BrowserConversion, type MeAnswer } from './me';
 import { isCleanForSend, isStripeReturn, surfaceFor, tidiedHref } from './surfaces';
+import { isTagged, keepFirst, serializeTouch, touchFromPage, type Touch } from './touch';
 
 export interface TrackingConfig {
   /** A dataset id is set: the banner may ask. */
@@ -46,6 +50,12 @@ let meAt = 0;
 let meInFlight: Promise<MeAnswer | null> | null = null;
 let lookupSettled = false;
 let lastChoice: Choice | null = null;
+// Sign-up attribution, in page memory only (touch.ts): the first touch of
+// this page load, carried to sign-up by the form and Google's return
+// address. Kept on the device (/api/tracking/touch) only after Accept.
+let touch: Touch | null = null;
+let touchValue = '';
+let touchKept = false;
 let creditTimers: ReturnType<typeof setTimeout>[] = [];
 let stripeTimer: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<() => void>();
@@ -61,6 +71,34 @@ function emit(): void {
 export function subscribeTracking(onChange: () => void): () => void {
   listeners.add(onChange);
   return () => listeners.delete(onChange);
+}
+
+/** This page load's touch, ready to carry to sign-up ('' when there is none). */
+export function currentTouchValue(): string {
+  return touchValue;
+}
+
+function capture(href: string): void {
+  let referrer = '';
+  try {
+    referrer = document.referrer;
+  } catch {
+    /* no referrer */
+  }
+  const next = keepFirst(touch, touchFromPage(href, referrer, Date.now()));
+  if (next === touch) return;
+  touch = next;
+  touchValue = next ? serializeTouch(next) : '';
+  emit();
+}
+
+/** With Accept: a tagged touch is kept on the device for 30 days (once per page load). */
+function keepTouchIfAccepted(): void {
+  if (touchKept || !config.bannerOn || !isTagged(touch) || parseConsent(readConsentRaw())?.choice !== 'accept') return;
+  touchKept = true;
+  postJson('/api/tracking/touch', { t: touchValue }).catch(() => {
+    touchKept = false;
+  });
 }
 
 /** The banner waits while a signed-in member's saved choice is looked up. */
@@ -219,12 +257,14 @@ function settle(mine: number): void {
   try {
     const href = window.location.href;
     stripe = isStripeReturn(href);
+    capture(href);
     const tidy = tidiedHref(href);
     if (tidy && tidy !== href) window.history.replaceState(null, '', tidy);
   } catch {
     /* the address stays as it was: nothing is sent from it */
   }
   if (stripe && measuringMember()) startStripePoll();
+  keepTouchIfAccepted();
   void refresh(mine, false);
 }
 
@@ -253,6 +293,7 @@ function onConsentChanged(): void {
     unsent.clear();
     return;
   }
+  if (choice === 'accept') keepTouchIfAccepted();
   // Anonymous visitors need nothing from the server: start straight away.
   // A member waits for the choice to be saved (consentSaved), so the server
   // has it, and any conversion it released, before we ask.

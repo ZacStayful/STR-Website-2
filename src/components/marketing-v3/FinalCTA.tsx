@@ -1,13 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "@/lib/icons";
 
 export function FinalCTA() {
+  const router = useRouter();
   const [postcode, setPostcode] = useState("");
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    window.location.href = "/signup";
+    // In-app, so the ad that brought them here is still known at sign-up (Batch 19).
+    router.push("/signup");
   };
   return (
     <section className="final-cta">

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bannerShown, consentFromCookieString, parseConsent, reconcile, secondChanceShown, serializeConsent } from './consent.ts';
+import { bannerShown, consentFromCookieString, parseConsent, quizCheckboxShown, reconcile, secondChanceShown, serializeConsent } from './consent.ts';
 
 const VID = '8f14e45f-ceea-467a-9c3b-1a2b3c4d5e6f';
 
@@ -52,4 +52,16 @@ test('the banner', () => {
   assert.equal(bannerShown({ ...base, choice: 'accept', settingsOpen: true }), true);
   assert.equal(bannerShown({ ...base, surface: 'none', settingsOpen: true }), false);
   assert.equal(bannerShown({ ...base, surface: 'banner' }), true);
+});
+
+test('the quiz start screen asks a new Google sign-up once, while nobody has said yes', () => {
+  const base = { enabled: true, fresh: true, google: true, teamSeat: false, memberChoice: null, deviceChoice: null } as const;
+  assert.equal(quizCheckboxShown(base), true);
+  assert.equal(quizCheckboxShown({ ...base, deviceChoice: 'reject' }), true);
+  assert.equal(quizCheckboxShown({ ...base, memberChoice: 'accept' }), false);
+  assert.equal(quizCheckboxShown({ ...base, deviceChoice: 'accept' }), false);
+  assert.equal(quizCheckboxShown({ ...base, google: false }), false, 'email sign-ups had the form checkbox');
+  assert.equal(quizCheckboxShown({ ...base, teamSeat: true }), false);
+  assert.equal(quizCheckboxShown({ ...base, fresh: false }), false);
+  assert.equal(quizCheckboxShown({ ...base, enabled: false }), false);
 });

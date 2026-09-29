@@ -108,6 +108,16 @@ export function secondChanceShown(choice: Choice | null | undefined): boolean {
 }
 
 /**
+ * The quiz's start screen offers it to a new Google sign-up, who never saw
+ * the sign-up form's checkbox: once (the start screen only shows before the
+ * first answer), never to a team seat, while neither this device nor the
+ * account has said yes.
+ */
+export function quizCheckboxShown(s: { enabled: boolean; fresh: boolean; google: boolean; teamSeat: boolean; memberChoice: Choice | null; deviceChoice: Choice | null }): boolean {
+  return s.enabled && s.fresh && s.google && !s.teamSeat && secondChanceShown(s.memberChoice) && secondChanceShown(s.deviceChoice);
+}
+
+/**
  * Whether the banner is on screen. Always when Cookie settings reopened it;
  * otherwise only where there is something to ask about, before a choice, and
  * not after it was closed without one on this page load. While a signed-in

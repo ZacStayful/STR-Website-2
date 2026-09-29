@@ -10,6 +10,10 @@ import { creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progre
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
 import { MembersFooter } from "@/components/feedback/MembersFooter";
+import { bannerEnabled } from "@/lib/meta/env";
+import { isTeamBound } from "@/lib/team";
+import { quizCheckboxShown } from "@/lib/tracking/consent";
+import { deviceConsent, memberConsentFor } from "@/lib/tracking/consent-server";
 import { Quiz } from "./Quiz";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +60,22 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
   const [areas, matchCount, credit] = await Promise.all([rankedAreasForQuiz(), matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers }), creditViewFor(summary)]);
   if (!editing) await markQuizOpened(user.id, summary, now);
 
+  // Batch 19: a new Google sign-up never saw the sign-up form's Meta pixel
+  // checkbox, so the start screen offers it (only looked up when it could show).
+  const fresh = !editing && summary.progress.answered.length === 0;
+  const google = user.app_metadata?.provider === "google";
+  const consentCheckbox =
+    fresh && google && bannerEnabled()
+      ? quizCheckboxShown({
+          enabled: true,
+          fresh,
+          google,
+          teamSeat: await isTeamBound(user.id, user.email ?? null),
+          memberChoice: (await memberConsentFor(user.id))?.choice ?? null,
+          deviceChoice: (await deviceConsent())?.choice ?? null,
+        })
+      : false;
+
   return (
     <main className="min-h-screen bg-background px-4 py-6 sm:py-12">
       <VisitHeartbeat />
@@ -67,7 +87,8 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
           credit={credit}
           editing={editing}
           returnTo={returnTo}
-          fresh={!editing && summary.progress.answered.length === 0}
+          fresh={fresh}
+          consentCheckbox={consentCheckbox}
           areas={areas}
           profileHref={GOALS_EDITOR_HREF}
           privacyHref="/privacy"

@@ -3,15 +3,23 @@
 import { useActionState } from 'react'
 import { signupAction, type AuthState } from '../actions'
 import { PasswordField } from '../PasswordField'
+import { AttributionFields } from '@/components/tracking/AttributionFields'
+import { SignupConsentCheckbox } from '@/components/tracking/SignupConsentCheckbox'
+import type { Choice } from '@/lib/tracking/consent'
 
 const initialState: AuthState = { error: null }
 
-export function SignupForm({ next = '' }: { next?: string }) {
+/**
+ * `consent`: the Meta pixel checkbox (Batch 19), with this device's choice
+ * as the server saw it; null leaves it out (no dataset, or a team invite).
+ */
+export function SignupForm({ next = '', consent = null }: { next?: string; consent?: { initialChoice: Choice | null } | null }) {
   const [state, action, pending] = useActionState(signupAction, initialState)
 
   return (
     <form action={action} className="space-y-4">
       <input type="hidden" name="next" value={next} />
+      <AttributionFields />
       <div className="space-y-1.5">
         <label htmlFor="full_name" className="text-sm font-medium">
           Full name
@@ -69,6 +77,7 @@ export function SignupForm({ next = '' }: { next?: string }) {
         <PasswordField id="password" name="password" autoComplete="new-password" minLength={8} />
         <p className="text-xs text-muted-foreground">At least 8 characters.</p>
       </div>
+      {consent ? <SignupConsentCheckbox initialChoice={consent.initialChoice} /> : null}
       {state.error ? <p className="text-sm text-destructive">{state.error}</p> : null}
       <button
         type="submit"

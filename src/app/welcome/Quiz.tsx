@@ -13,6 +13,7 @@ import { answerQuestionAction, finishLaterAction, previewMatchCountAction, sampl
 import { QuizPhoto } from "./_components/QuizPhoto";
 import { AmountChoice, AreasChoice, FinanceChoice, MultiChoice, PROFIT_INPUT, PrimaryButton, RENT_INPUT, SingleChoice, WhereChoice } from "./_components/Controls";
 import { SampleDeals } from "./_components/SampleDeals";
+import { SignupConsentCheckbox } from "@/components/tracking/SignupConsentCheckbox";
 
 export interface QuizStart {
   answers: Answers;
@@ -25,6 +26,8 @@ export interface QuizStart {
   returnTo: string;
   /** A member who has answered nothing yet sees the start screen first. */
   fresh: boolean;
+  /** Batch 19: the start screen offers the Meta pixel checkbox (a new Google sign-up). */
+  consentCheckbox?: boolean;
   areas: QuizArea[];
   profileHref: string;
   privacyHref: string;
@@ -142,6 +145,11 @@ export function Quiz(start: QuizStart) {
         <div className="mt-5">
           <PrimaryButton onClick={() => setScreen(progress.next ? { kind: "question", id: progress.next } : { kind: "done" })}>Start</PrimaryButton>
         </div>
+        {start.consentCheckbox ? (
+          <div className="mt-4">
+            <SignupConsentCheckbox instant />
+          </div>
+        ) : null}
         <p className="mt-4 text-center text-xs text-muted-foreground">
           Your answers only decide which deals you see and in what order. See our{" "}
           <Link href={start.privacyHref} className="underline underline-offset-4">

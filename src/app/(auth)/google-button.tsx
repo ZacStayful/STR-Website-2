@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser'
+import { currentTouchValue } from '@/lib/tracking/runtime'
 
 export function GoogleButton({ next = '' }: { next?: string }) {
   const [loading, setLoading] = useState(false)
@@ -14,11 +15,17 @@ export function GoogleButton({ next = '' }: { next?: string }) {
     const siteUrl =
       process.env.NEXT_PUBLIC_SITE_URL ||
       (typeof window !== 'undefined' ? window.location.origin : '')
+    // The callback applies the landing rule; only an explicit destination is carried.
+    const params = new URLSearchParams()
+    if (next) params.set('next', next)
+    // Batch 19: the ad or link that brought them here survives the trip to Google.
+    const attr = currentTouchValue()
+    if (attr) params.set('attr', attr)
+    const query = params.toString()
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        // The callback applies the landing rule; only an explicit destination is carried.
-        redirectTo: `${siteUrl}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`,
+        redirectTo: `${siteUrl}/auth/callback${query ? `?${query}` : ''}`,
       },
     })
     if (error) {

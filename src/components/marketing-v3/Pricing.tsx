@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Icon } from "@/lib/icons";
 import { getPlans, type BillingPlan } from "@/lib/credit/plans";
 import { getBillingSettings, getUnitCostTable } from "@/lib/credit/unit-costs";
@@ -106,9 +107,9 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> {pickLine(FREE_PERKS.sourcingCadence)}</li>
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Top-ups from {gbp(settings.topupPresetsPence[0] ?? 1000)}</li>
               </ul>
-              <a href={signupHref} className="btn btn-ghost" style={{ width: "100%", justifyContent: "center" }}>
+              <Link href={signupHref} className="btn btn-ghost" style={{ width: "100%", justifyContent: "center" }}>
                 Start free <Icon name="arrow" size={14} />
-              </a>
+              </Link>
             </div>
           )}
           {monthly.map((p, i) => card(p, p.code === "pro", p.code === "pro" ? "Most popular" : i === monthly.length - 1 ? "Best value" : undefined))}

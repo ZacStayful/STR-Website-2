@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { runSignInHooks } from '@/lib/auth/sign-in-hooks'
 import { postAuthPath } from '@/lib/auth/landing'
+import { onSignIn } from '@/lib/tracking/signup-server'
 
 // Signs a member in from a token-hash link:
 //   /auth/confirm?token_hash=…&type=magiclink&next=/deals
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   if (!tokenHash || !type || !TYPES.has(type)) return NextResponse.redirect(loginUrl('missing_token'))
 
   const supabase = await createSupabaseServerClient()
-  const { error } = await supabase.auth.verifyOtp({ type: type as EmailOtpType, token_hash: tokenHash })
+  const { data, error } = await supabase.auth.verifyOtp({ type: type as EmailOtpType, token_hash: tokenHash })
   if (error) {
     // Used or expired link, but the member may already be signed in from the
     // first click (the same link is in the email and the WhatsApp message).
@@ -38,5 +39,7 @@ export async function GET(request: NextRequest) {
   }
 
   await runSignInHooks(supabase)
+  // Batch 19: this device's cookie choice becomes the member's.
+  if (data.user) await onSignIn({ user: data.user, carried: null, next })
   return NextResponse.redirect(`${origin}${postAuthPath(next)}`)
 }
