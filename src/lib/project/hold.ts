@@ -40,7 +40,12 @@ export interface HoldInput {
   kind: SourcingKind;
   needsWork: NeedsWork | null | undefined;
   auction: boolean | null | undefined;
-  /** Whether the source's pages can be read (serverFetchEnabled). */
+  /**
+   * Whether the source's pages can ever be read (SERVER_FETCHABLE: never
+   * Zoopla's). Not the LISTING_SERVER_FETCH / LISTING_SOURCES switches: a
+   * listing held while fetching is switched off waits (and at worst expires
+   * unchecked, revivable); it is never retired for good over a switch.
+   */
   fetchable: boolean;
   /** The page's own first exclusion once it has been read (null: none found); undefined: never read. */
   pageExclusion?: ExclusionReason | null;

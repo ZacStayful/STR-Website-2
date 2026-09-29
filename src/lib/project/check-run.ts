@@ -50,6 +50,7 @@ import { ask, pdConservationArea, pdListedBuildings, pdSoldPrices } from '../bro
 import { COST_PENCE, providerEnabled } from '../broker/config';
 import { resolveListing } from '../listing/server';
 import { serverFetchEnabled } from '../listing/fetch';
+import { SERVER_FETCHABLE } from '../listing/detect';
 import { suitabilityFromSnapshot } from '../listing/suitability';
 import { projectPhotosFrom } from '../listing/parsers/photos';
 import { parseMotivation } from '../listing/motivation';
@@ -102,10 +103,18 @@ import {
 const RUN_BUDGET_MS = 55_000;
 /** A photo check is only started with this much of the run left. */
 const PHOTO_CHECK_MIN_MS = 40_000;
-/** A prep (a page read and up to three PropertyData calls) is only started with this much left. */
-const PREP_MIN_MS = 20_000;
-/** Between a prep's steps: stop rather than start a call that could run past the budget. */
-const STEP_MIN_MS = 8_000;
+/**
+ * A prep is only started with this much left: the screening context (up to
+ * SNAPSHOT_WAIT_MS, once a run) and the page read (up to 12s) fit, and the
+ * PropertyData steps then check the time for themselves.
+ */
+const PREP_MIN_MS = 25_000;
+/**
+ * A PropertyData step is only started with this much left: the call's own
+ * timeout (20s) plus a margin, so a slow reply never runs the route past
+ * Vercel's 60 seconds and loses the run's record of what it spent.
+ */
+const STEP_MIN_MS = 22_000;
 const SNAPSHOT_WAIT_MS = 10_000;
 /** Live Project deals re-costed a run, at most (database work only). */
 const RECOSTS_PER_RUN = 10;
@@ -295,6 +304,21 @@ interface RunEnv {
   /** Spent by this run so far, on top of `use`. */
   spent: { otherPence: number; soldLookups: number; photoPence: number; photoChecks: number };
   ctx: ScreenContext | null;
+  /** This run's marketplace_runs row, opened at the start so its spend is on record as it happens; null when it could not be opened. */
+  runId: string | null;
+  triggeredBy: string;
+}
+
+/**
+ * Writes the run's spend so far to its row (the day's accounting reads it),
+ * after each paid call: a run that dies, or one running beside it, never
+ * leaves that spend uncounted.
+ */
+async function saveSpend(env: RunEnv): Promise<void> {
+  if (!env.runId) return;
+  const summary = { inProgress: true, triggeredBy: env.triggeredBy, otherPence: Math.round(env.spent.otherPence * 100) / 100, soldLookups: env.spent.soldLookups, photoPence: Math.round(env.spent.photoPence * 100) / 100, photoChecks: env.spent.photoChecks };
+  const { error } = await env.admin.from('marketplace_runs').update({ summary }).eq('id', env.runId);
+  if (error) console.warn('[project-checks] spend record failed:', error.message);
 }
 
 const remaining = (env: RunEnv) => env.deadline - Date.now();
@@ -316,11 +340,13 @@ async function prepCandidate(env: RunEnv, c: Candidate): Promise<StepResult> {
     await retireHeld(admin, url, 'removed', now);
     return { outcome: 'removed', error: 'sourced listing gone' };
   }
-  if (!serverFetchEnabled(row.source)) {
+  if (!SERVER_FETCHABLE.has(row.source)) {
     // A page that can never be read can never be photo-checked (Zoopla).
     await retireHeld(admin, url, 'project_uncheckable', now);
     return { outcome: 'uncheckable', error: `${row.source} pages are not read` };
   }
+  // Fetching switched off for now (LISTING_SERVER_FETCH / LISTING_SOURCES): it waits, and nothing is counted against it.
+  if (!serverFetchEnabled(row.source)) return { outcome: 'skipped', error: `${row.source} fetching is switched off` };
   if (!env.ctx) return { outcome: 'skipped', error: 'snapshot_warming' };
   const ctx = env.ctx;
 
@@ -357,7 +383,7 @@ async function prepCandidate(env: RunEnv, c: Candidate): Promise<StepResult> {
   }
   const card = (merged.postcodeArea ? ctx.cardByCode.get(merged.postcodeArea) : null) ?? (row.postcode_area ? ctx.cardByCode.get(row.postcode_area) : null) ?? null;
   const check = validCheckFor(checkOf(row.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
-  const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, row.postcode_area) : null;
+  const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, row.postcode_area, row.canonical_url) : null;
   const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: row.first_seen_at, cohort, now });
   if (!qualifiesForMarketplace(rec)) {
     await retireHeld(admin, url, 'unqualified', now);
@@ -438,6 +464,7 @@ async function prepCandidate(env: RunEnv, c: Candidate): Promise<StepResult> {
     if (capLeft(env) < 2 * COST_PENCE.propertydataCall) return { outcome: 'skipped', error: 'the day’s cap' };
     const [listed, conservation] = await Promise.all([ask(pdListedBuildings, { postcode }, PD_CTX), ask(pdConservationArea, { postcode }, PD_CTX)]);
     spend((listed.costPence ?? 0) + (conservation.costPence ?? 0));
+    await saveSpend(env);
     const excluded = designationExclusion(listed.value, conservation.value);
     designation = { listed: listed.value ? excluded === 'listed' : null, conservation: conservation.value ? conservation.value.inside === true : null };
     if (excluded) {
@@ -459,6 +486,7 @@ async function prepCandidate(env: RunEnv, c: Candidate): Promise<StepResult> {
     soldLookups += 1;
     env.spent.soldLookups += 1;
     spend(sold.costPence);
+    await saveSpend(env);
   }
   if (!sold.value) {
     // Not in the cache and nothing more may be bought today: tomorrow, not a failure.
@@ -496,7 +524,10 @@ async function applyVerdict(env: RunEnv, c: Candidate, verdict: CheckVerdict, pr
   const { admin, now } = env;
   const url = c.row.canonical_url;
   if (verdict.kind === 'ready') {
-    return (await releaseHeld(admin, c.row, env.dq, now, { price })) ? 'ready' : 'skipped';
+    if (!(await releaseHeld(admin, c.row, env.dq, now, { price }))) return 'skipped';
+    // On record, so its wording no longer keeps it out of the picks and the live-deal backfill never holds it again.
+    await upsertPrep(admin, url, { deal_id: c.row.id, price, outcome: 'released' as PrepOutcome });
+    return 'ready';
   }
   if (verdict.kind === 'not_project') {
     return (await retireHeld(admin, url, 'not_project', now, { price })) ? 'not_project' : 'skipped';
@@ -532,13 +563,14 @@ async function photoCheckCandidate(env: RunEnv, c: Candidate): Promise<StepResul
   }
 
   const images = prep.photos.length + prep.floorplans.length;
+  const worstPence = photoCheckWorstPence(images);
   const { data: claim, error: claimErr } = await admin.rpc('project_claim_check', {
     p_url: url,
     p_deal: c.row.id,
     p_day: today,
     p_max: s.allowance.photoChecks,
     p_cap_pence: claimCapPence(s.allowance, env.use.otherPence + env.spent.otherPence),
-    p_worst_pence: photoCheckWorstPence(images),
+    p_worst_pence: worstPence,
   });
   if (claimErr) {
     console.error('[project-checks] claim failed:', claimErr.message);
@@ -552,16 +584,18 @@ async function photoCheckCandidate(env: RunEnv, c: Candidate): Promise<StepResul
   const result: PhotoCheckOutcome = await runMetered({ userId: null, admin: false, action: PROJECT_CHECKS_ACTION, actionId: newActionId() }, () =>
     runPhotoCheck({ photos: prep.photos, floorplans: prep.floorplans, bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, propertyType: facts.rawType, effort: s.checks.effort, deadline: env.deadline }),
   );
-  env.spent.photoPence += result.costPence;
+  // The claim holds the worst case until this replaces it; a call that failed in flight may still be billed, so it keeps it.
+  const costPence = !result.ok && result.costUnknown ? worstPence : result.costPence;
+  env.spent.photoPence += costPence;
   const finished = new Date().toISOString();
   const record = result.ok
-    ? { status: 'done', model: result.model, fell_back: result.fellBack, photos: result.used.photos, floorplans: result.used.floorplans, findings: result.findings, usage: result.usage, cost_pence: result.costPence, error: null, finished_at: finished }
-    : { status: result.reason === 'refused' || result.reason === 'invalid' || result.reason === 'max_tokens' || result.reason === 'unavailable' ? result.reason : 'failed', photos: prep.photos, floorplans: prep.floorplans, usage: result.usage, cost_pence: result.costPence, error: result.detail ?? result.reason, finished_at: finished };
+    ? { status: 'done', model: result.model, fell_back: result.fellBack, photos: result.used.photos, floorplans: result.used.floorplans, findings: result.findings, usage: result.usage, cost_pence: costPence, error: null, finished_at: finished }
+    : { status: result.reason === 'refused' || result.reason === 'invalid' || result.reason === 'max_tokens' || result.reason === 'unavailable' ? result.reason : 'failed', photos: prep.photos, floorplans: prep.floorplans, usage: result.usage, cost_pence: costPence, error: result.costUnknown ? `${result.detail ?? result.reason} (no reply: counted at the worst case)` : result.detail ?? result.reason, finished_at: finished };
   const { data: checkRow, error: recErr } = await admin.from('project_checks').update(record).eq('canonical_url', url).eq('check_day', today).select('id').maybeSingle();
   if (recErr) console.error('[project-checks] check record failed:', recErr.message);
-  if (!result.ok) return { ...(await recordFailedDay(admin, c, today, s, now, `photo check ${result.reason}`)), photoPence: result.costPence };
+  if (!result.ok) return { ...(await recordFailedDay(admin, c, today, s, now, `photo check ${result.reason}`)), photoPence: costPence };
   const outcome = await applyVerdict(env, c, estimateOn(result.findings), price, result.used, (checkRow as { id?: string } | null)?.id ?? null);
-  return { outcome, photoPence: result.costPence };
+  return { outcome, photoPence: costPence };
 }
 
 /** Live Project deals whose price has moved since they were costed. */
@@ -639,8 +673,21 @@ export interface ProjectRunResult {
 
 export { projectChecksOn };
 
-async function recordRun(admin: Admin, startedAt: Date, summary: Record<string, unknown>): Promise<void> {
-  const { error } = await admin.from('marketplace_runs').insert({ kind: PROJECT_CHECKS_KIND, dry: false, started_at: startedAt.toISOString(), finished_at: new Date().toISOString(), summary });
+/** The run's row, opened before anything is spent; null when it cannot be written (the run then records itself at the end). */
+async function openRun(admin: Admin, startedAt: Date, triggeredBy: string): Promise<string | null> {
+  const { data, error } = await admin.from('marketplace_runs').insert({ kind: PROJECT_CHECKS_KIND, dry: false, started_at: startedAt.toISOString(), summary: { inProgress: true, triggeredBy, otherPence: 0, soldLookups: 0 } }).select('id').single();
+  if (error) {
+    console.error('[project-checks] run record failed:', error.message);
+    return null;
+  }
+  return String((data as { id: string }).id);
+}
+
+async function recordRun(admin: Admin, startedAt: Date, summary: Record<string, unknown>, runId: string | null): Promise<void> {
+  const finished = new Date().toISOString();
+  const { error } = runId
+    ? await admin.from('marketplace_runs').update({ finished_at: finished, summary }).eq('id', runId)
+    : await admin.from('marketplace_runs').insert({ kind: PROJECT_CHECKS_KIND, dry: false, started_at: startedAt.toISOString(), finished_at: finished, summary });
   if (error) console.error('[project-checks] run record failed:', error.message);
 }
 
@@ -698,7 +745,9 @@ export async function runProjectChecks(opts: ProjectRunOptions): Promise<Project
       }),
   );
   const ready = () => candidates.filter((c) => !c.claimedToday && readyForCheck(c.prep, c.price, today));
-  const toPrep = () => candidates.filter((c) => needsPrep(c.prep, c.price, today));
+  // Each candidate is prepped at most once a run, whatever its prep ended in (retired, released, removed…).
+  const attempted = new Set<string>();
+  const toPrep = () => candidates.filter((c) => !attempted.has(c.row.canonical_url) && needsPrep(c.prep, c.price, today));
 
   const summary: Record<string, unknown> = {
     dry: opts.dry,
@@ -730,7 +779,8 @@ export async function runProjectChecks(opts: ProjectRunOptions): Promise<Project
     });
   }
 
-  const env: RunEnv = { admin, settings, dq, today, now: startedAt, deadline, use, spent: { otherPence: 0, soldLookups: 0, photoPence: 0, photoChecks: 0 }, ctx: null };
+  const runId = await openRun(admin, startedAt, opts.triggeredBy);
+  const env: RunEnv = { admin, settings, dq, today, now: startedAt, deadline, use, spent: { otherPence: 0, soldLookups: 0, photoPence: 0, photoChecks: 0 }, ctx: null, runId, triggeredBy: opts.triggeredBy };
   const recost = await recostLive(env);
   const results: { what: string; step: 'prep' | 'photo_check'; outcome: string; error?: string }[] = [];
   let photoChecked = false;
@@ -778,6 +828,7 @@ export async function runProjectChecks(opts: ProjectRunOptions): Promise<Project
       }
     }
     preps_ += 1;
+    attempted.add(next.row.canonical_url);
     const r = await runMetered({ userId: null, admin: false, action: PROJECT_CHECKS_ACTION, actionId: newActionId() }, () => prepCandidate(env, next));
     results.push({ what: describe(next), step: 'prep', outcome: r.outcome, error: r.error });
     if (r.outcome === 'skipped' || r.outcome === 'waiting') {
@@ -807,7 +858,7 @@ export async function runProjectChecks(opts: ProjectRunOptions): Promise<Project
     results,
     ms: Date.now() - startedAt.getTime(),
   });
-  await recordRun(admin, startedAt, summary);
+  await recordRun(admin, startedAt, summary, runId);
   if (results.length > 0 || recost.recosted + recost.retired > 0) revalidateDeals();
   return done({ status: 200, body: summary });
 }

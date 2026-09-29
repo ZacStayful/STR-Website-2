@@ -86,3 +86,12 @@ test('"I want rent-to-rent, not to buy" adds Rent-to-rent to the profile (Q25); 
   assert.deepEqual(legacy.dealTypes, ['buy_str', 'r2r']);
   assert.equal(withAddedType({ goals: null, about: null }, 'r2r'), null);
 });
+
+test('adding a type adds to what the profile is shown, never switches it (Q25)', () => {
+  // Goals with nothing that maps: shown Short-let + Rent-to-rent (Q22).
+  const nothing = { goals: { ...DEFAULT_GOALS }, about: null };
+  assert.deepEqual(typesShown(nothing), ['buy_str', 'r2r']);
+  assert.equal(withAddedType(nothing, 'r2r'), null, 'already shown: nothing to add');
+  assert.deepEqual([...(withAddedType(nothing, 'brrr')?.dealTypes ?? [])].sort(), ['brrr', 'buy_str', 'r2r']);
+  assert.equal(withAddedType(nothing, 'brrr')?.sourcingKind, 'both');
+});

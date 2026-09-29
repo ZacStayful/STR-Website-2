@@ -154,3 +154,26 @@ test('re-choosing a mixed day keeps each type’s answered cards where they are'
   assert.equal(again.dealIds[2], first.dealIds[2]);
   assert.equal(new Set(again.dealIds).size, again.dealIds.length);
 });
+
+test('re-choosing after a type is added gives it its slots: an untouched card of the fuller type makes room', async () => {
+  const { reads } = readsOf(poolOf({ buy_str: 8, brrr: 4, r2r: 0 }));
+  const before = await chooseDay(input(['buy_str']), reads);
+  assert.deepEqual(typesOf(before.dealIds), ['buy_str', 'buy_str', 'buy_str', 'buy_str', 'buy_str']);
+  const pinned = new Set([before.dealIds[4]]);
+  const after = await chooseDay(input(['buy_str', 'brrr']), reads, { current: before.dealIds, pinned });
+  const t = typesOf(after.dealIds);
+  assert.deepEqual([t.filter((x) => x === 'buy_str').length, t.filter((x) => x === 'brrr').length], [3, 2], 'the 3 / 2 mix, not five Short-let cards');
+  assert.ok(after.dealIds.includes(before.dealIds[4]), 'an answered card never goes to make room');
+});
+
+test('re-choosing keeps an answered card of a chosen type even when its type finds nothing else today', async () => {
+  const rows = [...poolOf({ buy_str: 8 }), row('r2r1', 'r2r', 15_000)];
+  const { reads } = readsOf(rows);
+  const current = ['buy_str1', 'r2r1', 'buy_str2', 'buy_str3', 'buy_str4'];
+  // The rental is no longer choosable (say the member lowered their rent), but they kept it.
+  const again = await chooseDay(input(['buy_str', 'r2r'], { exclude: new Set(['r2r1']) }), reads, { current, pinned: new Set(['r2r1']) });
+  assert.equal(again.dealIds[1], 'r2r1');
+  // A type no longer chosen: its cards go, answered or not.
+  const narrowed = await chooseDay(input(['buy_str', 'brrr'], { exclude: new Set(['r2r1']) }), readsOf([...rows, ...poolOf({ brrr: 3 })]).reads, { current, pinned: new Set(['r2r1']) });
+  assert.ok(!narrowed.dealIds.includes('r2r1'));
+});

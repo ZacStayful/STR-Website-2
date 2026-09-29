@@ -70,7 +70,10 @@ export default async function ProjectDealsAdminPage() {
   if (!isAdminEmail(user.email)) notFound();
 
   const v = await projectLearningView(createAdminClient(), DAYS);
-  const passed = v.outcomes.project ?? 0;
+  // The run keys its outcomes by step: "photo_check:project", and "photo_check:project (reused)" for a check reused within its window.
+  const passed = Object.entries(v.outcomes)
+    .filter(([key]) => key.startsWith("photo_check:project"))
+    .reduce((n, [, count]) => n + count, 0);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">

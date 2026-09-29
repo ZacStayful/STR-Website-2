@@ -12,7 +12,7 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 // that runs out of time carries on next time.
 //
 //   ?dry=1   counts and a sample (area, bedrooms, type, the phrases, the
-//            decision; never an address); changes nothing
+//            decision; never an address); changes no deal (the run is logged)
 //
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/project-backfill?dry=1"
 

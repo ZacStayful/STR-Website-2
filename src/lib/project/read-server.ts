@@ -64,6 +64,26 @@ export async function projectColumnsFor(admin: Admin, urls: readonly string[]): 
   return out;
 }
 
+/**
+ * Of these listings, the ones the Project check let go into the ordinary
+ * flow: an auction lot (Q10), or released because its page no longer says it
+ * needs work or its photos say it is ready to go. Their wording no longer
+ * keeps them out of the picks, and they are never held again by the
+ * live-deal backfill. Empty when unreadable (the table not there yet).
+ */
+export async function projectClearedUrls(admin: Admin, urls: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < urls.length; i += URL_CHUNK) {
+    const { data, error } = await admin.from('project_prep').select('canonical_url').in('canonical_url', urls.slice(i, i + URL_CHUNK)).in('outcome', ['released', 'auction']);
+    if (error) {
+      if (!/does not exist|could not find/i.test(error.message ?? '')) console.warn('[project] prep outcomes unreadable:', error.message);
+      return out;
+    }
+    for (const r of (data ?? []) as { canonical_url: string }[]) out.add(r.canonical_url);
+  }
+  return out;
+}
+
 export interface StoredEstimate {
   estimate: ProjectEstimate;
   /** The photos and floorplan the check looked at, in order: the working's photo numbers refer to these. */

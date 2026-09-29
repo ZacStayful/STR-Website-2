@@ -34,6 +34,7 @@ import { nextCheckDueAt } from './cadence';
 import { REACTIVATABLE_REASONS, RETURNING_REASONS, type DealRow } from './types';
 import { chunk, loadDealsByUrls, priceChangeColumns, recordColumns, retireDeal, writeWithoutMissing, type Admin } from './server';
 import { serverFetchEnabled } from '../listing/fetch';
+import { SERVER_FETCHABLE } from '../listing/detect';
 import type { NeedsWork } from '../project/needs-work';
 import { projectHoldFor, type HoldDecision } from '../project/hold';
 import { projectFactsOf } from '../project/check-plan';
@@ -79,7 +80,7 @@ function holdFor(l: SourcedListing, priceAmount: number | null, rules: DealRules
       kind: l.kind,
       needsWork: needsWorkOf(l),
       auction: l.auction,
-      fetchable: serverFetchEnabled(l.source),
+      fetchable: SERVER_FETCHABLE.has(l.source),
       pageExclusion: l.projectExclusion,
       texts: [l.title, l.priceQualifier, ...(l.features ?? [])],
       tenure: l.tenure,

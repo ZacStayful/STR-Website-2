@@ -12,6 +12,7 @@ import 'server-only';
  */
 import type { createAdminClient } from '../supabase/admin';
 import { indexCohorts, lookupCohorts, type CohortMember } from '../listing/cohorts';
+import { queryKeyArea } from '../listing/sourcing';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -19,9 +20,16 @@ type Admin = ReturnType<typeof createAdminClient>;
 export const COHORT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface CohortLookup {
-  /** The cohort member for a listing, from its area's cached cohorts; null when none is cached or it is not in one. */
-  find(listing: { postcodeArea?: string | null; uprn?: string | null; postcode?: string | null; address?: string | null }, fallbackArea?: string | null): Promise<CohortMember | null>;
+  /**
+   * The cohort member for a listing, from its area's cached cohorts; null
+   * when none is cached or it is not in one. Given the listing's URL, a miss
+   * also tries the area whose search found it: the sweep matched a listing
+   * against the cohorts of the areas it searched, so one found through a
+   * neighbouring area's search can sit in that area's cohort.
+   */
+  find(listing: { postcodeArea?: string | null; uprn?: string | null; postcode?: string | null; address?: string | null }, fallbackArea?: string | null, url?: string | null): Promise<CohortMember | null>;
 }
+
 
 export function cachedCohortLookup(admin: Admin, now: () => number = Date.now): CohortLookup {
   const index = new Map<string, CohortMember>();
@@ -41,11 +49,18 @@ export function cachedCohortLookup(admin: Admin, now: () => number = Date.now): 
     loaded.set(area, p);
     return p;
   };
+  const match = (listing: { uprn?: string | null; postcode?: string | null; address?: string | null }) => lookupCohorts(index, { uprn: listing.uprn ?? null, postcode: listing.postcode ?? null, address: listing.address ?? null });
   return {
-    async find(listing, fallbackArea) {
+    async find(listing, fallbackArea, url) {
       const area = listing.postcodeArea ?? fallbackArea ?? null;
       if (area) await load(area);
-      return lookupCohorts(index, { uprn: listing.uprn ?? null, postcode: listing.postcode ?? null, address: listing.address ?? null });
+      const hit = match(listing);
+      if (hit || !url) return hit;
+      const { data, error } = await admin.from('sourced_listings').select('query_key').eq('canonical_url', url).maybeSingle();
+      const searched = error ? null : queryKeyArea((data as { query_key?: string } | null)?.query_key);
+      if (!searched || searched === area) return null;
+      await load(searched);
+      return match(listing);
     },
   };
 }

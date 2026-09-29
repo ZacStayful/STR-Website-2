@@ -63,6 +63,7 @@ import { sendParts } from "../tailoring/email-answers";
 import { memberFinance } from "../marketplace/most-you-can-pay";
 import { projectCardsByUrl } from "../marketplace/queries";
 import { projectChecksOn, readProjectSettings } from "../project/settings-server";
+import { projectClearedUrls } from "../project/read-server";
 import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
 
@@ -855,8 +856,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // goes only to a profile that takes both.
   const candidateUrls = new Set(seenUrls);
   for (const list of olderCandidates.values()) for (const l of list) candidateUrls.add(l.canonicalUrl);
-  const projects = await projectCardsByUrl([...candidateUrls]);
+  const projects = await projectCardsByUrl([...candidateUrls], { liveOnly: true });
   isProjectDeal = (url) => Boolean(projects?.has(url));
+  // Let go into the ordinary flow by the Project check (an auction lot, or its photos say ready to go): its wording no longer holds it back.
+  const cleared = projectHold ? await projectClearedUrls(admin, [...candidateUrls]) : new Set<string>();
   const typeOfCandidate = (l: SourcedListing): DealType | null => (l.kind === "rent" ? "r2r" : projects === null ? null : projects.has(l.canonicalUrl) ? "brrr" : "buy_str");
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
@@ -883,7 +886,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Batch 17: never a deal type the profile did not choose.
       if (!typeFits(l)) return;
       // Batch 17: while the Project hold runs, a sale worded as needing work is only ever picked as a Project deal.
-      if (projectHold && l.kind === "sale" && !isProjectDeal(l.canonicalUrl) && listingNeedsWork(l).flag) return;
+      if (projectHold && l.kind === "sale" && l.auction !== true && !cleared.has(l.canonicalUrl) && !isProjectDeal(l.canonicalUrl) && listingNeedsWork(l).flag) return;
       // A pool deal still inside its early-access window is not for a member
       // whose account has never paid. Decided here, before anything is ranked,
       // so neither the alternates nor the daily cap can reach it later.
@@ -1140,7 +1143,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // however well it scores. The search card cannot know this — only the page can.
       const suitable: Verdict = s.status && GONE_STATUSES.has(s.status) ? "gone" : suitabilityFromSnapshot(s, l.kind);
       // Batch 17: the page says it needs work: a Project deal or nothing while the hold runs.
-      const verdict: Verdict = suitable === "ok" && projectHold && merged.kind === "sale" && !isProjectDeal(l.canonicalUrl) && merged.needsWork?.flag ? "project" : suitable;
+      const verdict: Verdict = suitable === "ok" && projectHold && merged.kind === "sale" && merged.auction !== true && !cleared.has(l.canonicalUrl) && !isProjectDeal(l.canonicalUrl) && merged.needsWork?.flag ? "project" : suitable;
       const out = { verdict, listing: merged, snapshot: s, previousAgentHash };
       verdicts.set(l.canonicalUrl, out);
       summary.verified += 1;
@@ -1400,7 +1403,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
       // The rest of the profile's Today, in the order /today draws it.
       const plan = plans.get(m.key) ?? null;
-      let teasers = plan ? teasersFrom(plan, row?.dealId ?? null, visibility) : [];
+      // The pick's type, so it makes room from the type the day holds most of (as /today does).
+      const pickType: DealType | null = row ? (row.sending.listing.kind === "rent" ? "r2r" : isProjectDeal(row.sending.listing.canonicalUrl) ? "brrr" : "buy_str") : null;
+      let teasers = plan ? teasersFrom(plan, row?.dealId ?? null, visibility, pickType) : [];
       if (!row && teasers.length > 0 && mode === "per_day" && !m.admin) {
         // A profile with no pick today is charged for its Today alone: on what
         // it holds from the credit check, else on what the purse has left.

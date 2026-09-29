@@ -288,7 +288,7 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   const card = (merged.postcodeArea ? ctx.cardByCode.get(merged.postcodeArea) : null) ?? (deal.postcode_area ? ctx.cardByCode.get(deal.postcode_area) : null) ?? null;
   // Batch 16: a check still good for the listing the page describes keeps its figure; otherwise the area figures, as before.
   const check = validCheckFor(checkOf(deal.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
-  const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, deal.postcode_area) : null;
+  const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, deal.postcode_area, deal.canonical_url) : null;
   const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, cohort, now });
   if (!qualifiesForMarketplace(rec)) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
@@ -344,9 +344,13 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
         }
       : {}),
   };
-  const { data, error } = await writeWithoutMissing(update, (u) => admin.from('marketplace_deals').update(u).eq('canonical_url', deal.canonical_url).select(DEAL_COLUMNS).maybeSingle(), 'marketplace');
+  // Batch 17: the hold is written only while the row is as it was read (a sweep may have retired it meanwhile); the live write is as it always was.
+  const { data, error } = await writeWithoutMissing(update, (u) => {
+    const q = admin.from('marketplace_deals').update(u).eq('canonical_url', deal.canonical_url);
+    return (held ? q.eq('status', deal.status) : q).select(DEAL_COLUMNS).maybeSingle();
+  }, 'marketplace');
   if (error) console.error('[marketplace] live update failed:', error.message);
-  if (held) return error ? { kind: 'failed', code: 'write' } : { kind: 'held' };
+  if (held) return error ? { kind: 'failed', code: 'write' } : data ? { kind: 'held' } : { kind: 'failed', code: 'changed' };
   return { kind: 'live', deal: ((data as unknown as DealRow | null) ?? { ...deal, ...(update as Partial<DealRow>) }) as DealRow, listing: merged, snapshot: s };
 }
 

@@ -39,7 +39,6 @@ interface MemberRow {
 interface ProfileRow {
   id: string;
   user_id: string;
-  name: string;
   criteria: unknown;
   answered: unknown;
   is_active: boolean;
@@ -54,7 +53,6 @@ interface QuizRow {
 export interface BackfillLine {
   member: string | null;
   profile: string | null;
-  name: string | null;
   active: boolean;
   status: 'map' | 'already' | 'nothing' | 'no_goals';
   before: BackfillBefore;
@@ -117,7 +115,7 @@ export async function runDealTypesBackfill(opts: { dry: boolean; triggeredBy: st
 
   const [members, profiles, quizzes] = await Promise.all([
     readAll<MemberRow>((from, to) => admin.from('profiles').select('id, market_goals, market_goals_updated_at, about_you').order('id', { ascending: true }).range(from, to)),
-    readAll<ProfileRow>((from, to) => admin.from('search_profiles').select('id, user_id, name, criteria, answered, is_active, updated_at').is('deleted_at', null).order('id', { ascending: true }).range(from, to)),
+    readAll<ProfileRow>((from, to) => admin.from('search_profiles').select('id, user_id, criteria, answered, is_active, updated_at').is('deleted_at', null).order('id', { ascending: true }).range(from, to)),
     readAll<QuizRow>((from, to) => admin.from('profile_quiz').select('user_id, answered').order('user_id', { ascending: true }).range(from, to)),
   ]);
   if (members.error) return { status: 500, body: { error: `members unreadable: ${members.error}` } };
@@ -153,7 +151,6 @@ export async function runDealTypesBackfill(opts: { dry: boolean; triggeredBy: st
     const line: BackfillLine = {
       member: shortId(seat.member.id),
       profile: shortId(seat.profile?.id),
-      name: seat.profile?.name ?? null,
       active: seat.live,
       status: outcome.status,
       before: beforeOf(seat.goals, seat.about),

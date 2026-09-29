@@ -155,7 +155,8 @@ function DealTypesBackfill({ dry, done, written, left, already, outOfTime }: { d
                 <tr key={`${l.member}-${l.profile ?? "own"}`} className="border-t border-border align-top">
                   <td className="py-1.5 pr-2 font-mono text-foreground">{l.member}</td>
                   <td className="py-1.5 pr-2 text-foreground">
-                    {l.name ?? "(no profile rows)"} {l.profile && <span className="font-mono text-muted-foreground">{l.profile}</span>} {l.active && <span className="text-muted-foreground">· active</span>}
+                    {/* Never the profile's name: a client profile's name can identify the client. */}
+                    {l.profile ? <span className="font-mono">{l.profile}</span> : "(no profile rows)"} {l.active && <span className="text-muted-foreground">· active</span>}
                   </td>
                   <td className="py-1.5 pr-2 text-muted-foreground">
                     roles {typesText(l.before.roles)} · main {l.before.mainRole ?? "—"} · exploring {l.before.exploringPick ?? "—"} · path {l.before.path ?? "—"} · kind {l.before.kind} · source for {l.before.sourceFor ?? "—"} · condition {l.before.condition ?? "—"} · budget {l.before.budget ?? "—"}

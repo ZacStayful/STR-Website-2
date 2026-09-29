@@ -14,7 +14,7 @@
  */
 import type { AuctionTerms } from '../deal-quality/auction.ts';
 import type { TaxCountry, TaxName } from '../listing/stamp-duty.ts';
-import type { ProjectSettings } from './config.ts';
+import { DEFAULT_PROJECT_SETTINGS, type ProjectSettings } from './config.ts';
 import type { LineStatus, ProjectLevel, WorksLine } from './costing.ts';
 import { evaluateLines, type Evaluation, type ProjectEstimate } from './estimate.ts';
 import type { Ceiling } from './value.ts';
@@ -96,7 +96,9 @@ export interface MemberContext {
 }
 
 export function memberContextFrom(estimate: ProjectEstimate, bedrooms: number, settings: ProjectSettings, bridging?: AuctionTerms): MemberContext {
-  return { price: estimate.finance.price, bedrooms, level: estimate.level, country: countryOfTax(estimate.finance.taxName), ceiling: estimate.value.ceiling, settings, bridging };
+  // Only what the sums read: this goes to the member's browser, and the job's settings (its allowance, spend cap, switch) stay on the server.
+  const engine: ProjectSettings = { ...DEFAULT_PROJECT_SETTINGS, rates: settings.rates, quantities: settings.quantities, value: settings.value, ceiling: settings.ceiling, costs: settings.costs };
+  return { price: estimate.finance.price, bedrooms, level: estimate.level, country: countryOfTax(estimate.finance.taxName), ceiling: estimate.value.ceiling, settings: engine, bridging };
 }
 
 /** The member's lines worked out: the same sums as our estimate, at our level (the photos' rating) and ceiling. */

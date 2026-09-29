@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   listingNeedsWork,
+  queryKey,
+  queryKeyArea,
   areasForGoals,
   queriesForGoals,
   onTheMarketSearchUrl,
@@ -329,4 +331,12 @@ test('Batch 17: a sale’s renovation wording is its card’s and its page’s t
   const read = { ...quiet, needsWork: { flag: true, score: 3, phrases: ['requires_works'] } };
   assert.equal(listingNeedsWork(read).flag, true, 'a page read folded in keeps the flag');
   assert.equal(listingNeedsWork({ ...card, kind: 'rent' as const }).flag, false);
+});
+
+test('the area a query key searched, for the cohort lookup (Batch 17, bug 1)', () => {
+  assert.equal(queryKeyArea(queryKey('sale', 'ls', 100000, null, 2)), 'LS');
+  assert.equal(queryKeyArea(queryKey('rent', 'B', null, null, null)), 'B');
+  assert.equal(queryKeyArea('odd'), null);
+  assert.equal(queryKeyArea(null), null);
+  assert.equal(queryKeyArea('sale|LS6|||'), null, 'an outcode is not an area');
 });

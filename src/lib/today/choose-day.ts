@@ -78,12 +78,12 @@ function readsFor(input: ChooseInput, reads: ChooseReads, t: DealType): ChooseRe
 export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: TailoredOptions = {}): Promise<DayChoice> {
   const types = input.types ? orderedTypes(input.types) : [];
   if (types.length === 0) return chooseOne(input, reads, opts);
-  if (types.length === 1) return chooseOne(inputForType(input, types[0]), readsFor(input, reads, types[0]), opts);
 
-  // Re-choosing a mixed list: each type keeps (and replaces) only its own cards.
+  // Re-choosing: each type keeps (and replaces) only its own cards; a card of a type no longer chosen goes, answered or not.
   const current = opts.current ?? [];
   const typeOf = current.length > 0 && reads.dealTypes ? await reads.dealTypes([...current]) : new Map<string, DealType>();
-  const optsFor = (t: DealType): TailoredOptions => (current.length === 0 ? opts : { ...opts, current: current.filter((id) => typeOf.get(id) === t) });
+  const optsFor = (t: DealType): TailoredOptions => (current.length === 0 || !reads.dealTypes ? opts : { ...opts, current: current.filter((id) => typeOf.get(id) === t) });
+  if (types.length === 1) return chooseOne(inputForType(input, types[0]), readsFor(input, reads, types[0]), optsFor(types[0]));
 
   const lists: Partial<Record<DealType, string[]>> = {};
   const strength: Strength = {};
@@ -110,16 +110,31 @@ export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: Ta
   let dealIds: string[];
   if (current.length === 0) dealIds = fillMix(types, slots, lists, strength);
   else {
-    // The cards each type kept stay where they are; the freed places take the
-    // fresh cards in the mix's order, then the end.
+    // The cards each type kept stay where they are, and so does every answered
+    // or opened card of a chosen type (even when its type found nothing else
+    // today); the freed places take the fresh cards in the mix's order, then
+    // the end.
+    const pinned = opts.pinned ?? new Set<string>();
+    const chosen = new Set<DealType>(types);
     const kept = new Set(Object.values(lists).flat());
-    const staying = current.filter((id) => kept.has(id));
+    let staying = current.filter((id) => kept.has(id) || (pinned.has(id) && chosen.has(typeOf.get(id) as DealType)));
     const fresh: Partial<Record<DealType, string[]>> = {};
-    const freeSlots: Partial<Record<DealType, number>> = {};
-    for (const t of types) {
-      fresh[t] = (lists[t] ?? []).filter((id) => !current.includes(id));
-      freeSlots[t] = Math.max(0, (slots[t] ?? 0) - staying.filter((id) => typeOf.get(id) === t).length);
+    for (const t of types) fresh[t] = (lists[t] ?? []).filter((id) => !current.includes(id));
+    const onList = (t: DealType) => staying.filter((id) => typeOf.get(id) === t).length;
+    // A type short of its slots (one just added, say) takes the place of an
+    // untouched card of a type over its slots, the lowest first, so the mix
+    // and every chosen type's floor hold when a day is re-chosen too.
+    const short = () => types.reduce((n, t) => n + Math.max(0, Math.min((slots[t] ?? 0) - onList(t), fresh[t]!.length)), 0);
+    while (short() > TODAY_SIZE - staying.length) {
+      const over = [...staying].reverse().find((id) => {
+        const t = typeOf.get(id);
+        return !pinned.has(id) && t !== undefined && onList(t) > (slots[t] ?? 0);
+      });
+      if (!over) break;
+      staying = staying.filter((id) => id !== over);
     }
+    const freeSlots: Partial<Record<DealType, number>> = {};
+    for (const t of types) freeSlots[t] = Math.max(0, (slots[t] ?? 0) - onList(t));
     const queue = fillMix(types, freeSlots, fresh, strength, Math.max(0, TODAY_SIZE - staying.length));
     const list: string[] = [];
     for (const id of current) {

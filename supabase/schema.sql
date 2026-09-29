@@ -4481,7 +4481,10 @@ revoke all on public.project_member_figures from anon, authenticated;
 -- Under an advisory lock, so two runs cannot both take the last slot: a
 -- listing is checked at most once a UK day, at most p_max times a day in
 -- all, and only while the day's spend plus this check's worst case stays
--- within p_cap_pence. Returns {ok, reason}. Service role only.
+-- within p_cap_pence. The claim is written at that worst case, so a check
+-- still running (or one whose run died before writing its cost) counts in
+-- full against the cap; the run replaces it with the real cost. Returns
+-- {ok, reason}. Service role only.
 create or replace function public.project_claim_check(p_url text, p_deal uuid, p_day date, p_max int, p_cap_pence numeric, p_worst_pence numeric)
 returns jsonb
 language plpgsql
@@ -4503,7 +4506,7 @@ begin
   if v_spent + greatest(p_worst_pence, 0) > greatest(p_cap_pence, 0) then
     return jsonb_build_object('ok', false, 'reason', 'cap');
   end if;
-  insert into public.project_checks (canonical_url, deal_id, check_day, status) values (p_url, p_deal, p_day, 'claimed');
+  insert into public.project_checks (canonical_url, deal_id, check_day, status, cost_pence) values (p_url, p_deal, p_day, 'claimed', greatest(p_worst_pence, 0));
   return jsonb_build_object('ok', true, 'reason', null);
 end;
 $$;

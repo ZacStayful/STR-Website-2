@@ -509,9 +509,11 @@ export interface PickEmailInput {
   profileLinks?: { today: string; edit: string } | null;
 }
 
-export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null } | null) {
+export function pickLinks(siteUrl: string, id: string, token: string, listingUrl: string, deal?: { dealId: string; kind: SourcingKind; area: string | null; bedrooms: number | null; project?: boolean } | null) {
   const base = siteUrl.replace(/\/$/, '');
-  const more = deal ? `${base}/deals?kind=${deal.kind}${deal.area ? `&areas=${encodeURIComponent(deal.area)}` : ''}${deal.bedrooms ? `&beds=${deal.bedrooms >= 4 ? '4%2B' : deal.bedrooms}` : ''}` : null;
+  // Batch 17: by the deal's own type, so "more like this" is a Short-let deal's kind of deal and not every sale.
+  const type = deal ? (deal.kind === 'rent' ? 'r2r' : deal.project ? 'brrr' : 'buy_str') : null;
+  const more = deal ? `${base}/deals?type=${type}${deal.area ? `&areas=${encodeURIComponent(deal.area)}` : ''}${deal.bedrooms ? `&beds=${deal.bedrooms >= 4 ? '4%2B' : deal.bedrooms}` : ''}` : null;
   return {
     /** The deal sheet on the marketplace, when the pick came from the pool. */
     deal: deal ? `${base}/deals/${deal.dealId}` : null,
@@ -570,7 +572,7 @@ export function describeMotivation(m: Motivation | null | undefined, limit = 3):
 export function pickSection(input: PickEmailInput): { section: Section; subject: string; headline: string; eyebrow: string; unsubscribe: Unsubscribe; links: ReturnType<typeof pickLinks> } {
   const { pick, basis, goalsChips, firstEver } = input;
   const l = pick.listing;
-  const plain = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
+  const plain = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms, project: l.kind === 'sale' && Boolean(input.project) } : null);
   const links = input.profileLinks ? { ...plain, today: input.profileLinks.today, filter: input.profileLinks.edit } : plain;
   const project = l.kind === 'sale' ? input.project ?? null : null;
   const kindWord = l.kind === 'rent' ? 'rent-to-rent' : project ? 'project' : 'to buy';

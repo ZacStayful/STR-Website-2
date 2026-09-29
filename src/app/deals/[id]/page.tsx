@@ -369,7 +369,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     {report ? (
                       <Link href={`/reports/${report.id}?back=${encodeURIComponent(dealPath)}`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Open full analysis{reportBy ? ` · ${reportBy}’s` : ""}</Link>
                     ) : null}
-                    <Link href={`/deals?${pn ? "type=brrr" : `kind=${deal.kind}`}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
+                    <Link href={`/deals?type=${pn ? "brrr" : deal.kind === "rent" ? "r2r" : "buy_str"}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
                     {priv.open.id !== "admin" && <span className="text-[11px] text-muted-foreground">Opened {new Date(priv.open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
                   </div>
                 ) : deal.status === "live" ? (

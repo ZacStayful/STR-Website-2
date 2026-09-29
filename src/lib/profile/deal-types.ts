@@ -176,14 +176,16 @@ export function typeFromPickReasons(reasons: readonly string[]): DealType | null
 }
 
 /**
- * The profile's goals with one more deal type (its older answers mapped
- * first, when it has not chosen any yet), and the search kind they now
- * cover. Null when the type is already there, or there are no goals.
+ * The profile's goals with one more deal type, added to what it is shown
+ * (its types; its older answers mapped; or, with nothing to go on, Short-let
+ * and Rent-to-rent, Q22), and the search kind they now cover: adding never
+ * narrows what it sees. Null when the type is already shown, or there are
+ * no goals.
  */
 export function withAddedType(p: TypedProfile, type: DealType): MarketGoals | null {
   const g = p.goals;
   if (!g || !isAvailableDealType(type)) return null;
-  const current = dealTypesFor(p);
+  const current = typesShown(p);
   if (current.includes(type)) return null;
   const types = availableTypes([...current, type]);
   return { ...g, dealTypes: types, sourcingKind: kindsFor(types) };

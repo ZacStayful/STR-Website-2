@@ -68,7 +68,19 @@ export type PhotoCheckOutcome =
       usage: PhotoCheckUsage[];
       costPence: number;
     }
-  | { ok: false; reason: 'not_configured' | 'no_photos' | 'unavailable' | 'refused' | 'max_tokens' | 'invalid'; detail: string | null; usage: PhotoCheckUsage[]; costPence: number };
+  | {
+      ok: false;
+      reason: 'not_configured' | 'no_photos' | 'unavailable' | 'refused' | 'max_tokens' | 'invalid';
+      detail: string | null;
+      usage: PhotoCheckUsage[];
+      costPence: number;
+      /**
+       * The request was sent but no reply came back (a timeout or a dropped
+       * connection): Anthropic may still have run it and billed it, so the
+       * caller counts the check at its worst case rather than 0.
+       */
+      costUnknown?: boolean;
+    };
 
 async function meterHops(hops: readonly PhotoCheckUsage[]): Promise<void> {
   for (const h of hops) {
@@ -101,6 +113,11 @@ async function inlineImage(url: string): Promise<{ media_type: InlineType; data:
 function imageFetchError(err: unknown): boolean {
   if (!(err instanceof Anthropic.APIError) || err.status !== 400) return false;
   return /image|url|download|fetch/i.test(err.message ?? '');
+}
+
+/** A failure after the request left: no status came back, so it may have run (and been billed) anyway. An error reply with a status is not billed. */
+function inFlight(err: unknown): boolean {
+  return err instanceof Anthropic.APIConnectionError;
 }
 
 type ImageBlock = { type: 'image'; source: { type: 'url'; url: string } | { type: 'base64'; media_type: InlineType; data: string } };
@@ -150,7 +167,7 @@ export async function runPhotoCheck(input: PhotoCheckInput): Promise<PhotoCheckO
   try {
     message = await ask(client, urls.map((url) => ({ type: 'image', source: { type: 'url', url } })), input, { photos: used.photos.length, floorplans: used.floorplans.length }, first);
   } catch (err) {
-    if (!imageFetchError(err)) return { ok: false, reason: 'unavailable', detail: err instanceof Error ? err.message.slice(0, 200) : null, ...none };
+    if (!imageFetchError(err)) return { ok: false, reason: 'unavailable', detail: err instanceof Error ? err.message.slice(0, 200) : null, ...none, costUnknown: inFlight(err) };
     // Anthropic could not fetch a photo: fetch them here, in memory, and send them inline once.
     // An image that cannot be fetched here either is left out, and the numbering follows what was sent.
     const fetched = await Promise.all(urls.map(async (url) => ({ url, img: await inlineImage(url) })));
@@ -164,7 +181,7 @@ export async function runPhotoCheck(input: PhotoCheckInput): Promise<PhotoCheckO
     try {
       message = await ask(client, [...photos, ...plans].map((x) => ({ type: 'image', source: { type: 'base64', ...x.img! } })), input, { photos: used.photos.length, floorplans: used.floorplans.length }, again);
     } catch (retryErr) {
-      return { ok: false, reason: 'unavailable', detail: retryErr instanceof Error ? retryErr.message.slice(0, 200) : null, ...none };
+      return { ok: false, reason: 'unavailable', detail: retryErr instanceof Error ? retryErr.message.slice(0, 200) : null, ...none, costUnknown: inFlight(retryErr) };
     }
   }
 

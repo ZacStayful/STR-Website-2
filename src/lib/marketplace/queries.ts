@@ -310,13 +310,16 @@ export async function dealTypesByIds(ids: readonly string[]): Promise<Map<string
  * a sale only to a profile that takes both kinds of sale, rather than risk
  * the wrong type.
  */
-export async function projectCardsByUrl(urls: readonly string[]): Promise<Map<string, ProjectCardData> | null> {
+export async function projectCardsByUrl(urls: readonly string[], opts: { liveOnly?: boolean } = {}): Promise<Map<string, ProjectCardData> | null> {
   const out = new Map<string, ProjectCardData>();
   if (!hasServiceRole() || urls.length === 0 || projectColumnMissing) return out;
   const admin = createAdminClient();
   const list = [...new Set(urls)];
   for (let i = 0; i < list.length; i += TYPE_CHUNK) {
-    const { data, error } = await admin.from('marketplace_deals').select('canonical_url, project').in('canonical_url', list.slice(i, i + TYPE_CHUNK)).not('project', 'is', null);
+    let q = admin.from('marketplace_deals').select('canonical_url, project').in('canonical_url', list.slice(i, i + TYPE_CHUNK)).not('project', 'is', null);
+    // A card stays on a row that leaves live (retired after a re-cost, held again): only a live row is a Project deal now.
+    if (opts.liveOnly) q = q.eq('status', 'live');
+    const { data, error } = await q;
     if (error) {
       if (isMissingProjectColumn(error)) return out;
       console.error('[marketplace] project deals unreadable:', error.message);

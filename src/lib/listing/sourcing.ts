@@ -199,6 +199,12 @@ export function queryKey(kind: SourcingKind, area: string, minPrice: number | nu
   return `${kind}|${area.toUpperCase()}|${minPrice ?? ''}|${maxPrice ?? ''}|${minBedrooms ?? ''}`;
 }
 
+/** The postcode area a query key searched ("sale|LS|…" → "LS"), or null for any other key. */
+export function queryKeyArea(key: string | null | undefined): string | null {
+  const area = typeof key === 'string' ? key.split('|')[1] : undefined;
+  return area && /^[A-Z]{1,2}$/.test(area) ? area : null;
+}
+
 /** The searches one member's goals translate into (shared across members by key). */
 export function queriesForGoals(goals: MarketGoals, savedAreas: string[], areas: AreaRef[]): SourcingQuery[] {
   const kinds: SourcingKind[] = goals.sourcingKind === 'both' ? ['sale', 'rent'] : [goals.sourcingKind];
