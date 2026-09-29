@@ -150,6 +150,9 @@ export default async function AdminPage() {
           <Link href="/admin/feedback" className="text-sm font-medium text-primary hover:underline">
             Feedback
           </Link>
+          <Link href="/admin/announcements" className="text-sm font-medium text-primary hover:underline">
+            Announcements
+          </Link>
           <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
             → Analyser
           </Link>

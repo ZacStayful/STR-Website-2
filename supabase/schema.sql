@@ -4811,6 +4811,22 @@ create index if not exists announcement_views_user_idx on public.announcement_vi
 alter table public.announcement_views enable row level security;  -- no policies: service role only
 revoke all on public.announcement_views from anon, authenticated;
 
+-- The admin list's figures, per announcement: members shown it, dismissed
+-- it and tapped "Take a look" (click-through is clicked / shown). Counted in
+-- the database rather than by reading every view. p is unused, kept for
+-- the one-jsonb rule.
+create or replace function public.announcement_stats(p jsonb)
+returns jsonb language sql stable set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', v.announcement_id, 'shown', v.shown, 'dismissed', v.dismissed, 'clicked', v.clicked)), '[]'::jsonb)
+  from (
+    select announcement_id, count(*) as shown, count(dismissed_at) as dismissed, count(clicked_at) as clicked
+    from public.announcement_views
+    group by announcement_id
+  ) v;
+$$;
+revoke all on function public.announcement_stats(jsonb) from public, anon, authenticated;
+grant execute on function public.announcement_stats(jsonb) to service_role;
+
 -- ── Settings (src/lib/feedback/config.ts; edited on /admin/feedback and /admin/announcements) ──
 --   feedback_daily_limit               reports one member may send in a UK day
 --   feedback_max_screenshots           screenshots on one report (0 turns them off)

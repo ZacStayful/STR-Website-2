@@ -44,7 +44,7 @@ test('every statement can run twice', () => {
 
 test('the functions take one jsonb and only the service role may call them', () => {
   const fns = [...section.matchAll(/create or replace function public\.(\w+)\((\w+) jsonb\)/g)].map((m) => m[1]);
-  assert.deepEqual(fns.sort(), ['feedback_status_claim', 'feedback_submit']);
+  assert.deepEqual(fns.sort(), ['announcement_stats', 'feedback_status_claim', 'feedback_submit']);
   for (const f of fns) {
     assert.match(section, new RegExp(`revoke all on function public\\.${f}\\(jsonb\\) from public, anon, authenticated;`), f);
     assert.match(section, new RegExp(`grant execute on function public\\.${f}\\(jsonb\\) to service_role;`), f);
