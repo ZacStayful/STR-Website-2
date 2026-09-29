@@ -1,12 +1,12 @@
 import type { ListingSnapshot, ListingStatus } from '../types.ts';
 import { unflatten } from '../devalue.ts';
 import { jsonAfter, metaContent, titleOf, parsePrice, findOutcode } from '../html.ts';
-import { toNum, toStr, strArray, statusFromText, baseSnapshot, isoFromCompactDate, isoFromUkDate, parseListingUpdate, type ParseContext } from './shared.ts';
+import { toNum, toStr, strArray, statusFromText, baseSnapshot, isoFromCompactDate, isoFromUkDate, parseListingUpdate, addProjectFacts, floorAreaSqftFrom, leaseYearsFrom, SNAPSHOT_PHOTO_LIMIT, type ParseContext } from './shared.ts';
 import { agentHash } from '../../crypto/agent.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
 import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
-export const RIGHTMOVE_PARSER_VERSION = 2;
+export const RIGHTMOVE_PARSER_VERSION = 3;
 
 interface RmPropertyData {
   id?: unknown;
@@ -28,6 +28,10 @@ interface RmPropertyData {
   listingHistory?: { listingUpdateReason?: unknown } | null;
   customer?: { branchDisplayName?: unknown; companyName?: unknown; displayName?: unknown } | null;
   sharedOwnership?: { sharedOwnershipFlag?: unknown } | null;
+  /** Material information: `obligations.listed` is Rightmove's listed-building flag. */
+  features?: { obligations?: { listed?: unknown } | null } | null;
+  /** Floor area: [{ unit: 'sqft' | 'sqm', minimumSize, maximumSize }]; often empty. */
+  sizings?: unknown;
 }
 
 interface RmModel {
@@ -114,6 +118,11 @@ export function parseRightmove(html: string, ctx: ParseContext): ListingSnapshot
   const yearsLeft = toNum(p?.tenure?.yearsRemainingOnLease);
   // 0 is Rightmove's "not stated" for a freehold, not a lease about to expire.
   if (yearsLeft !== null && yearsLeft > 0) snap.yearsRemainingOnLease = yearsLeft;
+  // Batch 17: the listed-building flag and the stated floor area (the rewire scales on it).
+  const listed = p?.features?.obligations?.listed;
+  if (typeof listed === 'boolean') snap.listedBuilding = listed;
+  const area = rightmoveFloorArea(p?.sizings);
+  if (area !== null) snap.floorAreaSqft = area;
 
   // When the seller started, and what they last did about it. The added date is
   // the portal's own, so days on market no longer depends on when we first looked.
@@ -147,10 +156,14 @@ export function parseRightmove(html: string, ctx: ParseContext): ListingSnapshot
     snap.sharedOwnership = p.sharedOwnership?.sharedOwnershipFlag === true || /shared ownership/i.test(description);
     snap.shortLetsPermitted = shortLetsAllowed([description, ...snap.features].join('. '));
     snap.auction = snap.auction || AUCTION_WORDING.test([description, snap.price?.qualifier ?? '', ...snap.features].join(' | '));
-  }
+    if (snap.yearsRemainingOnLease === undefined) snap.yearsRemainingOnLease = leaseYearsFrom(...snap.features, description) ?? undefined;
+    if (snap.floorAreaSqft === undefined) snap.floorAreaSqft = floorAreaSqftFrom(...snap.features, description) ?? undefined;
+    // Batch 17: the needs-work flag and the exclusions, from the same words (then dropped).
+    addProjectFacts(snap, description);
+  } else addProjectFacts(snap, '');
 
   const images = Array.isArray(p?.images) ? (p.images as { url?: unknown }[]) : [];
-  snap.photos = images.map((i) => toStr(i?.url)).filter((u): u is string => Boolean(u)).slice(0, 6);
+  snap.photos = images.map((i) => toStr(i?.url)).filter((u): u is string => Boolean(u)).slice(0, SNAPSHOT_PHOTO_LIMIT);
   if (snap.photos.length === 0) {
     const og = metaContent(html, 'og:image');
     if (og) snap.photos.push(og);
@@ -158,6 +171,20 @@ export function parseRightmove(html: string, ctx: ParseContext): ListingSnapshot
 
   snap.status = rightmoveStatus(p, snap.title);
   return snap;
+}
+
+/** Rightmove's `sizings`: the largest stated size, in square feet; null when none is usable. */
+function rightmoveFloorArea(raw: unknown): number | null {
+  if (!Array.isArray(raw)) return null;
+  let best: number | null = null;
+  for (const s of raw as { unit?: unknown; minimumSize?: unknown; maximumSize?: unknown }[]) {
+    const size = toNum(s?.maximumSize) ?? toNum(s?.minimumSize);
+    if (size === null || size <= 0) continue;
+    const unit = toStr(s?.unit)?.toLowerCase() ?? '';
+    const sqft = unit === 'sqft' ? size : unit === 'sqm' ? Math.round(size * 10.7639) : null;
+    if (sqft !== null && sqft >= 150 && sqft <= 20_000 && (best === null || sqft > best)) best = sqft;
+  }
+  return best;
 }
 
 function rightmoveStatus(p: RmPropertyData | null, title: string): ListingStatus {

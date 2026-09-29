@@ -17,6 +17,8 @@ import { postcodeAreaOf } from './normalise.ts';
 import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
 import type { DealType, MarketGoals } from '../market/goals.ts';
+import { needsWorkFrom, NO_NEEDS_WORK, type NeedsWork } from '../project/needs-work.ts';
+import type { ExclusionReason } from '../project/exclusions.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
 import type { Motivation } from './motivation.ts';
@@ -68,6 +70,28 @@ export interface SourcedListing {
   addedOrReduced?: string | null;
   /** Keyed digest of the marketing agent. Never the name — see crypto/agent.ts. */
   agentHash?: string | null;
+  /**
+   * Batch 17 (bugs 3 and 4: these were dropped at the merge). From the page
+   * when it has been read; absent or null otherwise. Years left on the lease
+   * make the "short lease" motivation signal fire (bug 2).
+   */
+  yearsRemainingOnLease?: number | null;
+  councilTaxBand?: string | null;
+  /** Batch 17: renovation wording (our phrase keys only), the card's text merged with the page's once read. */
+  needsWork?: NeedsWork | null;
+  /** Batch 17: the first reason it can never be a Project deal, from the page (null: none; absent: not read). */
+  projectExclusion?: ExclusionReason | null;
+  listedBuilding?: boolean | null;
+  floorAreaSqft?: number | null;
+}
+
+/**
+ * Batch 17: the needs-work flag a search result's own card text carries
+ * (title, price qualifier, features): free, before any page is read.
+ */
+export function cardNeedsWork(l: Pick<SourcedListing, 'kind' | 'title' | 'priceQualifier' | 'features' | 'rawType'>): NeedsWork {
+  if (l.kind !== 'sale') return NO_NEEDS_WORK;
+  return needsWorkFrom(l.title, l.rawType ?? null, l.priceQualifier ?? null, ...(l.features ?? []));
 }
 
 export interface SourcingQuery {

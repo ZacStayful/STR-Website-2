@@ -23,6 +23,7 @@ import { streamFor, type Stream } from '../deal-quality/streams.ts';
 import { DEFAULT_LOW_ENTRY, type LowEntrySettings } from '../deal-quality/config.ts';
 import type { AuctionTerms } from '../deal-quality/auction.ts';
 import type { StoredCheck } from '../deal-quality/checks.ts';
+import { mergeNeedsWork } from '../project/needs-work.ts';
 
 /** The stored-rent lookup, keyed exactly as broker/providers/internal.ts keys it. */
 export function areaRentKey(postcodeArea: string, bedrooms: number): string {
@@ -236,6 +237,14 @@ export function mergeSnapshotIntoListing(l: SourcedListing, s: ListingSnapshot):
     auction: s.auction ?? l.auction ?? null,
     listedDate: s.listedDate ?? l.listedDate ?? null,
     agentHash: s.agentHash ?? l.agentHash ?? null,
+    // Batch 17 (bug 4): the lease and the council tax band were dropped here.
+    yearsRemainingOnLease: s.yearsRemainingOnLease ?? l.yearsRemainingOnLease ?? null,
+    councilTaxBand: s.councilTaxBand ?? l.councilTaxBand ?? null,
+    // The card's needs-work wording and the page's together; the page decides the exclusions.
+    needsWork: s.needsWork || l.needsWork ? mergeNeedsWork(l.needsWork ?? null, s.needsWork ?? null) : null,
+    projectExclusion: s.projectExclusion !== undefined ? s.projectExclusion : l.projectExclusion ?? null,
+    listedBuilding: s.listedBuilding ?? l.listedBuilding ?? null,
+    floorAreaSqft: s.floorAreaSqft ?? l.floorAreaSqft ?? null,
   };
 }
 
@@ -273,6 +282,9 @@ export function snapshotFromDeal(l: SourcedListing, live: ListingSnapshot | null
     photos: l.photo ? [l.photo] : [],
     listedDate: l.listedDate ?? undefined,
     agentHash: l.agentHash ?? null,
+    // Batch 17: what the page said, when it was read.
+    yearsRemainingOnLease: l.yearsRemainingOnLease ?? undefined,
+    councilTaxBand: l.councilTaxBand ?? undefined,
     locationConfidence: l.lat !== null && l.lng !== null ? 'exact' : l.outcode ? 'outcode' : 'none',
   };
 }

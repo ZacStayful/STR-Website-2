@@ -10,6 +10,9 @@
  * a different agent than last time" without keeping who the agent is.
  */
 
+import type { NeedsWork } from '../project/needs-work.ts';
+import type { ExclusionReason } from '../project/exclusions.ts';
+
 export type ListingSource = 'rightmove' | 'onthemarket' | 'zoopla' | 'airbnb' | 'booking';
 
 /** sale / rent = property portals; str = an existing short-let listing. */
@@ -86,6 +89,18 @@ export interface ListingSnapshot {
   agentHash?: string | null;
   /** Years left on the lease, when the portal states it. Under ~80 is unmortgageable. */
   yearsRemainingOnLease?: number;
+  /**
+   * Batch 17: renovation wording in the page's own text (the description is
+   * read and dropped): our phrase keys, never the listing's words. Sales only;
+   * absent on snapshots parsed before it.
+   */
+  needsWork?: NeedsWork;
+  /** Batch 17: the first reason a sale can never be a Project deal (non-standard construction, a short lease, listed, conservation area, structural), or null. */
+  projectExclusion?: ExclusionReason | null;
+  /** Batch 17: the portal's own listed-building flag (Rightmove), when it gives one. */
+  listedBuilding?: boolean;
+  /** Batch 17: the floor area the portal states, in square feet; only ever used to scale the rewire. */
+  floorAreaSqft?: number;
   /** Rentals: when the property is free, as an ISO date. Already past means a live void. */
   letAvailableDate?: string;
   /** Rentals: the shortest tenancy the landlord will take, in months. */
