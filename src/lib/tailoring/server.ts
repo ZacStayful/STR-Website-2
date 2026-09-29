@@ -35,11 +35,13 @@ import { modesFor } from './modes-server';
 import { isAdminEmail } from '../admin';
 import { payerFor } from '../team';
 import { dealVisibilityFor } from '../marketplace/tier';
-import { rankingPool } from '../marketplace/queries';
+import { isMissingProjectColumn, rankingPool } from '../marketplace/queries';
 import { DEFAULT_FILTERS } from '../marketplace/grid';
 import { profilesFor } from '../profiles/server';
 import { rechooseToday, type TodaySelection } from '../today/selection';
 import { mustMatchCount, tailoredRows } from './today';
+import { dealTypeOf, typesShown } from '../profile/deal-types';
+import { goalsForType } from '../today/type-filters';
 import { isPromptQuestion, type PromptQuestion, type PromptState } from './behaviour';
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -130,18 +132,25 @@ async function signalsFor(admin: Admin, userIds: readonly string[], since: Date)
 /** The deal behind each signal: kind, type, size, area and price only. A deal that has since gone still counts. */
 async function signalFacts(admin: Admin, dealIds: readonly string[]): Promise<Map<string, Omit<Signal, 'dealId' | 'source' | 'at'>>> {
   const out = new Map<string, Omit<Signal, 'dealId' | 'source' | 'at'>>();
+  // Batch 17: the project column tells a BRRR deal; until the schema section is run, every sale is Buy and let.
+  let withProject = true;
   for (const some of chunks(dealIds)) {
-    const { data, error } = await admin.from('marketplace_deals').select('id, kind, raw_type, bedrooms, postcode_area, price_amount, price_period').in('id', some);
+    const read = () => admin.from('marketplace_deals').select(`id, kind, raw_type, bedrooms, postcode_area, price_amount, price_period${withProject ? ', project' : ''}`).in('id', some);
+    let { data, error } = await read();
+    if (error && withProject && isMissingProjectColumn(error)) {
+      withProject = false;
+      ({ data, error } = await read());
+    }
     if (error) {
       warn(`signal deals unreadable: ${error.message}`);
       continue;
     }
-    for (const r of (data ?? []) as { id: string; kind: string; raw_type: string | null; bedrooms: number | null; postcode_area: string | null; price_amount: number | string | null; price_period: string | null }[]) {
+    for (const r of (data ?? []) as unknown as { id: string; kind: string; raw_type: string | null; bedrooms: number | null; postcode_area: string | null; price_amount: number | string | null; price_period: string | null; project?: unknown }[]) {
       if (r.kind !== 'sale' && r.kind !== 'rent') continue;
       const n = r.price_amount === null ? NaN : Number(r.price_amount);
       const period = r.price_period === 'pw' || r.price_period === 'pcm' || r.price_period === 'total' ? r.price_period : r.kind === 'rent' ? 'pcm' : 'total';
       const amount = !Number.isFinite(n) || n <= 0 ? null : r.kind === 'rent' ? rentPcm({ amount: n, period }) : period === 'total' ? n : null;
-      out.set(r.id, { kind: r.kind, propertyKind: propertyKind(r.raw_type, null), bedrooms: r.bedrooms, area: r.postcode_area ? r.postcode_area.toUpperCase() : null, amount });
+      out.set(r.id, { kind: r.kind, propertyKind: propertyKind(r.raw_type, null), bedrooms: r.bedrooms, area: r.postcode_area ? r.postcode_area.toUpperCase() : null, amount, dealType: dealTypeOf({ kind: r.kind, project: r.project }) });
     }
   }
   return out;
@@ -296,8 +305,16 @@ export async function rechooseForMember(input: { userId: string; email: string |
 export async function mustHaveCountFor(input: { userId: string; email: string | null; tailoring: TailoringProfile | null; now?: Date }): Promise<number | null> {
   if (!hasServiceRole() || !usesTailoring(input.tailoring)) return null;
   const visibility = await dealVisibilityFor(input.userId, isAdminEmail(input.email));
-  const { rows } = await tailoredRows({ pool: (f, limit) => rankingPool(f, visibility, { userId: input.userId }, limit) }, input.tailoring, { ...DEFAULT_FILTERS, kind: input.tailoring.goals?.sourcingKind ?? 'both' });
-  return mustMatchCount(rows, input.tailoring, input.now ?? new Date());
+  // Batch 17: each deal type the profile is shown, judged on its own answers, summed (as Today counts).
+  const p = input.tailoring;
+  let total = 0;
+  for (const t of typesShown({ goals: p.goals, about: p.about })) {
+    const goals = p.goals ? goalsForType(p.goals, t) : null;
+    const typed = { ...p, goals };
+    const { rows } = await tailoredRows({ pool: (f, limit) => rankingPool({ ...f, types: [t] }, visibility, { userId: input.userId }, limit) }, typed, { ...DEFAULT_FILTERS, kind: goals?.sourcingKind ?? 'both' });
+    total += mustMatchCount(rows, typed, input.now ?? new Date());
+  }
+  return total;
 }
 
 // ── Behaviour prompts (behaviour.ts) ──

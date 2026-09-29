@@ -7,9 +7,12 @@
  *   bedrooms   they said N bedrooms and kept at least 3 of another size
  *   location   they look in chosen areas and kept at least 3 outside them
  *   budget     they gave a budget and kept at least 3 deals outside it
- *   kind       they buy (or rent) and kept at least 3 of the other kind
- * Accepting changes the answer (type, bedrooms, kind) or makes the check a
- * nice-to-have (location, budget: the answer itself still stands).
+ *   kind       they kept at least 3 deals of a deal type the profile does
+ *              not show (Batch 17: Buy and let, BRRR, Rent-to-rent; the one
+ *              kept most)
+ * Accepting changes the answer (type, bedrooms; kind adds the kept deal type
+ * to the profile's types) or makes the check a nice-to-have (location,
+ * budget: the answer itself still stands).
  *
  * Asking: one prompt a visit, the first that applies. A question shown on an
  * earlier day is not asked again for a week; one the member answered "keep
@@ -19,6 +22,7 @@
  * Pure: no network, no database, no server-only.
  */
 import type { MarketGoals } from '../market/goals.ts';
+import { DEAL_TYPES, DEAL_TYPE_LABELS, describeTypes, typesShown, withAddedType, type DealType } from '../profile/deal-types.ts';
 import { TAILORING } from './config.ts';
 import { wantsFor } from './criteria.ts';
 import type { CriterionKey, Signal, TailoringProfile } from './profile.ts';
@@ -51,6 +55,8 @@ export interface PromptState {
 }
 
 const PLURAL = { flat: 'flats', house: 'houses' } as const;
+/** "4 BRRR projects". */
+const TYPE_PLURAL: Record<DealType, string> = { buy_let: 'Buy and let deals', brrr: 'BRRR projects', r2r: 'rent-to-rent deals' };
 const bedWord = (n: number) => (n >= 4 ? '4+ bed' : `${n}-bed`);
 const bedAnswer = (n: number) => (n >= 4 ? '4 or more bedrooms' : `${n} bed`);
 
@@ -100,13 +106,18 @@ export function promptsFor(p: TailoringProfile): Prompt[] {
     if (n >= min) out.push({ question: 'budget', count: n, text: `You’ve kept ${n} deals outside your budget. Show deals outside it too?`, accept: 'Make budget a nice-to-have', keep: 'Keep to my budget', change: { kind: 'mode', criterion: 'budget' } });
   }
 
-  if (g.sourcingKind !== 'both') {
-    const other = g.sourcingKind === 'sale' ? 'rent' : 'sale';
-    const n = keeps.filter((s) => s.kind === other).length;
-    if (n >= min) {
-      const text = other === 'rent' ? `You’ve kept ${n} rent-to-rent deals but this profile is for buying. Show rent-to-rent too?` : `You’ve kept ${n} deals to buy but this profile is for rent-to-rent. Show deals to buy too?`;
-      out.push({ question: 'kind', count: n, text, accept: other === 'rent' ? 'Show rent-to-rent too' : 'Show deals to buy too', keep: other === 'rent' ? 'Buying only' : 'Rent-to-rent only', change: { kind: 'goals', goals: { ...g, sourcingKind: 'both' } } });
-    }
+  // Batch 17: deal types they keep that the profile does not show; accepting adds the one kept most.
+  const shown = typesShown({ goals: g, about: p.about });
+  const unshown = new Map<DealType, number>();
+  for (const s of keeps) {
+    const t = s.dealType ?? (s.kind === 'rent' ? 'r2r' : 'buy_let');
+    if (!shown.includes(t)) unshown.set(t, (unshown.get(t) ?? 0) + 1);
+  }
+  const [top] = [...unshown.entries()].sort((a, b) => b[1] - a[1] || DEAL_TYPES.indexOf(a[0]) - DEAL_TYPES.indexOf(b[0]));
+  if (top && top[1] >= min) {
+    const [type, n] = top;
+    const next = withAddedType({ goals: g, about: p.about }, type);
+    if (next) out.push({ question: 'kind', count: n, text: `You’ve kept ${n} ${TYPE_PLURAL[type]} but this profile doesn’t show them. Show ${DEAL_TYPE_LABELS[type]} too?`, accept: `Show ${DEAL_TYPE_LABELS[type]} too`, keep: `Keep to ${describeTypes(shown)}`, change: { kind: 'goals', goals: next } });
   }
   return out;
 }

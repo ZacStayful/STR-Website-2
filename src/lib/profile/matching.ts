@@ -15,6 +15,8 @@ import { areaCentroid } from '../market/area-centroids.ts';
 import { areaCodeFrom } from '../market/lead-goals.ts';
 import type { MarketGoals } from '../market/goals.ts';
 import { filtersForGoals } from '../today/candidates.ts';
+import { filtersForType } from '../today/type-filters.ts';
+import type { DealType } from './deal-types.ts';
 import type { DealFilters } from '../marketplace/grid.ts';
 
 /** The goals with the home placed: its own coordinates, else its postcode area's centre. */
@@ -29,6 +31,15 @@ export function placedForPreview(goals: MarketGoals): MarketGoals {
 /** The grid filters a member's answers point at, as Today counts them. */
 export function profileFilters(goals: MarketGoals | null, savedAreas: readonly string[]): DealFilters {
   return filtersForGoals(goals ? placedForPreview(goals) : null, savedAreas);
+}
+
+/**
+ * Batch 17: one set of filters per deal type the profile is shown, each on
+ * its own money answer, as Today chooses and counts them; the count is their
+ * sum.
+ */
+export function profileFiltersByType(goals: MarketGoals | null, savedAreas: readonly string[], types: readonly DealType[]): DealFilters[] {
+  return types.map((t) => filtersForType(goals ? placedForPreview(goals) : null, savedAreas, t));
 }
 
 /** "12 deals match you so far" (the quiz) / "12 deals match you" (the profile page). */

@@ -169,27 +169,3 @@ export function fillMix(types: readonly DealType[], slots: Partial<Record<DealTy
   }
   return out;
 }
-
-/**
- * Making room for the daily pick (day.ts displayOrder): which card goes. The
- * lowest untouched card of the type most represented on the list (the pick
- * counted), so a chosen type never drops below its floor while another has
- * more than it needs. Null when every card has been answered.
- */
-export function cardToDrop(list: readonly string[], answered: ReadonlySet<string>, typeOf: (id: string) => DealType | null, protect: string | null): string | null {
-  const counts = new Map<DealType | null, number>();
-  for (const id of list) counts.set(typeOf(id), (counts.get(typeOf(id)) ?? 0) + 1);
-  const candidates = list.filter((id) => id !== protect && !answered.has(id));
-  if (candidates.length === 0) return null;
-  let best: string | null = null;
-  let bestCount = -1;
-  for (let i = candidates.length - 1; i >= 0; i -= 1) {
-    const id = candidates[i];
-    const n = counts.get(typeOf(id)) ?? 0;
-    if (n > bestCount) {
-      best = id;
-      bestCount = n;
-    }
-  }
-  return best;
-}

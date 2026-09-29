@@ -12,10 +12,16 @@
  *                                   motivated-seller signal · asking price
  *   Management company              projected revenue · distance to their units ·   area occupancy
  *                                   local competition
+ *   Any Project (BRRR) deal         works · value added · profit after works         cash in, asking price
  *   No new answers                  none: the card is exactly as before
  *
- * A rental is judged as a rental whoever looks at it; a sale by the member's
- * path. The "Funding" blocker puts cash needed first. Beginners (no deals
+ * Batch 17 (Q23): the numbers follow the deal's own type. A Project deal
+ * shows the project's numbers to everyone (its price means little without
+ * the works). A rental shows the rent-to-rent numbers, any other sale the
+ * buyer's; except that a deal sourcer or a management company keeps their
+ * own numbers on those, unless they also ticked investor or rent-to-rent
+ * (about.ts jobRole). A profile answered before the roles question goes by
+ * its old path. The "Funding" blocker puts cash needed first. Beginners (no deals
  * done yet) get one plain line under each number. Figures resting on the
  * area's short-let income are shown as ranges, as the profit is (Batch 10).
  * Only formatted words and figures come out: no address, postcode or link.
@@ -28,16 +34,20 @@ import { motivationLine } from '../marketplace/motivation-line.ts';
 import { parseHistory } from '../listing/recheck.ts';
 import { parseMotivation } from '../listing/motivation.ts';
 import { motivationFor } from '../today/candidates.ts';
-import { factsFromRow, memberFigures, rentalFromCard, type DealFacts, type MemberFigures } from './criteria.ts';
+import { factsFromRow, memberFigures, rentalFromCard, typeOfFacts, type DealFacts, type MemberFigures } from './criteria.ts';
 import { areaLookup, leaningsFor, operationsMiles, type AreaFacts, type AreaLookup } from './order.ts';
 import type { AreaCardData } from '../market/explorer.ts';
 import { explainCard, type Explanation } from './why.ts';
 import { leadFor, type Lead } from './about-prompts.ts';
 import { asked, usesTailoring, type TailoringProfile } from './profile.ts';
+import { jobRole } from '../profile/about.ts';
+import type { DealType } from '../profile/deal-types.ts';
+import { valueAddedLabel } from '../project/headline.ts';
+import { shortMoney } from '../deal-quality/streams.ts';
 
-export type Role = 'buy_cashflow' | 'buy_growth' | 'r2r' | 'source' | 'manage';
+export type Role = 'buy_cashflow' | 'buy_growth' | 'r2r' | 'source' | 'manage' | 'brrr';
 
-export type NumberKey = 'profit' | 'cash' | 'coc' | 'yield' | 'vsTypical' | 'trend' | 'setup' | 'breakeven' | 'room' | 'motivation' | 'price' | 'priceCut' | 'revenue' | 'distance' | 'competition' | 'occupancy';
+export type NumberKey = 'profit' | 'cash' | 'coc' | 'yield' | 'vsTypical' | 'trend' | 'setup' | 'breakeven' | 'room' | 'motivation' | 'price' | 'priceCut' | 'revenue' | 'distance' | 'competition' | 'occupancy' | 'works' | 'valueAdded' | 'afterWorks';
 
 export interface CardNumber {
   key: NumberKey;
@@ -53,6 +63,7 @@ const PLAN: Record<Role, { keys: NumberKey[]; fallback: NumberKey[] }> = {
   r2r: { keys: ['profit', 'setup', 'breakeven'], fallback: ['revenue', 'price'] },
   source: { keys: ['room', 'motivation', 'price'], fallback: ['priceCut', 'profit'] },
   manage: { keys: ['revenue', 'distance', 'competition'], fallback: ['occupancy', 'profit', 'price'] },
+  brrr: { keys: ['works', 'valueAdded', 'afterWorks'], fallback: ['cash', 'price'] },
 };
 
 const HELP: Record<NumberKey, string> = {
@@ -72,20 +83,43 @@ const HELP: Record<NumberKey, string> = {
   distance: 'How far it is from the units you already run.',
   competition: 'How crowded the short-let market is here.',
   occupancy: 'How often short lets here are booked.',
+  works: 'A guide to the works from the photos, including VAT. Get your own quotes.',
+  valueAdded: 'The value after the works, less the price and the works.',
+  afterWorks: 'What’s left each month once the works are done, at your own figures.',
 };
 
-/** The role a card is read for; null when the profile has no new answers (the card is unchanged). */
-export function roleFor(p: TailoringProfile | null | undefined, kind: 'sale' | 'rent'): Role | null {
+/** A sourcer's or a manager's own numbers apply (Q23): by the roles ticked, or the old path before them. */
+function jobOf(p: TailoringProfile): 'source' | 'manage' | null {
+  if (p.about.roles.length === 0) {
+    const path = p.goals?.path ?? null;
+    return path === 'manage' ? 'manage' : path === 'source' ? 'source' : null;
+  }
+  const job = jobRole(p.about);
+  return job === 'manager' ? 'manage' : job === 'sourcer' ? 'source' : null;
+}
+
+/**
+ * The role a card is read for, by the deal's own type (a kind stands for its
+ * type: a sale is Buy and let); null when the profile has no new answers
+ * (the card is unchanged).
+ */
+export function roleFor(p: TailoringProfile | null | undefined, deal: DealType | 'sale' | 'rent'): Role | null {
   if (!usesTailoring(p)) return null;
-  const path = p.goals?.path ?? null;
-  if (path === 'manage') return 'manage';
-  if (path === 'source') return 'source';
-  if (kind === 'rent') return 'r2r';
+  const type: DealType = deal === 'sale' ? 'buy_let' : deal === 'rent' ? 'r2r' : deal;
+  if (type === 'brrr') return 'brrr';
+  const job = jobOf(p);
+  if (job) return job;
+  if (type === 'r2r') return 'r2r';
   const goal = p.goals && asked(p, 'main_goal') ? p.goals.buyer.mainGoal : null;
   return goal === 'growth' ? 'buy_growth' : 'buy_cashflow';
 }
 
 const gbp = (n: number) => `${n < 0 ? '−' : ''}£${Math.abs(Math.round(n)).toLocaleString('en-GB')}`;
+/** "£14k–£26k", one figure when both ends round the same. */
+const moneyRangeK = (low: number, high: number) => {
+  const [a, b] = [shortMoney(Math.max(0, low)), shortMoney(Math.max(0, high))];
+  return a === b ? b : `${a}–${b}`;
+};
 const gbpK = (n: number) => `£${Math.round(Math.abs(n) / 1_000).toLocaleString('en-GB')}k`;
 
 /** How far the asking figure has come down from the first one we recorded, %; null without a cut. */
@@ -118,11 +152,21 @@ function value(key: NumberKey, i: NumbersInput, p: TailoringProfile): { label: s
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
   };
   const beds = f.bedrooms !== null ? `${Math.min(f.bedrooms, 4)}${f.bedrooms >= 4 ? '+' : ''}-bed` : 'home';
+  const project = f.kind === 'sale' ? f.project ?? null : null;
   switch (key) {
     case 'profit':
+      if (project) return fig.range ? { label: 'After works / month', value: fig.range.label.replace(/\/mo$/, '') } : null;
       return fig.range ? { label: fig.range.kind === 'purchase' ? 'Cash flow / month' : 'Profit / month', value: fig.range.label.replace(/\/mo$/, '') } : null;
     case 'cash':
+      // A Project deal's cash is its own range: works, buying costs and holding (Q26).
+      if (project) return project.cashHigh > 0 ? { label: 'Cash in', value: moneyRangeK(project.cashLow, project.cashHigh) } : null;
       return fig.cashRequired !== null ? { label: 'Cash needed', value: gbp(fig.cashRequired) } : null;
+    case 'works':
+      return project ? { label: 'Works', value: `~${moneyRangeK(project.worksLow, project.worksHigh)}` } : null;
+    case 'valueAdded':
+      return project ? { label: 'Value added', value: valueAddedLabel(project.valueAdded).replace(/ value added$/, '') } : null;
+    case 'afterWorks':
+      return project && fig.range ? { label: 'After works / month', value: fig.range.label.replace(/\/mo$/, '') } : null;
     case 'coc':
       return fig.cashOnCashPct !== null ? { label: 'Return on cash', value: pctRange(fig.cashOnCashPct) } : null;
     case 'yield':
@@ -161,7 +205,7 @@ function value(key: NumberKey, i: NumbersInput, p: TailoringProfile): { label: s
 
 /** The three numbers for this profile, or null when the card stays as it was (no new answers). */
 export function numbersFor(i: NumbersInput, p: TailoringProfile | null | undefined): CardNumber[] | null {
-  const role = roleFor(p, i.facts.kind);
+  const role = roleFor(p, typeOfFacts(i.facts));
   if (!role || !p) return null;
   const plan = PLAN[role];
   let keys = [...plan.keys];

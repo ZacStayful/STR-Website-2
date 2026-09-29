@@ -21,6 +21,8 @@
  * Pure: no network, no database, no server-only.
  */
 import { describeType, headlineFigure, type DealCard, type DealFilters } from '../marketplace/grid.ts';
+import { dealTypeOf } from '../profile/deal-types.ts';
+import { parseProjectCard } from '../project/headline.ts';
 import { areaChangeLine, type AlertChange } from '../market/alerts.ts';
 import { manageNotificationsUrl } from '../url.ts';
 import { placeOf, type Item, type Link, type Message, type Section, type Unsubscribe } from './message.ts';
@@ -39,6 +41,8 @@ export const WENT_REASONS: readonly WentReason[] = ['sold', 'under_offer', 'let_
 export type WentDeal = Pick<DealCard, 'id' | 'kind' | 'postcode_area' | 'town' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'annual_profit' | 'uplift_pct' | 'listed_date' | 'first_seen_at' | 'live_since' | 'screening_gross' | 'screening_confidence'> & {
   retired_reason: WentReason;
   retired_at: string;
+  /** Batch 17: a Project deal's card numbers (marketplace_deals.project), where the read carried them. */
+  project?: unknown;
 };
 
 const num = (v: unknown): number | null => {
@@ -52,8 +56,14 @@ const time = (iso: string | null | undefined): number | null => {
 };
 
 /** Whether a deal matches a member's filters: the same tests the grid's query applies (queries.ts dealsQuery). */
-export function matchesFilters(d: Pick<WentDeal, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'annual_profit' | 'uplift_pct'>, f: DealFilters): boolean {
+export function matchesFilters(d: Pick<WentDeal, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'annual_profit' | 'uplift_pct' | 'project'>, f: DealFilters): boolean {
   if (f.kind !== 'both' && d.kind !== f.kind) return false;
+  // Batch 17: the deal types (a light-refresh answer takes light projects only).
+  if (f.types.length > 0) {
+    const t = dealTypeOf(d);
+    if (!f.types.includes(t)) return false;
+    if (t === 'brrr' && f.brrrLightOnly && parseProjectCard(d.project)?.level !== 'light') return false;
+  }
   if (f.areas.length > 0 && !(d.postcode_area && f.areas.includes(d.postcode_area))) return false;
   if (f.beds === '4+') {
     if (!(d.bedrooms !== null && d.bedrooms >= 4)) return false;
@@ -83,7 +93,8 @@ export function wasVisibleToFree(d: Pick<WentDeal, 'live_since' | 'retired_at'>,
 
 export interface MissedInput {
   deals: readonly WentDeal[];
-  filters: DealFilters;
+  /** The profile's search; one per deal type it is shown (Batch 17), a deal counting once if any matches. */
+  filters: DealFilters | readonly DealFilters[];
   /** Deal ids the member opened, kept, passed or was sent as a pick: never "missed". */
   seen: ReadonlySet<string>;
   /** Only deals that went at or after this. */
@@ -105,7 +116,8 @@ export interface Missed {
 
 export function missedFor(input: MissedInput): Missed {
   const since = time(input.since) ?? 0;
-  const matching = input.deals.filter((d) => (time(d.retired_at) ?? 0) >= since && WENT_REASONS.includes(d.retired_reason) && !input.seen.has(d.id) && matchesFilters(d, input.filters));
+  const searches: readonly DealFilters[] = 'kind' in input.filters ? [input.filters] : input.filters;
+  const matching = input.deals.filter((d) => (time(d.retired_at) ?? 0) >= since && WENT_REASONS.includes(d.retired_reason) && !input.seen.has(d.id) && searches.some((f) => matchesFilters(d, f)));
   const free = input.freeDelayHours;
   const visible = free === null ? matching : matching.filter((d) => wasVisibleToFree(d, free));
   const listed = [...visible].sort((a, b) => (num(b.annual_profit) ?? -Infinity) - (num(a.annual_profit) ?? -Infinity)).slice(0, MISSED_LISTED);
@@ -127,7 +139,7 @@ export interface ProfileMissed {
  * first. Profiles with nothing are left out.
  */
 export function missedByProfile(
-  profiles: readonly { heading: string | null; filters: DealFilters; figureFor?: (d: WentDeal) => string | null }[],
+  profiles: readonly { heading: string | null; filters: MissedInput['filters']; figureFor?: (d: WentDeal) => string | null }[],
   common: Omit<MissedInput, 'filters'>,
 ): ProfileMissed[] {
   const counted = new Set(common.seen);

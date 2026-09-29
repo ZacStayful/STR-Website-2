@@ -342,7 +342,9 @@ function readsFor(s: Scenario): { reads: ChooseReads; trace: string[] } {
   const reads: ChooseReads = {
     pool: async (f, limit) => {
       // The query rankingPool runs: it always reads the whole view, best profit first, whatever sort the filters carry.
-      trace.push(`pool ${limit} ${stable({ ...f, view: 'all', sort: 'profit', page: 1 })}`);
+      // Batch 17's types filter is left out when empty (every type): the record is about the untailored path, which never sets it.
+      const { types, ...rest } = f;
+      trace.push(`pool ${limit} ${stable(types.length > 0 ? { ...f, view: 'all', sort: 'profit', page: 1 } : { ...rest, view: 'all', sort: 'profit', page: 1 })}`);
       const n = (v: number | null) => (v === null ? null : Number(v));
       return s.rows
         .filter((row) => {
@@ -395,7 +397,9 @@ test('choosing Today from injected reads gives exactly what selection.ts chose, 
     const before = readsFor(s);
     const after = readsFor(s);
     const legacy = await legacyChooseToday(s.input, before.reads);
-    const now = await chooseTodayFrom(s.input, after.reads);
+    // Batch 17 adds how strong the best match is (for Today's mix); the choice itself is the record's.
+    const { best: _best, ...now } = await chooseTodayFrom(s.input, after.reads);
+    void _best;
     const where = `seed ${seed}`;
     assert.deepStrictEqual(now, legacy, `choice differs: ${where}`);
     assert.deepStrictEqual(after.trace, before.trace, `reads differ: ${where}`);

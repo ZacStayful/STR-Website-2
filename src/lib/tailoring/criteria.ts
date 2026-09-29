@@ -20,6 +20,15 @@
  *   breakeven        break-even occupancy                  break-even occupancy                 nice     rent
  *   payback          payback months                        payback months                       nice     rent
  *   motivation       motivated sellers: only / prefer      the member's own "motivated" test    the answer
+ *   work             "How much work?" = light refresh      a Project deal's level               must     buy
+ *
+ * Batch 17: each deal is judged as its own type. A BRRR (Project) deal's
+ * price is judged on the BRRR budget (before works), its profit is the
+ * short-let profit after the works (after the refinance on a full project),
+ * low end, against the buyer's minimum, and its cash is the project's own
+ * cash needed (the clearly needed works: unknown works never remove a deal).
+ * "Light refresh" matches light projects only; "Full project" and "Either"
+ * match both (Q24), so only a light-refresh answer makes a check.
  *
  * Unknown never removes a deal: a deal whose figure is missing is shown with
  * the check marked unknown ("Tenure unknown: check"), and counts as not met.
@@ -27,8 +36,8 @@
  * rental, and a rent ceiling never judges a sale.
  *
  * Only answers to questions the profile is asked count (profile.ts asked), so
- * an answer left behind on another path judges nothing. Condition, furnished
- * and deal structure are stored but judge nothing: no deal carries them.
+ * an answer left behind on another path judges nothing. Furnished and deal
+ * structure are stored but judge nothing: no deal carries them.
  *
  * Pure: no network, no database, no server-only.
  */
@@ -45,6 +54,9 @@ import type { QuestionId } from '../profile/questions.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
 import { memberFinance } from '../marketplace/most-you-can-pay.ts';
 import type { DealCard } from '../marketplace/grid.ts';
+import { dealTypeOf, type DealType } from '../profile/deal-types.ts';
+import { parseProjectCard, type ProjectCardData } from '../project/headline.ts';
+import { profitAfterWorksRange } from '../project/finance.ts';
 import { TAILORING } from './config.ts';
 import { asked, realAnswer, usesTailoring, type CriterionKey, type Mode, type TailoringProfile } from './profile.ts';
 
@@ -62,8 +74,9 @@ export interface CriterionSpec {
 
 export const CRITERIA: Record<CriterionKey, CriterionSpec> = {
   location: { label: 'Location', kinds: ['sale', 'rent'], defaultMode: 'must', questions: ['where'] },
-  budget: { label: 'Budget', kinds: ['sale'], defaultMode: 'must', questions: ['budget'] },
+  budget: { label: 'Budget', kinds: ['sale'], defaultMode: 'must', questions: ['budget', 'brrr_budget'] },
   cash: { label: 'Cash available', kinds: ['sale'], defaultMode: 'must', questions: ['cash_available'] },
+  work: { label: 'How much work', kinds: ['sale'], defaultMode: 'must', questions: ['brrr_work'] },
   rent: { label: 'Rent', kinds: ['rent'], defaultMode: 'must', questions: ['max_rent'] },
   profit: { label: 'Minimum profit', kinds: ['sale', 'rent'], defaultMode: 'must', questions: ['min_profit', 'r2r_min_profit'] },
   bedrooms: { label: 'Bedrooms', kinds: ['sale', 'rent'], defaultMode: 'nice', questions: ['bedrooms'] },
@@ -91,6 +104,10 @@ export interface Wants {
   /** Their home, placed (its own point, else its postcode area's centre): "about N miles away". */
   home: { lat: number; lng: number } | null;
   budget: { min: number | null; max: number | null } | null;
+  /** Batch 17: the most they'd pay for a project, before works: judges BRRR deals (the budget judges Buy-and-let ones). */
+  brrrBudget: { min: number | null; max: number | null } | null;
+  /** Batch 17: "Light refresh" only; null for "Full project" and "Either", which take both levels (Q24). */
+  brrrWork: 'light' | null;
   cashTop: number | null;
   rentMax: number | null;
   /** The buyer's minimum profit a month: judges Buy-and-let and BRRR deals. */
@@ -113,6 +130,8 @@ export const NO_WANTS: Wants = {
   localAreas: null,
   home: null,
   budget: null,
+  brrrBudget: null,
+  brrrWork: null,
   cashTop: null,
   rentMax: null,
   minProfit: null,
@@ -153,6 +172,8 @@ export function wantsFor(p: TailoringProfile): Wants {
     localAreas,
     home,
     budget: g.budget ? budgetBounds(g.budget) : null,
+    brrrBudget: g.brrr.budget ? budgetBounds(g.brrr.budget) : null,
+    brrrWork: asked(p, 'brrr_work') && g.brrr.work === 'light' ? 'light' : null,
     cashTop: asked(p, 'cash_available') && b.cashAvailable ? TAILORING.cashAvailableTop[b.cashAvailable] : null,
     rentMax: g.maxRentPcm,
     minProfit: buyProfit ? g.finance.targetMarginPcm : null,
@@ -173,8 +194,9 @@ export function wantsFor(p: TailoringProfile): Wants {
 export function activeCriteria(w: Wants): Set<CriterionKey> {
   const on: [CriterionKey, boolean][] = [
     ['location', w.areas !== null],
-    ['budget', w.budget !== null],
+    ['budget', w.budget !== null || w.brrrBudget !== null],
     ['cash', w.cashTop !== null],
+    ['work', w.brrrWork !== null],
     ['rent', w.rentMax !== null],
     ['profit', w.minProfit !== null || w.minProfitR2r !== null],
     ['bedrooms', w.bedrooms !== null],
@@ -190,7 +212,7 @@ export function activeCriteria(w: Wants): Set<CriterionKey> {
 }
 
 /** Answers the quiz keeps that no deal carries yet: stored, shown, and judged on nothing. */
-export const NOT_APPLIED: readonly QuestionId[] = ['brrr_work', 'furnished', 'deal_structure'];
+export const NOT_APPLIED: readonly QuestionId[] = ['furnished', 'deal_structure'];
 
 /** A deal as the checks read it: public columns and stored figures only, nothing a member pays to see. */
 export interface DealFacts {
@@ -213,8 +235,17 @@ export interface DealFacts {
   motivationQualifies: boolean | undefined;
   /** 0–100, every motivation signal that fired. */
   motivationScore: number;
-  /** Renovation or auction wording in what the deal says about itself (its type, title, features, or an auction signal). */
+  /** Renovation or auction wording in what the deal says about itself (its type, title, features, or an auction signal); every Project deal. */
   needsWork: boolean;
+  /** Batch 17: the deal's own type (dealTypeOf); absent reads as its kind's (a sale is Buy and let). */
+  dealType?: DealType;
+  /** Batch 17: a Project (BRRR) deal's card numbers; null or absent for any other deal. */
+  project?: ProjectCardData | null;
+}
+
+/** The deal's type: its own, else its kind's. */
+export function typeOfFacts(f: Pick<DealFacts, 'kind' | 'dealType'>): DealType {
+  return f.dealType ?? (f.kind === 'rent' ? 'r2r' : 'buy_let');
 }
 
 const num = (v: unknown): number | null => {
@@ -230,7 +261,10 @@ export function tenureOf(raw: string | null | undefined): DealFacts['tenure'] {
   return 'unknown';
 }
 
-type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'screening_gross' | 'screening_confidence' | 'check_comps'>;
+type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'screening_gross' | 'screening_confidence' | 'check_comps'> & {
+  /** Batch 17: marketplace_deals.project, where the read carried it (never in CARD_COLUMNS). */
+  project?: unknown;
+};
 
 /** A marketplace row (Today's pool, the grid) as facts. */
 export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }): DealFacts {
@@ -238,6 +272,7 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
   const period = row.price_period === 'pw' || row.price_period === 'pcm' || row.price_period === 'total' ? row.price_period : row.kind === 'rent' ? 'pcm' : 'total';
   const amount = price === null || price <= 0 ? null : row.kind === 'rent' ? rentPcm({ amount: price, period }) : period === 'total' ? price : null;
   const area = row.postcode_area ? row.postcode_area.toUpperCase() : null;
+  const project = row.kind === 'sale' ? parseProjectCard(row.project) : null;
   return {
     kind: row.kind,
     area,
@@ -252,7 +287,9 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
     deal,
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,
-    needsWork: NEEDS_WORK.test(row.raw_type ?? '') || (motivation.fired ?? []).includes('auction'),
+    needsWork: project !== null || NEEDS_WORK.test(row.raw_type ?? '') || (motivation.fired ?? []).includes('auction'),
+    dealType: dealTypeOf({ kind: row.kind, project }),
+    project,
   };
 }
 
@@ -269,8 +306,13 @@ export function rentalFromCard(card: Pick<DealCard, 'kind' | 'deal_setup' | 'dea
   return { kind: 'rent-to-rent', setupCost: setup ?? 0, breakevenOccupancyPct: num(card.deal_breakeven), paybackMonths: num(card.deal_payback), monthlyMargin: margin ?? 0 } as Deal;
 }
 
-/** A listing the daily picks run found (a search result or a pool deal) as facts. */
-export function factsFromListing(l: SourcedListing, deal: Deal | null, screening: Screening | null | undefined, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }): DealFacts {
+/**
+ * A listing the daily picks run found (a search result or a pool deal) as
+ * facts. `project`: a pool deal's Project estimate (Batch 17), which makes it
+ * a BRRR deal; a search result has none.
+ */
+export function factsFromListing(l: SourcedListing, deal: Deal | null, screening: Screening | null | undefined, motivation: { qualifies: boolean | undefined; score: number; fired?: readonly string[] }, project: ProjectCardData | null = null): DealFacts {
+  const isProject = l.kind === 'sale' && project !== null;
   const amount = l.price ? (l.kind === 'rent' ? rentPcm(l.price) : l.price.period === 'total' ? l.price.amount : null) : null;
   const area = l.postcodeArea ? l.postcodeArea.toUpperCase() : null;
   return {
@@ -286,7 +328,9 @@ export function factsFromListing(l: SourcedListing, deal: Deal | null, screening
     deal,
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,
-    needsWork: NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | ')) || (motivation.fired ?? []).includes('auction'),
+    needsWork: isProject || NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | ')) || (motivation.fired ?? []).includes('auction'),
+    dealType: l.kind === 'rent' ? 'r2r' : isProject ? 'brrr' : 'buy_let',
+    project: isProject ? project : null,
   };
 }
 
@@ -306,6 +350,7 @@ export interface MemberFigures {
 export function memberFigures(f: DealFacts, p: Pick<TailoringProfile, 'goals' | 'widths'>): MemberFigures {
   // A cash buyer's figures carry no mortgage, as "Most you can pay" carries none.
   const finance = memberFinance(p.goals);
+  if (f.kind === 'sale' && f.project) return projectFigures(f.project, f, finance, p.widths);
   const range =
     f.amount === null
       ? null
@@ -318,6 +363,21 @@ export function memberFigures(f: DealFacts, p: Pick<TailoringProfile, 'goals' | 
   }
   const d = f.deal?.kind === 'rent-to-rent' ? f.deal : null;
   return { range, cashRequired: null, cashOnCashPct: null, setupCost: d ? d.setupCost : null, breakEvenPct: d ? d.breakevenOccupancyPct : null, paybackMonths: d ? d.paybackMonths : null };
+}
+
+/**
+ * A Project deal's figures (Batch 17): the short-let profit after the works
+ * at the member's finance (after the refinance on a full project), and the
+ * project's own cash needed, the clearly needed works (its low end: works
+ * that can't be told from the photos never remove a deal).
+ */
+function projectFigures(project: ProjectCardData, f: Pick<DealFacts, 'grossRevenue' | 'confidence'>, finance: ReturnType<typeof memberFinance>, widths: TailoringProfile['widths']): MemberFigures {
+  const after =
+    f.grossRevenue !== null && f.grossRevenue > 0
+      ? profitAfterWorksRange({ level: project.level, price: project.price, value: project.value, bedrooms: project.bedrooms, grossRevenue: f.grossRevenue, finance: finance ?? null, refinancePct: project.refinancePct ?? undefined, confidence: f.confidence, widths })
+      : null;
+  const range: ProfitRange | null = after ? { kind: 'purchase', ...after, basis: 'short-let profit after the works' } : null;
+  return { range, cashRequired: project.cashLow, cashOnCashPct: null, setupCost: null, breakEvenPct: null, paybackMonths: null };
 }
 
 export interface Check {
@@ -335,6 +395,11 @@ export function modeOf(key: CriterionKey, p: Pick<TailoringProfile, 'modes' | 'g
 const within = (n: number, b: { min: number | null; max: number | null }) => (b.min === null || n >= b.min) && (b.max === null || n <= b.max);
 const atMost = (n: number | null, top: number): Verdict => (n === null ? 'unknown' : n <= top ? 'pass' : 'fail');
 
+/** The price band that judges this sale: a BRRR deal's is the project budget (before works), any other the budget. */
+export function budgetFor(f: Pick<DealFacts, 'kind' | 'dealType'>, w: Pick<Wants, 'budget' | 'brrrBudget'>): Wants['budget'] {
+  return typeOfFacts(f) === 'brrr' ? w.brrrBudget : w.budget;
+}
+
 /** The minimum profit that judges this deal: a rental's own, else the buyer's. */
 export function minProfitFor(f: Pick<DealFacts, 'kind'>, w: Pick<Wants, 'minProfit' | 'minProfitR2r'>): number | null {
   return f.kind === 'rent' ? w.minProfitR2r : w.minProfit;
@@ -346,8 +411,10 @@ export function checksFor(f: DealFacts, fig: MemberFigures, w: Wants, mode: (key
   const push = (key: CriterionKey, verdict: Verdict) => out.push({ key, mode: mode(key), verdict });
   if (w.areas) push('location', f.area === null ? 'unknown' : w.areas.has(f.area) ? 'pass' : 'fail');
   if (f.kind === 'sale') {
-    if (w.budget) push('budget', f.amount === null ? 'unknown' : within(f.amount, w.budget) ? 'pass' : 'fail');
+    const budget = budgetFor(f, w);
+    if (budget) push('budget', f.amount === null ? 'unknown' : within(f.amount, budget) ? 'pass' : 'fail');
     if (w.cashTop !== null) push('cash', atMost(fig.cashRequired, w.cashTop));
+    if (w.brrrWork === 'light' && typeOfFacts(f) === 'brrr') push('work', f.project ? (f.project.level === 'light' ? 'pass' : 'fail') : 'unknown');
   } else if (w.rentMax !== null) push('rent', atMost(f.amount, w.rentMax));
   const minProfit = minProfitFor(f, w);
   if (minProfit !== null) push('profit', fig.range === null ? 'unknown' : fig.range.lowPcm >= minProfit ? 'pass' : 'fail');
@@ -406,6 +473,8 @@ export function judgeDeal(f: DealFacts, p: TailoringProfile, w: Wants = wantsFor
 /** A listing the daily picks run is weighing, as far as the must-haves read it. */
 export interface PickCandidateLike {
   listing: SourcedListing;
+  /** Batch 17: a pool deal's Project estimate, when it is one. */
+  project?: ProjectCardData | null;
   deal: Deal | null;
   screening?: Screening | null;
   motivation?: Motivation | null;
@@ -421,5 +490,5 @@ export interface PickCandidateLike {
 export function mustHaveTest(p: TailoringProfile | null | undefined): ((c: PickCandidateLike) => boolean) | null {
   if (!usesTailoring(p)) return null;
   const w = wantsFor(p);
-  return (c) => judgeDeal(factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0, fired: c.motivation?.fired }), p, w).judgement.mustFails.length === 0;
+  return (c) => judgeDeal(factsFromListing(c.listing, c.deal, c.screening, { qualifies: c.motivationQualifies, score: c.motivation?.score ?? 0, fired: c.motivation?.fired }, c.project ?? null), p, w).judgement.mustFails.length === 0;
 }

@@ -37,6 +37,8 @@ import { areaCodeList, type MarketGoals } from '../market/goals.ts';
 import { queryKey } from '../listing/sourcing.ts';
 import { exclusionFor } from '../activity/metrics.ts';
 import { emailKey } from '../supabase/email-key.ts';
+import { DEFAULT_ABOUT, type AboutYou } from '../profile/about.ts';
+import { dealTypesFor, kindsFor } from '../profile/deal-types.ts';
 
 export type DemandKind = 'sale' | 'rent';
 export type DemandType = 'house' | 'flat' | 'any';
@@ -55,6 +57,8 @@ export interface DemandMember {
   paying: boolean;
   /** Postcode areas of the units they run now (Batch 12's about_you.unitAreas). */
   unitAreas: string[];
+  /** Batch 17: the roles they ticked (about_you.roles), for a profile not yet on deal types. */
+  roles?: AboutYou['roles'];
   /** On Batch 9's manual switch-off list (activity_excluded_accounts). */
   switchedOff: boolean;
 }
@@ -125,8 +129,15 @@ export function profileAreas(profile: Pick<DemandProfile, 'goals' | 'areas'>, un
   return [...new Set(ordered)].slice(0, Math.max(0, opts.maxAreasPerProfile));
 }
 
-export function kindsOf(goals: MarketGoals): DemandKind[] {
-  return goals.sourcingKind === 'both' ? ['sale', 'rent'] : [goals.sourcingKind];
+/**
+ * The kinds a profile's deal types search (Batch 17, the one helper every
+ * "which deal types" decision goes through): Buy and let and BRRR are sales,
+ * Rent-to-rent a rental. A profile with no types yet: Buy and let +
+ * Rent-to-rent, what it is shown (Q22).
+ */
+export function kindsOf(goals: MarketGoals, roles: AboutYou['roles'] = []): DemandKind[] {
+  const kind = kindsFor(dealTypesFor({ goals, about: roles.length > 0 ? { ...DEFAULT_ABOUT, roles } : null }));
+  return kind === 'both' ? ['sale', 'rent'] : [kind];
 }
 
 /** House, flat or either. Only buyers answer it; a rent-to-rent search takes either. */
@@ -196,7 +207,7 @@ export function buildDemand(members: readonly DemandMember[], profiles: readonly
       summary.profilesWithoutAreas += 1;
       continue;
     }
-    for (const kind of kindsOf(p.goals)) {
+    for (const kind of kindsOf(p.goals, m.roles ?? [])) {
       const type = typeOf(p.goals, kind);
       for (const area of areas) {
         const key = cellKey(area, kind);

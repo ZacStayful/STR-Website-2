@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { baseSlots, cardToDrop, DEFAULT_TODAY_MIX, fillMix, mixSlots, parseTodayMix } from './mix.ts';
+import { baseSlots, DEFAULT_TODAY_MIX, fillMix, mixSlots, parseTodayMix } from './mix.ts';
+import { cardToDrop, displayOrder } from './day.ts';
 import type { DealType } from '../profile/deal-types.ts';
 
 const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
@@ -62,6 +63,10 @@ test('the pick’s room comes from the most represented type, never an answered 
   assert.equal(cardToDrop(list, new Set(), typeOf, 'r9'), 'r2', 'rent-to-rent has three with the pick: its lowest goes');
   assert.equal(cardToDrop(list, new Set(['r2', 'r1']), typeOf, 'r9'), 'b2', 'answered cards stay');
   assert.equal(cardToDrop(['r9', 'p1'], new Set(['p1']), typeOf, 'r9'), null);
+  // Through displayOrder: the stored mix 2 / 2 / 1 and a rent-to-rent pick.
+  assert.deepEqual(displayOrder(['b1', 'r1', 'p1', 'b2', 'r2'], 'r9', new Set(), 5, typeOf), ['r9', 'b1', 'r1', 'p1', 'b2'], 'the lowest rent-to-rent card makes room: BRRR keeps its one');
+  assert.deepEqual(displayOrder(['b1', 'r1', 'p1', 'b2', 'r2'], 'r9', new Set(), 5), ['r9', 'b1', 'r1', 'p1', 'b2'], 'without types, the lowest card, as before');
+  assert.deepEqual(displayOrder(['b1', 'r1', 'b2', 'r2', 'p1'], 'r9', new Set(), 5, typeOf), ['r9', 'b1', 'r1', 'b2', 'p1'], 'never the only BRRR, even at the bottom');
 });
 
 test('the settings row: each mix must fill the day, anything else keeps the default', () => {

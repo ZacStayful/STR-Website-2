@@ -25,7 +25,7 @@ import { motivationLine } from '../marketplace/motivation-line.ts';
 import { parseMotivation } from '../listing/motivation.ts';
 import { motivationFor } from '../today/candidates.ts';
 import { TAILORING } from './config.ts';
-import { factsFromRow, judgeDeal, minProfitFor, rentalFromCard, wantsFor, type Check, type DealFacts, type Judgement, type MemberFigures, type Wants } from './criteria.ts';
+import { budgetFor, factsFromRow, judgeDeal, minProfitFor, rentalFromCard, wantsFor, type Check, type DealFacts, type Judgement, type MemberFigures, type Wants } from './criteria.ts';
 import { adjustmentsFor, leaningsFor, type AreaLookup } from './order.ts';
 import { usesTailoring, type CriterionKey, type TailoringProfile } from './profile.ts';
 
@@ -45,12 +45,16 @@ function phrase(key: CriterionKey, f: DealFacts, fig: MemberFigures, w: Wants): 
       }
       return f.area ? `in ${areaMetaForCode(f.area).name}` : null;
     }
-    case 'budget':
-      if (!w.budget) return null;
-      if (w.budget.max !== null && w.budget.min !== null) return `${gbpK(w.budget.min)}–${gbpK(w.budget.max)}`;
-      return w.budget.max !== null ? `under ${gbpK(w.budget.max)}` : w.budget.min !== null ? `over ${gbpK(w.budget.min)}` : null;
+    case 'budget': {
+      const b = budgetFor(f, w);
+      if (!b) return null;
+      if (b.max !== null && b.min !== null) return `${gbpK(b.min)}–${gbpK(b.max)}`;
+      return b.max !== null ? `under ${gbpK(b.max)}` : b.min !== null ? `over ${gbpK(b.min)}` : null;
+    }
     case 'cash':
       return fig.cashRequired !== null ? `${gbpK(fig.cashRequired)} in` : null;
+    case 'work':
+      return 'a light refresh';
     case 'rent':
       return w.rentMax !== null ? `under ${gbp(w.rentMax)} pcm` : null;
     case 'profit':
@@ -79,6 +83,7 @@ const CHECK: Record<CriterionKey, string> = {
   location: 'Location unknown: check',
   budget: 'Price unknown: check',
   cash: 'Cash needed unknown: check',
+  work: 'Works unknown: check',
   rent: 'Rent unknown: check',
   profit: 'Profit unknown: check',
   bedrooms: 'Bedrooms unknown: check',

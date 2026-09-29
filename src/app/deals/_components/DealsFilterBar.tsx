@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
-import { filtersToSearch, KIND_LABELS, SORT_LABELS, type DealFilters, type DealKindFilter, type DealSort } from "@/lib/marketplace/grid";
+import { filtersToSearch, kindOfTypes, SORT_LABELS, type DealFilters, type DealSort } from "@/lib/marketplace/grid";
+import { DEAL_TYPES, DEAL_TYPE_LABELS, type DealType } from "@/lib/profile/deal-types";
 import type { AreaCount } from "@/lib/marketplace/queries";
 
 const BEDS = ["any", "1", "2", "3", "4+"] as const;
@@ -10,23 +11,40 @@ const BEDS = ["any", "1", "2", "3", "4+"] as const;
  * pool, so the grid never holds more than one page in the browser and the
  * URL is always the whole filter. The member's kept and passed deals are on
  * My deals, not here (Batch 11).
+ *
+ * Batch 17: the deal types (Buy and let / BRRR / Rent-to-rent) replace the
+ * old buy-or-rent choice. With none in the URL the grid shows the profile's
+ * own types (`ownTypes`); "All types" is one click (Q29).
  */
-export function DealsFilterBar({ filters, counts, total }: { filters: DealFilters; counts: AreaCount[]; total: number }) {
+export function DealsFilterBar({ filters, counts, total, ownTypes }: { filters: DealFilters; counts: AreaCount[]; total: number; ownTypes: readonly DealType[] }) {
   const select = "rounded-md border border-border bg-card px-2.5 py-1.5 text-sm";
   const input = "w-28 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm";
   const areasWithDeals = counts.filter((c) => c.total > 0);
   const chosen = filters.areas.map((code) => areaMetaForCode(code));
+  // No types means every type (the profile chose all three, or `type=all`).
+  const shown = filters.types.length === 0 ? DEAL_TYPES : filters.types;
+  const narrowed = shown.length < DEAL_TYPES.length;
+  const isOwn = sameTypes(filters.types, ownTypes);
+  const countKind = filters.kind !== "both" ? filters.kind : kindOfTypes(filters.types);
   return (
     <form method="get" action="/deals" className="rounded-xl border border-border bg-card p-3">
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-muted-foreground">
-          <span className="block">Deal</span>
-          <select name="kind" defaultValue={filters.kind} className={select}>
-            {(Object.keys(KIND_LABELS) as DealKindFilter[]).map((k) => (
-              <option key={k} value={k}>{KIND_LABELS[k]}</option>
+        <fieldset className="text-xs text-muted-foreground">
+          <legend className="block">Deals{isOwn && narrowed ? " · your profile’s" : ""}</legend>
+          <span className="flex flex-wrap items-center gap-1">
+            {DEAL_TYPES.map((t) => (
+              <label key={t} className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1.5 text-sm text-foreground">
+                <input type="checkbox" name="type" value={t} defaultChecked={shown.includes(t)} />
+                {DEAL_TYPE_LABELS[t]}
+              </label>
             ))}
-          </select>
-        </label>
+            {narrowed && (
+              <Link href={`/deals${filtersToSearch({ ...filters, kind: "both", types: [...DEAL_TYPES], page: 1 })}`} className="px-1 text-sm font-medium text-foreground underline-offset-4 hover:underline">
+                All types
+              </Link>
+            )}
+          </span>
+        </fieldset>
         <label className="text-xs text-muted-foreground">
           <span className="block">Bedrooms</span>
           <select name="beds" defaultValue={filters.beds} className={select}>
@@ -69,14 +87,14 @@ export function DealsFilterBar({ filters, counts, total }: { filters: DealFilter
                 <label key={c.code} className="flex items-center gap-2 rounded px-2 py-1 text-sm text-foreground hover:bg-muted">
                   <input type="checkbox" name="areas" value={c.code} defaultChecked={filters.areas.includes(c.code)} />
                   <span className="flex-1">{meta.name}</span>
-                  <span className="text-xs text-muted-foreground">{filters.kind === "sale" ? c.sale : filters.kind === "rent" ? c.rent : c.total}</span>
+                  <span className="text-xs text-muted-foreground">{countKind === "sale" ? c.sale : countKind === "rent" ? c.rent : c.total}</span>
                 </label>
               );
             })}
           </div>
         </details>
         <button type="submit" className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:opacity-90">Apply</button>
-        {filtersToSearch(filters) !== "" && (
+        {filtersToSearch({ ...filters, types: isOwn ? [] : filters.types }) !== "" && (
           <Link href="/deals" className="rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted">Clear</Link>
         )}
         <span className="ml-auto text-xs text-muted-foreground">{total.toLocaleString("en-GB")} live deal{total === 1 ? "" : "s"}</span>
@@ -92,4 +110,11 @@ export function DealsFilterBar({ filters, counts, total }: { filters: DealFilter
       )}
     </form>
   );
+}
+
+/** The same types, whatever the order; none and all three are both "every type". */
+function sameTypes(a: readonly DealType[], b: readonly DealType[]): boolean {
+  const all = (x: readonly DealType[]) => (x.length === 0 ? DEAL_TYPES : x);
+  const [x, y] = [all(a), all(b)];
+  return x.length === y.length && x.every((t) => y.includes(t));
 }

@@ -60,3 +60,19 @@ test('one prompt a visit: the first that may be asked', () => {
   assert.equal(promptToShow(p, [{ question: 'type', lastShownAt: '2026-09-26T08:00:00Z', answeredAt: null, answer: null }], NOW, TODAY)?.question, 'kind');
   assert.equal(promptToShow(null, [], NOW, TODAY), null);
 });
+
+test('Batch 17: Keeps of a deal type the profile does not show ask to add it; accepting adds the type', () => {
+  const brrr = () => keep({ dealType: 'brrr' });
+  const p = profile({ dealTypes: ['buy_let'] }, [brrr(), brrr(), brrr(), keep({ kind: 'rent' })]);
+  const kind = promptsFor(p).find((x) => x.question === 'kind')!;
+  assert.equal(kind.text, 'You’ve kept 3 BRRR projects but this profile doesn’t show them. Show BRRR too?');
+  assert.equal(kind.accept, 'Show BRRR too');
+  assert.equal(kind.keep, 'Keep to Buy and let');
+  assert.ok(kind.change.kind === 'goals');
+  if (kind.change.kind === 'goals') {
+    assert.deepEqual(kind.change.goals.dealTypes, ['buy_let', 'brrr']);
+    assert.equal(kind.change.goals.sourcingKind, 'sale');
+  }
+  // Every type already shown: nothing to ask.
+  assert.equal(promptsFor(profile({ dealTypes: ['buy_let', 'brrr', 'r2r'] }, [brrr(), brrr(), brrr()])).some((x) => x.question === 'kind'), false);
+});

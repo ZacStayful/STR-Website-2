@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { cleanReasons, isPickToken } from '@/lib/listing/picks';
-import { applyPickRelaxation, pickByToken, recordReaction, setPicksEnabled } from '@/lib/listing/picks-server';
+import { addTypeFromPickFeedback, applyPickRelaxation, pickByToken, recordReaction, setPicksEnabled } from '@/lib/listing/picks-server';
 import { logActivity, logActivityForPick } from '@/lib/activity/log';
 
 // These run with no member session: the pick token in the email is the
@@ -15,6 +15,9 @@ export async function submitPickFeedbackAction(formData: FormData): Promise<void
   const reaction = formData.get('reaction') === 'yes' ? 'yes' : 'no';
   await recordReaction({ token }, { reaction, source: 'form', reasons: formData.getAll('reasons').map(String), comment: formData.get('comment') });
   logActivityForPick(token, 'email_feedback', { extras: { answer: reaction, via: 'form', reasons: reaction === 'no' ? cleanReasons(formData.getAll('reasons')) : undefined } });
+  // Batch 17 (Q25): "I want rent-to-rent, not to buy" adds the type to the pick's profile.
+  const added = reaction === 'no' ? await addTypeFromPickFeedback({ token }, formData.getAll('reasons')) : null;
+  if (added) logActivity(added.userId, 'profile_edited', { profileId: added.profileId, source: 'email_link', extras: { question: 'deal_types', via: 'pick_feedback', added: added.added } });
   redirect(`/p/${token}?a=${reaction}&thanks=1`);
 }
 

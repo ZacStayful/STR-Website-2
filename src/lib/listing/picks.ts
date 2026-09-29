@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import type { MarketGoals } from '../market/goals.ts';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { budgetBounds, describeDeal, queryKey, type SourcedListing, type SourcedPick, type SourcingKind, type SourcingQuery } from './sourcing.ts';
+import { describeDeal, queryKey, saleBoundsForGoals, type SourcedListing, type SourcedPick, type SourcingKind, type SourcingQuery } from './sourcing.ts';
 import { formatListingPrice } from './format.ts';
 import { priceFor } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
@@ -107,7 +107,7 @@ export function topScoredAreas<C extends HouseAreaCard>(cards: C[], limit: numbe
 export function houseQueries(cards: HouseAreaCard[], goals: MarketGoals | null, limit = HOUSE_AREAS): SourcingQuery[] {
   const g = goals ?? DEFAULT_GOALS;
   const kinds: SourcingKind[] = goals ? (g.sourcingKind === 'both' ? ['sale', 'rent'] : [g.sourcingKind]) : ['sale', 'rent'];
-  const bounds = goals ? budgetBounds(g.budget) : { min: null, max: null };
+  const bounds = goals ? saleBoundsForGoals(g) : { min: null, max: null };
   const minBedrooms = goals ? g.bedrooms ?? null : null;
   const areas = topScoredAreas(cards, limit);
   const out: SourcingQuery[] = [];
@@ -150,8 +150,8 @@ export const PICK_REASONS = [
   { key: 'needs_work', label: 'Needs too much work', group: 'type', effect: 'we skip renovation projects and auctions' },
   { key: 'not_str_suitable', label: 'Could not be run as a short let', group: 'type', effect: 'we tighten the short-let checks' },
   { key: 'poor_return', label: 'Return too low', group: 'returns', effect: 'we only send properties that beat this one against a long-term let' },
-  { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we switch you to rentals' },
-  { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we switch you to sales' },
+  { key: 'want_r2r', label: 'I want rent-to-rent, not to buy', group: 'other', effect: 'we add rent-to-rent deals to this profile' },
+  { key: 'want_buy', label: 'I want to buy, not rent-to-rent', group: 'other', effect: 'we add deals to buy to this profile' },
   { key: 'seen_it', label: 'Already seen it', group: 'other', effect: null },
 ] as const;
 
@@ -361,6 +361,22 @@ export function feedbackRules(feedback: PickFeedback[]): AppliedRules {
   return r;
 }
 
+/**
+ * The member's answers without "I want rent-to-rent, not to buy" and the
+ * reverse (Batch 17, Q25): those now add the deal type to the profile when
+ * they are given (picks-server.ts addTypeFromPickFeedback), so the searches
+ * and Today never switch kind on them. Everything else stays.
+ */
+export function withoutKindFlips(feedback: readonly PickFeedback[]): PickFeedback[] {
+  return withoutReasons(feedback, ['want_r2r', 'want_buy']);
+}
+
+/** The member's answers with these reasons taken out; everything else stays. */
+export function withoutReasons(feedback: readonly PickFeedback[], keys: readonly PickReason[]): PickFeedback[] {
+  const drop = new Set<string>(keys);
+  return feedback.map((f) => (f.reasons.some((r) => drop.has(r)) ? { ...f, reasons: f.reasons.filter((r) => !drop.has(r)) } : f));
+}
+
 /** True when this reason is actually changing what the member is sent. */
 export function ruleApplied(rules: AppliedRules, reason: PickReason): boolean {
   return !rules.cancelled.includes(reason) && !rules.inert.includes(reason);
@@ -388,7 +404,7 @@ export function applyQueryFeedback(queries: SourcingQuery[], feedback: PickFeedb
  * the member already said no to. Each rule is per kind where the rejected
  * pick's kind is known (a purchase budget is not a rent ceiling).
  */
-export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null; screening?: Screening | null }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
+export function applyCandidateFeedback<C extends { listing: SourcedListing; deal?: Deal | null; screening?: Screening | null; project?: unknown }>(candidates: C[], feedback: PickFeedback[], rules = feedbackRules(feedback)): C[] {
   return candidates.filter((c) => {
     const l = c.listing;
     const amount = l.price ? (l.kind === 'rent' ? (l.price.period === 'pw' ? (l.price.amount * 52) / 12 : l.price.amount) : l.price.amount) : null;
@@ -410,7 +426,8 @@ export function applyCandidateFeedback<C extends { listing: SourcedListing; deal
     const kind = propertyKind(l.rawType, l.title);
     if (rules.noFlats && kind !== 'house') return false;
     if (rules.noHouses && kind !== 'flat') return false;
-    if (rules.noWork && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
+    // A Project (BRRR) deal needs work by definition, and the profile chose it (Batch 17).
+    if (rules.noWork && !c.project && NEEDS_WORK.test([l.title, l.rawType ?? '', l.priceQualifier ?? '', ...(l.features ?? [])].join(' | '))) return false;
     const need = rules.minReturn[l.kind];
     if (need !== undefined) {
       // Same metric on both sides: the floor came from a screening, so it is

@@ -135,3 +135,30 @@ export function describeTypes(types: readonly DealType[]): string {
   if (types.length === DEAL_TYPES.length) return 'All of them';
   return orderedTypes(types).map((t) => DEAL_TYPE_LABELS[t]).join(' · ');
 }
+
+/**
+ * "I want rent-to-rent, not to buy" on a pick (and the reverse) adds that
+ * type to the profile's types rather than switching the search for the day
+ * (Q25; the reverse is treated the same way). Both at once cancel out, as
+ * they always have. Null: nothing to add.
+ */
+export function typeFromPickReasons(reasons: readonly string[]): DealType | null {
+  const r2r = reasons.includes('want_r2r');
+  const buy = reasons.includes('want_buy');
+  if (r2r === buy) return null;
+  return r2r ? 'r2r' : 'buy_let';
+}
+
+/**
+ * The profile's goals with one more deal type (its older answers mapped
+ * first, when it has not chosen any yet), and the search kind they now
+ * cover. Null when the type is already there, or there are no goals.
+ */
+export function withAddedType(p: TypedProfile, type: DealType): MarketGoals | null {
+  const g = p.goals;
+  if (!g) return null;
+  const current = dealTypesFor(p);
+  if (current.includes(type)) return null;
+  const types = orderedTypes([...current, type]);
+  return { ...g, dealTypes: types, sourcingKind: kindsFor(types) };
+}

@@ -17,6 +17,7 @@ import { motivationLabel } from "@/lib/listing/motivation";
 import { myDealsFocusPath } from "@/lib/listing/return-path";
 import { NAV_TARGETS, GOALS_EDITOR_HREF } from "@/lib/nav";
 import { savePickAction, reactToPickAction } from "./actions";
+import { describeTypes } from "@/lib/profile/deal-types";
 
 export const metadata: Metadata = {
   title: "Daily picks — Stayful Intelligence",
@@ -97,7 +98,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
                 {chips.map((c) => (
                   <span key={c} className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{c}</span>
                 ))}
-                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{goals.sourcingKind === "both" ? "Buy or rent-to-rent" : goals.sourcingKind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+                <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-foreground">{goals.dealTypes && goals.dealTypes.length > 0 ? describeTypes(goals.dealTypes) : goals.sourcingKind === "both" ? "Buy or rent-to-rent" : goals.sourcingKind === "rent" ? "Rent-to-rent" : "To buy"}</span>
               </p>
             </>
           ) : (

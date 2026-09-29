@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dealTypeOf, dealTypesFor, describeTypes, kindsFor, legacyDealTypes, typesShown } from './deal-types.ts';
+import { dealTypeOf, dealTypesFor, describeTypes, kindsFor, legacyDealTypes, typeFromPickReasons, typesShown, withAddedType, type DealType } from './deal-types.ts';
 import { DEFAULT_GOALS, parseMarketGoals, type MarketGoals } from '../market/goals.ts';
 import { DEFAULT_ABOUT, type AboutYou, type Role } from './about.ts';
 
@@ -69,4 +69,20 @@ test('goals keep the new answers through a save and a read', () => {
   assert.deepEqual(old?.brrr, { budget: null, work: null });
   assert.equal(old?.r2r.minMarginPcm, null);
   assert.equal(parseMarketGoals({ version: 2, dealTypes: [] })?.dealTypes, null);
+});
+
+test('"I want rent-to-rent, not to buy" adds Rent-to-rent to the profile (Q25); the reverse adds Buy and let; both at once cancel', () => {
+  assert.equal(typeFromPickReasons(['want_r2r', 'too_expensive']), 'r2r');
+  assert.equal(typeFromPickReasons(['want_buy']), 'buy_let');
+  assert.equal(typeFromPickReasons(['want_r2r', 'want_buy']), null);
+  assert.equal(typeFromPickReasons(['too_small']), null);
+  const buyer = { goals: { ...DEFAULT_GOALS, dealTypes: ['buy_let'] as DealType[] }, about: null };
+  const next = withAddedType(buyer, 'r2r')!;
+  assert.deepEqual(next.dealTypes, ['buy_let', 'r2r']);
+  assert.equal(next.sourcingKind, 'both');
+  assert.equal(withAddedType({ goals: next, about: null }, 'r2r'), null, 'already there: nothing to write');
+  // A profile not yet on types: its older answers mapped first, then the new type.
+  const legacy = withAddedType({ goals: { ...DEFAULT_GOALS, path: 'buy' }, about: null }, 'r2r')!;
+  assert.deepEqual(legacy.dealTypes, ['buy_let', 'r2r']);
+  assert.equal(withAddedType({ goals: null, about: null }, 'r2r'), null);
 });

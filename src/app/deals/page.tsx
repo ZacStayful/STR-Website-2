@@ -7,7 +7,7 @@ import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { barsText } from "@/lib/listing/screen";
-import { parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
+import { browseFilters, DEFAULT_FILTERS, kindOfTypes, parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
 import { MY_DEALS_PASSED_HREF, NAV_TARGETS, dealsViewRedirect } from "@/lib/nav";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount, type DealPage } from "@/lib/marketplace/queries";
 import { earlyAccessBanner, earlyAccessFor, isFiltered } from "@/lib/marketplace/early-access";
@@ -17,6 +17,8 @@ import { cameFromWelcome } from "@/lib/onboarding/deal-filters";
 import { cardViewsFor } from "@/lib/marketplace/card-state";
 import { cashBuyerOf } from "@/lib/marketplace/most-you-can-pay";
 import { parseMarketGoals } from "@/lib/market/goals";
+import { parseAboutYou } from "@/lib/profile/about";
+import { typesShown } from "@/lib/profile/deal-types";
 import { getAreaCardsWithin } from "@/lib/market/cached";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
@@ -57,8 +59,6 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const parsed = parseDealFilters(raw);
   const moved = dealsViewRedirect(parsed.view);
   if (moved) redirect(moved);
-  // The grid is always the default view: every live deal except the ones they passed.
-  const filters: DealFilters = { ...parsed, view: "all" };
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -66,13 +66,18 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   if (!user) return null;
 
   // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
-  const visibility = await dealVisibilityFor(user.id, isAdminEmail(user.email));
+  // The member's own row: their answers, and (Batch 17) the deal types the grid starts on.
+  const [visibility, { data: profile }] = await Promise.all([dealVisibilityFor(user.id, isAdminEmail(user.email)), supabase.from("profiles").select("market_goals, about_you").eq("id", user.id).maybeSingle()]);
+  const ownTypes = typesShown({ goals: parseMarketGoals(profile?.market_goals), about: parseAboutYou(profile?.about_you) });
+  // The grid is always the default view: every live deal except the ones they passed. With no
+  // type in the URL, the profile's own deal types (Q29); "All types" is `type=all`.
+  const filters: DealFilters = { ...browseFilters(parsed, raw.type !== undefined, ownTypes), view: "all" };
   const now = new Date();
   const adminUser = isAdminEmail(user.email);
   // The market snapshot, for the cards' area figures and the "Best for you" order: waited on briefly, never built here.
   const snapshotReady = getAreaCardsWithin(AREA_WAIT_MS);
   // The member's answers: the active profile's tailoring (Batch 14) orders "Best for you" and picks each card's three numbers.
-  const answersReady = Promise.all([supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]).then(async ([{ data: profile }, savedRes, savedProfiles]) => {
+  const answersReady = Promise.all([supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]).then(async ([savedRes, savedProfiles]) => {
     const goals = parseMarketGoals(profile?.market_goals);
     const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
     const active = savedProfiles.readable ? savedProfiles.active : null;
@@ -107,7 +112,8 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   // Nothing left in the grid: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
   const countMap: Record<string, number> = {};
-  for (const c of counts) countMap[c.code] = countFor(counts, c.code, filters.kind);
+  const countKind = filters.kind !== "both" ? filters.kind : kindOfTypes(filters.types);
+  for (const c of counts) countMap[c.code] = countFor(counts, c.code, countKind);
   const message = typeof raw.msg === "string" ? MESSAGES[raw.msg] ?? null : null;
   const banner = earlyAccessBanner(waiting, isFiltered(filters));
   const totalLive = counts.reduce((n, c) => n + c.total, 0);
@@ -135,7 +141,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
         <GoalsStrip total={matching} fromWelcome={cameFromWelcome(raw.from)} />
         <EarlyAccessBanner text={banner} />
-        <DealsFilterBar filters={filters} counts={counts} total={matching} />
+        <DealsFilterBar filters={filters} counts={counts} total={matching} ownTypes={browseFilters(DEFAULT_FILTERS, false, ownTypes).types} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <section>

@@ -14,14 +14,14 @@ import { afterDebit } from "../credit/after-debit";
 import { isAdminEmail } from "../admin";
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from "../access";
 import { dealVisibility, dealVisible, PAID_VISIBILITY } from "../marketplace/visibility";
-import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
+import { queriesForGoals, dealForSourced, rankPicks, withinQueryPrice, withinTypeBudget, listingAge, medianAgeDays, rentPcm, areaRevenueFor, type AreaRef, type SourcedListing, type SourcingQuery, type SourcedPick } from "./sourcing";
 import { motivationFromListing, motivationFromSnapshot, meetsMotivationBar, NO_MOTIVATION, type Motivation } from "./motivation";
 import { analyseRelaxation, closestMatch, describeRelaxation, toStoredRelaxation, type Dimension, type NearMiss, type Relaxation } from "./relax";
 import { indexCohorts, lookupCohorts, type CohortMember } from "./cohorts";
 import { fetchCohorts, sourcedPropertiesConfigured } from "../apis/propertydata-sourced";
 import { blendFit } from "./pipeline";
 import { thresholdDaysFor, type MotivationGoals } from "../market/goals";
-import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, addUnlocked, type PickBasis, type PickFeedback } from "./picks";
+import { houseQueries, applyQueryFeedback, feedbackRules, pickSection, pickPrice, newPickToken, startOfTodayUtc, addUnlocked, withoutKindFlips, type PickBasis, type PickFeedback } from "./picks";
 import { rankForMember, toPickFeedback, FEEDBACK_WINDOW_MS } from "./rank";
 import { missedRowFor } from "./picks-paused";
 import { mergeFeedback, type FeedbackEntry } from "../marketplace/reactions";
@@ -59,6 +59,8 @@ import type { TailoringProfile } from "../tailoring/profile";
 import { wantsActFast } from "../tailoring/about-prompts";
 import { sendParts } from "../tailoring/email-answers";
 import { memberFinance } from "../marketplace/most-you-can-pay";
+import { projectCardsByUrl } from "../marketplace/queries";
+import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
@@ -375,7 +377,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const grid = await dealFeedbackFor(admin, ids, feedbackSince, { byProfile: tagged });
   const feedbackFor = (userId: string, profileId: string | null): PickFeedback[] => {
     const picked = (pickEntries.get(userId) ?? []).filter((x) => !profileId || x.profileId === profileId).map((x) => x.entry);
-    return mergeFeedback(picked, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []);
+    // Batch 17 (Q25): "rent-to-rent, not buying" added the type when it was given; the searches never switch kind on it.
+    return withoutKindFlips(mergeFeedback(picked, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []));
   };
 
   const members: Member[] = [];
@@ -808,8 +811,22 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const perUser: { user: string; profile?: string; basis: PickBasis; candidates: number; sent: boolean; reason?: string }[] = [];
   const seatOf = (m: Member) => (m.profile ? { profile: m.profile.id } : {});
   const candidateCount = new Map<string, number>();
+  // Batch 17: the pick is one of the profile's chosen deal types. A sale that
+  // is a Project deal is BRRR; any other sale Buy and let; a rental
+  // Rent-to-rent. Unreadable: every sale might be a Project deal, so a sale
+  // goes only to a profile that takes both.
+  const candidateUrls = new Set(seenUrls);
+  for (const list of olderCandidates.values()) for (const l of list) candidateUrls.add(l.canonicalUrl);
+  const projects = await projectCardsByUrl([...candidateUrls]);
+  const typeOfCandidate = (l: SourcedListing): DealType | null => (l.kind === "rent" ? "r2r" : projects === null ? null : projects.has(l.canonicalUrl) ? "brrr" : "buy_let");
   for (const m of members) {
     const sent = sentByUser.get(m.id) ?? new Set<string>();
+    // What this profile is shown (Q22: an unanswered one, Buy and let + Rent-to-rent).
+    const types = typesShown({ goals: m.goals, about: tailoringBySeat.get(m.key)?.about ?? null });
+    const typeFits = (l: SourcedListing) => {
+      const t = typeOfCandidate(l);
+      return t === null ? types.includes("buy_let") && types.includes("brrr") : types.includes(t);
+    };
     // House picks have no filter, so no motivation read: there is no member
     // threshold to judge them against.
     const motiv: MotivationGoals | null = m.goals && m.goals.motivation.mode !== "off" ? m.goals.motivation : null;
@@ -824,6 +841,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const nearMisses: (NearMiss & { candidate: Candidate & { precheck: "ok" | "unknown" } })[] = [];
     const consider = (l: SourcedListing, q: SourcingQuery, fromBackCatalogue: boolean) => {
       if (seen.has(l.canonicalUrl) || sent.has(l.canonicalUrl)) return;
+      // Batch 17: never a deal type the profile did not choose.
+      if (!typeFits(l)) return;
       // A pool deal still inside its early-access window is not for a member
       // whose account has never paid. Decided here, before anything is ranked,
       // so neither the alternates nor the daily cap can reach it later.
@@ -847,7 +866,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // member the most.
       const fails: Dimension[] = [];
       if (q.minBedrooms && l.bedrooms !== null && l.bedrooms < q.minBedrooms) fails.push("bedrooms");
-      if (!withinQueryPrice(l, q)) fails.push("price");
+      // Each sale is held to its own type's band: the budget, or the project budget before works.
+      const type = typeOfCandidate(l);
+      if (!withinQueryPrice(l, q) || (type !== null && l.price?.period === "total" && !withinTypeBudget(l.price.amount, type, m.goals))) fails.push("price");
       const median = areaMedianDays.get(`${q.kind}|${q.area}`) ?? null;
       const motivation = motiv
         ? motivationFromListing(l, {
@@ -877,6 +898,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const { screening, figures } = screenSourced(l, card ?? null, rentTable, settings.r2rQualifiedProfit, check);
       const candidate = {
         listing: l,
+        // Batch 17: a Project deal is judged as one (its budget, its profit after works).
+        project: l.kind === "sale" ? projects?.get(l.canonicalUrl) ?? null : null,
         deal: dealForSourced(l, figures, memberFinance(m.goals)),
         areaFit,
         areaName: card?.name ?? q.areaName,

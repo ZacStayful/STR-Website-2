@@ -16,7 +16,7 @@ import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
 import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
-import type { MarketGoals } from '../market/goals.ts';
+import type { DealType, MarketGoals } from '../market/goals.ts';
 import { haversineMiles } from '../market/geo.ts';
 import type { PmiListingsResponse } from '../broker/providers/pmi.ts';
 import type { Motivation } from './motivation.ts';
@@ -97,6 +97,32 @@ export function budgetBounds(budget: MarketGoals['budget']): { min: number | nul
   }
 }
 
+/**
+ * Batch 17: the price band a profile's sale searches cover. The budget for
+ * Buy and let, the project budget (before works) for BRRR, the two together
+ * when both are chosen: each candidate is then held to its own type's band
+ * (withinTypeBudget). A profile that has not answered the deal types keeps
+ * its budget, as before.
+ */
+export function saleBoundsForGoals(goals: MarketGoals): { min: number | null; max: number | null } {
+  const types = goals.dealTypes ?? [];
+  if (!types.includes('brrr')) return budgetBounds(goals.budget);
+  const project = budgetBounds(goals.brrr.budget);
+  if (!types.includes('buy_let')) return project;
+  const buy = budgetBounds(goals.budget);
+  return {
+    min: buy.min === null || project.min === null ? null : Math.min(buy.min, project.min),
+    max: buy.max === null || project.max === null ? null : Math.max(buy.max, project.max),
+  };
+}
+
+/** Whether a sale's asking price sits in its own deal type's band (a rental, or no price: yes). */
+export function withinTypeBudget(price: number | null, type: DealType, goals: MarketGoals | null): boolean {
+  if (!goals || type === 'r2r' || price === null) return true;
+  const b = budgetBounds(type === 'brrr' ? goals.brrr.budget : goals.budget);
+  return (b.min === null || price >= b.min) && (b.max === null || price <= b.max);
+}
+
 export interface AreaRef {
   code: string;
   name: string;
@@ -147,7 +173,7 @@ export function queryKey(kind: SourcingKind, area: string, minPrice: number | nu
 export function queriesForGoals(goals: MarketGoals, savedAreas: string[], areas: AreaRef[]): SourcingQuery[] {
   const kinds: SourcingKind[] = goals.sourcingKind === 'both' ? ['sale', 'rent'] : [goals.sourcingKind];
   const minBedrooms = goals.bedrooms ?? null;
-  const bounds = budgetBounds(goals.budget);
+  const bounds = saleBoundsForGoals(goals);
   const out: SourcingQuery[] = [];
   for (const a of areasForGoals(goals, savedAreas, areas)) {
     for (const kind of kinds) {

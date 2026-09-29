@@ -19,7 +19,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import type { MarketGoals } from '../market/goals.ts';
+import type { DealType, MarketGoals } from '../market/goals.ts';
 import { DEFAULT_ABOUT, type AboutYou } from '../profile/about.ts';
 import type { AnsweredMap } from '../profile/state.ts';
 import { questionById, type QuestionId } from '../profile/questions.ts';
@@ -27,7 +27,7 @@ import { SHARED_QUESTION_IDS } from '../profiles/rules.ts';
 import { TAILORING } from './config.ts';
 
 /** The member's answers that can decide whether a deal is shown (Part A). */
-export const CRITERION_KEYS = ['location', 'budget', 'cash', 'rent', 'profit', 'bedrooms', 'type', 'leasehold', 'restricted', 'setup', 'breakeven', 'payback', 'motivation'] as const;
+export const CRITERION_KEYS = ['location', 'budget', 'cash', 'work', 'rent', 'profit', 'bedrooms', 'type', 'leasehold', 'restricted', 'setup', 'breakeven', 'payback', 'motivation'] as const;
 export type CriterionKey = (typeof CRITERION_KEYS)[number];
 
 export type Mode = 'must' | 'nice';
@@ -69,6 +69,8 @@ export interface Signal {
   area: string | null;
   /** Sale price, or rent a month. */
   amount: number | null;
+  /** Batch 17: the deal's own type (a sale with a Project estimate is BRRR); absent reads as its kind's. */
+  dealType?: DealType;
 }
 
 /** Batch 10's profit range half-widths by confidence (billing_settings.profit_range_pct). */
