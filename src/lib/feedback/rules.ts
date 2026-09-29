@@ -484,3 +484,65 @@ export const activityKey = {
   clicked: (announcementId: string) => `announcement_clicked:${announcementId}`,
   emailClick: (reportId: string, status: string) => `feedback_email_click:${reportId}:${status}`,
 };
+
+// ── Before the schema is run ──
+
+/**
+ * The Batch 18 tables or functions are not there yet (schema not run, or
+ * PostgREST not reloaded): every reader then says so instead of failing.
+ * PGRST205 is PostgREST's "table not in the schema cache", PGRST202 the same
+ * for a function; 42P01 and 42883 are Postgres's own.
+ */
+export function isSchemaMissing(error: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!error) return false;
+  if (['PGRST202', 'PGRST205', '42P01', '42883'].includes(error.code ?? '')) return true;
+  return /could not find the (function|table)|does not exist/i.test(error.message ?? '');
+}
+
+// ── A report's context, as stored and as shown to admin ──
+
+/** What is stored in feedback_reports.context: admin only, never shown to the member. */
+export interface ReportContext extends ClientContext {
+  device: string;
+  userAgent: string | null;
+  serverBuild: string | null;
+  env: string | null;
+  /** The member's email when they sent it. */
+  email: string | null;
+  /** The plan of whoever pays: a team member's owner. */
+  plan: { code: string | null; name: string; status: string };
+  team: { member: boolean; ownerId: string | null; ownerEmail: string | null };
+  activeProfileId: string | null;
+}
+
+const STATUS_WORDS: Record<string, string> = { paid: 'paid', subscription_trial: 'trial', free: 'free', lapsed: 'lapsed', paused: 'paused' };
+
+/** "Pro (paid)", or "Team member of owner@x.com — Starter (paused)". */
+export function planLine(ctx: Pick<ReportContext, 'plan' | 'team'> | null | undefined): string {
+  if (!ctx?.plan) return 'Unknown';
+  const plan = `${ctx.plan.name} (${STATUS_WORDS[ctx.plan.status] ?? ctx.plan.status})`;
+  return ctx.team?.member ? `Team member of ${ctx.team.ownerEmail ?? 'a team'} — ${plan}` : plan;
+}
+
+/** The plan in a word or two, for a subject line: "Pro", "Pay as you go", "Pro · team". */
+export function planShort(ctx: Pick<ReportContext, 'plan' | 'team'> | null | undefined): string {
+  if (!ctx?.plan) return 'unknown plan';
+  return ctx.team?.member ? `${ctx.plan.name} · team` : ctx.plan.name;
+}
+
+/** "390×844 @3x, window 390×664", from what the browser sent; null when it sent nothing. */
+export function screenLine(ctx: Pick<ClientContext, 'screen' | 'viewport' | 'dpr'> | null | undefined): string | null {
+  if (!ctx) return null;
+  const parts: string[] = [];
+  if (ctx.screen) parts.push(`${ctx.screen.w}×${ctx.screen.h}${ctx.dpr ? ` @${ctx.dpr}x` : ''}`);
+  if (ctx.viewport) parts.push(`window ${ctx.viewport.w}×${ctx.viewport.h}`);
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+/** "abc1234", or "abc1234 (browser on def5678)" when a tab left open across a deploy sent it. */
+export function versionLine(ctx: Pick<ReportContext, 'serverBuild' | 'clientBuild'> | null | undefined): string | null {
+  const server = ctx?.serverBuild ?? null;
+  const client = ctx?.clientBuild ?? null;
+  if (server && client && server !== client) return `${server} (browser on ${client})`;
+  return server ?? client;
+}

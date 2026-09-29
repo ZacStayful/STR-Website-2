@@ -34,6 +34,7 @@ import {
   type RecipientReport,
   type ReportFacts,
 } from './rules.ts';
+import * as rules from './rules.ts';
 
 const USER = '11111111-2222-4333-8444-555555555555';
 const REPORT = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -359,4 +360,31 @@ test('the keys and extras this batch logs survive the activity log’s filter', 
     assert.equal(buildActivityCall(USER, kind, { dedupeKey: key }, prod)?.dedupe_key, key, kind);
   }
   assert.deepEqual(buildActivityCall(USER, 'announcement_dismissed', { extras: { count: 3 } }, prod)?.extras, { count: 3 });
+});
+
+test('a missing table or function reads as "schema not run", anything else as a failure', () => {
+  const { isSchemaMissing } = rules;
+  for (const e of [{ code: 'PGRST205', message: "Could not find the table 'public.feedback_reports' in the schema cache" }, { code: 'PGRST202' }, { code: '42P01' }, { message: 'relation "public.announcements" does not exist' }]) {
+    assert.equal(isSchemaMissing(e), true, JSON.stringify(e));
+  }
+  for (const e of [null, undefined, { code: '23505', message: 'duplicate key value violates unique constraint' }, { code: 'PGRST301', message: 'JWT expired' }]) {
+    assert.equal(isSchemaMissing(e), false, JSON.stringify(e));
+  }
+});
+
+test('the context reads as lines for admin', () => {
+  const { planLine, planShort, screenLine, versionLine } = rules;
+  const own = { plan: { code: 'pro', name: 'Pro', status: 'paid' }, team: { member: false, ownerId: null, ownerEmail: null } };
+  const team = { plan: { code: 'starter', name: 'Starter', status: 'paused' }, team: { member: true, ownerId: 'o', ownerEmail: 'owner@x.com' } };
+  assert.equal(planLine(own), 'Pro (paid)');
+  assert.equal(planLine({ ...own, plan: { code: null, name: 'Pay as you go', status: 'subscription_trial' } }), 'Pay as you go (trial)');
+  assert.equal(planLine(team), 'Team member of owner@x.com — Starter (paused)');
+  assert.equal(planLine(null), 'Unknown');
+  assert.equal(planShort(own), 'Pro');
+  assert.equal(planShort(team), 'Starter · team');
+  assert.equal(screenLine({ screen: { w: 390, h: 844 }, viewport: { w: 390, h: 664 }, dpr: 3 }), '390×844 @3x, window 390×664');
+  assert.equal(screenLine({ screen: null, viewport: null, dpr: null }), null);
+  assert.equal(versionLine({ serverBuild: 'abc1234', clientBuild: 'abc1234' }), 'abc1234');
+  assert.equal(versionLine({ serverBuild: 'abc1234', clientBuild: 'def5678' }), 'abc1234 (browser on def5678)');
+  assert.equal(versionLine({ serverBuild: null, clientBuild: null }), null);
 });
