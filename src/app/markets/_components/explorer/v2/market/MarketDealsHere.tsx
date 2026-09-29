@@ -50,7 +50,7 @@ export function MarketDealsHere({ summary, areaCode, areaName, max = 3 }: { summ
                   ) : (
                     <span className="mx2-mdeal-thumb-note">{d.source === "zoopla" ? "Photo on the listing" : "Photo coming"}</span>
                   )}
-                  <span className="mx2-mdeal-kind">{d.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+                  <span className="mx2-mdeal-kind">{d.label}</span>
                 </span>
                 <div className="mx2-deal-top">
                   <span className="mx2-deal-title">{d.figureBig}</span>

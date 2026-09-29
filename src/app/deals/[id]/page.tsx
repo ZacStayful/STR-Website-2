@@ -21,7 +21,10 @@ import { areaRevenueFor } from "@/lib/listing/sourcing";
 import { parseStoredDeal } from "@/lib/marketplace/record";
 import { cashLine } from "@/lib/deal-quality/streams";
 import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
-import { isHeldForProject } from "@/lib/project/read-server";
+import { isHeldForProject, projectEstimateFor } from "@/lib/project/read-server";
+import { projectCardsFor } from "@/lib/marketplace/queries";
+import { kindWordFor, projectNumbersFor, projectSummary } from "@/lib/project/display";
+import { ProjectSection } from "../_components/ProjectSection";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
@@ -100,6 +103,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const { deal, priv } = sheet;
   // Batch 17: a deal held for its Project check says so (the stream is read on its own, tolerantly).
   const heldForProject = deal.status === "pending_check" ? await isHeldForProject(createAdminClient(), deal.id) : false;
+  // Batch 17: a Project deal's card numbers (card-safe); its working only once opened (below).
+  const projectCard = deal.kind === "sale" ? (await projectCardsFor([deal.id])).get(deal.id) ?? null : null;
   const [settings, credit, cards, profileRes, quoter, savedRes, savedProfiles] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
   // Batch 14: the member's finance as their figures use it (a cash buyer borrows nothing).
@@ -109,7 +114,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const pricing = quoter.pricing;
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
-  const badges = badgesFor(card, now);
+  const badges = badgesFor({ ...card, project: projectCard }, now);
   const price = priceLine(card);
   // An auction lot's figure is a guide, not an asking price (Batch 16).
   const auction = isAuctionCard(card);
@@ -199,9 +204,14 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const pay = mostYouCanPay({ kind: deal.kind, grossRevenue: gross, bedrooms: deal.bedrooms, finance, cashBuyer: cashBuyerOf(goals), widthPct: pct, checked: check !== null });
   const askingFigure = deal.price_amount === null ? null : Number(deal.price_amount);
   const payGap = pay ? gapLine(askingFigure, pay) : null;
+  // Batch 17: a Project deal leads with its own numbers (the card-safe row);
+  // its working, with reasons and photo numbers, only once it is opened.
+  const pn = projectCard ? projectNumbersFor({ screening_gross: gross, screening_confidence: screening?.confidence ?? null, check_comps: check?.compCount ?? null }, projectCard, finance, pricing.profitRangePct) : null;
+  const projectStored = pn && priv ? await projectEstimateFor(createAdminClient(), deal.id) : null;
   // Batch 14, Part C: the same three numbers as the member's card, from the same function.
   const sheetCard: Card = {
     ...card,
+    project: projectCard,
     screening_gross: gross,
     screening_confidence: screening?.confidence ?? null,
     check_comps: check?.compCount ?? null,
@@ -285,28 +295,36 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{deal.source === "zoopla" ? "Photos on the listing" : "Photo coming"}</div>
                 )}
                 <div className="absolute left-3 top-3 flex flex-wrap gap-1">
-                  <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{deal.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+                  <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{kindWordFor({ kind: deal.kind, project: projectCard })}</span>
                   {badges.tags.map((t) => (
                     <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
                   ))}
                   {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
-                  {lowEntry && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
+                  {lowEntry && !pn && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
                   {deal.status === "retired" && <span className="rounded-full bg-destructive px-2 py-0.5 text-[11px] font-semibold text-white">Off the market</span>}
                 </div>
               </div>
               <div className="p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="text-2xl font-bold text-foreground">
-                    {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{caption}{range ? ` · ${range.basis}` : ""}</span>
-                  </p>
-                  {(price || cashText) && (
+                  {pn ? (
+                    <p className="text-2xl font-bold text-foreground">
+                      {pn.range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{pn.caption}{pn.range ? " · profit after works" : ""}</span>
+                    </p>
+                  ) : (
+                    <p className="text-2xl font-bold text-foreground">
+                      {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{caption}{range ? ` · ${range.basis}` : ""}</span>
+                    </p>
+                  )}
+                  {(price || (pn ? pn.cash : cashText)) && (
                     <p className="text-lg font-semibold text-foreground">
                       {price ? (auction ? `Guide ${price}` : price) : ""}
-                      {cashText && <span className={"text-sm font-medium text-muted-foreground" + (price ? " ml-2" : "")}>{cashText}</span>}
+                      {(pn ? pn.cash : cashText) && <span className={"text-sm font-medium text-muted-foreground" + (price ? " ml-2" : "")}>{pn ? pn.cash : cashText}</span>}
                     </p>
                   )}
                 </div>
-                {uplift && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
+                {/* Batch 17: a Project deal's works and value added; "value added", never "uplift", which is the short-let gain over a long let. */}
+                {pn && <p className="mt-1 text-sm font-medium text-foreground">{projectSummary(pn)}</p>}
+                {uplift && !pn && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
                 <p className="mt-2 text-sm font-medium text-foreground">{priv ? (priv.address ?? where) : where}</p>
                 <p className="text-xs text-muted-foreground">{describeType(card)}{priv?.postcode ? ` · ${priv.postcode}` : ""}</p>
                 <p className={"mt-1 text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}{deal.listed_date ? ` · listed ${new Date(deal.listed_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
@@ -344,7 +362,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     {report ? (
                       <Link href={`/reports/${report.id}?back=${encodeURIComponent(dealPath)}`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Open full analysis{reportBy ? ` · ${reportBy}’s` : ""}</Link>
                     ) : null}
-                    <Link href={`/deals?kind=${deal.kind}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
+                    <Link href={`/deals?${pn ? "type=brrr" : `kind=${deal.kind}`}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
                     {priv.open.id !== "admin" && <span className="text-[11px] text-muted-foreground">Opened {new Date(priv.open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
                   </div>
                 ) : deal.status === "live" ? (
@@ -396,6 +414,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               </section>
             )}
 
+            {pn && projectCard && <ProjectSection project={projectCard} numbers={pn} opened={Boolean(priv)} stored={projectStored} />}
+
             <MoreNumbers folded={Boolean(numbers)}>
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
@@ -403,14 +423,15 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 <p className="mt-0.5 text-xs text-muted-foreground">{check ? `Our check on this property’s own comparables (${check.compCount} similar Airbnbs nearby), as ranges. A Full analysis works the exact figures out for this property.` : "Our screening of the area and size, as ranges. A Full analysis works the figures out for this property."}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
                   {gross !== null && <Fig label={check ? "Short-let revenue, own comparables" : "Short-let revenue, area"} value={`${moneyRange(spread(gross, pct, 100))}/yr`} />}
-                  {range && <Fig label={range.kind === "purchase" ? "Cash flow / mo" : "Profit / mo"} value={range.label.replace(/\/mo$/, "")} />}
-                  {screening.kind === "purchase" && screening.upliftPct !== null && <Fig label="Against a long let" value={`${screening.upliftPct >= 0 ? "+" : "−"}${Math.abs(Math.round(screening.upliftPct))}%`} />}
+                  {pn ? pn.range && <Fig label="Profit after works / mo" value={pn.range.label.replace(/\/mo$/, "")} /> : range && <Fig label={range.kind === "purchase" ? "Cash flow / mo" : "Profit / mo"} value={range.label.replace(/\/mo$/, "")} />}
+                  {screening.kind === "purchase" && screening.upliftPct !== null && !pn && <Fig label="Against a long let" value={`${screening.upliftPct >= 0 ? "+" : "−"}${Math.abs(Math.round(screening.upliftPct))}%`} />}
                   {screening.kind === "rent-to-rent" && screening.revenueMultiple !== null && <Fig label="Revenue multiple" value={`about ${screening.revenueMultiple.toFixed(1)}× the rent`} />}
                 </dl>
               </section>
             )}
 
-            {model && (
+            {/* Batch 17: "If you bought it" assumes a finished house; a Project deal's finance is in "The project". */}
+            {model && !pn && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
                 <h2 className="text-sm font-semibold text-foreground">{model.kind === "purchase" ? "If you bought it" : "If you rented it (rent-to-rent)"}</h2>
                 {pay && (

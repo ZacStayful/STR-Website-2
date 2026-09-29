@@ -21,6 +21,7 @@ import { countryForPostcode } from '../listing/stamp-duty.ts';
 import { cashLine } from '../deal-quality/streams.ts';
 import { DEFAULT_LOW_ENTRY } from '../deal-quality/config.ts';
 import type { DealCard } from './grid.ts';
+import { projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
 
 export interface CardState {
   /** Open to the member's account (theirs or a teammate's open). */
@@ -87,6 +88,13 @@ export interface CardView {
   cash: string | null;
   /** Batch 16, Part F: in the low-entry stream (the house figure within the low-entry bar). */
   lowEntry: boolean;
+  /**
+   * Batch 17: a Project deal's "Works ~£14k–£26k · £22k value added" (the
+   * range is then its profit after works, the cash its cash needed as a
+   * range, and "Most you can pay" is left off: it assumes a finished house).
+   * Null for every other deal.
+   */
+  projectLine: string | null;
   opened: boolean;
   analysed: boolean;
   reportId: string | null;
@@ -98,7 +106,7 @@ export interface CardView {
 }
 
 export function cardView(input: {
-  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup' | 'check_comps'>>;
+  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup' | 'check_comps' | 'project'>>;
   state: CardState;
   admin: boolean;
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
@@ -129,13 +137,18 @@ export function cardView(input: {
   const ladderPence = openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), input.ladder);
   const quote = analysisQuote({ admin: input.admin, pricing: input.pricing, opened: state.opened, openPaidBasePence: state.openPaidBasePence, openPricePence: ladderPence, withPmi: false });
   const pay = mostYouCanPay({ kind: card.kind, grossRevenue: card.screening_gross ?? null, bedrooms: card.bedrooms, finance: input.finance ?? null, cashBuyer: input.cashBuyer, widthPct: widthFor(card.screening_confidence ?? null, input.pricing.profitRangePct), checked: (num(card.check_comps) ?? 0) > 0 });
+  // Batch 17: a Project deal shows its own numbers: profit after works, works and value added, the cash needed as a range.
+  const project = projectOf(card);
+  const pn = project ? projectNumbersFor(card, project, finance, input.pricing.profitRangePct) : null;
+  const projectRange: ProfitRange | null = pn?.range ? { kind: 'purchase', midPcm: pn.range.midPcm, lowPcm: pn.range.lowPcm, highPcm: pn.range.highPcm, pct: pn.range.pct, label: pn.range.label, basis: 'profit after works' } : null;
   return {
-    range,
-    caption: rangeCaption(card.check_comps),
-    pay,
-    uplift: card.kind === 'sale' ? upliftTag(card.uplift_pct) : null,
-    cash: cashLine(card.kind, cash),
-    lowEntry: card.kind === 'sale' && houseCash !== null && houseCash > 0 && houseCash <= (input.lowEntryMaxCashIn ?? DEFAULT_LOW_ENTRY.maxCashIn),
+    range: pn ? projectRange : range,
+    caption: pn ? pn.caption : rangeCaption(card.check_comps),
+    pay: pn ? null : pay,
+    uplift: card.kind === 'sale' && !pn ? upliftTag(card.uplift_pct) : null,
+    cash: pn ? pn.cash : cashLine(card.kind, cash),
+    lowEntry: !pn && card.kind === 'sale' && houseCash !== null && houseCash > 0 && houseCash <= (input.lowEntryMaxCashIn ?? DEFAULT_LOW_ENTRY.maxCashIn),
+    projectLine: pn ? projectSummary(pn) : null,
     opened: state.opened,
     analysed,
     reportId: state.reportId,

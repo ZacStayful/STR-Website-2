@@ -50,7 +50,7 @@ import { mapLimit, planKey, teasersFrom, todayPlans } from './daily-server';
 import { getBalance } from '../credit/ledger';
 import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
-import { cardRangeLine } from '../marketplace/profit-range';
+import { rangeLineFor } from '../project/display';
 import { profileNudgesFor } from '../profile/server';
 import { allProfilesFor } from '../profiles/server';
 import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
@@ -271,7 +271,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           advice: plan?.advice ?? null,
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct),
+          figureFor: (c) => rangeLineFor(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct),
         },
       });
     }

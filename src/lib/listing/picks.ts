@@ -495,6 +495,13 @@ export interface PickEmailInput {
    */
   range?: { label: string; basis: string } | null;
   /**
+   * Batch 17: a Project deal's own line ("£550–£750/mo after works · … ·
+   * £22k value added · Works ~£14k–£26k · £45k–£58k cash in") and its value
+   * added for the subject. When given, the pick is a Project: it is called
+   * one, and its value added leads instead of the long-let uplift.
+   */
+  project?: { line: string; valueAdded: string } | null;
+  /**
    * Saved profiles (Batch 13): "See today's 5" and "Edit my filter" for the
    * profile this pick is for, through the switch route when it is not the
    * active one (profileLinks in src/lib/profiles/rules.ts).
@@ -565,14 +572,15 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   const l = pick.listing;
   const plain = pickLinks(input.siteUrl, input.id, input.token, l.canonicalUrl, input.dealId ? { dealId: input.dealId, kind: l.kind, area: l.postcodeArea, bedrooms: l.bedrooms } : null);
   const links = input.profileLinks ? { ...plain, today: input.profileLinks.today, filter: input.profileLinks.edit } : plain;
-  const kindWord = l.kind === 'rent' ? 'rent-to-rent' : 'to buy';
+  const project = l.kind === 'sale' ? input.project ?? null : null;
+  const kindWord = l.kind === 'rent' ? 'rent-to-rent' : project ? 'project' : 'to buy';
   const sc = input.screening && input.screening.band !== 'insufficient-data' ? input.screening : null;
   // The subject leads on the screening where there is one: "42% above a long let"
   // is the thing the member is deciding on, and it keeps the subject line and the
   // body telling one story rather than two.
   const range = input.range ?? null;
   const scHeadline = sc ? (sc.kind === 'purchase' ? `${sc.upliftPct}% above a long let` : range ? `${range.label} profit` : `£${Math.round(sc.annualProfit!).toLocaleString('en-GB')}/yr profit`) : null;
-  const figure = scHeadline ?? (range ? range.label : pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
+  const figure = project ? project.valueAdded : scHeadline ?? (range ? range.label : pick.deal ? (pick.deal.kind === 'purchase' ? `${pick.deal.grossYieldPct.toFixed(1)}% yield` : `£${Math.round(pick.deal.monthlyMargin).toLocaleString('en-GB')}/mo margin`) : null);
   const what = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}in ${pick.areaName}`;
   const subject = `Today's pick ${kindWord}: ${what}${figure ? ` · ${figure}` : ''}`;
   const headline = `${l.bedrooms ? `${l.bedrooms}-bed ` : ''}${kindWord} in ${pick.areaName}${figure ? `, ${figure}` : ''}`;
@@ -580,7 +588,7 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   const work = sc && !range ? screeningWorking(sc) : [];
   const scVerdict = sc ? (range ? BAND_LABELS[sc.band] : `${BAND_LABELS[sc.band]} — ${sc.reason}`) : null;
   const why = basis === 'goals' ? `Picked for your filter: ${goalsChips.join(' · ')}.` : `A Stayful house pick from one of the best-scoring areas we track. Set a filter to get picks in your area, budget and size.`;
-  const dealLine = range ? `${range.label} · ${rangeCaption(sc?.check?.compCount)}, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
+  const dealLine = project ? project.line : range ? `${range.label} · ${rangeCaption(sc?.check?.compCount)}, ${range.basis}` : pick.deal ? describeDeal(pick.deal) : 'Run a full report for the figures.';
   const motivationLine = describeMotivation(pick.motivation ?? null);
   // Said first and said plainly. A near miss presented as a match is a small
   // lie that costs more trust than the empty day it was avoiding.

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { areaMetaForCode } from "@/lib/market/areas";
 import { formatOpenPrice, openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
+import { kindWordFor } from "@/lib/project/display";
 import { AUCTION_LABEL, badgesFor, describeType, headlineFigure, isAuctionCard, priceLine, type DealCard as Card } from "@/lib/marketplace/grid";
 import { payLine } from "@/lib/marketplace/most-you-can-pay";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
@@ -77,7 +78,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{card.source === "zoopla" ? "Photo on the listing" : "Photo coming"}</div>
         )}
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-          <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
+          <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{kindWordFor(card)}</span>
           {earlyAccess && <span className="rounded-full bg-warning px-2 py-0.5 text-[11px] font-semibold text-warning-foreground">Early access</span>}
           {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
           {/* Batch 16, Part F: the low-entry stream (the house finance gets in for at most the low-entry cash). */}
@@ -105,6 +106,8 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
               {view.caption}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
+            {/* Batch 17: a Project deal's works and value added, numbers only. */}
+            {view.projectLine && <p className="mt-0.5 text-[11px] text-muted-foreground">{view.projectLine}</p>}
             {/* Batch 16, Part F: what it takes to get in ("£38k cash in" / "£12k to start") sits with the price on every card. */}
             <p className="mt-0.5 text-xs font-medium text-foreground">
               {[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}
@@ -122,6 +125,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
               {view.caption}{view.range ? ` · ${view.range.basis}` : ""}
               {view.uplift && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">{view.uplift}</span>}
             </p>
+            {view.projectLine && <p className="text-xs text-muted-foreground">{view.projectLine}</p>}
             {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure; Batch 16: the cash in / to start. */}
             {(view.pay || view.cash) && <p className="mt-0.5 text-xs font-medium text-foreground">{[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}</p>}
           </>

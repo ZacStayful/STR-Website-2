@@ -12,6 +12,7 @@ import type { createAdminClient } from '../supabase/admin';
 import type { DealStatus } from '../marketplace/types';
 import { parseProjectCard, type ProjectCardData } from './headline';
 import { parseNeedsWork, type NeedsWork } from './needs-work';
+import { parseStoredEstimate, type ProjectEstimate } from './estimate';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -61,4 +62,32 @@ export async function projectColumnsFor(admin: Admin, urls: readonly string[]): 
     for (const r of (data ?? []) as { canonical_url: string; needs_work: unknown; project: unknown }[]) out.set(r.canonical_url, { needsWork: parseNeedsWork(r.needs_work), project: parseProjectCard(r.project) });
   }
   return out;
+}
+
+export interface StoredEstimate {
+  estimate: ProjectEstimate;
+  /** The photos and floorplan the check looked at, in order: the working's photo numbers refer to these. */
+  photos: string[];
+  price: number;
+  estimatedAt: string;
+}
+
+/**
+ * A Project deal's full estimate, with its reasons and photo numbers. Only
+ * for a viewer who has opened the deal: the caller decides (the deal sheet
+ * reads it under `priv`, never before).
+ */
+export async function projectEstimateFor(admin: Admin, dealId: string): Promise<StoredEstimate | null> {
+  const { data, error } = await admin.from('project_estimates').select('estimate, photos, price, estimated_at').eq('deal_id', dealId).maybeSingle();
+  if (error) {
+    if (!/does not exist|could not find/i.test(error.message ?? '')) console.warn('[project] estimate read failed:', error.message);
+    return null;
+  }
+  if (!data) return null;
+  const row = data as { estimate: unknown; photos: unknown; price: unknown; estimated_at: string };
+  const estimate = parseStoredEstimate(row.estimate);
+  if (!estimate) return null;
+  const photos = Array.isArray(row.photos) ? row.photos.filter((p): p is string => typeof p === 'string' && /^https:\/\//i.test(p)) : [];
+  const price = Number(row.price);
+  return { estimate, photos, price: Number.isFinite(price) ? price : estimate.finance.price, estimatedAt: row.estimated_at };
 }

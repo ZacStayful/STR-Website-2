@@ -177,7 +177,7 @@ export async function listDeals(f: DealFilters, visibility: DealVisibility, memb
     void _r;
     return { ...card, has_photo: Boolean(photo) };
   });
-  return { cards, total, page, pages: Math.ceil(total / PAGE_SIZE) };
+  return { cards: await withProjectCards(cards), total, page, pages: Math.ceil(total / PAGE_SIZE) };
 }
 
 /** How many deals match these filters in another view (e.g. how many of them this member passed). Null when it cannot be read. */
@@ -355,6 +355,19 @@ export async function projectCardsFor(ids: readonly string[]): Promise<Map<strin
 }
 
 /**
+ * Batch 17: the cards with their Project numbers attached (card-safe: numbers
+ * only), for every surface that prints a range. The rest come back as they
+ * were; so do all of them until the schema section is run.
+ */
+export async function withProjectCards<T extends { id: string; kind?: string }>(cards: T[]): Promise<(T & { project?: ProjectCardData | null })[]> {
+  const sales = cards.filter((c) => c.kind === undefined || c.kind === 'sale');
+  if (sales.length === 0) return cards;
+  const projects = await projectCardsFor(sales.map((c) => c.id));
+  if (projects.size === 0) return cards;
+  return cards.map((c) => (projects.has(c.id) ? { ...c, project: projects.get(c.id)! } : c));
+}
+
+/**
  * Cards by id, in the order asked, for a list chosen earlier (Today's stored
  * selection): only deals still live and visible to this member now. A deal
  * that has since gone simply drops out.
@@ -370,7 +383,7 @@ export async function dealCardsByIds(ids: string[], visibility: DealVisibility):
   for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) {
     if (dealVisible(card.live_since ?? null, visibility.cutoffIso)) byId.set(card.id, { ...card, has_photo: Boolean(photo) });
   }
-  return ids.map((id) => byId.get(id)).filter((c): c is DealCard => c !== undefined);
+  return withProjectCards(ids.map((id) => byId.get(id)).filter((c): c is DealCard => c !== undefined));
 }
 
 export interface AreaCount {
@@ -504,6 +517,9 @@ async function teaserUncached(code: string, cutoffIso: string | null): Promise<A
     const byId = new Map(((extra ?? []) as { id: string; screening_gross: string | null; screening_confidence: string | null; check_comps: string | null }[]).map((r) => [r.id, r]));
     // Batch 16: the check's comparables count too (a count, never where), for the "based on N similar Airbnbs nearby" caption.
     for (const r of top) Object.assign(r, { screening_gross: byId.get(r.id)?.screening_gross ?? null, screening_confidence: byId.get(r.id)?.screening_confidence ?? null, check_comps: byId.get(r.id)?.check_comps ?? null });
+    // Batch 17: a Project deal among them shows its own numbers (read on its own: the column may not be there yet).
+    const projects = await projectCardsFor(top.map((r) => r.id));
+    for (const r of top) if (projects.has(r.id)) Object.assign(r, { project: projects.get(r.id)! });
   }
   return {
     code,

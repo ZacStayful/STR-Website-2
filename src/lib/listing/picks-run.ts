@@ -44,7 +44,9 @@ import { capDay, newSendToken, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
-import { cardRangeLine, profitRange } from "../marketplace/profit-range";
+import { profitRange } from "../marketplace/profit-range";
+import { projectNumbersFor, projectRangeLine, rangeLineFor } from "../project/display";
+import type { ProjectCardData } from "../project/headline";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
 import { allProfilesFor } from "../profiles/server";
@@ -152,6 +154,12 @@ const MOTIVATED_POOL_FLOOR_MS = 18 * 30 * 24 * 60 * 60 * 1000;
 const PAGE = 1000;
 const ID_CHUNK = 100;
 const URL_CHUNK = 150;
+
+/** Batch 17: a Project pick's line and value added for its email, at the profile's finance. */
+function pickProjectLine(project: ProjectCardData, screening: { grossRevenue?: { value?: number | null } | null; confidence?: string | null; check?: { compCount?: number | null } | null } | null, finance: Parameters<typeof projectNumbersFor>[2], widths: Parameters<typeof projectNumbersFor>[3]): { line: string; valueAdded: string } {
+  const n = projectNumbersFor({ screening_gross: screening?.grossRevenue?.value ?? null, screening_confidence: screening?.confidence ?? null, check_comps: screening?.check?.compCount ?? null }, project, finance, widths);
+  return { line: projectRangeLine(n), valueAdded: n.valueAdded };
+}
 
 function maxQueries(): number {
   const n = Number(process.env.SOURCING_MAX_QUERIES_PER_RUN ?? 150);
@@ -807,7 +815,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Pre-checked 'ok' listings rank ahead of 'unknown' ones (a leasehold flat
   // whose page has not been read yet) so the page reads go to listings that
   // are likely to pass.
-  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean; screening?: Screening | null };
+  // Batch 17: `project` rides along from the candidate (rankPicks spreads it), for a Project pick's email.
+  type Ranked = SourcedPick & { precheck: "ok" | "unknown"; nearMiss?: boolean; screening?: Screening | null; project?: ProjectCardData | null };
   const ranked = new Map<string, Ranked[]>();
   const relaxationFor = new Map<string, Relaxation | null>();
 
@@ -1380,6 +1389,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             dealId: pickDealId,
             // Batch 10: the profit as a range at the profile's finance, never one figure.
             range: profitRange({ kind: sending.listing.kind, priceAmount: sending.listing.price?.amount ?? null, pricePeriod: sending.listing.price?.period ?? null, bedrooms: sending.listing.bedrooms, grossRevenue: sending.screening?.grossRevenue?.value ?? null, confidence: sending.screening?.confidence ?? null, finance: memberFinance(m.goals), widths: settings.dealPricing.profitRangePct }),
+            // Batch 17: a Project deal's own numbers, at the profile's finance.
+            project: sending.project ? pickProjectLine(sending.project, sending.screening ?? null, memberFinance(m.goals), settings.dealPricing.profitRangePct) : null,
             profileLinks: links,
           });
           unsubscribe ??= section.unsubscribe;
@@ -1420,7 +1431,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           advice: plan?.advice ?? null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => cardRangeLine(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
+          figureFor: (c) => rangeLineFor(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
         },
       });
     }

@@ -10,6 +10,8 @@ import type { SourcingKind } from '../listing/sourcing.ts';
 import { AVAILABLE_DEAL_TYPES, type DealType } from '../market/goals.ts';
 import type { ConfirmedVia, DealStatus } from './types.ts';
 import { profitRange, rangeCaption, upliftTag } from './profit-range.ts';
+import type { ProjectCardData } from '../project/headline.ts';
+import { kindWordFor, projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
 /** 'best' (Batch 14, the default): "Best for you", the member's own order (src/lib/tailoring/browse.ts). */
@@ -278,6 +280,12 @@ export interface DealCard {
   deal_auction?: string | null;
   /** CARD_COLUMNS only (Batch 16, Part C): the comparables the deal's own check kept, when it has one (a count, never where). Null on the area's average. */
   check_comps?: string | number | null;
+  /**
+   * Batch 17: a Project deal's card numbers (marketplace_deals.project, numbers
+   * only), attached by the readers (queries.ts withProjectCards); never in
+   * CARD_COLUMNS, so the site works before the schema section is run.
+   */
+  project?: ProjectCardData | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -299,9 +307,11 @@ function agoWords(iso: string, now: Date): string {
   return days === 1 ? 'yesterday' : `${days} days ago`;
 }
 
-export function badgesFor(card: Pick<DealCard, 'first_seen_at' | 'reduced_at' | 'last_checked_live_at' | 'last_confirmed_at' | 'last_confirmed_via'>, now: Date = new Date()): Badges {
+export function badgesFor(card: Pick<DealCard, 'first_seen_at' | 'reduced_at' | 'last_checked_live_at' | 'last_confirmed_at' | 'last_confirmed_via'> & Partial<Pick<DealCard, 'kind' | 'live_since' | 'project'>>, now: Date = new Date()): Badges {
   const tags: Badges['tags'] = [];
-  const seen = new Date(card.first_seen_at).getTime();
+  // Batch 17: a Project deal waits for its check before it goes live, so it is new from when it went live.
+  const project = card.kind !== undefined && projectOf({ kind: card.kind, project: card.project }) !== null;
+  const seen = new Date(project && card.live_since ? card.live_since : card.first_seen_at).getTime();
   if (Number.isFinite(seen) && now.getTime() - seen < DAY_MS) tags.push('New today');
   const reduced = card.reduced_at ? new Date(card.reduced_at).getTime() : NaN;
   if (Number.isFinite(reduced) && now.getTime() - reduced < 14 * DAY_MS) tags.push('Reduced');
@@ -362,6 +372,8 @@ export function headlineFigure(card: Pick<DealCard, 'kind' | 'annual_profit' | '
 export interface AreaDealView {
   id: string;
   kind: SourcingKind;
+  /** Batch 17: the kind badge: "To buy", "Rent-to-rent" or "Project". */
+  label: string;
   /** "Acomb · YO24" */
   where: string;
   type: string;
@@ -393,10 +405,18 @@ export function areaDealView(card: DealCard, photoUrl: string | null, now: Date 
   const badges = badgesFor(card, now);
   const range = widths ? profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths }) : null;
   const uplift = card.kind === 'sale' ? upliftTag(card.uplift_pct) : null;
-  const figure = widths ? { big: range?.label ?? '—', small: [`${rangeCaption(card.check_comps)}${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') } : headlineFigure(card);
+  // Batch 17: a Project deal leads with its profit after works, then the works and the value added.
+  const project = widths ? projectOf(card) : null;
+  const pn = project && widths ? projectNumbersFor(card, project, null, widths) : null;
+  const figure = pn
+    ? { big: pn.range?.label ?? pn.valueAdded, small: [pn.range ? `${pn.caption}, after works` : null, projectSummary(pn)].filter(Boolean).join(' · ') }
+    : widths
+      ? { big: range?.label ?? '—', small: [`${rangeCaption(card.check_comps)}${range ? `, ${range.basis}` : ''}`, uplift].filter(Boolean).join(' · ') }
+      : headlineFigure(card);
   return {
     id: card.id,
     kind: card.kind,
+    label: kindWordFor(card),
     where: [card.town, card.outcode].filter(Boolean).join(' · '),
     type: describeType(card),
     price: priceLine(card),

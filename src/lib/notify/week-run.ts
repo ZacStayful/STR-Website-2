@@ -48,7 +48,7 @@ import { allProfilesFor } from '../profiles/server';
 import { labelFor, labelsShown, profileLinks, seatsFor, type SavedProfile } from '../profiles/rules';
 import { profileTagsFor } from '../profiles/deal-tags';
 import { GOALS_EDITOR_HREF } from '../nav';
-import { cardRangeLine } from '../marketplace/profit-range';
+import { rangeLineFor } from '../project/display';
 import { memberFinance } from '../marketplace/most-you-can-pay';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -237,7 +237,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       const withGoals = seats.filter((s) => s.profile?.goals);
       for (const s of withGoals) if (s.heading) profileOf.set(s.heading, s.profile!);
       byProfile = missedByProfile(
-        withGoals.map((s) => ({ heading: s.heading, filters: searchesFor(s.profile!.goals, s.profile!.areas, p), figureFor: (d: WentDeal) => cardRangeLine(d, memberFinance(s.profile!.goals), rangeWidths) })),
+        withGoals.map((s) => ({ heading: s.heading, filters: searchesFor(s.profile!.goals, s.profile!.areas, p), figureFor: (d: WentDeal) => rangeLineFor(d, memberFinance(s.profile!.goals), rangeWidths) })),
         { deals: went, seen: seen.get(p.id) ?? new Set(), since, freeDelayHours: free },
       );
       missed = missedTotal(byProfile);
@@ -325,7 +325,7 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       recap,
       areas: pl.areas,
       unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
-      figureFor: (d) => cardRangeLine(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths),
+      figureFor: (d) => rangeLineFor(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths),
     });
     const areaChanges = pl.areas?.length ?? 0;
     if (!built) {

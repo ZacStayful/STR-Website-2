@@ -16,6 +16,7 @@ import { cache } from 'react';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { CARD_COLUMNS, type DealCard } from './grid';
 import { isShareToken } from './share-view';
+import { withProjectCards } from './queries';
 import { dealVisible, type DealVisibility } from './visibility';
 
 /**
@@ -81,5 +82,7 @@ export const sharedDealByToken = cache(async (token: string): Promise<SharedDeal
   if (!dealRes.data) return null;
   const { photo, ...card } = dealRes.data as unknown as DealCard & { photo: string | null };
   const code = profileRes.data?.referral_code;
-  return { card: { ...card, has_photo: Boolean(photo) }, referralCode: typeof code === 'string' ? code : null };
+  // Batch 17: a shared Project deal shows its own numbers (numbers only, as every card).
+  const [withProject] = await withProjectCards([{ ...card, has_photo: Boolean(photo) }]);
+  return { card: withProject, referralCode: typeof code === 'string' ? code : null };
 });

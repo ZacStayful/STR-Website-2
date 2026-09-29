@@ -106,3 +106,33 @@ export function bestCase(price: number, facts: PropertyFacts, settings: ProjectS
   const test = valueTest(price, works.high, value.value, settings.value);
   return { worksHigh: works.high, value: value.value, valueAdded: test.valueAdded, valueAddedPct: test.valueAddedPct, passes: test.passes };
 }
+
+const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * project_estimates.estimate as stored, checked for the shape the deal sheet
+ * reads; null when it is not (an older version, a hand-edited row): the
+ * sheet then shows the card numbers alone rather than a half-read working.
+ */
+export function parseStoredEstimate(raw: unknown): ProjectEstimate | null {
+  let o: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      o = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!isObj(o) || o.v !== ESTIMATE_VERSION || (o.level !== 'light' && o.level !== 'full') || !Array.isArray(o.lines)) return null;
+  const { works, value, test, finance } = o;
+  if (!isObj(works) || !isNum(works.low) || !isNum(works.high)) return null;
+  if (!isObj(value) || !isNum(value.value) || !isNum(value.fromWorks)) return null;
+  if (!isObj(test) || !isNum(test.valueAdded) || !isNum(test.valueAddedPct)) return null;
+  if (!isObj(finance) || !isNum(finance.price) || !isNum(finance.months) || !isObj(finance.cash) || !isObj(finance.totalIn)) return null;
+  for (const l of o.lines) {
+    if (!isObj(l) || typeof l.key !== 'string' || typeof l.label !== 'string' || !isNum(l.unitCost) || !isNum(l.quantity)) return null;
+    if (l.status !== 'needed' && l.status !== 'not_needed' && l.status !== 'cant_tell') return null;
+  }
+  return o as unknown as ProjectEstimate;
+}

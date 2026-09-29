@@ -9,6 +9,7 @@ import type { TrackedCard } from "@/lib/listing/tracked-server";
 import { openPricePence, type DealOpenLadder } from "@/lib/marketplace/ladder";
 import { describeType, headlineFigure, priceLine } from "@/lib/marketplace/grid";
 import { motivationLine } from "@/lib/marketplace/motivation-line";
+import { kindWordFor } from "@/lib/project/display";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { StageSelect } from "./StageSelect";
 import { NextStepSlot } from "./NextStepSlot";
@@ -86,11 +87,12 @@ export function DealRow({
     href = `/deals/${card.id}`;
     photo = photoUrlFor(card, now) ?? (item.opened ? item.listing?.photo ?? null : null);
     big = view ? (view.range?.label ?? "—") : figure.big;
-    small = view ? [`${view.caption}${view.range ? ` · ${view.range.basis}` : ""}`, view.uplift].filter(Boolean).join(" · ") : figure.small;
+    // Batch 17: a Project deal adds its works and value added.
+    small = view ? [`${view.caption}${view.range ? ` · ${view.range.basis}` : ""}`, view.uplift, view.projectLine].filter(Boolean).join(" · ") : figure.small;
     price = priceLine(card);
     // The address rule: only for a deal the member may see the whole of.
     title = item.opened ? (item.listing?.address ?? address ?? where) : where;
-    sub = [KIND[card.kind] ?? null, describeType(card)].filter(Boolean).join(" · ");
+    sub = [kindWordFor(card), describeType(card)].filter(Boolean).join(" · ");
     motivation = motivationLine(card, now);
   } else {
     const l = item.listing;

@@ -17,6 +17,7 @@ import type { createAdminClient } from '../supabase/admin';
 import { todaySelection, type MemberContext } from '../today/selection';
 import { displayOrder, todayKey, TODAY_SIZE } from '../today/day';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
+import { projectCardsFor } from '../marketplace/queries';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { payersFor, type Payer } from '../team';
 import { seatKey } from '../profiles/rules';
@@ -109,6 +110,12 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
     const { data, error } = await admin.from('marketplace_deals').select(`${CARD_COLUMNS}, photo`).in('id', allIds.slice(i, i + ID_CHUNK)).eq('status', 'live');
     if (error) console.warn('[notify] today cards read failed:', error.message);
     for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) cards.set(card.id, { ...card, has_photo: Boolean(photo) });
+  }
+  // Batch 17: a Project teaser shows its own numbers and label.
+  const projects = await projectCardsFor([...cards.values()].filter((c) => c.kind === 'sale').map((c) => c.id));
+  for (const [id, project] of projects) {
+    const card = cards.get(id);
+    if (card) cards.set(id, { ...card, project });
   }
   const answered = new Map<string, Set<string>>();
   const withLists = [...new Set(members.filter((m) => (lists.get(planKey(m))?.stored.length ?? 0) > 0).map((m) => m.userId))];

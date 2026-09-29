@@ -9,6 +9,8 @@ import { ReasonChips } from "@/components/PickReasonChips";
 import { BAND_LABELS, screeningScore } from "@/lib/listing/screen";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { profitRange, rangeCaption, upliftTag } from "@/lib/marketplace/profit-range";
+import { projectCardsByUrl } from "@/lib/marketplace/queries";
+import { projectNumbersFor, projectRangeLine } from "@/lib/project/display";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
@@ -70,12 +72,15 @@ export default async function PickResponsePage({ params, searchParams }: { param
   const widths = (await getBillingSettings()).dealPricing.profitRangePct;
   const pickFinance = pick.deal?.kind === "purchase" ? { depositPct: pick.deal.depositPct, mortgageRatePct: pick.deal.mortgageRatePct, termYears: pick.deal.termYears } : null;
   const range = profitRange({ kind: l.kind === "rent" ? "rent" : "sale", priceAmount: l.price?.amount ?? null, pricePeriod: l.price?.period ?? null, bedrooms: l.bedrooms, grossRevenue: pick.screening?.grossRevenue?.value ?? null, confidence: pick.screening?.confidence ?? null, finance: pickFinance, widths });
-  const uplift = pick.screening?.kind === "purchase" ? upliftTag(pick.screening.upliftPct) : null;
+  // Batch 17: a pick that is a Project deal shows its own numbers.
+  const project = l.kind === "rent" ? null : (await projectCardsByUrl([l.canonicalUrl]))?.get(l.canonicalUrl) ?? null;
+  const projectLine = project ? projectRangeLine(projectNumbersFor({ screening_gross: pick.screening?.grossRevenue?.value ?? null, screening_confidence: pick.screening?.confidence ?? null, check_comps: pick.screening?.check?.compCount ?? null }, project, pickFinance, widths)) : null;
+  const uplift = pick.screening?.kind === "purchase" && !project ? upliftTag(pick.screening.upliftPct) : null;
 
   return (
     <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
       <div className="mx-auto max-w-2xl px-5 py-10">
-        <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Stayful daily pick · {l.kind === "rent" ? "rent-to-rent" : "to buy"}</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Stayful daily pick · {l.kind === "rent" ? "rent-to-rent" : project ? "project" : "to buy"}</p>
 
         {action === "unsubscribe" ? (
           <section className="mt-3 rounded-2xl border border-[#e4e7dc] bg-white p-6">
@@ -135,11 +140,15 @@ export default async function PickResponsePage({ params, searchParams }: { param
               </section>
             )}
             {l.photo && <img src={l.photo} alt="" className="mt-4 w-full rounded-2xl border border-[#e4e7dc] object-cover" style={{ maxHeight: 320 }} />}
-            {range && (
-              <p className="mt-4 text-sm font-medium text-[#5d8156]">
-                {range.label} · {rangeCaption(pick.screening?.check?.compCount)}, {range.basis}
-                {uplift ? ` · ${uplift}` : ""}
-              </p>
+            {projectLine ? (
+              <p className="mt-4 text-sm font-medium text-[#5d8156]">{projectLine}</p>
+            ) : (
+              range && (
+                <p className="mt-4 text-sm font-medium text-[#5d8156]">
+                  {range.label} · {rangeCaption(pick.screening?.check?.compCount)}, {range.basis}
+                  {uplift ? ` · ${uplift}` : ""}
+                </p>
+              )
             )}
             {pick.screening && pick.screening.band !== "insufficient-data" && (
               <div className="mt-3 rounded-lg bg-[#f5f2e8] p-3">
