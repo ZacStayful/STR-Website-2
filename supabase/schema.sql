@@ -3976,7 +3976,7 @@ $$;
 revoke all on function public.select_search_profile(jsonb) from public, anon, authenticated;
 grant execute on function public.select_search_profile(jsonb) to service_role;
 
--- ── Setting: how many profiles a member may keep (src/lib/profiles/settings.ts) ──
+-- ── Setting: how many profiles a member may keep (read by maxProfilesSetting in src/lib/profiles/server.ts) ──
 insert into public.billing_settings (key, value) values ('saved_profiles_max', '5'::jsonb)
 on conflict (key) do nothing;
 
@@ -4540,5 +4540,314 @@ insert into public.billing_settings (key, value) values
   ('project_checks', '{"enabled":false,"soldLookupsPerDay":15,"giveUpDays":3,"maxPhotos":10,"reuseDays":60,"planningChecks":true,"effort":"medium"}'::jsonb),
   ('today_mix', '{"all":{"buy_str":2,"brrr":1,"r2r":2},"two":[3,2],"windowDays":14,"keepsPerSlot":3,"floor":1}'::jsonb)
 on conflict (key) do nothing;
+
+-- =========================
+-- Batch 18: feedback and announcements
+-- =========================
+-- Members tell us about bugs and ideas from inside the app, and we tell them
+-- what became of them (src/lib/feedback): a report per send, a status email
+-- per report and status, and announcements shown as one banner at the top of
+-- the members' pages. Every table here is service role only (RLS on, no
+-- policies, nothing granted to anon or authenticated): a member sends and
+-- reads their own reports only through the app's routes, which take the
+-- member from the session, so the daily limit and the email to the admin
+-- address cannot be skipped by writing to a table directly. Screenshots live
+-- in the private storage bucket 'feedback-screenshots' (below), shown to
+-- admins only through links that expire after five minutes, and deleted by
+-- /api/internal/feedback-retention after
+-- billing_settings.feedback_screenshot_retention_days. Nothing is charged.
+-- Nothing here is in ACCESS_COLUMNS (src/lib/access.ts), and must not become
+-- so. Everything is additive: this section can be run before the code is
+-- merged, and until it is run the form says it cannot send, the banner shows
+-- nothing and the admin pages say to run it.
+
+-- ── feedback_reports: one row per bug report or idea (src/lib/feedback/server.ts) ──
+--   ref              the short number people use ("#123")
+--   kind             bug | feature
+--   body             the member's text, plain (src/lib/feedback/rules.ts cleanText)
+--   status           new | planned | done (reads Fixed on a bug, Built on an
+--                    idea) | not_doing
+--   duplicate_of     the original, once admin marks this a duplicate: it then
+--                    follows the original's status and message, and is left
+--                    out of the totals. Never itself (checked) and never a
+--                    chain (the app points duplicates at the original)
+--   admin_note       private to admins; never shown to the member
+--   status_message   the one line sent with the latest status email, also
+--                    shown on "Your feedback"
+--   context          what the form captured, for admins only: the page,
+--                    device, screen, app version, plan, team, active profile
+--   client_key       the form's own id for this send: a retry comes back as
+--                    the same report (feedback_submit)
+--   admin_emailed_at when the email to the admin address went; null until it
+--                    has, and the daily retention run retries it
+create table if not exists public.feedback_reports (
+  id uuid primary key default gen_random_uuid(),
+  ref bigint generated always as identity unique,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  body text not null,
+  status text not null default 'new',
+  duplicate_of uuid references public.feedback_reports(id) on delete set null,
+  admin_note text,
+  status_message text,
+  status_changed_at timestamptz,
+  context jsonb not null default '{}'::jsonb,
+  client_key text not null,
+  screenshot_count int not null default 0,
+  admin_emailed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create unique index if not exists feedback_reports_client_key_uidx on public.feedback_reports (user_id, client_key);
+create index if not exists feedback_reports_created_idx on public.feedback_reports (created_at desc);
+create index if not exists feedback_reports_user_idx on public.feedback_reports (user_id, created_at desc);
+create index if not exists feedback_reports_duplicate_idx on public.feedback_reports (duplicate_of) where duplicate_of is not null;
+create index if not exists feedback_reports_unemailed_idx on public.feedback_reports (created_at) where admin_emailed_at is null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_kind_check') then
+    alter table public.feedback_reports add constraint feedback_reports_kind_check check (kind in ('bug', 'feature'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_status_check') then
+    alter table public.feedback_reports add constraint feedback_reports_status_check check (status in ('new', 'planned', 'done', 'not_doing'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_body_check') then
+    alter table public.feedback_reports add constraint feedback_reports_body_check check (char_length(body) between 1 and 2000);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_message_check') then
+    alter table public.feedback_reports add constraint feedback_reports_message_check check (status_message is null or char_length(status_message) <= 200);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_not_own_duplicate') then
+    alter table public.feedback_reports add constraint feedback_reports_not_own_duplicate check (duplicate_of is null or duplicate_of <> id);
+  end if;
+end $$;
+alter table public.feedback_reports enable row level security;  -- no policies: service role only
+revoke all on public.feedback_reports from anon, authenticated;
+
+-- ── feedback_screenshots: the images sent with a report (src/lib/feedback/storage.ts) ──
+-- One row per image in the private bucket, written before the upload and
+-- removed if the upload fails, so no stored image is ever without its row.
+-- report_id is set to null when the report goes (the account was deleted),
+-- so the retention run still finds the image and removes it. deleted_at: the
+-- image has been removed from the bucket after the retention period; the row
+-- stays, so admin can say so.
+create table if not exists public.feedback_screenshots (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid references public.feedback_reports(id) on delete set null,
+  path text not null unique,
+  content_type text not null,
+  bytes int not null,
+  created_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+create index if not exists feedback_screenshots_report_idx on public.feedback_screenshots (report_id);
+create index if not exists feedback_screenshots_live_idx on public.feedback_screenshots (created_at) where deleted_at is null;
+alter table public.feedback_screenshots enable row level security;  -- no policies: service role only
+revoke all on public.feedback_screenshots from anon, authenticated;
+
+-- ── feedback_status_emails: one per report and status (src/lib/feedback/server.ts) ──
+-- When admin moves a report to planned, done or not_doing, its reporter and
+-- the reporters of its duplicates are emailed: one email per member, keyed on
+-- that member's own report. The unique (report_id, status) is the rule "each
+-- status at most once": a report that goes Planned → New → Planned is told
+-- Planned once. state: claimed → sent | failed | skipped (no email address).
+-- The claim is the write (feedback_status_claim): a failed row, or one left
+-- claimed after its send died, can be taken again; a sent one never.
+create table if not exists public.feedback_status_emails (
+  id uuid primary key default gen_random_uuid(),
+  report_id uuid not null references public.feedback_reports(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null,
+  message text,
+  state text not null default 'claimed',
+  claimed_at timestamptz not null default now(),
+  sent_at timestamptz,
+  error text
+);
+create unique index if not exists feedback_status_emails_uidx on public.feedback_status_emails (report_id, status);
+create index if not exists feedback_status_emails_user_idx on public.feedback_status_emails (user_id);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_status_emails'::regclass and conname = 'feedback_status_emails_status_check') then
+    alter table public.feedback_status_emails add constraint feedback_status_emails_status_check check (status in ('planned', 'done', 'not_doing'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_status_emails'::regclass and conname = 'feedback_status_emails_state_check') then
+    alter table public.feedback_status_emails add constraint feedback_status_emails_state_check check (state in ('claimed', 'sent', 'failed', 'skipped'));
+  end if;
+end $$;
+alter table public.feedback_status_emails enable row level security;  -- no policies: service role only
+revoke all on public.feedback_status_emails from anon, authenticated;
+
+-- ── Submit: the retry check and the daily limit are one step under the member's row lock ──
+-- p: {user, kind, body, context, client_key, limit}. Returns {outcome, id,
+-- ref, used, limit}. outcome: 'created'; 'duplicate' when this client_key has
+-- been sent already (the same report comes back and nothing is written); or
+-- 'limit' when the member has sent p.limit reports this UK day. The limit is
+-- billing_settings.feedback_daily_limit, parsed and clamped in
+-- src/lib/feedback/rules.ts and passed in, so a badly saved setting can
+-- never make every send fail. Locking the member's profiles row (as
+-- create_search_profile does) means two sends at once cannot both slip under
+-- the limit, and a double tap cannot make two reports.
+create or replace function public.feedback_submit(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_key text := nullif(btrim(coalesce(p->>'client_key', '')), '');
+  v_limit integer := greatest(1, coalesce((p->>'limit')::integer, 10));
+  v_day_start timestamptz := date_trunc('day', now() at time zone 'Europe/London') at time zone 'Europe/London';
+  v_used integer;
+  v_id uuid;
+  v_ref bigint;
+begin
+  if v_user is null or v_key is null then raise exception 'feedback_submit_bad_input'; end if;
+  perform 1 from public.profiles where id = v_user for no key update;
+  select r.id, r.ref into v_id, v_ref from public.feedback_reports r where r.user_id = v_user and r.client_key = v_key;
+  if v_id is not null then
+    return jsonb_build_object('outcome', 'duplicate', 'id', v_id, 'ref', v_ref);
+  end if;
+  select count(*) into v_used from public.feedback_reports r where r.user_id = v_user and r.created_at >= v_day_start;
+  if v_used >= v_limit then
+    return jsonb_build_object('outcome', 'limit', 'used', v_used, 'limit', v_limit);
+  end if;
+  insert into public.feedback_reports (user_id, kind, body, context, client_key)
+  values (v_user, p->>'kind', p->>'body', coalesce(p->'context', '{}'::jsonb), v_key)
+  returning id, ref into v_id, v_ref;
+  return jsonb_build_object('outcome', 'created', 'id', v_id, 'ref', v_ref, 'used', v_used + 1, 'limit', v_limit);
+end;
+$$;
+revoke all on function public.feedback_submit(jsonb) from public, anon, authenticated;
+grant execute on function public.feedback_submit(jsonb) to service_role;
+
+-- ── Claim a status email: whoever makes (or retakes) the row sends it ──
+-- p: {report, user, status, message, stale_seconds}. Returns true when the
+-- caller should send: a new row, a failed one, or one left 'claimed' longer
+-- than stale_seconds (the send died). A sent or skipped row is never taken
+-- again, so a double press, a retry or two admins at once send one email.
+create or replace function public.feedback_status_claim(p jsonb)
+returns boolean language plpgsql set search_path = '' as $$
+declare
+  v_report uuid := (p->>'report')::uuid;
+  v_status text := p->>'status';
+  v_stale integer := greatest(60, coalesce((p->>'stale_seconds')::integer, 600));
+  v_id uuid;
+begin
+  insert into public.feedback_status_emails (report_id, user_id, status, message)
+  values (v_report, (p->>'user')::uuid, v_status, nullif(p->>'message', ''))
+  on conflict (report_id, status) do nothing
+  returning id into v_id;
+  if v_id is not null then return true; end if;
+  update public.feedback_status_emails e
+     set state = 'claimed', claimed_at = now(), message = nullif(p->>'message', ''), error = null
+   where e.report_id = v_report
+     and e.status = v_status
+     and (e.state = 'failed' or (e.state = 'claimed' and e.claimed_at < now() - make_interval(secs => v_stale)))
+  returning e.id into v_id;
+  return v_id is not null;
+end;
+$$;
+revoke all on function public.feedback_status_claim(jsonb) from public, anon, authenticated;
+grant execute on function public.feedback_status_claim(jsonb) to service_role;
+
+-- ── announcements: what's new, shown to members as one banner (src/lib/feedback/announcements.ts) ──
+--   kind            feature ("New feature") | fix ("Bug fix")
+--   link_path       an optional page on this site for "Take a look": a path,
+--                   never another site (src/lib/feedback/rules.ts memberPath;
+--                   the check below is the same rule's floor)
+--   report_ids      the reports it answers, for admin
+--   published_at    when it went live. A member sees it only if they joined
+--                   before this, and only for
+--                   billing_settings.announcement_max_age_days
+--   unpublished_at  taken down: nobody sees it from then on (published again,
+--                   this is cleared and published_at restarts)
+create table if not exists public.announcements (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null,
+  title text not null,
+  body text not null,
+  link_path text,
+  report_ids uuid[] not null default '{}',
+  published_at timestamptz,
+  unpublished_at timestamptz,
+  created_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists announcements_live_idx on public.announcements (published_at desc) where published_at is not null and unpublished_at is null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_kind_check') then
+    alter table public.announcements add constraint announcements_kind_check check (kind in ('feature', 'fix'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_title_check') then
+    alter table public.announcements add constraint announcements_title_check check (char_length(title) between 1 and 80);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_body_check') then
+    alter table public.announcements add constraint announcements_body_check check (char_length(body) between 1 and 300);
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_link_check') then
+    alter table public.announcements add constraint announcements_link_check check (
+      link_path is null
+      or (char_length(link_path) <= 300 and link_path ~ '^/[!-~]*$' and link_path !~ '^//' and strpos(link_path, E'\\') = 0)
+    );
+  end if;
+end $$;
+alter table public.announcements enable row level security;  -- no policies: service role only
+revoke all on public.announcements from anon, authenticated;
+
+-- ── announcement_views: what each member was shown and did (src/lib/feedback/announcements-server.ts) ──
+-- A row when the banner was first on their screen (never from a prefetch:
+-- only the browser reports it). dismissed_at or clicked_at ("Take a look")
+-- and it is never shown to them again. The admin page's views, dismissals
+-- and click-through come from here.
+create table if not exists public.announcement_views (
+  announcement_id uuid not null references public.announcements(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  shown_at timestamptz not null default now(),
+  dismissed_at timestamptz,
+  clicked_at timestamptz,
+  primary key (announcement_id, user_id)
+);
+create index if not exists announcement_views_user_idx on public.announcement_views (user_id);
+alter table public.announcement_views enable row level security;  -- no policies: service role only
+revoke all on public.announcement_views from anon, authenticated;
+
+-- ── Settings (src/lib/feedback/config.ts; edited on /admin/feedback and /admin/announcements) ──
+--   feedback_daily_limit               reports one member may send in a UK day
+--   feedback_max_screenshots           screenshots on one report (0 turns them off)
+--   feedback_screenshot_max_mb         the biggest image a member may pick, before
+--                                      the browser shrinks it
+--   feedback_screenshot_retention_days days a screenshot is kept (never below 7)
+--   feedback_admin_email               where every new report is emailed
+--   announcement_max_age_days          announcements older than this are not shown
+insert into public.billing_settings (key, value) values
+  ('feedback_daily_limit', '10'::jsonb),
+  ('feedback_max_screenshots', '3'::jsonb),
+  ('feedback_screenshot_max_mb', '5'::jsonb),
+  ('feedback_screenshot_retention_days', '90'::jsonb),
+  ('feedback_admin_email', '"zac@stayful.co.uk"'::jsonb),
+  ('announcement_max_age_days', '30'::jsonb)
+on conflict (key) do nothing;
+
+-- ── The private bucket for screenshots (src/lib/feedback/storage.ts) ──
+-- Private, and there is no storage.objects policy for it, so only the service
+-- role can read or write it; an admin sees an image through a signed link
+-- that expires after five minutes. file_size_limit is a ceiling only (the
+-- most feedback_screenshot_max_mb can be set to); the app checks the real
+-- limit first. Created here rather than by hand so it can never start out
+-- public, and "on conflict" puts it back to private if it was ever switched.
+-- If this storage schema is too old for these columns, it raises a notice
+-- instead of stopping the run: create the bucket by hand then (README,
+-- "Switch on feedback").
+do $$
+begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('feedback-screenshots', 'feedback-screenshots', false, 20971520, array['image/jpeg', 'image/png', 'image/webp'])
+  on conflict (id) do update
+    set public = false,
+        file_size_limit = excluded.file_size_limit,
+        allowed_mime_types = excluded.allowed_mime_types;
+exception when others then
+  raise notice 'The feedback-screenshots bucket was not created (%): create it by hand, private.', sqlerrm;
+end $$;
 
 notify pgrst, 'reload schema';
