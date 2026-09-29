@@ -375,6 +375,7 @@ export function duplicateRoot(reportId: string, targetId: string, parentOf: (id:
 
 export interface RecipientReport {
   id: string;
+  ref: number;
   userId: string;
   email: string | null;
   firstName: string | null;

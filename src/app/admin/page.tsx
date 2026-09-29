@@ -113,7 +113,7 @@ export default async function AdminPage() {
             Signed in as {user.email}. This page is only visible to admins.
           </p>
         </div>
-        <span className="flex gap-4">
+        <span className="flex flex-wrap justify-end gap-x-4 gap-y-1">
           <Link href="/admin/billing" className="text-sm font-medium text-primary hover:underline">
             Billing admin
           </Link>
@@ -146,6 +146,9 @@ export default async function AdminPage() {
           </Link>
           <Link href="/admin/tailoring" className="text-sm font-medium text-primary hover:underline">
             Tailoring
+          </Link>
+          <Link href="/admin/feedback" className="text-sm font-medium text-primary hover:underline">
+            Feedback
           </Link>
           <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
             → Analyser

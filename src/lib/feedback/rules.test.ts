@@ -289,7 +289,7 @@ test('a duplicate points at the original, never a chain, a loop or itself', () =
 
 // ── Status email recipients ──
 
-const report = (id: string, userId: string, createdAt: string, email: string | null = `${userId}@example.com`): RecipientReport => ({ id, userId, email, firstName: null, kind: 'bug', body: `report ${id}`, createdAt });
+const report = (id: string, userId: string, createdAt: string, email: string | null = `${userId}@example.com`): RecipientReport => ({ id, ref: 1, userId, email, firstName: null, kind: 'bug', body: `report ${id}`, createdAt });
 
 test('one email per member, each quoting their own report', () => {
   const root = report('R', 'u1', '2026-09-01T10:00:00Z');
