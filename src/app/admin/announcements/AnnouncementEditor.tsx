@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useMemo, useState, useTransition, type FormEvent } from "react";
 import { AnnouncementBanner } from "@/components/announcements/AnnouncementBanner";
 import { LIMITS, SETTING_BOUNDS, type AnnouncementKind } from "@/lib/feedback/config";
 import { maxAgeAction, publishAction, saveAction, type EditorState } from "./actions";
@@ -39,7 +39,17 @@ export function AnnouncementEditor({ initial }: { initial: EditorInitial }) {
   const [title, setTitle] = useState(initial.title);
   const [body, setBody] = useState(initial.body);
   const [link, setLink] = useState(initial.link);
-  const [saveState, save, saving] = useActionState(saveAction, null);
+  const [saveState, setSaveState] = useState<EditorState>(null);
+  const [saving, startSaving] = useTransition();
+  // Not a form action: React resets a form's fields when its action
+  // finishes, which would put the type back to the one the page loaded with
+  // (while the preview shows the new one), and the next save would revert it.
+  const save = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (saving) return;
+    const data = new FormData(e.currentTarget);
+    startSaving(async () => setSaveState((await saveAction(saveState, data)) ?? null));
+  };
   const [pubState, publish, publishing] = useActionState(publishAction, null);
   const errors = saveState?.errors ?? {};
   const [previewAt] = useState(() => new Date().toISOString());
@@ -51,7 +61,7 @@ export function AnnouncementEditor({ initial }: { initial: EditorInitial }) {
 
   return (
     <div className="space-y-5">
-      <form action={save} className="space-y-3 rounded-xl border border-border bg-card p-5">
+      <form onSubmit={save} className="space-y-3 rounded-xl border border-border bg-card p-5">
         {initial.id && <input type="hidden" name="id" value={initial.id} />}
         <fieldset className="flex flex-wrap gap-4 text-sm">
           <legend className="mb-1 text-xs text-muted-foreground">Type</legend>

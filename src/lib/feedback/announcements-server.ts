@@ -99,11 +99,21 @@ export type BannerAction = 'shown' | 'dismiss' | 'click';
  */
 export async function recordBannerEvent(userId: string, action: BannerAction, rawIds: unknown, now = new Date()): Promise<boolean> {
   if (!hasServiceRole()) return false;
+  const wanted = cleanIds(rawIds);
+  if (wanted.length === 0) return false;
   const { announcementMaxAgeDays } = await feedbackSettings();
-  const liveIds = new Set((await liveRows(now, announcementMaxAgeDays)).filter((r) => isLive(r, now, announcementMaxAgeDays)).map((r) => r.id));
-  const ids = cleanIds(rawIds).filter((id) => liveIds.has(id));
-  if (ids.length === 0) return false;
   const admin = createAdminClient();
+  // Checked against the table itself, never this server's minute-old copy of
+  // the live list: another server may have published one since, and its
+  // dismissals must count from the first second.
+  const { data: rows, error: readError } = await admin.from('announcements').select('id, kind, title, body, link_path, published_at, unpublished_at').in('id', wanted);
+  if (readError) {
+    warn(`could not check announcements: ${readError.message}`);
+    return false;
+  }
+  const liveIds = new Set(((rows ?? []) as RawRow[]).map(toRow).filter((r): r is AnnouncementRow => r !== null && isLive(r, now, announcementMaxAgeDays)).map((r) => r.id));
+  const ids = wanted.filter((id) => liveIds.has(id));
+  if (ids.length === 0) return false;
   const at = now.toISOString();
   if (action === 'shown') {
     const { error } = await admin.from('announcement_views').upsert(ids.map((id) => ({ announcement_id: id, user_id: userId })), { onConflict: 'announcement_id,user_id', ignoreDuplicates: true });
@@ -221,7 +231,7 @@ export async function publishAnnouncement(id: string): Promise<{ ok: boolean; me
     if (published) break;
   }
   forgetLiveAnnouncements();
-  return { ok: true, message: published ? 'Published: members will see it on their next page.' : 'It was already live.' };
+  return { ok: true, message: published ? 'Published: members will see it on their next page, within a minute.' : 'It was already live.' };
 }
 
 export async function unpublishAnnouncement(id: string): Promise<{ ok: boolean; message: string }> {
@@ -230,5 +240,5 @@ export async function unpublishAnnouncement(id: string): Promise<{ ok: boolean; 
   const { error } = await createAdminClient().from('announcements').update({ unpublished_at: now, updated_at: now }).eq('id', id).is('unpublished_at', null).not('published_at', 'is', null);
   if (error) return { ok: false, message: `Could not take it down: ${error.message}` };
   forgetLiveAnnouncements();
-  return { ok: true, message: 'Taken down: nobody sees it from now on.' };
+  return { ok: true, message: 'Taken down: members stop seeing it within a minute.' };
 }

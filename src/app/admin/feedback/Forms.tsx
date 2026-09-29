@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useState, useTransition, type FormEvent } from "react";
 import { DEFAULT_SETTINGS, LIMITS, REPORT_STATUSES, SETTING_BOUNDS, type FeedbackSettings, type ReportKind, type ReportStatus } from "@/lib/feedback/config";
 import { statusLabel } from "@/lib/feedback/rules";
 import { duplicateAction, noteAction, settingsAction, statusAction, type ActionState } from "./actions";
@@ -32,9 +32,21 @@ const OUTCOME: Record<string, string> = {
 };
 
 export function StatusForm({ id, kind, status, message, locked, hasFailed }: { id: string; kind: ReportKind; status: ReportStatus; message: string | null; locked: boolean; hasFailed: boolean }) {
-  const [state, action, pending] = useActionState(statusAction, null);
+  const [state, setState] = useState<ActionState>(null);
+  const [pending, startTransition] = useTransition();
+  // Which button sent the form (Enter presses the first, Preview). Not a form
+  // action: React resets a form's fields when its action finishes, so after
+  // Preview the status chosen would snap back and Save would save the old one.
+  const intent = useRef<"preview" | "save" | "retry">("preview");
+  const submit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (pending) return;
+    const data = new FormData(e.currentTarget);
+    data.set("intent", intent.current);
+    startTransition(async () => setState(await statusAction(state, data)));
+  };
   return (
-    <form action={action} className="space-y-3">
+    <form onSubmit={submit} className="space-y-3">
       <input type="hidden" name="id" value={id} />
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -53,14 +65,14 @@ export function StatusForm({ id, kind, status, message, locked, hasFailed }: { i
         </label>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button type="submit" name="intent" value="preview" disabled={locked || pending} className={secondary}>
+        <button type="submit" onClick={() => (intent.current = "preview")} disabled={locked || pending} className={secondary}>
           Preview emails
         </button>
-        <button type="submit" name="intent" value="save" disabled={locked || pending} className={primary}>
+        <button type="submit" onClick={() => (intent.current = "save")} disabled={locked || pending} className={primary}>
           {pending ? "Working…" : "Save"}
         </button>
         {hasFailed && (
-          <button type="submit" name="intent" value="retry" disabled={locked || pending} className={secondary}>
+          <button type="submit" onClick={() => (intent.current = "retry")} disabled={locked || pending} className={secondary}>
             Retry failed emails
           </button>
         )}
