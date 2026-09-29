@@ -5,7 +5,7 @@ import { useState, useSyncExternalStore } from "react";
 import { chooseConsent, newVisitorId, readConsentRaw, subscribeConsent } from "@/lib/tracking/browser";
 import { COOKIE_POLICY_HREF, CONSENT_WORDING } from "@/lib/tracking/config";
 import { parseConsent, secondChanceShown, type Choice } from "@/lib/tracking/consent";
-import { consentSaved } from "@/lib/tracking/runtime";
+import { consentSaved, noteChoice } from "@/lib/tracking/runtime";
 
 const serverRaw = (): string | null => null;
 
@@ -32,6 +32,7 @@ export function SignupConsentCheckbox({ initialChoice = null, instant = false }:
     setChecked(on);
     if (!instant) return;
     const next: Choice = on ? "accept" : "reject";
+    noteChoice(next);
     void chooseConsent(next, "signup", parseConsent(readConsentRaw())?.visitorId ?? newVisitorId()).then(() => consentSaved(next));
   };
 

@@ -18,7 +18,6 @@ test('a member answer keeps only well-formed values', () => {
     signedIn: true,
     who: H,
     choice: 'accept',
-    deviceUpdated: true,
     excluded: false,
     pixel: { em: H2, external_id: H, name: 'Jo' },
     pending: [
@@ -30,7 +29,6 @@ test('a member answer keeps only well-formed values', () => {
   assert.ok(a);
   assert.equal(a.who, H);
   assert.equal(a.choice, 'accept');
-  assert.equal(a.deviceUpdated, true);
   assert.deepEqual(a.pixel, { em: H2, external_id: H });
   assert.deepEqual(a.pending, [{ key: 'Purchase:pi_1', name: 'Purchase', eventId: 'pi_1', valuePence: 1000 }]);
 });

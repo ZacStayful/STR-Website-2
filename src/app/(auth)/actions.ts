@@ -20,8 +20,14 @@ function getSiteUrl(): string {
 
 // Where an email link lands. The callback applies the landing rule
 // (src/lib/auth/landing.ts), so only an explicit destination is carried.
-function callbackUrl(next: string): string {
-  return `${getSiteUrl()}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`
+// `confirm` marks a sign-up confirmation link, so a confirmation opened on
+// another device can say the address is confirmed (Batch 19).
+function callbackUrl(next: string, confirm = false): string {
+  const params = new URLSearchParams()
+  if (next) params.set('next', next)
+  if (confirm) params.set('confirm', '1')
+  const query = params.toString()
+  return `${getSiteUrl()}/auth/callback${query ? `?${query}` : ''}`
 }
 
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -76,7 +82,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     email,
     password,
     options: {
-      emailRedirectTo: callbackUrl(next),
+      emailRedirectTo: callbackUrl(next, true),
       data: {
         full_name: fullName,
         mobile: normalisedMobile,
@@ -154,7 +160,7 @@ export async function resendConfirmationAction(
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email,
-    options: { emailRedirectTo: callbackUrl(next) },
+    options: { emailRedirectTo: callbackUrl(next, true) },
   })
 
   if (error) return { error: error.message, success: null }

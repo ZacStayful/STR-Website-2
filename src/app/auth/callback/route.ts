@@ -25,8 +25,9 @@ export async function GET(request: NextRequest) {
   const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
   if (exchangeError) {
     // An email link opened on another device than the one that asked for it:
-    // no verifier here, but Supabase has already confirmed the address.
-    if (isAuthPKCECodeVerifierMissingError(exchangeError) && next !== '/reset-password') return NextResponse.redirect(loginUrl('confirmed_elsewhere'))
+    // no verifier here. A sign-up confirmation has still confirmed the
+    // address; any other link (sign-in, password reset) needs a fresh one.
+    if (isAuthPKCECodeVerifierMissingError(exchangeError)) return NextResponse.redirect(loginUrl(searchParams.get('confirm') === '1' ? 'confirmed_elsewhere' : 'other_device'))
     return NextResponse.redirect(loginUrl(exchangeError.message))
   }
 

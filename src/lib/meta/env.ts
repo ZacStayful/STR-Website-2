@@ -27,11 +27,14 @@ const read = (env: Env, name: string): string | null => {
   return v ? v : null;
 };
 
-/** production | preview | development — the same rule as the activity log (src/lib/activity/log.ts). */
+/**
+ * production | preview | development, from VERCEL_ENV only: a production
+ * build run anywhere else (a local `next start`, CI) is never the live site,
+ * so it never loads the pixel or sends live events, whatever it is given.
+ */
 export function deployment(env: Env = process.env): Deployment {
   const v = env.VERCEL_ENV;
-  if (v === 'production' || v === 'preview' || v === 'development') return v;
-  return env.NODE_ENV === 'production' ? 'production' : 'development';
+  return v === 'production' || v === 'preview' ? v : 'development';
 }
 
 /** The dataset id, or null when it is missing or not digits only. */

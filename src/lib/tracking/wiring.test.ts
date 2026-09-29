@@ -47,11 +47,13 @@ test('the Conversions API token is never read in browser code', () => {
 test('conversions in code already running after the response are awaited; request ones use logConversion', () => {
   const analyse = read('src/app/api/analyse/route.ts');
   assert.match(analyse, /await recordConversion\(\{ name: 'FirstReport'/);
-  const deal = read('src/lib/analysis/deal-analysis.ts');
-  const start = deal.indexOf('const [{ error: doneErr }] = await Promise.all([');
-  const awaited = deal.slice(start, deal.indexOf(']);', start));
-  assert.match(awaited, /recordConversion\(\{ name: 'FirstReport', userId: purchase\.buyer_id \}\)/, 'inside the awaited Promise.all');
-  assert.doesNotMatch(analyse + deal, /logConversion/);
+  // The Full analysis: after the member has "Full analysis ready", never before it.
+  const run = read('src/app/api/deals/[id]/analysis/run/route.ts');
+  const complete = run.indexOf("send({ stage: 'complete'");
+  const first = run.indexOf("await recordConversion({ name: 'FirstReport'");
+  assert.ok(complete > 0 && first > complete, 'FirstReport after the complete message');
+  assert.doesNotMatch(read('src/lib/analysis/deal-analysis.ts'), /recordConversion|logConversion/);
+  assert.doesNotMatch(analyse + run, /logConversion/);
   assert.match(read('src/lib/stripe/deps.ts'), /recordConversion: \(c\) => recordConversion\(c\)/);
   assert.match(read('src/lib/profile/server.ts'), /await logConversion\(\{ name: 'ProfileComplete', userId \}\)/);
   assert.match(read('src/app/api/billing/topup/route.ts'), /await logConversion\(\{ name: 'Purchase'/);

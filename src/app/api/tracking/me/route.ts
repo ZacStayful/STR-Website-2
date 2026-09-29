@@ -1,12 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { pixelEnabled, serverSendMode } from '@/lib/meta/env';
 import { hashEmail, hashExternalId } from '@/lib/meta/hash';
 import { metaExclusion, pendingForBrowser, releaseHeld } from '@/lib/meta/conversions';
-import { TRACKING } from '@/lib/tracking/config';
-import { reconcile, type MemberConsent } from '@/lib/tracking/consent';
-import { attachDevice, clearTrackingCookies, deviceConsent, memberConsentFor, refreshBrowserDetails, setDeviceConsent } from '@/lib/tracking/consent-server';
+import { attachDevice, clearTrackingCookies, deviceConsent, refreshBrowserDetails } from '@/lib/tracking/consent-server';
 import { SIGNED_OUT, type BrowserConversion, type MeAnswer } from '@/lib/tracking/me';
 import { clientDetails, isSameOriginJson } from '@/lib/tracking/request';
 
@@ -16,13 +13,15 @@ const NO_STORE = { 'cache-control': 'no-store' };
 
 /**
  * The signed-in member's side of cookie consent and the pixel (Batch 19),
- * asked by TrackingRoot on page loads and after payments. Only called from a
- * device that has accepted or not chosen yet, and only when a session cookie
- * is present, so anonymous visitors never make this request.
+ * asked by TrackingRoot on page loads and after payments, only when a
+ * session cookie is present, so anonymous visitors never make this request.
  *
- *   - Brings this device and the member into line: the newer choice wins
- *     (a member is asked once, not once per device). The member's newer
- *     choice is written to this device's cookie.
+ *   - A choice made on this device while signed out (or by this member)
+ *     becomes theirs when it is newer (attachDevice); someone else's choice
+ *     on a shared device never does. The member's saved choice is what counts
+ *     while they are signed in, on any device: they are asked once, not once
+ *     per device. It is never written into this device's cookie, so it goes
+ *     when they sign out.
  *   - For a consenting member of a production build: the hashed email and
  *     account number for the pixel, and the conversions still to fire.
  *   - Keeps a consenting member's browser details (at most hourly) when the
@@ -45,57 +44,31 @@ export async function POST(request: Request) {
   }
   if (!user) return Response.json(SIGNED_OUT, { headers: NO_STORE });
 
+  const userId = user.id;
+  const details = clientDetails(request.headers);
   const device = await deviceConsent();
-  const saved = await memberConsentFor(user.id);
-  let member: MemberConsent | null = saved ? { choice: saved.choice, chosenAt: saved.chosenAt } : null;
-  let deviceChoice = device?.choice ?? null;
-  let deviceUpdated = false;
+  const member = await attachDevice(userId, device);
+  // This device's Accept has just become the member's: anything held in the last hour goes.
+  if (member?.adopted && member.choice === 'accept') after(() => releaseHeld(userId, details));
+  // A Reject made elsewhere: this device's attribution and click cookies go too.
+  if (member?.choice === 'reject' && device?.choice !== 'reject') await clearTrackingCookies(request.headers.get('x-forwarded-host') ?? request.headers.get('host'));
 
-  const side = reconcile(device, member);
-  if (side === 'device' && device && device.choice !== member?.choice) {
-    member = (await attachDevice(user.id, device)) ?? member;
-    // This device's Accept is now the member's: anything held in the last hour goes.
-    if (member?.choice === 'accept') {
-      const memberId = user.id;
-      const details = clientDetails(request.headers);
-      after(() => releaseHeld(memberId, details));
-    }
-  } else if (side === 'member' && member && member.choice !== device?.choice) {
-    await setDeviceConsent({ choice: member.choice, at: member.chosenAt, visitorId: device?.visitorId ?? randomUUID(), version: TRACKING.consentVersion });
-    if (member.choice === 'reject') await clearTrackingCookies(request.headers.get('x-forwarded-host') ?? request.headers.get('host'));
-    deviceChoice = member.choice;
-    deviceUpdated = true;
-  }
-
-  const who = hashExternalId(user.id);
-  const accepted = member?.choice === 'accept' && deviceChoice === 'accept';
+  const who = hashExternalId(userId);
   let excluded = false;
   let pixel: MeAnswer['pixel'] = null;
   let pending: BrowserConversion[] = [];
 
-  if (accepted && (pixelEnabled() || serverSendMode().ok)) {
-    excluded = (await metaExclusion(user.id, user.email ?? null)) !== null;
+  if (member?.choice === 'accept' && (pixelEnabled() || serverSendMode().ok)) {
+    excluded = (await metaExclusion(userId, user.email ?? null)) !== null;
     if (!excluded) {
       if (pixelEnabled() && who) {
         pixel = { em: hashEmail(user.email), external_id: who };
-        pending = await pendingForBrowser(user.id);
+        pending = await pendingForBrowser(userId);
       }
-      if (serverSendMode().ok) {
-        const userId = user.id;
-        const details = clientDetails(request.headers);
-        after(() => refreshBrowserDetails(userId, details));
-      }
+      if (serverSendMode().ok) after(() => refreshBrowserDetails(userId, details));
     }
   }
 
-  const answer: MeAnswer = {
-    signedIn: true,
-    who,
-    choice: member?.choice ?? null,
-    deviceUpdated,
-    excluded,
-    pixel,
-    pending,
-  };
+  const answer: MeAnswer = { signedIn: true, who, choice: member?.choice ?? null, excluded, pixel, pending };
   return Response.json(answer, { headers: NO_STORE });
 }

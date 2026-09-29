@@ -168,8 +168,9 @@ async function trackingSince(): Promise<Date | null> {
 
 type ConversionRow = { dedupe_key: string; event_id: string; event_name: string; user_id: string; value_pence: number | null; created_at: string };
 
+// Previews share the live database: a deployment only ever changes its own rows.
 async function setStatus(key: string, from: string, patch: Record<string, unknown>): Promise<void> {
-  const { error } = await createAdminClient().from('meta_conversions').update(patch).eq('dedupe_key', key).eq('server_status', from);
+  const { error } = await createAdminClient().from('meta_conversions').update(patch).eq('dedupe_key', key).eq('server_status', from).eq('env', deployment());
   if (error) throw new Error(error.message);
 }
 
@@ -325,6 +326,7 @@ export async function releaseHeld(userId: string, details: ClientDetails | null,
       .update({ consented: true, released_at: now.toISOString(), server_status: 'pending' })
       .eq('user_id', userId)
       .eq('server_status', 'held')
+      .eq('env', deployment())
       .gt('created_at', since)
       .select('dedupe_key');
     if (error) throw new Error(error.message);

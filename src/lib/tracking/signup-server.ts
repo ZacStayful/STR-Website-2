@@ -92,8 +92,8 @@ export async function onSignIn(input: {
     const email = input.user.email ?? null;
     after(async () => {
       const member = await attachDevice(userId, device);
-      // This device had said yes: anything held in the last hour goes now.
-      if (member?.choice === 'accept' && device?.choice === 'accept') await releaseHeld(userId, details);
+      // This device's yes has just become theirs: anything held in the last hour goes now.
+      if (member?.adopted && member.choice === 'accept') await releaseHeld(userId, details);
       if (chosen) {
         const teamInvite = input.next.startsWith('/team/join') && (await hasOpenInvite(email));
         await saveAttribution({ userId, method: 'google', teamInvite, touch: chosen.touch, via: chosen.via });

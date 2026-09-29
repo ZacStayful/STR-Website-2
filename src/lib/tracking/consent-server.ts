@@ -7,10 +7,13 @@ import 'server-only';
  *
  *   recordChoice        a choice made on the banner, in Cookie settings or at
  *                       sign-up: its proof, and the member's saved choice
- *   attachDevice        at sign-up or sign-in: this device's earlier choices
- *                       become the member's (their proof is attached too)
- *   memberConsentFor    the member's saved choice, and their last-seen browser
- *                       details (kept only while it is Accept)
+ *   attachDevice        at sign-up, sign-in and page loads: a choice made on
+ *                       this device while signed out (or by this member)
+ *                       becomes the member's when it is newer; never another
+ *                       person's choice on a shared device
+ *   memberConsentFor    the member's saved choice (for 6 months, then they are
+ *                       asked again), and their last-seen browser details
+ *                       (kept only while it is Accept)
  *   refreshBrowserDetails  at most hourly, for consenting members only
  *
  * The cookie helpers only work in a route handler or a server action (the
@@ -26,7 +29,7 @@ import { deployment } from '../meta/env';
 import { registrableDomain } from '../meta/fbc';
 import type { ClientDetails } from '../meta/capi';
 import { TRACKING } from './config';
-import { consentMaxAgeSeconds, parseConsent, serializeConsent, type Choice, type ConsentSource, type DeviceConsent, type MemberConsent } from './consent';
+import { consentMaxAgeSeconds, deviceChoiceAdoptable, memberChoiceCurrent, parseConsent, serializeConsent, type Choice, type ConsentSource, type DeviceConsent, type MemberConsent } from './consent';
 
 // One warning a minute per message, so a missing table (schema not run) does
 // not fill the logs.
@@ -139,19 +142,25 @@ export async function recordChoice(input: { visitorId: string; userId: string | 
 }
 
 /**
- * At sign-up or sign-in: this device's choices become the member's. Their
- * proof is attached to the member, and the device's latest choice is saved
- * against them unless the member already has a newer one. Returns the
- * member's choice afterwards.
+ * A choice made on this device becomes the member's: only one made here while
+ * signed out (the landing page before signing up) or by this same member, and
+ * only when it is newer than their own saved choice (deviceChoiceAdoptable).
+ * Its time is the server's record of it, never the device's clock. Returns the
+ * member's choice afterwards, and whether this device's choice was adopted.
  */
-export async function attachDevice(userId: string, device: DeviceConsent | null): Promise<MemberConsent | null> {
+export async function attachDevice(userId: string, device: DeviceConsent | null): Promise<(MemberConsent & { adopted: boolean }) | null> {
   if (!hasServiceRole()) return null;
   try {
-    if (!device) return await memberChoiceOnly(userId);
-    const admin = createAdminClient();
-    await admin.from('consent_records').update({ user_id: userId }).eq('visitor_id', device.visitorId).is('user_id', null);
+    const current = await memberChoiceOnly(userId);
+    const kept = current ? { ...current, adopted: false } : null;
+    if (!device) return kept;
     const last = await latestForDevice(device.visitorId);
-    return await setMember(userId, { choice: device.choice, at: device.at, source: last?.source ?? 'banner', version: device.version, recordId: last?.id ?? null });
+    const record = last ? { userId: last.user_id, at: new Date(last.created_at) } : null;
+    if (!last || !record || !deviceChoiceAdoptable(record, userId, current)) return kept;
+    // The choice's proof becomes the member's too.
+    if (last.user_id === null) await createAdminClient().from('consent_records').update({ user_id: userId }).eq('id', last.id).is('user_id', null);
+    const saved = await setMember(userId, { choice: last.choice, at: record.at, source: last.source, version: device.version, recordId: last.id });
+    return saved ? { ...saved, adopted: saved.choice === last.choice } : kept;
   } catch (err) {
     warn(`device choice not attached: ${err instanceof Error ? err.message : String(err)}`);
     return null;
@@ -167,8 +176,8 @@ async function memberChoiceOnly(userId: string): Promise<MemberConsent | null> {
   return row ? { choice: row.choice, chosenAt: row.chosenAt } : null;
 }
 
-/** The member's saved choice and last-seen browser details, or null. */
-export async function memberConsentFor(userId: string): Promise<MemberConsentRow | null> {
+/** The member's saved choice and last-seen browser details, or null (none, or older than 6 months). */
+export async function memberConsentFor(userId: string, now: Date = new Date()): Promise<MemberConsentRow | null> {
   if (!hasServiceRole()) return null;
   try {
     const { data, error } = await createAdminClient()
@@ -179,6 +188,7 @@ export async function memberConsentFor(userId: string): Promise<MemberConsentRow
     if (error) throw new Error(error.message);
     if (!data) return null;
     const r = data as { choice: Choice; chosen_at: string; ctx_ip: string | null; ctx_ua: string | null; ctx_fbp: string | null; ctx_fbc: string | null; ctx_at: string | null };
+    if (!memberChoiceCurrent(new Date(r.chosen_at), now)) return null;
     return {
       choice: r.choice,
       chosenAt: new Date(r.chosen_at),

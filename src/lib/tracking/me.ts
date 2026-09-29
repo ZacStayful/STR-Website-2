@@ -23,10 +23,12 @@ export interface MeAnswer {
   signedIn: boolean;
   /** The member's hashed account number: the pixel goes silent if it changes in the same tab. */
   who: string | null;
-  /** The member's saved choice, after this device and the member were brought into line. */
+  /**
+   * The member's saved choice (after any choice made on this device was
+   * adopted), which is what counts while they are signed in; null when they
+   * have not chosen, and are then asked. Never written to the device.
+   */
   choice: Choice | null;
-  /** The server rewrote this device's consent cookie (the member's newer choice). */
-  deviceUpdated: boolean;
   /** Admin, staff, switched off or a team seat: no pixel for them at all. */
   excluded: boolean;
   /** For the pixel's init: the hashed email and hashed account number. Consenting members only. */
@@ -35,7 +37,7 @@ export interface MeAnswer {
   pending: BrowserConversion[];
 }
 
-export const SIGNED_OUT: MeAnswer = { signedIn: false, who: null, choice: null, deviceUpdated: false, excluded: false, pixel: null, pending: [] };
+export const SIGNED_OUT: MeAnswer = { signedIn: false, who: null, choice: null, excluded: false, pixel: null, pending: [] };
 
 const HASH = /^[a-f0-9]{64}$/;
 const EVENT_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
@@ -77,7 +79,6 @@ export function parseMeAnswer(v: unknown): MeAnswer | null {
     signedIn: true,
     who,
     choice: isChoice(o.choice) ? o.choice : null,
-    deviceUpdated: o.deviceUpdated === true,
     excluded: o.excluded === true,
     pixel,
     pending,

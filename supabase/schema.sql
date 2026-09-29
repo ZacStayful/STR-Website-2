@@ -4964,7 +4964,8 @@ returns jsonb language plpgsql set search_path = '' as $$
 declare
   v_user uuid := nullif(p->>'user', '')::uuid;
   v_choice text := p->>'choice';
-  v_at timestamptz := coalesce(nullif(p->>'chosen_at', '')::timestamptz, now());
+  -- Never later than now: a device with a fast clock must not freeze the choice.
+  v_at timestamptz := least(coalesce(nullif(p->>'chosen_at', '')::timestamptz, now()), now());
   v_applied boolean := false;
   v_row public.member_consent%rowtype;
 begin

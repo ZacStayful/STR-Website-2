@@ -12,6 +12,9 @@ type SearchParams = Promise<{ redirect?: string; error?: string; email?: string 
 function errorMessage(error: string | undefined): string | null {
   if (!error) return null
   if (error === 'confirmed_elsewhere') return 'Your email is confirmed — sign in to continue.'
+  if (error === 'other_device') {
+    return 'That link was opened on a different device or browser from the one it was sent from. Email yourself a fresh one below, and open it here.'
+  }
   if (error === 'link_expired' || /expired|invalid|already/i.test(error)) {
     return 'That sign-in link has expired or has already been used. Email yourself a fresh one below.'
   }

@@ -86,20 +86,22 @@ export interface MemberConsent {
   chosenAt: Date;
 }
 
+/** A member's saved choice counts for 6 months, like the device's; then they are asked again. */
+export function memberChoiceCurrent(chosenAt: Date, now: Date = new Date()): boolean {
+  const age = now.getTime() - chosenAt.getTime();
+  return Number.isFinite(age) && age < TRACKING.consentDays * 86_400_000;
+}
+
 /**
- * Which side should follow the other: the newer choice wins. 'device' means
- * the member's saved choice should take the device's; 'member' means the
- * device should take the member's.
+ * Whether a choice made on this device becomes the member's at sign-up or
+ * sign-in: only one made here signed out (the landing page before signing
+ * up) or by this same member, and only when it is newer than their own. So
+ * on a shared device one person's choice never becomes someone else's.
  */
-export function reconcile(device: DeviceConsent | null, member: MemberConsent | null): 'device' | 'member' | 'same' | 'none' {
-  if (!device && !member) return 'none';
-  if (device && !member) return 'device';
-  if (!device && member) return 'member';
-  const d = device!.at.getTime();
-  const m = member!.chosenAt.getTime();
-  // The cookie keeps whole seconds; the same choice within a second is the same choice.
-  if (device!.choice === member!.choice && Math.abs(d - m) < 2000) return 'same';
-  return d > m ? 'device' : 'member';
+export function deviceChoiceAdoptable(record: { userId: string | null; at: Date } | null, userId: string, member: MemberConsent | null): boolean {
+  if (!record) return false;
+  if (record.userId !== null && record.userId !== userId) return false;
+  return !member || record.at.getTime() > member.chosenAt.getTime();
 }
 
 /** The second-chance checkbox shows while nobody has said yes: no choice yet, or Reject. */

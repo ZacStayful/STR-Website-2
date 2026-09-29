@@ -3,6 +3,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { claimDealAnalysisRun, runDealAnalysis } from '@/lib/analysis/deal-analysis';
 import { analysisHttpStatus } from '@/lib/analysis/deal-analysis-rules';
+import { recordConversion } from '@/lib/meta/conversions';
+import { clientDetails } from '@/lib/tracking/request';
 
 /**
  * Runs a started Full analysis (src/lib/analysis/deal-analysis.ts) and
@@ -53,10 +55,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       };
       after(
         (async () => {
+          let finished = false;
           try {
             const outcome = await runDealAnalysis(claim.purchase, { adminUser, onProgress: (e) => send({ stage: e.stage, progress: e.progress, message: e.message }) });
             if (outcome.ok) {
               send({ stage: 'complete', progress: 100, message: 'Full analysis ready', reportId: outcome.reportId, reused: outcome.reused, chargedBasePence: outcome.chargedBasePence });
+              finished = true;
             } else {
               send({ stage: 'error', progress: 0, message: outcome.message, code: outcome.code });
             }
@@ -70,6 +74,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
               /* the browser already went */
             }
           }
+          // Batch 19: Meta's FirstReport, once per account, only after the member
+          // has their report (awaited: this already runs after the response).
+          if (finished) await recordConversion({ name: 'FirstReport', userId: claim.purchase.buyer_id, details: clientDetails(request.headers) });
         })(),
       );
     },

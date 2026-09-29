@@ -8,13 +8,15 @@
  *      nothing at all.
  *   2. The address is tidied: tracking tags and the page's one-shot flags go
  *      (surfaces.ts). A return from Stripe is noticed first.
- *   3. A signed-in member on a device that has accepted or not chosen yet:
- *      /api/tracking/me brings the device and the member into line, and says
- *      whether they count, their hashed details and conversions to fire
- *      (asked at most every 30 s on route changes).
- *   4. With Accept, on a production build with a dataset: the pixel loads
- *      (only on a clean page on the PageView list), a PageView goes, and
- *      each pending conversion is claimed and fired with the server's id.
+ *   3. A signed-in member: /api/tracking/me says their saved choice (a
+ *      choice made on this device while signed out, or by them, becomes
+ *      theirs when newer), whether they count, their hashed details and the
+ *      conversions to fire (asked at most every 30 s on route changes).
+ *   4. The choice that counts is the member's while signed in (they are
+ *      asked once, on any device) and this device's own otherwise. With
+ *      Accept, on a production build with a dataset: the pixel loads (only on
+ *      a clean page on the PageView list), a PageView goes, and each pending
+ *      conversion is claimed and fired with the server's id.
  *
  * Also checked: after the app's credit-changed event (a top-up, the £5
  * profile credit, a report) at 0, 2, 5 and 10 s; every 3 s for 30 s after a
@@ -30,7 +32,7 @@ import { CREDIT_CHANGED_EVENT } from '../credit/client';
 import { canSendNow, loadPixel, pixelState, revokePixel, sendConversion, sendPageView, silencePixel } from '../meta/pixel';
 import { TRACKING } from './config';
 import { parseConsent, type Choice } from './consent';
-import { CONSENT_CHANGED_EVENT, clearMetaCookies, hasSessionCookie, isFramed, notifyConsentChanged, readConsentRaw } from './browser';
+import { CONSENT_CHANGED_EVENT, clearMetaCookies, hasSessionCookie, isFramed, readConsentRaw } from './browser';
 import { parseBrowserConversion, parseMeAnswer, type BrowserConversion, type MeAnswer } from './me';
 import { isCleanForSend, isStripeReturn, surfaceFor, tidiedHref } from './surfaces';
 import { isTagged, keepFirst, serializeTouch, touchFromPage, type Touch } from './touch';
@@ -107,6 +109,24 @@ export function memberLookupPending(bannerOn: boolean): boolean {
   return parseConsent(readConsentRaw()) === null && hasSessionCookie();
 }
 
+/**
+ * The signed-in member's saved choice, for the banner: 'none' when they have
+ * not chosen (they are asked, whatever this device says: its choice may have
+ * been someone else's), 'unknown' when signed out or not known yet (then this
+ * device's own choice counts).
+ */
+export function memberChoiceSnapshot(): Choice | 'none' | 'unknown' {
+  if (!me?.signedIn || !hasSessionCookie()) return 'unknown';
+  return me.choice ?? 'none';
+}
+
+/** A choice made on this page: while signed in it is the member's too, so it counts at once. */
+export function noteChoice(choice: Choice): void {
+  if (!me?.signedIn || !hasSessionCookie()) return;
+  me = { ...me, choice };
+  emit();
+}
+
 function settleLookup(): void {
   if (lookupSettled) return;
   lookupSettled = true;
@@ -127,9 +147,9 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
   }
 }
 
-/** A signed-in member on an accepting device of a production build: worth checking for conversions. */
+/** A signed-in, consenting member who counts, on a production build: worth checking for conversions. */
 function measuringMember(): boolean {
-  return config.pixelId !== null && hasSessionCookie() && parseConsent(readConsentRaw())?.choice === 'accept';
+  return config.pixelId !== null && hasSessionCookie() && me?.signedIn === true && me.choice === 'accept' && !me.excluded;
 }
 
 function lookup(): Promise<MeAnswer | null> {
@@ -140,7 +160,9 @@ function lookup(): Promise<MeAnswer | null> {
       if (answer) {
         me = answer;
         meAt = Date.now();
-        if (answer.deviceUpdated) notifyConsentChanged();
+        // Their Reject, made on another device: Meta's cookies go from this one too.
+        if (answer.signedIn && answer.choice === 'reject') clearMetaCookies();
+        emit();
       }
       return answer;
     } catch {
@@ -207,18 +229,24 @@ async function firePending(mine: number, list: BrowserConversion[]): Promise<voi
 
 /** With Accept: load the pixel if this page allows it, then PageView and conversions. */
 async function act(mine: number): Promise<void> {
-  const device = parseConsent(readConsentRaw());
   const pixelId = config.pixelId;
-  if (!device || device.choice !== 'accept' || !pixelId) return;
-
+  if (!pixelId) return;
   const signedIn = hasSessionCookie();
   if (signedIn && !me) return; // not known yet (or the lookup failed): send nothing
   const member = signedIn && me?.signedIn ? me : null;
-  // Started for a member who has since signed out in this tab, or for someone else.
-  const startedFor = pixelState().initialisedAs;
-  if (startedFor && startedFor !== member?.who) silencePixel();
-  // A member whose saved choice is not Accept, or who never counts (admin, staff, switched off, team seat).
-  if (member && (member.choice !== 'accept' || member.excluded)) silencePixel();
+  // The member's saved choice while signed in; this device's own otherwise.
+  const choice = member ? member.choice : parseConsent(readConsentRaw())?.choice ?? null;
+
+  const started = pixelState();
+  if (started.status === 'loading' || started.status === 'ready') {
+    // Nothing more from a pixel whose person no longer says yes, never counts
+    // (admin, staff, switched off, team seat), or has changed in this tab
+    // (signed out, or someone else signed in).
+    const changed = started.initialisedAs !== null && started.initialisedAs !== member?.who;
+    if (choice === 'reject') revokePixel();
+    else if (choice !== 'accept' || member?.excluded || changed) silencePixel();
+  }
+  if (choice !== 'accept' || member?.excluded) return;
 
   const state = pixelState();
   if (state.silent || state.status === 'failed') return;
@@ -237,15 +265,15 @@ async function act(mine: number): Promise<void> {
 
 async function refresh(mine: number, force: boolean): Promise<void> {
   if (!config.bannerOn) return;
-  const device = parseConsent(readConsentRaw());
   if (!hasSessionCookie()) {
-    me = null;
+    if (me) {
+      me = null;
+      emit();
+    }
     settleLookup();
-  } else if (!device || device.choice === 'accept') {
+  } else {
     const stale = !me || Date.now() - meAt > TRACKING.pendingRecheckSeconds * 1000;
     if (force || stale) await lookup();
-  } else {
-    settleLookup();
   }
   if (mine !== nav) return; // a newer page will act
   await act(mine);
@@ -263,9 +291,11 @@ function settle(mine: number): void {
   } catch {
     /* the address stays as it was: nothing is sent from it */
   }
-  if (stripe && measuringMember()) startStripePoll();
   keepTouchIfAccepted();
-  void refresh(mine, false);
+  // Back from Stripe: once the member is known to say yes, watch for the payment.
+  void refresh(mine, false).then(() => {
+    if (stripe && measuringMember()) startStripePoll();
+  });
 }
 
 /** Every page, including the first. */
@@ -277,9 +307,10 @@ export function navigate(pathname: string, next: TrackingConfig): void {
   setTimeout(() => settle(mine), 0);
 }
 
-/** A choice saved on the server (the banner or Cookie settings). */
+/** A choice saved on the server (the banner, Cookie settings or the quiz checkbox). */
 export function consentSaved(choice: Choice): void {
-  if (choice === 'accept') void refresh(nav, true);
+  // A member's saved choice (and, after an Accept, anything it released) is read again.
+  if (choice === 'accept' || hasSessionCookie()) void refresh(nav, true);
 }
 
 function onConsentChanged(): void {

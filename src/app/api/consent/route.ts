@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   await setDeviceConsent(consent);
   if (choice === 'reject') await clearTrackingCookies(request.headers.get('x-forwarded-host') ?? request.headers.get('host'));
   // A member's Accept: their conversions held in the last hour are sent after all.
-  if (userId && recorded.member?.choice === 'accept') {
+  if (userId && choice === 'accept' && recorded.member?.choice === 'accept') {
     const memberId = userId;
     const details = clientDetails(request.headers);
     after(() => releaseHeld(memberId, details));

@@ -148,8 +148,9 @@ export function sendConversion(c: { name: MetaEventName; eventId: string; valueP
 
 /** Reject or withdrawal: tell the pixel, and send nothing more on this page load. */
 export function revokePixel(): void {
-  silent = true;
+  // Never started (or not ours): nothing to revoke, and a later Accept on this page may still start it.
   if (status === 'idle' || status === 'failed') return;
+  silent = true;
   try {
     (window as PixelWindow).fbq?.('consent', 'revoke');
   } catch {

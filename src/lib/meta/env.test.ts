@@ -4,10 +4,11 @@ import { bannerEnabled, deployment, metaPixelId, metaStatus, pixelEnabled, serve
 
 const PROD = { VERCEL_ENV: 'production', NEXT_PUBLIC_META_PIXEL_ID: '123456789012345', META_CAPI_ACCESS_TOKEN: 'EAAsecret-token' };
 
-test('deployment follows VERCEL_ENV, then NODE_ENV', () => {
+test('deployment follows VERCEL_ENV only: a production build run elsewhere is never the live site', () => {
   assert.equal(deployment({ VERCEL_ENV: 'production' }), 'production');
   assert.equal(deployment({ VERCEL_ENV: 'preview', NODE_ENV: 'production' }), 'preview');
-  assert.equal(deployment({ NODE_ENV: 'production' }), 'production');
+  assert.equal(deployment({ NODE_ENV: 'production' }), 'development');
+  assert.equal(pixelEnabled({ NODE_ENV: 'production', NEXT_PUBLIC_META_PIXEL_ID: '1234567890' }), false);
   assert.equal(deployment({}), 'development');
 });
 

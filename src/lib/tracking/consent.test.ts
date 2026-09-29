@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bannerShown, consentFromCookieString, parseConsent, quizCheckboxShown, reconcile, secondChanceShown, serializeConsent } from './consent.ts';
+import { bannerShown, consentFromCookieString, deviceChoiceAdoptable, memberChoiceCurrent, parseConsent, quizCheckboxShown, secondChanceShown, serializeConsent } from './consent.ts';
 
 const VID = '8f14e45f-ceea-467a-9c3b-1a2b3c4d5e6f';
 
@@ -25,14 +25,21 @@ test('found inside a Cookie header or document.cookie', () => {
   assert.equal(consentFromCookieString(''), null);
 });
 
-test('the newer choice wins, whichever device it came from', () => {
-  const device = { choice: 'accept' as const, at: new Date('2026-10-02T10:00:00Z'), visitorId: VID, version: 'cookie-v1' };
-  assert.equal(reconcile(device, null), 'device');
-  assert.equal(reconcile(null, { choice: 'reject', chosenAt: new Date() }), 'member');
-  assert.equal(reconcile(device, { choice: 'reject', chosenAt: new Date('2026-10-01T10:00:00Z') }), 'device');
-  assert.equal(reconcile(device, { choice: 'reject', chosenAt: new Date('2026-10-03T10:00:00Z') }), 'member');
-  assert.equal(reconcile(device, { choice: 'accept', chosenAt: new Date('2026-10-02T10:00:00.500Z') }), 'same');
-  assert.equal(reconcile(null, null), 'none');
+test('a device\'s choice becomes the member\'s only if made signed out or by them, and newer', () => {
+  const at = new Date('2026-10-02T10:00:00Z');
+  assert.equal(deviceChoiceAdoptable({ userId: null, at }, 'u1', null), true, 'the landing page before signing up');
+  assert.equal(deviceChoiceAdoptable({ userId: 'u1', at }, 'u1', { choice: 'reject', chosenAt: new Date('2026-10-01T10:00:00Z') }), true);
+  assert.equal(deviceChoiceAdoptable({ userId: 'u2', at }, 'u1', null), false, 'someone else\'s choice on a shared device');
+  assert.equal(deviceChoiceAdoptable(null, 'u1', null), false, 'a cookie with no record behind it');
+  assert.equal(deviceChoiceAdoptable({ userId: null, at }, 'u1', { choice: 'reject', chosenAt: at }), false, 'the same moment is not newer');
+  assert.equal(deviceChoiceAdoptable({ userId: null, at }, 'u1', { choice: 'reject', chosenAt: new Date('2026-10-03T10:00:00Z') }), false);
+});
+
+test('a member\'s saved choice lasts 6 months', () => {
+  const now = new Date('2027-01-01T00:00:00Z');
+  assert.equal(memberChoiceCurrent(new Date('2026-12-01T00:00:00Z'), now), true);
+  assert.equal(memberChoiceCurrent(new Date('2026-07-10T00:00:00Z'), now), true);
+  assert.equal(memberChoiceCurrent(new Date('2026-06-01T00:00:00Z'), now), false);
 });
 
 test('the second-chance checkbox shows until someone says yes', () => {
