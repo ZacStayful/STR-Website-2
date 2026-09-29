@@ -17,6 +17,7 @@ import { tailoringForMember } from "@/lib/tailoring/server";
 import { activeCriteria, criterionForQuestion, modeOf, NOT_APPLIED, wantsFor } from "@/lib/tailoring/criteria";
 import { isSwitchable } from "@/lib/tailoring/profile";
 import { FilterModeSwitch } from "./_components/FilterModeSwitch";
+import { DEFAULT_FINANCE } from "@/lib/listing/deal";
 
 export const metadata: Metadata = {
   title: "Your profile — Stayful Intelligence",
@@ -190,10 +191,18 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
                   </select>
                 </label>
               ))}
-              <label className="block text-sm">
-                <span className="font-medium text-foreground">Mortgage term (years)</span>
-                <input name="f_termYears" type="number" min={1} max={40} step={1} defaultValue={g.finance.termYears} className="mt-1 h-11 w-full rounded-lg border border-border bg-input/50 px-3 text-sm" />
-              </label>
+              {/* Batch 16b: the figures use an interest-only mortgage, so the term is hidden (the stored answer is kept; the repayment formula would read it). */}
+              {DEFAULT_FINANCE.mortgageType === "repayment" ? (
+                <label className="block text-sm">
+                  <span className="font-medium text-foreground">Mortgage term (years)</span>
+                  <input name="f_termYears" type="number" min={1} max={40} step={1} defaultValue={g.finance.termYears} className="mt-1 h-11 w-full rounded-lg border border-border bg-input/50 px-3 text-sm" />
+                </label>
+              ) : (
+                <p className="block text-sm">
+                  <span className="font-medium text-foreground">Mortgage term</span>
+                  <span className="mt-1 block text-muted-foreground">Your figures use an interest-only mortgage, so no term applies.</span>
+                </p>
+              )}
               <label className="block text-sm">
                 <span className="font-medium text-foreground">Target yield (%)</span>
                 <input name="f_targetYieldPct" type="number" min={1} max={50} step={0.5} defaultValue={g.finance.targetYieldPct} className="mt-1 h-11 w-full rounded-lg border border-border bg-input/50 px-3 text-sm" />

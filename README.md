@@ -355,6 +355,36 @@ ways in get their own streams. In this order:
 9. **Market-warm** has its own switch now (`MARKET_WARM_ENABLED=false`
    stops the 04:45 cron) and `?dry=1`.
 
+### 12. Interest-only mortgages (Batch 16b)
+
+Every purchase deal is priced on an interest-only mortgage: the monthly
+payment is the loan × the rate ÷ 12, and the loan is repaid when the
+property is sold or refinanced. The one setting is
+`DEFAULT_FINANCE.mortgageType` in `src/lib/listing/deal.ts` (`interest_only`;
+the repayment formula is kept behind `repayment` and nothing selects it).
+`mortgagePayment` is the one function the deal maths, "most you can pay"
+(`maxPriceForProfit`, its exact inverse), Batch 17's refinance and Batch
+28's buy-to-let read. Cash flow, cash-on-cash, the profit range on cards,
+"most you can pay", the offer note, the Explorer verdict, the report page,
+its PDFs and the reports API all move; cash in, stamp duty, setup, the
+streams, qualification and every rent-to-rent figure do not. Nothing in the
+schema or `billing_settings` changes, nothing is added to `ACCESS_COLUMNS`,
+and the mortgage a member types into `/estimate` or `/str-report` stays as
+entered. Every stored purchase deal (marketplace deals, picks, Explorer
+checks, saved reports) reads at the current type wherever it is parsed
+(`atCurrentMortgage`, `atCurrentMortgageResult`), so no screen shows a
+repayment figure beside an interest-only one. Once, after deploying:
+
+1. **Dry-run the backfill:** "Dry-run the interest-only backfill" on
+   `/admin/deals`, or `/api/internal/mortgage-backfill?dry=1`: the rows to
+   rewrite per table, the live sale deals on both formulas (cash flow and
+   the profit check at each minimum in force) and five worked examples.
+   Writes nothing.
+2. **Run it:** "Run the interest-only backfill" rewrites the stored deal
+   JSON to match what the screens already show (no spend; press again if
+   it runs out of time; a second run finds nothing). Recorded in
+   `marketplace_runs` as `mortgage_backfill`.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,

@@ -94,6 +94,7 @@ import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { SourceListingCard } from "./_components/SourceListingCard";
 import { DealPanel } from "./_components/DealPanel";
+import { atCurrentMortgageResult } from "@/lib/analysis/deal-figures";
 import { CashflowChart } from "./_components/CashflowChart";
 import { CompetitorsPanel } from "./_components/CompetitorsPanel";
 import { DueDiligencePanel } from "./_components/DueDiligencePanel";
@@ -968,7 +969,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   // ─── Report State ───────────────────────────────────────────────
 
   if (result) {
-    const r = result;
+    // A report saved before Batch 16b reads at the current (interest-only) mortgage, its months rebuilt; a current one is untouched.
+    const r = atCurrentMortgageResult(result);
     const f = r.financials;
     const v = r.verdict;
     const risk = r.risk;
@@ -1997,7 +1999,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                   <CashflowChart
                     monthlyRevenue={r.shortLet.monthlyRevenue}
                     fixedPcm={r.deal.kind === "rent-to-rent" ? r.deal.advertisedRentPcm : r.deal.mortgageMonthly}
-                    fixedLabel={r.deal.kind === "rent-to-rent" ? "rent" : "mortgage"}
+                    fixedLabel={r.deal.kind === "rent-to-rent" ? "rent" : r.deal.mortgageType === "repayment" ? "mortgage" : "interest-only mortgage"}
                     billsPcm={r.deal.billsPcm}
                   />
                 )}

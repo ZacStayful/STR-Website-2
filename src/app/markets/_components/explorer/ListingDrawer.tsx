@@ -266,7 +266,7 @@ export function ListingDrawer({
                       deal.kind === "purchase"
                         ? [
                             { k: "Running costs", v: `${costsPct}% of revenue + ${gbp(DEFAULT_COSTS.billsPcm)} bills a month` },
-                            { k: "Mortgage", v: `${deal.depositPct}% deposit · ${deal.mortgageRatePct}% · ${deal.termYears} yrs` },
+                            { k: "Mortgage", v: `${deal.depositPct}% deposit · ${deal.mortgageRatePct}% · ${deal.mortgageType === "repayment" ? `${deal.termYears} yrs` : "interest-only"}` },
                             { k: "Stamp duty", v: gbp(deal.stampDuty) },
                             { k: "Setup budget", v: gbp(deal.setupCost) },
                             { k: "Net yield", v: `${deal.netYieldPct}%` },
