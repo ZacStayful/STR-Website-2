@@ -84,8 +84,8 @@ export const ACTIVITY_KINDS = {
   reminder_acted: inApp('Acted on a reminder'),
   reminder_shown: recordOnly('Was shown a reminder'),
 
-  // Batch 12: the profile quiz (src/lib/profile/activity.ts). Question ids
-  // only, never an answer.
+  // Batch 12: the profile quiz (logged from src/lib/profile/server.ts).
+  // Question ids only, never an answer.
   profile_started: inApp('Started the profile quiz'),
   profile_answered: inApp('Answered a profile question'),
   profile_not_sure: inApp('Said "not sure" to a profile question'),
@@ -122,6 +122,15 @@ export const ACTIVITY_KINDS = {
   project_line_add: inApp('Added a line to a Project deal’s works'),
   project_lock: inApp('Locked their figures for a Project deal'),
   project_unlock: inApp('Unlocked their figures for a Project deal'),
+
+  // Batch 18: feedback and announcements (src/lib/feedback). Ids, the kind of
+  // report and counts only: never what a member wrote or the page they were on.
+  feedback_opened: inApp('Opened the feedback form'),
+  feedback_sent: inApp('Sent a bug report or idea'),
+  announcement_shown: recordOnly('Was shown an announcement'),
+  announcement_dismissed: inApp('Dismissed an announcement'),
+  announcement_clicked: inApp('Opened an announcement'),
+  feedback_email_click: recordOnly('Opened their feedback from a status email'),
 
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),

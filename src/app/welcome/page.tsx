@@ -8,6 +8,8 @@ import { rankedAreasForQuiz } from "@/lib/onboarding/server";
 import { isQuestionId, questionsFor } from "@/lib/profile/questions";
 import { creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progressView } from "@/lib/profile/server";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
+import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
+import { MembersFooter } from "@/components/feedback/MembersFooter";
 import { Quiz } from "./Quiz";
 
 export const dynamic = "force-dynamic";
@@ -72,6 +74,11 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
           todayHref={HOME_PATH}
         />
       </div>
+      {/* Batch 18: the quiz is the first screen a new member sees, so they can tell us if it goes wrong. */}
+      <div className="mx-auto mt-10 w-full max-w-lg">
+        <MembersFooter />
+      </div>
+      <FeedbackDialog />
     </main>
   );
 }

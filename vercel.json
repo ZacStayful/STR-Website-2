@@ -124,6 +124,10 @@
 		{
 			"path": "/api/internal/activity-retention",
 			"schedule": "35 2 * * *"
+		},
+		{
+			"path": "/api/internal/feedback-retention",
+			"schedule": "45 2 * * *"
 		}
 	]
 }

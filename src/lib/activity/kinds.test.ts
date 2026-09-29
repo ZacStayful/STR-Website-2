@@ -54,3 +54,16 @@ test('subscription changes the member made become activity; the rest do not', ()
   assert.equal(planActivityKind('past_due', 'stripe'), null);
   assert.equal(planActivityKind('recovered', 'stripe'), null);
 });
+
+test("Batch 18's kinds: taps count towards weekly active, what is only shown or clicked in an email does not", () => {
+  for (const k of ['feedback_opened', 'feedback_sent', 'announcement_dismissed', 'announcement_clicked']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), true, k);
+    assert.equal(isCounted(k), true, k);
+  }
+  for (const k of ['announcement_shown', 'feedback_email_click']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isCounted(k), false, k);
+  }
+});

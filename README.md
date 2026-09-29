@@ -460,6 +460,63 @@ Members' own working on a Project deal (edit, save, lock) is free and
 private to them: a teammate never sees it, and a Full analysis report
 shows the reader's own locked figures beside ours without storing them.
 
+### 14. Switch on feedback and announcements (Batch 18)
+
+Members can report a bug or suggest an idea from any members-only page (with
+screenshots), see where each has got to on "Your feedback", and get an email
+when its status changes. Admin sorts them on `/admin/feedback` and tells
+members about new features and fixes with a banner from
+`/admin/announcements`. In this order:
+
+1. **Before merging, run `supabase/schema.sql`** (the "Batch 18: feedback
+   and announcements" section; previews use the live database). It is
+   additive and idempotent: new service-role tables `feedback_reports`,
+   `feedback_screenshots`, `feedback_status_emails`, `announcements` and
+   `announcement_views`; the `feedback_submit`, `feedback_status_claim` and
+   `announcement_stats` functions; six `billing_settings` rows
+   (`feedback_daily_limit` 10, `feedback_max_screenshots` 3,
+   `feedback_screenshot_max_mb` 5, `feedback_screenshot_retention_days` 90,
+   `feedback_admin_email` zac@stayful.co.uk, `announcement_max_age_days`
+   30); and the private storage bucket `feedback-screenshots`. Nothing is
+   added to `ACCESS_COLUMNS` or `profiles`. Until it is run the form says
+   feedback isn't switched on yet, the admin pages say to run it, and no
+   banner shows.
+2. **Check the bucket is private:** `select id, public, file_size_limit,
+   allowed_mime_types from storage.buckets where id = 'feedback-screenshots';`
+   gives `public` = `false`. If the run printed a notice ("The
+   feedback-screenshots bucket was not created") instead, create it by
+   hand: Storage → New bucket → `feedback-screenshots`, Public **off**,
+   allowed types `image/jpeg, image/png, image/webp`, 20 MB limit. Then
+   `select policyname, cmd, roles, qual from pg_policies where schemaname =
+   'storage';` must show nothing that opens every bucket to members (there
+   were no storage policies at all when this batch was built). Only the service role reads
+   the bucket; admin sees an image through a link that lasts 5 minutes, and
+   members never get one.
+3. **Vercel:** Settings → Environment Variables → "Automatically expose
+   System Environment Variables" on, so each report records the app version
+   (`VERCEL_GIT_COMMIT_SHA`); without it the version reads "unknown" and
+   nothing else changes. `RESEND_API_KEY` and `EMAIL_FROM` are already set
+   for the other emails; without them a report is still saved, admin shows
+   "email to admin not sent yet", and the nightly run sends it once they
+   are set (for reports up to 3 days old).
+4. **After the deploy:** as a member, send a bug with a phone screenshot and
+   an idea without one ("Feedback" in the header, or "Send feedback" at the
+   foot of any page). Both reach zac@stayful.co.uk (a reply goes to the
+   member) and `/admin/feedback`. Open one, choose Planned with a line for
+   the member, **Preview emails**, then **Save**: the member gets one email,
+   and "Your feedback" (Account → More) shows the status and the line.
+5. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/feedback-retention` (02:45 UTC). `?dry=1` counts admin
+   emails still to send, screenshots past the retention period or without
+   their report, and the oldest image kept, and changes nothing.
+6. **Announcements:** `/admin/announcements` → New announcement; the
+   preview is what members see. Publish shows it to every member who joined
+   before then (free, paid and team) for 30 days, until they tap Dismiss or
+   "Take a look".
+7. **Privacy:** the privacy policy's paragraph on feedback (what a report
+   keeps, and that screenshots are deleted after 90 days) was drafted for
+   this batch. Have it checked before merging.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -487,6 +544,10 @@ which are required, and what breaks without them.
 | `src/app/p/d` | Where a daily-email teaser's "Yes, more like this" / "Not for me" lands (public, keyed on the send's own token): a GET writes nothing, one confirming button records a Keep or a Pass |
 | `src/app/admin/demand` | Demand vs supply (Batch 15): per postcode area × kind × house / flat, the members and profiles that want it beside the live deals, whether the sweep or the demand-led searches cover it, and the gap; this month's spend against the cap, the next pass's plan, the settings and the latest searches. Rules in `src/lib/sourcing-demand` (pure, tested), reads and writes in `src/lib/sourcing-demand/server.ts` (below) |
 | `src/app/admin/weekly-active` | Weekly active against its targets, how members use the app, the per-member drill-down with the "Exclude from metrics" switch, the backfill and the retention count (below) |
+| `src/lib/feedback` | Feedback and announcements (Batch 18): the rules (`rules.ts`, `announcements.ts`; pure, tested), every fixed number (`config.ts`; the limits admin can change are `billing_settings` rows, edited on `/admin/feedback`), sending a report and the email to the admin address (`server.ts`), the private screenshot bucket (`storage.ts`), admin's reads and the status emails (`admin-server.ts`), the banner's reads and writes (`announcements-server.ts`) and the nightly run (`retention.ts`). The form is `src/components/feedback` (any page opens it with `openFeedback()`); the banner is `src/components/announcements` |
+| `src/app/account/feedback` | "Your feedback": the member's own reports and where each has got to, with the line admin sent. Never the private note, the page, the device or the screenshots |
+| `src/app/admin/feedback` | Feedback (Batch 18): totals by type and status, submissions per week, the list with its filters, and the settings; each report with its screenshots, what was captured with it, the status and its emails (Preview, then Save), a private note and duplicates |
+| `src/app/admin/announcements` | Announcements: write, preview and publish the "What's new" banner, and for each one how many members were shown it, dismissed it or tapped "Take a look" |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
@@ -531,6 +592,14 @@ own pick and Today and its own day's charge; no deal is told twice. When the
 credit runs out part-way the later profiles are left out and named. Once a
 member has two profiles, change lines, the out-of-credit letter and Your week
 name the profile each thing is for.
+
+Feedback emails (Batch 18) are outside the cap too, like receipts: the email
+to the admin address for each report, and the email a member gets when
+admin marks their report Planned, Fixed or Built, or Not doing (at most once
+for each status; `feedback_status_emails`). They are built in
+`src/lib/email/feedback.ts` and sent with their own idempotency keys, never
+through `notification_sends`, so they never use up a member's daily email.
+The status email's dry run is **Preview emails** on `/admin/feedback/<id>`.
 
 ## Text alerts
 

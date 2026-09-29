@@ -75,10 +75,11 @@ test('joining a team lands on its Leads only when it has a funnel', () => {
 });
 
 test('Account › More: Team for account owners only, Leads only for a team with a funnel', () => {
-  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: false }), ['team', 'extension', 'markets', 'picks']);
-  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: true }), ['team', 'leads', 'extension', 'markets', 'picks']);
-  assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: true }), ['leads', 'extension', 'markets', 'picks']);
-  assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: false }), ['extension', 'markets', 'picks']);
+  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: false }), ['team', 'extension', 'markets', 'picks', 'feedback']);
+  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: true }), ['team', 'leads', 'extension', 'markets', 'picks', 'feedback']);
+  assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: true }), ['leads', 'extension', 'markets', 'picks', 'feedback']);
+  assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: false }), ['extension', 'markets', 'picks', 'feedback']);
+  assert.equal(ACCOUNT_MORE.feedback.href, '/account/feedback', 'Batch 18: everyone, team members included, can see what they have sent');
   assert.equal(ACCOUNT_MORE.leads.href, LEADS_NAV.href, 'the same door as the nav');
   for (const [key, link] of Object.entries(ACCOUNT_MORE)) {
     assert.ok(link.href.startsWith('/') && !link.href.startsWith('//'), `${key} is internal`);

@@ -16,6 +16,10 @@ import { requireProfileStart } from "@/lib/profile/server";
 import { profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import type { PillProfiles } from "@/components/ProfilePill";
+import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
+import { MembersFooter } from "@/components/feedback/MembersFooter";
+import { AnnouncementBanner } from "@/components/announcements/AnnouncementBanner";
+import { unseenAnnouncementsFor } from "@/lib/feedback/announcements-server";
 
 /**
  * Server shell for every members-only surface: resolves the member, their
@@ -64,6 +68,9 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
   // read feeds the Profile pill. It throws a redirect, so it sits outside
   // the try below.
   const profile = await requireProfileStart(user.id, redirectTo);
+  // Batch 18: what's new, for this member. Started now so it runs alongside
+  // the reads below; it never rejects, and shows nothing on any failure.
+  const announcementsRead = unseenAnnouncementsFor(user.id, user.created_at ?? null);
   try {
     // For a team member this is the team's balance, which is what they spend.
     credit = await teamCreditSnapshot({ id: user.id, admin });
@@ -98,12 +105,18 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
     }
   }
 
+  const announcements = await announcementsRead;
+
   return (
     <CreditProvider initial={credit}>
       <AppSwitcher active={active} admin={admin} leads={leads} saved={saved} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
       <CreditBanner />
+      <AnnouncementBanner items={announcements} />
       <VisitHeartbeat />
       {children}
+      {/* Batch 18: the way to tell us about a bug or an idea, on every members-only page. */}
+      <MembersFooter />
+      <FeedbackDialog />
     </CreditProvider>
   );
 }
