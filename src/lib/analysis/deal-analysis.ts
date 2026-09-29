@@ -285,6 +285,8 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
     if (!dealVisible(deal.live_since, visibility.cutoffIso)) return fail('missing');
     if (deal.status === 'retired') return fail('gone');
     if (deal.status === 'pending_verify') return fail('checking');
+    // On the shortlist for its own check (Batch 16), or its Project check (Batch 17): nothing to analyse yet.
+    if (deal.status === 'pending_check') return fail('held');
   }
   const withPmi = Boolean(input.withPmi);
   if (withPmi && !enhancedEnabled(true)) return fail('pmi_unavailable');

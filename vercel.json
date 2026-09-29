@@ -110,6 +110,14 @@
 			"schedule": "20 4 * * *"
 		},
 		{
+			"path": "/api/internal/project-checks",
+			"schedule": "25,35,45,55 4 * * *"
+		},
+		{
+			"path": "/api/internal/project-checks",
+			"schedule": "5,15,25,35,45,55 5 * * *"
+		},
+		{
 			"path": "/api/internal/marketplace-recheck",
 			"schedule": "30 * * * *"
 		},

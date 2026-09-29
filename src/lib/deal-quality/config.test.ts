@@ -8,7 +8,7 @@ test('no row at all: the decided defaults (20 checks, £1 a day, 6/8/6, 12 comps
   assert.deepEqual(parseDealConfidence(undefined), DEFAULT_DEAL_CONFIDENCE);
   assert.equal(DEFAULT_DEAL_CHECKS.perDay, 20);
   assert.equal(DEFAULT_DEAL_CHECKS.dailyCapPence, 100);
-  assert.deepEqual(DEFAULT_DEAL_CHECKS.split, { top60: 6, low_entry: 8, r2r: 6 });
+  assert.deepEqual(DEFAULT_DEAL_CHECKS.split, { top60: 6, low_entry: 8, r2r: 6, project: 5 }, 'Batch 17 adds the Project candidates’ five');
   assert.equal(DEFAULT_DEAL_COMPS.targetCount, 12);
   assert.deepEqual(DEFAULT_DEAL_COMPS.radiiKm, [0.8, 2, 5, 12, 25]);
   assert.equal(DEFAULT_DEAL_CONFIDENCE.highPct, 20);
@@ -19,7 +19,7 @@ test('stored values are read, objects or JSON strings, field by field', () => {
   const c = parseDealChecks({ perDay: 10, dailyCapPence: '250', split: { top60: 4, low_entry: 10, r2r: 6 } });
   assert.equal(c.perDay, 10);
   assert.equal(c.dailyCapPence, 250);
-  assert.deepEqual(c.split, { top60: 4, low_entry: 10, r2r: 6 });
+  assert.deepEqual(c.split, { top60: 4, low_entry: 10, r2r: 6, project: 5 }, 'a row from before Batch 17: the Project share at its default');
   assert.equal(c.maxCallsPerCheck, DEFAULT_DEAL_CHECKS.maxCallsPerCheck);
   const s = parseDealComps(JSON.stringify({ targetCount: 10, radiiKm: [1, 3, 9], maxRadiusKm: 9 }));
   assert.equal(s.targetCount, 10);

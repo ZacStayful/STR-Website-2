@@ -30,7 +30,7 @@ test('the decided figures are the defaults (Zac’s BRRR guide, 28 Sep 2026)', (
   assert.equal(DEFAULT_PROJECT_COSTS.buyingCosts, 2_500);
   assert.equal(DEFAULT_PROJECT_COSTS.buyingCostsBridging, 3_500);
   assert.equal(DEFAULT_PROJECT_CHECKS.enabled, false, 'the hold starts off');
-  assert.deepEqual(DEFAULT_PROJECT_ALLOWANCE, { photoChecks: 5, capPence: 150 });
+  assert.deepEqual(DEFAULT_PROJECT_ALLOWANCE, { photoChecks: 5, capPence: 250 });
 });
 
 test('a missing, bad or out-of-bounds field keeps its default', () => {

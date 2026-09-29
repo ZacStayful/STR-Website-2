@@ -16,6 +16,8 @@ import { runDealChecks } from '@/lib/deal-quality/checks-run';
 import { retireUncheckedLive, runDealRecheck } from '@/lib/deal-quality/recheck-comps-run';
 import { runMortgageBackfill } from '@/lib/listing/mortgage-backfill-run';
 import { DEAL_CHECKS_KEY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '@/lib/deal-quality/config';
+import { parseProjectAllowance, parseProjectChecks, PROJECT_CHECKS_KEY, type ProjectChecksSettings } from '@/lib/project/config';
+import { runProjectChecks } from '@/lib/project/check-run';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -154,17 +156,70 @@ export async function updateDealChecksAction(formData: FormData): Promise<void> 
   const next: DealChecksSettings = {
     perDay: whole('perDay'),
     dailyCapPence: whole('dailyCapPence'),
-    split: { top60: whole('splitTop60'), low_entry: whole('splitLowEntry'), r2r: whole('splitR2r') },
+    split: { top60: whole('splitTop60'), low_entry: whole('splitLowEntry'), r2r: whole('splitR2r'), project: whole('splitProject') },
     maxCallsPerCheck: whole('maxCallsPerCheck'),
     validDays: whole('validDays'),
     shortlistExpiryDays: whole('shortlistExpiryDays'),
     recheckCeilingPence: whole('recheckCeilingPence'),
   };
   const parsed = parseDealChecks(next);
-  const same = (['perDay', 'dailyCapPence', 'maxCallsPerCheck', 'validDays', 'shortlistExpiryDays', 'recheckCeilingPence'] as const).every((k) => parsed[k] === next[k]) && parsed.split.top60 === next.split.top60 && parsed.split.low_entry === next.split.low_entry && parsed.split.r2r === next.split.r2r;
+  // Batch 17: the Project photo checks' own allowance lives in the same row (project/config.ts parseProjectAllowance).
+  const allowance = { projectPhotoChecks: whole('projectPhotoChecks'), projectCapPence: whole('projectCapPence') };
+  const parsedAllowance = parseProjectAllowance(allowance);
+  const same =
+    (['perDay', 'dailyCapPence', 'maxCallsPerCheck', 'validDays', 'shortlistExpiryDays', 'recheckCeilingPence'] as const).every((k) => parsed[k] === next[k]) &&
+    parsed.split.top60 === next.split.top60 && parsed.split.low_entry === next.split.low_entry && parsed.split.r2r === next.split.r2r && parsed.split.project === next.split.project &&
+    parsedAllowance.photoChecks === allowance.projectPhotoChecks && parsedAllowance.capPence === allowance.projectCapPence;
   if (!same) redirect('/admin/deals?msg=bad_deal_checks');
-  await updateBillingSetting(DEAL_CHECKS_KEY, parsed);
+  await updateBillingSetting(DEAL_CHECKS_KEY, { ...parsed, projectPhotoChecks: parsedAllowance.photoChecks, projectCapPence: parsedAllowance.capPence });
   redirect('/admin/deals?msg=deal_checks_saved');
+}
+
+// ── Batch 17: the Project checks ──
+
+/** The dry run keeps its lists (the cookie drops arrays) as one line each. */
+function withProjectLists(body: Record<string, unknown>): Record<string, unknown> {
+  const join = (k: string) => (Array.isArray(body[k]) ? { [k]: (body[k] as unknown[]).map(String).join(' | ') } : {});
+  return { ...body, ...join('wouldPrep'), ...join('candidates') };
+}
+
+/**
+ * "Dry run" shows the day's allowance and spend line, what waits and what a
+ * pass would do, spending nothing; "Run" makes one pass now (at most one
+ * photo check), whatever project_checks.enabled says. House spend.
+ */
+export async function runProjectChecksAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runProjectChecks({ dry, triggeredBy: user.email ?? 'admin' });
+  await finish(dry ? 'project-checks-dry' : 'project-checks', withProjectLists(result.body as Record<string, unknown>));
+}
+
+/**
+ * billing_settings.project_checks from the form: whole numbers within the
+ * bounds in src/lib/project/config.ts. A value the bounds refuse is
+ * reported, never quietly replaced by the default.
+ */
+export async function updateProjectChecksAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const whole = (name: string) => {
+    const raw = String(formData.get(name) ?? '').replace(/[,\s]/g, '');
+    return /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  };
+  const effort = String(formData.get('effort') ?? '');
+  const next: ProjectChecksSettings = {
+    enabled: formData.get('enabled') === 'on',
+    soldLookupsPerDay: whole('soldLookupsPerDay'),
+    giveUpDays: whole('giveUpDays'),
+    maxPhotos: whole('maxPhotos'),
+    reuseDays: whole('reuseDays'),
+    planningChecks: formData.get('planningChecks') === 'on',
+    effort: effort as ProjectChecksSettings['effort'],
+  };
+  const parsed = parseProjectChecks(next);
+  if ((Object.keys(next) as (keyof ProjectChecksSettings)[]).some((k) => parsed[k] !== next[k])) redirect('/admin/deals?msg=bad_project_checks');
+  await updateBillingSetting(PROJECT_CHECKS_KEY, parsed);
+  redirect('/admin/deals?msg=project_checks_saved');
 }
 
 export async function retireDealAction(formData: FormData): Promise<void> {

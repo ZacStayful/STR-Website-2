@@ -16,7 +16,8 @@ import 'server-only';
  *     The installed SDK types only know the array form, so the scalar is sent
  *     as a body field they do not describe. If the whole chain refuses, the
  *     listing is skipped for the day.
- *   - A 45-second timeout, no automatic retries: one call per cron fire.
+ *   - A 45-second timeout (less when the caller's deadline is nearer), no
+ *     automatic retries: one call per cron fire.
  *   - A reply cut at max_tokens, or one that fails validation, is skipped for
  *     the day; never guessed at.
  *   - When Anthropic cannot fetch a photo URL, the server fetches the images
@@ -26,14 +27,18 @@ import Anthropic from '@anthropic-ai/sdk';
 import { meter } from '../credit/meter';
 import type { PhotoFindings } from './costing';
 import { PHOTO_CHECK_SYSTEM, photoCheckPrompt, photoCheckSchema, validatePhotoAnswer } from './photo-check-schema';
-import { hopsOf, PHOTO_CHECK_MODEL, photoCheckCostPence, unitsFor, type PhotoCheckUsage, type UsageLike } from './photo-check-usage';
+import { hopsOf, MAX_OUTPUT_TOKENS, PHOTO_CHECK_MODEL, photoCheckCostPence, unitsFor, type PhotoCheckUsage, type UsageLike } from './photo-check-usage';
 
 export { PHOTO_CHECK_MODEL };
 
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 const TIMEOUT_MS = 45_000;
-const MAX_TOKENS = 16_000;
+const MAX_TOKENS = MAX_OUTPUT_TOKENS;
 const IMAGE_FETCH_MS = 8_000;
+/** Time kept back from the caller's deadline, for writing the outcome. */
+const DEADLINE_MARGIN_MS = 2_000;
+/** Below this, a call is not started: it could not finish in time. */
+const MIN_CALL_MS = 15_000;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const INLINE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
 type InlineType = (typeof INLINE_TYPES)[number];
@@ -47,6 +52,8 @@ export interface PhotoCheckInput {
   bathrooms: number | null;
   propertyType: string | null;
   effort: PhotoCheckEffort;
+  /** When the caller must be done (epoch ms): each call's timeout ends before it. */
+  deadline?: number;
 }
 
 export type PhotoCheckOutcome =
@@ -98,7 +105,14 @@ function imageFetchError(err: unknown): boolean {
 
 type ImageBlock = { type: 'image'; source: { type: 'url'; url: string } | { type: 'base64'; media_type: InlineType; data: string } };
 
-async function ask(client: Anthropic, images: ImageBlock[], input: PhotoCheckInput, counts: { photos: number; floorplans: number }) {
+/** The time a call may take: the timeout, or less when the caller's deadline is nearer; 0 when too little is left to start one. */
+function callTimeout(deadline: number | undefined): number {
+  if (deadline === undefined) return TIMEOUT_MS;
+  const left = deadline - Date.now() - DEADLINE_MARGIN_MS;
+  return left >= MIN_CALL_MS ? Math.min(TIMEOUT_MS, left) : 0;
+}
+
+async function ask(client: Anthropic, images: ImageBlock[], input: PhotoCheckInput, counts: { photos: number; floorplans: number }, timeout: number) {
   const params = {
     model: PHOTO_CHECK_MODEL,
     max_tokens: MAX_TOKENS,
@@ -114,7 +128,7 @@ async function ask(client: Anthropic, images: ImageBlock[], input: PhotoCheckInp
     // The scalar form (Anthropic picks the fallback by refusal category); see the header.
     fallbacks: 'default',
   };
-  return client.beta.messages.create(params as unknown as Parameters<typeof client.beta.messages.create>[0], { timeout: TIMEOUT_MS, maxRetries: 0 }) as Promise<Anthropic.Beta.Messages.BetaMessage>;
+  return client.beta.messages.create(params as unknown as Parameters<typeof client.beta.messages.create>[0], { timeout, maxRetries: 0 }) as Promise<Anthropic.Beta.Messages.BetaMessage>;
 }
 
 export function photoCheckConfigured(): boolean {
@@ -126,13 +140,15 @@ export async function runPhotoCheck(input: PhotoCheckInput): Promise<PhotoCheckO
   if (!photoCheckConfigured()) return { ok: false, reason: 'not_configured', detail: null, ...none };
   const urls = [...input.photos, ...input.floorplans];
   if (input.photos.length === 0) return { ok: false, reason: 'no_photos', detail: null, ...none };
+  const first = callTimeout(input.deadline);
+  if (first === 0) return { ok: false, reason: 'unavailable', detail: 'no_time', ...none };
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: TIMEOUT_MS, maxRetries: 0 });
 
   let inline = false;
   let used = { photos: [...input.photos], floorplans: [...input.floorplans] };
   let message: Anthropic.Beta.Messages.BetaMessage;
   try {
-    message = await ask(client, urls.map((url) => ({ type: 'image', source: { type: 'url', url } })), input, { photos: used.photos.length, floorplans: used.floorplans.length });
+    message = await ask(client, urls.map((url) => ({ type: 'image', source: { type: 'url', url } })), input, { photos: used.photos.length, floorplans: used.floorplans.length }, first);
   } catch (err) {
     if (!imageFetchError(err)) return { ok: false, reason: 'unavailable', detail: err instanceof Error ? err.message.slice(0, 200) : null, ...none };
     // Anthropic could not fetch a photo: fetch them here, in memory, and send them inline once.
@@ -141,10 +157,12 @@ export async function runPhotoCheck(input: PhotoCheckInput): Promise<PhotoCheckO
     const photos = fetched.slice(0, input.photos.length).filter((x) => x.img !== null);
     const plans = fetched.slice(input.photos.length).filter((x) => x.img !== null);
     if (photos.length === 0) return { ok: false, reason: 'unavailable', detail: 'images_unreachable', ...none };
+    const again = callTimeout(input.deadline);
+    if (again === 0) return { ok: false, reason: 'unavailable', detail: 'no_time', ...none };
     inline = true;
     used = { photos: photos.map((x) => x.url), floorplans: plans.map((x) => x.url) };
     try {
-      message = await ask(client, [...photos, ...plans].map((x) => ({ type: 'image', source: { type: 'base64', ...x.img! } })), input, { photos: used.photos.length, floorplans: used.floorplans.length });
+      message = await ask(client, [...photos, ...plans].map((x) => ({ type: 'image', source: { type: 'base64', ...x.img! } })), input, { photos: used.photos.length, floorplans: used.floorplans.length }, again);
     } catch (retryErr) {
       return { ok: false, reason: 'unavailable', detail: retryErr instanceof Error ? retryErr.message.slice(0, 200) : null, ...none };
     }

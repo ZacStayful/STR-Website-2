@@ -31,7 +31,7 @@ import type { Confidence } from '../listing/screen.ts';
 import type { DataQuality, ShortLetData } from '../types.ts';
 import { DEAL_COMPS_SOURCE } from '../market/quality.ts';
 import { typeBucket, type SubjectKind } from './comps.ts';
-import { STREAMS, type Stream } from './streams.ts';
+import { DAY_STREAMS, perStream, STREAMS, type Stream } from './streams.ts';
 import type { DealChecksSettings } from './config.ts';
 
 export const DEAL_CHECKS_KIND = 'deal_checks';
@@ -140,19 +140,24 @@ export function shortlistExpiryAt(shortlistedAt: Date, s: Pick<DealChecksSetting
  * than it has waiting, and what a stream cannot use passes to the others in
  * the split's order (top areas, low entry, rent-to-rent). Never more than
  * `left`, the checks the day still allows.
+ *
+ * Batch 17: the Project stream is counted on its own (DAY_STREAMS): at most
+ * `projectLeft` (its share of the day less what today's runs checked), never
+ * from `left` and never sharing the spare.
  */
-export function allocateSlots(split: DealChecksSettings['split'], waiting: Record<Stream, number>, left: number): Record<Stream, number> {
-  const out = { top60: 0, low_entry: 0, r2r: 0 } as Record<Stream, number>;
+export function allocateSlots(split: DealChecksSettings['split'], waiting: Record<Stream, number>, left: number, projectLeft = 0): Record<Stream, number> {
+  const out = perStream(() => 0);
   let spare = Math.max(0, Math.floor(left));
-  for (const s of STREAMS) {
+  for (const s of DAY_STREAMS) {
     out[s] = Math.max(0, Math.min(split[s], waiting[s] ?? 0, spare));
     spare -= out[s];
   }
-  for (const s of STREAMS) {
+  for (const s of DAY_STREAMS) {
     const more = Math.max(0, Math.min((waiting[s] ?? 0) - out[s], spare));
     out[s] += more;
     spare -= more;
   }
+  out.project = Math.max(0, Math.min(split.project, waiting.project ?? 0, Math.floor(projectLeft)));
   return out;
 }
 
@@ -182,7 +187,7 @@ export interface DaySpend {
 
 /** What today's runs (every checking job) have used of the day's budget. */
 export function daySpend(runs: readonly CheckRunLike[], dayStart: Date): DaySpend {
-  const out: DaySpend = { runs: 0, checked: { top60: 0, low_entry: 0, r2r: 0 }, pence: 0 };
+  const out: DaySpend = { runs: 0, checked: perStream(() => 0), pence: 0 };
   const since = dayStart.getTime();
   for (const r of runs) {
     const at = Date.parse(r.startedAt);
@@ -346,7 +351,8 @@ export interface CheckResult {
   bedrooms: number | null;
   kind: SourcingKind;
   stream: Stream;
-  outcome: 'pending_verify' | 'live' | 'insufficient' | 'unqualified' | 'failed' | 'stopped';
+  /** Batch 17: 'held', a Project candidate checked and kept on the shortlist for the Project photo check. */
+  outcome: 'pending_verify' | 'live' | 'held' | 'insufficient' | 'unqualified' | 'failed' | 'stopped';
   confidence: Confidence | null;
   comps: number | null;
   calls: number;

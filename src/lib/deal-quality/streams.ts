@@ -18,15 +18,35 @@ import type { Deal } from '../listing/deal.ts';
 import type { SourcingKind } from '../listing/sourcing.ts';
 import type { LowEntrySettings } from './config.ts';
 
-export type Stream = 'top60' | 'low_entry' | 'r2r';
+/**
+ * Batch 17 adds `project`: a sale whose wording says it needs work, held on
+ * the shortlist for its comparables check and then the Project photo check
+ * (src/lib/project). It is only ever set by that hold, never by streamFor.
+ */
+export type Stream = 'top60' | 'low_entry' | 'r2r' | 'project';
 
-export const STREAMS: readonly Stream[] = ['top60', 'low_entry', 'r2r'];
+export const STREAMS: readonly Stream[] = ['top60', 'low_entry', 'r2r', 'project'];
 
 export const STREAM_LABELS: Record<Stream, string> = {
   top60: 'Top areas',
   low_entry: 'Low entry',
   r2r: 'Rent-to-rent',
+  project: 'Project',
 };
+
+/**
+ * Batch 16's streams, which share the day's checks (`perDay`). The Project
+ * stream has its own count a day (`split.project`), on top, under the same
+ * spend cap: holding Project candidates never takes a slot from these.
+ */
+export const DAY_STREAMS: readonly Stream[] = ['top60', 'low_entry', 'r2r'];
+
+/** One value for every stream. */
+export function perStream<T>(make: (s: Stream) => T): Record<Stream, T> {
+  const out = {} as Record<Stream, T>;
+  for (const s of STREAMS) out[s] = make(s);
+  return out;
+}
 
 export function isStream(v: unknown): v is Stream {
   return typeof v === 'string' && (STREAMS as readonly string[]).includes(v);

@@ -132,7 +132,8 @@ export function validatePhotoAnswer(raw: unknown, imageCount: number): Validated
   if (!o || typeof o !== 'object' || Array.isArray(o)) return { ok: false, error: 'not_an_object' };
   const r = o as Record<string, unknown>;
   if (!CONDITIONS.includes(r.condition as PhotoCondition)) return { ok: false, error: 'bad_condition' };
-  const kitchen = r.kitchenSize === 'unknown' ? null : KITCHENS.includes(r.kitchenSize as KitchenSize) ? (r.kitchenSize as KitchenSize) : undefined;
+  // "unknown" from the model; null as a stored answer keeps it (a stored answer is validated again before it is reused).
+  const kitchen = r.kitchenSize === 'unknown' || r.kitchenSize === null ? null : KITCHENS.includes(r.kitchenSize as KitchenSize) ? (r.kitchenSize as KitchenSize) : undefined;
   if (kitchen === undefined) return { ok: false, error: 'bad_kitchen' };
   const rawLines = r.lines && typeof r.lines === 'object' && !Array.isArray(r.lines) ? (r.lines as Record<string, unknown>) : null;
   if (!rawLines) return { ok: false, error: 'no_lines' };

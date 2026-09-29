@@ -4344,3 +4344,197 @@ where stream is null;
 create index if not exists marketplace_deals_shortlist_idx on public.marketplace_deals (annual_profit desc) where status = 'pending_check';
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 17: project deals
+-- =========================
+-- Project (BRRR) deals: sale listings whose own words say they need work,
+-- photo-checked within a daily allowance, costed as a guide, valued after
+-- works against sold prices and shown only when the value added is real
+-- (src/lib/project). And "Which deals do you want to see?" per profile
+-- (src/lib/profile/deal-types.ts): that needs no column, it lives in the
+-- profile's goals JSON (search_profiles.criteria, profiles.market_goals).
+--
+-- Run Batch 16's section first: this one builds on its 'pending_check'
+-- status and its stream column. Every statement is idempotent: re-running
+-- this section changes nothing. Service role only. Nothing here is in
+-- ACCESS_COLUMNS (src/lib/access.ts), and must not become so; no new
+-- column is in CARD_COLUMNS or DEAL_COLUMNS either: the app reads them with
+-- their own tolerant selects, so it keeps working before this is run.
+
+-- ── marketplace_deals ──
+-- needs_work: the listing's renovation wording as our own phrase keys
+--   ({flag, score, phrases}, src/lib/project/needs-work.ts); never its words.
+-- project: a Project deal's card numbers (src/lib/project/headline.ts
+--   ProjectCardData: works range, value after works, value added, months,
+--   cash range, money left in). Numbers only: never a line, a reason or a
+--   photo; those stay in project_estimates, read only after an open.
+alter table public.marketplace_deals add column if not exists needs_work jsonb;
+alter table public.marketplace_deals add column if not exists project jsonb;
+create index if not exists marketplace_deals_live_project_idx on public.marketplace_deals ((project is not null), kind) where status = 'live';
+create index if not exists marketplace_deals_project_shortlist_idx on public.marketplace_deals (first_seen_at) where status = 'pending_check' and stream = 'project';
+-- marketplace_deals.stream also takes 'project': a sale held on the shortlist
+-- for its comparables check and then its Project photo check. New
+-- retired_reason values, none of them revived:
+--   not_project           it needs work, but the value added does not pass
+--   project_excluded      non-standard construction, a lease under 80 years,
+--                         listed, a conservation area, structural red flags
+--   project_no_evidence   fewer than 5 sold prices of its type within 3 miles
+--   project_uncheckable   flagged, but its page can never be read (Zoopla)
+-- marketplace_runs.kind also takes 'project_checks' (the project job, with
+-- who ran it).
+
+-- ── project_checks: one photo-check claim a listing a UK day ──
+-- Claimed through project_claim_check (below) before the call is made, so
+-- the day's allowance and spend cap hold across concurrent runs. The photo
+-- URLs, the validated answer and the tokens stay here, private.
+create table if not exists public.project_checks (
+  id uuid primary key default gen_random_uuid(),
+  canonical_url text not null,
+  deal_id uuid,
+  check_day date not null,                      -- the UK day it was claimed on
+  status text not null default 'claimed',      -- claimed | done | refused | invalid | max_tokens | unavailable | failed
+  model text,                                   -- the model that answered
+  fell_back boolean not null default false,     -- a refusal re-run on the fallback
+  photos jsonb,                                 -- the photo URLs sent, in order: the answer's numbers refer to these
+  floorplans jsonb,
+  findings jsonb,                               -- the validated answer (src/lib/project/photo-check-schema.ts)
+  usage jsonb,                                  -- tokens a hop, at the model that ran it
+  cost_pence numeric(12,4) not null default 0,  -- raw provider spend
+  error text,
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+create unique index if not exists project_checks_day_uidx on public.project_checks (canonical_url, check_day);
+create index if not exists project_checks_check_day_idx on public.project_checks (check_day);
+alter table public.project_checks enable row level security;  -- no policies: service role only
+revoke all on public.project_checks from anon, authenticated;
+
+-- ── project_prep: a candidate's day of free and cheaper steps ──
+-- Each UK day a candidate is prepped before its photo check: its page read
+-- again (the photos and floorplans the check will look at, by URL), the
+-- exclusions, the free best case, the planning checks and the sold-price
+-- ceiling (both through the broker, so a repeat within its cache is free).
+-- Also the days a step failed: three and the listing is let go. Private:
+-- the photo URLs are never shown before a deal is opened.
+create table if not exists public.project_prep (
+  canonical_url text primary key,
+  deal_id uuid,
+  price numeric,                                -- the asking price the steps were taken at
+  prepped_on date,                              -- the UK day of the page read
+  photos jsonb,                                 -- the page's photo URLs, in order (at most project_checks.maxPhotos)
+  floorplans jsonb,
+  facts jsonb,                                  -- bedrooms, bathrooms, type, floor area, tax country
+  best_case jsonb,
+  exclusion text,
+  ceiling jsonb,                                -- {value, sales, radiusMiles, basis}; null: not enough evidence
+  sold_checked_at timestamptz,
+  designation jsonb,                            -- {listed, conservation} from PropertyData
+  designation_checked_at timestamptz,
+  outcome text,                                 -- ready | excluded | not_project | no_evidence | auction | released | retired | failed
+  failed_days int not null default 0,
+  last_failed_day date,
+  updated_at timestamptz not null default now()
+);
+alter table public.project_prep enable row level security;  -- no policies: service role only
+revoke all on public.project_prep from anon, authenticated;
+
+-- ── project_estimates: the full estimate, read only after the deal is opened ──
+-- The lines with their reasons and photo numbers, the works, the value and
+-- the finance (src/lib/project/estimate.ts), with the photo URLs the
+-- numbers refer to. The deal sheet's working section reads it for a member
+-- who has opened the deal; nothing else shows it.
+create table if not exists public.project_estimates (
+  deal_id uuid primary key,
+  canonical_url text not null,
+  version int not null default 1,
+  price numeric not null,
+  estimate jsonb not null,
+  photos jsonb not null default '[]'::jsonb,
+  check_id uuid,
+  estimated_at timestamptz not null default now()
+);
+create index if not exists project_estimates_url_idx on public.project_estimates (canonical_url);
+alter table public.project_estimates enable row level security;  -- no policies: service role only
+revoke all on public.project_estimates from anon, authenticated;
+
+-- ── project_member_figures: a member's own working, every version kept ──
+-- Private to the member: never shown to anyone else, never used to change
+-- the house estimate. At most one locked version a member a deal.
+create table if not exists public.project_member_figures (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  deal_id uuid not null,
+  version int not null,
+  lines jsonb not null,
+  figures jsonb not null,
+  locked boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists project_member_figures_version_uidx on public.project_member_figures (user_id, deal_id, version);
+create unique index if not exists project_member_figures_locked_uidx on public.project_member_figures (user_id, deal_id) where locked;
+alter table public.project_member_figures enable row level security;  -- no policies: service role only
+revoke all on public.project_member_figures from anon, authenticated;
+
+-- ── project_claim_check: one photo check claimed against the day's allowance ──
+-- Under an advisory lock, so two runs cannot both take the last slot: a
+-- listing is checked at most once a UK day, at most p_max times a day in
+-- all, and only while the day's spend plus this check's worst case stays
+-- within p_cap_pence. Returns {ok, reason}. Service role only.
+create or replace function public.project_claim_check(p_url text, p_deal uuid, p_day date, p_max int, p_cap_pence numeric, p_worst_pence numeric)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_used int;
+  v_spent numeric;
+begin
+  perform pg_advisory_xact_lock(hashtext('project_claim_check'));
+  if exists (select 1 from public.project_checks where canonical_url = p_url and check_day = p_day) then
+    return jsonb_build_object('ok', false, 'reason', 'already_today');
+  end if;
+  select count(*), coalesce(sum(cost_pence), 0) into v_used, v_spent from public.project_checks where check_day = p_day;
+  if v_used >= greatest(p_max, 0) then
+    return jsonb_build_object('ok', false, 'reason', 'allowance');
+  end if;
+  if v_spent + greatest(p_worst_pence, 0) > greatest(p_cap_pence, 0) then
+    return jsonb_build_object('ok', false, 'reason', 'cap');
+  end if;
+  insert into public.project_checks (canonical_url, deal_id, check_day, status) values (p_url, p_deal, p_day, 'claimed');
+  return jsonb_build_object('ok', true, 'reason', null);
+end;
+$$;
+revoke all on function public.project_claim_check(text, uuid, date, int, numeric, numeric) from public, anon, authenticated;
+grant execute on function public.project_claim_check(text, uuid, date, int, numeric, numeric) to service_role;
+
+-- ── Settings (defaults and bounds in code, src/lib/project/config.ts and src/lib/today/mix.ts; a missing or bad row takes the default) ──
+--   project_rates        the works lines' rates (£, VAT included), the kitchen size factors, contingency %
+--   project_quantities   rooms, carpets, windows, doors and damp walls from the bedrooms; the rewire's baseline
+--   project_value        value after works: 2× visible, 1× hidden and can't-tell works; the test: value added
+--                        (value − price − works at the high end) of at least £15,000 and 10% of the value;
+--                        the refinance at 75% of the value
+--   project_ceiling      sold prices: 0.5 → 3 miles until 10 sales (at least 5), weights 1 / 0.75 / 0.5 / 0.25,
+--                        the weighted 75th percentile, the last 24 months
+--   project_costs        buying costs (£2,500; £3,500 with a bridge), months held, the level thresholds
+--                        (full above £15k of works, light under £5k), the bridge's terms
+--   project_checks       the job's switch (off), sold-price lookups a day, days before giving up, photos sent,
+--                        reuse window, the planning checks, the model's effort
+--   today_mix            Today's mix of deal types: 2 Short-let / 2 Rent-to-rent / 1 BRRR, 3 / 2 for two types,
+--                        shifted over 14 days' Keeps at 3 Keeps a slot, at least 1 of each chosen type
+-- The photo checks' allowance (5 a UK day) and Batch 17's spend line (250p a
+-- UK day: photo checks, sold prices and planning checks together) sit in
+-- Batch 16's deal_checks row as projectPhotoChecks / projectCapPence, beside
+-- that cap on /admin/deals; read with those defaults while the row lacks them.
+insert into public.billing_settings (key, value) values
+  ('project_rates', '{"waste":300,"rewire":4500,"boiler":2500,"radiator":300,"waterTank":2500,"pipework":500,"bathroom":2000,"plaster":500,"skirting":650,"paint":350,"kitchen":4000,"kitchenFactors":{"small":1,"big":1.5,"extra_big":2},"carpet":250,"roof":3000,"window":400,"outsideDoor":600,"internalDoor":300,"damp":350,"contingencyPct":10}'::jsonb),
+  ('project_quantities', '{"roomsPlusBedrooms":2,"carpetsPlusBedrooms":1,"windowsPlusRooms":1,"outsideDoorsHouse":2,"outsideDoorsFlat":1,"dampWallsHouse":4,"dampWallsFlat":2,"defaultBathrooms":1,"rewireBaselineRooms":5,"rewireBaselineSqft":900}'::jsonb),
+  ('project_value', '{"visibleMultiplier":2,"hiddenMultiplier":1,"minUplift":15000,"minUpliftPctOfValue":10,"refinancePct":75}'::jsonb),
+  ('project_ceiling', '{"radiiMiles":[0.5,1,2,3],"weights":[1,0.75,0.5,0.25],"months":24,"targetSales":10,"minSales":5,"quantile":0.75}'::jsonb),
+  ('project_costs', '{"buyingCosts":2500,"buyingCostsBridging":3500,"monthsLight":2,"monthsFull":4,"monthsFullLarge":6,"largeFromBedrooms":4,"bridgeWorksPct":0,"arrangementFee":true,"legalAndValuation":false,"fullAboveWorks":15000,"lightBelowWorks":5000}'::jsonb),
+  ('project_checks', '{"enabled":false,"soldLookupsPerDay":15,"giveUpDays":3,"maxPhotos":10,"reuseDays":60,"planningChecks":true,"effort":"medium"}'::jsonb),
+  ('today_mix', '{"all":{"buy_str":2,"brrr":1,"r2r":2},"two":[3,2],"windowDays":14,"keepsPerSlot":3,"floor":1}'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

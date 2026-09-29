@@ -64,3 +64,14 @@ test('validated findings cost through the engine as they are', () => {
   assert.equal(e.kind, 'project');
   if (e.kind === 'project') assert.ok(e.estimate.works.low > 0 && e.estimate.works.high >= e.estimate.works.low);
 });
+
+test('a stored answer validates again as it was (reused within 60 days, or re-costed at a new price), a kitchen never seen included', () => {
+  const first = validatePhotoAnswer(answer({ kitchenSize: 'unknown', condition: 'full' }, { paint: { status: 'needed', reason: 'Tired walls', photos: [1, 4] } }), 6);
+  assert.ok(first.ok);
+  if (!first.ok) return;
+  assert.equal(first.findings.kitchenSize, null);
+  // As project_checks.findings stores it: JSON, with the kitchen as null.
+  const again = validatePhotoAnswer(JSON.parse(JSON.stringify(first.findings)), 6);
+  assert.ok(again.ok, again.ok ? '' : again.error);
+  if (again.ok) assert.deepEqual(again.findings, first.findings);
+});

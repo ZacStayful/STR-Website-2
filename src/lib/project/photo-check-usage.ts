@@ -47,3 +47,22 @@ export function photoCheckCostPence(usage: readonly PhotoCheckUsage[]): number {
   }
   return Math.round(pence * 100) / 100;
 }
+
+/** The most one image can cost in input tokens on a high-resolution model (2,576 px on the long edge). */
+export const MAX_IMAGE_TOKENS = 4_800;
+/** The system prompt, the catalogue and the question, generously. */
+const TEXT_TOKENS = 4_000;
+/** The call's max_tokens: the most a reply (thinking included) can be billed for. */
+export const MAX_OUTPUT_TOKENS = 16_000;
+
+/**
+ * The most one photo check can cost, pence: the requested model's attempt
+ * and, after a refusal, a fallback at the dearest rates, each with every
+ * image at full size and a reply at max_tokens. What a claim reserves
+ * against the day's cap, so the cap holds whatever the call does.
+ */
+export function photoCheckWorstPence(images: number): number {
+  const input = Math.max(0, Math.floor(images)) * MAX_IMAGE_TOKENS + TEXT_TOKENS;
+  const hop = (model: string) => photoCheckCostPence([{ model, inputTokens: input, outputTokens: MAX_OUTPUT_TOKENS }]);
+  return Math.round((hop(PHOTO_CHECK_MODEL) + hop('fallback')) * 100) / 100;
+}

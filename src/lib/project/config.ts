@@ -247,11 +247,17 @@ export const DEFAULT_PROJECT_CHECKS: ProjectChecksSettings = {
 export interface ProjectAllowance {
   /** Photo checks a UK day. */
   photoChecks: number;
-  /** Batch 17's provider spend a UK day (photo checks, sold prices, planning checks), raw pence. */
+  /**
+   * Batch 17's provider spend a UK day (photo checks, sold prices, planning
+   * checks), raw pence. A photo check is only claimed while the day's spend
+   * plus its worst case (about £1: every image at full size, a refusal and a
+   * fallback, both replies at max_tokens) fits, so the line sits well above
+   * the typical day (five checks at about 10p, and the lookups).
+   */
   capPence: number;
 }
 
-export const DEFAULT_PROJECT_ALLOWANCE: ProjectAllowance = { photoChecks: 5, capPence: 150 };
+export const DEFAULT_PROJECT_ALLOWANCE: ProjectAllowance = { photoChecks: 5, capPence: 250 };
 
 export interface ProjectSettings {
   rates: ProjectRates;

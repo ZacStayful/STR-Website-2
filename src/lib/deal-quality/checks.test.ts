@@ -80,13 +80,23 @@ test('the UK day starts at London midnight: UTC in winter, an hour earlier in su
 });
 
 test('slots: each stream its share, no more than it has waiting, spare passed top areas → low entry → rent-to-rent', () => {
-  const split = { top60: 6, low_entry: 8, r2r: 6 };
-  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10 }, 20), { top60: 6, low_entry: 8, r2r: 6 });
-  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 2, r2r: 10 }, 20), { top60: 12, low_entry: 2, r2r: 6 }, 'low entry has two: the spare six go to top areas first');
-  assert.deepEqual(allocateSlots(split, { top60: 7, low_entry: 2, r2r: 10 }, 20), { top60: 7, low_entry: 2, r2r: 10 }, 'then on to rent-to-rent');
-  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10 }, 5), { top60: 5, low_entry: 0, r2r: 0 }, 'the day allows five more');
-  assert.deepEqual(allocateSlots(split, { top60: 0, low_entry: 0, r2r: 0 }, 20), { top60: 0, low_entry: 0, r2r: 0 });
-  assert.deepEqual(allocateSlots(split, { top60: 3, low_entry: 3, r2r: 3 }, 0), { top60: 0, low_entry: 0, r2r: 0 }, 'nothing left today');
+  const split = { top60: 6, low_entry: 8, r2r: 6, project: 0 };
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 20), { top60: 6, low_entry: 8, r2r: 6, project: 0 });
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 2, r2r: 10, project: 0 }, 20), { top60: 12, low_entry: 2, r2r: 6, project: 0 }, 'low entry has two: the spare six go to top areas first');
+  assert.deepEqual(allocateSlots(split, { top60: 7, low_entry: 2, r2r: 10, project: 0 }, 20), { top60: 7, low_entry: 2, r2r: 10, project: 0 }, 'then on to rent-to-rent');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 5), { top60: 5, low_entry: 0, r2r: 0, project: 0 }, 'the day allows five more');
+  assert.deepEqual(allocateSlots(split, { top60: 0, low_entry: 0, r2r: 0, project: 0 }, 20), { top60: 0, low_entry: 0, r2r: 0, project: 0 });
+  assert.deepEqual(allocateSlots(split, { top60: 3, low_entry: 3, r2r: 3, project: 0 }, 0), { top60: 0, low_entry: 0, r2r: 0, project: 0 }, 'nothing left today');
+});
+
+test('Batch 17: Project candidates have their own count of comparables checks, on top of the day’s, never taking another stream’s slot', () => {
+  const split = { top60: 6, low_entry: 8, r2r: 6, project: 5 };
+  // The day's 20 go to the three streams exactly as before; the Project stream has its own five.
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 9 }, 20, 5), { top60: 6, low_entry: 8, r2r: 6, project: 5 });
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 2 }, 20, 5), { top60: 6, low_entry: 8, r2r: 6, project: 2 }, 'unused Project slots are not handed to the others');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 2, r2r: 10, project: 9 }, 20, 5), { top60: 12, low_entry: 2, r2r: 6, project: 5 }, 'and the others’ spare never goes to Project');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 9 }, 20, 2), { top60: 6, low_entry: 8, r2r: 6, project: 2 }, 'today’s runs have used three of the five');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 9 }, 20), { top60: 6, low_entry: 8, r2r: 6, project: 0 }, 'without a Project count, none');
 });
 
 test('the shortlist order: most profitable first, then longest waiting', () => {
@@ -107,7 +117,7 @@ test('the day’s spend is summed over every checking run started today, whateve
     { startedAt: '2026-09-28T04:00:00Z', summary: { rawCostPence: 100, checked: { top60: 20 } } },
     { startedAt: '2026-09-29T05:00:00Z', summary: null },
   ];
-  assert.deepEqual(daySpend(runs, day), { runs: 3, checked: { top60: 4, low_entry: 2, r2r: 1 }, pence: 55.5 });
+  assert.deepEqual(daySpend(runs, day), { runs: 3, checked: { top60: 4, low_entry: 2, r2r: 1, project: 0 }, pence: 55.5 });
   assert.equal(callAffordable(100, 55.5, 5), true);
   assert.equal(callAffordable(100, 95.5, 5), false);
   assert.equal(callAffordable(100, 95, 5), true, 'exactly at the cap');

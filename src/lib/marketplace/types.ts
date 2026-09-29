@@ -27,7 +27,15 @@ export type RetiredReason =
   /** Batch 16: the check found too few similar homes within the widest radius. Never shown, never revived. */
   | 'insufficient_data'
   /** Batch 16: dropped from the shortlist unchecked (expired, or retired by the admin button); revived like unqualified. */
-  | 'unchecked';
+  | 'unchecked'
+  /** Batch 17 (none revived): it needs work, but the value added does not pass (Q3). */
+  | 'not_project'
+  /** Batch 17: non-standard construction, a lease under 80 years, listed, a conservation area, a structural red flag. */
+  | 'project_excluded'
+  /** Batch 17: fewer than 5 sold prices of its type within 3 miles to value it on. */
+  | 'project_no_evidence'
+  /** Batch 17: flagged, but it cannot be photo-checked (a Zoopla page; or three days' checks failed). */
+  | 'project_uncheckable';
 
 /** Retirements the sweep may undo when the listing is back in the feed and qualifies again. */
 export const REACTIVATABLE_REASONS: ReadonlySet<RetiredReason> = new Set<RetiredReason>(['unqualified', 'stale_listed', 'stale_unseen', 'unverifiable', 'unchecked']);

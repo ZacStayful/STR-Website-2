@@ -21,6 +21,7 @@ import { areaRevenueFor } from "@/lib/listing/sourcing";
 import { parseStoredDeal } from "@/lib/marketplace/record";
 import { cashLine } from "@/lib/deal-quality/streams";
 import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
+import { isHeldForProject } from "@/lib/project/read-server";
 import { parseHistory, describeChange } from "@/lib/listing/recheck";
 import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
@@ -71,6 +72,7 @@ const MESSAGES: Record<string, { text: string; tone: "ok" | "warn" }> = {
   just_gone: { text: "This one has just gone off the market. Nothing was charged.", tone: "warn" },
   gone: { text: "This deal is no longer on the market.", tone: "warn" },
   checking: { text: "We’re checking it is still on the market and will have an answer within the hour. Nothing was charged; try again shortly.", tone: "warn" },
+  held: { text: "We’re still checking this one before it goes live. Nothing was charged; come back tomorrow.", tone: "warn" },
   rate_limited: { text: "You’ve opened a lot of deals in the last hour. Give it a few minutes and try again.", tone: "warn" },
   failed: { text: "Something went wrong opening that deal. Nothing was charged. Please try again.", tone: "warn" },
   not_open: { text: "Open the deal first to save it to your pipeline.", tone: "warn" },
@@ -96,6 +98,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const sheet = await dealSheet(id, payerId, adminUser, visibility);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
+  // Batch 17: a deal held for its Project check says so (the stream is read on its own, tolerantly).
+  const heldForProject = deal.status === "pending_check" ? await isHeldForProject(createAdminClient(), deal.id) : false;
   const [settings, credit, cards, profileRes, quoter, savedRes, savedProfiles] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
   // Batch 14: the member's finance as their figures use it (a cash buyer borrows nothing).
@@ -355,7 +359,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     </form>
                   </div>
                 ) : (
-                  <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : deal.status === "pending_check" ? "We’re checking this property’s own Airbnb comparables before it goes live. Come back tomorrow." : "This deal is off the market and cannot be opened."}</p>
+                  <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : deal.status === "pending_check" ? (heldForProject ? "We’re checking this one’s condition before it goes live. Come back tomorrow." : "We’re checking this property’s own Airbnb comparables before it goes live. Come back tomorrow.") : "This deal is off the market and cannot be opened."}</p>
                 )}
                 {canBuy && !analysisFirst && (
                   <div className="mt-3">

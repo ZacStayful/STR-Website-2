@@ -11,13 +11,15 @@ import { describeBand, formatOpenPrice, ladderBandIndex } from "@/lib/marketplac
 import { sweepEnabled } from "@/lib/marketplace/sweep-run";
 import { recheckEnabled } from "@/lib/marketplace/recheck-run";
 import { SOURCE_HOURLY_CAPS } from "@/lib/marketplace/cadence";
-import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction } from "./actions";
+import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, updateProjectChecksAction } from "./actions";
 import { R2R_MEDIUM_PROFIT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { latestLowEntryRuns, lowEntrySearchEnabled } from "@/lib/deal-quality/low-entry-run";
 import { weekSpentPence } from "@/lib/deal-quality/low-entry-plan";
-import { STREAMS, STREAM_LABELS, streamOfRow, type Stream } from "@/lib/deal-quality/streams";
+import { DAY_STREAMS, STREAMS, STREAM_LABELS, streamOfRow, type Stream } from "@/lib/deal-quality/streams";
 import { checksView } from "@/lib/deal-quality/checks-run";
 import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
+import { readProjectSettings } from "@/lib/project/settings-server";
+import { projectChecksView } from "@/lib/project/check-run";
 import type { CheckResult } from "@/lib/deal-quality/checks";
 
 const RUN_COOKIE = "sf_deals_run";
@@ -53,7 +55,9 @@ const MESSAGES: Record<string, string> = {
   low_entry_saved: "Low-entry settings saved. New records and the next search pass use them within a minute.",
   bad_low_entry: "Those settings did not parse: whole numbers, cash in £0–£1,000,000, price cap £10,000–£2,000,000, weekly cap 0–100,000p, bedrooms 0–6, areas a pass 1–30.",
   deal_checks_saved: "Deal-check settings saved. The next pass and the next re-screen use them within a minute.",
-  bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days, re-check ceiling 0–100,000p.",
+  bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days, re-check ceiling 0–100,000p, Project photo checks 0–100 a day, Project spend 0–100,000p a day.",
+  project_checks_saved: "Project-check settings saved. The next pass uses them within a minute.",
+  bad_project_checks: "Those settings did not parse: whole numbers, sold-price lookups 0–200 a day, give up after 1–30 days, 1–20 photos, reuse 0–365 days, effort low, medium or high.",
   bad_url: "That is not a listing URL.",
   failed: "That did not work.",
 };
@@ -158,6 +162,10 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
   const dealQuality = await readDealQualitySettings(admin);
   const checks = await checksView(admin, dealQuality);
   const checkSettings = dealQuality.checks;
+  // Batch 17: the Project photo checks' own line (the same row, read with its defaults), and the Project job.
+  const projectSettings = await readProjectSettings(admin);
+  const projectAllowance = projectSettings.allowance;
+  const project = await projectChecksView(admin, projectSettings);
   const lastCheckResults = ((checks?.runs.find((r) => Array.isArray(r.summary.results))?.summary.results as CheckResult[] | undefined) ?? []).slice(0, 40);
   const lowEntryWeekSpent = weekSpentPence(lowEntryRuns.map((r) => ({ startedAt: r.started_at, rawCostPence: r.summary.rawCostPence })), new Date());
   const runs = (runsRes.data ?? []) as RunRow[];
@@ -278,7 +286,7 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
         </p>
         {checks ? (
           <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label="Checked today" value={`${STREAMS.reduce((n, s) => n + checks.spent.checked[s], 0)} of ${checks.perDay}`} sub={STREAMS.map((s) => `${STREAM_LABELS[s]} ${checks.spent.checked[s]}`).join(" · ")} />
+            <Stat label="Checked today" value={`${DAY_STREAMS.reduce((n, s) => n + checks.spent.checked[s], 0)} of ${checks.perDay}`} sub={`${STREAMS.map((s) => `${STREAM_LABELS[s]} ${checks.spent.checked[s]}`).join(" · ")} (Project: its own ${checkSettings.split.project} a day, on top)`} />
             <Stat label="Spent today" value={`${gbp(Number.isFinite(checks.spent.pence) ? checks.spent.pence : 0)} of ${gbp(checks.capPence)}`} sub={`${checks.spent.runs} run${checks.spent.runs === 1 ? "" : "s"} since ${new Date(checks.day).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`} />
             <Stat label="Shortlist" value={STREAMS.reduce((n, s) => n + checks.waiting[s], 0)} sub={STREAMS.map((s) => `${STREAM_LABELS[s]} ${checks.waiting[s]}`).join(" · ")} />
             <Stat label="Live on their own check" value={checks.checkedLive} sub={`${checks.uncheckedLive} live on the area average`} />
@@ -338,9 +346,63 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
           <label className="text-sm">Slots: top areas<input name="splitTop60" type="text" inputMode="numeric" defaultValue={checkSettings.split.top60} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Slots: low entry<input name="splitLowEntry" type="text" inputMode="numeric" defaultValue={checkSettings.split.low_entry} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Slots: rent-to-rent<input name="splitR2r" type="text" inputMode="numeric" defaultValue={checkSettings.split.r2r} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Slots: Project candidates<input name="splitProject" type="text" inputMode="numeric" defaultValue={checkSettings.split.project} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Project photo checks a day<input name="projectPhotoChecks" type="text" inputMode="numeric" defaultValue={projectAllowance.photoChecks} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Project spend a day, pence<input name="projectCapPence" type="text" inputMode="numeric" defaultValue={projectAllowance.capPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Shortlist waits, days<input name="shortlistExpiryDays" type="text" inputMode="numeric" defaultValue={checkSettings.shortlistExpiryDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Re-check ceiling, pence<input name="recheckCeilingPence" type="text" inputMode="numeric" defaultValue={checkSettings.recheckCeilingPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <div className="flex items-end sm:col-span-3"><button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Save deal-check settings</button></div>
+        </form>
+      </section>
+
+      {/* Batch 17: the Project checks. */}
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Project checks</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {project?.enabled && project.dealChecksOn ? "ON" : project?.enabled ? "Switched on here, but it does nothing until DEAL_CHECKS_ENABLED is 'true': Project candidates wait on the deal checks’ shortlist" : "OFF (switch it on below; it also needs DEAL_CHECKS_ENABLED)"} · passes every ten minutes 04:25–05:55 UTC · {project?.configured.anthropic ? "Anthropic key set" : "ANTHROPIC_API_KEY is not set: no photo check can run"} · {project?.configured.propertydata ? "PropertyData key set" : "PROPERTYDATA_API_KEY is not set: nothing can be prepped"}. A sale whose own words say it needs work waits on the shortlist for its comparables check, then here: its page read again, the free tests, PropertyData’s listed and conservation checks and its sold prices, then one photo check (Claude, at most one a pass) and the estimate. Passes go live as Project deals; the photos saying ready to go puts it back as an ordinary deal; the rest are never shown. House spend: {projectAllowance.photoChecks} photo checks and {gbp(projectAllowance.capPence)} a UK day, photo checks, sold prices and planning checks together, whichever binds first.
+        </p>
+        {project ? (
+          <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Stat label="Photo checks today" value={`${project.use.photoChecks} of ${project.allowance.photoChecks}`} sub={`sold-price lookups ${project.use.soldLookups} of ${project.soldLookupsPerDay}`} />
+            <Stat label="Spent today" value={`${gbp(project.use.photoPence + project.use.otherPence)} of ${gbp(project.allowance.capPence)}`} sub={`photo checks ${gbp(project.use.photoPence)} · PropertyData ${gbp(project.use.otherPence)}`} />
+            <Stat label="Candidates waiting" value={project.waiting.comparables + project.waiting.project} sub={`${project.waiting.comparables} on their comparables check · ${project.waiting.project} on this job`} />
+            <Stat label="Live Project deals" value={project.live} />
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">The Project candidates could not be read.</p>
+        )}
+        <form action={runProjectChecksAction} className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry-run the Project checks</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run a Project pass</button>
+          <span className="text-xs text-muted-foreground">Dry run shows the day’s allowance, what waits and what a pass would do, and spends nothing. Run makes real calls (at most one photo check) within the day’s allowance and takes up to a minute.</span>
+        </form>
+        <table className="mt-4 w-full text-xs">
+          <thead className="text-left text-muted-foreground"><tr><th className="py-1">When</th><th>By</th><th>Prepped</th><th>Photo checks</th><th>Outcomes</th><th>Re-costed</th><th>Raw p</th><th>Stopped</th></tr></thead>
+          <tbody>
+            {(project?.runs ?? []).map((r) => (
+              <tr key={r.id} className="border-t border-border">
+                <td className="py-1">{new Date(r.started_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+                <td>{String(r.summary.triggeredBy ?? "")}</td>
+                <td>{n(r.summary.preps)}</td>
+                <td>{n(r.summary.photoChecks)}</td>
+                <td>{Object.entries((r.summary.outcomes as Record<string, number>) ?? {}).map(([k, v]) => `${k} ${v}`).join(" · ")}</td>
+                <td>{n((r.summary.recost as Record<string, unknown> | undefined)?.recosted)}</td>
+                <td>{Math.round(n(r.summary.rawCostPence) * 10) / 10}</td>
+                <td>{String(r.summary.stoppedBy ?? "")}</td>
+              </tr>
+            ))}
+            {(project?.runs ?? []).length === 0 && <tr><td className="py-2 text-muted-foreground" colSpan={8}>No Project pass has run yet.</td></tr>}
+          </tbody>
+        </table>
+        <form action={updateProjectChecksAction} className="mt-4 grid gap-3 sm:grid-cols-4">
+          <label className="flex items-center gap-2 text-sm"><input name="enabled" type="checkbox" defaultChecked={projectSettings.checks.enabled} /> Project checks on</label>
+          <label className="text-sm">Sold-price lookups a day<input name="soldLookupsPerDay" type="text" inputMode="numeric" defaultValue={projectSettings.checks.soldLookupsPerDay} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Give up after failed days<input name="giveUpDays" type="text" inputMode="numeric" defaultValue={projectSettings.checks.giveUpDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Photos sent, at most<input name="maxPhotos" type="text" inputMode="numeric" defaultValue={projectSettings.checks.maxPhotos} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Reuse a photo check for, days<input name="reuseDays" type="text" inputMode="numeric" defaultValue={projectSettings.checks.reuseDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="flex items-center gap-2 text-sm"><input name="planningChecks" type="checkbox" defaultChecked={projectSettings.checks.planningChecks} /> Listed and conservation checks</label>
+          <label className="text-sm">Photo check effort<select name="effort" defaultValue={projectSettings.checks.effort} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+          <div className="flex items-end"><button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Save Project-check settings</button></div>
         </form>
       </section>
 

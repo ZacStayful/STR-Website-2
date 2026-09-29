@@ -1,0 +1,64 @@
+import 'server-only';
+
+/**
+ * Batch 17's reads of marketplace_deals columns that are deliberately NOT in
+ * DEAL_COLUMNS or CARD_COLUMNS (stream, needs_work, project): each a separate
+ * select, so the site keeps working on a database the Batch 16 and 17
+ * sections have not reached yet. A read that fails for a missing column is
+ * simply "none"; any other failure is logged and also "none" (a Project deal
+ * then shows as an ordinary one for that read, never an error page).
+ */
+import type { createAdminClient } from '../supabase/admin';
+import type { DealStatus } from '../marketplace/types';
+import { parseProjectCard, type ProjectCardData } from './headline';
+import { parseNeedsWork, type NeedsWork } from './needs-work';
+
+type Admin = ReturnType<typeof createAdminClient>;
+
+const URL_CHUNK = 150;
+
+/** PostgREST's answer for a column the table does not have (the section not run yet). */
+export function isMissingColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === '42703' || error.code === 'PGRST204' || /column .* does not exist|could not find the .* column/i.test(error.message ?? '');
+}
+
+/** The rows with these statuses held in the Project stream, by canonical URL. */
+export async function projectStreamUrls(admin: Admin, statuses: readonly DealStatus[] = ['pending_check']): Promise<Set<string>> {
+  const { data, error } = await admin.from('marketplace_deals').select('canonical_url').in('status', [...statuses]).eq('stream', 'project').limit(5000);
+  if (error) {
+    if (!isMissingColumn(error)) console.warn('[project] stream read failed:', error.message);
+    return new Set();
+  }
+  return new Set(((data ?? []) as { canonical_url: string }[]).map((r) => r.canonical_url));
+}
+
+/** Whether one deal waiting on the shortlist is held for its Project check (the sheet's message). */
+export async function isHeldForProject(admin: Admin, dealId: string): Promise<boolean> {
+  const { data, error } = await admin.from('marketplace_deals').select('stream').eq('id', dealId).eq('status', 'pending_check').maybeSingle();
+  if (error) {
+    if (!isMissingColumn(error)) console.warn('[project] stream read failed:', error.message);
+    return false;
+  }
+  return (data as { stream?: unknown } | null)?.stream === 'project';
+}
+
+export interface ProjectColumns {
+  needsWork: NeedsWork | null;
+  project: ProjectCardData | null;
+}
+
+/** needs_work and project for these rows, by canonical URL; an empty map when the columns are missing. */
+export async function projectColumnsFor(admin: Admin, urls: readonly string[]): Promise<Map<string, ProjectColumns>> {
+  const out = new Map<string, ProjectColumns>();
+  for (let i = 0; i < urls.length; i += URL_CHUNK) {
+    const some = urls.slice(i, i + URL_CHUNK);
+    const { data, error } = await admin.from('marketplace_deals').select('canonical_url, needs_work, project').in('canonical_url', some);
+    if (error) {
+      if (!isMissingColumn(error)) console.warn('[project] project columns read failed:', error.message);
+      return out;
+    }
+    for (const r of (data ?? []) as { canonical_url: string; needs_work: unknown; project: unknown }[]) out.set(r.canonical_url, { needsWork: parseNeedsWork(r.needs_work), project: parseProjectCard(r.project) });
+  }
+  return out;
+}
