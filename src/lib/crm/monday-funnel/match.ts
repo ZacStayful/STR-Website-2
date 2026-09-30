@@ -10,10 +10,15 @@
  *   One row, two members     the member it matches best keeps it: email
  *                            before the stored link before the number; then
  *                            the older account.
- *   One member, two rows     the stored row, else the oldest; the others are
- *                            listed and never touched (rows are not merged).
- *   A row in Excluded        its member is left alone entirely: no update,
- *                            no move, no second row.
+ *   One member, two rows     the stored row, else the best match, else the
+ *                            oldest; the others are listed and never touched
+ *                            (rows are not merged).
+ *   A row in Excluded        never touched. When it is the member's own row
+ *                            (the one kept above), the member is left alone
+ *                            entirely: no update, no move, no second row. A
+ *                            duplicate in Excluded that only shares their
+ *                            number does not exclude a member whose own row
+ *                            is elsewhere.
  *   A row nobody matches     untouched.
  */
 import { normaliseMobile } from '../../credit/abuse.ts';
@@ -113,13 +118,12 @@ export function matchMembers(members: readonly MemberKeys[], items: readonly Boa
   for (const m of members) {
     const rows = won.get(m.userId);
     if (!rows?.length) continue;
-    const excludedRow = rows.find((r) => r.item.groupId === GROUPS.excluded);
-    if (excludedRow) {
-      result.excluded.set(m.userId, excludedRow.item);
+    const stored = m.storedItemId ? rows.find((r) => r.item.id === m.storedItemId) : undefined;
+    const kept = stored ?? [...rows].sort((a, b) => STRENGTH[a.via] - STRENGTH[b.via] || older(a.item, b.item))[0];
+    if (kept.item.groupId === GROUPS.excluded) {
+      result.excluded.set(m.userId, kept.item);
       continue;
     }
-    const stored = m.storedItemId ? rows.find((r) => r.item.id === m.storedItemId) : undefined;
-    const kept = stored ?? [...rows].sort((a, b) => older(a.item, b.item))[0];
     result.matched.set(m.userId, kept);
     if (rows.length > 1) result.duplicates.push({ userId: m.userId, kept: kept.item.id, others: rows.filter((r) => r !== kept).map((r) => r.item.id) });
   }

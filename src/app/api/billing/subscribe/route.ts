@@ -70,6 +70,11 @@ export async function POST(request: Request) {
     // Batch 20: on the saved card, from our own confirm screen (which showed the price, the renewal and the terms).
     if (body.savedCard === true && body.termsAccepted === true && profile.stripe_default_payment_method_id) {
       try {
+        // Stripe is asked, not just the profile (the webhook may not have written a plan started seconds ago).
+        const existing = await stripe.subscriptions.list({ customer, limit: 10 });
+        if (existing.data.some((x) => ['active', 'trialing', 'past_due', 'incomplete'].includes(x.status))) {
+          return Response.json({ error: 'You already have a plan. Manage it from Billing.' }, { status: 409 });
+        }
         const sub = await stripe.subscriptions.create(
           {
             customer,
@@ -83,8 +88,10 @@ export async function POST(request: Request) {
           { idempotencyKey: `subscribe:${member.id}:${planCode}:${nonce}` },
         );
         if (sub.status === 'active' || sub.status === 'trialing') {
-          const { error } = await createAdminClient().from('profiles').update({ terms_accepted_at: new Date().toISOString() }).eq('id', member.id);
-          if (error) console.warn('[billing/subscribe] terms stamp failed:', error.message);
+          // The webhook fills in the rest (plan, period, credit); the id and status now, so a second tap
+          // before it lands finds a live plan instead of starting another.
+          const { error } = await createAdminClient().from('profiles').update({ terms_accepted_at: new Date().toISOString(), stripe_subscription_id: sub.id, stripe_subscription_status: sub.status }).eq('id', member.id);
+          if (error) console.warn('[billing/subscribe] profile stamp failed:', error.message);
           return Response.json({ ok: true, via: 'saved_card', planCode });
         }
         console.warn(`[billing/subscribe] saved-card subscription ${sub.id} is ${sub.status}; falling back to Checkout`);

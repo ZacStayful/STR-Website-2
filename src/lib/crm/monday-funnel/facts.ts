@@ -75,13 +75,22 @@ export function emailOkFor(p: { email: string | null; sourcing_alerts: boolean |
   return Boolean(p.email && p.email.includes('@')) && (p.sourcing_alerts === true || p.alert_missed === true);
 }
 
-/** One UTM part, kept only when every word passes the activity log's own check (no links, no postcodes). */
+/**
+ * One UTM part: split into words at spaces and punctuation ("Leads – Autumn"
+ * reads "Leads Autumn"), then kept only when every word passes the activity
+ * log's own check, which refuses anything like a link or a postcode (a link's
+ * slashes split it, so its domain is still a word of its own and refused).
+ */
 function cleanPart(v: string | null | undefined): string | null {
   if (typeof v !== 'string') return null;
-  const s = v.trim().replace(/\s+/g, ' ').slice(0, 80);
-  if (!s) return null;
-  const words = s.split(' ');
-  return words.every((w) => cleanExtras({ v: w }).v === w) ? s : null;
+  const words = v
+    .slice(0, 200)
+    .replace(/[^A-Za-z0-9_.:+-]+/g, ' ')
+    .split(' ')
+    .filter(Boolean);
+  if (words.length === 0) return null;
+  if (!words.every((w) => cleanExtras({ v: w }).v === w)) return null;
+  return words.join(' ').slice(0, 80);
 }
 
 /** "utm_source / utm_campaign / utm_content" (Batch 19's member_attribution), or "direct / unknown". */

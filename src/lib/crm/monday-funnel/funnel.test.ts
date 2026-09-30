@@ -164,6 +164,7 @@ test('email OK and the ad source', () => {
   assert.equal(adSourceText(null), 'direct / unknown');
   assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'Autumn Leads', utm_content: 'carousel_2' }), 'facebook / Autumn Leads / carousel_2');
   assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'https://evil.example.com/x', utm_content: 'NG1 1AA' }), 'facebook / - / -', 'no links, no postcodes');
+  assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'Leads – Autumn & Winter', utm_content: 'NG11AA' }), 'facebook / Leads Autumn Winter / -', 'punctuation dropped; a postcode without its space still refused');
 });
 
 const item = (over: Partial<BoardItem> & { id: string }): BoardItem => ({ name: 'Row', groupId: GROUPS.free, createdAt: '2026-09-01T00:00:00Z', email: null, mobile: null, columns: [], ...over });
@@ -195,6 +196,30 @@ test('matching: email exact, then ignoring case, then the number; the stored row
   assert.ok(!r.matched.has('d') && r.excluded.get('d')?.id === '400', 'a row in Excluded: left alone, and no other row touched');
   assert.ok(!r.matched.has('e'), 'no row');
   assert.ok(![...r.matched.values()].some((m) => m.item.id === '999'), 'a row nobody matches is untouched');
+});
+
+test('a duplicate in Excluded that only shares a member’s number never excludes the member whose own row is elsewhere', () => {
+  // As on the live board: one person's second account sits in Excluded with the same number.
+  const members = [
+    { userId: 'main', email: 'hannah@example.com', mobileKey: '+447537998686', storedItemId: '1', createdAt: '2026-07-24T13:58:00Z' },
+    { userId: 'second', email: 'hannah.two@example.com', mobileKey: '+447537998686', storedItemId: '2', createdAt: '2026-07-26T17:23:00Z' },
+    { userId: 'thomas', email: 'thomas@example.com', mobileKey: '+447542607327', storedItemId: null, createdAt: '2026-08-03T11:57:00Z' },
+  ];
+  const items = [
+    item({ id: '1', email: 'hannah@example.com', mobile: '+447537998686', groupId: GROUPS.free, createdAt: '2026-07-24T13:58:20Z' }),
+    item({ id: '2', email: 'hannah.two@example.com', mobile: '+447537998686', groupId: GROUPS.excluded, createdAt: '2026-07-26T17:23:37Z' }),
+    item({ id: '3', email: 'h.dallison@example.com', mobile: '+447537998686', groupId: GROUPS.excluded, createdAt: '2026-07-26T17:25:44Z' }),
+    item({ id: '4', email: 'thomas@example.com', mobile: '07542607327', groupId: GROUPS.pro, createdAt: '2026-08-03T11:57:14Z' }),
+    item({ id: '5', email: 'info@example.com', mobile: '07542607327', groupId: GROUPS.excluded, createdAt: '2026-08-03T22:55:56Z' }),
+  ];
+  const r = matchMembers(members, items);
+  assert.equal(r.matched.get('main')?.item.id, '1', 'her own row, though an Excluded row shares her number');
+  assert.equal(r.excluded.get('second')?.id, '2', 'the account whose own row is in Excluded is left alone');
+  assert.equal(r.matched.get('thomas')?.item.id, '4');
+  assert.ok(!r.excluded.has('main') && !r.excluded.has('thomas'));
+  const plan = planFunnel([facts({ userId: 'main', email: 'hannah@example.com', mobileKey: '+447537998686', mondayItemId: '1', createdAt: '2026-07-24T13:58:00Z', packAccount: false, balancePence: 1800, spendableBasePence: 1800 })], items, { lowCreditPence: LOW, now: NOW, createMissing: true, createMinAgeMs: 3_600_000 });
+  assert.ok(plan.updates.every((u) => u.itemId === '1'), 'nothing is written to the Excluded rows');
+  assert.equal(plan.creates.length, 0);
 });
 
 test('one row, two members: the email match wins over the number; a member without a row is not given someone else’s', () => {

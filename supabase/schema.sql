@@ -5400,12 +5400,14 @@ declare
   v_added integer := 0;
 begin
   if cardinality(v_qual) = 0 then raise exception 'lifecycle_active_days_sync needs the qualifying kinds'; end if;
-  insert into public.member_active_days_state (id) values (1) on conflict (id) do nothing;
+  -- A dry run writes nothing, not even the watermark's row.
   if v_apply then
+    insert into public.member_active_days_state (id) values (1) on conflict (id) do nothing;
     select last_event_id into v_from from public.member_active_days_state where id = 1 for update;
   else
     select last_event_id into v_from from public.member_active_days_state where id = 1;
   end if;
+  v_from := coalesce(v_from, 0);
   select max(x.id) into v_to from (select e.id from public.activity_events e where e.id > v_from order by e.id limit v_limit) x;
   if v_to is null then
     return jsonb_build_object('from', v_from, 'to', v_from, 'added', 0, 'more', false);
