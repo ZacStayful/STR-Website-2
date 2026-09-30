@@ -4,7 +4,7 @@ import { CONSENT_TEXT, fullAnalysesFor, packClawbackPence, packCopy, packGrants,
 import { DEFAULT_LIFECYCLE } from '../lifecycle/settings.ts';
 
 const on = { ...DEFAULT_LIFECYCLE, starterPackFrom: '2026-10-01T09:00:00.000Z' };
-const fresh: PackFacts = { createdAt: '2026-10-02T10:00:00Z', teamMember: false, bought: false, alreadyHad: false, onPlan: false };
+const fresh: PackFacts = { createdAt: '2026-10-02T10:00:00Z', hadWelcome: false, teamMember: false, bought: false, alreadyHad: false, onPlan: false };
 const rates = { welcome: 1, topup: 1.3 };
 
 test('the offer is for new members only, and never twice', () => {
@@ -12,6 +12,8 @@ test('the offer is for new members only, and never twice', () => {
   assert.deepEqual(packOffer(fresh, DEFAULT_LIFECYCLE), { eligible: false, reason: 'off' });
   assert.deepEqual(packOffer({ ...fresh, createdAt: '2026-09-30T10:00:00Z' }, on), { eligible: false, reason: 'existing_member' });
   assert.deepEqual(packOffer({ ...fresh, createdAt: null }, on), { eligible: false, reason: 'existing_member' });
+  // The cutover moved back after they joined: they had the £20, so never the pack as well.
+  assert.deepEqual(packOffer({ ...fresh, hadWelcome: true }, on), { eligible: false, reason: 'existing_member' });
   assert.deepEqual(packOffer({ ...fresh, teamMember: true }, on), { eligible: false, reason: 'team_member' });
   assert.deepEqual(packOffer({ ...fresh, bought: true }, on), { eligible: false, reason: 'bought' });
   assert.deepEqual(packOffer({ ...fresh, alreadyHad: true }, on), { eligible: false, reason: 'already_had' });

@@ -34,6 +34,9 @@ type Admin = ReturnType<typeof createAdminClient>;
 const BUDGET_MS = 50_000;
 const QUEUE_BATCH = 50;
 const MAX_ATTEMPTS = 5;
+const LINK_CONCURRENCY = 10;
+/** Saving links may run this far past the write deadline, inside the function's 60 seconds. */
+const LINK_GRACE_MS = 4_000;
 /** The nightly starts at this UK hour. */
 export const NIGHTLY_HOUR = 6;
 
@@ -41,12 +44,24 @@ function warn(message: string): void {
   console.warn(`[monday-funnel] ${message}`);
 }
 
-async function saveLinks(admin: Admin, links: { userId: string; itemId: string }[]): Promise<number> {
+/**
+ * Stores each member's row on their profile (null unlinks one that turned out
+ * to be another member's), ten at a time, and stops a little after the
+ * deadline so the run can still record itself: a link not saved is found
+ * again next run (every row the sync writes carries the member's email).
+ */
+async function saveLinks(admin: Admin, links: { userId: string; itemId: string | null }[], deadline: number): Promise<number> {
   let saved = 0;
-  for (const l of links) {
-    const { error } = await admin.from('profiles').update({ monday_item_id: l.itemId }).eq('id', l.userId);
-    if (error) warn(`link not saved: ${error.message}`);
-    else saved += 1;
+  for (let i = 0; i < links.length; i += LINK_CONCURRENCY) {
+    if (Date.now() > deadline + LINK_GRACE_MS) {
+      warn(`${links.length - i} row links left for the next run (out of time)`);
+      break;
+    }
+    const results = await Promise.all(links.slice(i, i + LINK_CONCURRENCY).map((l) => admin.from('profiles').update({ monday_item_id: l.itemId }).eq('id', l.userId)));
+    for (const r of results) {
+      if (r.error) warn(`link not saved: ${r.error.message}`);
+      else saved += 1;
+    }
   }
   return saved;
 }
@@ -65,7 +80,7 @@ function summary(plan: FunnelPlan) {
 
 async function applyPlan(admin: Admin, token: string, plan: FunnelPlan, deadline: number): Promise<WriteOutcome & { linked: number }> {
   const written = await writePlan(token, plan.updates, plan.creates, deadline);
-  const linked = await saveLinks(admin, [...plan.links, ...written.created]);
+  const linked = await saveLinks(admin, [...written.created, ...plan.links], deadline);
   if (written.failed.length > 0) warn(`${written.failed.length} rows not written: ${written.failed[0].error}`);
   if (written.stopped) warn(`stopped early: ${written.stopped}`);
   return { ...written, linked };
@@ -96,17 +111,33 @@ export async function drainQueue(admin: Admin, opts: { dry: boolean; token: stri
   out.queued = rows.length;
   if (rows.length === 0) return done();
 
+  // A run that cannot get as far as writing still counts as an attempt, so a
+  // fault that never clears cannot hold the head of the queue for ever (the
+  // nightly puts anyone dropped right).
+  const failAll = async (error: string): Promise<DrainOutcome> => {
+    if (!opts.dry) {
+      for (const r of rows) {
+        if (r.attempts + 1 >= MAX_ATTEMPTS) {
+          await admin.from('monday_funnel_queue').delete().eq('user_id', r.user_id).eq('queued_at', r.queued_at);
+          out.dropped += 1;
+        } else {
+          await admin.from('monday_funnel_queue').update({ attempts: r.attempts + 1, last_error: error.slice(0, 500), last_attempt_at: new Date().toISOString() }).eq('user_id', r.user_id).eq('queued_at', r.queued_at);
+        }
+      }
+    }
+    return { ...done(), error };
+  };
   const facts = await loadFacts(admin, { userIds: rows.map((r) => r.user_id), now: opts.now });
-  if (!facts.ok) return { ...done(), error: facts.error };
+  if (!facts.ok) return failAll(facts.error);
   const settings = await getBillingSettings();
   // Their rows: stored ids first, then email for anyone whose stored row is gone or never was.
   const byStored = await readItems(opts.token, facts.facts.map((f) => f.mondayItemId).filter((id): id is string => Boolean(id)));
   out.mondayCalls += byStored.calls;
-  if (!byStored.ok) return { ...done(), error: byStored.error };
+  if (!byStored.ok) return failAll(byStored.error);
   const found = new Set(byStored.items.map((i) => i.id));
   const byEmail = await findItemsByEmail(opts.token, facts.facts.filter((f) => !f.mondayItemId || !found.has(f.mondayItemId)).map((f) => f.email ?? ''));
   out.mondayCalls += byEmail.calls;
-  if (!byEmail.ok) return { ...done(), error: byEmail.error };
+  if (!byEmail.ok) return failAll(byEmail.error);
   const items = new Map<string, BoardItem>([...byStored.items, ...byEmail.items].map((i) => [i.id, i]));
   const plan = planFunnel(facts.facts, [...items.values()], { lowCreditPence: settings.lifecycle.lowCreditPence, now: opts.now, createMissing: false, createMinAgeMs: CREATE_MIN_AGE_MS });
   if (opts.dry) {
@@ -176,21 +207,25 @@ export async function runNightly(admin: Admin, opts: { dry: boolean; token: stri
   } catch (err) {
     return { ...done(), error: (err as Error).message };
   }
-  if (row?.finished_at && !opts.force) return { ...done(), why: 'already finished today' };
+  // The inactivity step is retried until it is done, even once the Monday pass has finished.
+  const inactivityDue = !row?.inactivity_at || opts.force;
+  if (row?.finished_at && !inactivityDue) return { ...done(), why: 'already finished today' };
   out.ran = true;
   if (!opts.dry && !row) await admin.from('monday_funnel_runs').upsert({ day, started_at: new Date().toISOString() }, { onConflict: 'day', ignoreDuplicates: true });
 
   // 1. Inactivity: database only, before any Monday call (and before the 07:00 UTC picks run).
-  if (!row?.inactivity_at || opts.force) {
+  if (inactivityDue) {
     const t = Date.now();
     const step = await runInactivityStep({ apply: !opts.dry, now: opts.now, budgetMs: 20_000 });
     out.ms.inactivity = Date.now() - t;
     out.inactivity = step;
     if (!step.ok) warn(`inactivity step failed: ${step.error}`);
+    else if (step.incomplete) warn('inactivity step stopped before the end of the activity log: nobody newly marked; it runs again next time');
     else if (!opts.dry) await admin.from('monday_funnel_runs').update({ inactivity_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('day', day);
   } else {
     out.inactivity = { skipped: 'done earlier today' };
   }
+  if (row?.finished_at && !opts.force) return { ...done(), why: 'Monday already finished today' };
 
   // 2. Every member's row and group.
   if (!opts.token) return { ...done(), why: 'MONDAY_API_KEY is not set: Monday skipped' };

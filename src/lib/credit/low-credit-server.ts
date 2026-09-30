@@ -34,6 +34,7 @@ import { lowCreditDue, lowCreditMessage, type LowCreditNotice } from './low-cred
 type Admin = ReturnType<typeof createAdminClient>;
 
 const ID_CHUNK = 150;
+const NOTICE_CONCURRENCY = 6;
 const PROFILE_COLUMNS = 'id, email, alert_credit, last_low_balance_email_at, created_at, stripe_default_payment_method_id, plan, plan_code, plan_source, reports_run, stripe_subscription_id, stripe_subscription_status, subscription_paused_from, subscription_paused_until, subscription_cancel_at';
 
 type ProfileRow = AccessProfile & {
@@ -111,16 +112,25 @@ export async function lowCreditNoticesFor(admin: Admin, userIds: readonly string
     }
     for (const r of (data ?? []) as { u: string; total: number | string; spendable: number | string }[]) balances.set(r.u, { total: Number(r.total) || 0, spendable: Number(r.spendable) || 0 });
   }
-  for (const p of candidates) {
+  const due = candidates.filter((p) => {
     const b = balances.get(p.id);
-    if (!b) continue;
-    if (!lowCreditDue({ noPlan: true, balancePence: b.total, spendableBasePence: b.spendable, lowCreditPence, lastToldAt: p.last_low_balance_email_at, alertsOn: true, hasEmail: true, admin: false, now })) continue;
-    try {
-      out.set(p.id, await noticeFor({ userId: p.id, createdAt: p.created_at, paymentMethodId: p.stripe_default_payment_method_id, balancePence: b.total, now }));
-    } catch (err) {
-      console.warn('[low-credit] notice not built:', err instanceof Error ? err.message : String(err));
+    return Boolean(b) && lowCreditDue({ noPlan: true, balancePence: b!.total, spendableBasePence: b!.spendable, lowCreditPence, lastToldAt: p.last_low_balance_email_at, alertsOn: true, hasEmail: true, admin: false, now });
+  });
+  // A few at a time (each reads the saved card from Stripe and the pack's
+  // state): the day this goes live, everyone at £5 or less is due at once,
+  // inside the picks run's time.
+  let next = 0;
+  const worker = async () => {
+    while (next < due.length) {
+      const p = due[next++];
+      try {
+        out.set(p.id, await noticeFor({ userId: p.id, createdAt: p.created_at, paymentMethodId: p.stripe_default_payment_method_id, balancePence: balances.get(p.id)!.total, now }));
+      } catch (err) {
+        console.warn('[low-credit] notice not built:', err instanceof Error ? err.message : String(err));
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(NOTICE_CONCURRENCY, due.length) }, worker));
   return out;
 }
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_LIFECYCLE, LIFECYCLE_KEYS, isPackAccount, parseLifecycle, starterPackBonusPence } from './settings.ts';
+import { DEFAULT_LIFECYCLE, LIFECYCLE_KEYS, isPackAccount, parseLifecycle, starterPackBonusPence, strandedByCutoverMove } from './settings.ts';
 
 const from = (rows: Record<string, unknown>) => parseLifecycle((k) => rows[k]);
 
@@ -66,4 +66,15 @@ test('a pack account is one created at or after the cutover, and only when a cut
   assert.equal(isPackAccount('2026-10-05T12:00:00Z', { starterPackFrom: null }), false);
   assert.equal(isPackAccount(null, s), false);
   assert.equal(isPackAccount('not a date', s), false);
+});
+
+test('moving the cutover later, or clearing it, strands the accounts in between; a first or earlier cutover strands nobody', () => {
+  const oct1 = '2026-10-01T09:00:00.000Z';
+  const oct8 = '2026-10-08T09:00:00.000Z';
+  assert.deepEqual(strandedByCutoverMove(oct1, oct8), { from: oct1, to: oct8 });
+  assert.deepEqual(strandedByCutoverMove(oct1, null), { from: oct1, to: null });
+  assert.equal(strandedByCutoverMove(null, oct1), null);
+  assert.equal(strandedByCutoverMove(oct8, oct1), null);
+  assert.equal(strandedByCutoverMove(oct1, oct1), null);
+  assert.equal(strandedByCutoverMove('not a date', oct1), null);
 });

@@ -7,12 +7,12 @@ import { normaliseMobile } from '../../credit/abuse';
 import { getBillingSettings } from '../../credit/unit-costs';
 import { getPlans } from '../../credit/plans';
 import { isPackAccount } from '../../lifecycle/settings';
-import { payersForAll } from '../../notify/daily-server';
+import { payersForStrict } from '../../team';
 import { parseAboutYou } from '../../profile/about';
 import { contactCanReceive } from '../../sms/choose';
 import { isStaffEmail } from '../../inactivity/rules';
 import { monthlyValuePence, totalPaidPence } from '../../payments/rules';
-import { adSourceText, emailOkFor, type MemberFacts } from './facts';
+import { adSourceText, earliest, emailOkFor, legacyPayments, type MemberFacts } from './facts';
 
 /**
  * The Monday funnel's view of members (Batch 20, Part F): one MemberFacts
@@ -82,7 +82,9 @@ export async function loadFacts(admin: Admin, opts: { userIds?: readonly string[
   }
 
   const left: { userId: string; reason: 'admin' | 'staff' | 'team_member' | 'no_email' }[] = [];
-  const payers = await payersForAll(profiles.map((p) => p.id));
+  // Never guessed: a failed team lookup would give every team member a row.
+  const payers = await payersForStrict(profiles.map((p) => p.id));
+  if (!payers) return { ok: false, error: 'team lookup failed' };
   const members = profiles.filter((p) => {
     const reason = !p.email ? 'no_email' : isAdminEmail(p.email) ? 'admin' : isStaffEmail(p.email) ? 'staff' : payers.get(p.id)?.memberId ? 'team_member' : null;
     if (reason) left.push({ userId: p.id, reason });
@@ -129,6 +131,8 @@ export async function loadFacts(admin: Admin, opts: { userIds?: readonly string[
     const ended = time(endedAt);
     const lastTopup = time(p.last_topup_at);
     const plan = p.plan_code ? plans.get(p.plan_code) ?? null : null;
+    const packAt = mark?.starter_pack_bought_at ?? st?.pack_at ?? null;
+    const legacy = legacyPayments(p, { recordedTopups: Number(st?.topups ?? 0), packAt });
     return {
       userId: p.id,
       email: p.email,
@@ -150,10 +154,10 @@ export async function loadFacts(admin: Admin, opts: { userIds?: readonly string[
       totalPaidPence: totalPaidPence(Number(st?.paid ?? 0), Number(st?.refunded ?? 0)),
       paidEver: hasEverPaid(p) || Number(st?.paid ?? 0) > 0,
       monthlyValuePence: monthlyValuePence({ status: p.stripe_subscription_status ?? null, paused: isPaused(p, now.getTime()), plan: plan ? { pricePence: plan.pricePence, interval: plan.interval } : null }),
-      firstPaidAt: st?.first_paid ?? null,
-      topups: Number(st?.topups ?? 0),
-      lastTopupAt: st?.last_topup ?? null,
-      packBoughtAt: mark?.starter_pack_bought_at ?? st?.pack_at ?? null,
+      firstPaidAt: earliest(st?.first_paid ?? null, legacy.firstPaidAt),
+      topups: Number(st?.topups ?? 0) + (legacy.topupAt ? 1 : 0),
+      lastTopupAt: st?.last_topup ?? legacy.topupAt,
+      packBoughtAt: packAt,
       hitZeroAt: p.hit_zero_at,
       lastActiveDay: st?.last_day ?? null,
       activeDays: Number(st?.days ?? 0),

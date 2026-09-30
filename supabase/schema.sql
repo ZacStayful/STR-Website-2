@@ -5297,13 +5297,46 @@ end $$;
 revoke all on function public.starter_pack_claim(jsonb) from public, anon, authenticated;
 grant execute on function public.starter_pack_claim(jsonb) to service_role;
 
+-- starter_pack_clawback(p): {user, base, target, refunded, description}. A
+-- pack's refund or dispute, cumulatively: takes back what is still owed, the
+-- target less the adjustments already made under `base` (the first is `base`
+-- itself, a later one `base:<refunded>`). Read and written under the
+-- member's profile row lock, so two refunds handled at once see each other.
+-- Returns the pence this call took back.
+create or replace function public.starter_pack_clawback(p jsonb)
+returns numeric language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_base text := nullif(p->>'base', '');
+  v_target numeric := greatest(0, coalesce((p->>'target')::numeric, 0));
+  v_taken numeric;
+  v_diff numeric;
+begin
+  if v_user is null or v_base is null then raise exception 'starter_pack_clawback needs user and base'; end if;
+  perform 1 from public.profiles where id = v_user for update;
+  select coalesce(sum(greatest(0, -g.amount_pence)), 0) into v_taken
+    from public.credit_grants g
+   where g.user_id = v_user and g.kind = 'adjustment'
+     and (g.source_ref = v_base or left(g.source_ref, length(v_base) + 1) = v_base || ':');
+  v_diff := round(v_target - v_taken);
+  if v_diff <= 0 then return 0; end if;
+  perform public.credit_grant(v_user, 'adjustment', -v_diff, null,
+    case when v_taken > 0 then v_base || ':' || coalesce(nullif(p->>'refunded', ''), '0') else v_base end,
+    nullif(p->>'description', ''));
+  return v_diff;
+end $$;
+revoke all on function public.starter_pack_clawback(jsonb) from public, anon, authenticated;
+grant execute on function public.starter_pack_clawback(jsonb) to service_role;
+
 -- ── member_payments / member_refunds: what "Total paid" adds up (src/lib/payments) ──
 -- Every successful payment, keyed by its Stripe id, amount as charged (VAT
 -- included): 'pi:<payment intent>' for a starter pack or a top-up,
 -- 'inv:<invoice>' for a subscription invoice. Refunds are kept per charge as
 -- the charge's cumulative amount_refunded, set and never added, so a
 -- redelivered or out-of-order event cannot count twice. Total paid =
--- payments - refunds, never below 0. Nothing from before Batch 20 is here.
+-- payments - refunds of those payments (matched on the PaymentIntent; an
+-- invoice's is looked up when it is paid), never below 0. Nothing from before
+-- Batch 20 is here, so a refund of an older payment is not taken off.
 create table if not exists public.member_payments (
   id text primary key,
   user_id uuid not null references public.profiles(id) on delete cascade,
@@ -5333,6 +5366,7 @@ create table if not exists public.member_refunds (
   updated_at timestamptz not null default now()
 );
 create index if not exists member_refunds_user_idx on public.member_refunds (user_id);
+create index if not exists member_refunds_pi_idx on public.member_refunds (payment_intent_id) where payment_intent_id is not null;
 alter table public.member_refunds enable row level security;  -- no policies: service role only
 revoke all on public.member_refunds from anon, authenticated;
 
@@ -5388,7 +5422,9 @@ revoke all on public.member_active_days_state from anon, authenticated;
 -- lifecycle_active_days_sync(p): {qualifying: [kinds], apply, limit}. Adds the
 -- (member, UK day) pairs of up to `limit` activity_events rows past the
 -- watermark and moves it on. apply = false counts what it would add and
--- changes nothing. Returns {from, to, added, more}.
+-- changes nothing, and lists each member's latest such day among them
+-- (`pending`), so a dry run's preview counts actions since the last nightly.
+-- Returns {from, to, added, more, pending}.
 create or replace function public.lifecycle_active_days_sync(p jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -5398,6 +5434,7 @@ declare
   v_from bigint;
   v_to bigint;
   v_added integer := 0;
+  v_pending jsonb;
 begin
   if cardinality(v_qual) = 0 then raise exception 'lifecycle_active_days_sync needs the qualifying kinds'; end if;
   -- A dry run writes nothing, not even the watermark's row.
@@ -5427,9 +5464,15 @@ begin
        where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
     ) n
     where not exists (select 1 from public.member_active_days d where d.user_id = n.user_id and d.day = n.day);
+    select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'day', x.day)), '[]'::jsonb) into v_pending from (
+      select e.user_id, max((e.occurred_at at time zone 'Europe/London')::date) as day
+        from public.activity_events e
+       where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
+       group by e.user_id
+    ) x;
   end if;
   return jsonb_build_object('from', v_from, 'to', v_to, 'added', v_added,
-    'more', exists (select 1 from public.activity_events e where e.id > v_to));
+    'more', exists (select 1 from public.activity_events e where e.id > v_to), 'pending', v_pending);
 end $$;
 revoke all on function public.lifecycle_active_days_sync(jsonb) from public, anon, authenticated;
 grant execute on function public.lifecycle_active_days_sync(jsonb) to service_role;
@@ -5452,9 +5495,17 @@ returns jsonb language sql stable security definer set search_path = '' as $$
       from public.member_payments m join u on u.id = m.user_id
      group by m.user_id
   ), ref as (
-    select r.user_id, sum(r.amount_refunded_pence) as refunded
-      from public.member_refunds r join u on u.id = r.user_id
-     group by r.user_id
+    -- Only refunds of the payments counted above (matched on the PaymentIntent),
+    -- each at most the payment: a refund of a payment from before Batch 20, or
+    -- one never recorded, is not taken off what was never added.
+    select m.user_id, sum(least(m.amount_pence, rr.refunded)) as refunded
+      from public.member_payments m join u on u.id = m.user_id
+      join lateral (
+        select sum(r.amount_refunded_pence) as refunded from public.member_refunds r
+         where r.payment_intent_id = m.payment_intent_id and r.user_id = m.user_id
+      ) rr on rr.refunded is not null
+     where m.payment_intent_id is not null
+     group by m.user_id
   ), top as (
     select m.user_id, count(*) as topups, max(m.paid_at) as last_topup
       from public.member_payments m join u on u.id = m.user_id

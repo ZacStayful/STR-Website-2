@@ -59,11 +59,30 @@ export function paymentFromIntent(
   return { id: `pi:${pi.id}`, userId, kind, amountPence: amount, currency: (pi.currency ?? 'gbp').toLowerCase(), planCode: null, paymentIntentId: pi.id };
 }
 
-/** A paid subscription invoice (anything charged: a renewal, a first month, a plan change's difference), as a row. */
-export function paymentFromInvoice(invoice: { id?: string | null; amount_paid?: number | null; currency?: string | null }, userId: string, planCode: string | null): PaymentRecord | null {
+/**
+ * A paid subscription invoice (anything charged: a renewal, a first month, a
+ * plan change's difference), as a row. `paymentIntentId` is the invoice's
+ * payment, which is how a later refund of it is matched.
+ */
+export function paymentFromInvoice(
+  invoice: { id?: string | null; amount_paid?: number | null; currency?: string | null },
+  userId: string,
+  planCode: string | null,
+  paymentIntentId: string | null = null,
+): PaymentRecord | null {
   const amount = Math.round(Number(invoice.amount_paid ?? 0));
   if (!invoice.id || !userId || !Number.isFinite(amount) || amount <= 0) return null;
-  return { id: `inv:${invoice.id}`, userId, kind: 'subscription', amountPence: amount, currency: (invoice.currency ?? 'gbp').toLowerCase(), planCode, paymentIntentId: null };
+  return { id: `inv:${invoice.id}`, userId, kind: 'subscription', amountPence: amount, currency: (invoice.currency ?? 'gbp').toLowerCase(), planCode, paymentIntentId };
+}
+
+/** The PaymentIntent an invoice was paid with, when the invoice carries its payments. */
+export function invoicePaymentIntentId(invoice: { payments?: { data?: Array<{ status?: string | null; payment?: { payment_intent?: string | { id: string } | null } | null }> } | null }): string | null {
+  for (const p of invoice.payments?.data ?? []) {
+    if (p.status && p.status !== 'paid') continue;
+    const pi = p.payment?.payment_intent;
+    if (pi) return typeof pi === 'string' ? pi : pi.id;
+  }
+  return null;
 }
 
 export function totalPaidPence(paidPence: number, refundedPence: number): number {

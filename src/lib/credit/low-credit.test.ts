@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { choosePath, lowCreditCopy, lowCreditDue, lowCreditMessage, lowCreditSection, lowUnderRule, type LowCreditNotice } from './low-credit.ts';
+import { choosePath, lowCreditCopy, lowCreditDue, lowCreditMayGoAlone, lowCreditMessage, lowCreditSection, lowUnderRule, type LowCreditNotice } from './low-credit.ts';
 import { buildDaily } from '../notify/message.ts';
 import { renderEmail } from '../notify/render-email.ts';
 
@@ -72,4 +72,13 @@ test('it rides at the top of the daily email, and alone it is a capped email wit
   assert.ok(alone.text.includes(`Start Starter: ${SITE}/account/billing/choose?pick=starter`));
   assert.ok(alone.headers['List-Unsubscribe']);
   assert.ok(alone.text.includes('Manage notifications') || alone.html.includes('Manage notifications'));
+});
+
+test("alone from a debit only once the day's daily emails have gone, so it never takes that morning's deals' slot", () => {
+  assert.equal(lowCreditMayGoAlone(new Date('2026-10-05T06:59:00Z')), false);
+  assert.equal(lowCreditMayGoAlone(new Date('2026-10-05T07:30:00Z')), false);
+  assert.equal(lowCreditMayGoAlone(new Date('2026-10-05T08:29:59Z')), false);
+  assert.equal(lowCreditMayGoAlone(new Date('2026-10-05T08:30:00Z')), true);
+  assert.equal(lowCreditMayGoAlone(new Date('2026-10-05T23:59:00Z')), true);
+  assert.equal(lowCreditMayGoAlone(new Date('2026-10-06T00:10:00Z')), false);
 });

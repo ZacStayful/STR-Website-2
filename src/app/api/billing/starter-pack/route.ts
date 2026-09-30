@@ -13,7 +13,7 @@ import { clientDetails } from '@/lib/tracking/request';
 import { paymentFromIntent } from '@/lib/payments/rules';
 import { recordPayment } from '@/lib/payments/server';
 import { latestPurchaseFor, starterPackStateFor } from '@/lib/starter-pack/server';
-import { grantStarterPack, settleStarterPack } from '@/lib/starter-pack/grant-server';
+import { grantStarterPack, settleStarterPack, type SettleOutcome } from '@/lib/starter-pack/grant-server';
 import { CONSENT_VERSION, returnMessage, type OfferBlock } from '@/lib/starter-pack/rules';
 
 export const dynamic = 'force-dynamic';
@@ -118,17 +118,30 @@ export async function POST(request: Request) {
         console.warn('[billing/starter-pack] off-session authorisation failed, falling back to Checkout:', e.code ?? e.message);
       }
       if (pi && pi.status === 'requires_capture') {
-        const settled = await settleStarterPack(pi.id);
+        let settled: SettleOutcome;
+        try {
+          settled = await settleStarterPack(pi.id);
+        } catch (err) {
+          // Authorised and held for them, but not settled: the webhook finishes it (captured, or let go if it cannot be).
+          console.error('[billing/starter-pack] settle failed:', (err as Error)?.message ?? err);
+          return Response.json({ error: `We couldn't confirm your payment just now. If it goes through, your ${state.copy.credit} of credit appears within a few minutes, so please don't pay again.` }, { status: 502 });
+        }
         if (settled === 'captured' || settled === 'already') {
-          const captured = await stripe.paymentIntents.retrieve(pi.id);
-          const outcome = await grantStarterPack({ paymentIntent: captured, email: member.email });
-          if (outcome === 'granted' || outcome === 'already') {
-            await recordPayment(paymentFromIntent(captured, member.id));
-            logActivity(member.id, 'starter_pack', { dedupeKey: `starter_pack:pi:${pi.id}`, extras: { amount_pence: lc.starterPackPricePence } });
-            // Meta's Purchase with the member's own browser (the webhook's copy has the same key: one is sent).
-            await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: lc.starterPackPricePence, currency: 'gbp' }, details: clientDetails(request.headers) });
-            const bal = await getBalance(member.id);
-            return Response.json({ ok: true, balancePence: bal.totalPence, via: 'saved_card' });
+          try {
+            const captured = await stripe.paymentIntents.retrieve(pi.id);
+            const outcome = await grantStarterPack({ paymentIntent: captured, email: member.email });
+            if (outcome === 'granted' || outcome === 'already') {
+              await recordPayment(paymentFromIntent(captured, member.id));
+              logActivity(member.id, 'starter_pack', { dedupeKey: `starter_pack:pi:${pi.id}`, extras: { amount_pence: lc.starterPackPricePence } });
+              // Meta's Purchase with the member's own browser (the webhook's copy has the same key: one is sent).
+              await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: lc.starterPackPricePence, currency: 'gbp' }, details: clientDetails(request.headers) });
+              const bal = await getBalance(member.id);
+              return Response.json({ ok: true, balancePence: bal.totalPence, via: 'saved_card' });
+            }
+          } catch (err) {
+            // Paid: the webhook's payment_intent.succeeded grants it. Never tell a charged member it failed.
+            console.error('[billing/starter-pack] grant after capture failed (the webhook will grant it):', (err as Error)?.message ?? err);
+            return Response.json({ ok: true, pending: true, via: 'saved_card' });
           }
         }
         const attempt = await latestPurchaseFor(member.id);

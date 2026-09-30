@@ -6,6 +6,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { parseLifecycleForm } from '@/lib/lifecycle/admin-form';
+import { LIFECYCLE_KEYS, strandedByCutoverMove } from '@/lib/lifecycle/settings';
+import { readStarterPackCutover, reopenWelcomeCheck } from '@/lib/lifecycle/settings-server';
 import { runMobileBackfill, type MobileBackfillOutcome } from '@/lib/credit/mobile-backfill-server';
 import { runBackfill, runFunnelCron, type BackfillOutcome, type CronOutcome } from '@/lib/crm/monday-funnel/sync-server';
 
@@ -31,13 +33,31 @@ export async function saveLifecycleAction(_prev: SaveState, formData: FormData):
     return typeof v === 'string' ? v : null;
   }, new Date());
   if (!parsed.ok) return { ok: false, message: parsed.message };
+  // A cutover moved later (or cleared) strands the accounts created in between:
+  // no welcome credit and no pack. Their welcome check is reopened before the
+  // save (nothing is saved if that fails; reopening early is harmless, the old
+  // date just decides again) and once more after it, for anyone who signed in
+  // in between.
+  const before = await readStarterPackCutover();
+  if (!before.ok) return { ok: false, message: 'Not saved: the current starter pack date could not be read. Try again.' };
+  const stranded = strandedByCutoverMove(before.from, (parsed.values[LIFECYCLE_KEYS.starterPackFrom] as string) || null);
+  if (stranded) {
+    const first = await reopenWelcomeCheck(stranded);
+    if (!first.ok) return { ok: false, message: `Not saved: the accounts created since the old starter pack date could not be given the welcome credit back (${first.error}). Try again.` };
+  }
   try {
     for (const [key, value] of Object.entries(parsed.values)) await updateBillingSetting(key, value);
   } catch (err) {
     return { ok: false, message: `Not saved: ${err instanceof Error ? err.message : String(err)}` };
   }
+  const notes = [...parsed.summary];
+  if (stranded) {
+    const again = await reopenWelcomeCheck(stranded);
+    const span = `created from ${stranded.from}${stranded.to ? ` to ${stranded.to}` : ''}`;
+    notes.push(again.ok ? `Accounts ${span} with no welcome credit and no pack get the welcome credit at their next sign-in` : `Warning: accounts ${span} who signed in during the save may need the save repeating (${again.error})`);
+  }
   revalidatePath(PAGE);
-  return { ok: true, message: `Saved. ${parsed.summary.join('. ')}.` };
+  return { ok: true, message: `Saved. ${notes.join('. ')}.` };
 }
 
 export type MobileState = { at: string; outcome: MobileBackfillOutcome } | null;

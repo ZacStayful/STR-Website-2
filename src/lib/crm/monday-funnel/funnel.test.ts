@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { COLUMNS, GROUPS, NEVER_WRITTEN, groupOf } from './config.ts';
-import { adSourceText, emailOkFor, type MemberFacts } from './facts.ts';
+import { adSourceText, earliest, emailOkFor, legacyPayments, type MemberFacts } from './facts.ts';
+import { updateRequest } from './mutations.ts';
 import { billingStatus, funnelGroup, planTier } from './precedence.ts';
 import { changedColumns, columnValuesJson, currentRow, desiredRow, planLabel } from './values.ts';
-import { matchMembers, type BoardItem } from './match.ts';
+import { matchMembers, mobileVariants, type BoardItem } from './match.ts';
 import { planFunnel, planTable } from './plan.ts';
 
 const LOW = 500;
@@ -279,3 +280,57 @@ test('the plan: moves, writes, links and creates, and never a second row', () =>
   assert.ok(table.some((r) => r.row === 'new' && r.group === '(no row) → 1. Free sign-up'));
   assert.equal(groupOf('group_unknown'), null);
 });
+
+test('a member whose every row is another member’s (a shared number) is never given a second row, and is unlinked from it', () => {
+  const opts = { lowCreditPence: LOW, now: NOW, createMissing: true, createMinAgeMs: 3_600_000 };
+  const a = facts({ userId: 'a', email: 'first@example.com', mobileKey: '+447700900222', createdAt: '2026-01-01T00:00:00Z', packAccount: false });
+  const b = facts({ userId: 'b', email: 'second@example.com', mobileKey: '+447700900222', mondayItemId: '10', createdAt: '2026-05-01T00:00:00Z', packAccount: false });
+  const row = item({ id: '10', email: 'first@example.com', mobile: '07700900222' });
+  const r = matchMembers([a, b].map((f) => ({ userId: f.userId, email: f.email, mobileKey: f.mobileKey, storedItemId: f.mondayItemId, createdAt: f.createdAt })), [row]);
+  assert.equal(r.matched.get('a')?.item.id, '10');
+  assert.deepEqual(r.shared.get('b'), { itemIds: ['10'], excluded: false });
+  const p = planFunnel([a, b], [row], opts);
+  assert.equal(p.creates.length, 0, 'no second row for the member sharing the number');
+  assert.deepEqual(p.noRow, [{ userId: 'b', reason: 'shares_a_row' }]);
+  assert.ok(p.updates.every((u) => u.userId === 'a'), 'nothing of theirs is written over the other member’s row');
+  assert.deepEqual(p.links.find((l) => l.userId === 'b'), { userId: 'b', itemId: null }, 'their stale link to it is cleared');
+  // The shared row in Excluded: both left alone.
+  const excludedRow = { ...row, groupId: GROUPS.excluded };
+  const q = planFunnel([a, { ...b, mondayItemId: null }], [excludedRow], opts);
+  assert.deepEqual(q.excluded.sort(), ['a', 'b']);
+  assert.equal(q.creates.length + q.updates.length, 0);
+});
+
+test('an update request declares $board only when a field uses it (a request of moves alone would be refused)', () => {
+  const moveOnly = updateRequest([{ userId: 'u', itemId: '1', via: 'email', from: 'free', to: 'pack', changes: {} }]);
+  assert.deepEqual(moveOnly.decl, []);
+  assert.equal(moveOnly.vars.board, undefined);
+  assert.deepEqual(moveOnly.aliases, [['m0']]);
+  const both = updateRequest([
+    { userId: 'u', itemId: '1', via: 'email', from: 'free', to: null, changes: { topups: 2 } },
+    { userId: 'v', itemId: '2', via: 'email', from: 'free', to: 'pack', changes: {} },
+  ]);
+  assert.equal(both.decl[0], '$board: ID!');
+  assert.deepEqual(both.aliases, [['c0'], ['m1']]);
+  assert.ok(both.fields[0].includes('board_id: $board') && both.fields[1].startsWith('m1: move_item_to_group'));
+});
+
+test('payments from before Batch 20: an old top-up keeps a pay-as-you-go member in Pay as you go; the pack’s own stamp is not one', () => {
+  const old = legacyPayments({ last_topup_at: '2026-08-10T10:00:00Z', subscription_started_at: null, stripe_subscription_status: null }, { recordedTopups: 0, packAt: null });
+  assert.deepEqual(old, { topupAt: '2026-08-10T10:00:00Z', firstPaidAt: '2026-08-10T10:00:00Z' });
+  assert.equal(funnelGroup(facts({ topups: old.topupAt ? 1 : 0, paidEver: true, packAccount: false, balancePence: 1500, spendableBasePence: 1500 }), LOW), 'payg');
+  assert.deepEqual(legacyPayments({ last_topup_at: '2026-10-03T10:00:00Z', subscription_started_at: null }, { recordedTopups: 0, packAt: '2026-10-03T10:00:00Z' }), { topupAt: null, firstPaidAt: null }, 'the pack stamps last_topup_at: not a top-up');
+  assert.deepEqual(legacyPayments({ last_topup_at: '2026-10-03T10:00:00Z', subscription_started_at: null }, { recordedTopups: 2, packAt: null }), { topupAt: null, firstPaidAt: null }, 'recorded already');
+  assert.equal(legacyPayments({ last_topup_at: null, subscription_started_at: '2026-06-01T00:00:00Z', stripe_subscription_status: 'canceled' }, { recordedTopups: 0, packAt: null }).firstPaidAt, '2026-06-01T00:00:00Z');
+  assert.equal(legacyPayments({ last_topup_at: null, subscription_started_at: '2026-06-01T00:00:00Z', stripe_subscription_status: 'trialing' }, { recordedTopups: 0, packAt: null }).firstPaidAt, null, 'a trial paid nothing yet');
+  assert.equal(earliest('2026-06-01T00:00:00Z', '2026-05-01T00:00:00Z'), '2026-05-01T00:00:00Z');
+  assert.equal(earliest(null, '2026-05-01T00:00:00Z'), '2026-05-01T00:00:00Z');
+});
+
+test('a number is looked for on the board as the board types numbers', () => {
+  assert.deepEqual(mobileVariants('07700 900123').sort(), ['+447700900123', '07700 900123', '07700900123', '447700900123', '7700900123'].sort());
+  assert.deepEqual(mobileVariants('+447700900123').sort(), ['+447700900123', '07700900123', '447700900123', '7700900123'].sort());
+  assert.deepEqual(mobileVariants(null), []);
+  assert.deepEqual(mobileVariants('12'), []);
+});
+

@@ -99,3 +99,35 @@ export function adSourceText(a: { utm_source?: string | null; utm_campaign?: str
   if (!source) return 'direct / unknown';
   return [source, cleanPart(a?.utm_campaign) ?? '-', cleanPart(a?.utm_content) ?? '-'].join(' / ');
 }
+
+function time(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : null;
+}
+
+export function earliest(a: string | null, b: string | null): string | null {
+  const ta = time(a);
+  const tb = time(b);
+  if (ta === null) return tb === null ? null : b;
+  if (tb === null) return a;
+  return ta <= tb ? a : b;
+}
+
+const SAME_MOMENT_MS = 5 * 60_000;
+
+/**
+ * Payments from before Batch 20, which member_payments never saw: a top-up
+ * shows only as profiles.last_topup_at (unless it is the pack's own stamp),
+ * a subscription as subscription_started_at once it has been paid for. Counted
+ * as one top-up (at least one was made) and as the first payment, so an
+ * existing pay-as-you-go member stays in Pay as you go.
+ */
+export function legacyPayments(p: { last_topup_at: string | null; subscription_started_at: string | null; stripe_subscription_status?: string | null }, known: { recordedTopups: number; packAt: string | null }): { topupAt: string | null; firstPaidAt: string | null } {
+  const topup = time(p.last_topup_at);
+  const pack = time(known.packAt);
+  const topupAt = known.recordedTopups === 0 && topup !== null && !(pack !== null && Math.abs(topup - pack) < SAME_MOMENT_MS) ? p.last_topup_at : null;
+  const status = (p.stripe_subscription_status ?? '').trim().toLowerCase();
+  const paidPlan = p.subscription_started_at && status !== '' && !['trialing', 'incomplete', 'incomplete_expired'].includes(status) ? p.subscription_started_at : null;
+  return { topupAt, firstPaidAt: earliest(topupAt, paidPlan) };
+}

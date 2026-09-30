@@ -51,13 +51,13 @@ export function StarterPackOffer({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ consent: true, nonce, returnTo }),
       });
-      const data = (await res.json().catch(() => ({}))) as { url?: string; ok?: boolean; error?: string };
+      const data = (await res.json().catch(() => ({}))) as { url?: string; ok?: boolean; pending?: boolean; error?: string };
       if (data.url) {
         window.location.href = data.url;
         return;
       }
       if (data.ok) {
-        setDone(`${copy.credit} of credit is on your account. It never expires.`);
+        setDone(data.pending ? `Your payment went through: your ${copy.credit} of credit will be on your account within a few minutes. It never expires.` : `${copy.credit} of credit is on your account. It never expires.`);
         notifyCreditChanged();
         router.refresh();
         return;

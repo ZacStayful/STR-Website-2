@@ -5,7 +5,7 @@ import { grant, redeemCode, CodeError } from './ledger';
 import { getBillingSettings } from './unit-costs';
 import { isDisposableEmail, normaliseMobile } from './abuse';
 import { teamOf, hasOpenInvite } from '../team';
-import { isPackAccount } from '../lifecycle/settings';
+import { isPackAccount, welcomeGrantRef } from '../lifecycle/settings';
 import { readStarterPackCutover } from '../lifecycle/settings-server';
 
 /**
@@ -78,7 +78,7 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
   }
   try {
     const settings = await getBillingSettings();
-    await grant(userId, 'welcome', settings.welcomeGrantPence, { sourceRef: `welcome:${userId}`, description: 'Welcome credit' });
+    await grant(userId, 'welcome', settings.welcomeGrantPence, { sourceRef: welcomeGrantRef(userId), description: 'Welcome credit' });
   } catch (err) {
     // The check stamp went in before the grant so a concurrent call would not
     // grant twice. If the grant itself failed, clear it again: otherwise the

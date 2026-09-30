@@ -19,6 +19,11 @@
  *                            duplicate in Excluded that only shares their
  *                            number does not exclude a member whose own row
  *                            is elsewhere.
+ *   Every row theirs is      someone else's (a number shared with another
+ *   another member's         account): they have a row, so they are never
+ *                            given a second; nothing is written for them
+ *                            (the row is the other member's), and when one
+ *                            of those rows is in Excluded they are left alone.
  *   A row nobody matches     untouched.
  */
 import { normaliseMobile } from '../../credit/abuse.ts';
@@ -53,6 +58,11 @@ export interface MatchResult {
   /** Members whose row is in Excluded, with that row (their profile is linked to it). */
   excluded: Map<string, BoardItem>;
   duplicates: { userId: string; kept: string; others: string[] }[];
+  /**
+   * Members every one of whose rows went to another member: never a second
+   * row, never linked. `excluded` when one of those rows is in Excluded.
+   */
+  shared: Map<string, { itemIds: string[]; excluded: boolean }>;
 }
 
 /** Oldest first: by creation time (unknown last), then by id (Monday's ids are numbers, so shorter is older). */
@@ -89,6 +99,7 @@ export function matchMembers(members: readonly MemberKeys[], items: readonly Boa
 
   // Every member's candidate rows, with how well each matches.
   const claims = new Map<string, { member: MemberKeys; via: MatchVia }[]>();
+  const candidates = new Map<string, string[]>();
   for (const m of members) {
     const mine = new Map<string, MatchVia>();
     const add = (list: BoardItem[] | undefined, via: MatchVia) => {
@@ -105,6 +116,7 @@ export function matchMembers(members: readonly MemberKeys[], items: readonly Boa
     if (m.storedItemId && byId.has(m.storedItemId)) add([byId.get(m.storedItemId)!], 'stored');
     if (m.mobileKey) add(byMobile.get(m.mobileKey), 'mobile');
     for (const [itemId, via] of mine) push(claims, itemId, { member: m, via });
+    if (mine.size > 0) candidates.set(m.userId, [...mine.keys()]);
   }
 
   // A row claimed twice goes to the best match, then the older account.
@@ -114,10 +126,14 @@ export function matchMembers(members: readonly MemberKeys[], items: readonly Boa
     push(won, best.member.userId, { item: byId.get(itemId)!, via: best.via });
   }
 
-  const result: MatchResult = { matched: new Map(), excluded: new Map(), duplicates: [] };
+  const result: MatchResult = { matched: new Map(), excluded: new Map(), duplicates: [], shared: new Map() };
   for (const m of members) {
     const rows = won.get(m.userId);
-    if (!rows?.length) continue;
+    if (!rows?.length) {
+      const theirs = candidates.get(m.userId);
+      if (theirs?.length) result.shared.set(m.userId, { itemIds: theirs, excluded: theirs.some((id) => byId.get(id)?.groupId === GROUPS.excluded) });
+      continue;
+    }
     const stored = m.storedItemId ? rows.find((r) => r.item.id === m.storedItemId) : undefined;
     const kept = stored ?? [...rows].sort((a, b) => STRENGTH[a.via] - STRENGTH[b.via] || older(a.item, b.item))[0];
     if (kept.item.groupId === GROUPS.excluded) {
@@ -128,4 +144,18 @@ export function matchMembers(members: readonly MemberKeys[], items: readonly Boa
     if (rows.length > 1) result.duplicates.push({ userId: m.userId, kept: kept.item.id, others: rows.filter((r) => r !== kept).map((r) => r.item.id) });
   }
   return result;
+}
+
+/** The ways the board has numbers typed (07…, +447…, 447…, 7…), for a number the site knows. */
+export function mobileVariants(mobile: string | null | undefined): string[] {
+  const key = normaliseMobile(mobile);
+  if (!key) return [];
+  const out = new Set<string>([key, key.slice(1)]);
+  if (key.startsWith('+44')) {
+    out.add(`0${key.slice(3)}`);
+    out.add(key.slice(3));
+  }
+  const typed = (mobile ?? '').trim();
+  if (typed) out.add(typed);
+  return [...out];
 }

@@ -62,6 +62,19 @@ export function lowCreditDue(input: {
   return !(Number.isFinite(last) && input.now.getTime() - last < LOW_CREDIT_CYCLE_MS);
 }
 
+/**
+ * Minutes into the UTC day (the day the email cap counts, capDay) after which
+ * the notice may go alone from a debit: once the day's daily emails have
+ * gone (the picks from 07:00 UTC, the digest at 08:10), which carry it at the
+ * top for anyone due. Alone any earlier, it would take the day's one slot
+ * from that morning's daily deals.
+ */
+export const LOW_CREDIT_ALONE_FROM_MINUTE_UTC = 8 * 60 + 30;
+
+export function lowCreditMayGoAlone(now: Date): boolean {
+  return now.getUTCHours() * 60 + now.getUTCMinutes() >= LOW_CREDIT_ALONE_FROM_MINUTE_UTC;
+}
+
 /** "£19", "£12.50". */
 function money(pence: number): string {
   return pence % 100 === 0 ? `£${Math.round(pence / 100)}` : formatGbp(pence);

@@ -42,6 +42,7 @@ interface PurchaseRow {
   price_pence: number;
   credit_pence: number;
   refunded_pence: number;
+  granted_at: string | null;
 }
 
 function num(v: unknown): number {
@@ -50,7 +51,7 @@ function num(v: unknown): number {
 }
 
 async function purchaseRow(piId: string): Promise<PurchaseRow | null> {
-  const { data, error } = await createAdminClient().from('starter_pack_purchases').select('payment_intent_id, user_id, status, blocked_by, price_pence, credit_pence, refunded_pence').eq('payment_intent_id', piId).maybeSingle();
+  const { data, error } = await createAdminClient().from('starter_pack_purchases').select('payment_intent_id, user_id, status, blocked_by, price_pence, credit_pence, refunded_pence, granted_at').eq('payment_intent_id', piId).maybeSingle();
   if (error) throw new Error(`starter_pack_purchases read failed: ${error.message}`);
   return (data as PurchaseRow | null) ?? null;
 }
@@ -71,7 +72,9 @@ async function claim(pi: Stripe.PaymentIntent): Promise<{ status: PurchaseRow['s
   const md = pi.metadata ?? {};
   const userId = md.user_id;
   const admin = createAdminClient();
-  const { data: profile } = await admin.from('profiles').select('email, mobile').eq('id', userId).maybeSingle();
+  // A failed read must not claim with no email or number: that would skip those checks and store nothing for later claims to meet.
+  const { data: profile, error: profileErr } = await admin.from('profiles').select('email, mobile').eq('id', userId).maybeSingle();
+  if (profileErr) throw new Error(`starter pack claim: profile read failed: ${profileErr.message}`);
   const p = (profile ?? {}) as { email?: string | null; mobile?: string | null };
   const { data, error } = await admin.rpc('starter_pack_claim', {
     p: {
@@ -122,9 +125,18 @@ export async function settleStarterPack(paymentIntentId: string): Promise<Settle
       await stripe.paymentIntents.capture(pi.id, {}, { idempotencyKey: `starter_pack_capture:${pi.id}` });
       return 'captured';
     } catch (err) {
-      console.error('[starter-pack] capture failed:', (err as Error)?.message ?? err);
-      await markFailed(pi.id);
-      return 'failed';
+      // The capture may have gone through anyway (a second settle of the same
+      // payment got there first, or the reply was lost): ask Stripe. Only a
+      // cancelled payment is a failure; one still waiting to be captured keeps
+      // its claim, and the error makes the caller try again (the webhook is
+      // redelivered), so a charged member is never told they were not.
+      const now = await stripe.paymentIntents.retrieve(pi.id);
+      if (now.status === 'succeeded') return 'captured';
+      if (now.status === 'canceled') {
+        await markFailed(pi.id);
+        return 'failed';
+      }
+      throw new Error(`starter pack ${pi.id}: capture failed (${(err as Error)?.message ?? err}); the payment is ${now.status}`);
     }
   }
   // Blocked (a repeat) or failed: never charge. A payment already captured
@@ -138,6 +150,23 @@ export async function settleStarterPack(paymentIntentId: string): Promise<Settle
     }
   }
   return c.status === 'blocked' ? 'blocked' : 'failed';
+}
+
+/**
+ * The profile as of the grant, so a late redelivery changes nothing that has
+ * happened since: bought stamped once; last_topup_at (which makes them paid
+ * for early access, as any top-up does) never moved backwards; hit_zero_at
+ * cleared only when they hit zero before this credit arrived.
+ */
+async function markProfile(userId: string, at: string): Promise<void> {
+  const admin = createAdminClient();
+  const writes = await Promise.all([
+    admin.from('profiles').update({ starter_pack_bought_at: at }).eq('id', userId).is('starter_pack_bought_at', null),
+    admin.from('profiles').update({ last_topup_at: at }).eq('id', userId).is('last_topup_at', null),
+    admin.from('profiles').update({ last_topup_at: at }).eq('id', userId).lt('last_topup_at', at),
+    admin.from('profiles').update({ hit_zero_at: null }).eq('id', userId).lt('hit_zero_at', at),
+  ]);
+  for (const w of writes) if (w.error) console.error('[starter-pack] profile update failed:', w.error.message);
 }
 
 /**
@@ -168,6 +197,14 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
     return 'blocked';
   }
 
+  // The credit first, both grants every time: idempotent on source_ref, so a
+  // redelivery completes a run that died half-way and never doubles it.
+  const bonus = Math.max(0, credit - price);
+  if (price > 0) await grant(userId, 'topup', price, { sourceRef: `pi:${pi.id}`, description: 'Starter pack' });
+  if (bonus > 0) await grant(userId, 'welcome', bonus, { sourceRef: `pack_bonus:${pi.id}`, description: 'Starter pack bonus credit' });
+
+  // Then the move to "granted": the one call that makes it (the route or the
+  // webhook, whichever is first) sends the receipt and queues Monday.
   const nowIso = new Date().toISOString();
   const { data: moved, error: moveErr } = await admin
     .from('starter_pack_purchases')
@@ -177,33 +214,23 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
     .select('payment_intent_id');
   if (moveErr) throw new Error(`starter_pack_purchases update failed: ${moveErr.message}`);
   const first = (moved?.length ?? 0) > 0;
-
-  // Both grants every time: idempotent on source_ref, so a redelivery completes a half-done run and never doubles it.
-  const bonus = Math.max(0, credit - price);
-  if (price > 0) await grant(userId, 'topup', price, { sourceRef: `pi:${pi.id}`, description: 'Starter pack' });
-  if (bonus > 0) await grant(userId, 'welcome', bonus, { sourceRef: `pack_bonus:${pi.id}`, description: 'Starter pack bonus credit' });
-
-  // last_topup_at makes them paid for early access (hasEverPaid), as any top-up does.
-  const { data: prof } = await admin.from('profiles').select('starter_pack_bought_at').eq('id', userId).maybeSingle();
-  const patch: Record<string, unknown> = { last_topup_at: nowIso, hit_zero_at: null };
-  if (!(prof as { starter_pack_bought_at?: string | null } | null)?.starter_pack_bought_at) patch.starter_pack_bought_at = nowIso;
-  const { error: profErr } = await admin.from('profiles').update(patch).eq('id', userId);
-  if (profErr) console.error('[starter-pack] profile update failed:', profErr.message);
-
-  // A team owner's seats paused for want of credit come back now.
-  try {
-    const { reinstateSeats } = await import('../team/seats');
-    await reinstateSeats({ ownerId: userId });
-  } catch (err) {
-    console.error('[starter-pack] seat reinstatement failed:', (err as Error)?.message ?? err);
-  }
-
   if (first) {
     if (input.email) {
       const bal = await getBalance(userId).catch(() => null);
       await starterPackReceiptEmail(input.email, { pricePence: price, creditPence: credit, balancePence: bal?.totalPence ?? credit }).catch(() => false);
     }
     await queueFunnelSync(userId, 'starter_pack');
+  }
+
+  // Every time, so a run that died before them is completed; each as of the grant.
+  const grantedAt = first ? nowIso : (row.granted_at ?? (await purchaseRow(pi.id))?.granted_at ?? nowIso);
+  await markProfile(userId, grantedAt);
+  // A team owner's seats paused for want of credit come back now (only seats still suspended; none if the credit has gone again).
+  try {
+    const { reinstateSeats } = await import('../team/seats');
+    await reinstateSeats({ ownerId: userId });
+  } catch (err) {
+    console.error('[starter-pack] seat reinstatement failed:', (err as Error)?.message ?? err);
   }
   return first ? 'granted' : 'already';
 }
@@ -214,31 +241,33 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
  * may go negative until the next credit repays it. Cumulative: the first
  * clawback is `pi:<id>:refunded` (the name Batch 9 and Batch 19 look for), a
  * later partial refund `pi:<id>:refunded:<total refunded>`, each only the
- * difference. The pack stays used.
+ * difference, read and written under the member's row lock
+ * (public.starter_pack_clawback) so two refunds handled at once cannot both
+ * miss the other. The pack stays used. Only for a payment that was captured:
+ * the webhook never sends a released authorisation here.
  */
 export async function clawbackStarterPack(input: { userId: string; paymentIntentId: string; refundedPence: number; chargedPence: number; reason: 'refunded' | 'disputed' }): Promise<number> {
   const row = await purchaseRow(input.paymentIntentId);
-  const creditBase = row ? (row.status === 'granted' ? num(row.credit_pence) : num(row.price_pence)) : 0;
-  if (!row || creditBase <= 0) return 0;
+  if (!row) return 0;
+  // Granted, or reserved (captured, its grant not run yet: it will add the full credit): the pack's credit.
+  // A repeat charged anyway was a plain top-up of its price.
+  const creditBase = row.status === 'granted' || row.status === 'reserved' ? num(row.credit_pence) : num(row.price_pence);
+  if (creditBase <= 0) return 0;
   const target = packClawbackPence({ creditPence: creditBase, chargedPence: input.chargedPence, refundedPence: input.refundedPence });
   const admin = createAdminClient();
-  const base = `pi:${input.paymentIntentId}:${input.reason}`;
-  // The member's adjustments, matched here exactly: a LIKE pattern would read the "_" in a Stripe id as a wildcard.
-  const { data: prior, error } = await admin.from('credit_grants').select('amount_pence, source_ref').eq('user_id', input.userId).eq('kind', 'adjustment').not('source_ref', 'is', null);
-  if (error) throw new Error(`clawback read failed: ${error.message}`);
-  const taken = ((prior ?? []) as { amount_pence: number | string; source_ref: string }[])
-    .filter((g) => g.source_ref === base || g.source_ref.startsWith(`${base}:`))
-    .reduce((sum, g) => sum + Math.max(0, -num(g.amount_pence)), 0);
-  const diff = Math.round(target - taken);
-  if (diff > 0) {
-    await grant(input.userId, 'adjustment', -diff, {
-      sourceRef: taken > 0 ? `${base}:${Math.round(input.refundedPence)}` : base,
+  const { data, error } = await admin.rpc('starter_pack_clawback', {
+    p: {
+      user: input.userId,
+      base: `pi:${input.paymentIntentId}:${input.reason}`,
+      target: Math.round(target),
+      refunded: Math.round(input.refundedPence),
       description: input.reason === 'disputed' ? 'Starter pack disputed: credit reversed' : 'Starter pack refunded: credit reversed',
-    });
-  }
+    },
+  });
+  if (error) throw new Error(`starter_pack_clawback failed: ${error.message}`);
   if (input.reason === 'refunded') {
     await admin.from('starter_pack_purchases').update({ refunded_pence: Math.max(num(row.refunded_pence), Math.round(input.refundedPence)) }).eq('payment_intent_id', input.paymentIntentId);
   }
   await queueFunnelSync(input.userId, 'refund');
-  return Math.max(0, diff);
+  return Math.max(0, num(data));
 }

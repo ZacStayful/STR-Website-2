@@ -63,7 +63,7 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
     // their team: not trial signups for the sales board.
     if (!profile.monday_item_id && !(await isTeamBound(user.id, profile.email ?? user.email ?? null))) {
       const userId = user.id
-      const input = { name: profile.full_name ?? '', email: profile.email ?? user.email ?? '', mobile: profile.mobile ?? '', trialStartedAt: new Date().toISOString() }
+      const input = { name: profile.full_name ?? '', email: profile.email ?? user.email ?? '', mobile: profile.mobile ?? '', trialStartedAt: new Date().toISOString(), userId }
       after(async () => {
         try {
           const mondayId = await ensureEnquiry(input)

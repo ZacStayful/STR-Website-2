@@ -93,6 +93,27 @@ function time(iso: string | Date | null | undefined): number | null {
 }
 
 /**
+ * The accounts a change of cutover strands: when it moves later (or is
+ * cleared), accounts created from the old cutover up to the new one were
+ * decided as pack accounts (no welcome credit) and are now before it, so
+ * their welcome check must be made again. Null when nobody is stranded: a
+ * first cutover, one moved earlier (those accounts already had the £20, and
+ * the pack is never offered to anyone who did) or no change.
+ */
+export function strandedByCutoverMove(oldFrom: string | null, newFrom: string | null): { from: string; to: string | null } | null {
+  const was = time(oldFrom);
+  if (was === null) return null;
+  const now = time(newFrom);
+  if (now !== null && now <= was) return null;
+  return { from: new Date(was).toISOString(), to: now === null ? null : new Date(now).toISOString() };
+}
+
+/** The welcome credit's grant (src/lib/credit/welcome.ts): one per account, found by this source_ref. */
+export function welcomeGrantRef(userId: string): string {
+  return `welcome:${userId}`;
+}
+
+/**
  * Is this an account the starter pack is for (created at or after the
  * cutover)? False whenever the cutover is not set or the date is unreadable,
  * so an account whose age is unknown keeps the old welcome credit.

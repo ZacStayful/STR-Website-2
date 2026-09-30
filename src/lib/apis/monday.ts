@@ -11,12 +11,23 @@
  * which replaced the billing mirror that lived here. Every board, group and
  * column id comes from its config module.
  *
+ * Batch 20: a row is created here only for someone who has none. Not for an
+ * admin, a Stayful account or a team member (the funnel never gives them
+ * rows), and not when a row already carries their email (Monday's match on
+ * it ignores case) or their mobile number (as the board types numbers:
+ * 07…, +447…, 447…, 7…). A number already on the board is left to the
+ * nightly sync, which reads the whole board and decides whose row it is.
+ *
  * Uses MONDAY_API_KEY (falls back to MONDAY_API_TOKEN). All failures are
  * logged and swallowed so CRM hiccups never break the user flow.
  */
 
 import { mondayRequest, mondayUploadFile } from "./monday-client";
 import { COLUMNS, FUNNEL_BOARD_ID, GROUPS, REPORTS_COLUMN } from "../crm/monday-funnel/config";
+import { isAdminEmail } from "../admin";
+import { isStaffEmail } from "../inactivity/rules";
+import { mobileVariants } from "../crm/monday-funnel/match";
+import { isTeamBound } from "../team";
 
 const BOARD_ID = FUNNEL_BOARD_ID;
 const GROUP_ID = GROUPS.free;
@@ -75,6 +86,26 @@ export async function findEnquiryByEmail(email: string): Promise<string | null> 
   return null;
 }
 
+/** Is any row on the board already carrying this number? null when Monday could not be asked. */
+export async function enquiryWithMobile(mobile: string | null | undefined): Promise<boolean | null> {
+  const values = mobileVariants(mobile);
+  if (values.length === 0) return false;
+  const data = await mondayQuery<{ items_page_by_column_values: { items: Array<{ id: string }> } }>(
+    `query ($boardId: ID!, $columnId: String!, $values: [String]!) {
+      items_page_by_column_values(board_id: $boardId, columns: [{ column_id: $columnId, column_values: $values }], limit: 1) { items { id } }
+    }`,
+    { boardId: BOARD_ID, columnId: COL.mobile, values },
+  );
+  if (!data) return null;
+  return (data.items_page_by_column_values?.items?.length ?? 0) > 0;
+}
+
+/** Someone the funnel never gives a row: an admin, a Stayful account, a team member (or one on the way). */
+async function neverARow(email: string, userId: string | null | undefined): Promise<boolean> {
+  if (isAdminEmail(email) || isStaffEmail(email)) return true;
+  return userId ? isTeamBound(userId, email) : false;
+}
+
 /**
  * Create a new enquiry row when a trial is created (email confirmed).
  * Lands in the "topics" (Free Trial) group with name/email/mobile + the
@@ -122,11 +153,16 @@ export async function ensureEnquiry(input: {
   email: string;
   mobile: string;
   trialStartedAt?: string;
+  /** The account, when known: a team member (or someone joining a team) gets no row. */
+  userId?: string | null;
 }): Promise<string | null> {
   if (!input.email || !input.email.includes("@")) return null;
+  if (await neverARow(input.email, input.userId)) return null;
   const existing = await findEnquiryByEmail(input.email);
   if (existing) return existing;
-  return createEnquiry(input);
+  // Their number is on a row already (or Monday could not say): not a second row; the nightly decides.
+  if ((await enquiryWithMobile(input.mobile)) !== false) return null;
+  return createEnquiry({ name: input.name, email: input.email, mobile: input.mobile, trialStartedAt: input.trialStartedAt });
 }
 
 /**
@@ -138,7 +174,7 @@ export async function ensureEnquiry(input: {
 export async function uploadPdfToMonday(
   input:
     | string
-    | { email: string; name?: string; mobile?: string },
+    | { email: string; name?: string; mobile?: string; userId?: string | null },
   pdfBuffer: Buffer | Uint8Array,
   filename: string,
 ): Promise<void> {
@@ -152,11 +188,12 @@ export async function uploadPdfToMonday(
   if (!itemId) {
     const name = typeof input === "string" ? "" : input.name ?? "";
     const mobile = typeof input === "string" ? "" : input.mobile ?? "";
-    itemId = await createEnquiry({ name, email, mobile });
-    console.log(`[Monday] no enquiry for ${email} — created ${itemId ?? "FAILED"}`);
+    // Batch 20: the same rules as a sign-up's row (none for admins, Stayful or team members, none beside a row with their number).
+    itemId = await ensureEnquiry({ name, email, mobile, userId: typeof input === "string" ? null : input.userId ?? null });
+    if (itemId) console.log(`[Monday] no enquiry for ${email}: found or created ${itemId}`);
   }
   if (!itemId) {
-    console.error(`[Monday] PDF skipped — could not find/create enquiry for ${email}`);
+    console.warn(`[Monday] PDF skipped: no enquiry row for ${email} (none may be created for this account, or Monday is unreachable)`);
     return;
   }
 

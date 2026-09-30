@@ -2,10 +2,10 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { isAdminEmail } from '../admin';
-import { ACCESS_COLUMNS, accountStatus, type AccessProfile } from '../access';
+import { ACCESS_COLUMNS, accountStatus, isCancelScheduled, type AccessProfile } from '../access';
 import { getBillingSettings } from '../credit/unit-costs';
 import { QUALIFYING_KINDS } from '../activity/kinds';
-import { payersForAll } from '../notify/daily-server';
+import { payersForStrict } from '../team';
 import { inactivityChange, inactivityEligible, inactivityState } from './rules';
 
 /**
@@ -43,6 +43,12 @@ export interface InactivityOutcome {
   /** The rules are off until billing_settings.inactivity_from is set. */
   rulesOn: boolean;
   activeDays: { added: number; upTo: number | null; more: boolean } | null;
+  /**
+   * The activity log was not read to the end in the time allowed: nobody is
+   * newly marked (their latest actions may not be counted yet), only cleared,
+   * and the nightly runs the step again.
+   */
+  incomplete: boolean;
   considered: number;
   eligible: number;
   reengage: { set: number; cleared: number };
@@ -52,25 +58,31 @@ export interface InactivityOutcome {
   ms: number;
 }
 
-/** Brings member_active_days up to date. A dry run only counts what it would add. */
-async function syncActiveDays(admin: Admin, apply: boolean, deadline: number): Promise<{ added: number; upTo: number | null; more: boolean } | { error: string }> {
+/**
+ * Brings member_active_days up to date. A dry run only counts what it would
+ * add, and returns each member's latest day among the actions not yet
+ * counted (`pending`), so its preview is as of now, not as of last night.
+ */
+async function syncActiveDays(admin: Admin, apply: boolean, deadline: number): Promise<{ added: number; upTo: number | null; more: boolean; pending: Map<string, string> } | { error: string }> {
   let added = 0;
   let upTo: number | null = null;
+  const pending = new Map<string, string>();
   for (;;) {
     const { data, error } = await admin.rpc('lifecycle_active_days_sync', { p: { qualifying: QUALIFYING_KINDS, apply, limit: 50000 } });
     if (error) return { error: `active days not synced (schema behind?): ${error.message}` };
-    const r = (data ?? {}) as { added?: number; to?: number | null; more?: boolean };
+    const r = (data ?? {}) as { added?: number; to?: number | null; more?: boolean; pending?: { u: string; day: string }[] | null };
     added += Number(r.added) || 0;
     upTo = r.to ?? upTo;
+    for (const x of r.pending ?? []) if (x?.u && x.day) pending.set(x.u, x.day);
     // A dry run does not move the watermark, so one pass is all it can count.
-    if (!r.more || !apply || Date.now() > deadline) return { added, upTo, more: Boolean(r.more) };
+    if (!r.more || !apply || Date.now() > deadline) return { added, upTo, more: Boolean(r.more), pending };
   }
 }
 
 export async function runInactivityStep(opts: { apply: boolean; now?: Date; budgetMs?: number }): Promise<InactivityOutcome> {
   const started = Date.now();
   const now = opts.now ?? new Date();
-  const out: InactivityOutcome = { ok: true, dry: !opts.apply, rulesOn: false, activeDays: null, considered: 0, eligible: 0, reengage: { set: 0, cleared: 0 }, paused: { set: 0, cleared: 0 }, changes: [], ms: 0 };
+  const out: InactivityOutcome = { ok: true, dry: !opts.apply, rulesOn: false, activeDays: null, incomplete: false, considered: 0, eligible: 0, reengage: { set: 0, cleared: 0 }, paused: { set: 0, cleared: 0 }, changes: [], ms: 0 };
   const fail = (error: string): InactivityOutcome => ({ ...out, ok: false, error, ms: Date.now() - started });
   if (!hasServiceRole()) return fail('Storage not configured');
   const admin = createAdminClient();
@@ -79,7 +91,8 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
 
   const synced = await syncActiveDays(admin, opts.apply, started + (opts.budgetMs ?? 20_000));
   if ('error' in synced) return fail(synced.error);
-  out.activeDays = synced;
+  out.activeDays = { added: synced.added, upTo: synced.upTo, more: synced.more };
+  out.incomplete = opts.apply && synced.more;
 
   // Everyone, with the plan columns (the rules need the plan holder's).
   const profiles: ProfileRow[] = [];
@@ -100,19 +113,28 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
   }
   const ids = profiles.map((p) => p.id);
   const byId = new Map(profiles.map((p) => [p.id, p]));
-  const payers = await payersForAll(ids);
+  // A team member follows their owner's plan: never guessed, so a failed lookup stops the step.
+  const payers = await payersForStrict(ids);
+  if (!payers) return fail('team lookup failed: nobody marked');
   const lastDay = new Map<string, string | null>();
   for (let i = 0; i < ids.length; i += ID_CHUNK) {
     const { data, error } = await admin.rpc('lifecycle_member_stats', { p: { users: ids.slice(i, i + ID_CHUNK) } });
     if (error) return fail(`member stats unreadable: ${error.message}`);
     for (const r of (data ?? []) as { u: string; last_day: string | null }[]) lastDay.set(r.u, r.last_day ?? null);
   }
+  // A dry run cannot count the actions since the last nightly into the table: its preview adds them here.
+  for (const [u, day] of synced.pending) {
+    const had = lastDay.get(u) ?? null;
+    if (!had || day > had) lastDay.set(u, day);
+  }
 
   const groups = { setReengage: [] as string[], clearReengage: [] as string[], setPaused: [] as string[], clearPaused: [] as string[] };
   for (const p of profiles) {
     // A team member follows their owner's plan; their own activity counts.
     const holder = byId.get(payers.get(p.id)?.payerId ?? p.id) ?? p;
-    const eligible = inactivityEligible({ planStatus: accountStatus(holder, now.getTime()), cancelBooked: Boolean(holder.subscription_cancel_at), admin: isAdminEmail(p.email), email: p.email });
+    // A cancellation booked and still to come; a plan granted by hand is never one (a stale date may be left on it).
+    const cancelBooked = holder.plan_source !== 'manual' && isCancelScheduled(holder, now.getTime());
+    const eligible = inactivityEligible({ planStatus: accountStatus(holder, now.getTime()), cancelBooked, admin: isAdminEmail(p.email), email: p.email });
     if (eligible) out.eligible += 1;
     const target = inactivityState({ eligible, lastActiveDay: lastDay.get(p.id) ?? null, createdAt: p.created_at }, settings, now);
     const mark = marks.get(p.id);
@@ -139,13 +161,18 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
     }
     return null;
   };
+  // Clears are always safe; new marks only once every action has been counted.
   const errors = [
-    await write(groups.setReengage, { reengage_since: nowIso }, 'reengage_since'),
+    out.incomplete ? null : await write(groups.setReengage, { reengage_since: nowIso }, 'reengage_since'),
     await write(groups.clearReengage, { reengage_since: null }),
     // A new pause gets its own "while you're away" letter.
-    await write(groups.setPaused, { picks_paused_inactive_at: nowIso, picks_paused_inactive_email_at: null }, 'picks_paused_inactive_at'),
+    out.incomplete ? null : await write(groups.setPaused, { picks_paused_inactive_at: nowIso, picks_paused_inactive_email_at: null }, 'picks_paused_inactive_at'),
     await write(groups.clearPaused, { picks_paused_inactive_at: null, picks_paused_inactive_email_at: null }),
   ].filter((e): e is string => e !== null);
+  if (out.incomplete) {
+    out.reengage.set = 0;
+    out.paused.set = 0;
+  }
   if (errors.length > 0) return fail(`inactivity not written: ${errors[0]}`);
   return { ...out, ms: Date.now() - started };
 }

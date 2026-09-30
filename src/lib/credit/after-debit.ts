@@ -11,7 +11,7 @@ import { isAdminEmail } from '../admin';
 import { getBillingSettings } from './unit-costs';
 import { isPackAccount } from '../lifecycle/settings';
 import { starterPackStateFor } from '../starter-pack/server';
-import { lowCreditDue } from './low-credit';
+import { lowCreditDue, lowCreditMayGoAlone } from './low-credit';
 import { noticeFor, queueLowCreditSync, sendLowCreditAlone } from './low-credit-server';
 
 /**
@@ -23,9 +23,10 @@ import { noticeFor, queueLowCreditSync, sendLowCreditAlone } from './low-credit-
  *
  * Batch 20, Part B: with no plan, "low" is £5 or less and the email is the
  * decision (Starter or a £10 top-up, src/lib/credit/low-credit.ts), capped:
- * alone in today's daily slot when it is free, else at the top of the next
- * daily email. A new member who can still buy the starter pack is offered
- * the pack, when low and when out.
+ * at the top of the next daily email, or alone in today's daily slot when it
+ * is still free once the day's daily emails have gone (08:30 UTC). A new
+ * member who can still buy the starter pack is offered the pack, when low
+ * and when out.
  */
 /** The starter pack's words for the out-of-credit email, while this new member can still buy it. */
 async function packOffer(userId: string, createdAt: string | null): Promise<{ body: string; cta: string } | null> {
@@ -88,6 +89,9 @@ export async function afterDebit(userId: string): Promise<void> {
         if (!due) return;
         await queueLowCreditSync(userId);
         if (!email || isAdminEmail(paymentEmail)) return;
+        // Before the day's daily emails have gone, they carry it (the picks run and the digest read who is due):
+        // sent alone now, it would take the day's one slot from that morning's deals.
+        if (!lowCreditMayGoAlone(now)) return;
         const notice = await noticeFor({ userId, createdAt: (p.created_at as string | null) ?? null, paymentMethodId: (p.stripe_default_payment_method_id as string | null) ?? null, balancePence: summary.totalPence, now });
         // Today's slot taken (the daily email went this morning): tomorrow's daily email carries it.
         await sendLowCreditAlone(admin, { userId, email, notice, now });

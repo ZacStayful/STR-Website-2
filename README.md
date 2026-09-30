@@ -49,7 +49,7 @@ So: merge, run the schema, then check that a member page loads.
 
 ### 2. Enable the Stripe webhook events
 
-Ten of them, listed with what each is for in `.env.example`. The endpoint is
+Twelve of them, listed with what each is for in `.env.example`. The endpoint is
 `/api/stripe/webhook`. `invoice.paid` is what turns a subscription payment into
 plan credit and `payment_intent.succeeded` is what credits a one-click top-up,
 so without those two people pay and nothing arrives.
@@ -597,10 +597,12 @@ editable on `/admin/lifecycle`. In this order:
 2. **Stripe:** a product "Starter pack" with a one-off **£10 GBP** price; its
    id is `STRIPE_PRICE_STARTER_PACK`. The pack refuses to sell if the price's
    amount differs from `starter_pack_price_pence`. The webhook must deliver
-   `checkout.session.completed`, `payment_intent.succeeded`, `charge.refunded`
-   and `charge.dispute.created` (the pack is captured, granted and clawed back
-   by them); `/admin/lifecycle` shows the last event received, and warns while
-   none ever has.
+   `checkout.session.completed`, `payment_intent.succeeded`,
+   `payment_intent.amount_capturable_updated`, `payment_intent.canceled`,
+   `charge.refunded` and `charge.dispute.created` (the pack is captured,
+   granted, let go when its card hold is cancelled, and clawed back by them);
+   `/admin/lifecycle` shows the last event received, and warns while none
+   ever has.
 3. **Vercel → Environment Variables (Production):** `STRIPE_PRICE_STARTER_PACK`;
    `CREDIT_ENFORCE=true` (without it £0 members can still run everything, so
    the pack buys nothing; `/admin/lifecycle` warns); and remove any old
@@ -613,7 +615,10 @@ editable on `/admin/lifecycle`. In this order:
    (every member, current group → new group, and every value). Then set
    `MONDAY_FUNNEL_ENABLED=true`, redeploy, and Run the backfill (again if it
    says it stopped early: it writes only what still differs). Rows in
-   "Excluded" are never touched, and nobody gets a second row. **Only then
+   "Excluded" are never touched, and nobody gets a second row: a member whose
+   number is on another member's row is left without one, and the sign-up
+   row (as before) is made only when no row has their email or number, and
+   never for an admin, a Stayful account or a team member. **Only then
    switch on the n8n trigger** on rows entering Re-engage: the backfill moves
    many rows at once.
 6. **Inactivity:** set "Inactivity counted from" to the release date. Nobody
@@ -625,7 +630,10 @@ editable on `/admin/lifecycle`. In this order:
 7. **The starter pack:** set "Starter pack for accounts created from" (or
    Start now). From that moment new accounts get the pack offer and no £20
    welcome credit; accounts created before it are untouched and never see
-   it. The public pages switch their copy within five minutes.
+   it. The public pages switch their copy within five minutes. The date can
+   be moved: an account that already had the £20 is never offered the pack,
+   and moving the date later (or clearing it) gives the £20, at their next
+   sign-in, to the accounts created in between that have neither.
 8. **Terms:** the new starter pack clause (section 2) shows once the pack's
    date is set; have it checked, and bump the page's date when it changes.
 
@@ -634,7 +642,8 @@ questions are answered), a Today card ("Not now" hides it for a week), a line
 on Account → Billing, and the pack in place of every dead end (the deal page's
 Quick look box, the out-of-credit dialog, the banner, the 08:00 letter). At
 £5 or less a member with no plan gets the Starter-or-£10 banner and one email
-a cycle, inside the day's daily email or alone in its slot; its buttons open
+a cycle, inside the day's daily email, or alone in its slot once the day's
+daily emails have gone (from 08:30 UTC); its buttons open
 `/account/billing/choose`, which charges only when confirmed there.
 
 ### Environment variables

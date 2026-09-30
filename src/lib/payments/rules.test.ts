@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { monthlyValuePence, paymentFromIntent, paymentFromInvoice, paymentKindFor, totalPaidPence } from './rules.ts';
+import { invoicePaymentIntentId, monthlyValuePence, paymentFromIntent, paymentFromInvoice, paymentKindFor, totalPaidPence } from './rules.ts';
 
 test('a PaymentIntent is ours only when its metadata says pack or top-up', () => {
   assert.equal(paymentKindFor({ kind: 'starter_pack' }), 'starter_pack');
@@ -38,4 +38,12 @@ test('monthly value: the live plan a month, annual divided by twelve, nothing wh
   assert.equal(monthlyValuePence({ status: 'canceled', paused: false, plan: starter }), 0);
   assert.equal(monthlyValuePence({ status: null, paused: false, plan: starter }), 0);
   assert.equal(monthlyValuePence({ status: 'active', paused: false, plan: null }), 0);
+});
+
+test("an invoice's PaymentIntent is its paid payment's, when the invoice carries them", () => {
+  assert.equal(invoicePaymentIntentId({ payments: { data: [{ status: 'open', payment: { payment_intent: 'pi_open' } }, { status: 'paid', payment: { payment_intent: 'pi_paid' } }] } }), 'pi_paid');
+  assert.equal(invoicePaymentIntentId({ payments: { data: [{ status: 'paid', payment: { payment_intent: { id: 'pi_obj' } } }] } }), 'pi_obj');
+  assert.equal(invoicePaymentIntentId({}), null);
+  assert.equal(paymentFromInvoice({ id: 'in_1', amount_paid: 1900 }, 'u1', 'starter', 'pi_1')?.paymentIntentId, 'pi_1');
+  assert.equal(paymentFromInvoice({ id: 'in_1', amount_paid: 1900 }, 'u1', 'starter')?.paymentIntentId, null);
 });

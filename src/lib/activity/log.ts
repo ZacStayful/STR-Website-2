@@ -45,10 +45,12 @@ function warn(message: string): void {
 
 async function write(call: ActivityCall): Promise<void> {
   try {
-    const { error } = await createAdminClient().rpc('activity_log', { p: call });
+    const { data, error } = await createAdminClient().rpc('activity_log', { p: call });
     if (error) warn(error.message);
-    // Batch 20, Part C: a qualifying action brings a quiet member back at once.
-    else if (isQualifying(call.kind)) await cameBack(call.user);
+    // Batch 20, Part C: a new qualifying action brings a quiet member back at
+    // once. Not a repeat the log ignored (null): a redelivered webhook weeks
+    // later is not the member coming back.
+    else if (data != null && isQualifying(call.kind)) await cameBack(call.user);
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err));
   }

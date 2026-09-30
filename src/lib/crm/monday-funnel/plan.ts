@@ -41,12 +41,12 @@ export interface RowCreate {
 export interface FunnelPlan {
   updates: RowUpdate[];
   creates: RowCreate[];
-  /** Profiles whose stored row id should change (matched, or linked to their Excluded row). */
-  links: { userId: string; itemId: string }[];
+  /** Profiles whose stored row id should change (matched, or linked to their Excluded row); itemId null unlinks. */
+  links: { userId: string; itemId: string | null }[];
   excluded: string[];
   duplicates: MatchResult['duplicates'];
-  /** Members with no row: too new to create yet, or not asked to create. */
-  noRow: { userId: string; reason: 'too_new' | 'not_created' }[];
+  /** Members with no row of their own: too new to create yet, not asked to create, or their row is another member's. */
+  noRow: { userId: string; reason: 'too_new' | 'not_created' | 'shares_a_row' }[];
   unchanged: number;
 }
 
@@ -73,6 +73,15 @@ export function planFunnel(facts: readonly MemberFacts[], items: readonly BoardI
     if (excludedRow) {
       plan.excluded.push(f.userId);
       if (f.mondayItemId !== excludedRow.id) plan.links.push({ userId: f.userId, itemId: excludedRow.id });
+      continue;
+    }
+    // Their rows are all other members' (a shared number): never a second row,
+    // and no link, so nothing of theirs is ever written over the other member's.
+    const shared = match.shared.get(f.userId);
+    if (shared) {
+      if (shared.excluded) plan.excluded.push(f.userId);
+      else plan.noRow.push({ userId: f.userId, reason: 'shares_a_row' });
+      if (f.mondayItemId && shared.itemIds.includes(f.mondayItemId)) plan.links.push({ userId: f.userId, itemId: null });
       continue;
     }
     const target = funnelGroup(f, o.lowCreditPence);

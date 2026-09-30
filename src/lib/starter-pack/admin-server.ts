@@ -51,7 +51,7 @@ export async function packAdminStatus(s: LifecycleSettings, now: Date = new Date
     if (!stripe) warnings.push('Stripe is not configured (STRIPE_SECRET_KEY): the pack cannot be sold.');
     if (!priceSet) warnings.push('STRIPE_PRICE_STARTER_PACK is not set: the pack cannot be sold. Create a one-off GBP price for the pack’s price in Stripe and set its id.');
     if (!enforcing) warnings.push('Credit is not enforced (CREDIT_ENFORCE is not "true"): members at £0 can still run everything, so the pack buys nothing they need.');
-    if (!lastStripeEvent) warnings.push('No Stripe webhook event has ever been received: packs are captured and granted by the webhook, so check the endpoint and its events (checkout.session.completed, payment_intent.succeeded, charge.refunded, charge.dispute.created) in Stripe.');
+    if (!lastStripeEvent) warnings.push('No Stripe webhook event has ever been received: packs are captured and granted by the webhook, so check the endpoint and its events (checkout.session.completed, payment_intent.succeeded, payment_intent.amount_capturable_updated, payment_intent.canceled, charge.refunded, charge.dispute.created) in Stripe.');
     if (counts === null) warnings.push('starter_pack_purchases is unreadable: run supabase/schema.sql (Batch 20 section).');
   }
   return { state, stripe, priceSet, enforcing, lastStripeEvent, counts, warnings };

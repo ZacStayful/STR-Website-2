@@ -134,6 +134,29 @@ export async function payersFor(userIds: string[]): Promise<Map<string, Payer>> 
   return out;
 }
 
+/**
+ * payersFor for any number of people, or null when the lookup fails. For the
+ * callers that must not guess (Batch 20: who is inactive, who gets a Monday
+ * row): a failed read there would treat every team member as paying for
+ * themselves.
+ */
+export async function payersForStrict(userIds: readonly string[]): Promise<Map<string, Payer> | null> {
+  const out = new Map<string, Payer>();
+  if (userIds.length === 0 || !hasServiceRole()) return out;
+  const admin = createAdminClient();
+  for (let i = 0; i < userIds.length; i += 300) {
+    const { data, error } = await admin.from('team_members').select('member_id, owner_id, suspended_at').in('member_id', userIds.slice(i, i + 300));
+    if (error) {
+      console.error('[team] payer lookup failed:', error.message);
+      return null;
+    }
+    for (const r of (data ?? []) as Array<{ member_id: string; owner_id: string; suspended_at: string | null }>) {
+      out.set(r.member_id, { payerId: r.owner_id, memberId: r.member_id, suspended: Boolean(r.suspended_at) });
+    }
+  }
+  return out;
+}
+
 /** Look up in a `payersFor` map, defaulting to "pays for themselves". */
 export function payerIn(map: Map<string, Payer>, userId: string): Payer {
   return map.get(userId) ?? { payerId: userId, memberId: null, suspended: false };

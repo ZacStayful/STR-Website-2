@@ -1,18 +1,22 @@
 import 'server-only';
 
-import { mondayRequest, type MondayResult } from '../../apis/monday-client';
+import { mondayRequest, mondayRequestRaw, type MondayResult } from '../../apis/monday-client';
 import { COLUMNS, FUNNEL_BOARD_ID, GROUPS, MIN_COMPLEXITY_LEFT, READ_PAGE, REQUEST_TIMEOUT_MS, WRITE_BATCH } from './config';
 import type { BoardItem } from './match';
 import type { RowCreate, RowUpdate } from './plan';
+import { updateRequest } from './mutations';
+import { readReply, type Reply } from './responses';
 import { columnValuesJson } from './values';
 
 /**
  * The Monday funnel's reads and writes (Batch 20, Part F), through the
  * shared transport (src/lib/apis/monday-client.ts) with an 8-second bound on
- * every call. Writes go as aliased mutations, 25 rows to a request, and every
- * request reads Monday's complexity budget: when it runs low the run stops
- * and the next one carries on. Nothing here throws; a failure comes back as
- * a result for the caller to report.
+ * every call. Updates go as aliased mutations, 25 rows to a request; creates
+ * one to a request, and never twice in a run (./responses.ts reads what
+ * Monday did, partial results included). Every request reads Monday's
+ * complexity budget: when it runs low, or Monday is limiting us or down, the
+ * run stops and the next one carries on. Nothing here throws; a failure
+ * comes back as a result for the caller to report.
  */
 
 export function mondayToken(): string | null {
@@ -68,34 +72,50 @@ export async function readBoard(token: string, deadline: number): Promise<({ ok:
   return { ok: true, items, calls, complexityLeft };
 }
 
-/** Just these rows (the queue's members with a stored row). */
+/** Just these rows (the queue's members with a stored row): only live rows on this board. */
 export async function readItems(token: string, ids: readonly string[]): Promise<({ ok: true; items: BoardItem[] } | { ok: false; error: string }) & Calls> {
   const valid = ids.filter((id) => /^\d+$/.test(id));
   if (valid.length === 0) return { ok: true, items: [], calls: 0, complexityLeft: null };
-  const res = await mondayRequest<{ complexity: Complexity; items: ItemNode[] }>(token, `query ($ids: [ID!], $cols: [String!]) { complexity { after reset_in_x_seconds } items(ids: $ids, limit: 100) { ${ITEM_FIELDS} } }`, { ids: valid.slice(0, 100), cols: COLUMN_IDS }, { timeoutMs: REQUEST_TIMEOUT_MS });
+  type Stored = ItemNode & { state?: string | null; board?: { id: string } | null };
+  const res = await mondayRequest<{ complexity: Complexity; items: Stored[] }>(token, `query ($ids: [ID!], $cols: [String!]) { complexity { after reset_in_x_seconds } items(ids: $ids, limit: 100) { state board { id } ${ITEM_FIELDS} } }`, { ids: valid.slice(0, 100), cols: COLUMN_IDS }, { timeoutMs: REQUEST_TIMEOUT_MS });
   if (!res.ok) return { ok: false, error: res.error, calls: 1, complexityLeft: null };
-  // A deleted or archived row is not the board's any more.
-  return { ok: true, items: (res.data.items ?? []).filter((n) => n.group?.id).map(toItem), calls: 1, complexityLeft: res.data.complexity?.after ?? null };
+  // A deleted or archived row, or one on another board, is not the member's row here: they are looked up by email instead.
+  const live = (res.data.items ?? []).filter((n) => n.group?.id && String(n.board?.id ?? '') === FUNNEL_BOARD_ID && (n.state ?? 'active') === 'active');
+  return { ok: true, items: live.map(toItem), calls: 1, complexityLeft: res.data.complexity?.after ?? null };
 }
 
-/** Rows by their Email Address column, as typed and lower-cased (the queue's members with no stored row). */
+/** How many emails one lookup request asks about. */
+const EMAILS_PER_REQUEST = 25;
+
+/**
+ * Rows by their Email Address column (the queue's members with no stored
+ * row). Monday's match on it ignores case (checked on this board), so the
+ * address as typed finds a row typed in capitals; lower-cased as well, all
+ * the same. 25 addresses to a request, as many requests as it takes.
+ */
 export async function findItemsByEmail(token: string, emails: readonly string[]): Promise<({ ok: true; items: BoardItem[] } | { ok: false; error: string }) & Calls> {
-  const list = [...new Set(emails.filter((e) => e && e.includes('@')))].slice(0, 25);
-  if (list.length === 0) return { ok: true, items: [], calls: 0, complexityLeft: null };
-  const vars: Record<string, unknown> = { board: FUNNEL_BOARD_ID, col: COLUMNS.email, cols: COLUMN_IDS };
-  const fields = list.map((e, i) => {
-    vars[`e${i}`] = [...new Set([e, e.toLowerCase()])];
-    return `q${i}: items_page_by_column_values(board_id: $board, columns: [{ column_id: $col, column_values: $e${i} }], limit: 5) { items { ${ITEM_FIELDS} } }`;
-  });
-  const decl = list.map((_, i) => `$e${i}: [String]!`).join(', ');
-  const res = await mondayRequest<Record<string, { items: ItemNode[] } | Complexity>>(token, `query ($board: ID!, $col: String!, $cols: [String!], ${decl}) { complexity { after reset_in_x_seconds } ${fields.join(' ')} }`, vars, { timeoutMs: REQUEST_TIMEOUT_MS });
-  if (!res.ok) return { ok: false, error: res.error, calls: 1, complexityLeft: null };
+  const list = [...new Set(emails.filter((e) => e && e.includes('@')))];
   const items = new Map<string, BoardItem>();
-  for (const [key, v] of Object.entries(res.data)) {
-    if (key === 'complexity' || !v || !('items' in v)) continue;
-    for (const n of v.items ?? []) items.set(String(n.id), toItem(n));
+  let calls = 0;
+  let complexityLeft: number | null = null;
+  for (let at = 0; at < list.length; at += EMAILS_PER_REQUEST) {
+    const some = list.slice(at, at + EMAILS_PER_REQUEST);
+    const vars: Record<string, unknown> = { board: FUNNEL_BOARD_ID, col: COLUMNS.email, cols: COLUMN_IDS };
+    const fields = some.map((e, i) => {
+      vars[`e${i}`] = [...new Set([e, e.toLowerCase()])];
+      return `q${i}: items_page_by_column_values(board_id: $board, columns: [{ column_id: $col, column_values: $e${i} }], limit: 5) { items { ${ITEM_FIELDS} } }`;
+    });
+    const decl = some.map((_, i) => `$e${i}: [String]!`).join(', ');
+    const res = await mondayRequest<Record<string, { items: ItemNode[] } | Complexity>>(token, `query ($board: ID!, $col: String!, $cols: [String!], ${decl}) { complexity { after reset_in_x_seconds } ${fields.join(' ')} }`, vars, { timeoutMs: REQUEST_TIMEOUT_MS });
+    calls += 1;
+    if (!res.ok) return { ok: false, error: res.error, calls, complexityLeft };
+    for (const [key, v] of Object.entries(res.data)) {
+      if (key === 'complexity' || !v || !('items' in v)) continue;
+      for (const n of v.items ?? []) items.set(String(n.id), toItem(n));
+    }
+    complexityLeft = (res.data.complexity as Complexity)?.after ?? complexityLeft;
   }
-  return { ok: true, items: [...items.values()], calls: 1, complexityLeft: (res.data.complexity as Complexity)?.after ?? null };
+  return { ok: true, items: [...items.values()], calls, complexityLeft };
 }
 
 export interface WriteOutcome extends Calls {
@@ -112,94 +132,118 @@ export interface WriteOutcome extends Calls {
 const safeId = (id: string) => /^\d+$/.test(id);
 const safeGroup = (g: string) => /^[A-Za-z0-9_]+$/.test(g);
 
+async function send(token: string, fields: string[], decl: string[], vars: Record<string, unknown>): Promise<Reply> {
+  const head = decl.length > 0 ? `mutation (${decl.join(', ')})` : 'mutation';
+  return readReply(await mondayRequestRaw(token, `${head} { ${fields.join(' ')} complexity { after reset_in_x_seconds } }`, vars, { timeoutMs: REQUEST_TIMEOUT_MS }));
+}
+
 /**
- * The updates and creates, 25 rows to a request. A request Monday refuses as
- * a whole is retried row by row, so one bad row costs only itself.
+ * The updates, 25 rows to a request (they are idempotent: a request refused
+ * as a whole is tried row by row, so one bad row costs only itself), then
+ * the creates, one to a request and never repeated in the run: when Monday's
+ * answer is unclear (no reply, a limit hit), the next run reads the board
+ * first and finds the row if it was made.
  */
 export async function writePlan(token: string, updates: readonly RowUpdate[], creates: readonly RowCreate[], deadline: number): Promise<WriteOutcome> {
   const out: WriteOutcome = { updated: 0, moved: 0, created: [], succeeded: [], failed: [], stopped: null, calls: 0, complexityLeft: null };
-  type Op = { kind: 'update'; u: RowUpdate } | { kind: 'create'; c: RowCreate };
-  const ops: Op[] = [...updates.map((u) => ({ kind: 'update' as const, u })), ...creates.map((c) => ({ kind: 'create' as const, c }))];
-
-  const send = async (batch: Op[]): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string; retryable: boolean }> => {
-    const vars: Record<string, unknown> = { board: FUNNEL_BOARD_ID };
-    const decl: string[] = ['$board: ID!'];
-    const fields: string[] = [];
-    batch.forEach((op, i) => {
-      if (op.kind === 'update') {
-        const { itemId, changes, to } = op.u;
-        if (Object.keys(changes).length > 0) {
-          decl.push(`$v${i}: JSON!`);
-          vars[`v${i}`] = JSON.stringify(columnValuesJson(changes));
-          fields.push(`c${i}: change_multiple_column_values(board_id: $board, item_id: ${itemId}, column_values: $v${i}) { id }`);
-        }
-        if (to) fields.push(`m${i}: move_item_to_group(item_id: ${itemId}, group_id: "${GROUPS[to]}") { id }`);
-      } else {
-        decl.push(`$n${i}: String!`, `$v${i}: JSON!`);
-        vars[`n${i}`] = op.c.name.slice(0, 255);
-        vars[`v${i}`] = JSON.stringify(columnValuesJson(op.c.changes));
-        fields.push(`n${i}: create_item(board_id: $board, group_id: "${GROUPS[op.c.group]}", item_name: $n${i}, column_values: $v${i}) { id }`);
-      }
-    });
-    if (fields.length === 0) return { ok: true, data: {} };
-    const res = await mondayRequest<Record<string, unknown>>(token, `mutation (${decl.join(', ')}) { ${fields.join(' ')} complexity { after reset_in_x_seconds } }`, vars, { timeoutMs: REQUEST_TIMEOUT_MS });
-    out.calls += 1;
-    if (!res.ok) return res;
-    out.complexityLeft = (res.data.complexity as Complexity)?.after ?? out.complexityLeft;
-    return { ok: true, data: res.data };
+  const complexity = (r: Reply) => {
+    const after = (r.data.complexity as Complexity)?.after;
+    if (typeof after === 'number') out.complexityLeft = after;
+  };
+  const halt = (): boolean => {
+    if (out.stopped) return true;
+    if (Date.now() > deadline) out.stopped = 'out of time';
+    else if (out.complexityLeft !== null && out.complexityLeft < MIN_COMPLEXITY_LEFT) out.stopped = "Monday's complexity budget is low";
+    return out.stopped !== null;
   };
 
-  const record = (batch: Op[], data: Record<string, unknown>) => {
-    batch.forEach((op, i) => {
-      if (op.kind === 'update') {
-        if (data[`c${i}`]) out.updated += 1;
-        if (data[`m${i}`]) out.moved += 1;
-        out.succeeded.push(op.u.userId);
-      } else {
-        const id = (data[`n${i}`] as { id?: string } | null)?.id;
-        if (id) {
-          out.created.push({ userId: op.c.userId, itemId: String(id) });
-          out.succeeded.push(op.c.userId);
-        } else out.failed.push({ userId: op.c.userId, itemId: null, error: 'Monday created no row' });
+  const okUpdates: RowUpdate[] = [];
+  for (const u of updates) {
+    if (safeId(u.itemId) && (!u.to || safeGroup(GROUPS[u.to]))) okUpdates.push(u);
+    else out.failed.push({ userId: u.userId, itemId: u.itemId, error: 'not a Monday id' });
+  }
+  const okCreates: RowCreate[] = [];
+  for (const c of creates) {
+    if (safeGroup(GROUPS[c.group])) okCreates.push(c);
+    else out.failed.push({ userId: c.userId, itemId: null, error: 'not a Monday group' });
+  }
+
+  /** Settles each row of a sent batch from the reply; returns the rows it could not tell about. */
+  const settle = (batch: readonly RowUpdate[], aliases: string[][], r: Reply): RowUpdate[] => {
+    const unknown: RowUpdate[] = [];
+    batch.forEach((u, i) => {
+      const mine = aliases[i];
+      const error = mine.map((a) => r.aliasErrors.get(a)).find(Boolean);
+      if (error) {
+        out.failed.push({ userId: u.userId, itemId: u.itemId, error });
+        return;
       }
+      if (mine.every((a) => r.data[a])) {
+        if (mine.some((a) => a.startsWith('c'))) out.updated += 1;
+        if (mine.some((a) => a.startsWith('m'))) out.moved += 1;
+        out.succeeded.push(u.userId);
+        return;
+      }
+      unknown.push(u);
     });
+    return unknown;
   };
 
-  const isValid = (op: Op) => (op.kind === 'update' ? safeId(op.u.itemId) && (!op.u.to || safeGroup(GROUPS[op.u.to])) : safeGroup(GROUPS[op.c.group]));
-  const valid = ops.filter(isValid);
-  for (const op of ops.filter((x) => !isValid(x))) out.failed.push({ userId: op.kind === 'update' ? op.u.userId : op.c.userId, itemId: op.kind === 'update' ? op.u.itemId : null, error: 'not a Monday id' });
-  for (let i = 0; i < valid.length; i += WRITE_BATCH) {
-    if (Date.now() > deadline) {
-      out.stopped = 'out of time';
-      break;
-    }
-    if (out.complexityLeft !== null && out.complexityLeft < MIN_COMPLEXITY_LEFT) {
-      out.stopped = "Monday's complexity budget is low";
-      break;
-    }
-    const batch = valid.slice(i, i + WRITE_BATCH);
-    const res = await send(batch);
-    if (res.ok) {
-      record(batch, res.data);
+  for (let i = 0; i < okUpdates.length && !halt(); i += WRITE_BATCH) {
+    const batch = okUpdates.slice(i, i + WRITE_BATCH);
+    const req = updateRequest(batch);
+    if (req.fields.length === 0) {
+      for (const u of batch) out.succeeded.push(u.userId);
       continue;
     }
-    if (res.retryable) {
-      // Monday down, slow or rate limiting: stop, and the next run carries on.
-      out.stopped = res.error;
-      for (const op of batch) out.failed.push({ userId: op.kind === 'update' ? op.u.userId : op.c.userId, itemId: op.kind === 'update' ? op.u.itemId : null, error: res.error });
+    const r = await send(token, req.fields, req.decl, req.vars);
+    out.calls += 1;
+    complexity(r);
+    const unknown = settle(batch, req.aliases, r);
+    if (r.stop) {
+      // Limited or unreachable: what got through is counted; the rest waits for the next run.
+      out.stopped = r.stop;
       break;
     }
-    // Refused as a whole (one row Monday will not take): row by row.
-    for (const op of batch) {
-      if (Date.now() > deadline) {
-        out.stopped = 'out of time';
+    // Refused as a whole, or rows it said nothing about: row by row.
+    for (const u of unknown) {
+      if (halt()) break;
+      const one = updateRequest([u]);
+      const r1 = await send(token, one.fields, one.decl, one.vars);
+      out.calls += 1;
+      complexity(r1);
+      const still = settle([u], one.aliases, r1);
+      if (r1.stop) {
+        out.stopped = r1.stop;
         break;
       }
-      const one = await send([op]);
-      if (one.ok) record([op], one.data);
-      else out.failed.push({ userId: op.kind === 'update' ? op.u.userId : op.c.userId, itemId: op.kind === 'update' ? op.u.itemId : null, error: one.error });
+      for (const x of still) out.failed.push({ userId: x.userId, itemId: x.itemId, error: r1.refused ?? 'Monday did not say it was written' });
     }
-    if (out.stopped) break;
+  }
+
+  for (const c of okCreates) {
+    if (halt()) break;
+    const r = await send(
+      token,
+      [`n0: create_item(board_id: $board, group_id: "${GROUPS[c.group]}", item_name: $name, column_values: $v) { id }`],
+      ['$board: ID!', '$name: String!', '$v: JSON!'],
+      { board: FUNNEL_BOARD_ID, name: c.name.slice(0, 255), v: JSON.stringify(columnValuesJson(c.changes)) },
+    );
+    out.calls += 1;
+    complexity(r);
+    const id = (r.data.n0 as { id?: string | number } | null | undefined)?.id;
+    if (id !== undefined && id !== null) {
+      out.created.push({ userId: c.userId, itemId: String(id) });
+      out.succeeded.push(c.userId);
+      continue;
+    }
+    if (r.stop) {
+      // No clear answer: it may have been made, so it is not sent again now.
+      out.failed.push({ userId: c.userId, itemId: null, error: r.stop });
+      out.stopped = r.stop;
+      break;
+    }
+    out.failed.push({ userId: c.userId, itemId: null, error: r.aliasErrors.get('n0') ?? r.refused ?? 'Monday created no row' });
   }
   return out;
 }

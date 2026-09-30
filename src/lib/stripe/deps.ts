@@ -62,6 +62,14 @@ export function liveWebhookDeps(): WebhookDeps {
         return null;
       }
     },
+    retrievePaymentIntentStrict: async (id) => {
+      try {
+        return await stripe.paymentIntents.retrieve(id);
+      } catch (err) {
+        if ((err as { code?: string }).code === 'resource_missing') return null;
+        throw err;
+      }
+    },
     retrieveSubscription: async (id) => {
       try {
         return await stripe.subscriptions.retrieve(id);
@@ -94,6 +102,14 @@ export function liveWebhookDeps(): WebhookDeps {
     // Batch 20: the rows behind "Total paid" (src/lib/payments).
     recordPayment: (payment) => recordPayment(payment),
     recordRefund: (refund) => recordRefund(refund),
+    invoicePaymentIntent: async (invoiceId) => {
+      const list = await stripe.invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 5 });
+      for (const p of list.data) {
+        const pi = p.payment?.payment_intent;
+        if (pi) return typeof pi === 'string' ? pi : pi.id;
+      }
+      return null;
+    },
     // Batch 20: the £10 starter pack (src/lib/starter-pack/grant-server.ts).
     settleStarterPack: (paymentIntentId) => settleStarterPack(paymentIntentId),
     grantStarterPack: (input) => grantStarterPack(input),

@@ -26,6 +26,11 @@ export type OfferBlock = 'off' | 'existing_member' | 'team_member' | 'bought' | 
 
 export interface PackFacts {
   createdAt: string | null;
+  /**
+   * The account already had the £20 welcome credit (welcome:<id>): it joined
+   * under the old offer, whatever the cutover says now (it can be moved).
+   */
+  hadWelcome: boolean;
   teamMember: boolean;
   /** profiles.starter_pack_bought_at, or a granted purchase row. */
   bought: boolean;
@@ -39,7 +44,7 @@ export type PackOffer = { eligible: true } | { eligible: false; reason: OfferBlo
 
 export function packOffer(f: PackFacts, s: Pick<LifecycleSettings, 'starterPackFrom'>): PackOffer {
   if (!s.starterPackFrom) return { eligible: false, reason: 'off' };
-  if (!isPackAccount(f.createdAt, s)) return { eligible: false, reason: 'existing_member' };
+  if (!isPackAccount(f.createdAt, s) || f.hadWelcome) return { eligible: false, reason: 'existing_member' };
   if (f.teamMember) return { eligible: false, reason: 'team_member' };
   if (f.bought) return { eligible: false, reason: 'bought' };
   if (f.alreadyHad) return { eligible: false, reason: 'already_had' };

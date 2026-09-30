@@ -7,7 +7,7 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { normaliseMobile } from '../credit/abuse';
 import { teamOf } from '../team';
 import { ACCESS_COLUMNS, accountStatus, type AccessProfile } from '../access';
-import { isPackAccount } from '../lifecycle/settings';
+import { isPackAccount, welcomeGrantRef } from '../lifecycle/settings';
 import { todayKey } from '../today/day';
 import { logActivity } from '../activity/log';
 import { packCopy, packOffer, snoozeUntil, todayCardShown, type PackCopy, type PackOffer } from './rules';
@@ -59,19 +59,21 @@ async function load(userId: string): Promise<PackState> {
   if (!isPackAccount(p.created_at, lc)) return off('existing_member');
 
   // The Batch 20 columns in a query of their own: before the schema is run it fails, and the pack is simply off.
-  const [cols, team, byAccount, byEmail, byMobile] = await Promise.all([
+  const [cols, team, byAccount, byEmail, byMobile, welcome] = await Promise.all([
     admin.from('profiles').select('starter_pack_bought_at, starter_pack_snoozed_until').eq('id', userId).maybeSingle(),
     teamOf(userId),
     claimed('user_id', userId),
     claimed('email_key', p.email ? emailKey(p.email) : null),
     claimed('mobile_key', normaliseMobile(p.mobile)),
+    admin.from('credit_grants').select('id').eq('user_id', userId).eq('source_ref', welcomeGrantRef(userId)).limit(1),
   ]);
-  if (cols.error || byAccount === null || byEmail === null || byMobile === null) return off('off');
+  if (cols.error || welcome.error || byAccount === null || byEmail === null || byMobile === null) return off('off');
   const c = (cols.data ?? {}) as { starter_pack_bought_at?: string | null; starter_pack_snoozed_until?: string | null };
   const status = accountStatus(p);
   const offer = packOffer(
     {
       createdAt: p.created_at,
+      hadWelcome: (welcome.data?.length ?? 0) > 0,
       teamMember: team.role === 'member',
       bought: Boolean(c.starter_pack_bought_at),
       alreadyHad: byAccount || byEmail || byMobile,

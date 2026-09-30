@@ -755,3 +755,61 @@ test("Batch 20: refunding or disputing a pack claws its credit back, and never t
   ]);
   assert.equal(deps.calls.refundTopup, undefined);
 });
+
+test('Batch 20: an invoice payment carries its PaymentIntent (from the invoice, else asked of Stripe), so its refunds can be matched', async () => {
+  const deps = fakeDeps();
+  const seen: Array<[string, string | null]> = [];
+  deps.recordPayment = async (p) => {
+    seen.push([p.id, p.paymentIntentId]);
+  };
+  deps.invoicePaymentIntent = async (invoiceId) => (invoiceId === 'in_ask' ? 'pi_asked' : null);
+  await handleStripeEvent(ev('invoice.paid', { ...paidInvoice('in_has', 'subscription_cycle', 1900, 1900), payments: { data: [{ status: 'paid', payment: { type: 'payment_intent', payment_intent: 'pi_on_invoice' } }] } }), deps);
+  await handleStripeEvent(ev('invoice.paid', paidInvoice('in_ask', 'subscription_cycle', 1900, 1900)), deps);
+  deps.invoicePaymentIntent = async () => {
+    throw new Error('Stripe down');
+  };
+  const r = await handleStripeEvent(ev('invoice.paid', paidInvoice('in_down', 'subscription_cycle', 1900, 1900)), deps);
+  assert.equal(r.handled, true);
+  assert.deepEqual(seen, [
+    ['inv:in_has', 'pi_on_invoice'],
+    ['inv:in_ask', 'pi_asked'],
+    ['inv:in_down', null],
+  ]);
+});
+
+test('Batch 20: a pack authorised or cancelled is settled (captured, or its claim let go); other payments are left alone', async () => {
+  const deps = fakeDeps();
+  const { settled } = withPack(deps);
+  assert.equal((await handleStripeEvent(ev('payment_intent.amount_capturable_updated', packPi({ status: 'requires_capture' })), deps)).note, 'starter pack captured');
+  assert.equal((await handleStripeEvent(ev('payment_intent.canceled', packPi({ status: 'canceled' })), deps)).handled, true);
+  const topup = { id: 'pi_t', status: 'canceled', metadata: { kind: 'topup', user_id: 'u1' } };
+  assert.equal((await handleStripeEvent(ev('payment_intent.canceled', topup), deps)).handled, false);
+  assert.deepEqual(settled, ['pi_pack', 'pi_pack']);
+});
+
+test('Batch 20: a pack hold released before capture is reported as refunded; nothing is clawed back or taken off Total paid', async () => {
+  const deps = fakeDeps();
+  const { clawed } = withPack(deps);
+  const { refunds } = withPayments(deps);
+  deps.retrievePaymentIntent = async () => packPi({ status: 'canceled' });
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_hold', payment_intent: 'pi_pack', customer: 'cus_1', captured: false, amount: 1000, amount_refunded: 1000 }), deps);
+  assert.equal(r.note, 'starter pack authorisation released (never charged)');
+  assert.deepEqual(clawed, []);
+  assert.equal(refunds.size, 0);
+  assert.equal(deps.calls.refundTopup, undefined);
+});
+
+test('Batch 20: a refund whose payment cannot be read fails the delivery, so Stripe sends it again and no clawback is lost', async () => {
+  const deps = fakeDeps();
+  const { clawed } = withPack(deps);
+  deps.retrievePaymentIntentStrict = async () => {
+    throw new Error('Stripe down');
+  };
+  await assert.rejects(handleStripeEvent(ev('charge.refunded', { id: 'ch_p', payment_intent: 'pi_pack', customer: 'cus_1', captured: true, amount: 1000, amount_refunded: 1000 }), deps), /Stripe down/);
+  deps.retrievePaymentIntentStrict = async () => packPi();
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_p', payment_intent: 'pi_pack', customer: 'cus_1', captured: true, amount: 1000, amount_refunded: 1000 }), deps);
+  assert.deepEqual(clawed, [{ refundedPence: 1000, chargedPence: 1000, reason: 'refunded' }]);
+  // No such payment (not ours): not a pack, and the delivery goes on as before.
+  deps.retrievePaymentIntentStrict = async () => null;
+  assert.equal((await handleStripeEvent(ev('charge.refunded', { id: 'ch_x', payment_intent: 'pi_gone', customer: 'cus_1', captured: true, amount: 500, amount_refunded: 500 }), deps)).handled, true);
+});

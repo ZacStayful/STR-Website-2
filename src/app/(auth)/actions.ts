@@ -131,6 +131,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
         email,
         mobile: normalisedMobile,
         trialStartedAt: new Date().toISOString(),
+        userId: newUserId,
       })
       // Batch 20: the rest of the row (route, ad source, the funnel group) follows through the queue.
       if (newUserId) await queueFunnelSync(newUserId, 'signup')
