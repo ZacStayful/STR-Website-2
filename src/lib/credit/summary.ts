@@ -7,6 +7,8 @@ import { getBillingSettings } from './unit-costs';
 import { getPlan } from './plans';
 import { lowBalanceState, type BalanceState, type SpendRates } from './pricing';
 import { isEnforcing } from './http';
+import { accountStatus, type AccessProfile } from '../access';
+import { isPackAccount } from '../lifecycle/settings';
 
 /**
  * Everything the app chrome needs to know about a member's credit in one
@@ -30,6 +32,12 @@ export interface CreditSummary {
   welcomeWithheldReason: string | null;
   /** One day of daily deals in base pence (billing_settings.todays_5_daily_pence), for the Usage chip. */
   dailyDealsPence: number;
+  /**
+   * Batch 20: no live, trialling, past-due or paused plan (free, or lapsed):
+   * low means £5 of credit or less (billing_settings.low_credit_pence), and
+   * the choice offered is Starter or a £10 top-up.
+   */
+  noPlan: boolean;
 }
 
 /** Every welcome-kind grant this account has had, in pence. 0 when it cannot be read: the setting then stands. */
@@ -76,19 +84,27 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     /* never block the summary */
   }
   const [balance, settings] = await Promise.all([getBalance(userId), getBillingSettings()]);
-  interface BillingProfile {
+  type BillingProfile = AccessProfile & {
     plan_code: string | null;
     current_period_end: string | null;
     stripe_default_payment_method_id: string | null;
     auto_topup_amount_pence: number | null;
     auto_topup_threshold_pence: number | null;
     welcome_withheld_reason: string | null;
-  }
+    created_at: string | null;
+  };
   let profile: BillingProfile | null = null;
   if (hasServiceRole()) {
-    const { data } = await createAdminClient().from('profiles').select('plan_code, current_period_end, stripe_default_payment_method_id, auto_topup_amount_pence, auto_topup_threshold_pence, welcome_withheld_reason').eq('id', userId).maybeSingle();
+    const { data } = await createAdminClient()
+      .from('profiles')
+      .select('plan_code, current_period_end, stripe_default_payment_method_id, auto_topup_amount_pence, auto_topup_threshold_pence, welcome_withheld_reason, created_at, plan, plan_source, reports_run, stripe_subscription_id, stripe_subscription_status, subscription_paused_from, subscription_paused_until, subscription_cancel_at')
+      .eq('id', userId)
+      .maybeSingle();
     profile = (data as unknown as BillingProfile | null) ?? null;
   }
+  // Batch 20: with no plan (free or lapsed) the £5 rule decides "low".
+  const status = profile ? accountStatus(profile) : null;
+  const noPlan = status === 'free' || status === 'lapsed';
   const plan = await getPlan(profile?.plan_code);
 
   let cycle: CreditSummary['cycle'] = null;
@@ -102,11 +118,21 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     // spend at face value. Measured against what was actually granted, so the
     // rewards cannot make "used" read low; never below the setting, so an
     // account whose welcome was withheld reads exactly as it always has.
-    const welcome = Math.max(settings.welcomeGrantPence, await welcomeGrantedPence(userId));
-    cycle = { planCode: null, planName: null, allowancePence: welcome, usedPence: Math.max(0, welcome - balance.buckets.welcomePence), endsAt: null };
+    // Batch 20: an account from the starter pack's cutover never had the welcome
+    // credit, so it is measured only against what it was given (the pack's bonus).
+    const floor = isPackAccount(profile?.created_at ?? null, settings.lifecycle) ? 0 : settings.welcomeGrantPence;
+    const welcome = Math.max(floor, await welcomeGrantedPence(userId));
+    cycle = welcome > 0 ? { planCode: null, planName: null, allowancePence: welcome, usedPence: Math.max(0, welcome - balance.buckets.welcomePence), endsAt: null } : null;
   }
 
-  const state = lowBalanceState({ cycleAllowancePence: cycle.allowancePence, cycleUsedPence: cycle.usedPence, spendableBasePence: balance.spendableBasePence, ratio: settings.lowBalanceRatio });
+  const state = lowBalanceState({
+    cycleAllowancePence: cycle?.allowancePence ?? 0,
+    cycleUsedPence: cycle?.usedPence ?? 0,
+    spendableBasePence: balance.spendableBasePence,
+    ratio: settings.lowBalanceRatio,
+    balancePence: balance.totalPence,
+    lowCreditPence: noPlan ? settings.lifecycle.lowCreditPence : null,
+  });
   return {
     buckets: balance.buckets,
     totalPence: balance.totalPence,
@@ -123,5 +149,6 @@ export async function getCreditSummary(userId: string): Promise<CreditSummary> {
     topupPresetsPence: settings.topupPresetsPence,
     welcomeWithheldReason: profile?.welcome_withheld_reason ?? null,
     dailyDealsPence: settings.dealPricing.todays5DailyPence,
+    noPlan,
   };
 }

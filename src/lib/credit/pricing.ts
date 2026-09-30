@@ -92,10 +92,15 @@ export type BalanceState = 'ok' | 'low' | 'out';
  * Banner / modal state. `low` once the cycle's allowance is ≥ ratio used and
  * there is no other credit to fall back on beyond a small margin; `out` when
  * nothing spendable is left.
+ *
+ * Batch 20: a member with no plan is `low` at `lowCreditPence` of credit or
+ * less (billing_settings.low_credit_pence, £5), whatever kind it is, top-up
+ * credit included; the allowance does not come into it. `out` is unchanged.
  */
-export function lowBalanceState(input: { cycleAllowancePence: number; cycleUsedPence: number; spendableBasePence: number; ratio?: number }): BalanceState {
+export function lowBalanceState(input: { cycleAllowancePence: number; cycleUsedPence: number; spendableBasePence: number; ratio?: number; balancePence?: number; lowCreditPence?: number | null }): BalanceState {
   const ratio = input.ratio ?? 0.8;
   if (input.spendableBasePence <= 0.5) return 'out';
+  if (input.lowCreditPence != null && input.lowCreditPence > 0 && input.balancePence != null) return input.balancePence <= input.lowCreditPence ? 'low' : 'ok';
   if (input.cycleAllowancePence > 0 && input.cycleUsedPence / input.cycleAllowancePence >= ratio) return 'low';
   return 'ok';
 }

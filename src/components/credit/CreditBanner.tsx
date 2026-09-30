@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { formatGbp, openOutOfCredit } from "@/lib/credit/client";
 import { useCreditOptional } from "./CreditProvider";
+import { LowCreditChoice } from "./LowCreditChoice";
 
 /**
  * Sticky strip under the app nav: a warning once 80% of the cycle's credit
@@ -47,6 +48,8 @@ export function CreditBanner() {
       </div>
     );
   }
+  // Batch 20, Part B: no plan, £5 or less (£0 included): Starter or a £10 top-up.
+  if (c.decision) return <LowCreditChoice credit={c} />;
   const cycle = c.cycle;
   const pct = cycle && cycle.allowancePence > 0 ? Math.min(100, Math.round((cycle.usedPence / cycle.allowancePence) * 100)) : null;
   const message = out

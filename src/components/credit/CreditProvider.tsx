@@ -31,6 +31,10 @@ export interface CreditSnapshot {
   member?: { teamName: string; paused: boolean } | null;
   /** Batch 20: the starter pack's words, while this member can still buy it. */
   pack?: PackCopy | null;
+  /** Batch 20, Part B: no plan (free or lapsed): "low" is £5 or less. */
+  noPlan?: boolean;
+  /** Batch 20, Part B: the choice at £5 or less for a member with no plan: Starter or the £10 top-up. */
+  decision?: { starter: { code: string; name: string; pricePence: number; creditPence: number } | null; topupPence: number } | null;
 }
 
 interface CreditContextValue {

@@ -52,9 +52,14 @@ export function topupComingEmail(to: string, opts: { amountPence: number; thresh
   ], { label: 'Review automatic top-ups', path: '/account/billing#topup' }));
 }
 
-export function outOfCreditEmail(to: string, opts: { planName: string | null }) {
+export function outOfCreditEmail(to: string, opts: { planName: string | null; pack?: { body: string; cta: string } | null }) {
+  // Batch 20: with no plan it is just "your credit" (a member from the starter
+  // pack's cutover never had welcome credit), and a new member who can still
+  // buy the pack is offered it.
+  const used = `${opts.planName ? `Your ${opts.planName} plan credit` : 'Your credit'} is used up, so reports and listing checks are paused.`;
+  if (opts.pack) return send(to, "You're out of Stayful credit", layout("You're out of credit", [used, opts.pack.body], { label: opts.pack.cta, path: '/today?offer=pack' }));
   return send(to, "You're out of Stayful credit", layout("You're out of credit", [
-    `Your ${opts.planName ? `${opts.planName} plan` : 'welcome'} credit is used up, so reports and listing checks are paused.`,
+    used,
     'Top up in one click or upgrade your plan to carry on. Upgrading is the better value if you run reports regularly.',
   ], { label: 'Top up or upgrade', path: '/account/billing#topup' }));
 }

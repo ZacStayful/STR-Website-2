@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   if (!stripeConfigured()) return Response.json({ error: 'Payments are not configured yet. Email hello@stayful.co.uk to top up.' }, { status: 503 });
 
-  let body: { amountPence?: unknown; nonce?: unknown };
+  let body: { amountPence?: unknown; nonce?: unknown; via?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -39,6 +39,8 @@ export async function POST(request: Request) {
   if (!settings.topupPresetsPence.includes(amount)) return Response.json({ error: 'Choose one of the top-up amounts.' }, { status: 400 });
   const priceId = priceIdForTopup(amount);
   const nonce = typeof body.nonce === 'string' && /^[0-9a-f-]{8,64}$/i.test(body.nonce) ? body.nonce : crypto.randomUUID();
+  // Batch 20, Part B: the top-up chosen from the low-credit decision (weekly active).
+  if (body.via === 'low_credit') logActivity(member.id, 'low_credit_topup', { dedupeKey: `low_credit_topup:${new Date().toISOString().slice(0, 10)}`, extras: { amount_pence: amount } });
 
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });

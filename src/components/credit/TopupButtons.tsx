@@ -11,7 +11,7 @@ import { useCreditOptional } from "./CreditProvider";
  * the balance updates in place; otherwise the member is sent to Stripe
  * Checkout, which saves the card for next time.
  */
-export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, autoFocusFirst }: { presets: number[]; hasSavedCard: boolean; size?: "default" | "lg" | "sm"; onDone?: (amountPence: number) => void; autoFocusFirst?: boolean }) {
+export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, autoFocusFirst, via, label }: { presets: number[]; hasSavedCard: boolean; size?: "default" | "lg" | "sm"; onDone?: (amountPence: number) => void; autoFocusFirst?: boolean; /** Batch 20: where the choice was made ("low_credit"), recorded with it. */ via?: string; /** Batch 20: the button's words ("Top up £10") instead of the bare amount. */ label?: (amountPence: number) => string }) {
   const credit = useCreditOptional();
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +20,7 @@ export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, 
     setBusy(amountPence);
     setError(null);
     try {
-      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence, nonce: crypto.randomUUID() }) });
+      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence, nonce: crypto.randomUUID(), ...(via ? { via } : {}) }) });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; url?: string; error?: string };
       if (data.url) {
         window.location.href = data.url;
@@ -46,7 +46,7 @@ export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, 
         {presets.map((p, i) => (
           <Button key={p} type="button" variant="outline" size={size} disabled={busy !== null} onClick={() => void topup(p)} autoFocus={autoFocusFirst && i === 0}>
             {busy === p ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {formatGbp(p).replace(".00", "")}
+            {label ? label(p) : formatGbp(p).replace(".00", "")}
           </Button>
         ))}
       </div>

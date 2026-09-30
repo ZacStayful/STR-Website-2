@@ -49,6 +49,23 @@ test('low-balance state: 80% of allowance → low, nothing spendable → out', (
   assert.equal(lowBalanceState({ cycleAllowancePence: 0, cycleUsedPence: 0, spendableBasePence: 0.2 }), 'out');
 });
 
+test('Batch 20: with no plan, low is £5 of credit or less of any kind, whatever the allowance; out is unchanged', () => {
+  const noPlan = { lowCreditPence: 500 };
+  // £6 left of £20 welcome credit: 70% used, and more than £5 — not low (was: not low either).
+  assert.equal(lowBalanceState({ cycleAllowancePence: 2000, cycleUsedPence: 1400, spendableBasePence: 600, balancePence: 600, ...noPlan }), 'ok');
+  // £4.60 left: low, however little of an allowance was used.
+  assert.equal(lowBalanceState({ cycleAllowancePence: 0, cycleUsedPence: 0, spendableBasePence: 460, balancePence: 460, ...noPlan }), 'low');
+  // Exactly £5: low.
+  assert.equal(lowBalanceState({ cycleAllowancePence: 0, cycleUsedPence: 0, spendableBasePence: 500, balancePence: 500, ...noPlan }), 'low');
+  // Welcome credit all spent but £30 of top-up credit: no longer low (bug 6: top-up credit was ignored).
+  assert.equal(lowBalanceState({ cycleAllowancePence: 2000, cycleUsedPence: 2000, spendableBasePence: 2307.7, balancePence: 3000, ...noPlan }), 'ok');
+  // Nothing spendable: out, as before.
+  assert.equal(lowBalanceState({ cycleAllowancePence: 0, cycleUsedPence: 0, spendableBasePence: 0.4, balancePence: 0.4, ...noPlan }), 'out');
+  // On a plan (no lowCreditPence): the 80% rule, as before.
+  assert.equal(lowBalanceState({ cycleAllowancePence: 1900, cycleUsedPence: 1600, spendableBasePence: 300, balancePence: 300, lowCreditPence: null }), 'low');
+  assert.equal(lowBalanceState({ cycleAllowancePence: 5000, cycleUsedPence: 1000, spendableBasePence: 400, balancePence: 400, lowCreditPence: null }), 'ok');
+});
+
 test('enhanced report estimate includes every unit and separates worst case', () => {
   const e = estimateAction(table, 'report_enhanced');
   const units = new Set(e.lines.map((l) => unitKey(l.provider, l.unit)));
