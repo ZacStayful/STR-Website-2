@@ -64,3 +64,12 @@ test('engaging by email or text keeps a member from being quiet, without countin
   assert.equal(EMAIL_ENGAGEMENT_KINDS.length, 6);
 });
 
+test('an unsubscribe from an email is not engaging; changing a pick’s search from one is', () => {
+  assert.equal(isEngagement('email_settings', { key: 'daily_picks', on: false, via: 'one_click' }), false);
+  assert.equal(isEngagement('email_settings', { key: 'deal_changes', on: false, via: 'page' }), false);
+  assert.equal(isEngagement('email_settings', { key: 'pick_search', field: 'beds' }), true);
+  assert.equal(isEngagement('email_settings'), true);
+  // Turning something off in the app is still in-app activity.
+  assert.equal(isEngagement('today_view', { on: false }), true);
+});
+

@@ -32,15 +32,24 @@ import type { LifecycleSettings } from '../lifecycle/settings.ts';
  * Engaging by email or text: a click from one of our emails or texts to a
  * page (recorded from the signed-in page itself, so a mail scanner opening
  * links is not one), an answer given from an email, a setting changed from
- * one. Record-only for weekly active; they keep a member from being quiet.
+ * one (but never turning one off: an unsubscribe is not engaging, Zac's
+ * call). Record-only for weekly active; they keep a member from being quiet.
  */
 export const EMAIL_ENGAGEMENT_KINDS: readonly ActivityKind[] = ['email_click', 'sms_click', 'email_feedback', 'email_settings', 'profile_email_click', 'feedback_email_click'];
 
 /** Everything that keeps a member from being quiet: the weekly-active kinds and engaging by email or text. */
 export const ENGAGED_KINDS: readonly ActivityKind[] = [...QUALIFYING_KINDS, ...EMAIL_ENGAGEMENT_KINDS];
 
-export function isEngagement(kind: string): boolean {
-  return (ENGAGED_KINDS as readonly string[]).includes(kind);
+/**
+ * Does this action keep a member from being quiet? Every weekly-active kind,
+ * and engaging by email or text unless it turned something off (extras.on
+ * false: an unsubscribe). The nightly applies the same rule in SQL
+ * (lifecycle_active_days_sync).
+ */
+export function isEngagement(kind: string, extras?: Record<string, unknown> | null): boolean {
+  if ((QUALIFYING_KINDS as readonly string[]).includes(kind)) return true;
+  if (!(EMAIL_ENGAGEMENT_KINDS as readonly string[]).includes(kind)) return false;
+  return extras?.on !== false;
 }
 
 export type InactivitySettings = Pick<LifecycleSettings, 'inactiveReengageDays' | 'picksPauseInactiveDays' | 'inactivityFrom'>;

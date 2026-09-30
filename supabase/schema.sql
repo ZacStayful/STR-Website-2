@@ -5406,7 +5406,8 @@ revoke all on public.member_active_days from anon, authenticated;
 
 -- ── member_engaged_days: the UK days a member engaged by email or text ──
 -- A click from one of our emails or texts, an answer or a setting changed
--- from one (the kinds are passed in by src/lib/inactivity). Record-only for
+-- from one (the kinds are passed in by src/lib/inactivity), but never one
+-- that turned something off (extras.on false: an unsubscribe). Record-only for
 -- weekly active, so kept apart from member_active_days (which Monday's Last
 -- active, Active days and Active weeks read); they keep a member from being
 -- counted as quiet. Filled in the same pass over activity_events.
@@ -5437,10 +5438,11 @@ revoke all on public.member_active_days_state from anon, authenticated;
 -- apply, limit}. Adds the (member, UK day) pairs of up to `limit`
 -- activity_events rows past the watermark, the qualifying kinds to
 -- member_active_days and the engaged (email and text) kinds to
--- member_engaged_days, and moves the watermark on. apply = false counts what
--- it would add and changes nothing, and lists each member's latest day of
--- either among them (`pending`), so a dry run's preview counts actions since
--- the last nightly. Returns {from, to, added, engaged_added, more, pending}.
+-- member_engaged_days (not an unsubscribe: extras.on false), and moves the
+-- watermark on. apply = false counts what it would add and changes nothing,
+-- and lists each member's latest day of either among them (`pending`), so a
+-- dry run's preview counts actions since the last nightly. Returns
+-- {from, to, added, engaged_added, more, pending}.
 create or replace function public.lifecycle_active_days_sync(p jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -5479,6 +5481,7 @@ begin
       select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date
         from public.activity_events e
        where e.id > v_from and e.id <= v_to and e.kind = any(v_engaged)
+         and coalesce(e.extras->>'on', '') <> 'false'
       on conflict do nothing;
       get diagnostics v_engaged_added = row_count;
     end if;
@@ -5493,7 +5496,8 @@ begin
     select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'day', x.day)), '[]'::jsonb) into v_pending from (
       select e.user_id, max((e.occurred_at at time zone 'Europe/London')::date) as day
         from public.activity_events e
-       where e.id > v_from and e.id <= v_to and (e.kind = any(v_qual) or e.kind = any(v_engaged))
+       where e.id > v_from and e.id <= v_to
+         and (e.kind = any(v_qual) or (e.kind = any(v_engaged) and coalesce(e.extras->>'on', '') <> 'false'))
        group by e.user_id
     ) x;
   end if;

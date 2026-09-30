@@ -627,9 +627,9 @@ editable on `/admin/lifecycle`. In this order:
    every 10 minutes, the nightly part from 06:00 UK) then moves members into
    Re-engage at 14 days and pauses their picks at 25; any real action brings
    them straight back. Engaging by email or text counts here (a click through
-   to the site, an answer or a setting changed from an email), though not
-   towards weekly active or Monday's Last active, Active days and Active
-   weeks. "Nightly: dry run" shows who would move.
+   to the site, an answer or a setting changed from an email, but not an
+   unsubscribe), though not towards weekly active or Monday's Last active,
+   Active days and Active weeks. "Nightly: dry run" shows who would move.
 7. **The starter pack:** set "Starter pack for accounts created from" (or
    Start now). From that moment new accounts get the pack offer and no £20
    welcome credit; accounts created before it are untouched and never see
