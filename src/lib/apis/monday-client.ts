@@ -44,6 +44,8 @@ export async function mondayRequest<T>(
   token: string,
   query: string,
   variables: Record<string, unknown> = {},
+  /** Batch 20: a shorter bound for the funnel sync, which has many calls to make in one cron run. */
+  opts: { timeoutMs?: number } = {},
 ): Promise<MondayResult<T>> {
   if (!token) return { ok: false, error: 'No Monday API token.', retryable: false };
   try {
@@ -55,7 +57,7 @@ export async function mondayRequest<T>(
         'API-Version': MONDAY_API_VERSION,
       },
       body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');

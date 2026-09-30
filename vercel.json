@@ -62,6 +62,10 @@
 			"schedule": "*/10 * * * *"
 		},
 		{
+			"path": "/api/internal/monday-funnel",
+			"schedule": "*/10 * * * *"
+		},
+		{
 			"path": "/api/internal/lead-retention",
 			"schedule": "15 2 * * *"
 		},

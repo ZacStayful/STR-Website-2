@@ -7,6 +7,7 @@ import { isAdminEmail } from '@/lib/admin';
 import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { parseLifecycleForm } from '@/lib/lifecycle/admin-form';
 import { runMobileBackfill, type MobileBackfillOutcome } from '@/lib/credit/mobile-backfill-server';
+import { runBackfill, runFunnelCron, type BackfillOutcome, type CronOutcome } from '@/lib/crm/monday-funnel/sync-server';
 
 const PAGE = '/admin/lifecycle';
 
@@ -46,4 +47,23 @@ export async function mobileBackfillAction(_prev: MobileState, formData: FormDat
   await requireAdmin();
   const apply = formData.get('apply') === '1';
   return { at: new Date().toISOString(), outcome: await runMobileBackfill({ apply }) };
+}
+
+export type MondayState = { at: string; what: 'nightly_dry' | 'backfill_dry' | 'backfill'; nightly?: CronOutcome; backfill?: BackfillOutcome } | null;
+
+/**
+ * Part F: the nightly's dry run (inactivity and every row, whatever the hour;
+ * writes nothing), the backfill's dry run, and the backfill itself.
+ */
+export async function mondayAction(_prev: MondayState, formData: FormData): Promise<MondayState> {
+  await requireAdmin();
+  const what = formData.get('what');
+  const at = new Date().toISOString();
+  if (what === 'nightly_dry') return { at, what, nightly: await runFunnelCron({ dry: true, nightly: 'force' }) };
+  if (what === 'backfill') {
+    const backfill = await runBackfill({ apply: true });
+    revalidatePath(PAGE);
+    return { at, what, backfill };
+  }
+  return { at, what: 'backfill_dry', backfill: await runBackfill({ apply: false }) };
 }

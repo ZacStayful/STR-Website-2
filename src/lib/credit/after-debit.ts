@@ -5,7 +5,7 @@ import { getCreditSummary } from './summary';
 import { lowBalanceEmail, outOfCreditEmail, topupComingEmail } from '../email/billing';
 import { shouldWarnBeforeTopup } from './topup-warning';
 import { DEFAULT_TOPUP_THRESHOLD_PENCE } from './topup-floor';
-import { flagHitZero } from '../apis/monday';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { maybeAutoTopup } from '../stripe/auto-topup';
 import { isAdminEmail } from '../admin';
 import { getBillingSettings } from './unit-costs';
@@ -17,8 +17,8 @@ import { noticeFor, queueLowCreditSync, sendLowCreditAlone } from './low-credit-
 /**
  * Runs after a member's balance changed because of a debit: the 80% and £0
  * emails (once per cycle each, and only while the "Picks paused / out of
- * credit" switch is on — src/lib/notifications), the Monday "hit zero" flag,
- * and auto top-up. Best-effort; never throws into the request that
+ * credit" switch is on — src/lib/notifications), Monday (queued: the
+ * funnel sync writes "Hit zero" and "Low credit"), and auto top-up. Best-effort; never throws into the request that
  * triggered it.
  *
  * Batch 20, Part B: with no plan, "low" is £5 or less and the email is the
@@ -62,10 +62,8 @@ export async function afterDebit(userId: string): Promise<void> {
         if (r === 'charged') return;
       }
       const patch: Record<string, unknown> = {};
-      if (!p.hit_zero_at || !sentThisCycle(p.hit_zero_at)) {
-        patch.hit_zero_at = now.toISOString();
-        if (paymentEmail) void flagHitZero(paymentEmail, now.toISOString()).catch(() => {});
-      }
+      const hitZeroNow = !p.hit_zero_at || !sentThisCycle(p.hit_zero_at);
+      if (hitZeroNow) patch.hit_zero_at = now.toISOString();
       if (email && !sentThisCycle(p.last_out_of_credit_email_at)) {
         patch.last_out_of_credit_email_at = now.toISOString();
         // Batch 20: a new member who can still buy the starter pack is offered it.
@@ -73,6 +71,8 @@ export async function afterDebit(userId: string): Promise<void> {
         void outOfCreditEmail(email, { planName: summary.noPlan ? null : (summary.cycle?.planName ?? null), pack }).catch(() => {});
       }
       if (Object.keys(patch).length) await admin.from('profiles').update(patch).eq('id', userId);
+      // Batch 20: Monday's "Hit zero" follows through the funnel queue, once the stamp is written.
+      if (hitZeroNow) await queueFunnelSync(userId, 'hit_zero');
       return;
     }
     if (summary.state === 'low') {

@@ -6,6 +6,7 @@ import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin'
 import { ensureEnquiry } from '@/lib/apis/monday'
 import { isTeamBound } from '@/lib/team'
 import { outboundInternalSecret } from '@/lib/internal-auth'
+import { queueFunnelSync } from '@/lib/crm/monday-funnel/queue-server'
 
 // Runs once a member has a session, from whichever route signed them in:
 // /auth/callback (OAuth and PKCE email links) and /auth/confirm (token-hash
@@ -16,7 +17,9 @@ import { outboundInternalSecret } from '@/lib/internal-auth'
 //    the lead became a member, so its optimisation learns which leads are
 //    worth buying. Idempotent on profiles.lead_activated_at.
 // 2. Monday: push a "Trial signups" row the first time a verified user lands.
-//    Idempotent on profiles.monday_item_id.
+//    Idempotent on profiles.monday_item_id. After the response (Batch 20): a
+//    slow Monday no longer holds up the sign-in redirect. The rest of the row
+//    follows through the funnel queue (src/lib/crm/monday-funnel).
 //
 // Errors are swallowed so a Monday or n8n outage can never block the redirect.
 export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
@@ -59,15 +62,17 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
     // Team members (and people on their way to becoming one) are paid for by
     // their team: not trial signups for the sales board.
     if (!profile.monday_item_id && !(await isTeamBound(user.id, profile.email ?? user.email ?? null))) {
-      const mondayId = await ensureEnquiry({
-        name: profile.full_name ?? '',
-        email: profile.email ?? user.email ?? '',
-        mobile: profile.mobile ?? '',
-        trialStartedAt: new Date().toISOString(),
+      const userId = user.id
+      const input = { name: profile.full_name ?? '', email: profile.email ?? user.email ?? '', mobile: profile.mobile ?? '', trialStartedAt: new Date().toISOString() }
+      after(async () => {
+        try {
+          const mondayId = await ensureEnquiry(input)
+          if (mondayId) await (hasServiceRole() ? createAdminClient() : supabase).from('profiles').update({ monday_item_id: mondayId }).eq('id', userId)
+          await queueFunnelSync(userId, 'signup')
+        } catch (err) {
+          console.warn('[auth] Monday sign-in hook failed:', (err as Error)?.message ?? err)
+        }
       })
-      if (mondayId) {
-        await supabase.from('profiles').update({ monday_item_id: mondayId }).eq('id', user.id)
-      }
     }
   } catch (err) {
     console.error('[auth] sign-in hooks failed:', err)

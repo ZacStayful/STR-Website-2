@@ -7,7 +7,7 @@ import { savePaymentMethod } from './customer';
 import { grantPlanCycle, grantTopup, grantUpgradeDifference } from './grants';
 import { expirePlanGrants, grant } from '../credit/ledger';
 import { cardNeedsUpdateEmail, paymentFailedEmail } from '../email/billing';
-import { setSubscriptionCancelled, setSubscriptionStarted } from '../apis/monday';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { getPlan } from '../credit/plans';
 import { recordSubscriptionEvent } from '../billing/subscription-events';
 import { recordActivity } from '../activity/log';
@@ -83,8 +83,9 @@ export function liveWebhookDeps(): WebhookDeps {
       // next credit repays it). Idempotent per (source, reason).
       await grant(userId, 'adjustment', -Math.abs(amountPence), { sourceRef: `${sourceRef}:${reason}`, description: reason === 'disputed' ? 'Top-up disputed — credit reversed' : 'Top-up refunded — credit reversed' });
     },
-    onSubscriptionStarted: (email) => setSubscriptionStarted(email).catch(() => {}),
-    onSubscriptionCancelled: (email) => setSubscriptionCancelled(email).catch(() => {}),
+    // Batch 20: Monday's row (plan, group, First payment, Cancel date) follows through the funnel queue.
+    onSubscriptionStarted: async (email) => queueFunnelSync((await one(admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(1).maybeSingle()))?.id, 'plan'),
+    onSubscriptionCancelled: async (email) => queueFunnelSync((await one(admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(1).maybeSingle()))?.id, 'plan'),
     paymentFailedEmail: async (email, planCode) => paymentFailedEmail(email, { planName: (await getPlan(planCode))?.name ?? null }),
     cardNeedsUpdateEmail: (email) => cardNeedsUpdateEmail(email),
     logActivity: (a) => recordActivity(a.userId, a.kind, { dedupeKey: a.dedupeKey, source: a.source, extras: a.extras }),
@@ -101,6 +102,8 @@ export function liveWebhookDeps(): WebhookDeps {
       // The price is resolved HERE rather than in the handler, so the handler
       // stays pure and testable and only this file needs the plan table.
       const plan = input.planCode ? await getPlan(input.planCode) : null;
+      // Batch 20: every plan change (started, paused, cancellation booked, ended, past due...) moves the Monday row.
+      await queueFunnelSync(input.userId, input.kind === 'past_due' ? 'payment_failed' : 'plan');
       return recordSubscriptionEvent(admin, {
         ...input,
         mrrPence: input.mrrPence ?? (plan ? monthlyPence({ pricePence: plan.pricePence, interval: plan.interval }) : null),

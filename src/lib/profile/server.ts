@@ -49,6 +49,7 @@ import { rangeLineFor } from '../project/display';
 import { quizPathFor } from '../auth/landing';
 import { logActivity } from '../activity/log';
 import { logConversion } from '../meta/conversions';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { todayKey } from '../today/day';
 import { mustHaveCountFor, rechooseForMember, tailoringPreview } from '../tailoring/server';
 
@@ -250,6 +251,8 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
       console.error('[profile] about save failed (schema behind?):', error.message);
       return fail('Could not save your answer. Please try again.');
     }
+    // Batch 20: Monday's "Next deal" follows the answer (queued, after the response).
+    if (next.about.nextDeal !== s.answers.about.nextDeal) after(() => queueFunnelSync(userId, 'next_deal'));
   }
   await syncSavedAreas(supabase, userId, s.answers.savedAreas, next.savedAreas);
 

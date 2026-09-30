@@ -5,6 +5,7 @@ import { hasOpenInvite } from '@/lib/team'
 import { after } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { ensureEnquiry } from '@/lib/apis/monday'
+import { queueFunnelSync } from '@/lib/crm/monday-funnel/queue-server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { postAuthPath } from '@/lib/auth/landing'
 import { onEmailSignup, onSignIn } from '@/lib/tracking/signup-server'
@@ -122,6 +123,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     })
   }
 
+  const newUserId = data.user && (data.user.identities?.length ?? 0) > 0 ? data.user.id : null
   if (!joiningTeam) after(async () => {
     try {
       await ensureEnquiry({
@@ -130,6 +132,8 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
         mobile: normalisedMobile,
         trialStartedAt: new Date().toISOString(),
       })
+      // Batch 20: the rest of the row (route, ad source, the funnel group) follows through the queue.
+      if (newUserId) await queueFunnelSync(newUserId, 'signup')
     } catch (err) {
       console.error('[signup] Monday trial create failed:', err)
     }

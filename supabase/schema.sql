@@ -5548,7 +5548,9 @@ alter table public.monday_funnel_queue enable row level security;  -- no policie
 revoke all on public.monday_funnel_queue from anon, authenticated;
 
 -- monday_funnel_enqueue(p): {user, reason}. Adds the member, or the reason
--- to their queued row (at most 10 kept); a re-queue resets the attempt count.
+-- to their queued row (at most 10 kept); a re-queue resets the attempt count
+-- and moves queued_at on, so a drain that read the row before it deletes
+-- only the row it read (the newer event waits for the next drain).
 create or replace function public.monday_funnel_enqueue(p jsonb)
 returns void language plpgsql security definer set search_path = '' as $$
 declare
@@ -5557,6 +5559,7 @@ begin
   insert into public.monday_funnel_queue (user_id, reasons) values ((p->>'user')::uuid, array[v_reason])
   on conflict (user_id) do update
     set reasons = (select array(select distinct r from unnest(public.monday_funnel_queue.reasons || array[v_reason]) r limit 10)),
+        queued_at = now(),
         attempts = 0;
 end $$;
 revoke all on function public.monday_funnel_enqueue(jsonb) from public, anon, authenticated;

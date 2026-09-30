@@ -6,7 +6,8 @@ import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings, invalidateCreditCaches } from "@/lib/credit/unit-costs";
 import { isoToLondonLocal } from "@/lib/lifecycle/admin-form";
 import { packAdminStatus } from "@/lib/starter-pack/admin-server";
-import { MobilePanel, SettingsForm } from "./Panels";
+import { funnelStatus } from "@/lib/crm/monday-funnel/status-server";
+import { MobilePanel, MondayPanel, SettingsForm } from "./Panels";
 
 export const metadata: Metadata = { title: "Starter pack, inactivity and Monday — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ export default async function LifecyclePage() {
 
   invalidateCreditCaches();
   const s = (await getBillingSettings()).lifecycle;
-  const pack = await packAdminStatus(s);
+  const [pack, funnel] = await Promise.all([packAdminStatus(s), funnelStatus()]);
   const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 
   return (
@@ -89,6 +90,27 @@ export default async function LifecyclePage() {
         Records every account&rsquo;s mobile number as claimed, as the welcome check does for new accounts. Where accounts share a number the oldest keeps it and the others are listed; no credit is taken back. Also at <code>/api/internal/mobile-backfill</code> (GET is a dry run).
       </p>
       <MobilePanel />
+
+      <h2 id="monday" className="mt-10 mb-1 text-lg font-semibold text-foreground">
+        Monday sales funnel and inactivity
+      </h2>
+      <div className="mb-3 max-w-3xl space-y-1 text-sm text-muted-foreground">
+        <p>
+          Every member&rsquo;s row on &ldquo;Stayful Intelligence enquiries&rdquo;: its group and the site&rsquo;s columns. Events (a payment, a plan change, low credit, coming back) are queued and written within ten minutes; the nightly, from 06:00 UK, first moves quiet members into Re-engage and pauses their daily picks, then corrects every row. Also at <code>/api/internal/monday-funnel</code> (<code>?dry=1</code>) and <code>/api/internal/monday-backfill</code> (GET is a dry run).
+        </p>
+        <p>
+          Monday writes: <strong className="text-foreground">{funnel.enabled ? "on" : "off (MONDAY_FUNNEL_ENABLED is not \"true\")"}</strong>; API key {funnel.token ? "set" : "not set"}. Queue: {funnel.queued ?? "unreadable"}
+          {funnel.queued ? ` (oldest ${when(funnel.oldestQueued!)}${funnel.failing ? `, ${funnel.failing} retrying` : ""})` : ""}. In Re-engage: {funnel.reengage ?? "unreadable"}; daily picks paused: {funnel.picksPaused ?? "unreadable"}.
+        </p>
+        {funnel.runs && funnel.runs.length > 0 ? (
+          <p>
+            Nightly runs:{" "}
+            {funnel.runs.map((r) => `${r.day}: ${r.finished_at ? `finished ${when(r.finished_at)}` : r.started_at ? "started, not finished" : "not started"}${r.inactivity_at ? ", inactivity done" : ""}`).join(" · ")}
+          </p>
+        ) : null}
+        <p>Switch the n8n trigger on only after the backfill has run: it moves many rows at once.</p>
+      </div>
+      <MondayPanel enabled={funnel.enabled && funnel.token} />
     </div>
   );
 }
