@@ -10,11 +10,9 @@ import {
   webPageSchema,
 } from "@/lib/schema";
 import { siteUrl } from "@/lib/url";
-import { FAQS } from "@/lib/faqs-data";
+import { faqsWith } from "@/lib/faqs-data";
+import { publicOfferNow } from "@/lib/starter-pack/public";
 
-const PAGE_TITLE = "Pricing — £20 free credit, then pay as you go or subscribe";
-const PAGE_DESCRIPTION =
-  "Stayful Intelligence pricing. Start with £20 of free credit, then subscribe from £19/month for monthly credit or top up as you go. No contract, cancel any time.";
 const PAGE_URL = siteUrl("/pricing");
 const LAST_UPDATED = "2026-09-27";
 
@@ -23,13 +21,17 @@ const LAST_UPDATED = "2026-09-27";
 // itself arriving) shows without a redeploy.
 export const revalidate = 300;
 
-export const metadata: Metadata = {
-  title: PAGE_TITLE,
-  description: PAGE_DESCRIPTION,
-  alternates: { canonical: PAGE_URL },
-};
+// Batch 20: the title and description say what a new member gets today (the £20 until the starter pack's cutover).
+export async function generateMetadata(): Promise<Metadata> {
+  const offer = await publicOfferNow();
+  return { title: offer.pricingTitle, description: offer.pricingDescription, alternates: { canonical: PAGE_URL } };
+}
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  const offer = await publicOfferNow();
+  const PAGE_TITLE = offer.pricingTitle;
+  const PAGE_DESCRIPTION = offer.pricingDescription;
+  const faqs = faqsWith(offer);
   return (
     <>
       <Schema
@@ -46,11 +48,11 @@ export default function PricingPage() {
             description: PAGE_DESCRIPTION,
             dateModified: LAST_UPDATED,
           }),
-          faqSchema(FAQS),
+          faqSchema(faqs),
         ]}
       />
       <Pricing />
-      <FAQ />
+      <FAQ items={faqs} />
       <FinalCTA />
     </>
   );

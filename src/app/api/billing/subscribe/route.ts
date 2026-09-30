@@ -5,13 +5,27 @@ import { stripeConfigured, getStripe } from '@/lib/stripe/client';
 import { ensureStripeCustomer, loadBillingProfile } from '@/lib/stripe/customer';
 import { createCheckoutSession, returnUrl } from '@/lib/stripe/checkout';
 import { safeInternalPath } from '@/lib/safe-path';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/lib/activity/log';
+import { todayKey } from '@/lib/today/day';
 
 export const dynamic = 'force-dynamic';
+
+/** A subscription in any of these is a plan the member has (or is paying for): never start a second. */
+const HOLDS_A_PLAN = new Set(['active', 'trialing', 'past_due', 'unpaid', 'paused', 'incomplete']);
 
 /**
  * POST { planCode, returnTo? } → { url }. New subscribers go to Checkout;
  * members with a live subscription go to the billing portal to switch
  * plans (prorated by the portal configuration).
+ *
+ * Batch 20, Part B: { savedCard: true, termsAccepted: true, nonce } from our
+ * own confirm screen (the low-credit decision) starts the plan on the saved
+ * card → { ok }: the first invoice is paid off-session or nothing is created
+ * (error_if_incomplete), and anything Stripe cannot do that way (3-D Secure,
+ * a missing tax address) falls back to Checkout. The webhook records the plan
+ * and grants its credit, as it does for Checkout. `via: 'low_credit'` records
+ * the choice (weekly active).
  */
 export async function POST(request: Request) {
   const member = await currentMember();
@@ -20,7 +34,7 @@ export async function POST(request: Request) {
   if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   if (!stripeConfigured()) return Response.json({ error: 'Payments are not configured yet. Email hello@stayful.co.uk and we will set you up.' }, { status: 503 });
 
-  let body: { planCode?: unknown; returnTo?: unknown };
+  let body: { planCode?: unknown; returnTo?: unknown; savedCard?: unknown; termsAccepted?: unknown; nonce?: unknown; via?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -34,6 +48,11 @@ export async function POST(request: Request) {
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });
   const back = safeInternalPath(typeof body.returnTo === 'string' ? body.returnTo : null, '/account/billing');
+  // The low-credit choice counts once it has gone somewhere: the plan started, or Checkout opened.
+  const chose = () => {
+    if (body.via === 'low_credit') logActivity(member.id, 'low_credit_starter', { dedupeKey: `low_credit_starter:${todayKey(new Date())}`, extras: { plan: planCode } });
+  };
+  const nonce = typeof body.nonce === 'string' && /^[0-9a-f-]{8,64}$/i.test(body.nonce) ? body.nonce : crypto.randomUUID();
 
   try {
     const customer = await ensureStripeCustomer(profile, member.email);
@@ -54,6 +73,44 @@ export async function POST(request: Request) {
       return Response.json({ url: portal.url, via: 'portal' });
     }
 
+    // Batch 20: Stripe is asked, not just the profile (the webhook may not have written a plan started
+    // seconds ago), before either way in. If it cannot be asked, nothing is started.
+    const existing = await stripe.subscriptions.list({ customer, status: 'all', limit: 20 });
+    if (existing.data.some((x) => HOLDS_A_PLAN.has(x.status))) {
+      return Response.json({ error: 'You already have a plan. Manage it from Billing.' }, { status: 409 });
+    }
+
+    // Batch 20: on the saved card, from our own confirm screen (which showed the price, the renewal and the terms).
+    if (body.savedCard === true && body.termsAccepted === true && profile.stripe_default_payment_method_id) {
+      try {
+        const sub = await stripe.subscriptions.create(
+          {
+            customer,
+            items: [{ price: priceId, quantity: 1 }],
+            default_payment_method: profile.stripe_default_payment_method_id,
+            payment_behavior: 'error_if_incomplete',
+            off_session: true,
+            metadata: { user_id: member.id, plan_code: planCode },
+            ...(process.env.STRIPE_TAX === 'true' ? { automatic_tax: { enabled: true } } : {}),
+          },
+          { idempotencyKey: `subscribe:${member.id}:${planCode}:${nonce}` },
+        );
+        if (sub.status === 'active' || sub.status === 'trialing') {
+          // The webhook fills in the rest (plan, period, credit); the id and status now, so a second tap
+          // before it lands finds a live plan instead of starting another.
+          const { error } = await createAdminClient().from('profiles').update({ terms_accepted_at: new Date().toISOString(), stripe_subscription_id: sub.id, stripe_subscription_status: sub.status }).eq('id', member.id);
+          if (error) console.warn('[billing/subscribe] profile stamp failed:', error.message);
+          chose();
+          return Response.json({ ok: true, via: 'saved_card', planCode });
+        }
+        console.warn(`[billing/subscribe] saved-card subscription ${sub.id} is ${sub.status}; falling back to Checkout`);
+        if (sub.status === 'incomplete') await stripe.subscriptions.cancel(sub.id).catch(() => undefined);
+      } catch (err) {
+        const e = err as Error & { code?: string };
+        console.warn('[billing/subscribe] saved-card subscription not possible, falling back to Checkout:', e.code ?? e.message);
+      }
+    }
+
     const session = await createCheckoutSession({
       mode: 'subscription',
       customer,
@@ -65,6 +122,7 @@ export async function POST(request: Request) {
       cancel_url: returnUrl(back.startsWith('/upgrade') ? back : '/upgrade', { redirect: back }),
       ...(process.env.STRIPE_TAX === 'true' ? { automatic_tax: { enabled: true }, customer_update: { address: 'auto' } } : {}),
     });
+    chose();
     return Response.json({ url: session.url, via: 'checkout' });
   } catch (err) {
     console.error('[billing/subscribe] failed:', err);

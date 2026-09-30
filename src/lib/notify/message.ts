@@ -34,7 +34,7 @@ import { EMAIL_ANSWER_LABELS, teaserAnswerUrl } from '../tailoring/email-answers
 
 // ── The data ──
 
-export type MessageKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week';
+export type MessageKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'low_credit';
 
 export interface Link {
   label: string;
@@ -338,6 +338,11 @@ export interface DailyInput {
   answerToken?: string | null;
   /** Batch 14, Part E: their next deal is this month: "Act fast · new today" on a teaser first seen in the last day. */
   actFast?: boolean;
+  /**
+   * Batch 20, Part B: the £5 low-credit decision (src/lib/credit/low-credit.ts
+   * lowCreditSection), at the top of the email when it is due today.
+   */
+  lowCredit?: Section | null;
 }
 
 /** One saved profile's part of the daily email. */
@@ -415,6 +420,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   if (dealCount === 0 && !changes) return null;
 
   const sections: Section[] = [];
+  // Batch 20: the low-credit decision leads, when it is due (it never makes an email on its own here).
+  if (input.lowCredit) sections.push(input.lowCredit);
   const anyPick = picks.length > 0;
   for (const { part, kept } of shown) {
     if (!part.pick && kept.length === 0) continue;

@@ -1,31 +1,43 @@
 /**
  * Monday.com CRM — "Stayful Intelligence enquiries" board (18413002067).
  *
- * One enquiry per trial signup, created in the "topics" (Free Trial) group
- * when a user confirms their email. Later events update that same item,
- * matched by email address:
- *   - trial created     → name / email / mobile + "Trial started" (date_mm3cny59)
+ * One enquiry per trial signup, created in "1. Free sign-up" when a user
+ * confirms their email, found again by email address:
+ *   - trial created     → name / email / mobile + "Signed up" (date_mm3cny59)
  *   - analysis run      → PDF into "Reports" (file_mm3aevrs)
- *   - subscription paid → "Sign up started" (date_mm3cp4k3)
- *   - cancellation      → "Cancel date" (date_mm3ctqag)
+ *
+ * Everything else on the row (plan, credit, payments, activity, the funnel
+ * group) is the sales-funnel sync's (Batch 20, src/lib/crm/monday-funnel),
+ * which replaced the billing mirror that lived here. Every board, group and
+ * column id comes from its config module.
+ *
+ * Batch 20: a row is created here only for someone who has none. Not for an
+ * admin, a Stayful account or a team member (the funnel never gives them
+ * rows), and not when a row already carries their email (Monday's match on
+ * it ignores case) or their mobile number (as the board types numbers:
+ * 07…, +447…, 447…, 7…). A number already on the board is left to the
+ * nightly sync, which reads the whole board and decides whose row it is.
  *
  * Uses MONDAY_API_KEY (falls back to MONDAY_API_TOKEN). All failures are
  * logged and swallowed so CRM hiccups never break the user flow.
  */
 
 import { mondayRequest, mondayUploadFile } from "./monday-client";
+import { COLUMNS, FUNNEL_BOARD_ID, GROUPS, REPORTS_COLUMN } from "../crm/monday-funnel/config";
+import { isAdminEmail } from "../admin";
+import { isStaffEmail } from "../inactivity/rules";
+import { mobileVariants } from "../crm/monday-funnel/match";
+import { isTeamBound } from "../team";
 
-const BOARD_ID = process.env.MONDAY_ENQUIRY_BOARD_ID || "18413002067";
-const GROUP_ID = process.env.MONDAY_ENQUIRY_GROUP_ID || "topics";
+const BOARD_ID = FUNNEL_BOARD_ID;
+const GROUP_ID = GROUPS.free;
 
 const COL = {
-  name: "text_mm3ad9y7",
-  email: "text_mm3a8s7c",
-  mobile: "text_mm3ah0bk",
-  trialStarted: "date_mm3cny59",
-  subscribed: "date_mm3cp4k3",
-  cancelled: "date_mm3ctqag",
-  file: "file_mm3aevrs",
+  name: COLUMNS.name,
+  email: COLUMNS.email,
+  mobile: COLUMNS.mobile,
+  trialStarted: COLUMNS.signedUp,
+  file: REPORTS_COLUMN,
 } as const;
 
 function token(): string | null {
@@ -72,6 +84,26 @@ export async function findEnquiryByEmail(email: string): Promise<string | null> 
     if (id) return id;
   }
   return null;
+}
+
+/** Is any row on the board already carrying this number? null when Monday could not be asked. */
+export async function enquiryWithMobile(mobile: string | null | undefined): Promise<boolean | null> {
+  const values = mobileVariants(mobile);
+  if (values.length === 0) return false;
+  const data = await mondayQuery<{ items_page_by_column_values: { items: Array<{ id: string }> } }>(
+    `query ($boardId: ID!, $columnId: String!, $values: [String]!) {
+      items_page_by_column_values(board_id: $boardId, columns: [{ column_id: $columnId, column_values: $values }], limit: 1) { items { id } }
+    }`,
+    { boardId: BOARD_ID, columnId: COL.mobile, values },
+  );
+  if (!data) return null;
+  return (data.items_page_by_column_values?.items?.length ?? 0) > 0;
+}
+
+/** Someone the funnel never gives a row: an admin, a Stayful account, a team member (or one on the way). */
+async function neverARow(email: string, userId: string | null | undefined): Promise<boolean> {
+  if (isAdminEmail(email) || isStaffEmail(email)) return true;
+  return userId ? isTeamBound(userId, email) : false;
 }
 
 /**
@@ -121,36 +153,17 @@ export async function ensureEnquiry(input: {
   email: string;
   mobile: string;
   trialStartedAt?: string;
+  /** The account, when known: a team member (or someone joining a team) gets no row. */
+  userId?: string | null;
 }): Promise<string | null> {
   if (!input.email || !input.email.includes("@")) return null;
+  if (await neverARow(input.email, input.userId)) return null;
   const existing = await findEnquiryByEmail(input.email);
   if (existing) return existing;
-  return createEnquiry(input);
+  // Their number is on a row already (or Monday could not say): not a second row; the nightly decides.
+  if ((await enquiryWithMobile(input.mobile)) !== false) return null;
+  return createEnquiry({ name: input.name, email: input.email, mobile: input.mobile, trialStartedAt: input.trialStartedAt });
 }
-
-async function setEnquiryDate(email: string, columnId: string, when?: string): Promise<void> {
-  const itemId = await findEnquiryByEmail(email);
-  if (!itemId) {
-    console.log(`[Monday] no enquiry for ${email} — date update skipped`);
-    return;
-  }
-  const mutation = `mutation ($boardId: ID!, $itemId: ID!, $values: JSON!) {
-    change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $values) { id }
-  }`;
-  await mondayQuery(mutation, {
-    boardId: BOARD_ID,
-    itemId,
-    values: JSON.stringify({ [columnId]: dateValue(when) }),
-  });
-}
-
-/** Log the date/time a user started paying ("Sign up started"). */
-export const setSubscriptionStarted = (email: string, when?: string) =>
-  setEnquiryDate(email, COL.subscribed, when);
-
-/** Log the date/time a user cancelled their subscription ("Cancel date"). */
-export const setSubscriptionCancelled = (email: string, when?: string) =>
-  setEnquiryDate(email, COL.cancelled, when);
 
 /**
  * Upload a PDF report to the enquiry's "Reports" file column (file_mm3aevrs),
@@ -161,7 +174,7 @@ export const setSubscriptionCancelled = (email: string, when?: string) =>
 export async function uploadPdfToMonday(
   input:
     | string
-    | { email: string; name?: string; mobile?: string },
+    | { email: string; name?: string; mobile?: string; userId?: string | null },
   pdfBuffer: Buffer | Uint8Array,
   filename: string,
 ): Promise<void> {
@@ -175,11 +188,12 @@ export async function uploadPdfToMonday(
   if (!itemId) {
     const name = typeof input === "string" ? "" : input.name ?? "";
     const mobile = typeof input === "string" ? "" : input.mobile ?? "";
-    itemId = await createEnquiry({ name, email, mobile });
-    console.log(`[Monday] no enquiry for ${email} — created ${itemId ?? "FAILED"}`);
+    // Batch 20: the same rules as a sign-up's row (none for admins, Stayful or team members, none beside a row with their number).
+    itemId = await ensureEnquiry({ name, email, mobile, userId: typeof input === "string" ? null : input.userId ?? null });
+    if (itemId) console.log(`[Monday] no enquiry for ${email}: found or created ${itemId}`);
   }
   if (!itemId) {
-    console.error(`[Monday] PDF skipped — could not find/create enquiry for ${email}`);
+    console.warn(`[Monday] PDF skipped: no enquiry row for ${email} (none may be created for this account, or Monday is unreachable)`);
     return;
   }
 
@@ -204,45 +218,3 @@ export async function uploadPdfToMonday(
 export async function syncTimeOnSiteToMonday(_email: string, _seconds: number): Promise<void> {
   return;
 }
-
-// ─── Billing state mirror ─────────────────────────────────────────────
-// Optional columns on the enquiry board so sales can see plan, balance and
-// who has hit £0 without topping up. Configure the column ids with
-// MONDAY_COL_PLAN, MONDAY_COL_CREDIT, MONDAY_COL_LAST_TOPUP,
-// MONDAY_COL_BILLING_STATUS and MONDAY_COL_HIT_ZERO; unset columns are
-// skipped, so this is a no-op until the board has them.
-
-const BILLING_COL = {
-  plan: process.env.MONDAY_COL_PLAN || null,
-  credit: process.env.MONDAY_COL_CREDIT || null,
-  lastTopup: process.env.MONDAY_COL_LAST_TOPUP || null,
-  status: process.env.MONDAY_COL_BILLING_STATUS || null,
-  hitZero: process.env.MONDAY_COL_HIT_ZERO || null,
-};
-
-export function mondayBillingConfigured(): boolean {
-  return Boolean(token()) && Object.values(BILLING_COL).some(Boolean);
-}
-
-export async function setBillingState(
-  email: string,
-  state: { planCode?: string | null; balancePence?: number; lastTopupAt?: string | null; status?: string; hitZeroAt?: string | null },
-): Promise<void> {
-  if (!mondayBillingConfigured()) return;
-  const itemId = await findEnquiryByEmail(email);
-  if (!itemId) return;
-  const values: Record<string, unknown> = {};
-  if (BILLING_COL.plan && state.planCode !== undefined) values[BILLING_COL.plan] = state.planCode ?? "Pay as you go";
-  if (BILLING_COL.credit && state.balancePence !== undefined) values[BILLING_COL.credit] = (state.balancePence / 100).toFixed(2);
-  if (BILLING_COL.lastTopup && state.lastTopupAt) values[BILLING_COL.lastTopup] = dateValue(state.lastTopupAt);
-  if (BILLING_COL.status && state.status) values[BILLING_COL.status] = state.status;
-  if (BILLING_COL.hitZero && state.hitZeroAt !== undefined) values[BILLING_COL.hitZero] = state.hitZeroAt ? dateValue(state.hitZeroAt) : null;
-  if (Object.keys(values).length === 0) return;
-  const mutation = `mutation ($boardId: ID!, $itemId: ID!, $values: JSON!) {
-    change_multiple_column_values(board_id: $boardId, item_id: $itemId, column_values: $values) { id }
-  }`;
-  await mondayQuery(mutation, { boardId: BOARD_ID, itemId, values: JSON.stringify(values) });
-}
-
-/** The member ran out of credit (first time this cycle). */
-export const flagHitZero = (email: string, when?: string) => setBillingState(email, { hitZeroAt: when ?? new Date().toISOString(), status: "Hit zero" });

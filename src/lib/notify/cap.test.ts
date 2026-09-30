@@ -6,7 +6,7 @@ const MONDAY = new Date('2026-09-28T07:05:00Z');
 const TUESDAY = new Date('2026-09-29T07:05:00Z');
 
 test('every capped kind but Your week shares the one daily slot', () => {
-  const daily: SendKind[] = ['todays_5', 'deal_changes', 'picks_paused', 'notice'];
+  const daily: SendKind[] = ['todays_5', 'deal_changes', 'picks_paused', 'notice', 'low_credit'];
   for (const k of daily) assert.equal(slotFor(k), 'daily', k);
   assert.equal(slotFor('your_week'), 'weekly');
   // Every kind has a slot: a new kind cannot slip past the cap unassigned.

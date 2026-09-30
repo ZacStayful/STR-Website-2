@@ -44,6 +44,8 @@ export async function mondayRequest<T>(
   token: string,
   query: string,
   variables: Record<string, unknown> = {},
+  /** Batch 20: a shorter bound for the funnel sync, which has many calls to make in one cron run. */
+  opts: { timeoutMs?: number } = {},
 ): Promise<MondayResult<T>> {
   if (!token) return { ok: false, error: 'No Monday API token.', retryable: false };
   try {
@@ -55,7 +57,7 @@ export async function mondayRequest<T>(
         'API-Version': MONDAY_API_VERSION,
       },
       body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -83,6 +85,59 @@ export async function mondayRequest<T>(
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: `Could not reach Monday: ${message}`, retryable: true };
   }
+}
+
+/**
+ * Batch 20: the response as Monday sent it, for a caller that must see partial
+ * results. A request with several aliased mutations can succeed for some and
+ * fail for others; mondayRequest drops the data when there is any error,
+ * which is right for a single call and wrong for a batch (a row created by
+ * the batch would be sent again). `transport` is set when there is no
+ * response at all (a timeout, a dropped connection): whether it ran is unknown.
+ */
+export type MondayRaw = {
+  status: number | null;
+  data: Record<string, unknown> | null;
+  /** GraphQL errors: the alias each is on (its path's first part), and Monday's code. */
+  errors: { message: string; code: string | null; alias: string | null }[];
+  /** The older error body ({ error_code, error_message }), which has no data. */
+  errorCode: string | null;
+  errorMessage: string | null;
+  transport: string | null;
+};
+
+export async function mondayRequestRaw(token: string, query: string, variables: Record<string, unknown> = {}, opts: { timeoutMs?: number } = {}): Promise<MondayRaw> {
+  const none: MondayRaw = { status: null, data: null, errors: [], errorCode: null, errorMessage: null, transport: null };
+  if (!token) return { ...none, transport: 'No Monday API token.' };
+  let res: Response;
+  try {
+    res = await fetch(MONDAY_API_URL, {
+      method: 'POST',
+      headers: { Authorization: token, 'Content-Type': 'application/json', 'API-Version': MONDAY_API_VERSION },
+      body: JSON.stringify({ query, variables }),
+      signal: AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { ...none, transport: `Could not reach Monday: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  const text = await res.text().catch(() => '');
+  let json: Record<string, unknown> | null = null;
+  try {
+    json = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+  } catch {
+    json = null;
+  }
+  const errors = Array.isArray(json?.errors)
+    ? (json!.errors as Array<{ message?: unknown; path?: unknown; extensions?: { code?: unknown } }>).map((e) => ({
+        message: typeof e?.message === 'string' ? e.message : 'Monday reported an error.',
+        code: typeof e?.extensions?.code === 'string' ? e.extensions.code : null,
+        alias: Array.isArray(e?.path) && typeof e.path[0] === 'string' ? e.path[0] : null,
+      }))
+    : [];
+  const data = json && typeof json.data === 'object' && json.data !== null ? (json.data as Record<string, unknown>) : null;
+  const errorCode = typeof json?.error_code === 'string' ? json.error_code : null;
+  const errorMessage = typeof json?.error_message === 'string' ? json.error_message : !res.ok && !errors.length ? describeHttp(res.status, text) : null;
+  return { status: res.status, data, errors, errorCode, errorMessage, transport: null };
 }
 
 function describeHttp(status: number, body: string): string {

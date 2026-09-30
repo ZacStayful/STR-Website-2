@@ -6,7 +6,7 @@ import { getPlan, type BillingPlan } from '../credit/plans';
 import { getBillingSettings } from '../credit/unit-costs';
 import { planCreditFor } from '../credit/deal-pricing';
 import { planRenewedEmail, topupReceiptEmail } from '../email/billing';
-import { setBillingState } from '../apis/monday';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 
 /**
  * Credit grants that follow Stripe money. Every grant is idempotent on its
@@ -42,8 +42,9 @@ export async function grantPlanCycle(userId: string, planCode: string, sourceRef
   await admin.from('profiles').update({ plan_code: planCode, plan: 'pro', hit_zero_at: null }).eq('id', userId);
   if (opts.notify !== false && opts.email) {
     void planRenewedEmail(opts.email, { planName: plan.name, creditPence: credit, periodEnd: periodEnd?.toISOString() ?? null }).catch(() => {});
-    void syncMonday(userId, opts.email).catch(() => {});
   }
+  // Batch 20: Monday's row follows through the funnel queue (plan, credit, Total paid).
+  await queueFunnelSync(userId, 'plan');
 }
 
 /**
@@ -89,8 +90,9 @@ export async function grantTopup(userId: string, amountPence: number, sourceRef:
   if (opts.email) {
     const bal = await getBalance(userId).catch(() => null);
     void topupReceiptEmail(opts.email, { amountPence, balancePence: bal?.totalPence ?? amountPence }).catch(() => {});
-    void syncMonday(userId, opts.email, { lastTopupAt: now, status: 'Topped up' }).catch(() => {});
   }
+  // Batch 20: Monday's row follows through the funnel queue (credit, top-ups, Total paid).
+  await queueFunnelSync(userId, 'topup');
   return true;
 }
 
@@ -124,10 +126,4 @@ export async function ensureAnnualMonthlyGrant(userId: string): Promise<boolean>
   // the new credit at its next annual renewal, not at a monthly slot.
   await grantPlanCycle(userId, 'pro_annual', sourceRef, expires, { email: (data.email as string | null) ?? null, notify: slot > 0, periodStart: start });
   return true;
-}
-
-export async function syncMonday(userId: string, email: string, extra: { lastTopupAt?: string | null; status?: string; hitZeroAt?: string | null } = {}): Promise<void> {
-  const admin = createAdminClient();
-  const [{ data }, bal] = await Promise.all([admin.from('profiles').select('plan_code').eq('id', userId).maybeSingle(), getBalance(userId).catch(() => null)]);
-  await setBillingState(email, { planCode: (data?.plan_code as string | null) ?? null, balancePence: bal?.totalPence, ...extra });
 }

@@ -996,10 +996,14 @@ revoke execute on function public.credit_redeem_code(uuid, text) from public, an
 
 -- ── Welcome credit backfill for every existing account (one-off, idempotent) ──
 -- New accounts are granted by the app after the abuse checks (src/lib/credit/welcome.ts).
+-- Frozen to the accounts it was written for (it ran on 12 Sep 2026): re-running
+-- this file must never hand £20 to a newer account, which would skip the abuse
+-- checks, a team seat's "no welcome credit" and, from Batch 20, the starter
+-- pack that replaces the welcome credit for new members.
 do $$
 declare p record;
 begin
-  for p in select id from profiles where not exists (select 1 from credit_grants g where g.user_id = profiles.id and g.kind = 'welcome') loop
+  for p in select id from profiles where profiles.created_at < timestamptz '2026-09-13 00:00:00+00' and not exists (select 1 from credit_grants g where g.user_id = profiles.id and g.kind = 'welcome') loop
     perform credit_grant(p.id, 'welcome', credit_setting_num('welcome_grant_pence', 2000), null, 'welcome:' || p.id::text, 'Welcome credit');
     update profiles set welcome_checked_at = now() where id = p.id;
   end loop;
@@ -5164,5 +5168,549 @@ begin
 end $$;
 revoke all on function public.signup_source_facts(jsonb) from public, anon, authenticated;
 grant execute on function public.signup_source_facts(jsonb) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 20: starter pack, inactivity and Monday sync
+-- =========================
+-- The £10 starter pack (src/lib/starter-pack), the payments behind "Total
+-- paid" (src/lib/payments), the inactivity rules (src/lib/inactivity) and the
+-- Monday sales-funnel sync (src/lib/crm/monday-funnel). Every new table is
+-- service role only. Nothing is added to ACCESS_COLUMNS: the code reads each
+-- new column in a query of its own, so until this section is run the pack is
+-- never offered, nobody is paused and nothing is written to Monday.
+
+-- ── profiles: Batch 20 columns ──
+alter table public.profiles add column if not exists starter_pack_bought_at timestamptz;          -- the pack was granted
+alter table public.profiles add column if not exists starter_pack_snoozed_until timestamptz;      -- "Not now" on the Today card
+alter table public.profiles add column if not exists reengage_since timestamptz;                  -- inactive_reengage_days without a qualifying action
+alter table public.profiles add column if not exists picks_paused_inactive_at timestamptz;        -- picks_pause_inactive_days: daily picks paused
+alter table public.profiles add column if not exists picks_paused_inactive_email_at timestamptz;  -- the "while you're away" letter for this pause
+
+-- ── Settings (inserted only when missing, so an edit on /admin/lifecycle survives a re-run) ──
+-- starter_pack_from and inactivity_from start empty: the pack and the
+-- inactivity rules are off until a date is set (src/lib/lifecycle/settings.ts).
+insert into public.billing_settings (key, value) values
+  ('starter_pack_from', 'null'),
+  ('starter_pack_price_pence', '1000'),
+  ('starter_pack_credit_pence', '3000'),
+  ('starter_pack_snooze_days', '7'),
+  ('low_credit_pence', '500'),
+  ('inactive_reengage_days', '14'),
+  ('picks_pause_inactive_days', '25'),
+  ('inactivity_from', 'null')
+on conflict (key) do nothing;
+
+-- ── starter_pack_purchases: one starter pack per person, ever ──
+-- One row per PaymentIntent that tried to buy a pack. A pack is claimed
+-- (reserved) after the card is authorised and before it is captured, so a
+-- repeat is cancelled without ever being charged; captured, it is granted.
+-- Only reserved and granted rows hold the identity (the partial unique
+-- indexes), so a blocked or failed attempt never stops a later one. The rows
+-- are kept when an account is deleted: "once per person, ever".
+--   status       reserved | granted | blocked | failed
+--   blocked_by   account | email | mobile | card | race (why it was refused)
+--   email_key    profiles.email, trimmed and lower-cased (emailKey)
+--   mobile_key   normaliseMobile(profiles.mobile), whether or not the account holds profiles.mobile_key
+create table if not exists public.starter_pack_purchases (
+  payment_intent_id text primary key,
+  user_id uuid references public.profiles(id) on delete set null,
+  status text not null default 'reserved',
+  blocked_by text,
+  email_key text,
+  mobile_key text,
+  card_fingerprint text,
+  price_pence integer not null,
+  credit_pence integer not null,
+  amount_paid_pence integer,
+  currency text,
+  consent_at timestamptz,
+  consent_version text,
+  refunded_pence integer not null default 0,
+  created_at timestamptz not null default now(),
+  granted_at timestamptz
+);
+create unique index if not exists starter_pack_user_uidx on public.starter_pack_purchases (user_id) where status in ('reserved', 'granted') and user_id is not null;
+create unique index if not exists starter_pack_email_uidx on public.starter_pack_purchases (email_key) where status in ('reserved', 'granted') and email_key is not null;
+create unique index if not exists starter_pack_mobile_uidx on public.starter_pack_purchases (mobile_key) where status in ('reserved', 'granted') and mobile_key is not null;
+create unique index if not exists starter_pack_card_uidx on public.starter_pack_purchases (card_fingerprint) where status in ('reserved', 'granted') and card_fingerprint is not null;
+create index if not exists starter_pack_purchases_user_idx on public.starter_pack_purchases (user_id);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.starter_pack_purchases'::regclass and conname = 'starter_pack_status_check') then
+    alter table public.starter_pack_purchases add constraint starter_pack_status_check check (status in ('reserved', 'granted', 'blocked', 'failed'));
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.starter_pack_purchases'::regclass and conname = 'starter_pack_blocked_by_check') then
+    alter table public.starter_pack_purchases add constraint starter_pack_blocked_by_check check (blocked_by is null or blocked_by in ('account', 'email', 'mobile', 'card', 'race'));
+  end if;
+end $$;
+alter table public.starter_pack_purchases enable row level security;  -- no policies: service role only
+revoke all on public.starter_pack_purchases from anon, authenticated;
+
+-- starter_pack_claim(p): the once-per-person decision, atomically.
+-- p: {pi, user, email_key, mobile_key, card, price, credit, currency,
+--     consent_at, consent_version}. Serialised on the member's profile row;
+-- the partial unique indexes settle two accounts racing with the same email,
+-- number or card. A reservation that was never captured stops blocking after
+-- 8 days (Stripe drops an uncaptured hold after 7).
+-- Returns {status, replay, blocked_by}: replay is true when this PaymentIntent
+-- was already claimed (a redelivery), with the status it has.
+create or replace function public.starter_pack_claim(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_pi text := nullif(p->>'pi', '');
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_email text := nullif(p->>'email_key', '');
+  v_mobile text := nullif(p->>'mobile_key', '');
+  v_card text := nullif(p->>'card', '');
+  v_row public.starter_pack_purchases%rowtype;
+  v_by text;
+begin
+  if v_pi is null or v_user is null then raise exception 'starter_pack_claim needs pi and user'; end if;
+  perform 1 from public.profiles where id = v_user for update;
+  select * into v_row from public.starter_pack_purchases where payment_intent_id = v_pi;
+  if found then
+    return jsonb_build_object('status', v_row.status, 'replay', true, 'blocked_by', v_row.blocked_by);
+  end if;
+  update public.starter_pack_purchases set status = 'failed'
+   where status = 'reserved' and created_at < now() - interval '8 days';
+  v_by := case
+    when exists (select 1 from public.starter_pack_purchases s where s.user_id = v_user and s.status in ('reserved', 'granted')) then 'account'
+    when v_email is not null and exists (select 1 from public.starter_pack_purchases s where s.email_key = v_email and s.status in ('reserved', 'granted')) then 'email'
+    when v_mobile is not null and exists (select 1 from public.starter_pack_purchases s where s.mobile_key = v_mobile and s.status in ('reserved', 'granted')) then 'mobile'
+    when v_card is not null and exists (select 1 from public.starter_pack_purchases s where s.card_fingerprint = v_card and s.status in ('reserved', 'granted')) then 'card'
+  end;
+  if v_by is null then
+    begin
+      insert into public.starter_pack_purchases (payment_intent_id, user_id, status, email_key, mobile_key, card_fingerprint, price_pence, credit_pence, currency, consent_at, consent_version)
+      values (v_pi, v_user, 'reserved', v_email, v_mobile, v_card, (p->>'price')::integer, (p->>'credit')::integer, nullif(p->>'currency', ''), nullif(p->>'consent_at', '')::timestamptz, nullif(p->>'consent_version', ''));
+      return jsonb_build_object('status', 'reserved', 'replay', false, 'blocked_by', null);
+    exception when unique_violation then
+      v_by := 'race';
+    end;
+  end if;
+  insert into public.starter_pack_purchases (payment_intent_id, user_id, status, blocked_by, email_key, mobile_key, card_fingerprint, price_pence, credit_pence, currency, consent_at, consent_version)
+  values (v_pi, v_user, 'blocked', v_by, v_email, v_mobile, v_card, (p->>'price')::integer, (p->>'credit')::integer, nullif(p->>'currency', ''), nullif(p->>'consent_at', '')::timestamptz, nullif(p->>'consent_version', ''));
+  return jsonb_build_object('status', 'blocked', 'replay', false, 'blocked_by', v_by);
+end $$;
+revoke all on function public.starter_pack_claim(jsonb) from public, anon, authenticated;
+grant execute on function public.starter_pack_claim(jsonb) to service_role;
+
+-- starter_pack_clawback(p): {user, base, target, refunded, description}. A
+-- pack's refund or dispute, cumulatively: takes back what is still owed, the
+-- target less the adjustments already made under `base` (the first is `base`
+-- itself, a later one `base:<refunded>`). Read and written under the
+-- member's profile row lock, so two refunds handled at once see each other.
+-- Returns the pence this call took back.
+create or replace function public.starter_pack_clawback(p jsonb)
+returns numeric language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_base text := nullif(p->>'base', '');
+  v_target numeric := greatest(0, coalesce((p->>'target')::numeric, 0));
+  v_taken numeric;
+  v_diff numeric;
+begin
+  if v_user is null or v_base is null then raise exception 'starter_pack_clawback needs user and base'; end if;
+  perform 1 from public.profiles where id = v_user for update;
+  select coalesce(sum(greatest(0, -g.amount_pence)), 0) into v_taken
+    from public.credit_grants g
+   where g.user_id = v_user and g.kind = 'adjustment'
+     and (g.source_ref = v_base or left(g.source_ref, length(v_base) + 1) = v_base || ':');
+  v_diff := round(v_target - v_taken);
+  if v_diff <= 0 then return 0; end if;
+  perform public.credit_grant(v_user, 'adjustment', -v_diff, null,
+    case when v_taken > 0 then v_base || ':' || coalesce(nullif(p->>'refunded', ''), '0') else v_base end,
+    nullif(p->>'description', ''));
+  return v_diff;
+end $$;
+revoke all on function public.starter_pack_clawback(jsonb) from public, anon, authenticated;
+grant execute on function public.starter_pack_clawback(jsonb) to service_role;
+
+-- ── member_payments / member_refunds: what "Total paid" adds up (src/lib/payments) ──
+-- Every successful payment, keyed by its Stripe id, amount as charged (VAT
+-- included): 'pi:<payment intent>' for a starter pack or a top-up,
+-- 'inv:<invoice>' for a subscription invoice. Refunds are kept per charge as
+-- the charge's cumulative amount_refunded, set and never added, so a
+-- redelivered or out-of-order event cannot count twice. Total paid =
+-- payments - refunds of those payments (matched on the PaymentIntent; an
+-- invoice's is looked up when it is paid), never below 0. Nothing from before
+-- Batch 20 is here, so a refund of an older payment is not taken off.
+create table if not exists public.member_payments (
+  id text primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  amount_pence integer not null,
+  currency text not null default 'gbp',
+  plan_code text,
+  payment_intent_id text,
+  paid_at timestamptz not null default now()
+);
+create index if not exists member_payments_user_idx on public.member_payments (user_id, paid_at);
+create index if not exists member_payments_pi_idx on public.member_payments (payment_intent_id) where payment_intent_id is not null;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.member_payments'::regclass and conname = 'member_payments_kind_check') then
+    alter table public.member_payments add constraint member_payments_kind_check check (kind in ('starter_pack', 'topup', 'auto_topup', 'subscription'));
+  end if;
+end $$;
+alter table public.member_payments enable row level security;  -- no policies: service role only
+revoke all on public.member_payments from anon, authenticated;
+
+create table if not exists public.member_refunds (
+  charge_id text primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  payment_intent_id text,
+  amount_refunded_pence integer not null,
+  updated_at timestamptz not null default now()
+);
+create index if not exists member_refunds_user_idx on public.member_refunds (user_id);
+create index if not exists member_refunds_pi_idx on public.member_refunds (payment_intent_id) where payment_intent_id is not null;
+alter table public.member_refunds enable row level security;  -- no policies: service role only
+revoke all on public.member_refunds from anon, authenticated;
+
+-- member_refund_set(p): {charge, user, pi, amount}. Keeps the largest
+-- cumulative amount seen for the charge (an older event arriving late never
+-- lowers it). Returns the amount now stored.
+create or replace function public.member_refund_set(p jsonb)
+returns integer language plpgsql security definer set search_path = '' as $$
+declare
+  v_amount integer;
+begin
+  insert into public.member_refunds (charge_id, user_id, payment_intent_id, amount_refunded_pence)
+  values (p->>'charge', (p->>'user')::uuid, nullif(p->>'pi', ''), greatest(0, (p->>'amount')::integer))
+  on conflict (charge_id) do update
+    set amount_refunded_pence = greatest(public.member_refunds.amount_refunded_pence, excluded.amount_refunded_pence),
+        payment_intent_id = coalesce(public.member_refunds.payment_intent_id, excluded.payment_intent_id),
+        updated_at = now()
+  returning amount_refunded_pence into v_amount;
+  return v_amount;
+end $$;
+revoke all on function public.member_refund_set(jsonb) from public, anon, authenticated;
+grant execute on function public.member_refund_set(jsonb) to service_role;
+
+-- ── member_active_days: one row per member per UK day with a qualifying action ──
+-- Batch 9's definition, stored once: an activity_events row whose kind is in
+-- QUALIFYING_KINDS (passed in by src/lib/inactivity, never written here), on
+-- its UK date. Filled from activity_events past a watermark on its id, so
+-- the nightly never rescans the log, a late backfilled row is still picked
+-- up, and the totals outlive the log's 24-month retention.
+create table if not exists public.member_active_days (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  primary key (user_id, day)
+);
+alter table public.member_active_days enable row level security;  -- no policies: service role only
+revoke all on public.member_active_days from anon, authenticated;
+
+-- ── member_engaged_days: the UK days a member engaged by email or text ──
+-- A click from one of our emails or texts, an answer or a setting changed
+-- from one (the kinds are passed in by src/lib/inactivity), but never one
+-- that turned something off (extras.on false: an unsubscribe). Record-only for
+-- weekly active, so kept apart from member_active_days (which Monday's Last
+-- active, Active days and Active weeks read); they keep a member from being
+-- counted as quiet. Filled in the same pass over activity_events.
+create table if not exists public.member_engaged_days (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  primary key (user_id, day)
+);
+alter table public.member_engaged_days enable row level security;  -- no policies: service role only
+revoke all on public.member_engaged_days from anon, authenticated;
+
+create table if not exists public.member_active_days_state (
+  id smallint primary key default 1,
+  last_event_id bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.member_active_days_state'::regclass and conname = 'member_active_days_state_one_row') then
+    alter table public.member_active_days_state add constraint member_active_days_state_one_row check (id = 1);
+  end if;
+end $$;
+insert into public.member_active_days_state (id) values (1) on conflict (id) do nothing;
+alter table public.member_active_days_state enable row level security;  -- no policies: service role only
+revoke all on public.member_active_days_state from anon, authenticated;
+
+-- lifecycle_active_days_sync(p): {qualifying: [kinds], engaged: [kinds],
+-- apply, limit}. Adds the (member, UK day) pairs of up to `limit`
+-- activity_events rows past the watermark, the qualifying kinds to
+-- member_active_days and the engaged (email and text) kinds to
+-- member_engaged_days (not an unsubscribe: extras.on false), and moves the
+-- watermark on. apply = false counts what it would add and changes nothing,
+-- and lists each member's latest day of either among them (`pending`), so a
+-- dry run's preview counts actions since the last nightly. Returns
+-- {from, to, added, engaged_added, more, pending}.
+create or replace function public.lifecycle_active_days_sync(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_qual text[] := coalesce(array(select jsonb_array_elements_text(p->'qualifying')), '{}'::text[]);
+  v_engaged text[] := coalesce(array(select jsonb_array_elements_text(p->'engaged')), '{}'::text[]);
+  v_apply boolean := coalesce((p->>'apply')::boolean, false);
+  v_limit integer := least(greatest(coalesce((p->>'limit')::integer, 50000), 1), 200000);
+  v_from bigint;
+  v_to bigint;
+  v_added integer := 0;
+  v_engaged_added integer := 0;
+  v_pending jsonb;
+begin
+  if cardinality(v_qual) = 0 then raise exception 'lifecycle_active_days_sync needs the qualifying kinds'; end if;
+  -- A dry run writes nothing, not even the watermark's row.
+  if v_apply then
+    insert into public.member_active_days_state (id) values (1) on conflict (id) do nothing;
+    select last_event_id into v_from from public.member_active_days_state where id = 1 for update;
+  else
+    select last_event_id into v_from from public.member_active_days_state where id = 1;
+  end if;
+  v_from := coalesce(v_from, 0);
+  select max(x.id) into v_to from (select e.id from public.activity_events e where e.id > v_from order by e.id limit v_limit) x;
+  if v_to is null then
+    return jsonb_build_object('from', v_from, 'to', v_from, 'added', 0, 'engaged_added', 0, 'more', false);
+  end if;
+  if v_apply then
+    insert into public.member_active_days (user_id, day)
+    select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date
+      from public.activity_events e
+     where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
+    on conflict do nothing;
+    get diagnostics v_added = row_count;
+    if cardinality(v_engaged) > 0 then
+      insert into public.member_engaged_days (user_id, day)
+      select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date
+        from public.activity_events e
+       where e.id > v_from and e.id <= v_to and e.kind = any(v_engaged)
+         and coalesce(e.extras->>'on', '') <> 'false'
+      on conflict do nothing;
+      get diagnostics v_engaged_added = row_count;
+    end if;
+    update public.member_active_days_state set last_event_id = v_to, updated_at = now() where id = 1;
+  else
+    select count(*) into v_added from (
+      select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date as day
+        from public.activity_events e
+       where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
+    ) n
+    where not exists (select 1 from public.member_active_days d where d.user_id = n.user_id and d.day = n.day);
+    select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'day', x.day)), '[]'::jsonb) into v_pending from (
+      select e.user_id, max((e.occurred_at at time zone 'Europe/London')::date) as day
+        from public.activity_events e
+       where e.id > v_from and e.id <= v_to
+         and (e.kind = any(v_qual) or (e.kind = any(v_engaged) and coalesce(e.extras->>'on', '') <> 'false'))
+       group by e.user_id
+    ) x;
+  end if;
+  return jsonb_build_object('from', v_from, 'to', v_to, 'added', v_added, 'engaged_added', v_engaged_added,
+    'more', exists (select 1 from public.activity_events e where e.id > v_to), 'pending', v_pending);
+end $$;
+revoke all on function public.lifecycle_active_days_sync(jsonb) from public, anon, authenticated;
+grant execute on function public.lifecycle_active_days_sync(jsonb) to service_role;
+
+-- lifecycle_member_stats(p): {users: [uuid]}. Per member: the last UK day
+-- with a qualifying action, how many such days and how many UK weeks (Monday
+-- to Sunday, as Batch 9 counts them) since sign-up; the last UK day they
+-- engaged at all, by email or text included (what inactivity counts from,
+-- `last_engaged`); what they have paid
+-- (payments and refunds as above, the first payment, paid top-ups that are
+-- not fully refunded and the latest); and whether they bought the pack.
+create or replace function public.lifecycle_member_stats(p jsonb)
+returns jsonb language sql stable security definer set search_path = '' as $$
+  with u as (
+    select distinct x::uuid as id from jsonb_array_elements_text(coalesce(p->'users', '[]'::jsonb)) x
+  ), a as (
+    select d.user_id, max(d.day) as last_day, count(*) as days, count(distinct date_trunc('week', d.day::timestamp)) as weeks
+      from public.member_active_days d join u on u.id = d.user_id
+     group by d.user_id
+  ), eng as (
+    select g.user_id, max(g.day) as last_day
+      from public.member_engaged_days g join u on u.id = g.user_id
+     group by g.user_id
+  ), pay as (
+    select m.user_id, sum(m.amount_pence) as paid, min(m.paid_at) as first_paid
+      from public.member_payments m join u on u.id = m.user_id
+     group by m.user_id
+  ), ref as (
+    -- Only refunds of the payments counted above (matched on the PaymentIntent),
+    -- each at most the payment: a refund of a payment from before Batch 20, or
+    -- one never recorded, is not taken off what was never added.
+    select m.user_id, sum(least(m.amount_pence, rr.refunded)) as refunded
+      from public.member_payments m join u on u.id = m.user_id
+      join lateral (
+        select sum(r.amount_refunded_pence) as refunded from public.member_refunds r
+         where r.payment_intent_id = m.payment_intent_id and r.user_id = m.user_id
+      ) rr on rr.refunded is not null
+     where m.payment_intent_id is not null
+     group by m.user_id
+  ), top as (
+    select m.user_id, count(*) as topups, max(m.paid_at) as last_topup
+      from public.member_payments m join u on u.id = m.user_id
+     where m.kind in ('topup', 'auto_topup')
+       and coalesce((select sum(r.amount_refunded_pence) from public.member_refunds r where r.payment_intent_id = m.payment_intent_id), 0) < m.amount_pence
+     group by m.user_id
+  ), pack as (
+    select s.user_id, min(s.granted_at) as bought_at
+      from public.starter_pack_purchases s join u on u.id = s.user_id
+     where s.status = 'granted'
+     group by s.user_id
+  )
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'u', u.id,
+    'last_day', a.last_day,
+    'last_engaged', greatest(a.last_day, eng.last_day),
+    'days', coalesce(a.days, 0),
+    'weeks', coalesce(a.weeks, 0),
+    'paid', coalesce(pay.paid, 0),
+    'refunded', coalesce(ref.refunded, 0),
+    'first_paid', pay.first_paid,
+    'topups', coalesce(top.topups, 0),
+    'last_topup', top.last_topup,
+    'pack_at', pack.bought_at
+  )), '[]'::jsonb)
+  from u
+  left join a on a.user_id = u.id
+  left join eng on eng.user_id = u.id
+  left join pay on pay.user_id = u.id
+  left join ref on ref.user_id = u.id
+  left join top on top.user_id = u.id
+  left join pack on pack.user_id = u.id;
+$$;
+revoke all on function public.lifecycle_member_stats(jsonb) from public, anon, authenticated;
+grant execute on function public.lifecycle_member_stats(jsonb) to service_role;
+
+-- lifecycle_balances(p): {users: [uuid]}. Each member's displayed balance
+-- (every unexpired bucket) through the ledger's own credit_available, so the
+-- nightly reads a whole page of members in one call and never has a second
+-- balance formula.
+create or replace function public.lifecycle_balances(p jsonb)
+returns jsonb language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'u', u.id,
+    'total', round(b.plan_pence + b.welcome_pence + b.topup_pence + b.adjustment_pence, 4),
+    'spendable', round(b.spendable_base_pence, 4)
+  )), '[]'::jsonb)
+  from (select distinct x::uuid as id from jsonb_array_elements_text(coalesce(p->'users', '[]'::jsonb)) x) u
+  cross join lateral public.credit_available(u.id) b;
+$$;
+revoke all on function public.lifecycle_balances(jsonb) from public, anon, authenticated;
+grant execute on function public.lifecycle_balances(jsonb) to service_role;
+
+-- ── Mobile numbers (Part D): the oldest account keeps a shared number ──
+-- mobile_key_assign(p): {key, keep, apply}. Gives `key` to the account
+-- `keep` and takes it from any other account holding it, in one transaction
+-- (the unique index allows one holder). Nothing else on the profiles changes.
+-- apply = false reports what it would do. Returns {taken_from: [uuid], set}.
+create or replace function public.mobile_key_assign(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_key text := nullif(p->>'key', '');
+  v_keep uuid := nullif(p->>'keep', '')::uuid;
+  v_apply boolean := coalesce((p->>'apply')::boolean, false);
+  v_taken uuid[];
+  v_set boolean;
+begin
+  if v_key is null or v_keep is null then raise exception 'mobile_key_assign needs key and keep'; end if;
+  select coalesce(array_agg(id), '{}') into v_taken from public.profiles where mobile_key = v_key and id <> v_keep;
+  select not exists (select 1 from public.profiles where id = v_keep and mobile_key is not distinct from v_key) into v_set;
+  if v_apply then
+    update public.profiles set mobile_key = null where mobile_key = v_key and id <> v_keep;
+    update public.profiles set mobile_key = v_key where id = v_keep and mobile_key is distinct from v_key;
+  end if;
+  return jsonb_build_object('taken_from', to_jsonb(v_taken), 'set', v_set);
+end $$;
+revoke all on function public.mobile_key_assign(jsonb) from public, anon, authenticated;
+grant execute on function public.mobile_key_assign(jsonb) to service_role;
+
+-- ── monday_funnel_queue: members whose Monday row needs updating ──
+-- An event (a payment, a plan change, low credit, coming back...) never talks
+-- to Monday itself: it queues the member here, and /api/internal/monday-funnel
+-- drains the queue every 10 minutes. One row per member, so a burst of events
+-- is one update.
+create table if not exists public.monday_funnel_queue (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  reasons text[] not null default '{}',
+  queued_at timestamptz not null default now(),
+  attempts integer not null default 0,
+  last_error text,
+  last_attempt_at timestamptz
+);
+create index if not exists monday_funnel_queue_at_idx on public.monday_funnel_queue (queued_at);
+alter table public.monday_funnel_queue enable row level security;  -- no policies: service role only
+revoke all on public.monday_funnel_queue from anon, authenticated;
+
+-- monday_funnel_enqueue(p): {user, reason}. Adds the member, or the reason
+-- to their queued row (at most 10 kept); a re-queue resets the attempt count
+-- and moves queued_at on, so a drain that read the row before it deletes
+-- only the row it read (the newer event waits for the next drain).
+create or replace function public.monday_funnel_enqueue(p jsonb)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  v_reason text := left(coalesce(nullif(p->>'reason', ''), 'event'), 40);
+begin
+  insert into public.monday_funnel_queue (user_id, reasons) values ((p->>'user')::uuid, array[v_reason])
+  on conflict (user_id) do update
+    set reasons = (select array(select distinct r from unnest(public.monday_funnel_queue.reasons || array[v_reason]) r limit 10)),
+        queued_at = now(),
+        attempts = 0;
+end $$;
+revoke all on function public.monday_funnel_enqueue(jsonb) from public, anon, authenticated;
+grant execute on function public.monday_funnel_enqueue(jsonb) to service_role;
+
+-- ── monday_funnel_runs / monday_funnel_lock: the nightly's progress and the one-writer lease ──
+-- One row per UK day of the nightly pass: when it started and finished, the
+-- inactivity step, how far it got (a pass resumes where the last one stopped)
+-- and what it did. The lease makes sure only one run (the cron, or a
+-- backfill from /admin/lifecycle) writes to Monday at a time.
+create table if not exists public.monday_funnel_runs (
+  day date primary key,
+  started_at timestamptz,
+  finished_at timestamptz,
+  inactivity_at timestamptz,
+  cursor text,
+  stats jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.monday_funnel_runs enable row level security;  -- no policies: service role only
+revoke all on public.monday_funnel_runs from anon, authenticated;
+
+create table if not exists public.monday_funnel_lock (
+  id smallint primary key default 1,
+  holder text,
+  lease_until timestamptz
+);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conrelid = 'public.monday_funnel_lock'::regclass and conname = 'monday_funnel_lock_one_row') then
+    alter table public.monday_funnel_lock add constraint monday_funnel_lock_one_row check (id = 1);
+  end if;
+end $$;
+insert into public.monday_funnel_lock (id) values (1) on conflict (id) do nothing;
+alter table public.monday_funnel_lock enable row level security;  -- no policies: service role only
+revoke all on public.monday_funnel_lock from anon, authenticated;
+
+-- monday_funnel_lease(p): {holder, seconds, release}. Takes the lease when it
+-- is free, expired or already this holder's; release gives it back. Returns
+-- whether the caller holds it now.
+create or replace function public.monday_funnel_lease(p jsonb)
+returns boolean language plpgsql security definer set search_path = '' as $$
+declare
+  v_holder text := nullif(p->>'holder', '');
+  v_ok boolean;
+begin
+  if v_holder is null then raise exception 'monday_funnel_lease needs a holder'; end if;
+  insert into public.monday_funnel_lock (id) values (1) on conflict (id) do nothing;
+  if coalesce((p->>'release')::boolean, false) then
+    update public.monday_funnel_lock set holder = null, lease_until = null where id = 1 and holder = v_holder;
+    return false;
+  end if;
+  update public.monday_funnel_lock
+     set holder = v_holder,
+         lease_until = now() + make_interval(secs => least(greatest(coalesce((p->>'seconds')::integer, 60), 10), 900))
+   where id = 1 and (holder is null or lease_until is null or lease_until < now() or holder = v_holder)
+  returning true into v_ok;
+  return coalesce(v_ok, false);
+end $$;
+revoke all on function public.monday_funnel_lease(jsonb) from public, anon, authenticated;
+grant execute on function public.monday_funnel_lease(jsonb) to service_role;
 
 notify pgrst, 'reload schema';

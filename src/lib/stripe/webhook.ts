@@ -14,6 +14,7 @@ import { subscriptionStateFromStripe } from '../subscription.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
 import type { InvoiceFacts, TopupFacts } from '../meta/events.ts';
+import { invoicePaymentIntentId, paymentFromIntent, paymentFromInvoice, type PaymentRecord, type RefundRecord } from '../payments/rules.ts';
 
 export interface WebhookUser {
   id: string;
@@ -46,6 +47,13 @@ export interface WebhookDeps {
   expirePlanGrants(userId: string, reason: string): Promise<number>;
   savePaymentMethod(userId: string, customerId: string | null, paymentMethodId: string): Promise<void>;
   retrievePaymentIntent(id: string): Promise<Stripe.PaymentIntent | null>;
+  /**
+   * Batch 20: the same, but a lookup that fails (Stripe down, a timeout)
+   * throws instead of answering null; null only when there is no such
+   * payment. For a refund or dispute, where "could not tell" must be retried,
+   * not taken as "not ours".
+   */
+  retrievePaymentIntentStrict?(id: string): Promise<Stripe.PaymentIntent | null>;
   retrieveSubscription(id: string): Promise<Stripe.Subscription | null>;
   /** Every subscription the customer holds; used to spot a late delete for a superseded plan. */
   listSubscriptions?(customerId: string): Promise<Stripe.Subscription[]>;
@@ -74,6 +82,27 @@ export interface WebhookDeps {
    * Optional; implementations must swallow their own errors.
    */
   recordConversion?(input: WebhookConversion): Promise<unknown>;
+  /**
+   * Batch 20 (src/lib/payments): the rows behind "Total paid". A payment is
+   * written once per Stripe id and a refund as the charge's cumulative
+   * amount, so a redelivery, or a top-up's two events, change nothing.
+   * Optional; implementations must swallow their own errors.
+   */
+  recordPayment?(payment: PaymentRecord): Promise<unknown>;
+  recordRefund?(refund: RefundRecord): Promise<unknown>;
+  /** The PaymentIntent a paid invoice was paid with (its refunds are matched on it); null when it cannot be told. */
+  invoicePaymentIntent?(invoiceId: string): Promise<string | null>;
+  /**
+   * Batch 20's £10 starter pack (src/lib/starter-pack/grant-server.ts). The
+   * card is authorised, not captured: settle claims the pack once per
+   * person and captures it, or cancels a repeat so it is never charged;
+   * grant runs on the captured payment and is idempotent (a redelivery or
+   * both events grant once); clawback takes the credit back on a refund or a
+   * dispute. Optional: without them a pack payment is left alone.
+   */
+  settleStarterPack?(paymentIntentId: string): Promise<string>;
+  grantStarterPack?(input: { paymentIntent: Stripe.PaymentIntent; email: string | null }): Promise<'granted' | 'already' | 'blocked' | 'ignored'>;
+  clawbackStarterPack?(input: { userId: string; paymentIntentId: string; refundedPence: number; chargedPence: number; reason: 'refunded' | 'disputed' }): Promise<unknown>;
   log?: (msg: string) => void;
 }
 
@@ -233,6 +262,96 @@ async function recordMetaConversion(deps: WebhookDeps, input: WebhookConversion)
   }
 }
 
+/** Batch 20: a payment for "Total paid". Never throws. */
+async function recordPaymentRow(deps: WebhookDeps, payment: PaymentRecord | null): Promise<void> {
+  if (!deps.recordPayment || !payment) return;
+  try {
+    await deps.recordPayment(payment);
+  } catch {
+    // Bookkeeping never fails a delivery.
+  }
+}
+
+/** Batch 20: the PaymentIntent a paid invoice was paid with, from the invoice or else Stripe. Never throws. */
+async function invoicePaymentIntentFor(deps: WebhookDeps, invoice: Stripe.Invoice): Promise<string | null> {
+  const fromInvoice = invoicePaymentIntentId(invoice as unknown as Parameters<typeof invoicePaymentIntentId>[0]);
+  if (fromInvoice || !deps.invoicePaymentIntent || !invoice.id) return fromInvoice;
+  try {
+    return await deps.invoicePaymentIntent(invoice.id);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Batch 20: a charge's refunds for "Total paid", whatever was bought (a pack,
+ * a top-up or a subscription invoice). The member is the one the payment was
+ * for, else the charge's customer. Never throws.
+ */
+async function recordChargeRefund(deps: WebhookDeps, charge: Stripe.Charge): Promise<void> {
+  // A released authorisation (a repeat pack cancelled before capture) is reported as refunded, but nothing was paid.
+  if (!deps.recordRefund || !charge?.id || charge.captured === false) return;
+  try {
+    const piId = id(charge.payment_intent);
+    const pi = piId ? await deps.retrievePaymentIntent(piId) : null;
+    let userId = pi?.metadata?.user_id ?? null;
+    if (!userId && id(charge.customer)) userId = (await deps.findUserByCustomer(id(charge.customer)!))?.id ?? null;
+    if (!userId) return;
+    await deps.recordRefund({ chargeId: charge.id, userId, paymentIntentId: piId, amountRefundedPence: Number(charge.amount_refunded) || 0 });
+  } catch {
+    // Bookkeeping never fails a delivery.
+  }
+}
+
+/**
+ * Batch 20: a captured starter pack. The grant is idempotent, and the
+ * activity, Meta's Purchase and the payment row are each keyed on the
+ * PaymentIntent, so a redelivery (or the one-click route having done it
+ * already) changes nothing. A repeat that was charged anyway is a top-up.
+ */
+async function handleStarterPackPaid(pi: Stripe.PaymentIntent, deps: WebhookDeps): Promise<HandleResult> {
+  if (!deps.grantStarterPack) return { handled: false, note: 'starter pack not configured' };
+  const userId = pi.metadata?.user_id;
+  const user = userId ? await deps.findUserById(userId) : null;
+  if (!user) return { handled: false, note: 'no user for starter pack' };
+  const pm = id(pi.payment_method);
+  if (pm) await deps.savePaymentMethod(user.id, id(pi.customer), pm);
+  const outcome = await deps.grantStarterPack({ paymentIntent: pi, email: user.email });
+  if (outcome === 'ignored') return { handled: false, note: 'starter pack payment not captured' };
+  const pricePence = Math.round(Number(pi.metadata?.price_pence) || 0) || pi.amount_received || pi.amount;
+  if (deps.logActivity) {
+    try {
+      // A repeat charged anyway became a top-up, and is logged as one.
+      if (outcome === 'blocked') await deps.logActivity({ userId: user.id, kind: 'topup', dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: pricePence } });
+      else await deps.logActivity({ userId: user.id, kind: 'starter_pack', dedupeKey: `starter_pack:pi:${pi.id}`, extras: { amount_pence: pricePence } });
+    } catch {
+      // The activity log never fails a delivery.
+    }
+  }
+  // Meta's Purchase: the pack's price (the credit paid for, excluding VAT), once per PaymentIntent.
+  await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: pricePence, currency: pi.currency } });
+  await recordPaymentRow(deps, paymentFromIntent(pi, user.id));
+  return { handled: true, note: `starter pack ${outcome}` };
+}
+
+/** Batch 20: a refund or dispute on a starter pack's charge, or null when it is not one. */
+async function clawbackPackIfPack(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult | null> {
+  if (!deps.clawbackStarterPack) return null;
+  const obj = event.data.object as Stripe.Charge | Stripe.Dispute;
+  const charge = event.type === 'charge.refunded' ? (obj as Stripe.Charge) : null;
+  const piId = charge ? id(charge.payment_intent) : id((obj as Stripe.Dispute).payment_intent);
+  if (!piId) return null;
+  // Not knowing whether it was a pack must not lose its clawback for good: a failed lookup throws, and Stripe sends it again.
+  const pi = deps.retrievePaymentIntentStrict ? await deps.retrievePaymentIntentStrict(piId) : await deps.retrievePaymentIntent(piId);
+  if (pi?.metadata?.kind !== 'starter_pack' || !pi.metadata.user_id) return null;
+  // A hold released before capture (a repeat pack, or one never captured) is reported as refunded: no credit was ever given.
+  if (charge && charge.captured === false) return { handled: true, note: 'starter pack authorisation released (never charged)' };
+  const refundedPence = charge ? Number(charge.amount_refunded) || 0 : Number((obj as Stripe.Dispute).amount) || 0;
+  const chargedPence = charge ? Number(charge.amount) || 0 : Number(pi.amount_received ?? pi.amount) || 0;
+  await deps.clawbackStarterPack({ userId: pi.metadata.user_id, paymentIntentId: piId, refundedPence, chargedPence, reason: event.type === 'charge.refunded' ? 'refunded' : 'disputed' });
+  return { handled: true, note: 'starter pack credit clawed back' };
+}
+
 export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult> {
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`));
@@ -300,13 +419,34 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
           if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
           // Meta's Purchase: payment_intent.succeeded carries the same key, so one is recorded.
           if (amount > 0) await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: piId, paymentIntentId: piId, topup: { kind: 'topup', auto: pi?.metadata?.auto ?? session.metadata?.auto ?? null, amountPence: amount, currency: pi?.currency ?? session.currency ?? null } });
+          // Batch 20: what was charged, for Total paid (the same row as payment_intent.succeeded's).
+          await recordPaymentRow(deps, paymentFromIntent(pi ?? { id: piId, amount_received: session.amount_total ?? null, currency: session.currency ?? null, metadata: session.metadata ?? null }, user.id));
+        }
+        // Batch 20: the starter pack. The card was only authorised: claim it once per person, then capture it or cancel it.
+        if (pi?.metadata?.kind === 'starter_pack' || session.metadata?.kind === 'starter_pack') {
+          if (!deps.settleStarterPack) return { handled: false, note: 'starter pack not configured' };
+          const outcome = await deps.settleStarterPack(piId);
+          return { handled: true, note: `starter pack ${outcome}` };
         }
       }
       return { handled: true };
     }
 
+    // Batch 20: a pack's card authorised (the one-click route settles it too,
+    // and Checkout's completion; settling twice is safe), or its payment
+    // cancelled (an authorisation never captured: the claim is let go).
+    case 'payment_intent.amount_capturable_updated':
+    case 'payment_intent.canceled': {
+      const pi = event.data.object as Stripe.PaymentIntent;
+      if (pi.metadata?.kind !== 'starter_pack') return { handled: false, note: 'not a starter pack' };
+      if (!deps.settleStarterPack) return { handled: false, note: 'starter pack not configured' };
+      const outcome = await deps.settleStarterPack(pi.id);
+      return { handled: true, note: `starter pack ${outcome}` };
+    }
+
     case 'payment_intent.succeeded': {
       const pi = event.data.object as Stripe.PaymentIntent;
+      if (pi.metadata?.kind === 'starter_pack') return handleStarterPackPaid(pi, deps);
       if (pi.metadata?.kind !== 'topup') return { handled: false, note: 'not a top-up' };
       const userId = pi.metadata.user_id;
       const user = userId ? await deps.findUserById(userId) : id(pi.customer) ? await deps.findUserByCustomer(id(pi.customer)!) : null;
@@ -318,6 +458,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       await logTopupActivity(deps, user.id, pi.id, amount, pi.metadata?.auto === '1');
       // Meta's Purchase (never an automatic top-up; Checkout's event carries the same key).
       await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: pi.metadata?.kind, auto: pi.metadata?.auto, amountPence: amount, currency: pi.currency } });
+      // Batch 20: what was charged, for Total paid.
+      await recordPaymentRow(deps, paymentFromIntent(pi, user.id));
       return { handled: true, note: granted ? 'top-up granted' : 'already granted' };
     }
 
@@ -332,6 +474,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       const linePrice = invoice.lines?.data?.[0]?.pricing?.price_details?.price;
       const priceId = priceIdOf(sub) ?? (typeof linePrice === 'string' ? linePrice : (linePrice?.id ?? null));
       const planCode = planForPriceId(priceId, env);
+      // Batch 20: every paid invoice is money the member paid (Total paid), whatever it is for.
+      await recordPaymentRow(deps, paymentFromInvoice(invoice, user.id, planCode, await invoicePaymentIntentFor(deps, invoice)));
       if (!planCode) {
         log(`invoice ${invoice.id}: price ${priceId} is not a known plan`);
         return { handled: false, note: 'unknown price' };
@@ -553,6 +697,11 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
 
     case 'charge.refunded':
     case 'charge.dispute.created': {
+      // Batch 20: every refund comes off Total paid, whatever the charge was for.
+      if (event.type === 'charge.refunded') await recordChargeRefund(deps, event.data.object as Stripe.Charge);
+      // Batch 20: a starter pack's credit comes back in the same share as its payment.
+      const packClawback = await clawbackPackIfPack(event, deps);
+      if (packClawback) return packClawback;
       if (!deps.refundTopup) return { handled: false, note: 'no clawback configured' };
       const obj = event.data.object as Stripe.Charge | Stripe.Dispute;
       const charge = event.type === 'charge.refunded' ? (obj as Stripe.Charge) : null;

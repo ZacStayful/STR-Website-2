@@ -137,6 +137,15 @@ export const ACTIVITY_KINDS = {
   // proof of consent itself is consent_records.
   cookie_choice: recordOnly('Made a cookie choice'),
 
+  // Batch 20: the starter pack and the low-credit decision (src/lib/starter-pack,
+  // src/lib/credit). Buying and choosing count; being shown and "Not now" are
+  // recorded only.
+  starter_pack: inApp('Bought the starter pack'),
+  starter_pack_not_now: recordOnly('Said "not now" to the starter pack'),
+  starter_pack_shown: recordOnly('Was shown the starter pack'),
+  low_credit_starter: inApp('Chose Starter when credit was low'),
+  low_credit_topup: inApp('Chose a top-up when credit was low'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),

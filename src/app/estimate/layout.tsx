@@ -62,6 +62,8 @@ export default async function EstimateLayout({
           email: profile.email ?? user.email ?? "",
           mobile: profile.mobile ?? "",
           trialStartedAt: profile.created_at ?? undefined,
+          // Batch 20: a team member (or someone joining a team) gets no row.
+          userId: user.id,
         });
         if (mondayId) {
           await supabase

@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CREDIT_CHANGED_EVENT, OUT_OF_CREDIT_EVENT, type OutOfCreditDetail } from "@/lib/credit/client";
 import { OutOfCreditModal } from "./OutOfCreditModal";
+import type { PackCopy } from "@/lib/starter-pack/rules";
 
 /** Mirrors CreditSummary from src/lib/credit/summary.ts (plus `admin`). */
 export interface CreditSnapshot {
@@ -28,6 +29,12 @@ export interface CreditSnapshot {
    * and top-up and plans are not theirs to buy.
    */
   member?: { teamName: string; paused: boolean } | null;
+  /** Batch 20: the starter pack's words, while this member can still buy it. */
+  pack?: PackCopy | null;
+  /** Batch 20, Part B: no plan (free or lapsed): "low" is £5 or less. */
+  noPlan?: boolean;
+  /** Batch 20, Part B: the choice at £5 or less for a member with no plan: Starter or the £10 top-up. */
+  decision?: { starter: { code: string; name: string; pricePence: number; creditPence: number } | null; topupPence: number } | null;
 }
 
 interface CreditContextValue {

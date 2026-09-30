@@ -74,8 +74,9 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
           return;
         }
         setPhase({ kind: "error", message: answer.error ?? "Something went wrong. Nothing was charged; please try again." });
-        // A new price (or a deal opened on the way) needs the page's own prices.
-        if (answer.code === "price_changed" || answer.code === "insufficient_credit") setTimeout(() => window.location.reload(), 3000);
+        // A new price (or a deal opened on the way) needs the page's own prices. Not for
+        // insufficient credit (Batch 20): the reload closed the out-of-credit dialog it opened.
+        if (answer.code === "price_changed") setTimeout(() => window.location.reload(), 3000);
         return;
       }
       started = answer;

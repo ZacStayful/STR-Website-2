@@ -14,6 +14,9 @@ import { QuizPhoto } from "./_components/QuizPhoto";
 import { AmountChoice, AreasChoice, FinanceChoice, MultiChoice, PROFIT_INPUT, PrimaryButton, RENT_INPUT, SingleChoice, WhereChoice } from "./_components/Controls";
 import { SampleDeals } from "./_components/SampleDeals";
 import { SignupConsentCheckbox } from "@/components/tracking/SignupConsentCheckbox";
+import { StarterPackOffer } from "@/components/starter-pack/StarterPackOffer";
+import { packNotNowAction, packShownAction } from "@/components/starter-pack/actions";
+import type { PackCopy } from "@/lib/starter-pack/rules";
 
 export interface QuizStart {
   answers: Answers;
@@ -29,12 +32,14 @@ export interface QuizStart {
   /** Batch 19: the start screen offers the Meta pixel checkbox (a new Google sign-up). */
   consentCheckbox?: boolean;
   areas: QuizArea[];
+  /** Batch 20: the starter pack, offered once the welcome questions are answered (eligible new members only). */
+  pack?: { copy: PackCopy; returnTo: string } | null;
   profileHref: string;
   privacyHref: string;
   todayHref: string;
 }
 
-type Screen = { kind: "start" } | { kind: "question"; id: QuestionId } | { kind: "samples"; then: QuestionId } | { kind: "done" };
+type Screen = { kind: "start" } | { kind: "question"; id: QuestionId } | { kind: "samples"; then: QuestionId } | { kind: "pack"; view: { progress: ProgressView; answers: Answers }; listBefore: string } | { kind: "done" };
 
 /**
  * The quiz: one question per screen, big tap cards, every answer saved at
@@ -114,6 +119,11 @@ export function Quiz(start: QuizStart) {
       if (r.view.credit.paid && !credit.paid) notifyCreditChanged();
       setCredit(r.view.credit);
       if (r.warning) setWarning(r.warning);
+      // Batch 20: the answer that opens the app offers the starter pack first, once; "Not now" carries on.
+      if (start.pack && !wasEditing && !progress.mandatoryDone && r.view.progress.mandatoryDone) {
+        setScreen({ kind: "pack", view: r.view, listBefore });
+        return;
+      }
       advance(r.view, wasEditing, listBefore);
     });
   };
@@ -175,6 +185,23 @@ export function Quiz(start: QuizStart) {
             Review your answers
           </Link>
         </div>
+      </Frame>
+    );
+  }
+
+  if (screen.kind === "pack") {
+    const carryOn = () => advance(screen.view, null, screen.listBefore);
+    if (!start.pack) return null;
+    return (
+      <Frame>
+        <PackScreen
+          pack={start.pack}
+          onNotNow={() => {
+            packNotNowAction("welcome").catch(() => {});
+            carryOn();
+          }}
+          onContinue={carryOn}
+        />
       </Frame>
     );
   }
@@ -244,6 +271,21 @@ export function Quiz(start: QuizStart) {
         )}
       </div>
     </Frame>
+  );
+}
+
+/** Batch 20: the starter pack between the welcome questions and the rest. "Not now" goes on with the quiz; Today keeps the offer. */
+function PackScreen({ pack, onNotNow, onContinue }: { pack: { copy: PackCopy; returnTo: string }; onNotNow: () => void; onContinue: () => void }) {
+  useEffect(() => {
+    packShownAction("welcome").catch(() => {});
+  }, []);
+  return (
+    <>
+      <p className="text-xs font-semibold uppercase tracking-wider text-primary">You’re in</p>
+      <div className="mt-1">
+        <StarterPackOffer copy={pack.copy} returnTo={pack.returnTo} variant="screen" onNotNow={onNotNow} onContinue={onContinue} continueLabel="Carry on with your profile" />
+      </div>
+    </>
   );
 }
 

@@ -12,6 +12,8 @@ import { cardNeedsUpdateEmail } from '@/lib/email/billing';
 import { logActivity } from '@/lib/activity/log';
 import { logConversion } from '@/lib/meta/conversions';
 import { clientDetails } from '@/lib/tracking/request';
+import { paymentFromIntent } from '@/lib/payments/rules';
+import { recordPayment } from '@/lib/payments/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,7 +28,7 @@ export async function POST(request: Request) {
   if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   if (!stripeConfigured()) return Response.json({ error: 'Payments are not configured yet. Email hello@stayful.co.uk to top up.' }, { status: 503 });
 
-  let body: { amountPence?: unknown; nonce?: unknown };
+  let body: { amountPence?: unknown; nonce?: unknown; via?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -37,6 +39,8 @@ export async function POST(request: Request) {
   if (!settings.topupPresetsPence.includes(amount)) return Response.json({ error: 'Choose one of the top-up amounts.' }, { status: 400 });
   const priceId = priceIdForTopup(amount);
   const nonce = typeof body.nonce === 'string' && /^[0-9a-f-]{8,64}$/i.test(body.nonce) ? body.nonce : crypto.randomUUID();
+  // Batch 20, Part B: the top-up chosen from the low-credit decision (weekly active).
+  if (body.via === 'low_credit') logActivity(member.id, 'low_credit_topup', { dedupeKey: `low_credit_topup:${new Date().toISOString().slice(0, 10)}`, extras: { amount_pence: amount } });
 
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });
@@ -64,6 +68,8 @@ export async function POST(request: Request) {
         if (pi.status === 'succeeded') {
           // The webhook will also arrive; grantTopup is idempotent on pi id.
           await grantTopup(member.id, amount, `pi:${pi.id}`, { email: member.email });
+          // Batch 20: what was charged, for Total paid (the webhook writes the same row, once).
+          await recordPayment(paymentFromIntent(pi, member.id));
           logActivity(member.id, 'topup', { dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
           // Batch 19: Meta's Purchase, with the member's own browser (the webhook's copy is the same key: one is sent).
           await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: amount, currency: pi.currency }, details: clientDetails(request.headers) });

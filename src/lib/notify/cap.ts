@@ -5,8 +5,9 @@
  * A member gets at most ONE non-billing email a day and, on Mondays, TWO:
  *
  *   daily   Today's 5, the changes-only email, the picks-paused letter, an
- *           admin notice. Whichever claims the day's slot first is the one
- *           that goes; the others bundle into it or wait for tomorrow.
+ *           admin notice, the £5 low-credit decision sent alone (Batch 20).
+ *           Whichever claims the day's slot first is the one that goes; the
+ *           others bundle into it or wait for tomorrow.
  *   weekly  Your week, Mondays only.
  *
  * The record behind the rules is notification_sends (supabase/schema.sql);
@@ -20,13 +21,14 @@ import type { NotificationKey } from '../notifications/registry.ts';
 
 export type Slot = 'daily' | 'weekly';
 
-export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice';
+export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit';
 
 export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   todays_5: 'daily',
   deal_changes: 'daily',
   picks_paused: 'daily',
   notice: 'daily',
+  low_credit: 'daily',
   your_week: 'weekly',
 };
 
@@ -45,6 +47,7 @@ export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey
   picks_paused: ['credit_alerts'],
   your_week: ['weekly_missed', 'weekly_alerts'],
   notice: ['daily_picks'],
+  low_credit: ['credit_alerts'],
 };
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */

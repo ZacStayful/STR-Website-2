@@ -23,6 +23,8 @@ import { after } from 'next/server';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { buildActivityCall, type ActivityCall, type ActivityOptions } from './event';
 import type { ActivityKind } from './kinds';
+import { cameBack } from '../inactivity/came-back';
+import { isEngagement } from '../inactivity/rules';
 
 export type { ActivityOptions } from './event';
 export type { ActivityKind } from './kinds';
@@ -44,8 +46,13 @@ function warn(message: string): void {
 
 async function write(call: ActivityCall): Promise<void> {
   try {
-    const { error } = await createAdminClient().rpc('activity_log', { p: call });
+    const { data, error } = await createAdminClient().rpc('activity_log', { p: call });
     if (error) warn(error.message);
+    // Batch 20, Part C: a new qualifying action, or engaging by email or text
+    // (never an unsubscribe), brings a quiet member back at once. Not a repeat
+    // the log ignored (null): a redelivered webhook weeks later is not the
+    // member coming back.
+    else if (data != null && isEngagement(call.kind, call.extras)) await cameBack(call.user);
   } catch (err) {
     warn(err instanceof Error ? err.message : String(err));
   }

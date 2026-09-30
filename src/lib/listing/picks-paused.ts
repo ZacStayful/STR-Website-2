@@ -119,6 +119,11 @@ export interface PausedEmailInput {
   extra?: { text: string; html: string; subjectSuffix?: string | null } | null;
   /** From billing_settings.new_pricing_from daily deals are charged by the day, not by the pick. */
   perDay?: boolean;
+  /**
+   * Batch 20: a new member who can still buy the starter pack is offered it
+   * instead of "top up" (the pack's own words, from src/lib/starter-pack/rules.ts).
+   */
+  pack?: { body: string; cta: string } | null;
 }
 
 /** The letter itself: plain, one button. */
@@ -127,29 +132,38 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
   const topUp = `${base}/account/billing`;
   const manage = manageNotificationsUrl(base);
   const n = input.misses.length;
+  const pack = input.pack ?? null;
   const what = input.perDay ? 'daily deals' : 'daily picks';
-  const baseSubject = n === 1 ? `Your ${what} have paused: 1 pick you missed` : `Your ${what} have paused: ${n} picks you missed`;
+  const baseSubject = pack ? 'Your daily deals are waiting' : n === 1 ? `Your ${what} have paused: 1 pick you missed` : `Your ${what} have paused: ${n} picks you missed`;
   // The cost, said truly for how it is charged: never "a few pence" for a pick that can cost £1.
-  const why = input.perDay
-    ? 'Your daily deals have paused because your credit ran out. Daily deals are charged by the day, so rather than run your balance further down we stop sending them until you top up.'
-    : 'Your daily picks have paused because your credit ran out. Each pick is charged from your credit, so rather than run your balance further down we stop sending them until you top up.';
+  const why = pack
+    ? `We found ${n === 1 ? 'a deal' : `${n} deals`} for you but couldn't send ${n === 1 ? 'it' : 'them'} without credit. ${pack.body}`
+    : input.perDay
+      ? 'Your daily deals have paused because your credit ran out. Daily deals are charged by the day, so rather than run your balance further down we stop sending them until you top up.'
+      : 'Your daily picks have paused because your credit ran out. Each pick is charged from your credit, so rather than run your balance further down we stop sending them until you top up.';
   const again = input.perDay ? 'daily deals start' : 'picks start';
   const subject = input.extra?.subjectSuffix ? `${baseSubject} · ${input.extra.subjectSuffix}` : baseSubject;
   const hi = input.firstName ? `Hi ${input.firstName},` : 'Hi,';
   const since = input.misses[0] ? dayWords(input.misses[0].missedAt) : '';
   const lines = input.misses.map(missedPickLine);
+  const noun = pack ? 'deal' : 'pick';
+  const intro = n === 1 ? `Here is the ${noun} we found for you${since ? ` on ${since}` : ''} and could not send:` : `Here are the ${noun}s we found for you${since ? ` since ${since}` : ''} and could not send:`;
+  // The pack is bought on Today, with its tickbox; ?offer=pack shows the card even inside a "Not now".
+  const button = pack ? { url: `${base}/today?offer=pack`, label: pack.cta } : { url: topUp, label: 'Top up' };
+  const after = pack ? 'Your daily deals start again with the next morning’s run once you have credit.' : `Top up and ${again} again with tomorrow morning’s run.`;
   const text = [
     hi,
     '',
     why,
     '',
-    n === 1 ? `Here is the pick we found for you${since ? ` on ${since}` : ''} and could not send:` : `Here are the picks we found for you${since ? ` since ${since}` : ''} and could not send:`,
+    intro,
     '',
     ...lines.map((l) => `• ${l}`),
     '',
-    `Top up and ${again} again with tomorrow morning's run: ${topUp}`,
+    pack ? `${button.label}: ${button.url}` : `Top up and ${again} again with tomorrow morning's run: ${topUp}`,
     '',
-    'Figures are Stayful estimates for the area and size of property. The address and listing come with the pick itself.',
+    ...(pack ? [after, ''] : []),
+    `Figures are Stayful estimates for the area and size of property. The address and listing come with the ${noun} itself.`,
     '',
     ...(input.extra ? [input.extra.text, ''] : []),
     `Manage notifications: ${manage}`,
@@ -158,10 +172,10 @@ export function pausedEmail(input: PausedEmailInput): { subject: string; text: s
     <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.6;color:#2e3d2b;max-width:560px">
       <p style="margin:0 0 14px">${esc(hi)}</p>
       <p style="margin:0 0 14px">${esc(why)}</p>
-      <p style="margin:0 0 6px">${esc(n === 1 ? `Here is the pick we found for you${since ? ` on ${since}` : ''} and could not send:` : `Here are the picks we found for you${since ? ` since ${since}` : ''} and could not send:`)}</p>
+      <p style="margin:0 0 6px">${esc(intro)}</p>
       <ul style="margin:0 0 18px;padding-left:18px">${lines.map((l) => `<li style="margin:4px 0">${esc(l)}</li>`).join('')}</ul>
-      <p style="margin:0 0 18px"><a href="${esc(topUp)}" style="display:inline-block;background:#5d8156;color:#fff;text-decoration:none;padding:10px 20px;border-radius:999px;font-weight:600">Top up</a></p>
-      <p style="margin:0 0 14px;color:#5b6657;font-size:13px">Top up and ${esc(again)} again with tomorrow morning&#8217;s run. Figures are Stayful estimates for the area and size of property; the address and listing come with the pick itself.</p>
+      <p style="margin:0 0 18px"><a href="${esc(button.url)}" style="display:inline-block;background:#5d8156;color:#fff;text-decoration:none;padding:10px 20px;border-radius:999px;font-weight:600">${esc(button.label)}</a></p>
+      <p style="margin:0 0 14px;color:#5b6657;font-size:13px">${esc(after)} Figures are Stayful estimates for the area and size of property; the address and listing come with the ${noun} itself.</p>
       ${input.extra ? `<div style="margin:0 0 18px">${input.extra.html}</div>` : ''}
       <p style="margin:0;color:#7a8274;font-size:12px">Stayful Intelligence · <a href="${esc(manage)}" style="color:#7a8274">Manage notifications</a></p>
     </div>`.trim();

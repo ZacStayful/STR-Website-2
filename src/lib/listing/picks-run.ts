@@ -49,6 +49,9 @@ import { projectNumbersFor, projectRangeLine, rangeLineFor } from "../project/di
 import type { ProjectCardData } from "../project/headline";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
+import { lowCreditNoticesFor, markLowCreditTold } from "../credit/low-credit-server";
+import { lowCreditSection } from "../credit/low-credit";
+import { inactivePausedIds } from "../inactivity/server";
 import { allProfilesFor } from "../profiles/server";
 import { labelFor, profileLinks, seatKey, seatsFor, type SavedProfile } from "../profiles/rules";
 import { GOALS_EDITOR_HREF } from "../nav";
@@ -398,9 +401,17 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
 
   const members: Member[] = [];
   const skipped: { user: string; profile?: string; reason: string }[] = [];
+  // Batch 20, Part C: daily picks pause after 25 days without a qualifying
+  // action, until the member comes back. Read on its own: a schema that has
+  // not been run pauses nobody. Never the admin's test send.
+  const inactive = opts.ignoreToday ? new Set<string>() : await inactivePausedIds(admin);
   for (const p of profiles) {
     if (!p.email) {
       skipped.push({ user: p.id, reason: "no_email" });
+      continue;
+    }
+    if (inactive.has(p.id)) {
+      skipped.push({ user: p.id, reason: "inactive" });
       continue;
     }
     if (isPaused(p)) {
@@ -509,11 +520,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // their daily slot is already spent. The pick itself is chosen at send
     // time, after page reads a dry run does not make.
     const ids = memberIds;
-    const [slots, plans, alertsOn, pending] = await Promise.all([
+    const [slots, plans, alertsOn, pending, lowNotices] = await Promise.all([
       slotsInUse(admin, ids, "daily"),
       todayPlans(admin, members.map(memberContextOf), new Date(), { create: false }),
       trackedAlertsOn(admin, ids),
       pendingChanges(admin, ids),
+      // Batch 20, Part B: who would get the £5 low-credit decision at the top of their email.
+      lowCreditNoticesFor(admin, [...new Set(ids)].filter((id) => payerIn(payers, id).payerId === id)),
     ]);
     return done({
       status: 200,
@@ -543,6 +556,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               actFast: wantsActFast(tailoringBySeat.get(m.key) ?? null),
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
+              lowCredit: lowNotices.get(m.id)?.kind ?? null,
               wouldCharge: m.admin
                 ? 0
                 : mode === "per_day"
@@ -1161,6 +1175,10 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // profile is not complete. One read for the whole audience; a team member
   // is never asked, so never nudged.
   const nudges = await profileNudgesFor(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id));
+  // Batch 20, Part B: the £5 low-credit decision, at the top of the email of
+  // anyone due it who pays for themselves (a team's owner decides for it).
+  // Never on the admin's test send, which marks nothing.
+  const lowNotices = opts.ignoreToday ? new Map<string, never>() : await lowCreditNoticesFor(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id));
 
   // ── One pick per member: the best candidate that passes, under the daily cap ──
   const picks: { member: Member; pick: Ranked; alternates: Ranked[]; candidates: number; nearMiss: boolean }[] = [];
@@ -1467,6 +1485,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       unsubscribe,
       // Batch 12: "Your profile is 60% done" while it is not complete (never for a team member).
       profileNudge: nudges.has(userId) ? { percent: nudges.get(userId)!, url: `${base.replace(/\/$/, "")}/profile`, pence: settings.profileCompletePence } : null,
+      lowCredit: lowNotices.has(userId) ? lowCreditSection(lowNotices.get(userId)!, base) : null,
       answerToken,
       // Part E: About you is the member's own, so any seat's answer is theirs.
       actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
@@ -1516,6 +1535,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // send and this record can be interrupted into telling them twice.
     if (claimId) await finishSend(admin, claimId, true, sendSummary, closingIds(built, settled));
     summary.emails += 1;
+    // Batch 20: the low-credit decision went with it: once a cycle.
+    if (lowNotices.has(userId)) await markLowCreditTold(admin, userId);
     summary.sections += parts.length;
     summary.unfunded += unfunded.length;
     const sentAt = new Date().toISOString();

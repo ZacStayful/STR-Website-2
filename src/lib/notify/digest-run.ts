@@ -52,6 +52,9 @@ import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
 import { rangeLineFor } from '../project/display';
 import { profileNudgesFor } from '../profile/server';
+import { lowCreditNoticesFor, markLowCreditTold, sendLowCreditAlone } from '../credit/low-credit-server';
+import { lowCreditSection } from '../credit/low-credit';
+import { inactivePausedIds } from '../inactivity/server';
 import { allProfilesFor } from '../profiles/server';
 import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
 import { GOALS_EDITOR_HREF } from '../nav';
@@ -160,7 +163,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     else if (slots?.has(p.id)) perUser.push({ user: p.id, sent: false, reason: 'slot_used' });
     else if (seatSuspended(p)) perUser.push({ user: p.id, sent: false, reason: 'seat_suspended' });
   }
-  const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p);
+  // Batch 20, Part C: a member whose picks are paused for inactivity gets no Today's 5 (it would send, and
+  // charge for, the very deals the pause stopped); their changes on tracked deals still go.
+  const inactive = await inactivePausedIds(admin);
+  const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p) && !inactive.has(p.id);
   // A seat for each running profile (Batch 13); unreadable profiles (schema
   // not run): every member is one seat, as before.
   const profileRows = await allProfilesFor(admin, open.map((p) => p.id));
@@ -242,6 +248,9 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   // complete. Team members are never asked, so never nudged.
   const nudges = await profileNudgesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id));
   const profileUrl = `${base.replace(/\/$/, '')}/profile`;
+  // Batch 20, Part B: the £5 low-credit decision, for anyone due it who pays
+  // for themselves: at the top of their email, or alone when there is nothing else.
+  const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now);
 
   await mapLimit(open, 4, async (p) => {
     if (elapsed() > TIME_BUDGET_MS) {
@@ -291,6 +300,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       // The label is settled below, from what the email turned out to be.
       unsubscribe: { label: 'Stop these emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
       profileNudge: nudges.has(p.id) ? { percent: nudges.get(p.id)!, url: profileUrl, pence: settings.profileCompletePence } : null,
+      lowCredit: lowNotices.has(p.id) ? lowCreditSection(lowNotices.get(p.id)!, base) : null,
       // Batch 14: "Yes, more like this" / "Not for me" under each teaser, on this send's own token (Part F),
       // and "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
       answerToken: token,
@@ -303,6 +313,20 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     // A day of daily deals is charged only for a profile's Today's 5 itself, never for changes alone.
     const chargeFor = (i: number) => mode === 'per_day' && !isAdmin(p) && (built?.teasersByPart[i]?.length ?? 0) > 0;
     if (!built) {
+      // Batch 20: nothing else today, but the low-credit decision is due: it goes alone, in the same slot.
+      const notice = lowNotices.get(p.id);
+      if (notice) {
+        if (opts.dry) {
+          wouldEmail.push({ user: p.id, email: p.email, kind: 'low_credit', lowCredit: notice.kind });
+          perUser.push({ user: p.id, sent: false, kind: 'low_credit', reason: 'would_send' });
+          return;
+        }
+        const r = await sendLowCreditAlone(admin, { userId: p.id, email: p.email!, notice, now });
+        if (r === 'sent') summary.emails += 1;
+        else if (r === 'failed') summary.emailFailures += 1;
+        perUser.push({ user: p.id, sent: r === 'sent', kind: 'low_credit', ...(r === 'sent' ? {} : { reason: r }) });
+        return;
+      }
       perUser.push({ user: p.id, sent: false, reason: 'nothing_to_say' });
       return;
     }
@@ -322,6 +346,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
         unfunded: unfunded.length,
         payer: payers.get(p.id)?.payerId ?? p.id,
+        lowCredit: lowNotices.get(p.id)?.kind ?? null,
       });
       perUser.push({ user: p.id, sent: false, kind: built.message.kind, reason: 'would_send' });
       return;
@@ -350,6 +375,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       return;
     }
     summary.emails += 1;
+    // Batch 20: the low-credit decision went with it: once a cycle.
+    if (lowNotices.has(p.id)) await markLowCreditTold(admin, p.id, now);
     if (built.message.kind === 'todays_5') summary.todays5 += 1;
     else summary.changesOnly += 1;
     for (const [i, part] of parts.entries()) {

@@ -52,9 +52,14 @@ export function topupComingEmail(to: string, opts: { amountPence: number; thresh
   ], { label: 'Review automatic top-ups', path: '/account/billing#topup' }));
 }
 
-export function outOfCreditEmail(to: string, opts: { planName: string | null }) {
+export function outOfCreditEmail(to: string, opts: { planName: string | null; pack?: { body: string; cta: string } | null }) {
+  // Batch 20: with no plan it is just "your credit" (a member from the starter
+  // pack's cutover never had welcome credit), and a new member who can still
+  // buy the pack is offered it.
+  const used = `${opts.planName ? `Your ${opts.planName} plan credit` : 'Your credit'} is used up, so reports and listing checks are paused.`;
+  if (opts.pack) return send(to, "You're out of Stayful credit", layout("You're out of credit", [used, opts.pack.body], { label: opts.pack.cta, path: '/today?offer=pack' }));
   return send(to, "You're out of Stayful credit", layout("You're out of credit", [
-    `Your ${opts.planName ? `${opts.planName} plan` : 'welcome'} credit is used up, so reports and listing checks are paused.`,
+    used,
     'Top up in one click or upgrade your plan to carry on. Upgrading is the better value if you run reports regularly.',
   ], { label: 'Top up or upgrade', path: '/account/billing#topup' }));
 }
@@ -93,4 +98,18 @@ export function subscriberTransitionEmail(to: string, opts: { firstName: string 
     'Every report shows what it will use before you run it (about £4.85 for a standard report, or £8.60 with the PMI second opinion), so you always know where you stand. If you ever need more, you can top up in one click or move to the Scale plan.',
     opts.renewsAt ? `Your next renewal is on ${new Date(opts.renewsAt).toLocaleDateString('en-GB')}. Until then nothing changes.` : 'Until your next renewal nothing changes.',
   ], { label: 'See your billing page', path: '/account/billing' }));
+}
+
+/**
+ * Batch 20: the starter pack's receipt. It also confirms, in writing, that the
+ * member asked to use the credit straight away and accepted that the 14-day
+ * right to cancel ends once they use it: the Consumer Contracts Regulations
+ * want that confirmation on a durable medium, and this email is it.
+ */
+export function starterPackReceiptEmail(to: string, opts: { pricePence: number; creditPence: number; balancePence: number }) {
+  return send(to, `Your ${formatGbp(opts.creditPence)} of Stayful credit is ready`, layout('Your starter pack is ready', [
+    `Thanks — your ${formatGbp(opts.pricePence)} starter pack is paid, and ${formatGbp(opts.creditPence)} of credit is on your account (your balance is now ${formatGbp(opts.balancePence)}). It never expires.`,
+    'You asked to use your credit straight away and confirmed you understand that you lose your 14-day right to cancel once you use it.',
+    'Your Stripe receipt will arrive separately.',
+  ], { label: "See today's deals", path: '/today' }));
 }

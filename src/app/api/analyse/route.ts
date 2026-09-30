@@ -291,7 +291,7 @@ export async function POST(request: Request) {
               const { renderReportPdf, reportFilename } = await import('@/lib/pdf/render');
               const buffer = await renderReportPdf(result, { preparedFor: effectiveEmail });
               await uploadPdfToMonday(
-                { email: effectiveEmail, name: userName ?? undefined, mobile: userMobile ?? undefined },
+                { email: effectiveEmail, name: userName ?? undefined, mobile: userMobile ?? undefined, userId },
                 buffer,
                 reportFilename(result),
               );

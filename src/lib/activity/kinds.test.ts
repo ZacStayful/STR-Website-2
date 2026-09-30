@@ -73,3 +73,15 @@ test("Batch 19's cookie choice is recorded but can never count towards weekly ac
   assert.equal(isQualifying('cookie_choice'), false);
   assert.equal(isCounted('cookie_choice'), false);
 });
+
+test("Batch 20's kinds: buying the pack and choosing at low credit count; being shown the pack and 'Not now' do not", () => {
+  for (const k of ['starter_pack', 'low_credit_starter', 'low_credit_topup']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), true, k);
+  }
+  for (const k of ['starter_pack_shown', 'starter_pack_not_now']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isCounted(k), false, k);
+  }
+});

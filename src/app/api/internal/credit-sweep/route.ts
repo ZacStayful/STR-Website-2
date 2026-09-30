@@ -3,13 +3,13 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 import { expireDueGrants } from "@/lib/credit/ledger";
 import { syncUnitCosts } from "@/lib/credit/unit-costs";
 import { ensureAnnualMonthlyGrant } from "@/lib/stripe/grants";
-import { setBillingState, mondayBillingConfigured } from "@/lib/apis/monday";
 
 // ─── Daily credit sweep ────────────────────────────────────────────────
 // Vercel cron (vercel.json, 03:00 UTC). Writes 'expire' rows for plan credit
-// past its cycle, grants the next monthly slot to annual subscribers, seeds
-// any unit-cost rows a deploy added, and flags members who hit £0 more than
-// 48 h ago without topping up or upgrading for sales follow-up in Monday.
+// past its cycle, grants the next monthly slot to annual subscribers, and
+// seeds any unit-cost rows a deploy added. (Its Monday "Lapsed at zero" step
+// went in Batch 20: Monday's Billing status is the sales-funnel sync's,
+// src/lib/crm/monday-funnel.)
 //
 //   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/credit-sweep"
 
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
   } catch {
     return Response.json({ error: "Storage not configured" }, { status: 503 });
   }
-  const summary = { expired: 0, annualGranted: 0, seeded: 0, lapsedFlagged: 0, errors: [] as string[] };
+  const summary = { expired: 0, annualGranted: 0, seeded: 0, errors: [] as string[] };
 
   try {
     summary.expired = await expireDueGrants();
@@ -50,22 +50,6 @@ export async function GET(request: Request) {
     summary.seeded = await syncUnitCosts();
   } catch (err) {
     summary.errors.push(`seed: ${(err as Error).message}`);
-  }
-
-  if (mondayBillingConfigured()) {
-    try {
-      const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
-      const { data } = await admin.from("profiles").select("id, email, hit_zero_at, last_topup_at, plan_code").lt("hit_zero_at", cutoff).not("email", "is", null);
-      for (const p of data ?? []) {
-        const hit = new Date(String(p.hit_zero_at)).getTime();
-        const topped = p.last_topup_at ? new Date(String(p.last_topup_at)).getTime() : 0;
-        if (topped > hit) continue;
-        await setBillingState(String(p.email), { status: "Lapsed at zero", planCode: (p.plan_code as string | null) ?? null });
-        summary.lapsedFlagged += 1;
-      }
-    } catch (err) {
-      summary.errors.push(`monday: ${(err as Error).message}`);
-    }
   }
 
   return Response.json(summary);

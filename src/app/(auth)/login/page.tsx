@@ -3,6 +3,7 @@ import { LoginForm } from './login-form'
 import { MagicLinkForm } from './magic-link-form'
 import { GoogleButton } from '../google-button'
 import { safeInternalPath } from '@/lib/safe-path'
+import { publicOfferNow } from '@/lib/starter-pack/public'
 
 export const metadata = { title: 'Sign in · Stayful Intelligence' }
 
@@ -31,6 +32,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
   // An email confirmed from a link opened on another device: good news, not an error.
   const noticeTone = error === 'confirmed_elsewhere' ? 'border-border bg-muted text-foreground' : 'border-destructive/30 bg-destructive/5 text-destructive'
   const prefill = typeof email === 'string' && email.includes('@') ? email : ''
+  const offer = await publicOfferNow()
 
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
@@ -64,9 +66,9 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
       </div>
 
       <p className="mt-6 text-sm text-muted-foreground">
-        Don&apos;t have an account?{' '}
+        {offer.loginPrompt}{' '}
         <Link href="/signup" className="text-primary font-medium hover:underline">
-          Start with £20 of free credit
+          {offer.loginLink}
         </Link>
       </p>
     </div>

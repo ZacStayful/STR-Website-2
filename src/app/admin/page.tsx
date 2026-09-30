@@ -156,6 +156,9 @@ export default async function AdminPage() {
           <Link href="/admin/announcements" className="text-sm font-medium text-primary hover:underline">
             Announcements
           </Link>
+          <Link href="/admin/lifecycle" className="text-sm font-medium text-primary hover:underline">
+            Starter pack &amp; Monday
+          </Link>
           <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
             → Analyser
           </Link>
