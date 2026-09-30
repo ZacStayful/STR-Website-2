@@ -9,6 +9,7 @@ import { getPlan } from "@/lib/credit/plans";
 import { cardSummary } from "@/lib/stripe/customer";
 import { stripeConfigured } from "@/lib/stripe/client";
 import { WELCOME_WITHHELD_COPY } from "@/lib/credit/welcome";
+import { recordPackShown, starterPackStateFor } from "@/lib/starter-pack/server";
 import { BillingClient } from "./BillingClient";
 
 export const metadata: Metadata = {
@@ -36,12 +37,16 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   if (!profile) redirect("/upgrade");
 
   const admin = isAdminEmail(user.email);
-  const [summary, history, plan, card] = await Promise.all([
+  const [summary, history, plan, card, pack] = await Promise.all([
     getCreditSummary(user.id),
     usageHistory(user.id, { limit: 40 }).catch(() => ({ items: [], nextCursor: null })),
     getPlan(profile.plan_code),
     cardSummary(profile.stripe_default_payment_method_id ?? null),
+    starterPackStateFor(user.id),
   ]);
+  // Batch 20: the starter pack line on "Pay as you go", for a new member who can still buy it.
+  const packLine = !plan && pack.offer.eligible;
+  if (packLine) recordPackShown(user.id, "account");
 
   return (
     <BillingClient
@@ -56,6 +61,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       welcomeWithheld={profile.welcome_withheld_reason ? (WELCOME_WITHHELD_COPY[profile.welcome_withheld_reason] ?? null) : null}
       justToppedUp={params.topup === "1"}
       justSubscribed={params.subscribed === "1"}
+      pack={packLine ? pack.copy : null}
+      packBought={!pack.offer.eligible && pack.offer.reason === "bought"}
     />
   );
 }

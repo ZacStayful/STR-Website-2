@@ -58,6 +58,8 @@ import { reminderWhere } from "@/lib/analysis/take-up";
 import { StageSelect } from "@/app/my-deals/_components/StageSelect";
 import { NextStepSlot } from "@/app/my-deals/_components/NextStepSlot";
 import { factsFromCard } from "@/lib/pipeline/slot-facts";
+import { recordPackShown, starterPackStateFor } from "@/lib/starter-pack/server";
+import { StarterPackOffer } from "@/components/starter-pack/StarterPackOffer";
 import { StageReminder } from "@/components/pipeline/StageReminder";
 import { ShareDealButton } from "../_components/ShareDealButton";
 import { AnalysisPanel } from "../_components/AnalysisPanel";
@@ -134,6 +136,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const history = parseHistory(deal.price_history);
   const message = msg ? MESSAGES[msg] ?? null : null;
   const insufficient = msg === "insufficient_credit";
+  // Batch 20: a new member short of credit is offered the starter pack rather than a dead end.
+  const pack = insufficient ? await starterPackStateFor(user.id) : null;
+  const packOffered = Boolean(pack?.offer.eligible);
+  if (packOffered) recordPackShown(user.id, "deal", new Date());
   const where = [deal.town, area?.name && area.name !== deal.town ? area.name : null, deal.outcode].filter(Boolean).join(" · ");
 
   // The profit as an area-estimate range at the member's finance (Batch 10):
@@ -257,7 +263,23 @@ export default async function DealPage({ params, searchParams }: { params: Promi
         </div>
 
         {message && <p className={"mb-4 rounded-md border p-3 text-sm " + (message.tone === "ok" ? "border-primary/40 bg-primary/10 text-foreground" : "border-destructive/40 bg-destructive/10 text-destructive")}>{message.text}</p>}
-        {insufficient && (
+        {insufficient && pack && packOffered && (
+          <section className="mb-4 rounded-md border border-primary/30 bg-primary/5 p-4 text-sm">
+            <p className="font-semibold text-foreground">Not enough credit for a Quick look.</p>
+            <p className="mt-1 text-muted-foreground">{pack.copy.body}</p>
+            <div className="mt-3">
+              <StarterPackOffer copy={pack.copy} returnTo={`/deals/${id}`} variant="compact" heading={false} />
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Or{" "}
+              <Link href={`/upgrade?redirect=${encodeURIComponent(`/deals/${id}`)}`} className="font-medium text-foreground underline underline-offset-4">
+                choose a plan
+              </Link>
+              .
+            </p>
+          </section>
+        )}
+        {insufficient && !packOffered && (
           <section className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
             <p className="font-semibold text-destructive">Not enough credit for a Quick look.</p>
             <p className="mt-1 text-muted-foreground">

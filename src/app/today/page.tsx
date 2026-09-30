@@ -38,6 +38,9 @@ import { logActivity } from "@/lib/activity/log";
 import { BehaviourPrompt } from "./_components/BehaviourPrompt";
 import { LeadsUpsell } from "./_components/LeadsUpsell";
 import { WidenAndSee } from "./_components/WidenAndSee";
+import { latestPurchaseFor, recordPackShown, starterPackStateFor } from "@/lib/starter-pack/server";
+import { returnMessage } from "@/lib/starter-pack/rules";
+import { StarterPackCard } from "@/components/starter-pack/StarterPackCard";
 
 /** How long the page waits for the market snapshot for the cards' area figures; without it they fall back. */
 const AREA_WAIT_MS = 2_000;
@@ -53,9 +56,12 @@ export const metadata: Metadata = {
  * for the day. The list is chosen once a day and stored, so it does not move
  * under them between visits or devices.
  */
-export default async function TodayPage({ searchParams }: { searchParams: Promise<{ check?: string | string[] }> }) {
+export default async function TodayPage({ searchParams }: { searchParams: Promise<{ check?: string | string[]; pack?: string | string[]; offer?: string | string[] }> }) {
   const params = await searchParams;
   const searchParam = Array.isArray(params.check) ? params.check[0] : params.check;
+  const packParam = Array.isArray(params.pack) ? params.pack[0] : params.pack;
+  // Batch 20: the pack letter's button (?offer=pack) shows the card even inside a "Not now".
+  const offerParam = Array.isArray(params.offer) ? params.offer[0] : params.offer;
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
@@ -64,7 +70,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
 
   const now = new Date();
   const adminUser = isAdminEmail(user.email);
-  const [payer, visibility, profileRes, savedRes, settings, saved] = await Promise.all([
+  const [payer, visibility, profileRes, savedRes, settings, saved, pack, packReturn] = await Promise.all([
     payerFor(user.id),
     // An account that has never paid sees a deal only once its early-access window has passed.
     dealVisibilityFor(user.id, adminUser),
@@ -73,7 +79,14 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     getBillingSettings(),
     // Saved profiles (Batch 13): Today is the active profile's own list and pick.
     profilesFor(user.id),
+    // Batch 20: the starter pack card, and what happened to a purchase Stripe has just sent them back from.
+    starterPackStateFor(user.id),
+    packParam === "1" ? latestPurchaseFor(user.id) : Promise.resolve(null),
   ]);
+  const packNote = packParam === "1" ? returnMessage(packReturn?.status ?? "reserved", packReturn?.blockedBy ?? null, pack.copy.credit) : null;
+  // Not beside the note about a purchase that has only just been made.
+  const packCard = (pack.showTodayCard || (offerParam === "pack" && pack.offer.eligible)) && packParam !== "1";
+  if (packCard) recordPackShown(user.id, "today", now);
   const active = saved.readable ? saved.active : null;
   const profileId = active?.id ?? null;
   const paused = active !== null && !isRunning(active);
@@ -164,6 +177,12 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     <main className="min-h-screen bg-background">
       <ChecklistProvider initial={checklist}>
       <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:py-8">
+        {packNote && (
+          <p role="status" className={`rounded-lg border p-3 text-sm ${packNote.tone === "ok" ? "border-primary/30 bg-primary/5 text-foreground" : "border-warning/40 bg-warning/10 text-foreground"}`}>
+            {packNote.text}
+          </p>
+        )}
+        {packCard && <StarterPackCard copy={pack.copy} />}
         <Checklist />
         {/* Batch 12: the profile reminder, until the profile is complete. */}
         <ProfileProgressCard userId={user.id} now={now} />

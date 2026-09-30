@@ -665,3 +665,93 @@ test('Batch 20: bookkeeping that throws never fails the delivery', async () => {
   assert.equal((await handleStripeEvent(ev('payment_intent.succeeded', pi), deps)).handled, true);
   assert.equal((await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', amount_refunded: 100 }), deps)).handled, true);
 });
+
+// ── Batch 20: the £10 starter pack ──
+const packPi = (over: Record<string, unknown> = {}) =>
+  ({ id: 'pi_pack', status: 'succeeded', customer: 'cus_1', payment_method: 'pm_1', amount: 1000, amount_received: 1000, currency: 'gbp', metadata: { kind: 'starter_pack', user_id: 'u1', price_pence: '1000', credit_pence: '3000' }, ...over }) as unknown as Stripe.PaymentIntent;
+
+function withPack(deps: ReturnType<typeof fakeDeps>, outcomes: Array<'granted' | 'already' | 'blocked' | 'ignored'> = ['granted', 'already']) {
+  const settled: string[] = [];
+  const granted: string[] = [];
+  const clawed: Array<{ refundedPence: number; chargedPence: number; reason: string }> = [];
+  deps.settleStarterPack = async (piId) => {
+    settled.push(piId);
+    return 'captured';
+  };
+  deps.grantStarterPack = async ({ paymentIntent }) => {
+    granted.push(paymentIntent.id);
+    return outcomes[Math.min(granted.length - 1, outcomes.length - 1)];
+  };
+  deps.clawbackStarterPack = async (c) => {
+    clawed.push({ refundedPence: c.refundedPence, chargedPence: c.chargedPence, reason: c.reason });
+  };
+  return { settled, granted, clawed };
+}
+
+test('Batch 20: a pack Checkout saves the card and settles the authorised payment; it never grants a top-up', async () => {
+  const deps = fakeDeps();
+  const { settled } = withPack(deps);
+  deps.retrievePaymentIntent = async () => packPi({ status: 'requires_capture' });
+  const session = { id: 'cs_p', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_pack', amount_total: 1000, metadata: { kind: 'starter_pack', user_id: 'u1' } };
+  const r = await handleStripeEvent(ev('checkout.session.completed', session), deps);
+  assert.equal(r.handled, true);
+  assert.deepEqual(settled, ['pi_pack']);
+  assert.equal(deps.calls.savePaymentMethod?.length, 1);
+  assert.equal(deps.calls.grantTopup, undefined);
+});
+
+test('Batch 20: a captured pack is granted, logged, measured and booked once, however often it is delivered', async () => {
+  const deps = fakeDeps();
+  const { granted } = withPack(deps);
+  const recorded = withConversions(deps);
+  const { payments } = withPayments(deps);
+  const seen = new Set<string>();
+  deps.logActivity = async (a) => {
+    if (a.dedupeKey && seen.has(a.dedupeKey)) return;
+    if (a.dedupeKey) seen.add(a.dedupeKey);
+    deps.activity.push(a);
+  };
+  for (let i = 0; i < 3; i += 1) await handleStripeEvent(ev('payment_intent.succeeded', packPi()), deps);
+  assert.deepEqual(granted, ['pi_pack', 'pi_pack', 'pi_pack']);
+  assert.deepEqual(deps.activity.map((a) => [a.kind, a.dedupeKey]), [['starter_pack', 'starter_pack:pi:pi_pack']]);
+  assert.deepEqual(recorded, [{ key: 'Purchase:pi_pack', name: 'Purchase', eventId: 'pi_pack', valuePence: 1000 }]);
+  assert.deepEqual([...payments.entries()].map(([k, v]) => [k, v.kind, v.amountPence]), [['pi:pi_pack', 'starter_pack', 1000]]);
+  assert.equal(deps.calls.grantTopup, undefined);
+});
+
+test('Batch 20: a repeat that was charged anyway becomes a top-up and is logged as one', async () => {
+  const deps = fakeDeps();
+  withPack(deps, ['blocked']);
+  const r = await handleStripeEvent(ev('payment_intent.succeeded', packPi()), deps);
+  assert.equal(r.note, 'starter pack blocked');
+  assert.deepEqual(deps.activity.map((a) => a.kind), ['topup']);
+});
+
+test('Batch 20: a pack payment the grant will not take (not captured) is not handled', async () => {
+  const deps = fakeDeps();
+  withPack(deps, ['ignored']);
+  const r = await handleStripeEvent(ev('payment_intent.succeeded', packPi()), deps);
+  assert.equal(r.handled, false);
+  assert.equal(deps.activity.length, 0);
+});
+
+test('Batch 20: without the pack wired in, a pack payment is left alone, never granted as a top-up', async () => {
+  const deps = fakeDeps();
+  const r = await handleStripeEvent(ev('payment_intent.succeeded', packPi()), deps);
+  assert.equal(r.handled, false);
+  assert.equal(deps.calls.grantTopup, undefined);
+});
+
+test("Batch 20: refunding or disputing a pack claws its credit back, and never touches the top-up clawback", async () => {
+  const deps = fakeDeps();
+  const { clawed } = withPack(deps);
+  deps.retrievePaymentIntent = async () => packPi();
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_p', payment_intent: 'pi_pack', customer: 'cus_1', amount: 1000, amount_refunded: 500 }), deps);
+  assert.equal(r.note, 'starter pack credit clawed back');
+  await handleStripeEvent(ev('charge.dispute.created', { id: 'dp_1', payment_intent: 'pi_pack', amount: 1000 }), deps);
+  assert.deepEqual(clawed, [
+    { refundedPence: 500, chargedPence: 1000, reason: 'refunded' },
+    { refundedPence: 1000, chargedPence: 1000, reason: 'disputed' },
+  ]);
+  assert.equal(deps.calls.refundTopup, undefined);
+});

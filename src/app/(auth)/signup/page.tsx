@@ -4,6 +4,7 @@ import { GoogleButton } from '../google-button'
 import { safeInternalPath } from '@/lib/safe-path'
 import { bannerEnabled } from '@/lib/meta/env'
 import { deviceConsent } from '@/lib/tracking/consent-server'
+import { publicOfferNow } from '@/lib/starter-pack/public'
 
 export const metadata = { title: 'Start your free trial · Stayful Intelligence' }
 
@@ -17,6 +18,8 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
   const joiningTeam = nextPath.startsWith('/team/join')
   // Batch 19: the Meta pixel checkbox, never for a team invite (team seats are never measured).
   const consent = bannerEnabled() && !joiningTeam ? { initialChoice: (await deviceConsent())?.choice ?? null } : null
+  // Batch 20: the welcome credit until the starter pack's cutover, the pack from then.
+  const offer = joiningTeam ? null : await publicOfferNow()
   return (
     <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
       {joiningTeam ? (
@@ -28,7 +31,7 @@ export default async function SignupPage({ searchParams }: { searchParams: Searc
         </>
       ) : (
         <>
-          <h1 className="text-2xl font-semibold text-foreground">Start with £20 of free credit</h1>
+          <h1 className="text-2xl font-semibold text-foreground">{offer?.signupHeadline}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Profitable purchase and rent-to-rent deals, matched to you.
           </p>

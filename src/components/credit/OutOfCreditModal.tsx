@@ -8,20 +8,32 @@ import { ACTION_LABELS, fetchEstimate, formatGbp, type EstimateResponse, type Ou
 import { useCreditOptional } from "./CreditProvider";
 import { TopupButtons } from "./TopupButtons";
 import { RateComparison } from "./RateComparison";
+import { StarterPackOffer } from "@/components/starter-pack/StarterPackOffer";
+import { packNotNowAction, packShownAction } from "@/components/starter-pack/actions";
+import type { PackCopy } from "@/lib/starter-pack/rules";
 
 /**
  * The blocking out-of-credit dialog: what was needed, what's left, then two
  * ways forward — upgrade (primary, spends at the plan rate) or a one-click
- * top-up (spends at the top-up rate, 1.3× by default).
+ * top-up (spends at the top-up rate, 1.3× by default). A new member who can
+ * still buy the starter pack is offered that instead (Batch 20).
  */
 export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetail | null; onClose: () => void }) {
   const credit = useCreditOptional();
   const [busy, setBusy] = useState(false);
   const [reportEst, setReportEst] = useState<EstimateResponse | null>(null);
   const open = detail !== null;
+  // The pack as it was when the dialog opened: buying it refreshes the balance, and the dialog must not change under them.
+  const [packFor, setPackFor] = useState<{ detail: OutOfCreditDetail | null; pack: PackCopy | null }>({ detail: null, pack: null });
+  if (packFor.detail !== detail) setPackFor({ detail, pack: detail && !credit?.credit?.member ? (credit?.credit?.pack ?? null) : null });
+  const pack = packFor.detail === detail ? packFor.pack : null;
 
   useEffect(() => {
-    if (!open) return;
+    if (open && pack) packShownAction("modal").catch(() => {});
+  }, [open, pack]);
+
+  useEffect(() => {
+    if (!open || pack) return;
     let alive = true;
     void fetchEstimate("report").then((e) => {
       if (alive) setReportEst(e);
@@ -29,7 +41,7 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
     return () => {
       alive = false;
     };
-  }, [open]);
+  }, [open, pack]);
 
   const snapshot = credit?.credit ?? null;
   const presets = snapshot?.topupPresetsPence ?? [1000, 2500, 5000];
@@ -41,7 +53,7 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
   const member = snapshot?.member ?? null;
   const title = member?.paused
     ? "Your seat is paused"
-    : topupMode ? "Top up your credit" : available <= 0 ? "You're out of credit" : "Not enough credit for this";
+    : topupMode ? (pack ? pack.headline : "Top up your credit") : available <= 0 ? "You're out of credit" : "Not enough credit for this";
   const body = topupMode
     ? `You have ${formatGbp(available)} of credit left.`
     : detail?.requiredPence
@@ -68,7 +80,30 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
             </Dialog.Close>
           </div>
 
-          {member ? (
+          {pack && !member ? (
+            <div className="mt-5 space-y-3">
+              <section className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+                <StarterPackOffer
+                  copy={pack}
+                  returnTo={typeof window === "undefined" ? "/today" : `${window.location.pathname}${window.location.search}`}
+                  variant="card"
+                  onNotNow={() => {
+                    packNotNowAction("modal").catch(() => {});
+                    onClose();
+                  }}
+                  onContinue={onClose}
+                  continueLabel="Carry on"
+                />
+              </section>
+              <p className="text-center text-xs text-muted-foreground">
+                Or{" "}
+                <Link href="/upgrade" className="font-medium text-foreground underline underline-offset-4" onClick={onClose}>
+                  choose a plan
+                </Link>
+                .
+              </p>
+            </div>
+          ) : member ? (
             // A team member spends the owner's credit and cannot buy more.
             <p className="mt-5 rounded-xl border border-border p-4 text-sm text-muted-foreground">
               {member.paused

@@ -19,7 +19,8 @@ import {
   webApplicationSchema,
   webPageSchema,
 } from "@/lib/schema";
-import { FAQS } from "@/lib/faqs-data";
+import { faqsWith } from "@/lib/faqs-data";
+import { publicOfferNow } from "@/lib/starter-pack/public";
 import { siteUrl } from "@/lib/url";
 
 const PAGE_TITLE =
@@ -28,6 +29,10 @@ const PAGE_DESCRIPTION =
   "Short-term rental intelligence from a company that actually manages the properties. See the income forecasts we produced before six UK short-lets went live, next to what they really earned. Type a UK postcode for a 10-section report.";
 const PAGE_URL = siteUrl("/");
 const LAST_UPDATED = "2026-05-08";
+
+// Batch 20: the pricing section and the FAQ follow billing_settings (the
+// starter pack's cutover among them), refreshed every five minutes like /pricing.
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: PAGE_TITLE,
@@ -43,7 +48,8 @@ export const metadata: Metadata = {
   },
 };
 
-export default function HomePage() {
+export default async function HomePage() {
+  const faqs = faqsWith(await publicOfferNow());
   return (
     <>
       <Schema
@@ -60,7 +66,7 @@ export default function HomePage() {
             description: PAGE_DESCRIPTION,
             dateModified: LAST_UPDATED,
           }),
-          faqSchema(FAQS),
+          faqSchema(faqs),
         ]}
       />
 
@@ -76,7 +82,7 @@ export default function HomePage() {
       <WhyWeBuilt variant="landing" />
       <Comparison />
       <Pricing />
-      <FAQ />
+      <FAQ items={faqs} />
       <FinalCTA />
     </>
   );

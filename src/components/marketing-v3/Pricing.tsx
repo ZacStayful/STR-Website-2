@@ -8,6 +8,7 @@ import { dailyDealsMonthly, formatPence, fullAnalysesIncluded, newPricingActive,
 import { ladderRangeText } from "@/lib/marketplace/ladder";
 import { perkLines, pickLine, FREE_PERKS } from "@/lib/credit/perks";
 import { SubscribeButton } from "@/components/credit/SubscribeButton";
+import { packCopy, packLive } from "@/lib/starter-pack/rules";
 
 /**
  * The plan grid, shared by the marketing pages and /upgrade (Batch 10: told
@@ -33,6 +34,8 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
   const fromWords = from && Number.isFinite(from.getTime()) ? from.toLocaleDateString("en-GB", { day: "numeric", month: "long", timeZone: "UTC" }) : null;
   const analyses = (credit: number) => fullAnalysesIncluded(credit, pricing);
   const welcomeAnalyses = full > 0 ? Math.floor(settings.welcomeGrantPence / full) : 0;
+  // Batch 20: from the starter pack's cutover a new member starts with the pack, not the £20.
+  const pack = packLive(settings.lifecycle, now) ? packCopy(settings.lifecycle, full, settings.spendRates) : null;
   const gbp = (p: number) => formatGbp(p).replace(".00", "");
 
   const card = (p: BillingPlan, hl: boolean, tag?: string) => {
@@ -75,12 +78,14 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
           <div className="pricing-head">
             <div className="eyebrow">Pricing</div>
             <h2>
-              {gbp(settings.welcomeGrantPence)} of credit free.
+              {pack ? pack.pricingLine : `${gbp(settings.welcomeGrantPence)} of credit free.`}
               <br />
               Then pay for what you use.
             </h2>
             <p className="lede">
-              Every account starts with {gbp(settings.welcomeGrantPence)} of credit, about {welcomeAnalyses} Full analyses, and no card. Subscribe for monthly credit, or top up as you go.
+              {pack
+                ? `Start with the ${pack.price} starter pack: ${pack.credit} of credit${pack.analyses > 0 ? `, about ${pack.analyses} Full analyses` : ""}, one per person. Or subscribe for monthly credit, or top up as you go.`
+                : `Every account starts with ${gbp(settings.welcomeGrantPence)} of credit, about ${welcomeAnalyses} Full analyses, and no card. Subscribe for monthly credit, or top up as you go.`}
             </p>
             <ul className="lede" style={{ listStyle: "none", paddingLeft: 0, marginTop: 12 }}>
               <li><strong>Daily deals:</strong> {formatPence(daily)} a day, {dailyDealsMonthly(daily)}, charged only on days we send them{fromWords ? ` (from ${fromWords}; each pick is priced on its own until then)` : ""}.</li>
@@ -93,12 +98,12 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
         <div className="pricing-grid">
           {!signedIn && (
             <div className="plan">
-              <div className="plan-name">Free to start</div>
+              <div className="plan-name">{pack ? "Starter pack" : "Free to start"}</div>
               <div className="plan-price-row">
-                <span className="plan-price">{gbp(settings.welcomeGrantPence)}</span>
-                <span className="plan-price-sub">credit, no card</span>
+                <span className="plan-price">{pack ? pack.price : gbp(settings.welcomeGrantPence)}</span>
+                <span className="plan-price-sub">{pack ? `for ${pack.credit} of credit` : "credit, no card"}</span>
               </div>
-              <div className="plan-sub">About {welcomeAnalyses} Full analyses · then top up or subscribe</div>
+              <div className="plan-sub">{pack ? `About ${pack.analyses} Full analyses · one per person · then top up or subscribe` : `About ${welcomeAnalyses} Full analyses · then top up or subscribe`}</div>
               <ul className="plan-features">
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Full analysis of any deal</li>
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Market Explorer: UK area rankings</li>
@@ -108,7 +113,7 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
                 <li><Icon name="check" size={13} color="var(--sage-500)" /> Top-ups from {gbp(settings.topupPresetsPence[0] ?? 1000)}</li>
               </ul>
               <Link href={signupHref} className="btn btn-ghost" style={{ width: "100%", justifyContent: "center" }}>
-                Start free <Icon name="arrow" size={14} />
+                {pack ? "Get started" : "Start free"} <Icon name="arrow" size={14} />
               </Link>
             </div>
           )}

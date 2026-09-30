@@ -13,6 +13,7 @@ import { recordSubscriptionEvent } from '../billing/subscription-events';
 import { recordActivity } from '../activity/log';
 import { recordConversion } from '../meta/conversions';
 import { recordPayment, recordRefund } from '../payments/server';
+import { clawbackStarterPack, grantStarterPack, settleStarterPack } from '../starter-pack/grant-server';
 import { monthlyPence } from '../billing/churn';
 import type { WebhookDeps } from './webhook';
 
@@ -92,6 +93,10 @@ export function liveWebhookDeps(): WebhookDeps {
     // Batch 20: the rows behind "Total paid" (src/lib/payments).
     recordPayment: (payment) => recordPayment(payment),
     recordRefund: (refund) => recordRefund(refund),
+    // Batch 20: the £10 starter pack (src/lib/starter-pack/grant-server.ts).
+    settleStarterPack: (paymentIntentId) => settleStarterPack(paymentIntentId),
+    grantStarterPack: (input) => grantStarterPack(input),
+    clawbackStarterPack: (input) => clawbackStarterPack(input),
     recordSubscriptionEvent: async (input) => {
       // The price is resolved HERE rather than in the handler, so the handler
       // stays pure and testable and only this file needs the plan table.

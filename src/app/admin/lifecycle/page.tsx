@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings, invalidateCreditCaches } from "@/lib/credit/unit-costs";
 import { isoToLondonLocal } from "@/lib/lifecycle/admin-form";
+import { packAdminStatus } from "@/lib/starter-pack/admin-server";
 import { MobilePanel, SettingsForm } from "./Panels";
 
 export const metadata: Metadata = { title: "Starter pack, inactivity and Monday — Stayful Intelligence", robots: { index: false, follow: false } };
@@ -26,6 +27,8 @@ export default async function LifecyclePage() {
 
   invalidateCreditCaches();
   const s = (await getBillingSettings()).lifecycle;
+  const pack = await packAdminStatus(s);
+  const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-10">
@@ -38,6 +41,32 @@ export default async function LifecyclePage() {
       <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
         Batch 20. The £10 starter pack for new members, the £5 low-credit decision for members with no plan, the inactivity rules (Re-engage and paused daily picks) and the Monday sales-funnel board.
       </p>
+
+      <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Starter pack</h2>
+      <div className="rounded-xl border border-border bg-card p-5 text-sm">
+        <p className="font-medium text-foreground">
+          {pack.state === "off" ? "Off: new members get the welcome credit." : pack.state === "scheduled" ? `Starts for accounts created from ${when(s.starterPackFrom!)} (UK time).` : `Live for accounts created from ${when(s.starterPackFrom!)} (UK time).`}
+        </p>
+        <dl className="mt-3 grid max-w-xl grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+          <dt>Stripe</dt>
+          <dd className="text-foreground">{pack.stripe ? "Configured" : "Not configured"}</dd>
+          <dt>STRIPE_PRICE_STARTER_PACK</dt>
+          <dd className="text-foreground">{pack.priceSet ? "Set" : "Not set"}</dd>
+          <dt>Credit enforcement</dt>
+          <dd className="text-foreground">{pack.enforcing ? "On" : "Off (shadow mode)"}</dd>
+          <dt>Last Stripe event received</dt>
+          <dd className="text-foreground">{pack.lastStripeEvent ? `${pack.lastStripeEvent.type}, ${when(pack.lastStripeEvent.receivedAt)}${pack.lastStripeEvent.error ? ` (failed: ${pack.lastStripeEvent.error})` : ""}` : "None ever"}</dd>
+          <dt>Packs bought</dt>
+          <dd className="text-foreground">{pack.counts ? `${pack.counts.granted} granted · ${pack.counts.reserved} being settled · ${pack.counts.blocked} refused (one per person, not charged) · ${pack.counts.failed} failed` : "Unreadable (schema not run?)"}</dd>
+        </dl>
+        {pack.warnings.length > 0 && (
+          <ul className="mt-4 space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-900">
+            {pack.warnings.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Settings</h2>
       <SettingsForm

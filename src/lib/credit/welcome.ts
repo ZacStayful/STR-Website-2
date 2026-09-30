@@ -5,17 +5,26 @@ import { grant, redeemCode, CodeError } from './ledger';
 import { getBillingSettings } from './unit-costs';
 import { isDisposableEmail, normaliseMobile } from './abuse';
 import { teamOf, hasOpenInvite } from '../team';
+import { isPackAccount } from '../lifecycle/settings';
+import { readStarterPackCutover } from '../lifecycle/settings-server';
 
 /**
  * Grants the one-off welcome credit to a member the first time we see them
  * signed in, after the abuse checks: not a disposable email domain, and a
  * mobile number no other account has already used. Idempotent (source_ref)
  * and cheap after the first call (welcome_checked_at short-circuits).
+ *
+ * Batch 20: an account created at or after the starter pack's cutover
+ * (billing_settings.starter_pack_from) gets the pack offer instead, so no
+ * welcome credit. The checks still run and are stamped exactly as before,
+ * because the £5 profile credit, the first-week £1s and the daily picks all
+ * follow them, and its number is still claimed; a referral code is still
+ * redeemed. Accounts created before the cutover are untouched.
  */
 export async function ensureWelcomeGrant(userId: string, email: string | null): Promise<{ granted: boolean; withheld: string | null }> {
   if (!hasServiceRole()) return { granted: false, withheld: null };
   const admin = createAdminClient();
-  const { data: profile } = await admin.from('profiles').select('id, mobile, mobile_key, welcome_checked_at, welcome_withheld_reason').eq('id', userId).maybeSingle();
+  const { data: profile } = await admin.from('profiles').select('id, created_at, mobile, mobile_key, welcome_checked_at, welcome_withheld_reason').eq('id', userId).maybeSingle();
   if (!profile) return { granted: false, withheld: null };
   if (profile.welcome_checked_at) return { granted: false, withheld: (profile.welcome_withheld_reason as string | null) ?? null };
 
@@ -52,6 +61,20 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
   if (withheld) {
     console.warn(`[credit] welcome credit withheld for ${userId}: ${withheld}`);
     return { granted: false, withheld };
+  }
+  // Batch 20: the starter pack replaces the welcome credit for new members.
+  // Read directly, never from a default: when the setting cannot be read the
+  // stamp is cleared and the next sign-in decides, so a bad read can never
+  // grant £20 to a member the pack was meant for.
+  const cutover = await readStarterPackCutover();
+  if (!cutover.ok) {
+    await admin.from('profiles').update({ welcome_checked_at: null }).eq('id', userId);
+    console.warn(`[credit] welcome decision for ${userId} postponed: the starter pack setting could not be read`);
+    return { granted: false, withheld: null };
+  }
+  if (isPackAccount(profile.created_at as string | null, { starterPackFrom: cutover.from })) {
+    await redeemPendingReferral(userId);
+    return { granted: false, withheld: null };
   }
   try {
     const settings = await getBillingSettings();

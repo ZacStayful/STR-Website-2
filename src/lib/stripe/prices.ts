@@ -16,7 +16,14 @@ export const TOPUP_PRICE_ENV: Record<number, string> = {
   5000: 'STRIPE_PRICE_TOPUP_5000',
 };
 
+/** Batch 20: the £10 starter pack, one Stripe price (its amount must match billing_settings.starter_pack_price_pence). */
+export const STARTER_PACK_PRICE_ENV = 'STRIPE_PRICE_STARTER_PACK';
+
 export type Env = Record<string, string | undefined>;
+
+export function priceIdForStarterPack(env: Env = process.env): string | null {
+  return env[STARTER_PACK_PRICE_ENV] || null;
+}
 
 export function priceIdForPlan(planCode: string, env: Env = process.env): string | null {
   const key = PLAN_PRICE_ENV[planCode];

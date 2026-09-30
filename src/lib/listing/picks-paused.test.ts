@@ -122,3 +122,25 @@ test('the letter carries the changes the daily email would have, and says so in 
   // With nothing extra the letter is exactly as it was.
   assert.deepEqual(pausedEmail({ ...base, extra: null }), plain);
 });
+
+test('Batch 20: a member who can still buy the starter pack gets the pack letter: the offer, the deals, one button to it, and still no address', () => {
+  const pack = { body: '£10 gets you £30 of credit: about 7 Full analyses, plus daily deals picked for you. It never expires.', cta: 'Get £30 for £10' };
+  const m = pausedEmail({ misses: [miss(), miss({ kind: 'rent', areaName: 'Leeds', bedrooms: null, priceAmount: 950, pricePeriod: 'pcm', missedAt: daysAgo(1) })], siteUrl: 'https://intelligence.stayful.co.uk/', firstName: 'Sam', pack });
+  assert.equal(m.subject, 'Your daily deals are waiting');
+  assert.ok(m.text.includes(`We found 2 deals for you but couldn't send them without credit. ${pack.body}`));
+  assert.ok(m.text.includes('Here are the deals we found for you'));
+  assert.ok(m.text.includes('Leeds · Rent-to-rent · £950 pcm'));
+  assert.ok(m.text.includes('Get £30 for £10: https://intelligence.stayful.co.uk/today?offer=pack'));
+  assert.ok(!m.text.includes('/account/billing'), 'no top-up link');
+  assert.equal((m.html.match(/<a /g) ?? []).length, 2, 'one button and one footer link');
+  assert.ok(m.html.includes('href="https://intelligence.stayful.co.uk/today?offer=pack"'));
+  assert.ok(m.html.includes('>Get £30 for £10</a>'));
+  for (const secret of ['Secret Street', 'NG1 1AA', 'rightmove.co.uk', 'http://', 'properties/']) {
+    assert.ok(!m.text.includes(secret) && !m.html.includes(secret), `no ${secret}`);
+  }
+  const one = pausedEmail({ misses: [miss()], siteUrl: 'https://x.test', pack });
+  assert.ok(one.text.includes("We found a deal for you but couldn't send it without credit."));
+  assert.ok(one.text.includes('Here is the deal we found for you'));
+  // Without the pack the letter is exactly as before.
+  assert.deepEqual(pausedEmail({ misses: [miss()], siteUrl: 'https://x.test', pack: null }), pausedEmail({ misses: [miss()], siteUrl: 'https://x.test' }));
+});

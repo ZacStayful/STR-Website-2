@@ -7,6 +7,7 @@ import { ladderRangeText } from "@/lib/marketplace/ladder";
 import { maxProfilesSetting } from "@/lib/profiles/server";
 import { DEFAULT_MAX_PROFILES } from "@/lib/profiles/rules";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
+import { packCopy, packGrants } from "@/lib/starter-pack/rules";
 
 export const metadata: Metadata = {
   title: "Terms of service — Stayful Intelligence",
@@ -36,6 +37,12 @@ export default async function TermsPage() {
   const started = newPricingActive(p);
   // Daily deals and 1:1 plan credit start on the new pricing date; until one is set, the date comes by email.
   const fromDate = started ? "" : dateWords ? ` From ${dateWords}:` : " From a date we will email you at least 14 days before:";
+  // Batch 20: the starter pack's clause, once a cutover date is set (for legal review).
+  const lc = settings.lifecycle;
+  const packFrom = lc.starterPackFrom ? new Date(lc.starterPackFrom) : null;
+  const packFromWords = packFrom && Number.isFinite(packFrom.getTime()) ? packFrom.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/London" }) : null;
+  const pack = packFromWords ? packCopy(lc, p.fullAnalysisPence, settings.spendRates) : null;
+  const packSplit = packGrants(lc);
 
   return (
     <section className="section">
@@ -61,7 +68,12 @@ export default async function TermsPage() {
             <strong>Daily deals.</strong>
             {fromDate} Your Today&apos;s 5 email costs {formatPence(p.todays5DailyPence)} a day on a plan ({dailyDealsMonthly(p.todays5DailyPence)}), charged only on days we send it. You can switch it off any time in Account → Notifications.
           </li>
-          <li><strong>Welcome credit</strong> is a one-off promotional grant for new accounts. It is not transferable, has no cash value and may be withheld or reversed where an account is created to abuse the offer (for example with temporary email addresses or a mobile number already used on another account).</li>
+          <li><strong>Welcome credit</strong> is a one-off promotional grant for new accounts{packFromWords ? ` created before ${packFromWords}` : ""}. It is not transferable, has no cash value and may be withheld or reversed where an account is created to abuse the offer (for example with temporary email addresses or a mobile number already used on another account).</li>
+          {pack && packFromWords && (
+            <li>
+              <strong>Starter pack.</strong> Accounts created on or after {packFromWords} can buy one starter pack: {pack.credit} of credit for {pack.price}. {formatPence(packSplit.topupPence)} of it is top-up credit (spent at {topup}×) and {formatPence(packSplit.bonusPence)} is a bonus spent like welcome credit; none of it expires while your account is open. It is one per person: an account, email address, mobile number or card that has had a starter pack cannot have another, and a payment made with one is cancelled before it is taken. When you buy it you ask for the credit straight away and confirm that you lose your 14-day right to cancel once you use any of it; until then you can cancel within 14 days of buying it for a full refund by emailing <a href="mailto:hello@stayful.co.uk">hello@stayful.co.uk</a>. If the payment is refunded or disputed, the same share of the pack&apos;s credit is removed from your account, and the pack still counts as used. It is not transferable and the bonus has no cash value.
+            </li>
+          )}
           {settings.profileCompletePence > 0 && (
             <li>
               <strong>Profile completion credit.</strong> When you complete your profile we add a one-off promotional grant of {formatPence(settings.profileCompletePence)} to your account. It is paid once per account, needs at least {settings.profileCreditMinRealPct}% of the optional questions answered rather than &ldquo;Not sure&rdquo;, spends like welcome credit and is withheld on the same terms (including accounts created to abuse promotional credit, and team logins, which use their team&apos;s credit). It is not transferable and has no cash value. Changing your answers later does not earn it again.

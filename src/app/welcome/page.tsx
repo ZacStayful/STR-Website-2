@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureWelcomeGrant } from "@/lib/credit/welcome";
-import { welcomeReturnPath, HOME_PATH } from "@/lib/auth/landing";
+import { quizPathFor, welcomeReturnPath, HOME_PATH } from "@/lib/auth/landing";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { rankedAreasForQuiz } from "@/lib/onboarding/server";
 import { isQuestionId, questionsFor } from "@/lib/profile/questions";
@@ -14,6 +14,7 @@ import { bannerEnabled } from "@/lib/meta/env";
 import { isTeamBound } from "@/lib/team";
 import { quizCheckboxShown } from "@/lib/tracking/consent";
 import { deviceConsent, memberConsentFor } from "@/lib/tracking/consent-server";
+import { starterPackStateFor } from "@/lib/starter-pack/server";
 import { Quiz } from "./Quiz";
 
 export const dynamic = "force-dynamic";
@@ -76,6 +77,10 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
         })
       : false;
 
+  // Batch 20: the starter pack, offered as the welcome questions are finished (only looked up when it could show).
+  const packState = !editing && !summary.teamMember && !summary.progress.mandatoryDone ? await starterPackStateFor(user.id) : null;
+  const pack = packState?.offer.eligible ? { copy: packState.copy, returnTo: quizPathFor(returnTo) } : null;
+
   return (
     <main className="min-h-screen bg-background px-4 py-6 sm:py-12">
       <VisitHeartbeat />
@@ -90,6 +95,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
           fresh={fresh}
           consentCheckbox={consentCheckbox}
           areas={areas}
+          pack={pack}
           profileHref={GOALS_EDITOR_HREF}
           privacyHref="/privacy"
           todayHref={HOME_PATH}

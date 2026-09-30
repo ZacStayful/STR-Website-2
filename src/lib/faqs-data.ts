@@ -66,3 +66,17 @@ export const TRUST_FAQS: FAQItem[] = [
     a: "You get the market data every platform has — live comparables, long-let benchmarks, demand drivers — without the first-party layer on top. The report says which is which rather than presenting both with the same confidence.",
   },
 ];
+
+const COST_Q = "What does it cost?";
+const COST_REST =
+  "Or subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.3× the plan rate. Cancel any time, no contract.";
+
+/**
+ * The FAQs with "What does it cost?" as it stands (Batch 20): once the
+ * starter pack is live its answer leads with the pack instead of the £20
+ * (src/lib/starter-pack/public.ts); before that, exactly as above.
+ */
+export function faqsWith(offer: { costLead: string | null }): FAQItem[] {
+  if (!offer.costLead) return FAQS;
+  return FAQS.map((f) => (f.q === COST_Q ? { ...f, a: `${offer.costLead} ${COST_REST}` } : f));
+}

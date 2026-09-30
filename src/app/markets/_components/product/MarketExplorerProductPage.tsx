@@ -8,6 +8,7 @@ import { ProductWalkthrough } from "./ProductWalkthrough";
 import { ProductFaq } from "./ProductFaq";
 import { SampleArea } from "./SampleArea";
 import { MarketPulse } from "../explorer/MarketPulse";
+import { publicOfferNow } from "@/lib/starter-pack/public";
 
 const SIGNUP = "/signup?next=/markets";
 const LOGIN = "/login?redirect=/markets";
@@ -19,7 +20,7 @@ const LOGIN = "/login?redirect=/markets";
  * ONE live sample area — never the full dataset.
  */
 export async function MarketExplorerProductPage() {
-  const [sample, national] = await Promise.all([getSampleArea(), getNationalSeries().catch(() => [])]);
+  const [sample, national, offer] = await Promise.all([getSampleArea(), getNationalSeries().catch(() => []), publicOfferNow()]);
   const licensingEntries = Object.keys(STR_LICENSING).length;
   const areaCount = sample?.totalAreas ?? null;
   const reportCount = sample?.totalSamples ?? null;
@@ -157,7 +158,7 @@ export async function MarketExplorerProductPage() {
       <Pricing signupHref={SIGNUP} />
 
       {/* ── FAQ ── */}
-      <ProductFaq />
+      <ProductFaq alongside={offer.alongside} />
 
       {/* ── Final CTA ── */}
       <section className="final-cta">
@@ -180,7 +181,7 @@ export async function MarketExplorerProductPage() {
             </div>
             <div className="final-cta-meta">
               <span><Icon name="check" size={13} /> Free trial · No card</span>
-              <span><Icon name="check" size={13} /> £20 of free credit included</span>
+              <span><Icon name="check" size={13} /> {offer.chip}</span>
               <span><Icon name="check" size={13} /> Cancel any time</span>
             </div>
           </div>

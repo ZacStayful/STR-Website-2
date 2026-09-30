@@ -9,6 +9,8 @@ import { escapeHtml } from "@/lib/email/escape";
 import { siteUrl } from "@/lib/url";
 import { confirmLink } from "@/lib/auth/magic-link";
 import { HOME_PATH } from "@/lib/auth/landing";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { pounds } from "@/lib/starter-pack/rules";
 
 // ─── Lead-form provisioning ───────────────────────────────────────────
 // Turns a Meta lead-form submission (relayed by n8n) into a member: the
@@ -49,13 +51,15 @@ export const maxDuration = 30;
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function welcomeEmail(input: { name: string | null; link: string; areaName: string | null }): { subject: string; html: string; text: string } {
+// Batch 20: the credit is only mentioned when it was granted: from the starter
+// pack's cutover a new account has none (Today offers the pack instead).
+function welcomeEmail(input: { name: string | null; link: string; areaName: string | null; credit: string | null }): { subject: string; html: string; text: string } {
   const hi = input.name ? `Hi ${input.name.split(" ")[0]},` : "Hi,";
   const where = input.areaName ? ` in ${input.areaName}` : "";
   const text = [
     hi,
     "",
-    `Your Stayful Intelligence account is ready, with £20 of credit on it. Every morning we'll email you one property${where} that earns clearly more as a short let than a long let, and you can browse every deal on the market in our top areas at ${siteUrl("/deals")}.`,
+    `Your Stayful Intelligence account is ready${input.credit ? `, with ${input.credit} of credit on it` : ""}. Every morning we'll email you one property${where} that earns clearly more as a short let than a long let, and you can browse every deal on the market in our top areas at ${siteUrl("/deals")}.`,
     "",
     `Sign in with this link (no password needed): ${input.link}`,
     "",
@@ -65,11 +69,11 @@ function welcomeEmail(input: { name: string | null; link: string; areaName: stri
     <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#2e3d2b;max-width:560px">
       <p style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5d8156;font-weight:600">Stayful Intelligence</p>
       <p>${escapeHtml(hi)}</p>
-      <p>Your account is ready, with <strong>£20 of credit</strong> on it. Every morning we’ll email you one property${escapeHtml(where)} that earns clearly more as a short let than a long let, and you can browse every deal on the market in our top areas.</p>
+      <p>Your account is ready${input.credit ? `, with <strong>${escapeHtml(input.credit)} of credit</strong> on it` : ""}. Every morning we’ll email you one property${escapeHtml(where)} that earns clearly more as a short let than a long let, and you can browse every deal on the market in our top areas.</p>
       <p><a href="${escapeHtml(input.link)}" style="display:inline-block;background:#2e3d2b;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600">Sign in and see today’s deals</a></p>
       <p style="color:#7a8274;font-size:13px">No password needed; the link signs you in. If you didn’t ask for this, ignore it and nothing happens.</p>
     </div>`.trim();
-  return { subject: "Your Stayful account is ready: £20 of credit and today’s deals", html, text };
+  return { subject: input.credit ? `Your Stayful account is ready: ${input.credit} of credit and today’s deals` : "Your Stayful account is ready: today’s deals", html, text };
 }
 
 export async function POST(request: Request) {
@@ -167,7 +171,7 @@ export async function POST(request: Request) {
         const { areaMetaForCode } = await import("@/lib/market/areas");
         areaName = areaMetaForCode(areaCode).name;
       }
-      const mail = welcomeEmail({ name, link: magicLink, areaName });
+      const mail = welcomeEmail({ name, link: magicLink, areaName, credit: welcomeGranted ? pounds((await getBillingSettings()).welcomeGrantPence) : null });
       const res = await sendEmail({ to: email, subject: mail.subject, html: mail.html, text: mail.text });
       magicLinkSent = res.sent;
     }

@@ -18,6 +18,7 @@ import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import type { RunResult } from "./picks-run";
 import { allProfilesFor } from "../profiles/server";
 import { labelFor } from "../profiles/rules";
+import { starterPackStateFor } from "../starter-pack/server";
 
 // ─── "Your picks have paused": the run ────────────────────────────────
 // The daily-picks run records, for every member it could not send to for
@@ -156,7 +157,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
 
   const summary = { dry: opts.dry, considered: ids.length, emails: 0, emailFailures: 0, superseded: 0, ranOutOfTime: false };
   const perUser: { user: string; email: string | null; picks: number; sent: boolean; reason?: string }[] = [];
-  const wouldEmail: { email: string; picks: number; lines: string[]; changes: { id: string; type: string }[]; slot: string }[] = [];
+  const wouldEmail: { email: string; picks: number; lines: string[]; changes: { id: string; type: string }[]; slot: string; pack: boolean }[] = [];
   for (const [userId, rows] of byUser) {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
@@ -225,6 +226,9 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       skip("slot_used");
       continue;
     }
+    // Batch 20: a new member who can still buy the starter pack is offered it instead of "top up".
+    const packState = await starterPackStateFor(userId);
+    const pack = packState.offer.eligible ? { body: packState.copy.body, cta: packState.copy.cardCta } : null;
     const base = siteUrl();
     // The letter with (or, when its delivery cannot be recorded, without) the
     // changes on deals they track. Built after the claim, so changes only ever
@@ -236,7 +240,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
       const ids = (list: readonly ChangeInput[]) => list.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
       const extra = changes ? { ...renderSections([changes]), subjectSuffix: changesPhrase(used) } : null;
       return {
-        mail: pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra, perDay }),
+        mail: pausedEmail({ misses: list, siteUrl: base, firstName: firstNameOf(p.full_name), extra, perDay, pack }),
         used,
         // What a sent letter closes: what it told, what it would not tell, what settling dismissed.
         closing: [...new Set([...ids(used), ...ids(given.filter((c) => !used.includes(c))), ...(settled?.dismissed ?? [])])],
@@ -244,7 +248,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     };
     if (opts.dry) {
       const preview = letter(true);
-      wouldEmail.push({ email: p.email, picks: list.length, lines: list.map(missedPickLine), changes: preview.used.map((c) => ({ id: c.id, type: c.alertType })), slot: slots === null ? "unreadable" : "free" });
+      wouldEmail.push({ email: p.email, picks: list.length, lines: list.map(missedPickLine), changes: preview.used.map((c) => ({ id: c.id, type: c.alertType })), slot: slots === null ? "unreadable" : "free", pack: pack !== null });
       perUser.push({ user: userId, email: p.email, picks: list.length, sent: false, reason: "would_send" });
       continue;
     }
@@ -265,7 +269,7 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     const { mail, used, closing } = letter(claimId !== null);
     const unsubscribeToken = claimId ? newSendToken() : null;
     const unsubscribeUrl = unsubscribeToken ? `${base.replace(/\/$/, "")}/api/notify/unsubscribe/${unsubscribeToken}` : null;
-    const sendSummary = { misses: list.length, alerts: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]), subject: mail.subject };
+    const sendSummary = { misses: list.length, alerts: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]), subject: mail.subject, ...(pack ? { pack: true } : {}) };
     if (claimId && !(await markSending(admin, claimId, sendSummary, unsubscribeToken))) {
       await releaseClaim(admin, claimId);
       skip("slot_unwritable");

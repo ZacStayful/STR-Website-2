@@ -18,7 +18,8 @@ const FAQS = [
   },
   {
     q: "Do I get it on the free trial?",
-    a: "Yes. The Market Explorer is included from the moment you sign up, alongside £20 of free credit. Browsing the explorer is free; only paid lookups such as listing checks use credit.",
+    // Batch 20: "{alongside}" is the offer as it stands (the £20 until the starter pack's cutover).
+    a: "Yes. The Market Explorer is included from the moment you sign up, {alongside}. Browsing the explorer is free; only paid lookups such as listing checks use credit.",
   },
   {
     q: "Can I check a specific property I've found online?",
@@ -30,7 +31,7 @@ const FAQS = [
   },
 ];
 
-export function ProductFaq() {
+export function ProductFaq({ alongside }: { alongside: string }) {
   const [open, setOpen] = useState<number>(0);
   return (
     <section className="faq section" id="faq">
@@ -47,7 +48,7 @@ export function ProductFaq() {
                 <span className="faq-toggle">{open === i ? <Icon name="minus" size={14} /> : <Icon name="plus" size={14} />}</span>
               </button>
               <div className="faq-a-wrap">
-                <p className="faq-a">{f.a}</p>
+                <p className="faq-a">{f.a.replace("{alongside}", alongside)}</p>
               </div>
             </div>
           ))}

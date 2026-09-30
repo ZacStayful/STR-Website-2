@@ -6,7 +6,8 @@ import { useCreditOptional } from "./CreditProvider";
 
 /**
  * Sticky strip under the app nav: a warning once 80% of the cycle's credit
- * is used, a red one at £0. Both link to top-up and upgrade.
+ * is used, a red one at £0. Both link to top-up and upgrade. A new member
+ * who can still buy the starter pack is offered that instead (Batch 20).
  */
 export function CreditBanner() {
   const ctx = useCreditOptional();
@@ -30,6 +31,19 @@ export function CreditBanner() {
         <p className="mx-auto max-w-5xl px-4 py-2.5 text-center text-sm font-medium text-white">
           {out ? `${c.member.teamName} is out of credit.` : `${c.member.teamName} is running low on credit (${formatGbp(c.totalPence)} left).`} Ask the account owner to top up.
         </p>
+      </div>
+    );
+  }
+  if (c.pack) {
+    const text = out ? c.pack.deadEnd : `You have ${formatGbp(c.totalPence)} of credit left. ${c.pack.cardTitle}.`;
+    return (
+      <div className="sticky top-0 z-40 w-full border-b border-black/10 shadow-sm" style={{ backgroundColor: out ? "#991b1b" : "#b45309" }}>
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-2.5 text-center text-sm font-medium text-white">
+          <span>{text}</span>
+          <button type="button" onClick={() => openOutOfCredit({ mode: "topup" })} className="inline-flex items-center rounded-full bg-white px-4 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-white/90" style={{ color: out ? "#991b1b" : "#b45309" }}>
+            {c.pack.cardCta}
+          </button>
+        </div>
       </div>
     );
   }

@@ -9,6 +9,8 @@ import { formatGbp, notifyCreditChanged } from "@/lib/credit/client";
 import { useCreditOptional, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { TopupCard } from "@/components/credit/TopupCard";
 import type { UsageItem } from "@/lib/credit/history";
+import type { PackCopy } from "@/lib/starter-pack/rules";
+import { StarterPackLine } from "@/components/starter-pack/StarterPackLine";
 
 interface Props {
   admin: boolean;
@@ -22,6 +24,10 @@ interface Props {
   welcomeWithheld: string | null;
   justToppedUp: boolean;
   justSubscribed: boolean;
+  /** Batch 20: the starter pack line, for a new member who can still buy it. */
+  pack?: PackCopy | null;
+  /** Batch 20: the welcome-kind credit is the starter pack's bonus. */
+  packBought?: boolean;
 }
 
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null);
@@ -106,6 +112,7 @@ export function BillingClient(props: Props) {
               <div className="mt-3">
                 <Link href="/upgrade" className="inline-flex h-7 items-center rounded-lg border border-transparent bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground hover:opacity-90">See plans</Link>
               </div>
+              {props.pack && <StarterPackLine copy={props.pack} returnTo="/account/billing" />}
             </>
           )}
         </Card>
@@ -115,7 +122,7 @@ export function BillingClient(props: Props) {
           <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
             <dt className="text-muted-foreground">Plan credit</dt>
             <dd className="text-right text-foreground">{formatGbp(summary.buckets.planPence)}{cycle?.endsAt && summary.buckets.planPence > 0 ? <span className="text-muted-foreground"> · resets {fmtDate(cycle.endsAt)}</span> : null}</dd>
-            <dt className="text-muted-foreground">Welcome credit</dt>
+            <dt className="text-muted-foreground">{props.packBought ? "Starter pack bonus" : "Welcome credit"}</dt>
             <dd className="text-right text-foreground">{formatGbp(summary.buckets.welcomePence)}</dd>
             <dt className="text-muted-foreground">Top-up credit <span className="text-xs">({summary.rates.topup}× rate)</span></dt>
             <dd className="text-right text-foreground">{formatGbp(summary.buckets.topupPence)}</dd>

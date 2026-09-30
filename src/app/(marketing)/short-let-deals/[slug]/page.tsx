@@ -13,6 +13,7 @@ import { ladderRangeText } from "@/lib/marketplace/ladder";
 import { formatPence } from "@/lib/credit/deal-pricing";
 import { siteUrl } from "@/lib/url";
 import { barsText } from "@/lib/listing/screen";
+import { publicOfferNow } from "@/lib/starter-pack/public";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
   } = await supabase.auth.getUser();
   if (user) redirect(`/deals?areas=${encodeURIComponent(meta.code)}`);
   // Visitors see the delayed set: never more than a free member would.
-  const [teaser, settings] = await Promise.all([teaserForArea(meta.code, (await publicDealVisibility()).hourCutoffIso), getBillingSettings()]);
+  const [teaser, settings, offer] = await Promise.all([teaserForArea(meta.code, (await publicDealVisibility()).hourCutoffIso), getBillingSettings(), publicOfferNow()]);
   const widths = settings.dealPricing.profitRangePct;
   const now = new Date();
   const signup = `/signup?next=${encodeURIComponent(`/deals?areas=${meta.code}`)}`;
@@ -90,7 +91,7 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
 
       <section className="mt-10 rounded-2xl bg-[#2e3d2b] p-6 text-white">
         <h2 className="text-xl font-bold">See every deal in {meta.name}, with the working</h2>
-        <p className="mt-2 text-sm text-[#d7e0d0]">A free account shows the full grid with the income figures, the uplift over a long let and the profit after rent. A Quick look at a deal for its address, photos and listing link is {ladderRangeText(settings.dealOpenLadder)}, a Full analysis of the property {formatPence(settings.dealPricing.fullAnalysisPence)} on a plan, and every new member starts with £20.</p>
+        <p className="mt-2 text-sm text-[#d7e0d0]">A free account shows the full grid with the income figures, the uplift over a long let and the profit after rent. A Quick look at a deal for its address, photos and listing link is {ladderRangeText(settings.dealOpenLadder)}, a Full analysis of the property {formatPence(settings.dealPricing.fullAnalysisPence)} on a plan, and {offer.newMembers}.</p>
         <p className="mt-4 flex flex-wrap gap-2">
           <Link href={signup} className="rounded-md bg-white px-4 py-2 text-sm font-semibold text-[#2e3d2b]">Start free</Link>
           <Link href={`/login?redirect=${encodeURIComponent(`/deals?areas=${meta.code}`)}`} className="rounded-md border border-white/40 px-4 py-2 text-sm font-medium text-white">Sign in</Link>

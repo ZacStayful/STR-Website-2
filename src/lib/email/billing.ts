@@ -94,3 +94,17 @@ export function subscriberTransitionEmail(to: string, opts: { firstName: string 
     opts.renewsAt ? `Your next renewal is on ${new Date(opts.renewsAt).toLocaleDateString('en-GB')}. Until then nothing changes.` : 'Until your next renewal nothing changes.',
   ], { label: 'See your billing page', path: '/account/billing' }));
 }
+
+/**
+ * Batch 20: the starter pack's receipt. It also confirms, in writing, that the
+ * member asked to use the credit straight away and accepted that the 14-day
+ * right to cancel ends once they use it: the Consumer Contracts Regulations
+ * want that confirmation on a durable medium, and this email is it.
+ */
+export function starterPackReceiptEmail(to: string, opts: { pricePence: number; creditPence: number; balancePence: number }) {
+  return send(to, `Your ${formatGbp(opts.creditPence)} of Stayful credit is ready`, layout('Your starter pack is ready', [
+    `Thanks — your ${formatGbp(opts.pricePence)} starter pack is paid, and ${formatGbp(opts.creditPence)} of credit is on your account (your balance is now ${formatGbp(opts.balancePence)}). It never expires.`,
+    'You asked to use your credit straight away and confirmed you understand that you lose your 14-day right to cancel once you use it.',
+    'Your Stripe receipt will arrive separately.',
+  ], { label: "See today's deals", path: '/today' }));
+}
