@@ -587,8 +587,8 @@ editable on `/admin/lifecycle`. In this order:
    `reengage_since`, `picks_paused_inactive_at`,
    `picks_paused_inactive_email_at`), service-role tables
    (`starter_pack_purchases`, `member_payments`, `member_refunds`,
-   `member_active_days`, `monday_funnel_queue`, `monday_funnel_runs`,
-   `monday_funnel_lock`), their functions, and eight `billing_settings`
+   `member_active_days`, `member_engaged_days`, `monday_funnel_queue`,
+   `monday_funnel_runs`, `monday_funnel_lock`), their functions, and eight `billing_settings`
    rows. `starter_pack_from` and `inactivity_from` start empty, which keeps
    the pack and the inactivity rules off. It also freezes the 12 Sep welcome
    backfill to accounts created before 13 Sep 2026: before this, every run of
@@ -626,7 +626,10 @@ editable on `/admin/lifecycle`. In this order:
    who has been quiet since sign-up. The nightly (`/api/internal/monday-funnel`,
    every 10 minutes, the nightly part from 06:00 UK) then moves members into
    Re-engage at 14 days and pauses their picks at 25; any real action brings
-   them straight back. "Nightly: dry run" shows who would move.
+   them straight back. Engaging by email or text counts here (a click through
+   to the site, an answer or a setting changed from an email), though not
+   towards weekly active or Monday's Last active, Active days and Active
+   weeks. "Nightly: dry run" shows who would move.
 7. **The starter pack:** set "Starter pack for accounts created from" (or
    Start now). From that moment new accounts get the pack offer and no £20
    welcome credit; accounts created before it are untouched and never see

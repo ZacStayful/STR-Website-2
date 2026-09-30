@@ -6,22 +6,24 @@ import { ACCESS_COLUMNS, accountStatus, isCancelScheduled, type AccessProfile } 
 import { getBillingSettings } from '../credit/unit-costs';
 import { QUALIFYING_KINDS } from '../activity/kinds';
 import { payersForStrict } from '../team';
-import { inactivityChange, inactivityEligible, inactivityState } from './rules';
+import { EMAIL_ENGAGEMENT_KINDS, inactivityChange, inactivityEligible, inactivityState } from './rules';
 
 /**
  * Inactivity (Batch 20, Part C; the rules are in ./rules.ts).
  *
  *   runInactivityStep   the nightly, database only: brings member_active_days
- *                       up to date from the activity log (from a watermark,
- *                       never a rescan), then sets reengage_since at 14 quiet
- *                       days and picks_paused_inactive_at at 25, and clears
- *                       both for anyone active again. The first step of
+ *                       and member_engaged_days up to date from the activity
+ *                       log (from a watermark, never a rescan), then sets
+ *                       reengage_since at 14 quiet days and
+ *                       picks_paused_inactive_at at 25, and clears both for
+ *                       anyone active again (engaging by email or text
+ *                       counts). The first step of
  *                       /api/internal/monday-funnel's nightly, before any
  *                       Monday call. `apply: false` writes nothing.
  *   inactivePausedIds   whose daily picks are paused (the picks run skips
  *                       them, the digest drops their Today's 5).
  *
- * A qualifying action clears both at once: ./came-back.ts, from
+ * An engaging action clears both at once: ./came-back.ts, from
  * src/lib/activity/log.ts.
  *
  * Every read of the Batch 20 columns is its own query: before the schema is
@@ -68,7 +70,7 @@ async function syncActiveDays(admin: Admin, apply: boolean, deadline: number): P
   let upTo: number | null = null;
   const pending = new Map<string, string>();
   for (;;) {
-    const { data, error } = await admin.rpc('lifecycle_active_days_sync', { p: { qualifying: QUALIFYING_KINDS, apply, limit: 50000 } });
+    const { data, error } = await admin.rpc('lifecycle_active_days_sync', { p: { qualifying: QUALIFYING_KINDS, engaged: EMAIL_ENGAGEMENT_KINDS, apply, limit: 50000 } });
     if (error) return { error: `active days not synced (schema behind?): ${error.message}` };
     const r = (data ?? {}) as { added?: number; to?: number | null; more?: boolean; pending?: { u: string; day: string }[] | null };
     added += Number(r.added) || 0;
@@ -120,7 +122,8 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
   for (let i = 0; i < ids.length; i += ID_CHUNK) {
     const { data, error } = await admin.rpc('lifecycle_member_stats', { p: { users: ids.slice(i, i + ID_CHUNK) } });
     if (error) return fail(`member stats unreadable: ${error.message}`);
-    for (const r of (data ?? []) as { u: string; last_day: string | null }[]) lastDay.set(r.u, r.last_day ?? null);
+    // The last day they engaged at all (by email or text included: ./rules.ts), not only the weekly-active one.
+    for (const r of (data ?? []) as { u: string; last_day: string | null; last_engaged?: string | null }[]) lastDay.set(r.u, r.last_engaged ?? r.last_day ?? null);
   }
   // A dry run cannot count the actions since the last nightly into the table: its preview adds them here.
   for (const [u, day] of synced.pending) {

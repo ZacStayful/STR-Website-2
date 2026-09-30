@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { daysQuiet, inactivityChange, inactivityEligible, inactivityState, isStaffEmail } from './rules.ts';
+import { EMAIL_ENGAGEMENT_KINDS, daysQuiet, inactivityChange, inactivityEligible, inactivityState, isEngagement, isStaffEmail } from './rules.ts';
+import { QUALIFYING_KINDS } from '../activity/kinds.ts';
 
 const S = { inactiveReengageDays: 14, picksPauseInactiveDays: 25, inactivityFrom: '2026-10-01T00:00:00.000Z' };
 const at = (iso: string) => new Date(iso);
@@ -51,3 +52,15 @@ test('the change: set what is due, clear what is not (coming back clears both)',
   assert.deepEqual(inactivityChange(both, { reengage: false, picksPaused: false, days: 0 }), { setReengage: false, clearReengage: true, setPaused: false, clearPaused: true });
   assert.deepEqual(inactivityChange(both, { reengage: true, picksPaused: true, days: 30 }), { setReengage: false, clearReengage: false, setPaused: false, clearPaused: false });
 });
+
+test('engaging by email or text keeps a member from being quiet, without counting towards weekly active', () => {
+  for (const k of ['email_click', 'sms_click', 'email_feedback', 'email_settings', 'profile_email_click', 'feedback_email_click']) {
+    assert.equal(isEngagement(k), true, k);
+    assert.ok(!QUALIFYING_KINDS.includes(k as (typeof QUALIFYING_KINDS)[number]), `${k} stays out of weekly active`);
+  }
+  assert.equal(isEngagement('today_view'), true, 'every weekly-active kind still counts');
+  assert.equal(isEngagement('keep'), true);
+  for (const k of ['starter_pack_shown', 'reminder_shown', 'auto_topup', 'cookie_choice']) assert.equal(isEngagement(k), false, k);
+  assert.equal(EMAIL_ENGAGEMENT_KINDS.length, 6);
+});
+

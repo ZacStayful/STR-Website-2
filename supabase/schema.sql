@@ -5404,6 +5404,20 @@ create table if not exists public.member_active_days (
 alter table public.member_active_days enable row level security;  -- no policies: service role only
 revoke all on public.member_active_days from anon, authenticated;
 
+-- ── member_engaged_days: the UK days a member engaged by email or text ──
+-- A click from one of our emails or texts, an answer or a setting changed
+-- from one (the kinds are passed in by src/lib/inactivity). Record-only for
+-- weekly active, so kept apart from member_active_days (which Monday's Last
+-- active, Active days and Active weeks read); they keep a member from being
+-- counted as quiet. Filled in the same pass over activity_events.
+create table if not exists public.member_engaged_days (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null,
+  primary key (user_id, day)
+);
+alter table public.member_engaged_days enable row level security;  -- no policies: service role only
+revoke all on public.member_engaged_days from anon, authenticated;
+
 create table if not exists public.member_active_days_state (
   id smallint primary key default 1,
   last_event_id bigint not null default 0,
@@ -5419,21 +5433,25 @@ insert into public.member_active_days_state (id) values (1) on conflict (id) do 
 alter table public.member_active_days_state enable row level security;  -- no policies: service role only
 revoke all on public.member_active_days_state from anon, authenticated;
 
--- lifecycle_active_days_sync(p): {qualifying: [kinds], apply, limit}. Adds the
--- (member, UK day) pairs of up to `limit` activity_events rows past the
--- watermark and moves it on. apply = false counts what it would add and
--- changes nothing, and lists each member's latest such day among them
--- (`pending`), so a dry run's preview counts actions since the last nightly.
--- Returns {from, to, added, more, pending}.
+-- lifecycle_active_days_sync(p): {qualifying: [kinds], engaged: [kinds],
+-- apply, limit}. Adds the (member, UK day) pairs of up to `limit`
+-- activity_events rows past the watermark, the qualifying kinds to
+-- member_active_days and the engaged (email and text) kinds to
+-- member_engaged_days, and moves the watermark on. apply = false counts what
+-- it would add and changes nothing, and lists each member's latest day of
+-- either among them (`pending`), so a dry run's preview counts actions since
+-- the last nightly. Returns {from, to, added, engaged_added, more, pending}.
 create or replace function public.lifecycle_active_days_sync(p jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_qual text[] := coalesce(array(select jsonb_array_elements_text(p->'qualifying')), '{}'::text[]);
+  v_engaged text[] := coalesce(array(select jsonb_array_elements_text(p->'engaged')), '{}'::text[]);
   v_apply boolean := coalesce((p->>'apply')::boolean, false);
   v_limit integer := least(greatest(coalesce((p->>'limit')::integer, 50000), 1), 200000);
   v_from bigint;
   v_to bigint;
   v_added integer := 0;
+  v_engaged_added integer := 0;
   v_pending jsonb;
 begin
   if cardinality(v_qual) = 0 then raise exception 'lifecycle_active_days_sync needs the qualifying kinds'; end if;
@@ -5447,7 +5465,7 @@ begin
   v_from := coalesce(v_from, 0);
   select max(x.id) into v_to from (select e.id from public.activity_events e where e.id > v_from order by e.id limit v_limit) x;
   if v_to is null then
-    return jsonb_build_object('from', v_from, 'to', v_from, 'added', 0, 'more', false);
+    return jsonb_build_object('from', v_from, 'to', v_from, 'added', 0, 'engaged_added', 0, 'more', false);
   end if;
   if v_apply then
     insert into public.member_active_days (user_id, day)
@@ -5456,6 +5474,14 @@ begin
      where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
     on conflict do nothing;
     get diagnostics v_added = row_count;
+    if cardinality(v_engaged) > 0 then
+      insert into public.member_engaged_days (user_id, day)
+      select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date
+        from public.activity_events e
+       where e.id > v_from and e.id <= v_to and e.kind = any(v_engaged)
+      on conflict do nothing;
+      get diagnostics v_engaged_added = row_count;
+    end if;
     update public.member_active_days_state set last_event_id = v_to, updated_at = now() where id = 1;
   else
     select count(*) into v_added from (
@@ -5467,11 +5493,11 @@ begin
     select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'day', x.day)), '[]'::jsonb) into v_pending from (
       select e.user_id, max((e.occurred_at at time zone 'Europe/London')::date) as day
         from public.activity_events e
-       where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
+       where e.id > v_from and e.id <= v_to and (e.kind = any(v_qual) or e.kind = any(v_engaged))
        group by e.user_id
     ) x;
   end if;
-  return jsonb_build_object('from', v_from, 'to', v_to, 'added', v_added,
+  return jsonb_build_object('from', v_from, 'to', v_to, 'added', v_added, 'engaged_added', v_engaged_added,
     'more', exists (select 1 from public.activity_events e where e.id > v_to), 'pending', v_pending);
 end $$;
 revoke all on function public.lifecycle_active_days_sync(jsonb) from public, anon, authenticated;
@@ -5479,7 +5505,9 @@ grant execute on function public.lifecycle_active_days_sync(jsonb) to service_ro
 
 -- lifecycle_member_stats(p): {users: [uuid]}. Per member: the last UK day
 -- with a qualifying action, how many such days and how many UK weeks (Monday
--- to Sunday, as Batch 9 counts them) since sign-up; what they have paid
+-- to Sunday, as Batch 9 counts them) since sign-up; the last UK day they
+-- engaged at all, by email or text included (what inactivity counts from,
+-- `last_engaged`); what they have paid
 -- (payments and refunds as above, the first payment, paid top-ups that are
 -- not fully refunded and the latest); and whether they bought the pack.
 create or replace function public.lifecycle_member_stats(p jsonb)
@@ -5490,6 +5518,10 @@ returns jsonb language sql stable security definer set search_path = '' as $$
     select d.user_id, max(d.day) as last_day, count(*) as days, count(distinct date_trunc('week', d.day::timestamp)) as weeks
       from public.member_active_days d join u on u.id = d.user_id
      group by d.user_id
+  ), eng as (
+    select g.user_id, max(g.day) as last_day
+      from public.member_engaged_days g join u on u.id = g.user_id
+     group by g.user_id
   ), pay as (
     select m.user_id, sum(m.amount_pence) as paid, min(m.paid_at) as first_paid
       from public.member_payments m join u on u.id = m.user_id
@@ -5521,6 +5553,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'u', u.id,
     'last_day', a.last_day,
+    'last_engaged', greatest(a.last_day, eng.last_day),
     'days', coalesce(a.days, 0),
     'weeks', coalesce(a.weeks, 0),
     'paid', coalesce(pay.paid, 0),
@@ -5532,6 +5565,7 @@ returns jsonb language sql stable security definer set search_path = '' as $$
   )), '[]'::jsonb)
   from u
   left join a on a.user_id = u.id
+  left join eng on eng.user_id = u.id
   left join pay on pay.user_id = u.id
   left join ref on ref.user_id = u.id
   left join top on top.user_id = u.id

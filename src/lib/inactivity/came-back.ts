@@ -5,17 +5,17 @@ import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 
 /**
  * Batch 20, Part C: coming back. Called by src/lib/activity/log.ts after a
- * qualifying action is written (Batch 9's weekly-active kinds): the member
- * leaves Re-engage and their daily picks restart with the next run. Kept on
- * its own, with nothing but the database and the Monday queue, so the
- * activity log imports nothing heavier.
+ * new engaging action is written (Batch 9's weekly-active kinds, or engaging
+ * by email or text: ./rules.ts): the member leaves Re-engage and their daily
+ * picks restart with the next run. Kept on its own, with nothing but the
+ * database and the Monday queue, so the activity log imports nothing heavier.
  */
 
 // One warning a minute, so a missing column (schema not run) does not fill the logs.
 let warnedAt = 0;
 
 /**
- * A qualifying action: out of Re-engage and daily picks back on, at once.
+ * An engaging action: out of Re-engage and daily picks back on, at once.
  * One guarded update (it writes only a member who was marked), then Monday
  * hears within ten minutes. Never throws.
  */

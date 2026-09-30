@@ -5,7 +5,11 @@
  *
  * "Active" is Batch 9's weekly-active definition, reused: a day counts when
  * the member did something in a qualifying kind (src/lib/activity/kinds.ts),
- * on UK days. The days are kept in member_active_days by the nightly.
+ * on UK days. The days are kept in member_active_days by the nightly. So does
+ * engaging by email or text (EMAIL_ENGAGEMENT_KINDS, kept in
+ * member_engaged_days): Zac's call, so a member who only uses the emails is
+ * never paused. Those count here only: weekly active, and Monday's Last
+ * active, Active days and Active weeks, stay in-app.
  *
  * Counted from the latest of: their last active UK day, the day they signed
  * up, and billing_settings.inactivity_from (the release date: nobody is
@@ -20,8 +24,24 @@
  * Pure: no network, no database, no server-only.
  */
 import type { AccountStatus } from '../access.ts';
+import { QUALIFYING_KINDS, type ActivityKind } from '../activity/kinds.ts';
 import { ukDay } from '../activity/week.ts';
 import type { LifecycleSettings } from '../lifecycle/settings.ts';
+
+/**
+ * Engaging by email or text: a click from one of our emails or texts to a
+ * page (recorded from the signed-in page itself, so a mail scanner opening
+ * links is not one), an answer given from an email, a setting changed from
+ * one. Record-only for weekly active; they keep a member from being quiet.
+ */
+export const EMAIL_ENGAGEMENT_KINDS: readonly ActivityKind[] = ['email_click', 'sms_click', 'email_feedback', 'email_settings', 'profile_email_click', 'feedback_email_click'];
+
+/** Everything that keeps a member from being quiet: the weekly-active kinds and engaging by email or text. */
+export const ENGAGED_KINDS: readonly ActivityKind[] = [...QUALIFYING_KINDS, ...EMAIL_ENGAGEMENT_KINDS];
+
+export function isEngagement(kind: string): boolean {
+  return (ENGAGED_KINDS as readonly string[]).includes(kind);
+}
 
 export type InactivitySettings = Pick<LifecycleSettings, 'inactiveReengageDays' | 'picksPauseInactiveDays' | 'inactivityFrom'>;
 
