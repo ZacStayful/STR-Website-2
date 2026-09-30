@@ -19,6 +19,7 @@ import type { RunResult } from "./picks-run";
 import { allProfilesFor } from "../profiles/server";
 import { labelFor } from "../profiles/rules";
 import { starterPackStateFor } from "../starter-pack/server";
+import { awayLetter } from "../inactivity/letter";
 
 // ─── "Your picks have paused": the run ────────────────────────────────
 // The daily-picks run records, for every member it could not send to for
@@ -299,5 +300,118 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     perUser.push({ user: userId, email: p.email, picks: list.length, sent: true });
   }
 
-  return done({ status: 200, body: { ...summary, ms: elapsed(), members: perUser, wouldEmail } });
+  // Batch 20, Part C: "while you're away", after the out-of-credit letters and in the same budget.
+  const away = await runAwayLetters(admin, { dry: opts.dry, now, deadline: started + TIME_BUDGET_MS });
+  summary.emails += away.emails;
+  summary.emailFailures += away.failures;
+  if (away.ranOutOfTime) summary.ranOutOfTime = true;
+  return done({ status: 200, body: { ...summary, ms: elapsed(), members: perUser, wouldEmail, away: { considered: away.considered, emails: away.emails, members: away.members, ...(opts.dry ? { wouldEmail: away.wouldEmail } : {}) } } });
+}
+
+/**
+ * Batch 20, Part C: one "while you're away" letter per inactivity pause
+ * (profiles.picks_paused_inactive_at set by the nightly, the letter stamped in
+ * picks_paused_inactive_email_at). Only while both "Daily picks" and "Picks
+ * paused / out of credit" are on. It takes the day's daily slot and carries
+ * that day's changes, as the out-of-credit letter does; a slot already used
+ * today leaves it for tomorrow. Every read of the Batch 20 columns is its own
+ * query: before the schema is run, nothing is sent.
+ */
+async function runAwayLetters(admin: ReturnType<typeof createAdminClient>, opts: { dry: boolean; now: Date; deadline: number }) {
+  const result = { considered: 0, emails: 0, failures: 0, ranOutOfTime: false, members: [] as { user: string; sent: boolean; reason?: string }[], wouldEmail: [] as { email: string; changes: { id: string; type: string }[]; team: boolean }[] };
+  const { data: due, error } = await admin.from("profiles").select("id").not("picks_paused_inactive_at", "is", null).is("picks_paused_inactive_email_at", null).limit(2000);
+  if (error) {
+    console.warn("[picks-paused] away letters skipped (schema not run?):", error.message);
+    return result;
+  }
+  const ids = ((due ?? []) as { id: string }[]).map((r) => r.id);
+  result.considered = ids.length;
+  if (ids.length === 0) return result;
+  const rows: { id: string; email: string | null; full_name: string | null; sourcing_alerts: boolean | null; alert_credit: boolean | null }[] = [];
+  for (const some of chunk(ids, ID_CHUNK)) {
+    const { data, error: pErr } = await admin.from("profiles").select("id, email, full_name, sourcing_alerts, alert_credit").in("id", some);
+    if (pErr) {
+      console.error("[picks-paused] away profiles read failed:", pErr.message);
+      return result;
+    }
+    rows.push(...((data ?? []) as typeof rows));
+  }
+  const [payers, alertsOn, pending, slots, profileRows] = await Promise.all([payersForAll(ids), trackedAlertsOn(admin, ids), pendingChanges(admin, ids, opts.now), slotsInUse(admin, ids, "daily", opts.now), allProfilesFor(admin, ids)]);
+  const base = siteUrl();
+  for (const p of rows) {
+    if (Date.now() > opts.deadline) {
+      result.ranOutOfTime = true;
+      break;
+    }
+    const skip = (reason: string) => result.members.push({ user: p.id, sent: false, reason });
+    if (!p.email) {
+      skip("no_email");
+      continue;
+    }
+    if (p.sourcing_alerts !== true) {
+      skip("picks_off");
+      continue;
+    }
+    if (p.alert_credit === false) {
+      skip("switched_off");
+      continue;
+    }
+    const payer = payerIn(payers, p.id);
+    if (payer.suspended) {
+      skip("seat_suspended");
+      continue;
+    }
+    if (slots?.has(p.id)) {
+      skip("slot_used");
+      continue;
+    }
+    const letter = (withChanges: boolean) => {
+      const settled = withChanges && alertsOn.has(p.id) ? pending.get(p.id) ?? null : null;
+      const given = (settled?.changes ?? []).map((c) => ({ ...c, profileName: labelFor(profileRows?.get(p.id), c.profileId) }));
+      const { section: changes, used } = changesSection(given, base);
+      const idsOf = (list: readonly ChangeInput[]) => list.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]);
+      const extra = changes ? { ...renderSections([changes]), subjectSuffix: changesPhrase(used) } : null;
+      return {
+        mail: awayLetter({ siteUrl: base, firstName: firstNameOf(p.full_name), team: Boolean(payer.memberId), extra }),
+        used,
+        closing: [...new Set([...idsOf(used), ...idsOf(given.filter((c) => !used.includes(c))), ...(settled?.dismissed ?? [])])],
+      };
+    };
+    if (opts.dry) {
+      const preview = letter(true);
+      result.wouldEmail.push({ email: p.email, changes: preview.used.map((c) => ({ id: c.id, type: c.alertType })), team: Boolean(payer.memberId) });
+      skip("would_send");
+      continue;
+    }
+    if (!isEmailConfigured()) {
+      skip("email_not_configured");
+      continue;
+    }
+    const claim = await claimSlot(admin, p.id, "picks_paused", opts.now);
+    if (!claim.ok) {
+      skip(claim.reason);
+      continue;
+    }
+    const { mail, used, closing } = letter(true);
+    const unsubscribeToken = newSendToken();
+    const unsubscribeUrl = `${base.replace(/\/$/, "")}/api/notify/unsubscribe/${unsubscribeToken}`;
+    const sendSummary = { away: true, alerts: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]), subject: mail.subject };
+    if (!(await markSending(admin, claim.id, sendSummary, unsubscribeToken))) {
+      await releaseClaim(admin, claim.id);
+      skip("slot_unwritable");
+      continue;
+    }
+    const res = await sendEmail({ to: p.email, subject: mail.subject, html: mail.html, text: mail.text, headers: listUnsubscribeHeaders({ url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }), idempotencyKey: sendKey("daily", p.id, claim.day) });
+    await finishSend(admin, claim.id, res.sent, sendSummary, res.sent ? closing : []);
+    if (!res.sent) {
+      result.failures += 1;
+      skip(res.reason ?? "send_failed");
+      continue;
+    }
+    result.emails += 1;
+    const { error: stampErr } = await admin.from("profiles").update({ picks_paused_inactive_email_at: new Date().toISOString() }).eq("id", p.id);
+    if (stampErr) console.error("[picks-paused] away stamp failed:", stampErr.message);
+    result.members.push({ user: p.id, sent: true });
+  }
+  return result;
 }

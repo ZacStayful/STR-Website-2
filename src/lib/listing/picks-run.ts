@@ -51,6 +51,7 @@ import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
 import { lowCreditNoticesFor, markLowCreditTold } from "../credit/low-credit-server";
 import { lowCreditSection } from "../credit/low-credit";
+import { inactivePausedIds } from "../inactivity/server";
 import { allProfilesFor } from "../profiles/server";
 import { labelFor, profileLinks, seatKey, seatsFor, type SavedProfile } from "../profiles/rules";
 import { GOALS_EDITOR_HREF } from "../nav";
@@ -400,9 +401,17 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
 
   const members: Member[] = [];
   const skipped: { user: string; profile?: string; reason: string }[] = [];
+  // Batch 20, Part C: daily picks pause after 25 days without a qualifying
+  // action, until the member comes back. Read on its own: a schema that has
+  // not been run pauses nobody. Never the admin's test send.
+  const inactive = opts.ignoreToday ? new Set<string>() : await inactivePausedIds(admin);
   for (const p of profiles) {
     if (!p.email) {
       skipped.push({ user: p.id, reason: "no_email" });
+      continue;
+    }
+    if (inactive.has(p.id)) {
+      skipped.push({ user: p.id, reason: "inactive" });
       continue;
     }
     if (isPaused(p)) {

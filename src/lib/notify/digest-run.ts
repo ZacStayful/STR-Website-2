@@ -54,6 +54,7 @@ import { rangeLineFor } from '../project/display';
 import { profileNudgesFor } from '../profile/server';
 import { lowCreditNoticesFor, markLowCreditTold, sendLowCreditAlone } from '../credit/low-credit-server';
 import { lowCreditSection } from '../credit/low-credit';
+import { inactivePausedIds } from '../inactivity/server';
 import { allProfilesFor } from '../profiles/server';
 import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
 import { GOALS_EDITOR_HREF } from '../nav';
@@ -162,7 +163,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     else if (slots?.has(p.id)) perUser.push({ user: p.id, sent: false, reason: 'slot_used' });
     else if (seatSuspended(p)) perUser.push({ user: p.id, sent: false, reason: 'seat_suspended' });
   }
-  const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p);
+  // Batch 20, Part C: a member whose picks are paused for inactivity gets no Today's 5 (it would send, and
+  // charge for, the very deals the pause stopped); their changes on tracked deals still go.
+  const inactive = await inactivePausedIds(admin);
+  const wantsTeasers = (p: ProfileRow) => p.sourcing_alerts === true && p.welcome_checked_at !== null && !isPaused(p) && !inactive.has(p.id);
   // A seat for each running profile (Batch 13); unreadable profiles (schema
   // not run): every member is one seat, as before.
   const profileRows = await allProfilesFor(admin, open.map((p) => p.id));
