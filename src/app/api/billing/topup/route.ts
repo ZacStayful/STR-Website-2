@@ -12,6 +12,8 @@ import { cardNeedsUpdateEmail } from '@/lib/email/billing';
 import { logActivity } from '@/lib/activity/log';
 import { logConversion } from '@/lib/meta/conversions';
 import { clientDetails } from '@/lib/tracking/request';
+import { paymentFromIntent } from '@/lib/payments/rules';
+import { recordPayment } from '@/lib/payments/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +66,8 @@ export async function POST(request: Request) {
         if (pi.status === 'succeeded') {
           // The webhook will also arrive; grantTopup is idempotent on pi id.
           await grantTopup(member.id, amount, `pi:${pi.id}`, { email: member.email });
+          // Batch 20: what was charged, for Total paid (the webhook writes the same row, once).
+          await recordPayment(paymentFromIntent(pi, member.id));
           logActivity(member.id, 'topup', { dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
           // Batch 19: Meta's Purchase, with the member's own browser (the webhook's copy is the same key: one is sent).
           await logConversion({ name: 'Purchase', userId: member.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: 'topup', auto: null, amountPence: amount, currency: pi.currency }, details: clientDetails(request.headers) });

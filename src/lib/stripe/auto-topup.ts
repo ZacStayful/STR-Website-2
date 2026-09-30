@@ -7,6 +7,8 @@ import { grantTopup } from './grants';
 import { cardNeedsUpdateEmail } from '../email/billing';
 import { DEFAULT_TOPUP_THRESHOLD_PENCE } from '../credit/topup-floor';
 import { recordActivity } from '../activity/log';
+import { paymentFromIntent } from '../payments/rules';
+import { recordPayment } from '../payments/server';
 
 /**
  * Opt-in auto top-up: when a debit leaves the balance below the member's
@@ -50,6 +52,8 @@ export async function maybeAutoTopup(userId: string): Promise<'charged' | 'skipp
     );
     if (pi.status !== 'succeeded') throw new Error(`payment intent ${pi.status}`);
     await grantTopup(userId, amount, `pi:${pi.id}`, { email: (p.email as string | null) ?? null });
+    // Batch 20: what was charged, for Total paid (the webhook writes the same row, once).
+    await recordPayment(paymentFromIntent(pi, userId));
     await recordActivity(userId, 'auto_topup', { source: 'system', dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
     return 'charged';
   } catch (err) {

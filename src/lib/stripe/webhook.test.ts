@@ -580,3 +580,88 @@ test('Batch 19: a failure to record never fails the delivery', async () => {
   const r = await handleStripeEvent(ev('payment_intent.succeeded', { id: 'pi_8', customer: 'cus_1', amount: 1000, amount_received: 1000, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '1000' } }), deps);
   assert.equal(r.handled, true);
 });
+
+// ── Batch 20: the payments behind "Total paid" ──
+// The fake stores rows as the database does: a payment once per id, a refund as the charge's largest cumulative amount.
+function withPayments(deps: ReturnType<typeof fakeDeps>) {
+  const payments = new Map<string, { kind: string; amountPence: number; userId: string; planCode: string | null }>();
+  const refunds = new Map<string, { userId: string; amount: number; pi: string | null }>();
+  deps.recordPayment = async (p) => {
+    if (!payments.has(p.id)) payments.set(p.id, { kind: p.kind, amountPence: p.amountPence, userId: p.userId, planCode: p.planCode });
+  };
+  deps.recordRefund = async (r) => {
+    const prev = refunds.get(r.chargeId);
+    refunds.set(r.chargeId, { userId: r.userId, pi: r.paymentIntentId, amount: Math.max(prev?.amount ?? 0, r.amountRefundedPence) });
+  };
+  return { payments, refunds };
+}
+
+test('Batch 20: a Checkout top-up and its payment_intent.succeeded, each delivered twice, are one payment at the amount charged', async () => {
+  const deps = fakeDeps();
+  const { payments } = withPayments(deps);
+  const session = { id: 'cs_1', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_7', amount_total: 3000, currency: 'gbp', customer_details: { email: 'a@example.com' } };
+  const pi = { id: 'pi_7', customer: 'cus_1', payment_method: 'pm_1', amount: 3000, amount_received: 3000, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } };
+  deps.retrievePaymentIntent = async () => pi as unknown as Stripe.PaymentIntent;
+  for (let i = 0; i < 2; i += 1) {
+    await handleStripeEvent(ev('checkout.session.completed', session), deps);
+    await handleStripeEvent(ev('payment_intent.succeeded', pi), deps);
+  }
+  assert.deepEqual([...payments.entries()], [['pi:pi_7', { kind: 'topup', amountPence: 3000, userId: 'u1', planCode: null }]]);
+});
+
+test('Batch 20: an automatic top-up is a payment too, marked automatic', async () => {
+  const deps = fakeDeps();
+  const { payments } = withPayments(deps);
+  const pi = { id: 'pi_a', customer: 'cus_1', payment_method: 'pm_1', amount: 2000, amount_received: 2000, currency: 'gbp', metadata: { kind: 'topup', auto: '1', user_id: 'u1', amount_pence: '2000' } };
+  await handleStripeEvent(ev('payment_intent.succeeded', pi), deps);
+  assert.equal(payments.get('pi:pi_a')?.kind, 'auto_topup');
+});
+
+test('Batch 20: every paid invoice is a payment (a renewal, a plan change, an unknown price); a £0 one is not', async () => {
+  const deps = fakeDeps();
+  const { payments } = withPayments(deps);
+  await handleStripeEvent(ev('invoice.paid', { ...paidInvoice('in_a', 'subscription_create', 2280, 1900) }), deps);
+  await handleStripeEvent(ev('invoice.paid', { ...paidInvoice('in_a', 'subscription_create', 2280, 1900) }), deps);
+  await handleStripeEvent(ev('invoice.paid', { ...paidInvoice('in_b', 'subscription_update', 500, 417) }), deps);
+  await handleStripeEvent(ev('invoice.paid', { ...paidInvoice('in_c', 'subscription_cycle', 0, 0) }), deps);
+  deps.setSub(null);
+  await handleStripeEvent(ev('invoice.paid', { ...paidInvoice('in_d', 'subscription_cycle', 999, 999), lines: { data: [{ pricing: { price_details: { price: 'price_unknown' } } }] } }), deps);
+  assert.deepEqual(
+    [...payments.entries()].map(([k, v]) => [k, v.kind, v.amountPence, v.planCode]),
+    [
+      ['inv:in_a', 'subscription', 2280, 'starter'],
+      ['inv:in_b', 'subscription', 500, 'starter'],
+      ['inv:in_d', 'subscription', 999, null],
+    ],
+  );
+});
+
+test('Batch 20: refunds are recorded for any charge, as the cumulative amount, and the top-up clawback is unchanged', async () => {
+  const deps = fakeDeps();
+  const { refunds } = withPayments(deps);
+  // A top-up's charge: the member comes from the payment's own metadata.
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', customer: 'cus_1', amount_refunded: 1000 }), deps);
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', customer: 'cus_1', amount_refunded: 2500 }), deps);
+  // A redelivery of the first, arriving late, never lowers it.
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', customer: 'cus_1', amount_refunded: 1000 }), deps);
+  assert.deepEqual(refunds.get('ch_1'), { userId: 'u1', pi: 'pi_9', amount: 2500 });
+  assert.deepEqual(deps.calls.refundTopup![0], ['u1', 'pi:pi_9', 1000, 'refunded']);
+  // A subscription invoice's charge: no metadata, so the member is the customer.
+  deps.retrievePaymentIntent = async (id) => ({ id, customer: 'cus_1', metadata: {} }) as unknown as Stripe.PaymentIntent;
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_2', payment_intent: 'pi_inv', customer: 'cus_1', amount_refunded: 1900 }), deps);
+  assert.deepEqual(refunds.get('ch_2'), { userId: 'u1', pi: 'pi_inv', amount: 1900 });
+  assert.equal(r.note, 'not a top-up');
+});
+
+test('Batch 20: bookkeeping that throws never fails the delivery', async () => {
+  const deps = fakeDeps();
+  deps.recordPayment = async () => {
+    throw new Error('down');
+  };
+  deps.recordRefund = async () => {
+    throw new Error('down');
+  };
+  const pi = { id: 'pi_9', customer: 'cus_1', payment_method: 'pm_9', amount: 2500, amount_received: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } };
+  assert.equal((await handleStripeEvent(ev('payment_intent.succeeded', pi), deps)).handled, true);
+  assert.equal((await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', amount_refunded: 100 }), deps)).handled, true);
+});

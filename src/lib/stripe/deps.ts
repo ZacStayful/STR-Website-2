@@ -12,6 +12,7 @@ import { getPlan } from '../credit/plans';
 import { recordSubscriptionEvent } from '../billing/subscription-events';
 import { recordActivity } from '../activity/log';
 import { recordConversion } from '../meta/conversions';
+import { recordPayment, recordRefund } from '../payments/server';
 import { monthlyPence } from '../billing/churn';
 import type { WebhookDeps } from './webhook';
 
@@ -88,6 +89,9 @@ export function liveWebhookDeps(): WebhookDeps {
     logActivity: (a) => recordActivity(a.userId, a.kind, { dedupeKey: a.dedupeKey, source: a.source, extras: a.extras }),
     // Batch 19: awaited, as the webhook has no browser and must not return before it is recorded.
     recordConversion: (c) => recordConversion(c),
+    // Batch 20: the rows behind "Total paid" (src/lib/payments).
+    recordPayment: (payment) => recordPayment(payment),
+    recordRefund: (refund) => recordRefund(refund),
     recordSubscriptionEvent: async (input) => {
       // The price is resolved HERE rather than in the handler, so the handler
       // stays pure and testable and only this file needs the plan table.

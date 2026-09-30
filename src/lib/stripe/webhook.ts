@@ -14,6 +14,7 @@ import { subscriptionStateFromStripe } from '../subscription.ts';
 import type { SubscriptionEventInput } from '../billing/subscription-events.ts';
 import { planActivityKind, type ActivityKind } from '../activity/kinds.ts';
 import type { InvoiceFacts, TopupFacts } from '../meta/events.ts';
+import { paymentFromIntent, paymentFromInvoice, type PaymentRecord, type RefundRecord } from '../payments/rules.ts';
 
 export interface WebhookUser {
   id: string;
@@ -74,6 +75,14 @@ export interface WebhookDeps {
    * Optional; implementations must swallow their own errors.
    */
   recordConversion?(input: WebhookConversion): Promise<unknown>;
+  /**
+   * Batch 20 (src/lib/payments): the rows behind "Total paid". A payment is
+   * written once per Stripe id and a refund as the charge's cumulative
+   * amount, so a redelivery, or a top-up's two events, change nothing.
+   * Optional; implementations must swallow their own errors.
+   */
+  recordPayment?(payment: PaymentRecord): Promise<unknown>;
+  recordRefund?(refund: RefundRecord): Promise<unknown>;
   log?: (msg: string) => void;
 }
 
@@ -233,6 +242,35 @@ async function recordMetaConversion(deps: WebhookDeps, input: WebhookConversion)
   }
 }
 
+/** Batch 20: a payment for "Total paid". Never throws. */
+async function recordPaymentRow(deps: WebhookDeps, payment: PaymentRecord | null): Promise<void> {
+  if (!deps.recordPayment || !payment) return;
+  try {
+    await deps.recordPayment(payment);
+  } catch {
+    // Bookkeeping never fails a delivery.
+  }
+}
+
+/**
+ * Batch 20: a charge's refunds for "Total paid", whatever was bought (a pack,
+ * a top-up or a subscription invoice). The member is the one the payment was
+ * for, else the charge's customer. Never throws.
+ */
+async function recordChargeRefund(deps: WebhookDeps, charge: Stripe.Charge): Promise<void> {
+  if (!deps.recordRefund || !charge?.id) return;
+  try {
+    const piId = id(charge.payment_intent);
+    const pi = piId ? await deps.retrievePaymentIntent(piId) : null;
+    let userId = pi?.metadata?.user_id ?? null;
+    if (!userId && id(charge.customer)) userId = (await deps.findUserByCustomer(id(charge.customer)!))?.id ?? null;
+    if (!userId) return;
+    await deps.recordRefund({ chargeId: charge.id, userId, paymentIntentId: piId, amountRefundedPence: Number(charge.amount_refunded) || 0 });
+  } catch {
+    // Bookkeeping never fails a delivery.
+  }
+}
+
 export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps): Promise<HandleResult> {
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((m: string) => console.log(`[stripe/webhook] ${m}`));
@@ -300,6 +338,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
           if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
           // Meta's Purchase: payment_intent.succeeded carries the same key, so one is recorded.
           if (amount > 0) await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: piId, paymentIntentId: piId, topup: { kind: 'topup', auto: pi?.metadata?.auto ?? session.metadata?.auto ?? null, amountPence: amount, currency: pi?.currency ?? session.currency ?? null } });
+          // Batch 20: what was charged, for Total paid (the same row as payment_intent.succeeded's).
+          await recordPaymentRow(deps, paymentFromIntent(pi ?? { id: piId, amount_received: session.amount_total ?? null, currency: session.currency ?? null, metadata: session.metadata ?? null }, user.id));
         }
       }
       return { handled: true };
@@ -318,6 +358,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       await logTopupActivity(deps, user.id, pi.id, amount, pi.metadata?.auto === '1');
       // Meta's Purchase (never an automatic top-up; Checkout's event carries the same key).
       await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: pi.metadata?.kind, auto: pi.metadata?.auto, amountPence: amount, currency: pi.currency } });
+      // Batch 20: what was charged, for Total paid.
+      await recordPaymentRow(deps, paymentFromIntent(pi, user.id));
       return { handled: true, note: granted ? 'top-up granted' : 'already granted' };
     }
 
@@ -332,6 +374,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       const linePrice = invoice.lines?.data?.[0]?.pricing?.price_details?.price;
       const priceId = priceIdOf(sub) ?? (typeof linePrice === 'string' ? linePrice : (linePrice?.id ?? null));
       const planCode = planForPriceId(priceId, env);
+      // Batch 20: every paid invoice is money the member paid (Total paid), whatever it is for.
+      await recordPaymentRow(deps, paymentFromInvoice(invoice, user.id, planCode));
       if (!planCode) {
         log(`invoice ${invoice.id}: price ${priceId} is not a known plan`);
         return { handled: false, note: 'unknown price' };
@@ -553,6 +597,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
 
     case 'charge.refunded':
     case 'charge.dispute.created': {
+      // Batch 20: every refund comes off Total paid, whatever the charge was for.
+      if (event.type === 'charge.refunded') await recordChargeRefund(deps, event.data.object as Stripe.Charge);
       if (!deps.refundTopup) return { handled: false, note: 'no clawback configured' };
       const obj = event.data.object as Stripe.Charge | Stripe.Dispute;
       const charge = event.type === 'charge.refunded' ? (obj as Stripe.Charge) : null;
