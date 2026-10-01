@@ -10,6 +10,8 @@ import { sendLeadReportEmail } from '../email/lead-report';
 import { getFunnel } from '../funnels';
 import { siteUrl } from '../url';
 import type { AnalysisResult } from '../types';
+import type { AnalysisInput } from '../analysis/input';
+import { leaseCutoff, reuseSince } from './dedupe';
 
 /**
  * Writing down a lead. Every write is service-role: `leads` is RLS-on with a
@@ -43,11 +45,24 @@ export function mintReportToken(): string {
   return randomBytes(24).toString('base64url');
 }
 
+export type CaptureResult =
+  /** A new lead. */
+  | { id: string; reused: false }
+  /** Batch 21 (C3): the same enquiry again inside the hour: the earlier lead, with its report when it has one. */
+  | { id: string; reused: true; status: LeadStatus; result: AnalysisResult | null };
+
 /**
  * Records a lead BEFORE anything is spent. Called first on every submission,
  * including when the customer is out of credit — capturing the enquiry is
  * free, and losing a real prospect because a balance ran dry is the one
  * outcome worth designing against.
+ *
+ * Batch 21 (C3): the same email asking about the same postcode on the same
+ * funnel inside the hour is one enquiry, not two. A prospect told "please try
+ * again" after a failed run used to make a second lead that was run and
+ * charged on its own, beside the first one the drain re-ran; now they get the
+ * lead they already have. `analysis` is the whole parsed input (C4), stored
+ * for the drain so a queued lead is run as the property was described.
  */
 export async function captureLead(input: {
   userId: string;
@@ -55,9 +70,33 @@ export async function captureLead(input: {
   contact: LeadContact;
   property: LeadProperty;
   status: LeadStatus;
-}): Promise<string | null> {
+  analysis?: AnalysisInput;
+  now?: Date;
+}): Promise<CaptureResult | null> {
   if (!hasServiceRole()) return null;
-  const { data, error } = await createAdminClient()
+  const admin = createAdminClient();
+  const now = input.now ?? new Date();
+
+  if (input.contact.email && input.property.postcode) {
+    const { data: prior, error: priorError } = await admin
+      .from('leads')
+      .select('id, status, result')
+      .eq('funnel_id', input.funnelId)
+      .eq('email', input.contact.email)
+      .eq('postcode', input.property.postcode)
+      .is('archived_at', null)
+      .gte('created_at', reuseSince(now))
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (priorError) console.warn('[leads] reuse check failed, capturing afresh:', priorError.message);
+    else if (prior) {
+      const row = prior as { id: string; status: LeadStatus; result: AnalysisResult | null };
+      return { id: row.id, reused: true, status: row.status, result: row.result ?? null };
+    }
+  }
+
+  const { data, error } = await admin
     .from('leads')
     .insert({
       user_id: input.userId,
@@ -79,7 +118,43 @@ export async function captureLead(input: {
     console.error('[leads] capture failed:', error?.message);
     return null;
   }
-  return data.id as string;
+  const id = data.id as string;
+  if (input.analysis) await rememberLeadInput(id, input.analysis);
+  return { id, reused: false };
+}
+
+/**
+ * Batch 21 (C4): the parsed input, kept beside the lead for the drain. On its
+ * own write so a database that is behind on the schema (Batch 21a adds
+ * `leads.input`) costs the drain its detail, never the customer the lead.
+ */
+async function rememberLeadInput(leadId: string, analysis: AnalysisInput): Promise<void> {
+  const { error } = await createAdminClient().from('leads').update({ input: analysis }).eq('id', leadId);
+  if (error) console.warn('[leads] input not stored (schema behind? Batch 21a adds leads.input):', error.message);
+}
+
+/**
+ * Batch 21 (D10): claims a queued lead before its report is run, so two
+ * drains (or the funnel and the drain) cannot both run and charge it. The
+ * claim moves `updated_at` to now and only succeeds for a lead nobody has
+ * touched inside the lease; a run that dies mid-way frees it when the lease
+ * runs out. False means somebody else has it, it is no longer queued, or the
+ * database could not be reached.
+ */
+export async function leaseQueuedLead(leadId: string, now: Date = new Date()): Promise<boolean> {
+  if (!hasServiceRole()) return false;
+  const { data, error } = await createAdminClient()
+    .from('leads')
+    .update({ updated_at: now.toISOString() })
+    .eq('id', leadId)
+    .eq('status', 'queued')
+    .lt('updated_at', leaseCutoff(now))
+    .select('id');
+  if (error) {
+    console.error('[leads] lease failed:', error.message);
+    return false;
+  }
+  return (data ?? []).length > 0;
 }
 
 /**

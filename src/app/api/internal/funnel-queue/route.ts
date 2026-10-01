@@ -1,15 +1,16 @@
 import { authoriseInternal, internalSecretsConfigured } from '@/lib/internal-auth';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
-import { parseAnalysisInput } from '@/lib/analysis/input';
 import { reserveAnalysis, runAnalysis } from '@/lib/analysis/run';
+import { analysisComplete } from '@/lib/analysis/reuse';
+import { actionSpend, refundAction } from '@/lib/credit/action';
 import { InsufficientCreditError, getBalance } from '@/lib/credit/ledger';
 import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
 import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { getFunnel } from '@/lib/funnels';
 import { raiseFunnelAlert } from '@/lib/funnels/alerts';
 import { reserveSpend, settleSpend } from '@/lib/funnels/caps';
-import { completeLead } from '@/lib/leads/store';
-import { defaultGuests } from '@/lib/listing/normalise';
+import { completeLead, leaseQueuedLead } from '@/lib/leads/store';
+import { queuedAnalysisInput } from '@/lib/leads/queue-input';
 
 /**
  * Runs the reports for leads captured while their funnel's owner was short
@@ -23,6 +24,18 @@ import { defaultGuests } from '@/lib/listing/normalise';
  *
  * Same auth as the other internal routes: Vercel Cron's bearer or the shared
  * header. A run costs the customer money, so it never runs open.
+ *
+ * Batch 21:
+ *   - D10: a lead is claimed (src/lib/leads/store.ts leaseQueuedLead) before
+ *     anything is reserved, so two runs in the same minute cannot both run
+ *     and charge it.
+ *   - D13: no new lead is started once START_BUDGET_MS has gone; a run that
+ *     reaches the function's limit is killed with its spend reservation
+ *     unsettled, and five full analyses do not fit in sixty seconds.
+ *   - C4: a lead is run with the input the prospect gave (leads.input), not
+ *     rebuilt from its address, postcode and bedrooms alone.
+ *   - C3: a run that fails, or comes back without short-let figures, is
+ *     refunded and the day's spend settled to what stayed charged.
  */
 
 export const maxDuration = 60;
@@ -31,6 +44,8 @@ export const maxDuration = 60;
 const MAX_PER_RUN = 5;
 /** Older than this and the prospect has moved on; do not spend on it. */
 const MAX_AGE_DAYS = 14;
+/** No new lead is started after this long into the run (D13). */
+const START_BUDGET_MS = 15_000;
 
 interface QueuedLead {
   id: string;
@@ -40,7 +55,11 @@ interface QueuedLead {
   postcode: string | null;
   bedrooms: number | null;
   created_at: string;
+  /** Batch 21a's column; absent until the schema is applied. */
+  input?: unknown;
 }
+
+const LEAD_COLUMNS = 'id, user_id, funnel_id, address, postcode, bedrooms, created_at';
 
 export async function GET(request: Request) {
   if (!internalSecretsConfigured()) return new Response('Not found', { status: 404 });
@@ -49,27 +68,38 @@ export async function GET(request: Request) {
 
   const dry = new URL(request.url).searchParams.get('dry') === '1';
   const admin = createAdminClient();
-  const cutoff = new Date(Date.now() - MAX_AGE_DAYS * 86_400_000).toISOString();
+  const started = Date.now();
+  const cutoff = new Date(started - MAX_AGE_DAYS * 86_400_000).toISOString();
 
-  const { data, error } = await admin
-    .from('leads')
-    .select('id, user_id, funnel_id, address, postcode, bedrooms, created_at')
-    .eq('status', 'queued')
-    // An archived lead is one the customer chose to drop: running its report
-    // now would charge them for it.
-    .is('archived_at', null)
-    .gte('created_at', cutoff)
-    .order('created_at', { ascending: true })
-    .limit(MAX_PER_RUN);
-  if (error) {
-    console.error('[funnel-queue] read failed:', error.message);
-    return Response.json({ error: error.message }, { status: 500 });
+  const queuedLeads = (columns: string) =>
+    admin
+      .from('leads')
+      .select(columns)
+      .eq('status', 'queued')
+      // An archived lead is one the customer chose to drop: running its report
+      // now would charge them for it.
+      .is('archived_at', null)
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: true })
+      .limit(MAX_PER_RUN);
+
+  // With the stored input when the column exists (Batch 21a); without it, as
+  // before, on a database that is behind on the schema.
+  let read = await queuedLeads(`${LEAD_COLUMNS}, input`);
+  if (read.error && /input/i.test(read.error.message)) read = await queuedLeads(LEAD_COLUMNS);
+  if (read.error) {
+    console.error('[funnel-queue] read failed:', read.error.message);
+    return Response.json({ error: read.error.message }, { status: 500 });
   }
 
-  const queued = (data ?? []) as QueuedLead[];
+  const queued = (read.data ?? []) as unknown as QueuedLead[];
   const outcomes: Array<{ leadId: string; outcome: string }> = [];
 
   for (const lead of queued) {
+    if (Date.now() - started > START_BUDGET_MS) {
+      outcomes.push({ leadId: lead.id, outcome: 'out_of_time' });
+      continue;
+    }
     if (!lead.funnel_id || !lead.address || !lead.postcode) {
       outcomes.push({ leadId: lead.id, outcome: 'incomplete' });
       continue;
@@ -80,14 +110,8 @@ export async function GET(request: Request) {
       continue;
     }
 
-    const parsed = parseAnalysisInput({
-      address: lead.address,
-      postcode: lead.postcode,
-      bedrooms: lead.bedrooms ?? 2,
-      guests: defaultGuests(lead.bedrooms ?? 2),
-      enhanced: funnel.reportDepth === 'enhanced',
-    });
-    if (!parsed.ok) {
+    const input = queuedAnalysisInput(lead, { enhanced: funnel.reportDepth === 'enhanced' });
+    if (!input) {
       outcomes.push({ leadId: lead.id, outcome: 'unparseable' });
       continue;
     }
@@ -111,25 +135,40 @@ export async function GET(request: Request) {
       outcomes.push({ leadId: lead.id, outcome: 'would_run' });
       continue;
     }
+    // Ours, or somebody else's: the funnel's own run of a fresh lead, or an
+    // overlapping drain, holds the lease.
+    if (!(await leaseQueuedLead(lead.id))) {
+      outcomes.push({ leadId: lead.id, outcome: 'claimed_elsewhere' });
+      continue;
+    }
     if (!(await reserveSpend(funnel.id, estimate.maxBasePence, funnel.dailySpendCapPence))) {
       outcomes.push({ leadId: lead.id, outcome: 'daily_spend_cap' });
       continue;
     }
 
     let actual = 0;
+    let prepared: Awaited<ReturnType<typeof reserveAnalysis>> | null = null;
     try {
-      const prepared = await reserveAnalysis(parsed.input, {
+      prepared = await reserveAnalysis(input, {
         billedUserId: funnel.userId,
         markupOverride,
         requireCredit: true,
         funnelId: funnel.id,
       });
-      const { result, spend } = await runAnalysis(prepared, parsed.input, {
+      const { result, spend } = await runAnalysis(prepared, input, {
         billedUserId: funnel.userId,
         markupOverride,
         requireCredit: true,
       });
       actual = spend.basePence;
+      // No short-let figures is no report: refunded, not saved, run again
+      // another time.
+      if (!analysisComplete(result)) {
+        await refundAction(prepared.ctx.actionId, 'Report could not get short-let figures').catch(() => 0);
+        actual = (await actionSpend(prepared.ctx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 }))).basePence;
+        outcomes.push({ leadId: lead.id, outcome: 'no_figures' });
+        continue;
+      }
       // Reported apart from 'ran'. This used to say 'ran' whatever happened,
       // so a lead whose report could not be saved looked identical in the
       // cron's own output to one that worked — while being the case that
@@ -142,7 +181,12 @@ export async function GET(request: Request) {
       });
       outcomes.push({ leadId: lead.id, outcome: attached ? 'ran' : 'ran_unsaved' });
     } catch (err) {
-      // Stays queued either way — a failure here must not lose the lead.
+      // Stays queued either way — a failure here must not lose the lead. What
+      // the failed run had charged is given back.
+      if (prepared) {
+        await refundAction(prepared.ctx.actionId, 'Report failed').catch(() => 0);
+        actual = (await actionSpend(prepared.ctx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 }))).basePence;
+      }
       const reason = err instanceof InsufficientCreditError ? 'insufficient_credit' : 'failed';
       if (reason === 'failed') console.error('[funnel-queue] run failed:', err);
       outcomes.push({ leadId: lead.id, outcome: reason });
@@ -151,5 +195,5 @@ export async function GET(request: Request) {
     }
   }
 
-  return Response.json({ considered: queued.length, dry, outcomes });
+  return Response.json({ considered: queued.length, dry, outcomes, ms: Date.now() - started });
 }

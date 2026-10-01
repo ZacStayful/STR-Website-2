@@ -88,3 +88,13 @@ test('a Project deal\'s project follows the deal it changes, ahead of due dilige
   assert.equal(sectionsFor({ setup: true, deal: true, diligence: true }).some((s) => s.id === 'project'), false);
   assert.equal(sectionsFor({ setup: true, deal: true, diligence: true }).length, 8);
 });
+
+test('Batch 21 (C9): a white-label report has no plan page; absent means present, as before', () => {
+  const branded = sectionsFor({ setup: true, deal: true, diligence: true, plan: false });
+  assert.equal(branded.some((s) => s.id === 'plan'), false);
+  assert.equal(branded[branded.length - 1].id, 'diligence');
+  assert.equal(stamp(navFor(branded, 'diligence')), '07 / 07 — DUE DILIGENCE');
+  assert.equal(contentsFor(branded).some((s) => s.id === 'plan'), false);
+  assert.equal(sectionsFor({ setup: true, deal: true, diligence: true, plan: true }).length, 8);
+  assert.equal(sectionsFor({ setup: true, deal: true, diligence: true }).length, 8);
+});

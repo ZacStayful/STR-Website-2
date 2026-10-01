@@ -210,11 +210,3 @@ export async function uploadPdfToMonday(
   }
   console.log(`[Monday] PDF uploaded for ${email} → item ${itemId}`);
 }
-
-/**
- * Kept for the marketing /api/track caller. The enquiries board has no
- * time-on-site column, so this is intentionally a no-op now.
- */
-export async function syncTimeOnSiteToMonday(_email: string, _seconds: number): Promise<void> {
-  return;
-}
