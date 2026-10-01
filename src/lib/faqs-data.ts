@@ -1,10 +1,48 @@
 // FAQs ported from the Drive bundle's app-data.js.
-// Q6 deliberately carries no plan prices: live figures come from Supabase via
-// Pricing.tsx, and duplicating them here lets the two drift apart.
+// "What does it cost?" is built from figures (costAnswer): the pages that show
+// it pass the live billing settings (src/lib/faqs-server.ts), so the welcome
+// credit, the cheapest plan, the smallest top-up and the top-up rate can never
+// drift from what Pricing.tsx charges. The static list carries the defaults.
 
 export interface FAQItem {
   q: string;
   a: string;
+}
+
+/** The numbers the cost answer is written from. */
+export interface CostFigures {
+  welcomePence: number;
+  fullAnalysisPence: number;
+  pmiAddonPence: number;
+  /** The cheapest active monthly plan. */
+  minPlanPence: number;
+  /** The smallest top-up preset. */
+  minTopupPence: number;
+  /** Top-up credit's spend rate against plan credit. */
+  topupRate: number;
+}
+
+/** The seeded billing_settings and billing_plans values (supabase/schema.sql). */
+export const DEFAULT_COST_FIGURES: CostFigures = { welcomePence: 2000, fullAnalysisPence: 400, pmiAddonPence: 200, minPlanPence: 1900, minTopupPence: 1000, topupRate: 1.3 };
+
+const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+const count = (n: number) => (n >= 0 && n < WORDS.length ? WORDS[n] : String(n));
+const pounds = (pence: number) => `£${pence % 100 === 0 ? pence / 100 : (pence / 100).toFixed(2)}`;
+
+/** The rest of the cost answer: plans, top-ups, the rate. */
+export function costRest(f: CostFigures): string {
+  return `subscribe for monthly credit from ${pounds(f.minPlanPence)}/month — current plans and annual saving are on the pricing page — or top up as you go from ${pounds(f.minTopupPence)}. Plan credit resets each month; top-up credit never expires but is spent at ${f.topupRate}× the plan rate. Cancel any time, no contract.`;
+}
+
+/**
+ * "What does it cost?" as it stands: the starter pack's lead once the pack is
+ * live (src/lib/starter-pack/rules.ts costLead), else the welcome credit.
+ */
+export function costAnswer(offer: { costLead: string | null }, f: CostFigures = DEFAULT_COST_FIGURES): string {
+  if (offer.costLead) return `${offer.costLead} Or ${costRest(f)}`;
+  const analyses = f.fullAnalysisPence > 0 ? Math.floor(f.welcomePence / f.fullAnalysisPence) : 0;
+  const withPmi = f.fullAnalysisPence + f.pmiAddonPence > 0 ? Math.floor(f.welcomePence / (f.fullAnalysisPence + f.pmiAddonPence)) : 0;
+  return `Every account starts with ${pounds(f.welcomePence)} of free credit, no card required — about ${count(analyses)} Full analyses of deals, or ${count(withPmi)} with the PMI second opinion added. After that, ${costRest(f)}`;
 }
 
 export const FAQS: FAQItem[] = [
@@ -30,7 +68,7 @@ export const FAQS: FAQItem[] = [
   },
   {
     q: "What does it cost?",
-    a: "Every account starts with £20 of free credit, no card required — about five Full analyses of deals, or three with the PMI second opinion added. After that, subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.3× the plan rate. Cancel any time, no contract.",
+    a: costAnswer({ costLead: null }),
   },
   {
     q: "Can I use this for properties I don't own yet?",
@@ -68,15 +106,13 @@ export const TRUST_FAQS: FAQItem[] = [
 ];
 
 const COST_Q = "What does it cost?";
-const COST_REST =
-  "Or subscribe for monthly credit from £19/month — current plans and annual saving are on the pricing page — or top up as you go from £10. Plan credit resets each month; top-up credit never expires but is spent at 1.3× the plan rate. Cancel any time, no contract.";
 
 /**
  * The FAQs with "What does it cost?" as it stands (Batch 20): once the
  * starter pack is live its answer leads with the pack instead of the £20
- * (src/lib/starter-pack/public.ts); before that, exactly as above.
+ * (src/lib/starter-pack/public.ts), and every figure is the live one when
+ * the page passes them (src/lib/faqs-server.ts costFiguresNow).
  */
-export function faqsWith(offer: { costLead: string | null }): FAQItem[] {
-  if (!offer.costLead) return FAQS;
-  return FAQS.map((f) => (f.q === COST_Q ? { ...f, a: `${offer.costLead} ${COST_REST}` } : f));
+export function faqsWith(offer: { costLead: string | null }, figures: CostFigures = DEFAULT_COST_FIGURES): FAQItem[] {
+  return FAQS.map((f) => (f.q === COST_Q ? { ...f, a: costAnswer(offer, figures) } : f));
 }

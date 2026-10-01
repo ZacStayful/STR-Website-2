@@ -37,9 +37,13 @@ export function UsageChip() {
     );
   }
   const days = dailyDealsDaysLeft(c.spendableBasePence, c.dailyDealsPence ?? 0);
+  const daysWords = days !== null ? `about ${days} day${days === 1 ? "" : "s"} of daily deals` : null;
+  // The chip shares one row with the nav, the pill and Feedback: on a phone
+  // the days are in the title (and on the Usage page), not the strip.
   return (
-    <Link href="/account/usage" title={c.member ? `${c.member.teamName}'s balance — the account owner tops it up` : "Your credit and where it goes"} style={style}>
-      {`${team}${formatGbp(c.totalPence)}${days !== null ? ` · about ${days} day${days === 1 ? "" : "s"} of daily deals` : ""}`}
+    <Link href="/account/usage" title={`${c.member ? `${c.member.teamName}'s balance — the account owner tops it up` : "Your credit and where it goes"}${daysWords ? ` · ${daysWords}` : ""}`} style={style}>
+      {`${team}${formatGbp(c.totalPence)}`}
+      {daysWords && <span className="hidden sm:inline">{` · ${daysWords}`}</span>}
     </Link>
   );
 }

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  SEAT_PRICE_PENCE, periodEnd, inviteExpiry, seatDue, normaliseEmail, joinBlocker, can,
+  SEAT_PRICE_PENCE, seatPriceLabel, periodEnd, inviteExpiry, seatDue, normaliseEmail, joinBlocker, can,
   JOIN_BLOCKER_COPY, type JoinFacts,
 } from './rules.ts';
 
@@ -24,6 +24,8 @@ function facts(over: Partial<JoinFacts> = {}, invite: Partial<NonNullable<JoinFa
 
 test('a seat is a flat £10', () => {
   assert.equal(SEAT_PRICE_PENCE, 1000);
+  assert.equal(seatPriceLabel(), '£10');
+  assert.equal(seatPriceLabel(1250), '£12.50');
 });
 
 test('a seat period is 30 days and falls due exactly at its end', () => {

@@ -13,6 +13,12 @@ const DAY_MS = 86_400_000;
 /** £10 of displayed credit (debited with credit_debit_face, not at spend rates). */
 export const SEAT_PRICE_PENCE = 1000;
 export const SEAT_PERIOD_DAYS = 30;
+
+/** "£10": the seat price as the team page and the team emails print it. */
+export function seatPriceLabel(pence: number = SEAT_PRICE_PENCE): string {
+  const pounds = pence / 100;
+  return `£${Number.isInteger(pounds) ? pounds : pounds.toFixed(2)}`;
+}
 /** How long an emailed invite link works. */
 export const INVITE_DAYS = 7;
 

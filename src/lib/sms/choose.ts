@@ -23,6 +23,7 @@ import type { AlertType, ChangeInput } from '../notify/message.ts';
 import type { NotificationState, SmsNotificationKey } from '../notifications/registry.ts';
 import { isUkMobile } from './phone.ts';
 import { renderSmsText } from './render.ts';
+import { KEPT_STATUS, PIPELINE_STATUSES } from '../listing/pipeline.ts';
 
 /** Which switch each kind of change needs. */
 export const SMS_SWITCH_FOR: Readonly<Record<AlertType, SmsNotificationKey>> = {
@@ -50,7 +51,18 @@ export function contactCanReceive(c: ContactState | null | undefined): c is Cont
   return Boolean(c && c.verified_at && c.enabled && !c.stopped_at && isUkMobile(c.phone_e164));
 }
 
-const ACTIVE_STAGES: ReadonlySet<string> = new Set(['offer', 'viewing', 'contacted']);
+/**
+ * The stages a member is actively working: everything between Kept and
+ * Passed in the pipeline's one list (src/lib/listing/pipeline.ts), except
+ * Secured. A secured deal is never texted at all (the collector drops it, see
+ * the rules above), so it has no place in the priority order either.
+ */
+const ACTIVE_STAGES: ReadonlySet<string> = new Set(activeStageKeys());
+
+export function activeStageKeys(): string[] {
+  const keys = PIPELINE_STATUSES.map((s) => s.key);
+  return keys.slice(keys.indexOf(KEPT_STATUS) + 1, keys.indexOf('passed')).filter((k) => k !== 'secured');
+}
 
 /** Lower is more important. */
 export function textPriority(c: Pick<ChangeInput, 'alertType' | 'stage'>): number {

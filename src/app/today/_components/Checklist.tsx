@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CheckCircle2, ChevronDown, ChevronUp, Circle } from "lucide-react";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import { samePageAnchor } from "@/lib/nav";
+import { rewardLabel } from "@/lib/today/checklist";
 import type { ChecklistView } from "@/lib/today/checklist-server";
 import { refreshChecklistAction } from "../actions";
 
@@ -106,7 +107,7 @@ export function Checklist() {
           <span id="first-week" className="block text-sm font-semibold text-foreground">
             Your first week · {view.doneCount} of {view.steps.length} done
           </span>
-          {view.rewarded && <span className="block text-xs text-muted-foreground">£1 of credit for each step, this week only.</span>}
+          {view.rewarded && <span className="block text-xs text-muted-foreground">{rewardLabel()} of credit for each step, this week only.</span>}
         </span>
         {collapsed ? <ChevronDown size={16} aria-hidden /> : <ChevronUp size={16} aria-hidden />}
       </button>

@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { runSignInHooks } from '@/lib/auth/sign-in-hooks'
 import { postAuthPath } from '@/lib/auth/landing'
+import { isAuthServiceFault } from '@/lib/auth/error-message'
 import { onSignIn } from '@/lib/tracking/signup-server'
 
 // Handles both OAuth (Google) callback and PKCE email links (confirmation,
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest) {
     // no verifier here. A sign-up confirmation has still confirmed the
     // address; any other link (sign-in, password reset) needs a fresh one.
     if (isAuthPKCECodeVerifierMissingError(exchangeError)) return NextResponse.redirect(loginUrl(searchParams.get('confirm') === '1' ? 'confirmed_elsewhere' : 'other_device'))
-    return NextResponse.redirect(loginUrl(exchangeError.message))
+    // An outage is not "Sign-in failed: fetch failed": the login page has a sentence for it.
+    return NextResponse.redirect(loginUrl(isAuthServiceFault(exchangeError) ? 'service_unavailable' : exchangeError.message))
   }
 
   await runSignInHooks(supabase)

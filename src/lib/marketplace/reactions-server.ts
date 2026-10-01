@@ -7,9 +7,10 @@ import 'server-only';
  * reacting to a deal is free, whoever you are.
  *
  * For other batches:
- *   - keptDealIds(userId)       the member's kept list (My deals, watchlist alerts)
  *   - reactionsFor(userId, ids) the state to draw on a page of cards
  *   - dealFeedbackFor(...)      what the daily picks run merges with pick answers
+ * The kept list itself is read by src/lib/listing/tracked-server.ts
+ * (loadTrackedDeals), which is what My deals, the alerts and the checklist use.
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { dealVisible, type DealVisibility } from './visibility';
@@ -105,28 +106,6 @@ export async function reactionsFor(userId: string, dealIds: string[]): Promise<M
   }
   for (const r of (data ?? []) as { deal_id: string; reaction: unknown }[]) if (isDealReaction(r.reaction)) out.set(r.deal_id, r.reaction);
   return out;
-}
-
-/**
- * Every deal the member has kept, newest first: the kept list other batches
- * build on. Ids only, whatever each deal's state now: a kept deal may since
- * have gone, and the caller must still apply the member's visibility
- * (dealVisible) before showing one.
- */
-export async function keptDealIds(userId: string): Promise<string[]> {
-  if (!hasServiceRole()) return [];
-  const admin = createAdminClient();
-  const ids: string[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await admin.from('deal_reactions').select('deal_id').eq('user_id', userId).eq('reaction', 'keep').order('updated_at', { ascending: false }).order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
-    if (error) {
-      console.warn('[deal-reactions] kept read failed:', error.message);
-      break;
-    }
-    ids.push(...((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id));
-    if ((data?.length ?? 0) < PAGE) break;
-  }
-  return ids;
 }
 
 type ReactionRow = { user_id: string; deal_id: string; reaction: unknown; reasons: unknown; updated_at: string; profile_id?: string | null };

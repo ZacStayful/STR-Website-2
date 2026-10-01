@@ -4,6 +4,7 @@ import { MagicLinkForm } from './magic-link-form'
 import { GoogleButton } from '../google-button'
 import { safeInternalPath } from '@/lib/safe-path'
 import { publicOfferNow } from '@/lib/starter-pack/public'
+import { AUTH_SERVICE_DOWN } from '@/lib/auth/error-message'
 
 export const metadata = { title: 'Sign in · Stayful Intelligence' }
 
@@ -22,6 +23,8 @@ function errorMessage(error: string | undefined): string | null {
   if (error === 'missing_code' || error === 'missing_token') {
     return 'That sign-in link was incomplete. Email yourself a fresh one below.'
   }
+  // /auth/callback could not reach Supabase (an outage, a timeout): not the member's doing.
+  if (error === 'service_unavailable') return AUTH_SERVICE_DOWN
   return `Sign-in failed: ${error}`
 }
 
@@ -67,7 +70,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
 
       <p className="mt-6 text-sm text-muted-foreground">
         {offer.loginPrompt}{' '}
-        <Link href="/signup" className="text-primary font-medium hover:underline">
+        <Link href={redirectTo ? `/signup?next=${encodeURIComponent(redirectTo)}` : '/signup'} className="text-primary font-medium hover:underline">
           {offer.loginLink}
         </Link>
       </p>

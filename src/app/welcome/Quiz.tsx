@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import { answerLabel, currentValue, imageOf, optionsOf, questionById, text, type Answers, type Question, type QuestionId, type WhereAnswer } from "@/lib/profile/questions";
 import { minutesLeftLabel, pillLabel } from "@/lib/profile/state";
+import { DEFAULT_FINANCE } from "@/lib/listing/deal";
 import { matchLabel } from "@/lib/profile/matching";
 import type { QuizArea } from "@/lib/onboarding/server";
 import type { CreditView, ProgressView, SampleDeal } from "@/lib/profile/server";
@@ -178,7 +179,7 @@ export function Quiz(start: QuizStart) {
         <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-primary">Profile 100%</p>
         <h1 className="mt-1 text-2xl font-semibold text-foreground">That’s everything. Nice work.</h1>
         {credit.line && <p className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${credit.paid ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}>{credit.line}</p>}
-        {matchCount !== null && <p className="mt-3 text-sm text-muted-foreground">{matchLabel(matchCount, false)}. From tomorrow, your Today’s 5 is picked from them.</p>}
+        {matchCount !== null && <p className="mt-3 text-sm text-muted-foreground">{matchLabel(matchCount, false)}. Your Today’s 5 is picked from them, starting now.</p>}
         <div className="mt-5 space-y-3">
           <PrimaryButton onClick={() => router.push(start.todayHref)}>See your Today’s 5</PrimaryButton>
           <Link href={start.profileHref} className="block text-center text-sm font-medium text-foreground underline-offset-4 hover:underline">
@@ -330,7 +331,7 @@ function Control({ q, answers, value, areas, busy, onAnswer, onPreview }: { q: Q
     case "profit":
       return <AmountChoice presets={q.presets ?? []} value={typeof value === "number" ? value : null} {...PROFIT_INPUT} suffix=" a month" placeholder="500" onSubmit={onAnswer} busy={busy} />;
     case "finance":
-      return <FinanceChoice value={(value as { depositPct: number; mortgageRatePct: number } | null) ?? { depositPct: 25, mortgageRatePct: 5.5 }} onSubmit={onAnswer} busy={busy} />;
+      return <FinanceChoice value={(value as { depositPct: number; mortgageRatePct: number } | null) ?? { depositPct: DEFAULT_FINANCE.depositPct, mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct }} onSubmit={onAnswer} busy={busy} />;
     case "areas":
       return <AreasChoice areas={areas} value={Array.isArray(value) ? (value as string[]) : []} onSubmit={onAnswer} busy={busy} label={q.id === "unit_areas" ? "Where your units are" : "Your cities"} />;
   }

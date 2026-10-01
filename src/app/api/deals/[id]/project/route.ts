@@ -48,8 +48,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (event !== "view") {
     if (!hasServiceRole()) return new Response(null, { status: 503 });
     const adminUser = isAdminEmail(user.email);
-    const { payerId } = await payerFor(user.id);
-    const sheet = await dealSheet(id, payerId, adminUser, await dealVisibilityFor(user.id, adminUser));
+    // A paused (suspended) seat may not use the team's opens.
+    const payer = await payerFor(user.id);
+    const sheet = await dealSheet(id, payer.suspended ? user.id : payer.payerId, adminUser, await dealVisibilityFor(user.id, adminUser));
     if (!sheet?.priv) return new Response(null, { status: 403 });
   }
   const day = ukDay(new Date());

@@ -15,6 +15,10 @@ import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type Act
 // page that left the strip (the analyser, the Market Explorer, daily picks)
 // still announces the section it always did, and NAV_FOR_SECTION says which
 // item that lights up.
+//
+// The nav items come first; the pill, the usage chip, the admin's Dashboard
+// chip and Feedback sit in one group after them, so on a phone the group
+// wraps onto its own row rather than splitting the three items.
 export function AppSwitcher({ active, admin, leads, profile = null, saved = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null }) {
   const current = activeNavFor(active);
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
@@ -29,6 +33,8 @@ export function AppSwitcher({ active, admin, leads, profile = null, saved = null
       {label}
     </Link>
   );
+  // The chip style the usage chip and Feedback use, for the admin's Dashboard link.
+  const chipStyle: React.CSSProperties = { background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 999, padding: "2px 10px", fontWeight: 600, textDecoration: "none", fontSize: 12, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 };
 
   return (
     <nav
@@ -46,19 +52,20 @@ export function AppSwitcher({ active, admin, leads, profile = null, saved = null
         fontFamily: "var(--font-dmsans), var(--font-sans), system-ui, sans-serif",
       }}
     >
-      {admin && <span style={{ opacity: 0.8 }}>Admin</span>}
       {NAV_ORDER.filter((key) => key !== "account").map((key) => item(key, NAV_TARGETS[key].href, NAV_TARGETS[key].label))}
       {leads && item("leads", LEADS_NAV.href, LEADS_NAV.label)}
       {item("account", NAV_TARGETS.account.href, NAV_TARGETS.account.label)}
-      {admin && (
-        <Link href="/admin" style={linkStyle(false)}>
-          Dashboard
-        </Link>
-      )}
-      <ProfilePill profile={profile} saved={saved} />
-      <UsageChip />
-      {/* Batch 18: a shortcut to the feedback form, not a nav item. */}
-      <FeedbackTrigger variant="header" />
+      <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+        <ProfilePill profile={profile} saved={saved} />
+        {admin && (
+          <Link href="/admin" style={chipStyle} title="The admin dashboard">
+            Dashboard
+          </Link>
+        )}
+        <UsageChip />
+        {/* Batch 18: a shortcut to the feedback form, not a nav item. */}
+        <FeedbackTrigger variant="header" />
+      </span>
     </nav>
   );
 }

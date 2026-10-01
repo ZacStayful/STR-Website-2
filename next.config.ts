@@ -51,6 +51,18 @@ const nextConfig: NextConfig = {
         destination: "/",
         permanent: true,
       },
+      // Batch 21: the orphan second analyser (invented market data, nothing
+      // linked to it) is gone; an old link lands on the real one.
+      {
+        source: "/str-report",
+        destination: "/estimate",
+        permanent: true,
+      },
+      {
+        source: "/str-report/presentation",
+        destination: "/estimate",
+        permanent: true,
+      },
     ];
   },
 };

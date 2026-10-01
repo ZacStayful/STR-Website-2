@@ -19,7 +19,7 @@ import { packCopy, packLive } from "@/lib/starter-pack/rules";
  * "about N Full analyses" is what is left of a month's plan credit after 30
  * days of daily deals, at the Full analysis price.
  */
-export async function Pricing({ signupHref = "/signup", signedIn = false, currentPlanCode = null, compact = false }: { signupHref?: string; signedIn?: boolean; currentPlanCode?: string | null; compact?: boolean }) {
+export async function Pricing({ signupHref = "/signup", signedIn = false, currentPlanCode = null, compact = false, highlightPlanCode = null }: { signupHref?: string; signedIn?: boolean; currentPlanCode?: string | null; compact?: boolean; /** The plan to draw highlighted (`/upgrade?plan=`); Pro when null. */ highlightPlanCode?: string | null }) {
   const [plans, settings, table] = await Promise.all([getPlans(), getBillingSettings(), getUnitCostTable()]);
   const pricing = settings.dealPricing;
   const now = new Date();
@@ -117,8 +117,8 @@ export async function Pricing({ signupHref = "/signup", signedIn = false, curren
               </Link>
             </div>
           )}
-          {monthly.map((p, i) => card(p, p.code === "pro", p.code === "pro" ? "Most popular" : i === monthly.length - 1 ? "Best value" : undefined))}
-          {annual && card(annual, false, "Save 25%")}
+          {monthly.map((p, i) => card(p, highlightPlanCode ? p.code === highlightPlanCode : p.code === "pro", p.code === "pro" ? "Most popular" : i === monthly.length - 1 ? "Best value" : undefined))}
+          {annual && card(annual, highlightPlanCode === annual.code, "Save 25%")}
         </div>
         <div className="pricing-foot muted">
           Prices are in plan credit, ex VAT · Cancel any time, no contract · Plan credit resets each month; top-up credit never expires but is spent at {topupRate}× the plan rate (a Full analysis is {formatPence(full * topupRate)} of top-up credit, {formatPence(full)} on a plan).

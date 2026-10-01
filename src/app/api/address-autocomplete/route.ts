@@ -203,6 +203,8 @@ export async function GET(request: Request) {
               'suggestions.placePrediction.structuredFormat',
           },
           body: JSON.stringify(body),
+          // Batch 21 (G7): a hung lookup answers "no suggestions" rather than holding the request.
+          signal: AbortSignal.timeout(8_000),
           cache: 'no-store',
         }),
       ),

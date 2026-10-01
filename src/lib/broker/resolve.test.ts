@@ -13,6 +13,16 @@ function q(rungs: Question<P, T>['rungs']): Question<P, T> {
 const enabled = () => true;
 const HOUR = 3600_000;
 
+// The budget tests set live env overrides (src/lib/broker/config.ts reads
+// them); put back whatever was there, rather than deleting it.
+const savedAirbtics = process.env.BROKER_BUDGET_AIRBTICS;
+const savedMemberAirbtics = process.env.BROKER_MEMBER_BUDGET_AIRBTICS;
+const savedPropertyData = process.env.BROKER_BUDGET_PROPERTYDATA;
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
+
 test('stops at the first sufficient rung and never calls later ones', async () => {
   const calls: string[] = [];
   const question = q([
@@ -77,8 +87,8 @@ test('budget exhaustion skips paid rungs (global and per member)', async () => {
     assert.equal(c.unavailable, true);
     assert.equal(runs, 1);
   } finally {
-    delete process.env.BROKER_BUDGET_AIRBTICS;
-    delete process.env.BROKER_MEMBER_BUDGET_AIRBTICS;
+    restoreEnv('BROKER_BUDGET_AIRBTICS', savedAirbtics);
+    restoreEnv('BROKER_MEMBER_BUDGET_AIRBTICS', savedMemberAirbtics);
   }
 });
 
@@ -154,7 +164,7 @@ test('a burst of asks reads today\'s spend once per payer and sees each other\'s
     assert.equal(results.filter((r) => r.value).length, 4);
     assert.equal(results.filter((r) => r.unavailable).length, 3);
   } finally {
-    delete process.env.BROKER_BUDGET_PROPERTYDATA;
+    restoreEnv('BROKER_BUDGET_PROPERTYDATA', savedPropertyData);
   }
 });
 

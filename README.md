@@ -28,8 +28,8 @@ injected, rather than inside the route handlers.
 
 ## Deploying
 
-Vercel deploys `main` automatically. Ten things are **not** automated, and all
-ten have to be done by hand.
+Vercel deploys `main` automatically. Everything below is **not** automated,
+and has to be done by hand, in the order given.
 
 ### 1. Run `supabase/schema.sql` after any merge that changes it
 
@@ -383,8 +383,7 @@ the repayment formula is kept behind `repayment` and nothing selects it).
 its PDFs and the reports API all move; cash in, stamp duty, setup, the
 streams, qualification and every rent-to-rent figure do not. Nothing in the
 schema or `billing_settings` changes, nothing is added to `ACCESS_COLUMNS`,
-and the mortgage a member types into `/estimate` or `/str-report` stays as
-entered. Every stored purchase deal (marketplace deals, picks, Explorer
+and the mortgage a member types into `/estimate` stays as entered. Every stored purchase deal (marketplace deals, picks, Explorer
 checks, saved reports) reads at the current type wherever it is parsed
 (`atCurrentMortgage`, `atCurrentMortgageResult`), so no screen shows a
 repayment figure beside an interest-only one. Once, after deploying:
@@ -664,6 +663,56 @@ a cycle, inside the day's daily email, or alone in its slot once the day's
 daily emails have gone (from 08:30 UTC); its buttons open
 `/account/billing/choose`, which charges only when confirmed there.
 
+### 17. The Batch 21 review fixes
+
+Nine branches from the review of Batches 1–20 (`docs/reviews/batch-21-review.md`),
+merged in the order 21a, 21d, then the rest. What each needs by hand, in the
+order it is needed:
+
+1. **Before the ads, and before `starter_pack_from` is set:** set
+   `CREDIT_ENFORCE=true` on Vercel (Production), then **run
+   `supabase/schema.sql`** (the "Batch 21: review fixes" section, 21a):
+   the atomic `credit_plan_cycle` function the webhook uses, the one-off
+   forgiveness of every shadow-mode overdraft (an `adjust` row per member;
+   the count is printed), the referral guard in `credit_redeem_code`, and
+   `leads.input`. Idempotent; nothing is added to `ACCESS_COLUMNS`. Flipping
+   the flag first means no pack-era account can overdraw in between.
+2. **Stripe:** enable `charge.dispute.closed` on the webhook endpoint (21c):
+   a dispute that is won or withdrawn gives the clawed-back credit back.
+3. **n8n:** `N8N_SHARED_SECRET` now opens only `/api/internal/leads/provision`
+   (21e). Nothing to change unless an n8n workflow calls another internal
+   route with it: those take `INTERNAL_API_SECRET`.
+4. **Monday (board 18413002067):** add a Numbers column "Weeks since sign-up",
+   put its id in `MONDAY_FUNNEL_WEEKS_COLUMN`, and point the Engagement %
+   formula at it instead of `ROUNDUP(DAYS(TODAY(), Signed up) / 7, 0)` (21f):
+   the site writes it with the same Monday–Sunday weeks as Active weeks, so
+   the ratio can no longer read over 100% or divide by zero.
+5. **Resend:** verify a neutral domain (not stayful.co.uk) and set
+   `EMAIL_FROM_WHITELABEL` to a sender on it (21g), so a funnel prospect's
+   report email does not arrive from Stayful's address. Optional: unset,
+   `EMAIL_FROM` is used as before.
+6. **Crons (21e):** `vercel.json` moves `listing-recheck` to 06:03, adds a
+   fourth `sourcing` pass at 07:50, moves `picks-paused` to 08:20 (after the
+   08:10 digest), `funnel-queue` to :07 and :37, and `project-checks` off the
+   demand-sourcing minutes in hour 05. Vercel → Settings → Cron Jobs should
+   list the new times after the deploy; the table below is the new order.
+7. **Next.js 16.3.7 (21i):** a full click-through on the preview before it
+   merges (sign-up on a phone, the quiz, Today, a deal page with a photo, a
+   Full analysis, an `/estimate` report and its PDF, `/account/billing`,
+   `/extension/connect`, a cron with `?dry=1`).
+8. **The Facebook app:** test the sign-up from the Facebook app on a phone
+   before the first ad goes live (21h): inside its browser the Google button
+   is replaced by "open this page in your browser", and the confirmation
+   email opens in the phone's real browser, where the sign-up's session is
+   not, so the member signs in with the password they chose. Optional: send
+   sign-up confirmations through the token-hash `/auth/confirm` link (Supabase
+   → Authentication → Email templates, `{{ .TokenHash }}`), which needs no
+   session from the sign-up's browser.
+
+Nothing in 21h needs a setting: the new optional variables are documented in
+`.env.example` (`EMAIL_FROM_WHITELABEL`, `MONDAY_FUNNEL_WEEKS_COLUMN`,
+`CRON_SECRET`, the PriceLabs and broker budget lines).
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -725,12 +774,12 @@ emails never go through the cap.
 
 | UTC | Job | Sends |
 |---|---|---|
-| 06:00 | `listing-recheck` | Nothing: records price and status changes on pipeline rows |
+| 06:03 | `listing-recheck` | Nothing: records price and status changes on pipeline rows |
 | 06:55 | `deal-alerts` | Nothing: turns changes on tracked deals into `deal_alerts` |
-| 07:00, 07:20, 07:40 | `sourcing` | Today's 5: the charged pick, the rest of the member's Today, and changes |
-| 08:00 | `picks-paused` | The out-of-credit letter, instead of the daily email, with changes |
+| 07:00, 07:20, 07:40, 07:50 | `sourcing` | Today's 5: the charged pick, the rest of the member's Today, and changes |
 | Mon 08:00 | `alerts` | Your week: deals missed, your deals, your areas |
 | 08:10 | `daily-digest` | The daily email for anyone who had none: Today's 5 without a pick, or changes only |
+| 08:20 | `picks-paused` | The out-of-credit letter (and the away letter), for anyone the daily email could not go to, with changes |
 | :40, 07:40–19:40 | `deal-alerts` | Nothing: the same collector hourly in the day, so texts can go within the hour |
 | every 15 min, 07:00–19:45 | `sms-alerts` | At most one text a member a day (below) |
 

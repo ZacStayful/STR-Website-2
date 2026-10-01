@@ -4,7 +4,7 @@ import type {
   AnalysisResult, ShortLetData, LongLetData, DemandDrivers, NearbyEvent, DataQuality,
   CompetitorsResult,
 } from '../types';
-import { geocodePostcode } from '../apis/geocode';
+import { geocodePostcode, GeocodePostcodeError } from '../apis/geocode';
 import { getShortLetData } from '../apis/airbtics';
 import { dueDiligenceFor, floorAreaFor, longLetFor, saleValuationFor } from './propertydata-steps';
 import { getNearbyAmenities } from '../apis/google-places';
@@ -91,7 +91,12 @@ export interface AnalysisRun {
   spend: { basePence: number; chargedPence: number };
 }
 
-/** The postcode could not be geocoded — nothing downstream can run. */
+/**
+ * The postcode could not be geocoded — nothing downstream can run. Only when
+ * Google found nothing for it (GeocodePostcodeError): a missing key, a quota
+ * or an outage is not the member's postcode and takes the generic failure
+ * path, which refunds and says "unexpected error", not "check your postcode".
+ */
 export class GeocodeError extends Error {
   constructor() {
     super('Could not geocode the provided postcode. Please check it and try again.');
@@ -216,7 +221,8 @@ export async function runAnalysis(
         coordinates = await geocodePromise;
       } catch (err) {
         console.error('Geocoding failed:', err);
-        throw new GeocodeError();
+        if (err instanceof GeocodePostcodeError) throw new GeocodeError();
+        throw err;
       }
 
       progress('geocoding', 20, 'Property located');

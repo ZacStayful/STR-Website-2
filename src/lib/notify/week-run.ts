@@ -325,7 +325,8 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
       recap,
       areas: pl.areas,
       unsubscribe: { label: 'Stop weekly emails', url: unsubscribeUrl, oneClickUrl: unsubscribeUrl },
-      figureFor: (d) => rangeLineFor(d, parseMarketGoals(p.market_goals)?.finance ?? null, rangeWidths),
+      // As the profiles branch above and Today: a cash buyer's range has no mortgage taken off.
+      figureFor: (d) => rangeLineFor(d, memberFinance(parseMarketGoals(p.market_goals)), rangeWidths),
     });
     const areaChanges = pl.areas?.length ?? 0;
     if (!built) {

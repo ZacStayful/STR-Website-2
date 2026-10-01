@@ -1,5 +1,6 @@
 import 'server-only';
 
+import type Stripe from 'stripe';
 import { createAdminClient } from '../supabase/admin';
 import { getBalance } from '../credit/ledger';
 import { getStripe, stripeConfigured } from './client';
@@ -9,57 +10,57 @@ import { DEFAULT_TOPUP_THRESHOLD_PENCE } from '../credit/topup-floor';
 import { recordActivity } from '../activity/log';
 import { paymentFromIntent } from '../payments/rules';
 import { recordPayment } from '../payments/server';
+import { runAutoTopup, type AutoTopupDeps, type AutoTopupProfile } from './auto-topup-core';
 
 /**
- * Opt-in auto top-up: when a debit leaves the balance below the member's
- * threshold, charge their saved card for their chosen amount. At most one
- * attempt per 10 minutes per member; a decline switches the setting off and
- * emails them. Called from the meter after a debit (fire-and-forget).
+ * Opt-in auto top-up: the rule is in auto-topup-core.ts (tested); this is its
+ * live wiring. Called from the meter after a debit (fire-and-forget).
  */
-export async function maybeAutoTopup(userId: string): Promise<'charged' | 'skipped' | 'failed'> {
-  if (!stripeConfigured()) return 'skipped';
-  const admin = createAdminClient();
-  const { data: p } = await admin
-    .from('profiles')
-    .select('email, stripe_customer_id, stripe_default_payment_method_id, auto_topup_amount_pence, auto_topup_threshold_pence, auto_topup_last_at')
-    .eq('id', userId)
-    .maybeSingle();
-  if (!p || !p.auto_topup_amount_pence || !p.stripe_default_payment_method_id || !p.stripe_customer_id) return 'skipped';
-  const last = p.auto_topup_last_at ? new Date(String(p.auto_topup_last_at)).getTime() : 0;
-  if (Date.now() - last < 10 * 60 * 1000) return 'skipped';
-  const bal = await getBalance(userId);
-  if (bal.spendableBasePence >= Number(p.auto_topup_threshold_pence ?? DEFAULT_TOPUP_THRESHOLD_PENCE)) return 'skipped';
+export function liveAutoTopupDeps(): AutoTopupDeps<Stripe.PaymentIntent> {
+  return {
+    configured: stripeConfigured,
+    profile: async (userId) => {
+      const { data: p } = await createAdminClient()
+        .from('profiles')
+        .select('email, stripe_customer_id, stripe_default_payment_method_id, auto_topup_amount_pence, auto_topup_threshold_pence, auto_topup_last_at')
+        .eq('id', userId)
+        .maybeSingle();
+      return (p as AutoTopupProfile | null) ?? null;
+    },
+    spendableBasePence: async (userId) => (await getBalance(userId)).spendableBasePence,
+    claim: async (userId, nowIso, cutoffIso) => {
+      const { data: claimed } = await createAdminClient().from('profiles').update({ auto_topup_last_at: nowIso }).eq('id', userId).or(`auto_topup_last_at.is.null,auto_topup_last_at.lt.${cutoffIso}`).select('id');
+      return Boolean(claimed && claimed.length > 0);
+    },
+    charge: (p) =>
+      getStripe().paymentIntents.create(
+        {
+          amount: p.amountPence,
+          currency: 'gbp',
+          customer: p.customerId,
+          payment_method: p.paymentMethodId,
+          off_session: true,
+          confirm: true,
+          description: `Stayful auto top-up £${(p.amountPence / 100).toFixed(2)}`,
+          metadata: { user_id: p.userId, kind: 'topup', amount_pence: String(p.amountPence), auto: '1' },
+        },
+        { idempotencyKey: p.idempotencyKey },
+      ),
+    grantTopup: (userId, amountPence, sourceRef, opts) => grantTopup(userId, amountPence, sourceRef, opts),
+    recordCharge: async (userId, pi, amountPence) => {
+      // Batch 20: what was charged, for Total paid (the webhook writes the same row, once).
+      await recordPayment(paymentFromIntent(pi, userId));
+      await recordActivity(userId, 'auto_topup', { source: 'system', dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amountPence } });
+    },
+    switchOff: async (userId) => {
+      await createAdminClient().from('profiles').update({ auto_topup_amount_pence: null }).eq('id', userId);
+    },
+    cardNeedsUpdate: (email) => cardNeedsUpdateEmail(email),
+    now: () => new Date(),
+    defaultThresholdPence: DEFAULT_TOPUP_THRESHOLD_PENCE,
+  };
+}
 
-  // Claim the slot before charging so two concurrent debits can't double-charge.
-  const now = new Date().toISOString();
-  const { data: claimed } = await admin.from('profiles').update({ auto_topup_last_at: now }).eq('id', userId).or(`auto_topup_last_at.is.null,auto_topup_last_at.lt.${new Date(Date.now() - 10 * 60 * 1000).toISOString()}`).select('id');
-  if (!claimed || claimed.length === 0) return 'skipped';
-
-  const amount = Number(p.auto_topup_amount_pence);
-  try {
-    const pi = await getStripe().paymentIntents.create(
-      {
-        amount,
-        currency: 'gbp',
-        customer: String(p.stripe_customer_id),
-        payment_method: String(p.stripe_default_payment_method_id),
-        off_session: true,
-        confirm: true,
-        description: `Stayful auto top-up £${(amount / 100).toFixed(2)}`,
-        metadata: { user_id: userId, kind: 'topup', amount_pence: String(amount), auto: '1' },
-      },
-      { idempotencyKey: `autotopup:${userId}:${now.slice(0, 16)}` },
-    );
-    if (pi.status !== 'succeeded') throw new Error(`payment intent ${pi.status}`);
-    await grantTopup(userId, amount, `pi:${pi.id}`, { email: (p.email as string | null) ?? null });
-    // Batch 20: what was charged, for Total paid (the webhook writes the same row, once).
-    await recordPayment(paymentFromIntent(pi, userId));
-    await recordActivity(userId, 'auto_topup', { source: 'system', dedupeKey: `topup:pi:${pi.id}`, extras: { amount_pence: amount } });
-    return 'charged';
-  } catch (err) {
-    console.warn('[auto-topup] charge failed; switching off:', (err as Error).message);
-    await admin.from('profiles').update({ auto_topup_amount_pence: null }).eq('id', userId);
-    if (p.email) await cardNeedsUpdateEmail(String(p.email)).catch(() => {});
-    return 'failed';
-  }
+export function maybeAutoTopup(userId: string, deps: AutoTopupDeps<Stripe.PaymentIntent> = liveAutoTopupDeps()): Promise<'charged' | 'skipped' | 'failed'> {
+  return runAutoTopup(userId, deps);
 }

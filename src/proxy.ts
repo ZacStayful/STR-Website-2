@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { updateSupabaseSession } from '@/lib/supabase/proxy'
 import { postAuthPath } from '@/lib/auth/landing'
 
-const PROTECTED_PREFIXES = ['/welcome', '/today', '/my-deals', '/estimate', '/reports', '/picks', '/deals', '/leads', '/dashboard', '/account', '/upgrade', '/admin', '/extension/connect']
+// /profile and /profiles are here so a signed-out click on an email link
+// keeps its whole address (?via=email, ?q=, ?new=1) through the login bounce;
+// their own in-page redirects stay as the fallback.
+const PROTECTED_PREFIXES = ['/welcome', '/today', '/my-deals', '/estimate', '/reports', '/picks', '/deals', '/leads', '/profile', '/profiles', '/account', '/upgrade', '/admin', '/extension/connect']
 const AUTH_ROUTES = ['/login', '/signup']
 
 function isProtected(pathname: string): boolean {

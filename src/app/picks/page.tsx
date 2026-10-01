@@ -11,6 +11,7 @@ import { ReasonChips } from "@/components/PickReasonChips";
 import { BAND_LABELS } from "@/lib/listing/screen";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { profitRange, rangeCaption, upliftTag, type ProfitRangeInput } from "@/lib/marketplace/profit-range";
+import { memberFinance } from "@/lib/marketplace/most-you-can-pay";
 import { projectCardsByUrl } from "@/lib/marketplace/queries";
 import { projectNumbersFor, projectRangeLine } from "@/lib/project/display";
 import type { ProjectCardData } from "@/lib/project/headline";
@@ -149,7 +150,7 @@ export default async function PicksPage({ searchParams }: { searchParams: Promis
         ) : (
           <ul className="space-y-3">
             {rows.map((p) => (
-              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={(profileOf(p.id)?.goals ?? goals)?.finance ?? null} widths={settings.dealPricing.profitRangePct} profileName={showProfiles && profileOf(p.id) ? profileLabel(profileOf(p.id)!) : null} project={p.kind === "rent" ? null : projects.get(p.listing.canonicalUrl) ?? null} />
+              <PickCard key={p.id} pick={p} tab={tab} showReasons={failedPick === p.id ? false : p.reaction === "no" && p.reactionSource !== "form"} finance={memberFinance(profileOf(p.id)?.goals ?? goals)} widths={settings.dealPricing.profitRangePct} profileName={showProfiles && profileOf(p.id) ? profileLabel(profileOf(p.id)!) : null} project={p.kind === "rent" ? null : projects.get(p.listing.canonicalUrl) ?? null} />
             ))}
           </ul>
         )}

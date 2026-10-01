@@ -5,6 +5,23 @@
  */
 
 import { meter } from '../credit/meter.ts';
+import { isPostcodeFault } from './geocode-status.ts';
+
+const GEOCODE_TIMEOUT_MS = 8_000;
+
+/**
+ * Google looked and found nothing for the postcode (ZERO_RESULTS,
+ * INVALID_REQUEST): the member's postcode, not our configuration. Everything
+ * else (a missing or rejected key, a quota, an outage) throws a plain Error,
+ * so the report's generic failure path runs and the member is not told to
+ * check a postcode that was fine.
+ */
+export class GeocodePostcodeError extends Error {
+  constructor(postcode: string, public readonly status: string) {
+    super(`Geocoding found nothing for postcode "${postcode}" (${status}).`);
+    this.name = 'GeocodePostcodeError';
+  }
+}
 
 export interface GeocodeResult {
   lat: number;
@@ -26,7 +43,7 @@ export async function geocodePostcode(postcode: string): Promise<GeocodeResult> 
   const encodedPostcode = encodeURIComponent(postcode.trim() + ', UK');
   const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedPostcode}&key=${apiKey}`;
 
-  const response = await meter({ provider: 'google', unit: 'geocode', key: postcode.trim().toUpperCase(), failed: (r) => !r.ok }, () => fetch(url));
+  const response = await meter({ provider: 'google', unit: 'geocode', key: postcode.trim().toUpperCase(), failed: (r) => !r.ok }, () => fetch(url, { signal: AbortSignal.timeout(GEOCODE_TIMEOUT_MS) }));
 
   if (!response.ok) {
     throw new Error(
@@ -37,6 +54,8 @@ export async function geocodePostcode(postcode: string): Promise<GeocodeResult> 
   const data = await response.json();
 
   if (data.status !== 'OK' || !data.results?.length) {
+    const status = String(data.status ?? 'UNKNOWN');
+    if (isPostcodeFault(status, data.results?.length ?? 0)) throw new GeocodePostcodeError(postcode, status);
     throw new Error(
       `Geocoding failed for postcode "${postcode}". API status: ${data.status}. ${data.error_message ?? ''}`.trim(),
     );

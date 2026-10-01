@@ -18,7 +18,6 @@ import {
   MOTIVATION_LIFT,
   listingAge,
   medianAgeDays,
-  sourcingEmail,
   budgetBounds,
   type AreaRef,
   type SourcedListing,
@@ -192,17 +191,6 @@ test('dealForSourced uses per-bedroom figures and rankPicks drops losing deals',
   assert.equal(picks[0].listing.id, '19782017');
   assert.ok(picks[0].fit > 70);
   assert.equal(dealForSourced(sale[0], null, null), null);
-});
-
-test('sourcing email links to the analyser and the explorer check flow', () => {
-  const figures = { byBedrooms: [], headline: { grossRevenue: 30_000, adr: 140 } };
-  const sale = parseOnTheMarketSearch(fixture('onthemarket-search-sale.html'), 'sale').slice(0, 2);
-  const picks = rankPicks(sale.map((l) => ({ listing: l, deal: dealForSourced(l, figures, null), areaFit: 65, areaName: 'Nottingham' })));
-  const mail = sourcingEmail(picks, 'https://intelligence.stayful.co.uk');
-  assert.equal(mail.subject, '2 new listings that fit your goals');
-  assert.ok(mail.text.includes('/estimate?listing=https%3A%2F%2Fwww.onthemarket.com%2Fdetails%2F19782017%2F'));
-  assert.ok(mail.html.includes('/markets?check=https%3A%2F%2Fwww.onthemarket.com'));
-  assert.ok(mail.html.includes('gross yield'));
 });
 
 // ── How long it has been sitting ──

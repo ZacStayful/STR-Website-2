@@ -2,7 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ChangeInput } from '../notify/message.ts';
 import { notificationState } from '../notifications/registry.ts';
-import { contactCanReceive, orderForText, planMemberText, textPriority, TEXT_FRESH_MS, type MemberPlanInput } from './choose.ts';
+import { activeStageKeys, contactCanReceive, orderForText, planMemberText, textPriority, TEXT_FRESH_MS, type MemberPlanInput } from './choose.ts';
+import { PIPELINE_STATUSES } from '../listing/pipeline.ts';
+
+test('the active stages are the pipeline’s own list between Kept and Passed, Secured left out on purpose', () => {
+  assert.deepEqual(activeStageKeys(), ['contacted', 'viewing', 'offer']);
+  // Every pipeline stage is accounted for: active, kept, passed, or secured (never texted).
+  for (const s of PIPELINE_STATUSES) assert.ok(activeStageKeys().includes(s.key) || ['watching', 'passed', 'secured'].includes(s.key), s.key);
+  // A secured deal is priced like a kept one, not an active one.
+  assert.equal(textPriority({ alertType: 'price_drop', stage: 'secured' }), textPriority({ alertType: 'price_drop', stage: 'watching' }));
+});
 import { fitsOneSegment } from './gsm.ts';
 
 const NOW = new Date('2026-09-26T10:00:00Z');

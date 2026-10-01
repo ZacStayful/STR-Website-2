@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { teamOf, teamName, profileNames, personName } from "@/lib/team";
 import { retentionDate } from "@/lib/leads/retention";
+import { seatPriceLabel } from "@/lib/team/rules";
 import { InviteForm, RevokeInviteButton, RemoveMemberForm, LeaveTeamForm } from "./TeamForms";
 
 export const metadata: Metadata = {
@@ -89,7 +90,7 @@ export default async function TeamPage() {
       <h1 className="text-2xl font-bold text-foreground">Team</h1>
       <p className="mt-2 text-sm text-muted-foreground">
         Invite colleagues to work your leads in <span className="font-medium text-foreground">{name}</span>. Each member
-        costs <span className="font-medium text-foreground">£10 a month</span> from your credit, taken when they accept and
+        costs <span className="font-medium text-foreground">{seatPriceLabel()} a month</span> from your credit, taken when they accept and
         every 30 days after. Funnels, integrations, API keys and billing stay yours to manage.
       </p>
 
@@ -122,7 +123,7 @@ export default async function TeamPage() {
                       Joined {retentionDate(m.joined_at)} ·{" "}
                       {m.suspended_at
                         ? <span className="text-warning">Paused since {retentionDate(m.suspended_at)}</span>
-                        : <>Next £10 on {retentionDate(m.seat_paid_until)}</>}
+                        : <>Next {seatPriceLabel()} on {retentionDate(m.seat_paid_until)}</>}
                     </p>
                   </div>
                   <RemoveMemberForm memberId={m.member_id} name={personName(p)} deletesLogin={m.created_via_invite} />

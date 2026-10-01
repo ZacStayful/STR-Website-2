@@ -10,9 +10,7 @@ import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE } from './de
 import { countryForPostcode } from './stamp-duty.ts';
 import { auctionEvidenceFor, auctionMethod, isAuctionLot, type AuctionTerms } from '../deal-quality/auction.ts';
 import { detectListingUrl, SERVER_FETCHABLE } from './detect.ts';
-import { escapeHtml as esc } from '../email/escape.ts';
 import { scriptJsonById, parsePrice, findPostcode, findOutcode } from './html.ts';
-import { formatListingPrice } from './format.ts';
 import { postcodeAreaOf } from './normalise.ts';
 import { agentHash } from '../crypto/agent.ts';
 import { blendFit } from './pipeline.ts';
@@ -560,36 +558,4 @@ export function describeDeal(d: Deal): string {
   const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
   if (d.kind === 'purchase') return `est. ${gbp(d.grossRevenue)}/yr · ${d.grossYieldPct.toFixed(1)}% gross yield · ${gbp(d.cashflowMonthly)}/mo after ${d.mortgageType === 'repayment' ? 'mortgage' : 'an interest-only mortgage'}`;
   return `est. ${gbp(d.grossRevenue)}/yr · ${gbp(d.monthlyMargin)}/mo margin after rent · breakeven ${d.breakevenOccupancyPct === null ? 'n/a' : `${Math.round(d.breakevenOccupancyPct)}% occupancy`}`;
-}
-
-export function sourcingEmail(picks: SourcedPick[], siteUrl: string): { subject: string; text: string; html: string } {
-  const subject = picks.length === 1 ? `1 new listing that fits your goals: ${picks[0].areaName}` : `${picks.length} new listings that fit your goals`;
-  const label = (p: SourcedPick) => {
-    const l = p.listing;
-    const bits = [l.bedrooms ? `${l.bedrooms}-bed` : null, l.rawType, formatListingPrice(l.price)].filter(Boolean);
-    return `${l.address ?? l.title} — ${bits.join(' · ')}`;
-  };
-  const analyse = (p: SourcedPick) => `${siteUrl}/estimate?listing=${encodeURIComponent(p.listing.canonicalUrl)}`;
-  const pipeline = (p: SourcedPick) => `${siteUrl}/markets?check=${encodeURIComponent(p.listing.canonicalUrl)}`;
-  const text = [
-    'New listings from Stayful that fit your goals.',
-    '',
-    ...picks.map((p) => `• ${label(p)}\n  ${p.deal ? describeDeal(p.deal) : ''} · fit ${p.fit}/100 (${p.areaName})\n  Full report: ${analyse(p)}\n  Add to pipeline: ${pipeline(p)}\n  Listing: ${p.listing.canonicalUrl}`),
-    '',
-    'Figures are area averages for the size of property; run a full report before acting on one.',
-    `Turn sourcing emails off under “Edit goals” in the explorer: ${siteUrl}/markets`,
-  ].join('\n');
-  const html = `
-    <div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#2e3d2b;max-width:560px">
-      <p style="font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#5d8156;font-weight:600">Stayful Deal Sourcing</p>
-      <h1 style="font-size:22px;margin:0 0 14px">${esc(subject)}</h1>
-      <ol style="padding-left:18px">${picks
-        .map(
-          (p) =>
-            `<li style="margin:12px 0"><strong>${esc(label(p))}</strong><br><span style="color:#5d8156">${esc(p.deal ? describeDeal(p.deal) : '')}</span><br><span style="color:#7a8274;font-size:13px">Fit ${p.fit}/100 · ${esc(p.areaName)}</span><br><a href="${esc(analyse(p))}" style="color:#2e3d2b;font-weight:600">Full report</a> · <a href="${esc(pipeline(p))}" style="color:#2e3d2b">Add to pipeline</a> · <a href="${esc(p.listing.canonicalUrl)}" style="color:#7a8274">View listing</a></li>`,
-        )
-        .join('')}</ol>
-      <p style="color:#7a8274;font-size:12px">Figures are area averages for the size of property; run a full report before acting on one. You get this because deal sourcing is on in your goals. Turn it off under “Edit goals” in the <a href="${esc(`${siteUrl}/markets`)}" style="color:#7a8274">Market Explorer</a>.</p>
-    </div>`.trim();
-  return { subject, text, html };
 }

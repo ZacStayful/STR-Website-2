@@ -32,8 +32,9 @@ async function access(dealId: unknown) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'signed_out' as const };
   const adminUser = isAdminEmail(user.email);
-  const { payerId } = await payerFor(user.id);
-  const sheet = await dealSheet(dealId, payerId, adminUser, await dealVisibilityFor(user.id, adminUser));
+  // A paused (suspended) seat may not use the team's opens.
+  const payer = await payerFor(user.id);
+  const sheet = await dealSheet(dealId, payer.suspended ? user.id : payer.payerId, adminUser, await dealVisibilityFor(user.id, adminUser));
   if (!sheet?.priv) return { error: 'not_open' as const };
   const admin = createAdminClient();
   const stored = await projectEstimateFor(admin, dealId);

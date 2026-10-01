@@ -51,7 +51,7 @@ export default async function AreaPage({
   if (!meta) notFound();
   // Members only: blocked users go to /upgrade and come back to this area;
   // signed-out visitors get the public product page.
-  if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage />;
+  if ((await requireMarketAccess(`/markets/${meta.slug}`)) === "anon") return <MarketExplorerProductPage returnTo={`/markets/${meta.slug}`} />;
 
   const access = await getMarketAccess();
   const visibility = await dealVisibilityFor(access.user?.id ?? null, isAdminEmail(access.user?.email));

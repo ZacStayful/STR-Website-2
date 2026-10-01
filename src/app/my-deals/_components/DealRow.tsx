@@ -84,7 +84,8 @@ export function DealRow({
     const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
     const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ") || "Location on the sheet";
     const figure = headlineFigure(card);
-    href = `/deals/${card.id}`;
+    // The deal page's back link reads this (src/lib/listing/return-path.ts).
+    href = `/deals/${card.id}?back=${encodeURIComponent("/my-deals")}`;
     photo = photoUrlFor(card, now) ?? (item.opened ? item.listing?.photo ?? null : null);
     big = view ? (view.range?.label ?? "—") : figure.big;
     // Batch 17: a Project deal adds its works and value added.

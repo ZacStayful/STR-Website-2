@@ -277,7 +277,7 @@ export function buildTabModel(tab: TabKey, ctx: TabContext): TabModel {
         desc: `Net income after costs for a typical ${area.name} property let short-term against the same home on a standard tenancy at the area's average rent. Costs follow the analyser's standard assumptions; mortgage costs are the same either way and are left out of both sides.${ctx.isDistrict ? ` ${DISTRICT_NOTE}` : ''}`,
         kpis: [
           { label: 'Verdict', value: winner, sub: `by ${gbp(v.annualAdvantage)} a year`, tone: v.winner === 'short-let' ? 'works' : undefined },
-          { label: 'Short-let net / yr', value: gbp(f.shortLetNetAnnual), sub: 'after management, cleaning, bills' },
+          { label: 'Short-let net / yr', value: gbp(f.shortLetNetAnnual), sub: 'after platform, management and cleaning; before bills and mortgage' },
           { label: 'Long-let net / yr', value: gbp(f.longLetNetAnnual), sub: `${gbp(v.longLetMonthlyRent)} pcm before costs` },
           { label: 'Break-even occupancy', value: `${v.breakEvenOccupancyPct}%`, sub: 'to match long-let net' },
         ],

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
@@ -49,7 +50,7 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) redirect("/login?redirect=/my-deals");
   const adminUser = isAdminEmail(user.email);
   const now = new Date();
   const reportsTab = tab === "reports";

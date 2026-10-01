@@ -20,6 +20,7 @@ import {
   webPageSchema,
 } from "@/lib/schema";
 import { faqsWith } from "@/lib/faqs-data";
+import { costFiguresNow } from "@/lib/faqs-server";
 import { publicOfferNow } from "@/lib/starter-pack/public";
 import { siteUrl } from "@/lib/url";
 
@@ -49,7 +50,7 @@ export const metadata: Metadata = {
 };
 
 export default async function HomePage() {
-  const faqs = faqsWith(await publicOfferNow());
+  const faqs = faqsWith(await publicOfferNow(), await costFiguresNow());
   return (
     <>
       <Schema

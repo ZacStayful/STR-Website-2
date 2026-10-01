@@ -45,6 +45,7 @@ import { geocodePostcode } from '../apis/geocode';
 import { countDealsAcross, listDeals, photoUrlFor } from '../marketplace/queries';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { areaDealView, type AreaDealView } from '../marketplace/grid';
+import { memberFinance } from '../marketplace/most-you-can-pay';
 import { rangeLineFor } from '../project/display';
 import { quizPathFor } from '../auth/landing';
 import { logActivity } from '../activity/log';
@@ -408,7 +409,8 @@ export async function sampleMatches(p: { userId: string; email: string | null; l
   const page = await listDeals({ ...profileFilters(s.answers.goals, s.answers.savedAreas), types: typesShown({ goals: s.answers.goals, about: s.answers.about }) }, visibility, { userId: p.userId });
   return page.cards.slice(0, p.limit ?? 2).map((card) => ({
     ...areaDealView(card, photoUrlFor(card, now), now, settings.dealPricing.profitRangePct),
-    range: rangeLineFor(card, s.answers.goals.finance, settings.dealPricing.profitRangePct),
+    // The member's finance as Today prices it: a cash buyer borrows nothing.
+    range: rangeLineFor(card, memberFinance(s.answers.goals), settings.dealPricing.profitRangePct),
   }));
 }
 

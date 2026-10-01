@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { seatPriceLabel } from "@/lib/team/rules";
 import {
   inviteAction,
   revokeInviteAction,
@@ -25,7 +26,7 @@ export function InviteForm() {
     <form
       action={action}
       onSubmit={(e) => {
-        if (!confirm("Each member costs £10 a month from your credit, first charged when they accept. Send the invite?")) {
+        if (!confirm(`Each member costs ${seatPriceLabel()} a month from your credit, first charged when they accept. Send the invite?`)) {
           e.preventDefault();
         }
       }}

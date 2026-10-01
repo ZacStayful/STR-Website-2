@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { QUESTIONS, answerLabel, applyAnswer, clearAnswer, currentValue, emptyAnswers, imageOf, moneyQuestionsFor, optionsOf, questionsFor, text, type Answers, type QuestionId } from './questions.ts';
+import { DEFAULT_FINANCE } from '../listing/deal.ts';
+
+test('"not sure" on finance and profit is the house finance, from its one definition', () => {
+  const a = emptyAnswers(DEFAULT_GOALS, null, []);
+  assert.equal(clearAnswer('finance', a).goals.finance.depositPct, DEFAULT_FINANCE.depositPct);
+  assert.equal(clearAnswer('finance', a).goals.finance.mortgageRatePct, DEFAULT_FINANCE.mortgageRatePct);
+  assert.equal(clearAnswer('min_profit', a).goals.finance.targetMarginPcm, DEFAULT_FINANCE.targetMarginPcm);
+});
 import { DEFAULT_GOALS, GOAL_OPTIONS } from '../market/goals.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT } from './about.ts';
 import { QUIZ_IMAGES } from './images.ts';

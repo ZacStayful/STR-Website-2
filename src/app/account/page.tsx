@@ -140,11 +140,15 @@ export default async function AccountPage({
   const pauseScheduled = isPauseScheduled(profile);
 
   // What the plan card says about the tier: price and the credit it brings.
+  // The credit is the member's live grant (plan_credit_pence once the new
+  // pricing applies to their cycle), not the billing_plans seed, so the card
+  // never states a figure the usage bar beneath it contradicts.
   const plan = await getPlan((profile.plan_code as string | null) ?? null).catch(() => null);
-  const planLabel = plan
-    ? `Stayful ${plan.name} — ${formatGbp(plan.pricePence).replace('.00', '')} a ${plan.interval === 'year' ? 'year' : 'month'}, ${formatGbp(plan.monthlyCreditPence).replace('.00', '')} of credit every month`
-    : null;
   const credit = await getCreditSummary(user.id).catch(() => null);
+  const planCreditPence = plan && credit?.cycle?.planCode === plan.code && credit.cycle.allowancePence > 0 ? credit.cycle.allowancePence : plan?.monthlyCreditPence ?? 0;
+  const planLabel = plan
+    ? `Stayful ${plan.name} — ${formatGbp(plan.pricePence).replace('.00', '')} a ${plan.interval === 'year' ? 'year' : 'month'}, ${formatGbp(planCreditPence).replace('.00', '')} of credit every month`
+    : null;
 
   // A subscription arranged by hand has no Stripe record we can drive, so it
   // gets a route to a human instead of buttons that would throw.

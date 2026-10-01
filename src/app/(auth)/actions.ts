@@ -8,16 +8,14 @@ import { ensureEnquiry } from '@/lib/apis/monday'
 import { queueFunnelSync } from '@/lib/crm/monday-funnel/queue-server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { postAuthPath } from '@/lib/auth/landing'
+import { authErrorMessage } from '@/lib/auth/error-message'
+import { siteUrl } from '@/lib/url'
 import { onEmailSignup, onSignIn } from '@/lib/tracking/signup-server'
 
 export type AuthState = { error: string | null }
 // For flows that show a success message in place (resend, reset request) as
 // well as an error.
 export type FormState = { error: string | null; success: string | null }
-
-function getSiteUrl(): string {
-  return process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
-}
 
 // Where an email link lands. The callback applies the landing rule
 // (src/lib/auth/landing.ts), so only an explicit destination is carried.
@@ -28,7 +26,8 @@ function callbackUrl(next: string, confirm = false): string {
   if (next) params.set('next', next)
   if (confirm) params.set('confirm', '1')
   const query = params.toString()
-  return `${getSiteUrl()}/auth/callback${query ? `?${query}` : ''}`
+  // siteUrl() is the one place the site's address is decided (NEXT_PUBLIC_SITE_URL).
+  return siteUrl(`/auth/callback${query ? `?${query}` : ''}`)
 }
 
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -43,7 +42,8 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
-  if (error) return { error: error.message }
+  // Supabase's words for the member's mistakes; ours for an outage.
+  if (error) return { error: authErrorMessage(error) }
 
   // Batch 19: this device's cookie choice becomes the member's (e.g. the first
   // sign-in after confirming the email on another device).
@@ -93,7 +93,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     },
   })
 
-  if (error) return { error: error.message }
+  if (error) return { error: authErrorMessage(error) }
 
   // The DB trigger handle_new_user() reads full_name + mobile out of
   // raw_user_meta_data and writes them onto the profile row. New profiles
@@ -168,7 +168,7 @@ export async function resendConfirmationAction(
     options: { emailRedirectTo: callbackUrl(next, true) },
   })
 
-  if (error) return { error: error.message, success: null }
+  if (error) return { error: authErrorMessage(error), success: null }
   return { error: null, success: `Confirmation email resent to ${email}.` }
 }
 
@@ -209,7 +209,7 @@ export async function requestPasswordResetAction(
 
   const supabase = await createSupabaseServerClient()
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${getSiteUrl()}/auth/callback?next=/reset-password`,
+    redirectTo: siteUrl('/auth/callback?next=/reset-password'),
   })
 
   // Don't reveal whether an account exists — always show the same message.
@@ -243,7 +243,7 @@ export async function updatePasswordAction(
   }
 
   const { error } = await supabase.auth.updateUser({ password })
-  if (error) return { error: error.message }
+  if (error) return { error: authErrorMessage(error) }
 
   redirect(postAuthPath(null))
 }

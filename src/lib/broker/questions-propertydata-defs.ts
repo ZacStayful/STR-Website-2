@@ -156,7 +156,8 @@ function postcodeQuestion<T>(name: string, ttlMs: number, run: (postcode: string
   };
 }
 
-export function pdQuestions(client: PdClient): PdQuestions {
+export function pdQuestions(client: PdClient, opts: { /** The clock the stamp-duty key reads the month from (tests pass a fixed one). */ now?: () => Date } = {}): PdQuestions {
+  const now = opts.now ?? (() => new Date());
   return {
     pdFloorAreas: postcodeQuestion('pdFloorAreas', TTL.pdPostcode, (postcode) => client.floorAreas(postcode)),
 
@@ -210,7 +211,7 @@ export function pdQuestions(client: PdClient): PdQuestions {
       name: 'pdStampDuty',
       // The month is part of the key: the calculator prices for today, and a
       // figure cached before a budget's rate change must not outlive it.
-      key: (p) => `${p.country}|${p.mode}|${p.ukResident === false ? 'nonres' : 'res'}|${Math.round(p.value)}|${new Date().toISOString().slice(0, 7)}`,
+      key: (p) => `${p.country}|${p.mode}|${p.ukResident === false ? 'nonres' : 'res'}|${Math.round(p.value)}|${now().toISOString().slice(0, 7)}`,
       rungs: [{ provider: 'propertydata', level: 3, costPence: COST_PENCE.propertydataCall, ttlMs: TTL.pdStampDuty, run: (p) => client.stampDuty(p) }],
     },
 
