@@ -5845,3 +5845,263 @@ begin
 end $$;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 22: signup reveal
+-- =========================
+-- The signup reveal and the Stayful Intelligence view (src/lib/intelligence),
+-- the member searches behind them (src/lib/sourcing-demand/member-search*.ts),
+-- the welcome and first-deep-report prices (src/lib/analysis/offers*.ts),
+-- resuming after a top-up (src/lib/billing/resume-rules.ts) and the call
+-- choice. Every new table is service role only. Nothing is added to
+-- ACCESS_COLUMNS: each new column is read in a query of its own, so until this
+-- section is run no reveal is shown, no search runs and no offer is priced.
+
+-- ── Settings (inserted only when missing, so an edit on /admin/billing survives a re-run) ──
+-- reveal_from is stamped once, the first time this section runs: accounts
+-- created at or after it are "new members" for the reveal. Existing members
+-- never see it.
+insert into public.billing_settings (key, value) values ('reveal_from', to_jsonb(now()))
+on conflict (key) do nothing;
+insert into public.billing_settings (key, value) values
+  ('accuracy_advanced_pct', '50'),
+  ('reveal_low_match_pct', '70'),
+  ('reveal_small_count', '20'),
+  ('strong_match_pct', '90'),
+  ('strong_match_min_checked', '5'),
+  ('signup_search_cap_pence', '50'),
+  ('signup_thin_stock', '5'),
+  ('signup_search_fresh_hours', '24'),
+  ('signup_confirm_live_max', '5'),
+  ('signup_income_checks_max', '3'),
+  ('signup_search_monthly_cap_pence', '2000'),
+  ('member_search_confirms_per_hour', '40'),
+  ('deep_search_markup', '5'),
+  ('deep_search_max_raw_pence', '300'),
+  ('deep_search_monthly_cap_pence', '5000'),
+  ('deep_search_first_discount_pct', '50'),
+  ('deep_search_nearby_areas', '3'),
+  ('reveal_analysis_discount_pct', '50'),
+  ('reveal_welcome_days', '7'),
+  ('deep_first_run_extra_pence', '100'),
+  ('reveal_auto_topup_amount_pence', '2500'),
+  ('reveal_auto_topup_threshold_pence', '500'),
+  ('si_call_pence_per_min', '65'),
+  ('si_text_pence', '22'),
+  ('si_email_pence', '20')
+on conflict (key) do nothing;
+
+-- ── profiles: the call choice ──
+-- "Calls from Stayful Intelligence": off until the member ticks it (the
+-- history is in si_call_consents; the number is sms_contacts').
+alter table public.profiles add column if not exists si_calls boolean not null default false;
+alter table public.profiles add column if not exists si_calls_changed_at timestamptz;
+
+-- ── si_call_consents: every change to the call choice, with its wording ──
+-- Batch 19's consent_records is the cookie banner's (visitor_id, accept |
+-- reject, banner | signup | settings), so call consent has its own.
+create table if not exists public.si_call_consents (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  choice text not null check (choice in ('on', 'off')),
+  source text not null check (source in ('welcome', 'settings')),
+  version text not null check (char_length(version) between 1 and 40),
+  created_at timestamptz not null default now()
+);
+create index if not exists si_call_consents_user_idx on public.si_call_consents (user_id, created_at desc);
+alter table public.si_call_consents enable row level security;  -- no policies: service role only
+revoke all on public.si_call_consents from anon, authenticated;
+
+-- ── profile_today_lists.choice: what the day's choice read ──
+-- {checked, meeting, capped, nearby, finds}: "I checked N live deals". Written
+-- only by the request that stored the list (never by a race loser).
+alter table public.profile_today_lists add column if not exists choice jsonb;
+
+-- ── signup_reveals: one per member, written before the reveal renders ──
+--   deal_ids        the 3 shown (best match first)
+--   offer_deal_ids  the deals the welcome price applies to
+--   shown_ids       every deal shown on the reveal, replaced ones included
+--   layer           which layer found #1 (1 stock, 2 signup search, 3 what-if)
+create table if not exists public.signup_reveals (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  profile_id uuid references public.search_profiles(id) on delete set null,
+  day date not null,
+  deal_ids uuid[] not null default '{}',
+  offer_deal_ids uuid[] not null default '{}',
+  shown_ids uuid[] not null default '{}',
+  level smallint,
+  checked integer,
+  layer smallint,
+  no_match boolean not null default false,
+  strong boolean not null default false,
+  search_id uuid,
+  viewed_at timestamptz,
+  first_keep_at timestamptz,
+  first_keep_ms integer,
+  choices_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists signup_reveals_created_idx on public.signup_reveals (created_at desc);
+alter table public.signup_reveals enable row level security;  -- no policies: service role only
+revoke all on public.signup_reveals from anon, authenticated;
+
+-- ── member_searches: a member's own search (signup: free; deep: paid) ──
+-- id is the action id of its provider calls and its ledger debit.
+--   status       queued | running | done | failed
+--   cap_raw_pence      this search's raw-cost cap; claimed_raw_pence what its
+--                      steps have claimed (member_search_claim) and raw_pence
+--                      what they actually cost (member_search_true_up)
+--   about / up_to      the deep search's quote, in base pence
+create table if not exists public.member_searches (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  payer_id uuid references public.profiles(id) on delete set null,
+  profile_id uuid references public.search_profiles(id) on delete set null,
+  purpose text not null check (purpose in ('signup', 'deep')),
+  status text not null default 'queued' check (status in ('queued', 'running', 'done', 'failed')),
+  plan jsonb,
+  cursor jsonb,
+  lease_until timestamptz,
+  cap_raw_pence numeric(14,4) not null default 0,
+  claimed_raw_pence numeric(14,4) not null default 0,
+  raw_pence numeric(14,4) not null default 0,
+  about_base_pence numeric(14,4),
+  up_to_base_pence numeric(14,4),
+  discount_pct integer not null default 0,
+  first_discount boolean not null default false,
+  reservation_id uuid,
+  charged_base_pence numeric(14,4) not null default 0,
+  transaction_id bigint,
+  stop_reason text,
+  found integer not null default 0,
+  confirmed integer not null default 0,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz
+);
+create unique index if not exists member_searches_signup_uidx on public.member_searches (user_id) where purpose = 'signup';
+create unique index if not exists member_searches_active_uidx on public.member_searches (user_id) where status in ('queued', 'running');
+-- One first-time discount per paying account: held while the search runs and
+-- once it charged; a search that charged nothing frees it.
+create unique index if not exists member_searches_first_discount_uidx on public.member_searches (payer_id)
+  where first_discount and (status in ('queued', 'running') or charged_base_pence > 0);
+create index if not exists member_searches_due_idx on public.member_searches (status, lease_until) where status in ('queued', 'running');
+create index if not exists member_searches_month_idx on public.member_searches (purpose, created_at);
+alter table public.member_searches enable row level security;  -- no policies: service role only
+revoke all on public.member_searches from anon, authenticated;
+
+-- ── member_search_finds: deals a member's search inserted ──
+-- unique(deal_id): one finder per deal, so a free member's early access to
+-- their own finds can never be shared.
+create table if not exists public.member_search_finds (
+  id uuid primary key default gen_random_uuid(),
+  search_id uuid not null references public.member_searches(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  deal_id uuid not null unique,
+  found_at timestamptz not null default now(),
+  confirmed_at timestamptz,
+  checked_at timestamptz
+);
+create index if not exists member_search_finds_user_idx on public.member_search_finds (user_id, found_at desc);
+create index if not exists member_search_finds_search_idx on public.member_search_finds (search_id);
+alter table public.member_search_finds enable row level security;  -- no policies: service role only
+revoke all on public.member_search_finds from anon, authenticated;
+
+-- ── resume_intents: what to start when a member comes back from paying ──
+create table if not exists public.resume_intents (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('analyses')),
+  items jsonb not null default '[]',
+  return_path text not null,
+  status text not null default 'open' check (status in ('open', 'done', 'expired', 'cancelled')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index if not exists resume_intents_user_idx on public.resume_intents (user_id, created_at desc) where status = 'open';
+alter table public.resume_intents enable row level security;  -- no policies: service role only
+revoke all on public.resume_intents from anon, authenticated;
+
+-- ── analysis_purchases: the offer a purchase was priced at ──
+--   offer       welcome | welcome_deep | first_deep | first_pmi (null: list price)
+--   first_deep  this purchase is the account's first deep report
+alter table public.analysis_purchases add column if not exists offer text;
+alter table public.analysis_purchases add column if not exists first_deep boolean not null default false;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'analysis_purchases_offer_check') then
+    alter table public.analysis_purchases add constraint analysis_purchases_offer_check
+      check (offer is null or offer in ('welcome', 'welcome_deep', 'first_deep', 'first_pmi'));
+  end if;
+end $$;
+-- One welcome-priced analysis per member and deal; one first deep report per
+-- paying account. A failed purchase frees its claim.
+create unique index if not exists analysis_purchases_welcome_uidx on public.analysis_purchases (buyer_id, deal_id)
+  where offer in ('welcome', 'welcome_deep') and status <> 'failed';
+create unique index if not exists analysis_purchases_first_deep_uidx on public.analysis_purchases (buyer_id)
+  where first_deep and status <> 'failed';
+
+-- ── member_search_claim / member_search_true_up ──
+-- Every paid step of a member search is claimed BEFORE it runs, against the
+-- search's own cap and the month's ceiling for its purpose
+-- (signup_search_monthly_cap_pence / deep_search_monthly_cap_pence), under one
+-- advisory lock per purpose so two searches can't both take the last pennies.
+-- After the step, true_up swaps the claim for what it actually cost.
+--   claim   {search_id, pence}           -> {ok, reason?, claimed, month}
+--   true_up {search_id, claimed, actual} -> {claimed, raw}
+create or replace function public.member_search_claim(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_id uuid := (p ->> 'search_id')::uuid;
+  v_pence numeric := coalesce((p ->> 'pence')::numeric, 0);
+  v_purpose text;
+  s record;
+  v_month numeric;
+  v_cap numeric;
+begin
+  if v_pence < 0 then raise exception 'member_search_claim: negative pence'; end if;
+  select purpose into v_purpose from member_searches where id = v_id;
+  if v_purpose is null then return jsonb_build_object('ok', false, 'reason', 'missing'); end if;
+  perform pg_advisory_xact_lock(hashtext('member_search_' || v_purpose));
+  select id, purpose, cap_raw_pence, claimed_raw_pence, status into s from member_searches where id = v_id for update;
+  if s.status not in ('queued', 'running') then return jsonb_build_object('ok', false, 'reason', 'finished'); end if;
+  if s.claimed_raw_pence + v_pence > s.cap_raw_pence then
+    return jsonb_build_object('ok', false, 'reason', 'cap', 'claimed', s.claimed_raw_pence);
+  end if;
+  v_cap := credit_setting_num(case when s.purpose = 'deep' then 'deep_search_monthly_cap_pence' else 'signup_search_monthly_cap_pence' end,
+                              case when s.purpose = 'deep' then 5000 else 2000 end);
+  select coalesce(sum(greatest(claimed_raw_pence, raw_pence)), 0) into v_month
+    from member_searches where purpose = s.purpose and created_at >= date_trunc('month', now());
+  if v_month + v_pence > v_cap then
+    return jsonb_build_object('ok', false, 'reason', 'month', 'claimed', s.claimed_raw_pence, 'month', v_month);
+  end if;
+  update member_searches set claimed_raw_pence = claimed_raw_pence + v_pence where id = v_id;
+  return jsonb_build_object('ok', true, 'claimed', s.claimed_raw_pence + v_pence, 'month', v_month + v_pence);
+end $$;
+revoke all on function public.member_search_claim(jsonb) from public, anon, authenticated;
+grant execute on function public.member_search_claim(jsonb) to service_role;
+
+create or replace function public.member_search_true_up(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_id uuid := (p ->> 'search_id')::uuid;
+  v_claimed numeric := coalesce((p ->> 'claimed')::numeric, 0);
+  v_actual numeric := coalesce((p ->> 'actual')::numeric, 0);
+  v_purpose text;
+  r record;
+begin
+  select purpose into v_purpose from member_searches where id = v_id;
+  if v_purpose is null then return jsonb_build_object('ok', false, 'reason', 'missing'); end if;
+  perform pg_advisory_xact_lock(hashtext('member_search_' || v_purpose));
+  update member_searches
+     set claimed_raw_pence = greatest(claimed_raw_pence - v_claimed + v_actual, 0),
+         raw_pence = raw_pence + greatest(v_actual, 0)
+   where id = v_id
+  returning claimed_raw_pence, raw_pence into r;
+  return jsonb_build_object('ok', true, 'claimed', r.claimed_raw_pence, 'raw', r.raw_pence);
+end $$;
+revoke all on function public.member_search_true_up(jsonb) from public, anon, authenticated;
+grant execute on function public.member_search_true_up(jsonb) to service_role;
+
+notify pgrst, 'reload schema';
