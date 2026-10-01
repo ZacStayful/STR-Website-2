@@ -17,7 +17,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { CARD_COLUMNS, PAGE_SIZE, PUBLIC_DEAL_COLUMNS, areaDealView, typeClauseFor, type AreaDealsSummary, type DealCard, type DealFilters, type DealKindFilter } from './grid';
 import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign';
 import { DEALS_TAG } from './server';
-import { dealVisible, type DealVisibility } from './visibility';
+import { type DealVisibility, dealVisibleTo, visibilityOrFilter } from './visibility';
 import { reactionFilter, type ReactionFilter } from './reactions';
 import { dealTypeOf, type DealType } from '../profile/deal-types';
 import { parseProjectCard, type ProjectCardData } from '../project/headline';
@@ -92,7 +92,13 @@ function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, op
     if (opts.reaction.absent) q = q.is('deal_reactions', null);
   }
   // A live deal with no live_since is brand new as far as the window goes (visibility.ts dealVisible).
-  if (opts.earlyAfter) q = q.or(`live_since.is.null,live_since.gt.${opts.earlyAfter}`);
+  // Batch 22: a free member's own search finds are theirs at once (set only in tier.ts) — and not "early access".
+  const ownFilter = visibilityOrFilter(visibility);
+  const ownIds = ownFilter ? (visibility.ownFinds ?? []).filter((id) => /^[0-9a-f-]{36}$/i.test(id)) : [];
+  if (opts.earlyAfter) {
+    q = q.or(`live_since.is.null,live_since.gt.${opts.earlyAfter}`);
+    if (ownIds.length > 0) q = q.not('id', 'in', `(${ownIds.join(',')})`);
+  } else if (ownFilter) q = q.or(ownFilter);
   else if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
   // Batch 17: the deal types shown (Browse's type filter, Today's per-type pools).
@@ -384,7 +390,7 @@ export async function dealCardsByIds(ids: string[], visibility: DealVisibility):
   }
   const byId = new Map<string, DealCard>();
   for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) {
-    if (dealVisible(card.live_since ?? null, visibility.cutoffIso)) byId.set(card.id, { ...card, has_photo: Boolean(photo) });
+    if (dealVisibleTo({ id: card.id, live_since: card.live_since ?? null }, visibility)) byId.set(card.id, { ...card, has_photo: Boolean(photo) });
   }
   return withProjectCards(ids.map((id) => byId.get(id)).filter((c): c is DealCard => c !== undefined));
 }

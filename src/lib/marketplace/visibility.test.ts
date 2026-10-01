@@ -58,3 +58,19 @@ test('Batch 22: the own-finds filter only names UUIDs, and is null without finds
   const f = visibilityOrFilter({ ...v, ownFinds: ['11111111-1111-4111-8111-111111111111', 'x),or(id.not.is.null'] });
   assert.equal(f, `live_since.lte.${v.cutoffIso},id.in.(11111111-1111-4111-8111-111111111111)`);
 });
+
+test('Batch 22: ownFinds is set in tier.ts and nowhere else', async () => {
+  const { readdirSync, readFileSync, statSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const root = new URL('../../', import.meta.url).pathname;
+  const hits: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(name) && !name.endsWith('.test.ts') && /ownFinds\s*:/.test(readFileSync(p, 'utf8'))) hits.push(p.slice(root.length));
+    }
+  };
+  walk(root);
+  assert.deepEqual(hits.sort(), ['lib/marketplace/tier.ts']);
+});

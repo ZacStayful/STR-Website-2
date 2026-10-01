@@ -6,6 +6,8 @@ import { CreditProvider } from "@/components/credit/CreditProvider";
 import { IntelligenceView } from "@/components/intelligence/IntelligenceView";
 import { intelligenceCards } from "@/components/intelligence/cards";
 import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
+import { SearchProgress } from "@/components/intelligence/SearchProgress";
+import { DeepSearchOffer } from "@/components/intelligence/DeepSearchOffer";
 import { profileSummaryFor } from "@/lib/profile/server";
 import { quizPathFor } from "@/lib/auth/landing";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
@@ -88,6 +90,12 @@ export default async function RevealPage({ searchParams }: { searchParams: Promi
           ) : null
         }
         whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="reveal" changeHref={`/welcome?q=budget&next=${encodeURIComponent(`/welcome/reveal?next=${encodeURIComponent(next)}`)}`} /> : undefined}
+        note={
+          <>
+            <SearchProgress running={data.searching} />
+            {data.deepQuote && <DeepSearchOffer aboutBasePence={data.deepQuote.aboutBasePence} upToBasePence={data.deepQuote.upToBasePence} firstDiscount={data.deepQuote.firstDiscount} surface="reveal" />}
+          </>
+        }
         answers={data.answers}
       />
     </CreditProvider>

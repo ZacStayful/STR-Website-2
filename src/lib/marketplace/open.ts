@@ -28,7 +28,7 @@ import { openDecision, hasRecentLiveCheck, pendingOpenInFlight, type FetchOutcom
 import { retiredReasonFor } from './status';
 import { applyLiveResult, fetchDealPage, loadDealById, loadScreenContext, loadSourcedListings, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 import { snapshotFromDeal } from './record';
-import { dealVisible, PAID_VISIBILITY, type DealVisibility } from './visibility';
+import { PAID_VISIBILITY, type DealVisibility, dealVisibleTo } from './visibility';
 import type { DealOpenRow, DealRow, VerifiedVia } from './types';
 import type { ListingSnapshot } from '../listing/types';
 import { KEPT_STATUS, type PipelineStatus } from '../listing/pipeline';
@@ -84,7 +84,7 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
   // Early access: an account that has never paid cannot open a deal inside
   // its window by any route. Checked after the "already theirs" branch so a
   // pool pick they were charged for stays open to them.
-  if (!dealVisible(deal.live_since, input.visibility.cutoffIso)) return { ok: false, code: 'missing' };
+  if (!dealVisibleTo({ id: deal.id, live_since: deal.live_since }, input.visibility)) return { ok: false, code: 'missing' };
   if (deal.status === 'retired') return { ok: false, code: 'gone' };
   if (deal.status === 'pending_verify') return { ok: false, code: 'checking' };
   // On the shortlist for its own check (Batch 16), or its Project check (Batch 17): not yet a deal to open.
@@ -265,7 +265,7 @@ export async function dealSheet(dealId: string, userId: string, adminUser: boole
   const unlocked = open?.status === 'open' || adminUser;
   // Inside its early-access window a deal does not exist for an account
   // that has never paid — unless it is already theirs (a pool pick).
-  if (!unlocked && !dealVisible(deal.live_since, visibility.cutoffIso)) return null;
+  if (!unlocked && !dealVisibleTo({ id: deal.id, live_since: deal.live_since }, visibility)) return null;
   if (!unlocked) return { deal, listing: null, priv: null };
   const { listing, live, snapshot } = await dealListingFor(admin, deal);
   if (!snapshot) return { deal, listing, priv: null };

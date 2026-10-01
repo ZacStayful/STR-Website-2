@@ -16,7 +16,7 @@ import { cardView, NOT_OPENED } from "@/lib/marketplace/card-view";
 import { cashBuyerOf } from "@/lib/marketplace/most-you-can-pay";
 import { quoterFor } from "@/lib/credit/quote-server";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
-import { dealVisible } from "@/lib/marketplace/visibility";
+import { dealVisibleTo } from "@/lib/marketplace/visibility";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { FocusScroll } from "./_components/FocusScroll";
 import { ReportsList } from "./_components/ReportsList";
@@ -105,7 +105,7 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
     // Still in its early-access window for this member: a kept deal that went
     // and came back (a revival restarts the window), or a team seat under an
     // owner who has never paid. Nothing on it can be bought yet.
-    return !opened && !dealVisible(c.live_since, visibility.cutoffIso) ? { ...v, quickLook: null, fullAnalysis: null } : v;
+    return !opened && !dealVisibleTo({ id: c.id, live_since: c.live_since }, visibility) ? { ...v, quickLook: null, fullAnalysis: null } : v;
   };
 
   const counts = stageCounts(view);

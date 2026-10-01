@@ -29,8 +29,22 @@ export const dealTierFor = cache(async (userId: string | null, adminUser: boolea
 /** The visibility a signed-in person's reads should apply. */
 export async function dealVisibilityFor(userId: string | null, adminUser: boolean, now: Date = new Date()): Promise<DealVisibility> {
   const [tier, settings] = await Promise.all([dealTierFor(userId, adminUser), getBillingSettings()]);
-  return dealVisibility(tier, now, settings.freeDealDelayHours);
+  const v = dealVisibility(tier, now, settings.freeDealDelayHours);
+  // Batch 22: a free member sees the deals their own search first found at once. Set here and only here.
+  if (v.cutoffIso && userId) {
+    const own = await ownFindsFor(userId);
+    if (own.length > 0) return { ...v, ownFinds: own };
+  }
+  return v;
 }
+
+/** Deals this member's own search first inserted (member_search_finds; one finder per deal), newest 100, per request. */
+const ownFindsFor = cache(async (userId: string): Promise<string[]> => {
+  if (!hasServiceRole()) return [];
+  const { data, error } = await createAdminClient().from('member_search_finds').select('deal_id').eq('user_id', userId).order('found_at', { ascending: false }).limit(100);
+  if (error) return [];
+  return ((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id);
+});
 
 /** What a signed-out visitor sees: the delayed set, never more than a free member. */
 export async function publicDealVisibility(now: Date = new Date()): Promise<DealVisibility> {

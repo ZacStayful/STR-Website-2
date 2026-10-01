@@ -59,7 +59,7 @@ import { openDeal, existingOpen, dealListingFor } from '../marketplace/open';
 import { loadDealById } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { dealVisibilityFor } from '../marketplace/tier';
-import { dealVisible } from '../marketplace/visibility';
+import { dealVisibleTo } from '../marketplace/visibility';
 import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from './input';
 import { enhancedEnabled, fetchSecondOpinion, runAnalysis, type PreparedAnalysis } from './run';
@@ -283,7 +283,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   const isOpen = open?.status === 'open';
   const visibility = isOpen || input.adminUser ? null : await dealVisibilityFor(input.userId, input.adminUser);
   if (visibility) {
-    if (!dealVisible(deal.live_since, visibility.cutoffIso)) return fail('missing');
+    if (!dealVisibleTo({ id: deal.id, live_since: deal.live_since }, visibility)) return fail('missing');
     if (deal.status === 'retired') return fail('gone');
     if (deal.status === 'pending_verify') return fail('checking');
     // On the shortlist for its own check (Batch 16), or its Project check (Batch 17): nothing to analyse yet.

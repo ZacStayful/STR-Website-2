@@ -39,6 +39,7 @@ import type { Level } from '../profile/levels';
 import { answersFor, type Answer, type AnswerFacts } from './answers';
 import { matchPctOf, revealDeals, revealTone, type RevealTone } from './reveal';
 import { whatIfViewFor, type WhatIfView } from './what-if-server';
+import { deepQuoteFor, searchStatusFor, type DeepQuoteView } from '../sourcing-demand/member-search';
 
 type Cards = TodayView['cards'];
 
@@ -63,6 +64,9 @@ export interface IntelligenceData {
   answers: Answer[];
   /** Part F: when the match is low or there is none. */
   whatIfs: WhatIfView | null;
+  /** Part G: the member's own search is still running; the deep search's quote when there is no strong match. */
+  searching: boolean;
+  deepQuote: DeepQuoteView | null;
   credit: TeamCreditSnapshot | null;
   settings: Awaited<ReturnType<typeof getBillingSettings>>;
   visibilityTier: 'paid' | 'free';
@@ -161,12 +165,18 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     noMatch: null,
   };
 
-  const whatIfs = tone === 'match' ? null : await whatIfViewFor(member, now);
+  const [whatIfs, status, deepQuote] = await Promise.all([
+    tone === 'match' ? Promise.resolve(null) : whatIfViewFor(member, now),
+    searchStatusFor(user.id),
+    tone === 'match' ? Promise.resolve(null) : deepQuoteFor(user.id, now),
+  ]);
   if (whatIfs) facts.noMatch = whatIfs.items[0]?.line ?? whatIfs.none;
 
   return {
     profile,
     whatIfs,
+    searching: status.running,
+    deepQuote: status.running ? null : deepQuote,
     cards,
     views,
     opened,

@@ -252,6 +252,35 @@ export const marketplaceListings: Question<SourcingQuery, SourcedListing[]> = {
   ],
 };
 
+// ── A member's own search (Batch 22, Part G) ──
+// The marketplace search one source at a time, cheapest first, each in its
+// own cache namespace: reordering marketplaceListings would hand the sweep
+// and the demand run (which share its cache) an OnTheMarket-only answer.
+export const memberListingsOtm: Question<SourcingQuery, SourcedListing[]> = {
+  name: 'memberListingsOtm',
+  key: (q) => q.key,
+  rungs: [{ provider: 'onthemarket', level: 3, costPence: COST_PENCE.onthemarketFetch, ttlMs: TTL.sourcing, run: (q) => fetchOnTheMarketSearch(q) }],
+};
+export const memberListingsPmi: Question<SourcingQuery, SourcedListing[]> = {
+  name: 'memberListingsPmi',
+  key: (q) => q.key,
+  rungs: [
+    {
+      provider: 'pmi',
+      level: 3,
+      costPence: COST_PENCE.pmiListings,
+      ttlMs: TTL.sourcing,
+      run: async (q) => {
+        const c = areaCentroid(q.area);
+        if (!c) return null;
+        const resp = await pmiListings({ lat: c.lat, lng: c.lng, radiusM: PMI_LISTINGS_RADIUS_M }, { type: q.kind, sort: 'date_desc', perPage: 50 });
+        const list = fromPmiListings(resp, q.kind, { sources: 'all' });
+        return list.length > 0 ? list : null;
+      },
+    },
+  ],
+};
+
 // ── The nationwide low-entry search (Batch 16, Part F) ──
 // The marketplace search with the query's price ceiling and bedroom floor,
 // in its own cache namespace (the sweep's unbounded answer is a different

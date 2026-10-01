@@ -156,6 +156,8 @@ export async function absorbListings(
   counters: AbsorbCounters,
   tag = 'marketplace-sweep',
   rules: DealRules = {},
+  /** Batch 22: collects the canonical URLs this call newly inserted (a member search attributes its finds exactly). */
+  out?: { inserted: string[] },
 ): Promise<void> {
   const now = new Date();
   const stamp = now.toISOString();
@@ -226,7 +228,10 @@ export async function absorbListings(
     // ignoreDuplicates: a row that appeared between the read and the write keeps its state.
     const { error, data } = await writeWithoutMissing(inserts, (rows) => admin.from('marketplace_deals').upsert(rows, { onConflict: 'canonical_url', ignoreDuplicates: true }).select('canonical_url'), tag);
     if (error) console.error(`[${tag}] deals insert failed:`, error.message);
-    else counters.newDeals += data?.length ?? inserts.length;
+    else {
+      counters.newDeals += data?.length ?? inserts.length;
+      if (out && Array.isArray(data)) for (const r of data as { canonical_url?: unknown }[]) if (typeof r.canonical_url === 'string') out.inserted.push(r.canonical_url);
+    }
   }
 }
 

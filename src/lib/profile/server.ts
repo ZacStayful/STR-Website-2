@@ -40,6 +40,7 @@ import { rewardEligibility, type Eligibility } from '../today/checklist';
 import { grant, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings } from '../credit/unit-costs';
 import { accuracyHint, accuracyLabel, accuracyLevel, advancedNeeded, levelMarkers, type Level } from './levels';
+import { queueSignupSearch } from '../sourcing-demand/member-search';
 import { startAction, welcomeGranted } from '../credit/action';
 import { newActionId, runMetered } from '../credit/context';
 import { geocodePostcode } from '../apis/geocode';
@@ -342,7 +343,11 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     const extras = { question: q.id, section: SECTION_TOKENS[q.section] };
     if (input.editing) logActivity(userId, 'profile_edited', { extras });
     else logActivity(userId, input.notSure ? 'profile_not_sure' : 'profile_answered', { extras });
-    if (!s.progress.mandatoryDone && prog.mandatoryDone) logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
+    if (!s.progress.mandatoryDone && prog.mandatoryDone) {
+      logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
+      // Batch 22, Part G: a new member's own search, queued now (the quiz kicks it; the cron finishes it).
+      await queueSignupSearch(userId).catch((err) => console.error('[profile] signup search not queued:', err));
+    }
     if (!s.quiz.completedAt && prog.complete) {
       logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
       // Batch 19: Meta's ProfileComplete, at the first completion (the £5 may come later, or never).

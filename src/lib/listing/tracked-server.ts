@@ -26,7 +26,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { payerFor, teamOf } from '../team';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
 import { projectCardsFor } from '../marketplace/queries';
-import { dealVisible, type DealVisibility } from '../marketplace/visibility';
+import { type DealVisibility, dealVisibleTo } from '../marketplace/visibility';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { loadSourcedListings } from '../marketplace/server';
 import type { DealRow } from '../marketplace/types';
@@ -232,7 +232,7 @@ export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | '
   const deals = new Map<string, TrackedDealFacts>();
   const cards = new Map<string, TrackedCard>();
   for (const [id, c] of loaded) {
-    if (!openedIds.has(id) && !rowUrls.has(c.canonical_url) && !reactedIds.has(id) && !dealVisible(c.live_since ?? null, visibility.cutoffIso)) continue;
+    if (!openedIds.has(id) && !rowUrls.has(c.canonical_url) && !reactedIds.has(id) && !dealVisibleTo({ id, live_since: c.live_since ?? null }, visibility)) continue;
     deals.set(id, factsOf(c));
     // The card never carries the canonical URL: it is drawn in the browser.
     const { canonical_url: _url, ...card } = c;

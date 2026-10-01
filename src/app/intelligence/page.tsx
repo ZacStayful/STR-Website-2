@@ -5,6 +5,8 @@ import { CreditProvider } from "@/components/credit/CreditProvider";
 import { IntelligenceView } from "@/components/intelligence/IntelligenceView";
 import { intelligenceCards } from "@/components/intelligence/cards";
 import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
+import { SearchProgress } from "@/components/intelligence/SearchProgress";
+import { DeepSearchOffer } from "@/components/intelligence/DeepSearchOffer";
 import { requireProfileStart } from "@/lib/profile/server";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
 import { logActivity } from "@/lib/activity/log";
@@ -50,6 +52,12 @@ export default async function IntelligencePage() {
         best={cards[0] ?? null}
         alternatives={cards.slice(1)}
         whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="header" changeHref={`/welcome?q=budget&next=${encodeURIComponent("/intelligence")}`} /> : undefined}
+        note={
+          <>
+            <SearchProgress running={data.searching} />
+            {data.deepQuote && <DeepSearchOffer aboutBasePence={data.deepQuote.aboutBasePence} upToBasePence={data.deepQuote.upToBasePence} firstDiscount={data.deepQuote.firstDiscount} surface="header" />}
+          </>
+        }
         answers={data.answers}
       />
     </CreditProvider>

@@ -148,6 +148,14 @@ export function Quiz(start: QuizStart) {
       if (r.view.credit.paid && !credit.paid) notifyCreditChanged();
       setCredit(r.view.credit);
       if (r.warning) setWarning(r.warning);
+      // Batch 22, Part G: the mandatory answers are done: start the member's own search now (it runs on while they carry on).
+      if (start.revealHref && !wasEditing && !progress.mandatoryDone && r.view.progress.mandatoryDone) {
+        try {
+          fetch("/api/welcome/search", { method: "POST", keepalive: true }).catch(() => {});
+        } catch {
+          /* the cron picks it up */
+        }
+      }
       // Batch 20: the answer that opens the app offers the starter pack first, once; "Not now" carries on.
       if (start.pack && !wasEditing && !progress.mandatoryDone && r.view.progress.mandatoryDone) {
         setScreen({ kind: "pack", view: r.view, listBefore });

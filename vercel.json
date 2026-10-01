@@ -82,6 +82,10 @@
 			"schedule": "*/10 5-6 * * *"
 		},
 		{
+			"path": "/api/internal/member-searches",
+			"schedule": "*/5 * * * *"
+		},
+		{
 			"path": "/api/internal/demand-sourcing",
 			"schedule": "5,15,25,35,45,55 5-6 * * *"
 		},
