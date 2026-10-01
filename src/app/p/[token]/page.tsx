@@ -14,7 +14,6 @@ import { projectNumbersFor, projectRangeLine } from "@/lib/project/display";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { applyRelaxationAction, submitPickFeedbackAction, unsubscribePicksAction } from "./actions";
-import { logActivity } from "@/lib/activity/log";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +40,10 @@ export default async function PickResponsePage({ params, searchParams }: { param
   const action = a === "yes" || a === "no" || a === "unsubscribe" || a === "relaxed" ? a : null;
   if ((action === "yes" || action === "no") && !thanks) {
     // A link click only ever sets the reaction; reasons come from the form below.
+    // Batch 21 (D7): the bare click is not logged as engagement: a mail
+    // scanner that prefetches the link would keep a quiet member "engaged"
+    // for ever; the confirmed form (actions.ts) is what is logged.
     after(() => recordReaction({ token }, { reaction: action, source: "link" }).catch(() => {}));
-    logActivity(pick.userId, "email_feedback", { source: "email_link", dealId: pick.dealId, dedupeKey: `email_feedback:${pick.id}:${action}:link`, extras: { answer: action, via: "link" } });
   }
   const reaction = thanks ? (action === "yes" ? "yes" : "no") : action === "yes" || action === "no" ? action : pick.reaction;
   const l = pick.listing;

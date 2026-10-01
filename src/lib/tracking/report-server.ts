@@ -51,7 +51,12 @@ export async function loadSignupReport(opts: { from: Date | null; to: Date | nul
     }, null);
     const weeks = weeksToCover(first ?? opts.from, now);
     let weekly: ActiveWeeks | null = null;
-    let manual = new Set<string>();
+    // Batch 21 (E25): the "Exclude from metrics" switch is read on its own, so
+    // it still applies when the weekly-active read fails.
+    const manual = new Set<string>();
+    const { data: ex, error: exErr } = await admin.from('activity_excluded_accounts').select('user_id');
+    if (exErr) console.warn('[signups] excluded accounts not read:', exErr.message);
+    for (const r of (ex ?? []) as { user_id: string }[]) manual.add(r.user_id);
     const { data: wf, error: wErr } = await admin.rpc('activity_weekly_facts', { p: { weeks, now: now.toISOString(), qualifying: QUALIFYING_KINDS, counted: COUNTED_KINDS } });
     if (!wErr && wf) {
       const report = computeWeeklyActive(wf as WeeklyFacts, { adminEmails: adminEmails(), drillWeeks: weeks });
@@ -59,7 +64,6 @@ export async function loadSignupReport(opts: { from: Date | null; to: Date | nul
         weeks: new Set(report.weeks.map((w) => w.week)),
         active: new Map(report.members.map((m) => [m.id, new Set(m.weeks.filter((w) => w.active).map((w) => w.week))])),
       };
-      manual = new Set(report.excluded.map((x) => x.id));
     } else if (wErr) {
       console.warn('[signups] weekly active not read:', wErr.message);
     }

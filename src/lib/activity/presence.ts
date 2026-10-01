@@ -9,6 +9,7 @@ import 'server-only';
  *                both before and after the day's list changes at 07:00 UTC
  *   deal_view    a deal page on screen: once per deal per UK day
  *   report_view  a saved report on screen: once per report per UK day
+ *   explorer_view / my_deals_view   the Explorer or My deals on screen: once a UK day (Batch 21, E6)
  *   email_click / sms_click   the page was reached from our email or text:
  *                once per visit, and never counting towards weekly active
  *
@@ -47,7 +48,8 @@ export async function handlePresence(userId: string, raw: unknown, now: Date = n
   const day = ukDay(now);
   const logged: Promise<void>[] = [];
   if (ping.via && visitId) {
-    logged.push(recordActivity(userId, ping.via === 'email' ? 'email_click' : 'sms_click', { dedupeKey: `${ping.via}_click:${visitId}`, at: now }));
+    // Batch 21 (E12): the row says where it came from, not 'web'.
+    logged.push(recordActivity(userId, ping.via === 'email' ? 'email_click' : 'sms_click', { dedupeKey: `${ping.via}_click:${visitId}`, at: now, source: ping.via === 'email' ? 'email_link' : 'sms_link' }));
   }
   const view = ping.view;
   if (view?.type === 'today') {
@@ -56,6 +58,10 @@ export async function handlePresence(userId: string, raw: unknown, now: Date = n
     logged.push(recordActivity(userId, 'deal_view', { dealId: view.id, dedupeKey: `deal_view:${view.id}:${day}`, at: now }));
   } else if (view?.type === 'report') {
     logged.push(recordActivity(userId, 'report_view', { extras: { report: view.id }, dedupeKey: `report_view:${view.id}:${day}`, at: now }));
+  } else if (view?.type === 'explorer') {
+    logged.push(recordActivity(userId, 'explorer_view', { dedupeKey: `explorer_view:${day}`, at: now }));
+  } else if (view?.type === 'my_deals') {
+    logged.push(recordActivity(userId, 'my_deals_view', { dedupeKey: `my_deals_view:${day}`, at: now }));
   }
   await Promise.all(logged);
 }

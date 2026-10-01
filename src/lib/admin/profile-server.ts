@@ -33,6 +33,8 @@ export async function loadProfileStats(): Promise<ProfileStatsLoad> {
     return { status: missing ? 'schema_missing' : 'failed', message: quizRes.error.message };
   }
   if (profilesRes.error) return { status: 'failed', message: profilesRes.error.message };
+  // Batch 21 (E26): a failed read of the exclusions is a failure, not "nobody excluded".
+  if (excludedRes.error) return { status: 'failed', message: excludedRes.error.message };
 
   const admins = new Set(adminEmails().map((e) => emailKey(e)));
   const manual = new Map<string, string | null>();

@@ -62,6 +62,8 @@ export function desiredRow(f: MemberFacts, lowCreditPence: number): Row {
     smsOk: f.smsOk,
     reengageSince: day(f.reengageSince),
   };
+  // Batch 21 (E2): written only once the board has the column (config.ts, MONDAY_FUNNEL_WEEKS_COLUMN).
+  if (COLUMNS.weeksSinceSignup && f.weeksSinceSignup != null) row.weeksSinceSignup = f.weeksSinceSignup;
   if (!f.manualNoTier) {
     row.plan = planLabel(f);
     row.totalPaid = money(f.totalPaidPence);
@@ -174,6 +176,9 @@ export function changedColumns(current: Row | null, desired: Row): Partial<Recor
 /** The JSON for change_multiple_column_values / create_item, keyed by column id. */
 export function columnValuesJson(changes: Partial<Record<ColumnKey, Cell>>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [key, v] of Object.entries(changes) as [ColumnKey, Cell][]) out[COLUMNS[key]] = mondayValue(key, v);
+  for (const [key, v] of Object.entries(changes) as [ColumnKey, Cell][]) {
+    const id = COLUMNS[key];
+    if (id) out[id] = mondayValue(key, v);
+  }
   return out;
 }

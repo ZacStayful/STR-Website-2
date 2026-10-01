@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { ownerIdOrNull } from '@/lib/leads/scope';
 import { mintApiKey, revokeApiKey } from '@/lib/api/keys';
 import { parseScopes } from '@/lib/api/scopes';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Minting and revoking API keys.
@@ -50,6 +51,8 @@ export async function mintKeyAction(_prev: KeyState, formData: FormData): Promis
   const minted = await mintApiKey(who.id, label.length > 0 ? label : null, scopes);
   if (!minted) return { error: 'We could not create that key just now. Please try again.' };
 
+  // Batch 21 (E5): the scopes only; the label is the customer's own words and the key is never logged.
+  logActivity(who.id, 'api_key_created', { extras: { scopes: [...scopes] } });
   revalidatePath('/leads/api');
   return { key: minted.raw, notice: 'Copy this key now — it is not shown again.' };
 }

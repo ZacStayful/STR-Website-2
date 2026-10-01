@@ -59,6 +59,8 @@ export async function removeMemberAction(_prev: TeamState, formData: FormData): 
   const result = await removeMember({ ownerId: who.id, memberId, by: 'owner' });
   revalidatePath('/account/team');
   if (!result.ok) return { error: result.error ?? 'That did not work.' };
+  // Batch 21 (E18): the owner's doing; the member's id only.
+  logActivity(who.id, 'team_remove', { extras: { member: memberId, login_deleted: result.loginDeleted } });
   return { notice: result.loginDeleted ? 'Removed, and their team login deleted.' : 'Removed from your team.' };
 }
 
@@ -71,6 +73,8 @@ export async function leaveTeamAction(_prev: TeamState, formData: FormData): Pro
   }
   const result = await removeMember({ ownerId: who.ownerId, memberId: who.id, by: 'member' });
   if (!result.ok) return { error: result.error ?? 'That did not work.' };
+  // Batch 21 (E18): logged only when the account stays (a deleted login has no row to log against).
+  if (!result.loginDeleted) logActivity(who.id, 'team_leave', { extras: { owner: who.ownerId } });
   if (result.loginDeleted) {
     // The login is gone; the session cookie now points at nobody.
     const supabase = await createSupabaseServerClient();

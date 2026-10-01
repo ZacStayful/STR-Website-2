@@ -8,6 +8,7 @@ import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, parseHttpsUrl, lo
 import { parseLeadRules } from '@/lib/leads/rules';
 import { uploadLogo, deleteLogoIfOurs } from '@/lib/funnels/storage';
 import { LOGO_MAX_BYTES } from '@/lib/funnels/brand';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Funnel management. Every write goes through the service role (the funnels
@@ -66,6 +67,8 @@ export async function createFunnelAction(_prev: FunnelState, formData: FormData)
 
   const funnel = await createFunnel(who.id, name, brand.brand);
   if (!funnel) return { error: 'We could not create that funnel just now. Please try again.' };
+  // Batch 21 (E5): setting up a funnel is the owner at work (the funnel id only, never the brand).
+  logActivity(who.id, 'funnel_edited', { extras: { action: 'create', funnel: funnel.id } });
   revalidatePath('/leads/funnels');
   revalidatePath('/leads');
   return { saved: true };
@@ -113,6 +116,7 @@ export async function saveBrandAction(_prev: FunnelState, formData: FormData): P
 
   const ok = await updateFunnel(who.id, id, { name: String(formData.get('name') ?? '').trim(), brand });
   if (!ok) return { error: 'We could not save those changes just now. Please try again.' };
+  logActivity(who.id, 'funnel_edited', { extras: { action: 'brand', funnel: id } });
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
   return { saved: true };
@@ -170,6 +174,7 @@ export async function uploadLogoAction(_prev: FunnelState, formData: FormData): 
   // ours, so a customer's own hosted logo is left alone.
   await deleteLogoIfOurs(previous);
 
+  logActivity(who.id, 'funnel_edited', { extras: { action: 'logo', funnel: id } });
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
   return { saved: true };
@@ -209,6 +214,7 @@ export async function saveRulesAction(_prev: FunnelState, formData: FormData): P
       : undefined,
   });
   if (!ok) return { error: 'We could not save those rules just now. Please try again.' };
+  logActivity(who.id, 'funnel_edited', { extras: { action: 'rules', funnel: id } });
   revalidatePath(`/leads/funnels/${id}`);
   return { saved: true };
 }
@@ -220,6 +226,7 @@ export async function rotateTokenAction(_prev: FunnelState, formData: FormData):
   if (!UUID.test(id)) return { error: 'That funnel could not be found.' };
   const token = await rotateFunnelToken(who.id, id);
   if (!token) return { error: 'We could not change that link just now. Please try again.' };
+  logActivity(who.id, 'funnel_edited', { extras: { action: 'rotate_link', funnel: id } });
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
   return { saved: true, token };
@@ -249,6 +256,7 @@ export async function toggleFunnelAction(_prev: FunnelState, formData: FormData)
 
   const ok = await updateFunnel(who.id, id, { active: !funnel.active });
   if (!ok) return { error: 'We could not change that just now. Please try again.' };
+  logActivity(who.id, 'funnel_edited', { extras: { action: funnel.active ? 'pause' : 'go_live', funnel: id } });
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
   return { saved: true };

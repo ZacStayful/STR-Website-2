@@ -19,7 +19,8 @@ export const IDLE_MS = 5 * 60_000;
 export const MOVE_THROTTLE_MS = 10_000;
 
 export type PingKind = 'load' | 'page' | 'beat' | 'resume' | 'hide';
-export type View = { type: 'today' } | { type: 'deal'; id: string } | { type: 'report'; id: string };
+/** Batch 21 (E6): the Explorer (its search and area pages) and My deals are views too; never which area. */
+export type View = { type: 'today' } | { type: 'deal'; id: string } | { type: 'report'; id: string } | { type: 'explorer' } | { type: 'my_deals' };
 export type Via = 'email' | 'sms';
 
 export interface Ping {
@@ -31,11 +32,14 @@ export interface Ping {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Today, a deal page or a saved report, from the path; null for any other page. */
+/** Today, a deal page, a saved report, the Explorer or My deals, from the path; null for any other page. */
 export function viewFor(pathname: string | null | undefined): View | null {
   if (!pathname) return null;
   const path = pathname.replace(/\/+$/, '') || '/';
   if (path === '/today') return { type: 'today' };
+  // Batch 21 (E6): a member researching areas, or reviewing their pipeline, is looking.
+  if (path === '/markets' || /^\/markets\/[A-Za-z0-9-]+$/.test(path)) return { type: 'explorer' };
+  if (path === '/my-deals') return { type: 'my_deals' };
   const deal = /^\/deals\/([^/]+)$/.exec(path);
   if (deal && UUID.test(deal[1])) return { type: 'deal', id: deal[1].toLowerCase() };
   const report = /^\/reports\/([^/]+)$/.exec(path);
@@ -126,7 +130,7 @@ export function parsePing(raw: unknown): Ping | null {
   if (r.via === 'email' || r.via === 'sms') ping.via = r.via;
   const v = r.view as Record<string, unknown> | undefined;
   if (v && typeof v === 'object') {
-    if (v.type === 'today') ping.view = { type: 'today' };
+    if (v.type === 'today' || v.type === 'explorer' || v.type === 'my_deals') ping.view = { type: v.type };
     else if ((v.type === 'deal' || v.type === 'report') && typeof v.id === 'string' && UUID.test(v.id)) ping.view = { type: v.type, id: v.id.toLowerCase() };
   }
   return ping;

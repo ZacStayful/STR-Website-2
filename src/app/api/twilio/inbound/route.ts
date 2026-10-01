@@ -3,6 +3,7 @@ import { classifyKeyword, keywordFromOptOutType, type Keyword } from "@/lib/sms/
 import { isUkMobile, maskPhone, ukMobile } from "@/lib/sms/phone";
 import { insertMessage, startNumber, stopNumber } from "@/lib/sms/store";
 import { twiml, verifiedTwilioForm } from "@/lib/sms/webhook";
+import { logActivity } from "@/lib/activity/log";
 
 // ─── Twilio inbound texts: STOP / START / HELP (Batch 8) ──────────────
 // The Messaging Service's incoming-message webhook points here. Every request
@@ -28,6 +29,17 @@ const REPLIES: Record<Keyword, string> = {
   start: "Stayful: texts are back on. Manage them in your account under Notifications. Reply STOP to opt out",
   help: "Stayful deal alerts. Manage texts in your account under Notifications. Reply STOP to opt out",
 };
+
+/**
+ * Batch 21 (E17): a STOP or START by text is in the activity log, for every
+ * account on the number (record-only: never weekly active; a START keeps a
+ * member from being quiet, a STOP does not). The keyword only, never the text.
+ */
+async function logKeyword(admin: ReturnType<typeof createAdminClient>, phone: string, kind: "sms_stop" | "sms_start"): Promise<void> {
+  const { data, error } = await admin.from("sms_contacts").select("user_id").eq("phone_e164", phone);
+  if (error) return;
+  for (const r of (data ?? []) as { user_id: string }[]) logActivity(r.user_id, kind, { source: "sms_link", extras: { on: kind === "sms_start" } });
+}
 
 export async function POST(request: Request) {
   const form = await verifiedTwilioForm(request);
@@ -58,10 +70,12 @@ export async function POST(request: Request) {
     const n = await stopNumber(admin, phone, "keyword");
     if (n === null) return new Response("Could not record STOP", { status: 500 });
     console.log(`[sms] STOP from ${maskPhone(phone)}: ${n} account(s) stopped`);
+    if (n > 0) await logKeyword(admin, phone, "sms_stop");
   } else if (keyword === "start") {
     const n = await startNumber(admin, phone);
     if (n === null) return new Response("Could not record START", { status: 500 });
     console.log(`[sms] START from ${maskPhone(phone)}: ${n} account(s) restarted`);
+    if (n > 0) await logKeyword(admin, phone, "sms_start");
   }
 
   // The keyword, never the words. A repeat delivery of the same MessageSid is refused by the unique index, harmlessly.

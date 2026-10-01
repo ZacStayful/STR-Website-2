@@ -35,7 +35,8 @@ test('who can be quiet: no plan, or a booked cancellation; never admins or Stayf
   assert.equal(inactivityEligible({ planStatus: 'lapsed', cancelBooked: false, admin: false, email: 'a@example.com' }), true);
   for (const s of ['paid', 'subscription_trial', 'paused'] as const) {
     assert.equal(inactivityEligible({ planStatus: s, cancelBooked: false, admin: false, email: 'a@example.com' }), false, s);
-    assert.equal(inactivityEligible({ planStatus: s, cancelBooked: true, admin: false, email: 'a@example.com' }), true, `${s}, cancellation booked`);
+    // Batch 21 (E24, Q9): a booked cancellation is still a paid plan until it ends.
+    assert.equal(inactivityEligible({ planStatus: s, cancelBooked: true, admin: false, email: 'a@example.com' }), false, `${s}, cancellation booked`);
   }
   assert.equal(inactivityEligible({ planStatus: 'free', cancelBooked: false, admin: true, email: 'boss@example.com' }), false);
   assert.equal(inactivityEligible({ planStatus: 'free', cancelBooked: false, admin: false, email: 'Sam@Stayful.co.uk' }), false);
@@ -73,3 +74,8 @@ test('an unsubscribe from an email is not engaging; changing a pick’s search f
   assert.equal(isEngagement('today_view', { on: false }), true);
 });
 
+
+test('Batch 21 (E7): the extension and the API keep a member from being quiet, though they are not weekly active', () => {
+  assert.equal(isEngagement('extension_check'), true);
+  assert.equal(isEngagement('api_report'), true);
+});
