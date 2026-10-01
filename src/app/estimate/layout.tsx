@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { AppShell } from "@/components/AppShell";
 import { ensureEnquiry } from "@/lib/apis/monday";
 
@@ -65,8 +66,10 @@ export default async function EstimateLayout({
           // Batch 20: a team member (or someone joining a team) gets no row.
           userId: user.id,
         });
-        if (mondayId) {
-          await supabase
+        // Batch 21 (A4): monday_item_id is written with the service role only;
+        // a member's own session can no longer re-point their row.
+        if (mondayId && hasServiceRole()) {
+          await createAdminClient()
             .from("profiles")
             .update({ monday_item_id: mondayId })
             .eq("id", user.id);
