@@ -34,6 +34,9 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
     deal: Boolean(data.deal),
     diligence: Boolean(data.diligence),
     project: Boolean(data.project),
+    // Batch 21 (C9): the plan page sells Stayful's management service in the
+    // brand's name. Only our own report carries it.
+    plan: ours,
   });
   const nav = (id: Parameters<typeof navFor>[1]) => navFor(sections, id);
 
@@ -62,7 +65,7 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
       {data.deal ? <PageDeal deal={data.deal} chrome={chrome} nav={nav("deal")} /> : null}
       {data.project ? <PageProject data={data.project} chrome={chrome} nav={nav("project")} /> : null}
       {data.diligence ? <PageDiligence data={data.diligence} chrome={chrome} nav={nav("diligence")} /> : null}
-      <Page6Plan data={data} chrome={chrome} nav={nav("plan")} />
+      {sections.some((s) => s.id === "plan") ? <Page6Plan data={data} chrome={chrome} nav={nav("plan")} /> : null}
     </Document>
   );
 }

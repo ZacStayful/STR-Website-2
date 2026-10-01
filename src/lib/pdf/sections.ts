@@ -59,11 +59,18 @@ export interface SectionAvailability {
   diligence?: boolean;
   /** Only a Project deal's Full analysis has one. */
   project?: boolean;
+  /**
+   * Batch 21 (C9): the closing page is Stayful's management pitch ("How
+   * {company} grows your returns", "{COMPANY} HANDLES EVERYTHING", the free
+   * call). Absent means present, so every existing caller is unchanged; a
+   * white-label report passes false and ends on due diligence instead.
+   */
+  plan?: boolean;
 }
 
 export function sectionsFor(has: SectionAvailability): Section[] {
   return ALL.filter((s) =>
-    s.id === "setup" ? has.setup : s.id === "deal" ? has.deal : s.id === "diligence" ? Boolean(has.diligence) : s.id === "project" ? Boolean(has.project) : true,
+    s.id === "setup" ? has.setup : s.id === "deal" ? has.deal : s.id === "diligence" ? Boolean(has.diligence) : s.id === "project" ? Boolean(has.project) : s.id === "plan" ? has.plan !== false : true,
   );
 }
 
