@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { CreditProvider } from "@/components/credit/CreditProvider";
 import { IntelligenceView } from "@/components/intelligence/IntelligenceView";
 import { intelligenceCards } from "@/components/intelligence/cards";
+import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
 import { requireProfileStart } from "@/lib/profile/server";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
 import { logActivity } from "@/lib/activity/log";
@@ -48,6 +49,7 @@ export default async function IntelligencePage() {
         checkedText={data.checkedText}
         best={cards[0] ?? null}
         alternatives={cards.slice(1)}
+        whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="header" changeHref={`/welcome?q=budget&next=${encodeURIComponent("/intelligence")}`} /> : undefined}
         answers={data.answers}
       />
     </CreditProvider>

@@ -38,6 +38,7 @@ import { accuracySettings, accuracyView, profileSummaryFor } from '../profile/se
 import type { Level } from '../profile/levels';
 import { answersFor, type Answer, type AnswerFacts } from './answers';
 import { matchPctOf, revealDeals, revealTone, type RevealTone } from './reveal';
+import { whatIfViewFor, type WhatIfView } from './what-if-server';
 
 type Cards = TodayView['cards'];
 
@@ -60,6 +61,8 @@ export interface IntelligenceData {
   /** Answers still needed for the next level (below the top). */
   nextLevel: { name: string; needed: number } | null;
   answers: Answer[];
+  /** Part F: when the match is low or there is none. */
+  whatIfs: WhatIfView | null;
   credit: TeamCreditSnapshot | null;
   settings: Awaited<ReturnType<typeof getBillingSettings>>;
   visibilityTier: 'paid' | 'free';
@@ -72,24 +75,35 @@ function dayLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'Europe/London' });
 }
 
-export async function loadIntelligence(input: { user: User; supabase: SupabaseClient; mode: 'reveal' | 'header'; now?: Date }): Promise<IntelligenceData> {
-  const now = input.now ?? new Date();
-  const user = input.user;
+/**
+ * Today's member context for the reveal (primary profile) or the header view
+ * (active profile): the same one Today builds. Also used by the what-ifs.
+ */
+export async function intelligenceMember(user: Pick<User, 'id' | 'email'>, mode: 'reveal' | 'header', now: Date = new Date()) {
   const adminUser = isAdminEmail(user.email);
-  const [payer, visibility, settings, profile, summary, credit, levelSettings] = await Promise.all([
-    payerFor(user.id),
-    dealVisibilityFor(user.id, adminUser),
-    getBillingSettings(),
-    input.mode === 'reveal' ? primaryProfileFor(user.id) : activeProfileFor(user.id),
-    profileSummaryFor(user.id),
-    teamCreditSnapshot({ id: user.id, admin: adminUser }).catch(() => null),
-    accuracySettings(),
-  ]);
+  const [payer, visibility, profile] = await Promise.all([payerFor(user.id), dealVisibilityFor(user.id, adminUser), mode === 'reveal' ? primaryProfileFor(user.id) : activeProfileFor(user.id)]);
   const goals = profile?.goals ?? null;
   const savedAreas = profile?.areas ?? [];
   const paused = profile !== null && !isRunning(profile);
   const tailoring = paused ? null : await tailoringForMember(user.id, profile, goals, savedAreas, now);
-  const member = { userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId: profile?.id ?? null, profileActive: profile?.isActive ?? true, tailoring };
+  return { profile, paused, member: { userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId: profile?.id ?? null, profileActive: profile?.isActive ?? true, tailoring } };
+}
+
+export async function loadIntelligence(input: { user: User; supabase: SupabaseClient; mode: 'reveal' | 'header'; now?: Date }): Promise<IntelligenceData> {
+  const now = input.now ?? new Date();
+  const user = input.user;
+  const adminUser = isAdminEmail(user.email);
+  const [{ profile, paused, member }, settings, summary, credit, levelSettings] = await Promise.all([
+    intelligenceMember(user, input.mode, now),
+    getBillingSettings(),
+    profileSummaryFor(user.id),
+    teamCreditSnapshot({ id: user.id, admin: adminUser }).catch(() => null),
+    accuracySettings(),
+  ]);
+  const goals = member.goals;
+  const tailoring = member.tailoring;
+  const visibility = member.visibility;
+  const payer = { payerId: member.payerId };
   const today = await loadTodayView(member, now, { paused });
   const keep = new Set(revealDeals(today.cards.map((c) => c.id)));
   const cards = today.cards.filter((c) => keep.has(c.id));
@@ -144,11 +158,15 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     call: { perMinPence: settings.intelligence.siCallPencePerMin, textPence: settings.intelligence.siTextPence, emailPence: settings.intelligence.siEmailPence },
     topupPresetsPence: settings.topupPresetsPence,
     autoTopupOn: Boolean(credit?.autoTopup?.amountPence),
-    noMatch: tone === 'match' ? null : today.selection?.advice ?? (tone === 'none' ? 'Nothing near your criteria yet.' : null),
+    noMatch: null,
   };
+
+  const whatIfs = tone === 'match' ? null : await whatIfViewFor(member, now);
+  if (whatIfs) facts.noMatch = whatIfs.items[0]?.line ?? whatIfs.none;
 
   return {
     profile,
+    whatIfs,
     cards,
     views,
     opened,

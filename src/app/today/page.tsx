@@ -15,6 +15,8 @@ import { typesShown } from "@/lib/profile/deal-types";
 import { greeting, matchLine, todayKey, todayStart } from "@/lib/today/day";
 import { type TodaysPick } from "@/lib/today/selection";
 import { loadTodayView } from "@/lib/today/view-server";
+import { whatIfViewFor } from "@/lib/intelligence/what-if-server";
+import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
 import { syncChecklist } from "@/lib/today/checklist-server";
 import { GOALS_EDITOR_HREF, TODAY_LIST_ID } from "@/lib/nav";
 import { DealCard } from "@/app/deals/_components/DealCard";
@@ -128,6 +130,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const investorShare = sharesWithInvestors(tailoring);
 
   const { selection, pick, pickDealId, onDay, answered, short, widen, cards } = today;
+  // Batch 22, Part F: a near-miss day gets the what-ifs (real counts) instead of the advice line.
+  const whatIfs = selection?.nearMiss && !paused ? await whatIfViewFor({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, now) : null;
   const stored = selection?.dealIds ?? [];
   // A near miss is on the list without meeting them; the pick was chosen with them.
   const widenCount = onDay.length - (selection?.nearMiss ? stored.filter((id) => id !== pickDealId).length : 0);
@@ -242,7 +246,13 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
                   <h2 id="todays-deals" className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {selection?.nearMiss ? "The closest we found" : pickCard ? "More picked for you today" : "Picked for you today"}
                   </h2>
-                  {selection?.nearMiss && (
+                  {selection?.nearMiss && whatIfs && (
+                    // Batch 22, Part F: what would find a real match, with real counts, in place of the old advice line.
+                    <div className="mb-3">
+                      <WhatIfSuggestions items={whatIfs.items} none={whatIfs.none} surface="today" tone="light" changeHref={`/welcome?q=budget&next=${encodeURIComponent("/today")}`} />
+                    </div>
+                  )}
+                  {selection?.nearMiss && !whatIfs && (
                     <div className="mb-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
                       <p className="font-semibold text-foreground">Not an exact match</p>
                       {selection.advice && <p className="mt-0.5 text-foreground">{selection.advice}</p>}

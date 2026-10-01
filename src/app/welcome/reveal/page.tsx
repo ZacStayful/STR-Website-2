@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { CreditProvider } from "@/components/credit/CreditProvider";
 import { IntelligenceView } from "@/components/intelligence/IntelligenceView";
 import { intelligenceCards } from "@/components/intelligence/cards";
+import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
 import { profileSummaryFor } from "@/lib/profile/server";
 import { quizPathFor } from "@/lib/auth/landing";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
@@ -85,6 +86,7 @@ export default async function RevealPage({ searchParams }: { searchParams: Promi
             </form>
           ) : null
         }
+        whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="reveal" changeHref={`/welcome?q=budget&next=${encodeURIComponent(`/welcome/reveal?next=${encodeURIComponent(next)}`)}`} /> : undefined}
         answers={data.answers}
       />
     </CreditProvider>

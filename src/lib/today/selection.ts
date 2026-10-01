@@ -36,7 +36,9 @@ import { widenOptions, type WidenOption } from '../tailoring/widen';
 import { chooseDay, type DayChoice } from './choose-day';
 import { answersFingerprint, parseStoredChoice, poolTally, rechooseAllowed, type StoredChoice } from './choice';
 import { refreshList } from './refresh';
-import { TODAY_LIST_MAX } from '../intelligence/config';
+import { TODAY_LIST_MAX, WHAT_IF_NEARBY_AREAS } from '../intelligence/config';
+import { whatIfChanges, whatIfResults, type WhatIf, type WhatIfResult } from '../intelligence/what-if';
+import { nearestAreas, referencePoint } from './candidates';
 import { feedbackForMember } from './feedback';
 import { todayKey, todayStart } from './day';
 
@@ -579,6 +581,36 @@ export async function widenOptionsFor(member: MemberContext, current: readonly s
   } catch (err) {
     console.error('[today] widen offers failed:', (err as Error)?.message ?? err);
     return [];
+  }
+}
+
+/**
+ * Batch 22, Part F: the what-ifs for this member's day (intelligence/what-if.ts):
+ * every one-change variant judged on one read of the member's own visible
+ * pool, with Today's own exclusions and checks. Empty on any failure (the page
+ * then shows the plain line).
+ */
+export async function whatIfsForMember(member: MemberContext, now: Date = new Date()): Promise<{ variants: WhatIf[]; results: WhatIfResult[] }> {
+  const none = { variants: [] as WhatIf[], results: [] as WhatIfResult[] };
+  if (!hasServiceRole() || !member.tailoring || !member.goals) return none;
+  const admin = createAdminClient();
+  try {
+    const [exclude, feedback, cards] = await Promise.all([excludedFor(admin, member, todayKey(now)), feedbackForMember(admin, member.userId, now, member.profileId ?? null), getAreaCardsWithin(AREA_WAIT_MS)]);
+    const own = new Set(member.savedAreas);
+    const nearby = member.goals.where === 'near' ? [] : nearestAreas(referencePoint(member.goals, member.savedAreas), own, WHAT_IF_NEARBY_AREAS);
+    const p = member.tailoring;
+    const variants = whatIfChanges(p, { nearbyAreas: nearby });
+    const results = await whatIfResults(
+      { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: p },
+      p,
+      // Every deal type: a variant may add one the profile does not show yet.
+      { pool: (filters, limit) => rankingPool({ ...filters, types: [] }, member.visibility, { userId: member.userId }, limit) },
+      variants,
+    );
+    return { variants, results };
+  } catch (err) {
+    console.error('[today] what-ifs failed:', (err as Error)?.message ?? err);
+    return none;
   }
 }
 
