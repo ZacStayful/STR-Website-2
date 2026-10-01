@@ -37,7 +37,7 @@ test('the decision: Starter or a £10 top-up, each through the confirm page, nev
   assert.equal(c.subject, 'You have £4.60 of Stayful credit left');
   assert.equal(c.heading, 'You’re nearly out of credit');
   assert.deepEqual(c.lines, [
-    'You have £4.60 of credit left. When it runs out, your daily deals and reports pause.',
+    'You have £4.60 of credit left. When it runs out, reports, Quick looks and your daily pick pause.',
     'Starter: £19 a month gets you £19 of credit every month, and plan credit goes further than top-ups. Cancel any time.',
     'Or top up £10: credit that never expires.',
   ]);

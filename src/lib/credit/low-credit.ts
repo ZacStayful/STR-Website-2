@@ -27,6 +27,8 @@ import type { Link, Message, Section, Unsubscribe } from '../notify/message.ts';
 export const LOW_CREDIT_CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface LowCreditNotice {
+  /** Batch 21 (B6): whether credit is enforced; the words follow it. Unset reads as enforced. */
+  enforcing?: boolean;
   /** Face value of every kind of credit left (what the header shows). */
   balancePence: number;
   /** 'decision': Starter or a top-up. 'pack': a new member who can still buy the starter pack. */
@@ -97,7 +99,11 @@ export function lowCreditCopy(n: LowCreditNotice, siteUrl: string): LowCreditCop
   const left = formatGbp(Math.max(0, n.balancePence));
   const subject = `You have ${left} of Stayful credit left`;
   const heading = 'You’re nearly out of credit';
-  const first = `You have ${left} of credit left. When it runs out, your daily deals and reports pause.`;
+  // Batch 21 (B6): what runs out follows the mode. Enforced: the paid doors
+  // (reports, Quick looks, the daily pick) are refused at £0; in shadow mode
+  // nothing is, and new usage counts against the next credit. The daily
+  // email itself still comes either way (Batch 21, Q2).
+  const first = (n.enforcing ?? true) ? `You have ${left} of credit left. When it runs out, reports, Quick looks and your daily pick pause.` : `You have ${left} of credit left. When it runs out, new usage counts against your next credit.`;
   if (n.kind === 'pack' && n.pack) {
     return { subject, heading, lines: [first, n.pack.body], buttons: [{ label: n.pack.cta, url: `${base}/today?offer=pack`, primary: true }] };
   }

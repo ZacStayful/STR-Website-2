@@ -24,7 +24,7 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { pendingChanges } from '../notify/alerts-server';
 import { payersForAll } from '../notify/daily-server';
-import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from '../notify/sends';
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from '../notify/sends';
 import { siteUrl } from '../url';
 import { isSmsConfigured, isSmsDryRun, smsAlertsEnabled, twilioConfig } from './config';
 import { contactCanReceive, planMemberText, stillWanted, TEXTED_LOOKBACK_MS } from './choose';
@@ -178,7 +178,8 @@ export async function runSmsAlerts(opts: { dry: boolean; onlyUserIds?: string[];
     const [last, lastSwitches] = await Promise.all([getContact(admin, userId), smsSwitchesFor(admin, [userId])]);
     if (!contactCanReceive(last) || last.phone_e164 !== fresh.phone_e164 || !stillWanted(plan.types, lastSwitches?.get(userId))) {
       await updateMessage(admin, messageId, { outcome: 'refused' });
-      await finishSend(admin, claim.id, false, { ...sendSummary, outcome: 'withdrawn' }, []);
+      // Batch 21 (D19): nothing reached Twilio, so the day's text slot goes back rather than closing as failed.
+      await abandonSend(admin, claim.id);
       members.push({ user: userId, sent: false, reason: 'changed_before_send' });
       continue;
     }

@@ -39,7 +39,7 @@ import { parseHistory } from '../listing/recheck';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { renderEmail } from './render-email';
-import { claimSlot, finishSend, markSending, releaseClaim } from './sends';
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim } from './sends';
 import { newSendToken, sendKey, slotAllowed } from './cap';
 import { mapLimit, payersForAll } from './daily-server';
 import { trackedLink, trackedPlace, trackingFor } from './tracked-read';
@@ -277,7 +277,8 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
     }
   };
 
-  await mapLimit(plans, 4, async (pl) => {
+  // Batch 21 (D2): two senders at once (Resend allows two requests a second).
+  await mapLimit(plans, 2, async (pl) => {
     const { p } = pl;
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
@@ -355,7 +356,9 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
     }
     const mail = renderEmail(built.message);
     const res = await sendEmail({ to: p.email!, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers, idempotencyKey: sendKey('weekly', p.id, claim.day) });
-    await finishSend(admin, claim.id, res.sent, sendSummary, []);
+    // Batch 21 (D5): a failed send gives the slot back (the same key makes a second copy impossible); a sent one closes it.
+    if (res.sent) await finishSend(admin, claim.id, true, sendSummary, []);
+    else await abandonSend(admin, claim.id);
     // Told, or nothing about the areas to tell: record. A failed send with area changes records nothing.
     if (pl.areas && (res.sent || areaChanges === 0)) record(p.id, pl.rows);
     if (!res.sent) {

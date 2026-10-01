@@ -12,7 +12,7 @@ import { siteUrl } from "../url";
 import { missesToList, missedPickLine, pausedEmail, pausedEmailDue, type MissedPick } from "./picks-paused";
 import { changesPhrase, changesSection, type ChangeInput } from "../notify/message";
 import { renderSections, listUnsubscribeHeaders } from "../notify/render-email";
-import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
 import { capDay, newSendToken, sendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import type { RunResult } from "./picks-run";
@@ -286,7 +286,8 @@ export async function runPausedEmails(opts: { dry: boolean }): Promise<RunResult
     });
     if (!res.sent) {
       summary.emailFailures += 1;
-      if (claimId) await finishSend(admin, claimId, false, sendSummary, []);
+      // Batch 21 (D5): the slot goes back for a later send today.
+      if (claimId) await abandonSend(admin, claimId);
       skip(res.reason ?? "send_failed");
       continue;
     }
@@ -402,12 +403,14 @@ async function runAwayLetters(admin: ReturnType<typeof createAdminClient>, opts:
       continue;
     }
     const res = await sendEmail({ to: p.email, subject: mail.subject, html: mail.html, text: mail.text, headers: listUnsubscribeHeaders({ url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }), idempotencyKey: sendKey("daily", p.id, claim.day) });
-    await finishSend(admin, claim.id, res.sent, sendSummary, res.sent ? closing : []);
     if (!res.sent) {
+      // Batch 21 (D5): the slot goes back for a later send today.
+      await abandonSend(admin, claim.id);
       result.failures += 1;
       skip(res.reason ?? "send_failed");
       continue;
     }
+    await finishSend(admin, claim.id, true, sendSummary, closing);
     result.emails += 1;
     const { error: stampErr } = await admin.from("profiles").update({ picks_paused_inactive_email_at: new Date().toISOString() }).eq("id", p.id);
     if (stampErr) console.error("[picks-paused] away stamp failed:", stampErr.message);

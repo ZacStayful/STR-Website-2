@@ -15,6 +15,9 @@ import 'server-only';
  *   finishSend    sent or failed, and — only if sent — the alerts it carried
  *                 marked notified, in one transaction. An alert in a failed
  *                 email stays pending and rides the next one.
+ *   abandonSend   the send did not go (Resend or Twilio refused it, the call
+ *                 failed): the row is deleted, so a later run can try again
+ *                 today under the same idempotency key (Batch 21).
  *
  * Billing and receipt emails never come here.
  */
@@ -69,6 +72,19 @@ export async function markSending(admin: Admin, id: string, summary: Record<stri
     .select('id');
   if (error) console.error('[notify] mark sending failed:', error.message);
   return !error && Array.isArray(data) && data.length === 1;
+}
+
+/**
+ * Batch 21 (D5, D15, D19): a send that did not go gives the slot back: the
+ * row is deleted, so the next pass or the 08:10 digest can try again today
+ * under the same idempotency key (which makes a second copy impossible if
+ * the first did go after all: Resend returns the first answer, or a 409 that
+ * counts as sent). Before, the row was closed as 'failed' and still counted
+ * as the day's email, so one failure cost the member their day.
+ */
+export async function abandonSend(admin: Admin, id: string): Promise<void> {
+  const { error } = await admin.from('notification_sends').delete().eq('id', id).eq('status', 'sending');
+  if (error) console.error('[notify] abandon failed:', error.message);
 }
 
 export async function finishSend(admin: Admin, id: string, sent: boolean, summary: Record<string, unknown> | null, alertIds: readonly string[]): Promise<boolean> {

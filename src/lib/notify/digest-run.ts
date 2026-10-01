@@ -2,9 +2,11 @@ import 'server-only';
 
 /**
  * The 08:10 daily digest: the daily email for everyone who has not had one
- * today. It runs after the three picks passes (07:00–07:40) and the
- * picks-paused letter (08:00), so it only ever fills the day's one slot
- * when nothing else did:
+ * today. It runs after the four picks passes (07:00–07:50), so it only ever
+ * fills the day's one slot when they did not; the picks-paused letter (08:20)
+ * comes after it (Batch 21, Q2), so a member at £0 gets this email (their
+ * Today's 5, uncharged, with the pack or the £5 decision at its top) and the
+ * letter only when there was nothing to send them:
  *
  *   picks on, no pick today   Today's 5 without a pick: the rest of the
  *                             member's Today, plus any changes. Not charged
@@ -42,8 +44,9 @@ import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { buildDaily } from './message';
 import { renderEmail } from './render-email';
-import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './sends';
-import { newSendToken, sendKey } from './cap';
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './sends';
+import { capDay, newSendToken, sendKey } from './cap';
+import { dayChargeDue, freeTeasersFor } from './daily-charge';
 import { pendingChanges, trackedAlertsOn } from './alerts-server';
 import { closingIds } from './alerts';
 import { mapLimit, planKey, teasersFrom, todayPlans } from './daily-server';
@@ -52,6 +55,7 @@ import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
 import { rangeLineFor } from '../project/display';
 import { profileNudgesFor } from '../profile/server';
+import { mandatoryIncompleteFor } from '../profile/mandatory-server';
 import { lowCreditNoticesFor, markLowCreditTold, sendLowCreditAlone } from '../credit/low-credit-server';
 import { lowCreditSection } from '../credit/low-credit';
 import { inactivePausedIds } from '../inactivity/server';
@@ -64,6 +68,19 @@ import type { MarketGoals } from '../market/goals';
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
 const ID_CHUNK = 150;
+/** Batch 21 (D2): Resend allows two requests a second; four senders at once drew 429s. */
+const SEND_CONCURRENCY = 2;
+
+/**
+ * Batch 21 (D3): a member's place in today's order, a stable hash of id and
+ * day (as deal-alerts rotates), so the members cut when the run is out of
+ * time are different ones each day, never the same highest-sorting ids.
+ */
+function rotation(id: string, day: string): number {
+  let h = 2166136261;
+  for (const ch of `${day}:${id}`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
 
 type ProfileRow = PaidTierAccount & {
   id: string;
@@ -132,7 +149,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     for (const p of (data ?? []) as unknown as ProfileRow[]) byId.set(p.id, p);
   }
   const ids = [...byId.keys()];
-  const summary = { dry: opts.dry, considered: ids.length, emails: 0, emailFailures: 0, todays5: 0, changesOnly: 0, ranOutOfTime: false, chargeMode: 'per_pick' as 'per_pick' | 'per_day', chargedBasePence: 0, noCreditForTodays5: 0 };
+  const summary = { dry: opts.dry, considered: ids.length, emails: 0, emailFailures: 0, todays5: 0, changesOnly: 0, ranOutOfTime: false, outOfTime: 0, chargeMode: 'per_pick' as 'per_pick' | 'per_day', chargedBasePence: 0, noCreditForTodays5: 0, freeTodays5: 0, profileIncomplete: 0 };
   const perUser: { user: string; sent: boolean; kind?: string; teasers?: number; changes?: number; reason?: string }[] = [];
   if (ids.length === 0) return { status: 200, body: { ...summary, members: perUser } };
 
@@ -158,6 +175,9 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   const seatSuspended = (p: ProfileRow) => payers.get(p.id)?.suspended === true;
   // Who gets teasers: picks on, signed in once, not paused, day not spent.
   const open = [...byId.values()].filter((p) => p.email && !(slots?.has(p.id)) && !seatSuspended(p));
+  // Batch 21 (D3): in today's rotation, not id order, so a run out of time cuts different members each day.
+  const day = capDay(now);
+  open.sort((a, b) => rotation(a.id, day) - rotation(b.id, day));
   for (const p of byId.values()) {
     if (!p.email) perUser.push({ user: p.id, sent: false, reason: 'no_email' });
     else if (slots?.has(p.id)) perUser.push({ user: p.id, sent: false, reason: 'slot_used' });
@@ -224,9 +244,21 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       teasersOf.set(seat.key, plan ? teasersFrom(plan, null, visibility) : []);
     }
   }
+  // Batch 21 (B49, Q16): a member who has not answered the mandatory questions
+  // is not charged for a day of deals they have not described: their email
+  // goes uncharged, with the profile line, until they do. Only members who pay
+  // for themselves (a team member is never asked). Unreadable: nobody is held.
+  const incomplete = (await mandatoryIncompleteFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id))) ?? new Set<string>();
+  summary.profileIncomplete = incomplete.size;
   const noCredit = new Set<string>();
+  // Batch 21 (B6, Q2): a member none of whose profiles the payer could fund
+  // still gets their Today's 5, uncharged (the teasers carry no address), with
+  // the pack or the £5 decision at its top when that is due; the day is
+  // charged only when the credit is there. A member funded in part keeps the
+  // funded profiles and is told which were left out, as before.
+  const freeTeasers = new Set<string>();
   if (mode === 'per_day') {
-    const wanting = open.filter((p) => !isAdmin(p) && (seatsOf.get(p.id) ?? []).some((seat) => (teasersOf.get(seat.key)?.length ?? 0) > 0));
+    const wanting = open.filter((p) => !isAdmin(p) && !incomplete.has(p.id) && (seatsOf.get(p.id) ?? []).some((seat) => (teasersOf.get(seat.key)?.length ?? 0) > 0));
     const payerIds = [...new Set(wanting.map((p) => payers.get(p.id)?.payerId ?? p.id))];
     const spendable = new Map<string, number | null>();
     for (let i = 0; i < payerIds.length; i += 10) {
@@ -236,12 +268,12 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     }
     const purse = new PayerPurse(spendable);
     for (const p of wanting) {
-      for (const seat of seatsOf.get(p.id) ?? []) {
-        if ((teasersOf.get(seat.key)?.length ?? 0) === 0) continue;
-        if (!purse.take(payers.get(p.id)?.payerId ?? p.id, dailyPence)) noCredit.add(seat.key);
-      }
+      const seats = (seatsOf.get(p.id) ?? []).filter((seat) => (teasersOf.get(seat.key)?.length ?? 0) > 0);
+      for (const seat of seats) if (!purse.take(payers.get(p.id)?.payerId ?? p.id, dailyPence)) noCredit.add(seat.key);
+      if (freeTeasersFor(seats.map((seat) => ({ funded: !noCredit.has(seat.key) })))) freeTeasers.add(p.id);
     }
     summary.noCreditForTodays5 = noCredit.size;
+    summary.freeTodays5 = freeTeasers.size;
   }
   const wouldEmail: Record<string, unknown>[] = [];
   // Batch 12: "Your profile is 60% done" for anyone whose profile is not
@@ -250,11 +282,13 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   const profileUrl = `${base.replace(/\/$/, '')}/profile`;
   // Batch 20, Part B: the £5 low-credit decision, for anyone due it who pays
   // for themselves: at the top of their email, or alone when there is nothing else.
-  const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now);
+  // Batch 21 (D22): a dry run reads no card from Stripe for them.
+  const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now, { preview: opts.dry });
 
-  await mapLimit(open, 4, async (p) => {
+  await mapLimit(open, SEND_CONCURRENCY, async (p) => {
     if (elapsed() > TIME_BUDGET_MS) {
       summary.ranOutOfTime = true;
+      summary.outOfTime += 1;
       perUser.push({ user: p.id, sent: false, reason: 'out_of_time' });
       return;
     }
@@ -265,7 +299,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     for (const seat of seats) {
       const teasers = teasersOf.get(seat.key) ?? [];
       if (teasers.length === 0) continue;
-      if (noCredit.has(seat.key)) {
+      if (noCredit.has(seat.key) && !freeTeasers.has(p.id)) {
         if (seat.heading) unfunded.push(seat.heading);
         continue;
       }
@@ -311,7 +345,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     // its link turns off the changes, so it must not say "Stop daily picks".
     if (built?.message.unsubscribe) built.message.unsubscribe = { ...built.message.unsubscribe, label: built.message.kind === 'todays_5' ? 'Stop daily picks' : 'Stop these emails' };
     // A day of daily deals is charged only for a profile's Today's 5 itself, never for changes alone.
-    const chargeFor = (i: number) => mode === 'per_day' && !isAdmin(p) && (built?.teasersByPart[i]?.length ?? 0) > 0;
+    const chargeFor = (i: number) => dayChargeDue({ mode, admin: isAdmin(p), teasers: built?.teasersByPart[i]?.length ?? 0, funded: !noCredit.has(parts[i]?.seat.key ?? ''), mandatoryDone: !incomplete.has(p.id) });
     if (!built) {
       // Batch 20: nothing else today, but the low-credit decision is due: it goes alone, in the same slot.
       const notice = lowNotices.get(p.id);
@@ -345,6 +379,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         answerLinks: built.teaserIds.length,
         actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
         unfunded: unfunded.length,
+        // Batch 21: why the day is not charged, when it is not.
+        free: freeTeasers.has(p.id) ? 'no_credit' : incomplete.has(p.id) ? 'profile_incomplete' : null,
         payer: payers.get(p.id)?.payerId ?? p.id,
         lowCredit: lowNotices.get(p.id)?.kind ?? null,
       });
@@ -367,13 +403,15 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     }
     const mail = renderEmail(built.message);
     const res = await sendEmail({ to: p.email!, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers, idempotencyKey: sendKey('daily', p.id, claim.day) });
-    // Sent: close what it told, what it would not tell and what settling dismissed. Failed: close nothing.
-    await finishSend(admin, claim.id, res.sent, sendSummary, res.sent ? closingIds(built, alertsOn.has(p.id) ? pending.get(p.id) : null) : []);
     if (!res.sent) {
+      // Batch 21 (D5, D15): the slot goes back, so a later send today can still use it under the same key.
+      await abandonSend(admin, claim.id);
       summary.emailFailures += 1;
       perUser.push({ user: p.id, sent: false, reason: res.reason });
       return;
     }
+    // Sent: close what it told, what it would not tell and what settling dismissed.
+    await finishSend(admin, claim.id, true, sendSummary, closingIds(built, alertsOn.has(p.id) ? pending.get(p.id) : null));
     summary.emails += 1;
     // Batch 20: the low-credit decision went with it: once a cycle.
     if (lowNotices.has(p.id)) await markLowCreditTold(admin, p.id, now);
@@ -390,6 +428,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   });
 
   const body = { ...summary, ms: elapsed(), members: perUser, ...(opts.dry ? { wouldEmail } : {}) };
+  // Batch 21 (D3): a run that cut members is said so in the log, with how many.
+  if (summary.ranOutOfTime) console.warn(`[digest] out of time: ${summary.outOfTime} of ${open.length} members not reached`);
   console.log('[digest] run', JSON.stringify({ ...summary, ms: elapsed() }));
   return { status: 200, body };
 }

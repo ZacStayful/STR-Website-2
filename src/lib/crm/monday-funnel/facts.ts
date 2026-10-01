@@ -71,7 +71,12 @@ export interface MemberFacts {
  * is on (profiles.sourcing_alerts, profiles.alert_missed). One-click
  * unsubscribe turns those off, so it unticks too.
  */
-export function emailOkFor(p: { email: string | null; sourcing_alerts: boolean | null; alert_missed: boolean | null }): boolean {
+export function emailOkFor(p: { email: string | null; sourcing_alerts: boolean | null; alert_missed: boolean | null; welcome_checked_at?: string | null }): boolean {
+  // Batch 21 (D4): an account that has never signed in (welcome_checked_at
+  // unset) confirmed nothing, so it is not OK to email: the site's own emails
+  // all wait for that first sign-in. A caller that does not pass the column
+  // is unchanged until facts-server reads it (Batch 21f).
+  if (p.welcome_checked_at === null) return false;
   return Boolean(p.email && p.email.includes('@')) && (p.sourcing_alerts === true || p.alert_missed === true);
 }
 
