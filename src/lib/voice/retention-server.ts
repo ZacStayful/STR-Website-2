@@ -19,9 +19,12 @@ export async function purgeTranscripts(o: { apply: boolean; days: number; now?: 
   if (error) throw new Error(error.message);
   const ids = ((data ?? []) as { id: string }[]).map((r) => r.id);
   if (!o.apply || ids.length === 0) return { due: ids.length, purged: 0 };
-  const { error: delErr } = await admin.from('si_conversation_turns').delete().in('conversation_id', ids);
-  if (delErr) throw new Error(delErr.message);
-  const { error: upErr } = await admin.from('si_conversations').update({ transcript_purged_at: new Date().toISOString() }).in('id', ids);
-  if (upErr) throw new Error(upErr.message);
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const { error: delErr } = await admin.from('si_conversation_turns').delete().in('conversation_id', chunk);
+    if (delErr) throw new Error(delErr.message);
+    const { error: upErr } = await admin.from('si_conversations').update({ transcript_purged_at: new Date().toISOString() }).in('id', chunk);
+    if (upErr) throw new Error(upErr.message);
+  }
   return { due: ids.length, purged: ids.length };
 }

@@ -179,3 +179,8 @@ export function parseWebhook(json: unknown): WebhookEvent | null {
 export function failureStatus(reason: string): 'missed' | 'failed' {
   return /busy|no[-_ ]?answer|cancel/i.test(reason) ? 'missed' : 'failed';
 }
+
+/** The agent's own voicemail detection ended the call (no answering_machine_detection event comes then). */
+export function endedByVoicemail(terminationReason: string | null): boolean {
+  return Boolean(terminationReason && /voicemail|answering[_ -]?machine/i.test(terminationReason));
+}

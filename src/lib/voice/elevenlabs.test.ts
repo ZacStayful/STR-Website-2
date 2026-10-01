@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { failureStatus, outboundCallBody, parseOutboundCallResponse, parseWebhook, signElevenLabs, verifyElevenLabsSignature } from './elevenlabs.ts';
+import { endedByVoicemail, failureStatus, outboundCallBody, parseOutboundCallResponse, parseWebhook, signElevenLabs, verifyElevenLabsSignature } from './elevenlabs.ts';
 
 const SECRET = 'wsec_test';
 const BODY = '{"type":"post_call_transcription","data":{"conversation_id":"c1"}}';
@@ -67,4 +67,11 @@ test('initiation failures and answering machines', () => {
   assert.ok(h && h.type === 'answering_machine_detection' && !h.machine);
   assert.equal(parseWebhook({ type: 'post_call_audio', data: {} })?.type, 'other');
   assert.equal(parseWebhook('nope'), null);
+});
+
+test('a call the agent ended on voicemail is voicemail, whatever the transcript says', () => {
+  assert.equal(endedByVoicemail('voicemail_detection tool was called'), true);
+  assert.equal(endedByVoicemail('Answering machine detected'), true);
+  assert.equal(endedByVoicemail('end_call tool'), false);
+  assert.equal(endedByVoicemail(null), false);
 });

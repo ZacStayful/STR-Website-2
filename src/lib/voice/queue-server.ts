@@ -105,6 +105,20 @@ export type PlaceResult =
   | { outcome: 'dry_run'; would: Record<string, unknown> }
   | { outcome: 'not_due' | 'gone' };
 
+/**
+ * Stop a queued call. An intro that never rang is dropped instead (its row
+ * deleted), so it is still owed: the intro is once ever, and it was never made.
+ */
+async function dropOrBlock(call: CallRow, reason: BlockedReason): Promise<void> {
+  const admin = createAdminClient();
+  if (call.call_type === 'intro') {
+    const { error } = await admin.from('si_calls_log').delete().eq('id', call.id).eq('status', 'queued');
+    if (error) console.error('[voice] intro drop failed:', error.message);
+    return;
+  }
+  await updateCall(admin, call.id, { status: 'blocked', blocked_reason: reason }, ['queued']);
+}
+
 /** Place a queued call if it is still allowed; never twice (the status moves queued → ringing once). */
 export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }): Promise<PlaceResult> {
   const now = o.now ?? new Date();
@@ -113,7 +127,7 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
   const admin = createAdminClient();
   const type = call.call_type as OutboundType;
   if (now.getTime() - Date.parse(call.queued_at) > STALE_QUEUED_MS) {
-    if (o.apply) await updateCall(admin, call.id, { status: 'blocked', blocked_reason: 'stale' }, ['queued']);
+    if (o.apply) await dropOrBlock(call, 'stale');
     return { outcome: 'blocked', reason: 'stale' };
   }
   const m = await memberFacts(call.user_id);
@@ -132,7 +146,7 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
       if (o.apply) await updateCall(admin, call.id, { not_before: until }, ['queued']);
       return { outcome: 'deferred', until };
     }
-    if (o.apply) await updateCall(admin, call.id, { status: 'blocked', blocked_reason: e.reason }, ['queued']);
+    if (o.apply) await dropOrBlock(call, e.reason);
     return { outcome: 'blocked', reason: e.reason };
   }
 

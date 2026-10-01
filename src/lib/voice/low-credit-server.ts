@@ -7,11 +7,13 @@ import 'server-only';
  * queue-server.ts.
  *
  * The answer tells Batch 20's £5 notice what to do the same day:
- *   called: true    a low-credit call for this credit landing is queued or
- *                   placed — the call (or its missed-call text and email) is
- *                   the notice, so Batch 20's is skipped
- *   called: false   no call (not triggered, a member choice, or a safety rule
- *                   blocked it) — Batch 20's notice runs as it always has
+ *   called: true    a low-credit call for this credit landing has been
+ *                   placed (rang) — the call, or its missed-call text and
+ *                   email, is the notice, so Batch 20's is skipped
+ *   called: false   no call placed (not triggered, a member choice, a safety
+ *                   rule blocked it, it failed, or it waits for tomorrow's
+ *                   opening) — Batch 20's notice runs as it always has, so the
+ *                   member is never left without one
  */
 import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
@@ -20,6 +22,9 @@ import { callsEnabled } from './config';
 import { latestLanding, lowCreditTriggered, spentFromLedger, type GrantRow } from './low-credit';
 import { enqueueCall, placeCall } from './queue-server';
 import { inOutboundHours } from './hours';
+
+/** A call that rang: it, or its missed-call text and email, told the member. */
+const PLACED: ReadonlySet<string> = new Set(['ringing', 'answered', 'missed', 'voicemail']);
 
 export async function maybeQueueLowCreditCall(userId: string, now: Date = new Date()): Promise<{ called: boolean }> {
   if (!callsEnabled()) return { called: false };
@@ -41,7 +46,7 @@ export async function maybeQueueLowCreditCall(userId: string, now: Date = new Da
   // Already handled for this landing? (One low-credit call per landing.)
   const { data: existing } = await admin.from('si_calls_log').select('status').eq('user_id', userId).eq('call_type', 'low_credit').eq('trigger_ref', landing.id).limit(1);
   const prior = ((existing ?? []) as { status: string }[])[0];
-  if (prior) return { called: prior.status !== 'blocked' };
+  if (prior) return { called: PLACED.has(prior.status) };
 
   const { data: ledger } = await admin.from('credit_transactions').select('kind, amount_pence').eq('user_id', userId).in('kind', ['debit', 'refund']).gte('at', landing.landedAt.toISOString()).limit(5000);
   const triggered = lowCreditTriggered({
@@ -56,12 +61,16 @@ export async function maybeQueueLowCreditCall(userId: string, now: Date = new Da
 
   const r = await enqueueCall({ userId, type: 'low_credit', triggerRef: landing.id, now });
   if (r.outcome === 'queued') {
-    if (inOutboundHours(now, settings.voice)) void placeCall(r.call, { apply: true, now }).catch((err) => console.error('[voice] low-credit place failed:', err));
-    return { called: true };
+    if (!inOutboundHours(now, settings.voice)) return { called: false };
+    const placed = await placeCall(r.call, { apply: true, now }).catch((err) => {
+      console.error('[voice] low-credit place failed:', err);
+      return null;
+    });
+    return { called: placed?.outcome === 'placed' };
   }
   if (r.outcome === 'exists') {
     const { data: again } = await admin.from('si_calls_log').select('status').eq('user_id', userId).eq('call_type', 'low_credit').eq('trigger_ref', landing.id).limit(1);
-    return { called: ((again ?? []) as { status: string }[]).some((x) => x.status !== 'blocked') };
+    return { called: ((again ?? []) as { status: string }[]).some((x) => PLACED.has(x.status)) };
   }
   return { called: false };
 }

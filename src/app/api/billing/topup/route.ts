@@ -15,6 +15,7 @@ import { clientDetails } from '@/lib/tracking/request';
 import { paymentFromIntent } from '@/lib/payments/rules';
 import { recordPayment } from '@/lib/payments/server';
 import { resumeReturnFor } from '@/lib/billing/resume-server';
+import { FUNNEL_TOPUP_FLOOR_PENCE, hasLiveFunnel } from '@/lib/credit/topup-floor';
 
 export const dynamic = 'force-dynamic';
 // Batch 21 (G14): the Stripe client gives up at 20 s; the route stops before the platform does.
@@ -50,6 +51,10 @@ export async function POST(request: Request) {
   // checkout saves the card and the webhook switches auto top-up on (only at the
   // link's own amount and trigger, and only if it is still off).
   const autoTopup = body.autoTopup === true && amount === settings.intelligence.revealAutoTopupAmountPence;
+  // The same rule as /api/billing/auto-topup: with a funnel live, the trigger can't be below £20.
+  if (autoTopup && settings.intelligence.revealAutoTopupThresholdPence < FUNNEL_TOPUP_FLOOR_PENCE && (await hasLiveFunnel(member.id))) {
+    return Response.json({ error: 'With a funnel live, the automatic top-up trigger has to be at least £20. Set it up in Billing.' }, { status: 400 });
+  }
   const autoMeta: Record<string, string> = autoTopup ? { auto_topup_on: '1', auto_topup_threshold_pence: String(Math.round(settings.intelligence.revealAutoTopupThresholdPence)) } : {};
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });

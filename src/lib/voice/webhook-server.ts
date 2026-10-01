@@ -17,11 +17,11 @@ import 'server-only';
  */
 import { createAdminClient } from '../supabase/admin';
 import { addTurns, closeConversation, hasOutcome, recordQuestion, startConversation } from '../conversations/log-server';
-import { failureStatus, type WebhookEvent } from './elevenlabs';
+import { endedByVoicemail, failureStatus, type WebhookEvent } from './elevenlabs';
 import { chargeCallMinutes } from './charge-server';
 import { sendMissedCallFallback } from './fallback-server';
 import { hangUp } from './twilio-voice';
-import { callByConversation, claimEvent, finishEvent, updateCall, type CallRow } from './store-server';
+import { callById, callByConversation, claimEvent, finishEvent, updateCall, type CallRow } from './store-server';
 
 export type HandleResult = { status: number; body: Record<string, unknown> };
 
@@ -60,7 +60,10 @@ async function dispatch(e: WebhookEvent): Promise<Record<string, unknown>> {
   const admin = createAdminClient();
   if (e.type === 'answering_machine_detection') {
     const call = await callByConversation(admin, e.conversationId, e.callSid);
-    if (!call) return { unknown_call: true };
+    if (!call) {
+      if (!e.machine) return { human: true };
+      throw new RetryLater('call not recorded yet');
+    }
     if (!e.machine) return { human: true };
     const sid = e.callSid ?? call.twilio_call_sid;
     if (sid) await hangUp(sid);
@@ -79,17 +82,20 @@ async function dispatch(e: WebhookEvent): Promise<Record<string, unknown>> {
   }
   if (e.type === 'post_call_transcription') {
     const call = await callByConversation(admin, e.conversationId, e.callSid);
-    if (!call) return { unknown_call: true };
+    if (!call) throw new RetryLater('call not recorded yet');
     return finishCall(call, e);
   }
   return { ignored: true };
 }
 
-async function finishCall(call: CallRow, e: Extract<WebhookEvent, { type: 'post_call_transcription' }>): Promise<Record<string, unknown>> {
+async function finishCall(first: CallRow, e: Extract<WebhookEvent, { type: 'post_call_transcription' }>): Promise<Record<string, unknown>> {
   const admin = createAdminClient();
+  // Re-read: the machine-detection webhook may have marked it voicemail meanwhile.
+  const call = (await callById(admin, first.id)) ?? first;
   const memberSpoke = e.transcript.some((t) => t.role === 'member' && t.text.trim().length > 0);
-  // Voicemail already handled by the detector stays voicemail; nobody speaking is missed.
-  const status = call.status === 'voicemail' ? 'voicemail' : memberSpoke && e.durationSecs > 0 ? 'answered' : 'missed';
+  // Voicemail (Twilio's detector, or the agent's) is never answered; nobody speaking is missed.
+  const voicemail = call.status === 'voicemail' || (call.direction === 'outbound' && endedByVoicemail(e.terminationReason));
+  const status = voicemail ? 'voicemail' : memberSpoke && e.durationSecs > 0 ? 'answered' : 'missed';
   const startedAt = e.startedAt ?? (call.placed_at ? new Date(call.placed_at) : new Date());
   const seconds = status === 'answered' ? e.durationSecs : 0;
 
@@ -116,11 +122,11 @@ async function finishCall(call: CallRow, e: Extract<WebhookEvent, { type: 'post_
     ended_at: new Date(startedAt.getTime() + e.durationSecs * 1000).toISOString(),
     conversation_id: conversationId,
     ...(e.callSid && !call.twilio_call_sid ? { twilio_call_sid: e.callSid } : {}),
-  }, ['ringing', 'queued', 'answered', 'voicemail', 'missed']);
+  }, status === 'voicemail' ? ['ringing', 'queued', 'voicemail'] : ['ringing', 'queued']);
 
-  // Answered minutes, once (the guard key), only for a recognised member.
+  // Answered minutes, once (the guard key), only for a recognised member, and only if this update won.
   let charged = 0;
-  if (status === 'answered' && call.user_id && seconds > 0) {
+  if (updated && updated.status === 'answered' && call.user_id && seconds > 0) {
     charged = (await chargeCallMinutes(call.id, call.user_id, seconds)).charged;
   }
   if (updated && status !== 'answered' && call.direction === 'outbound') await sendMissedCallFallback(updated);

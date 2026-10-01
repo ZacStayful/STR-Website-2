@@ -33,7 +33,7 @@ import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, cal
 import { callText } from './templates';
 import { memberFacts } from './member-server';
 import { claimCharge, releaseCharge, settleText } from './charge-server';
-import { callByConversation, lastTemplateSent, logTool, toolCount, updateCall, type CallRow } from './store-server';
+import { callByConversation, claimEvent, lastTemplateSent, logTool, toolCount, updateCall, type CallRow } from './store-server';
 
 export interface ToolRequest {
   conversation_id?: unknown;
@@ -59,6 +59,11 @@ async function liveCall(req: ToolRequest, maxCallSeconds: number, now: Date): Pr
   const since = Date.parse(call.placed_at ?? call.started_at ?? call.queued_at);
   if (!Number.isFinite(since) || now.getTime() - since > maxCallSeconds * 1000 + TOOL_GRACE_MS) return null;
   return call;
+}
+
+/** A per-call text slot (si_webhook_events as a once-only claim); its key, or null when taken. */
+async function claimEventSlot(key: string): Promise<string | null> {
+  return (await claimEvent(createAdminClient(), 'si_text_slot', key)) === 'new' ? key : null;
 }
 
 export async function runTool(tool: ToolName, req: ToolRequest, now: Date = new Date()): Promise<ToolAnswer> {
@@ -122,9 +127,17 @@ async function sendTemplateText(call: CallRow, req: ToolRequest, textsPerCallMax
   const settings = await getBillingSettings();
   const which = template === 'resend_last_link' ? ((await lastTemplateSent(admin, m.userId)) ?? 'contact_card') : template;
   const body = callText(which, { base: siteUrl(), topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence });
-  const key = `call:${call.id}:text:${template === 'resend_last_link' ? `resend_${which}` : which}`;
+  // Each template at most once a call (a resend of one already sent here is the same text)…
+  const key = `call:${call.id}:text:${which}`;
   const guard = await claimCharge(key, call.id, m.userId, 'text');
   if (!guard) return { ok: true, say: "It's already been sent on this call.", detail: { reason: 'already_sent' } };
+  // …and never more than the per-call limit, however the requests race: one slot row each.
+  let slot: string | null = null;
+  for (let n = 0; n < textsPerCallMax && !slot; n++) slot = await claimEventSlot(`${call.id}:${n}`);
+  if (!slot) {
+    await releaseCharge(guard);
+    return { ok: false, say: "That's the most texts for one call.", detail: { reason: 'limit' } };
+  }
   const r = await sendSms({ to: m.phone, body, purpose: `si_${which}`, dryRun: callsDryRun() });
   if (!r.sent && r.reason !== 'unknown') {
     await releaseCharge(guard);
