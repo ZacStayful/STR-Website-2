@@ -4,6 +4,7 @@ import { isUkMobile, maskPhone, ukMobile } from "@/lib/sms/phone";
 import { insertMessage, startNumber, stopNumber } from "@/lib/sms/store";
 import { twiml, verifiedTwilioForm } from "@/lib/sms/webhook";
 import { logActivity } from "@/lib/activity/log";
+import { replyToText } from "@/lib/voice/sms-replies-server";
 
 // ─── Twilio inbound texts: STOP / START / HELP (Batch 8) ──────────────
 // The Messaging Service's incoming-message webhook points here. Every request
@@ -18,8 +19,12 @@ import { logActivity } from "@/lib/activity/log";
 //
 // When Twilio's Advanced Opt-Out has already recognised the keyword (it sends
 // OptOutType) it has also replied, so we record it and reply with nothing.
-// Other messages get no reply (a reply costs a text). Only the keyword is
-// stored, never what the member wrote.
+// Only the keyword is stored in sms_messages, never what the member wrote.
+//
+// Batch 23, Part E: any other text is Stayful Intelligence's to answer
+// (src/lib/voice/sms-replies-server.ts): "who is this?" gets the SI line,
+// anything else a short reply and a copy to the team; both go into the
+// conversation log.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +94,13 @@ export async function POST(request: Request) {
     twilio_sid: p.get("MessageSid") ?? p.get("SmsSid"),
   });
 
-  if (!keyword || twilioReplied) return twiml(null);
+  if (!keyword) {
+    const reply = await replyToText({ phone, body: p.get("Body") ?? "", messageSid: p.get("MessageSid") ?? p.get("SmsSid") }).catch((err) => {
+      console.error("[sms] Stayful Intelligence reply failed:", err);
+      return null;
+    });
+    return twiml(reply);
+  }
+  if (twilioReplied) return twiml(null);
   return twiml(REPLIES[keyword]);
 }

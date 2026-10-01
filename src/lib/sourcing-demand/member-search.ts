@@ -474,6 +474,8 @@ async function chargeDeep(admin: Admin, row: SearchRow, s: IntelligenceSettings)
       const tx = await debit(payer, base, { reservationId: row.reservation_id, meta: { action_id: row.id, action: DEEP_SEARCH_ACTION, description: 'Deep search of your areas', raw_cost_pence: row.raw_pence } });
       out.transaction_id = tx;
       out.charged_base_pence = base;
+      // Batch 23 (bug 3): the low-balance emails, auto top-up and the low-credit call follow this debit too.
+      void import('../credit/after-debit').then((m) => m.afterDebit(payer)).catch(() => {});
     }
   } catch (err) {
     console.error('[member-search] deep charge failed:', (err as Error)?.message ?? err);

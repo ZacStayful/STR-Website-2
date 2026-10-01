@@ -13,7 +13,7 @@ import { isPackAccount } from '../lifecycle/settings';
 import { starterPackStateFor } from '../starter-pack/server';
 import { lowCreditDue, lowCreditMayGoAlone } from './low-credit';
 import { isEnforcing } from './http';
-import { noticeFor, queueLowCreditSync, sendLowCreditAlone } from './low-credit-server';
+import { markLowCreditTold, noticeFor, queueLowCreditSync, sendLowCreditAlone } from './low-credit-server';
 
 /**
  * Runs after a member's balance changed because of a debit: the 80% and £0
@@ -46,6 +46,27 @@ async function everGranted(admin: ReturnType<typeof createAdminClient>, userId: 
   const { data, error } = await admin.from('credit_grants').select('id').eq('user_id', userId).gt('amount_pence', 0).limit(1);
   if (error) return true;
   return (data?.length ?? 0) > 0;
+}
+
+/** Batch 23: whether a low-credit call is queued or placed for the member's most recent credit. Never throws. */
+async function lowCreditCalled(userId: string): Promise<boolean> {
+  try {
+    const { maybeQueueLowCreditCall } = await import('../voice/low-credit-server');
+    return (await maybeQueueLowCreditCall(userId)).called;
+  } catch (err) {
+    console.error('[credit] low-credit call check failed:', err);
+    return false;
+  }
+}
+
+/** Batch 23: the call is the £5 notice — stamp it told (once a cycle, as the email would have been) and tell Monday. */
+async function toldByCall(admin: ReturnType<typeof createAdminClient>, userId: string, summary: Awaited<ReturnType<typeof getCreditSummary>>, p: Record<string, unknown>, now: Date): Promise<void> {
+  const lastToldAt = (p.last_low_balance_email_at as string | null) ?? null;
+  const settings = await getBillingSettings();
+  const due = lowCreditDue({ noPlan: true, balancePence: summary.totalPence, spendableBasePence: summary.spendableBasePence, lowCreditPence: settings.lifecycle.lowCreditPence, lastToldAt, alertsOn: true, hasEmail: true, admin: false, now });
+  if (!due) return;
+  await markLowCreditTold(admin, userId, now);
+  if (summary.noPlan) await queueLowCreditSync(userId);
 }
 
 export async function afterDebit(userId: string): Promise<void> {
@@ -101,6 +122,15 @@ export async function afterDebit(userId: string): Promise<void> {
         const r = await maybeAutoTopup(userId);
         if (r === 'charged') return;
       }
+      // Batch 23, Part C: the low-credit call goes first (src/lib/voice/low-credit-server.ts).
+      // When one is queued or placed for this credit, it — or its missed-call
+      // text and email — is the notice, so the £5 email below is not sent
+      // (marked told, so the morning email doesn't carry it either). When a
+      // safety rule blocked the call, the email runs as it always has.
+      if (await lowCreditCalled(userId)) {
+        await toldByCall(admin, userId, summary, p, now);
+        return;
+      }
       if (summary.noPlan) {
         // Batch 20, Part B: the £5 decision, once a cycle.
         const settings = await getBillingSettings();
@@ -123,6 +153,11 @@ export async function afterDebit(userId: string): Promise<void> {
         await admin.from('profiles').update({ last_low_balance_email_at: now.toISOString() }).eq('id', userId);
         void lowBalanceEmail(email, { remainingPence: summary.totalPence, planName: summary.cycle?.planName ?? null, topupRate: summary.rates.topup }).catch(() => {});
       }
+      return;
+    }
+    // Batch 23: a plan member can be at £5 before the 80% rule says "low".
+    if (!p.auto_topup_amount_pence && summary.totalPence <= (await getBillingSettings()).lifecycle.lowCreditPence && (await lowCreditCalled(userId))) {
+      await toldByCall(admin, userId, summary, p, now);
       return;
     }
     // Healthy balance, but possibly on the way down towards an automatic
