@@ -39,6 +39,7 @@ import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIN
 import { rewardEligibility, type Eligibility } from '../today/checklist';
 import { grant, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings } from '../credit/unit-costs';
+import { accuracyHint, accuracyLabel, accuracyLevel, levelMarkers, type Level } from './levels';
 import { startAction, welcomeGranted } from '../credit/action';
 import { newActionId, runMetered } from '../credit/context';
 import { geocodePostcode } from '../apis/geocode';
@@ -168,6 +169,24 @@ export interface ProgressView {
   complete: boolean;
   mandatoryDone: boolean;
   questions: QuestionId[];
+  /** Batch 22, Part A: match accuracy (levels.ts), worked out with the live settings. */
+  accuracy: AccuracyView;
+}
+
+export interface AccuracyView {
+  level: Level;
+  name: string;
+  label: string;
+  hint: string;
+  /** Where each level's marker sits on the bar, and how far the member is (0–100). */
+  markers: Record<1 | 2 | 3, number>;
+  at: number;
+}
+
+/** The level settings: Advanced's share, and the profile credit's for the top level. */
+export interface AccuracySettings {
+  advancedPct: number;
+  siPct: number;
 }
 
 export interface CreditView {
@@ -186,8 +205,23 @@ export interface QuizView {
   credit: CreditView;
 }
 
-export function progressView(p: Progress): ProgressView {
-  return { percent: p.percent, minutesLeft: p.minutesLeft, next: p.next, complete: p.complete, mandatoryDone: p.mandatoryDone, questions: p.questions };
+export function progressView(p: Progress, s: AccuracySettings): ProgressView {
+  return { percent: p.percent, minutesLeft: p.minutesLeft, next: p.next, complete: p.complete, mandatoryDone: p.mandatoryDone, questions: p.questions, accuracy: accuracyView(p, s) };
+}
+
+/** Mandatory questions have no "Not sure", so every one answered is real. */
+export function accuracyView(p: Progress, s: AccuracySettings): AccuracyView {
+  const realMandatory = p.mandatory.filter((id) => p.answered.includes(id)).length;
+  const input = { questions: p.questions.length, mandatory: p.mandatory.length, mandatoryDone: p.mandatoryDone, answered: p.answered.length, real: p.real, realMandatory };
+  const l = accuracyLevel(input, s);
+  const total = Math.max(1, p.questions.length);
+  return { level: l.level, name: l.name, label: accuracyLabel(l), hint: accuracyHint(l), markers: levelMarkers(input, s), at: Math.min(100, Math.round((p.real / total) * 100)) };
+}
+
+/** The live level settings (billing_settings, 60 s cache). */
+export async function accuracySettings(): Promise<AccuracySettings> {
+  const settings = await getBillingSettings();
+  return { advancedPct: settings.intelligence.accuracyAdvancedPct, siPct: settings.profileCreditMinRealPct };
 }
 
 export interface AnswerInput {
@@ -298,7 +332,7 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     console.error('[profile] answer bookkeeping failed (the answer itself is saved):', (err as Error)?.message ?? err);
     credit = await creditViewFor(s).catch(() => credit);
   }
-  return { ok: true, warning, view: { answers: next, answered, progress: progressView(prog), matchCount, credit } };
+  return { ok: true, warning, view: { answers: next, answered, progress: progressView(prog, await accuracySettings()), matchCount, credit } };
 }
 
 /** The "specific areas" answer is the member's saved areas: add the new ones, drop the old. */

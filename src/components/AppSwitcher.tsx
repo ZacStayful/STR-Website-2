@@ -2,6 +2,8 @@ import Link from "next/link";
 import { UsageChip } from "@/components/credit/UsageChip";
 import { FeedbackTrigger } from "@/components/feedback/FeedbackTrigger";
 import { ProfilePill, type PillProfiles } from "@/components/ProfilePill";
+import { HeaderEyeLink } from "@/components/intelligence/HeaderEyeLink";
+import type { EyeLevel } from "@/components/StayfulEye";
 import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type ActiveNav } from "@/lib/nav";
 
 // Thin strip shown to signed-in members: Today, My deals and Account — the
@@ -16,10 +18,11 @@ import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type Act
 // still announces the section it always did, and NAV_FOR_SECTION says which
 // item that lights up.
 //
-// The nav items come first; the pill, the usage chip, the admin's Dashboard
-// chip and Feedback sit in one group after them, so on a phone the group
-// wraps onto its own row rather than splitting the three items.
-export function AppSwitcher({ active, admin, leads, profile = null, saved = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null }) {
+// The Stayful Intelligence eye (Batch 22) comes first, then the nav items;
+// the pill, the usage chip, the admin's Dashboard chip and Feedback sit in
+// one group after them, so on a phone the group wraps onto its own row
+// rather than splitting the three items.
+export function AppSwitcher({ active, admin, leads, profile = null, saved = null, eyeLevel = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null; eyeLevel?: EyeLevel | null }) {
   const current = activeNavFor(active);
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
@@ -52,6 +55,8 @@ export function AppSwitcher({ active, admin, leads, profile = null, saved = null
         fontFamily: "var(--font-dmsans), var(--font-sans), system-ui, sans-serif",
       }}
     >
+      {/* Batch 22: the Stayful Intelligence eye leads the row (it adds no line at 375px). */}
+      {eyeLevel !== null && <HeaderEyeLink level={eyeLevel} />}
       {NAV_ORDER.filter((key) => key !== "account").map((key) => item(key, NAV_TARGETS[key].href, NAV_TARGETS[key].label))}
       {leads && item("leads", LEADS_NAV.href, LEADS_NAV.label)}
       {item("account", NAV_TARGETS.account.href, NAV_TARGETS.account.label)}

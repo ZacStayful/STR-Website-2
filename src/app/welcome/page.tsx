@@ -6,7 +6,7 @@ import { quizPathFor, welcomeReturnPath, HOME_PATH } from "@/lib/auth/landing";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { rankedAreasForQuiz } from "@/lib/onboarding/server";
 import { isQuestionId, questionsFor } from "@/lib/profile/questions";
-import { creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progressView } from "@/lib/profile/server";
+import { accuracySettings, creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progressView } from "@/lib/profile/server";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
 import { MembersFooter } from "@/components/feedback/MembersFooter";
@@ -59,7 +59,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
   if (!editing && summary.progress.complete) redirect(GOALS_EDITOR_HREF);
 
   const now = new Date();
-  const [areas, matchCount, credit] = await Promise.all([rankedAreasForQuiz(), matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers }), creditViewFor(summary)]);
+  const [areas, matchCount, credit, levelSettings] = await Promise.all([rankedAreasForQuiz(), matchCountFor({ userId: user.id, email: user.email ?? null, answers: summary.answers }), creditViewFor(summary), accuracySettings()]);
   if (!editing) await markQuizOpened(user.id, summary, now);
 
   // Batch 19: a new Google sign-up never saw the sign-up form's Meta pixel
@@ -88,7 +88,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
       <div className="mx-auto w-full max-w-lg">
         <Quiz
           answers={summary.answers}
-          progress={progressView(summary.progress)}
+          progress={progressView(summary.progress, levelSettings)}
           matchCount={matchCount}
           credit={credit}
           editing={editing}

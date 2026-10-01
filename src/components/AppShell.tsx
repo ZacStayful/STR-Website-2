@@ -12,7 +12,7 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { CreditBanner } from "@/components/credit/CreditBanner";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
-import { requireProfileStart } from "@/lib/profile/server";
+import { accuracySettings, accuracyView, requireProfileStart } from "@/lib/profile/server";
 import { profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import type { PillProfiles } from "@/components/ProfilePill";
@@ -106,10 +106,19 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
   }
 
   const announcements = await announcementsRead;
+  // Batch 22: the header eye shows the member's match accuracy (a team member's eye is full).
+  let eyeLevel: 0 | 1 | 2 | 3 = 3;
+  if (profile && !profile.teamMember) {
+    try {
+      eyeLevel = accuracyView(profile.progress, await accuracySettings()).level;
+    } catch (err) {
+      console.error("[AppShell] accuracy level failed:", err);
+    }
+  }
 
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} leads={leads} saved={saved} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
+      <AppSwitcher active={active} admin={admin} leads={leads} saved={saved} eyeLevel={eyeLevel} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
       <CreditBanner />
       <AnnouncementBanner items={announcements} />
       <VisitHeartbeat />
