@@ -59,6 +59,20 @@ resume and scheduled cancellation. Without it `/account` still looks correct,
 because the server actions write the columns directly, but the row quietly
 drifts out of step with Stripe from then on.
 
+**The endpoint's API version must be the one the `stripe` package reads**,
+currently `2026-04-22.dahlia` (`node -p "require('stripe').API_VERSION"`); a
+later `.dahlia` version also works, an older family does not. Stripe writes
+every event in its endpoint's version, and the handler reads the newer shapes:
+an invoice's subscription at `invoice.parent.subscription_details`, a
+subscription's period on its items. An endpoint on an older version (an
+account's default can be years old) still passes the signature check, but every
+subscription invoice is skipped as "invoice without subscription", so a plan is
+paid for and no credit arrives. An existing endpoint's version cannot be
+changed: create a new one with `api_version` set (through the API if the
+Dashboard's picker doesn't offer it), put its secret in `STRIPE_WEBHOOK_SECRET`,
+redeploy, then turn the old one off. Do the same whenever the `stripe` package
+moves to a new API version family.
+
 More than one endpoint is supported, and needs one secret per endpoint. Stripe
 signs each delivery with the secret of the endpoint it came from, so a second
 endpoint whose secret is not configured has every delivery refused with a 400.
@@ -600,7 +614,8 @@ editable on `/admin/lifecycle`. In this order:
    `checkout.session.completed`, `payment_intent.succeeded`,
    `payment_intent.amount_capturable_updated`, `payment_intent.canceled`,
    `charge.refunded` and `charge.dispute.created` (the pack is captured,
-   granted, let go when its card hold is cancelled, and clawed back by them);
+   granted, let go when its card hold is cancelled, and clawed back by them),
+   from an endpoint on API version `2026-04-22.dahlia` (§2);
    `/admin/lifecycle` shows the last event received, and warns while none
    ever has.
 3. **Vercel → Environment Variables (Production):** `STRIPE_PRICE_STARTER_PACK`;
