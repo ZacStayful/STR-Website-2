@@ -58,6 +58,13 @@ const PLANS = [
   { code: 'pro_annual', lookup: 'stayful_pro_annual', name: 'Stayful Pro (annual)', amount: 36000, interval: 'year', credit: 5000 },
 ];
 const TOPUPS = [1000, 2500, 5000];
+// What /api/stripe/webhook handles (src/lib/stripe/webhook.ts; each is explained in .env.example).
+const WEBHOOK_EVENTS = [
+  'checkout.session.completed', 'invoice.paid', 'invoice.payment_failed',
+  'customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted',
+  'payment_intent.succeeded', 'payment_intent.amount_capturable_updated', 'payment_intent.canceled',
+  'payment_method.attached', 'charge.refunded', 'charge.dispute.created',
+];
 
 async function findByLookup(lookup) {
   const r = await stripe.prices.list({ lookup_keys: [lookup], limit: 1, active: true });
@@ -176,7 +183,7 @@ async function ensurePortal(priceIds, productIds) {
   for (const [k, v] of Object.entries(out)) console.log(`${k}=${v}`);
   console.log('\nAlso, in the Stripe Dashboard:');
   console.log('  • Settings → Public details: set the Terms of Service URL to https://intelligence.stayful.co.uk/terms so Checkout can collect consent.');
-  console.log('  • Developers → Webhooks: point /api/stripe/webhook at checkout.session.completed, invoice.paid, invoice.payment_failed, customer.subscription.updated, customer.subscription.deleted, payment_intent.succeeded, payment_method.attached, charge.refunded, charge.dispute.created.');
+  console.log(`  • Developers → Webhooks: add an endpoint for https://intelligence.stayful.co.uk/api/stripe/webhook on API version ${Stripe.API_VERSION} (the version this stripe package reads: an older one passes the signature check but every subscription invoice is skipped, and an endpoint's version cannot be changed later; README §2), with these events: ${WEBHOOK_EVENTS.join(', ')}. Its signing secret goes in STRIPE_WEBHOOK_SECRET.`);
   console.log('  • Optional: STRIPE_TAX=true once Stripe Tax is enabled to collect VAT automatically.');
 })().catch((err) => {
   console.error(err);
