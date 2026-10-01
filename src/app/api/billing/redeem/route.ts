@@ -12,6 +12,8 @@ const MESSAGES: Record<string, string> = {
   code_own_referral: "You can't use your own referral code.",
   code_already_used: "You've already used that code.",
   referral_already_used: "You've already used a referral code.",
+  // Batch 21 (B9): an account whose welcome credit was withheld gets no referral credit either.
+  referral_withheld: "Referral codes aren't available on this account.",
   not_configured: 'Codes are not available right now.',
 };
 

@@ -2,14 +2,14 @@ import 'server-only';
 
 import type Stripe from 'stripe';
 import { createAdminClient } from '../supabase/admin';
-import { emailKey } from '../supabase/email-key';
 import { getStripe } from '../stripe/client';
 import { grant, getBalance } from '../credit/ledger';
 import { normaliseMobile } from '../credit/abuse';
 import { grantTopup } from '../stripe/grants';
 import { starterPackReceiptEmail } from '../email/billing';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
-import { CONSENT_VERSION, packClawbackPence } from './rules';
+import { forgetTodayLists } from '../today/forget-server';
+import { CONSENT_VERSION, packClawbackPence, packEmailKey } from './rules';
 
 /**
  * Paying for the starter pack (Batch 20, Part A), in three steps:
@@ -73,16 +73,21 @@ async function claim(pi: Stripe.PaymentIntent): Promise<{ status: PurchaseRow['s
   const userId = md.user_id;
   const admin = createAdminClient();
   // A failed read must not claim with no email or number: that would skip those checks and store nothing for later claims to meet.
-  const { data: profile, error: profileErr } = await admin.from('profiles').select('email, mobile').eq('id', userId).maybeSingle();
+  const { data: profile, error: profileErr } = await admin.from('profiles').select('email, mobile, mobile_key').eq('id', userId).maybeSingle();
   if (profileErr) throw new Error(`starter pack claim: profile read failed: ${profileErr.message}`);
-  const p = (profile ?? {}) as { email?: string | null; mobile?: string | null };
+  const p = (profile ?? {}) as { email?: string | null; mobile?: string | null; mobile_key?: string | null };
+  const card = fingerprintOf(pi);
+  // Batch 21 (B30): Checkout and the saved-card path only take cards, so a pack
+  // without a fingerprint is worth a loud line: its card leg of once-per-person is empty.
+  if (!card) console.error(`[starter-pack] ${pi.id} has no card fingerprint; the claim cannot stop this card buying again`);
   const { data, error } = await admin.rpc('starter_pack_claim', {
     p: {
       pi: pi.id,
       user: userId,
-      email_key: p.email ? emailKey(p.email) : null,
-      mobile_key: normaliseMobile(p.mobile ?? null),
-      card: fingerprintOf(pi),
+      // Batch 21 (B21, B22): the claim's own email key, and the number the account holds, not the editable one.
+      email_key: packEmailKey(p.email),
+      mobile_key: p.mobile_key ?? normaliseMobile(p.mobile ?? null),
+      card,
       price: Math.round(num(md.price_pence)),
       credit: Math.round(num(md.credit_pence)),
       currency: pi.currency ?? 'gbp',
@@ -97,6 +102,12 @@ async function claim(pi: Stripe.PaymentIntent): Promise<{ status: PurchaseRow['s
 
 async function markFailed(piId: string): Promise<void> {
   await createAdminClient().from('starter_pack_purchases').update({ status: 'failed' }).eq('payment_intent_id', piId).eq('status', 'reserved');
+}
+
+/** Batch 21 (B44): the money has been taken; the claim's 8-day sweep leaves a captured row alone. */
+async function markCaptured(piId: string): Promise<void> {
+  const { error } = await createAdminClient().from('starter_pack_purchases').update({ captured_at: new Date().toISOString() }).eq('payment_intent_id', piId).is('captured_at', null);
+  if (error) console.error('[starter-pack] captured_at not stamped:', error.message);
 }
 
 /**
@@ -116,13 +127,17 @@ export async function settleStarterPack(paymentIntentId: string): Promise<Settle
   const c = await claim(pi);
   if (c.status === 'granted') return 'already';
   if (c.status === 'reserved') {
-    if (pi.status === 'succeeded') return 'already';
+    if (pi.status === 'succeeded') {
+      await markCaptured(pi.id);
+      return 'already';
+    }
     if (pi.status !== 'requires_capture') {
       await markFailed(pi.id);
       return 'failed';
     }
     try {
       await stripe.paymentIntents.capture(pi.id, {}, { idempotencyKey: `starter_pack_capture:${pi.id}` });
+      await markCaptured(pi.id);
       return 'captured';
     } catch (err) {
       // The capture may have gone through anyway (a second settle of the same
@@ -131,7 +146,10 @@ export async function settleStarterPack(paymentIntentId: string): Promise<Settle
       // its claim, and the error makes the caller try again (the webhook is
       // redelivered), so a charged member is never told they were not.
       const now = await stripe.paymentIntents.retrieve(pi.id);
-      if (now.status === 'succeeded') return 'captured';
+      if (now.status === 'succeeded') {
+        await markCaptured(pi.id);
+        return 'captured';
+      }
       if (now.status === 'canceled') {
         await markFailed(pi.id);
         return 'failed';
@@ -191,11 +209,15 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
   const price = Math.round(num(row.price_pence));
   const credit = Math.round(num(row.credit_pence));
 
-  if (row.status === 'blocked' || row.status === 'failed') {
+  if (row.status === 'blocked') {
     // A repeat that was charged: the member gets what they paid for, as any top-up.
     if (price > 0) await grantTopup(userId, price, `pi:${pi.id}`, { email: input.email });
     return 'blocked';
   }
+  // Batch 21 (B44): a 'failed' row whose payment succeeded was captured after
+  // all (by hand, or swept before captured_at existed): it is the pack the
+  // member paid for, never a plain top-up that reopens the offer.
+  await markCaptured(pi.id);
 
   // The credit first, both grants every time: idempotent on source_ref, so a
   // redelivery completes a run that died half-way and never doubles it.
@@ -210,7 +232,7 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
     .from('starter_pack_purchases')
     .update({ status: 'granted', granted_at: nowIso, amount_paid_pence: pi.amount_received ?? pi.amount })
     .eq('payment_intent_id', pi.id)
-    .eq('status', 'reserved')
+    .in('status', ['reserved', 'failed'])
     .select('payment_intent_id');
   if (moveErr) throw new Error(`starter_pack_purchases update failed: ${moveErr.message}`);
   const first = (moved?.length ?? 0) > 0;
@@ -220,6 +242,9 @@ export async function grantStarterPack(input: { paymentIntent: Stripe.PaymentInt
       await starterPackReceiptEmail(input.email, { pricePence: price, creditPence: credit, balancePence: bal?.totalPence ?? credit }).catch(() => false);
     }
     await queueFunnelSync(userId, 'starter_pack');
+    // Batch 21 (C32): the pack lifts the early-access delay; the morning's Today
+    // list was chosen as a free member, so the next visit chooses again.
+    await forgetTodayLists(userId);
   }
 
   // Every time, so a run that died before them is completed; each as of the grant.
@@ -268,6 +293,24 @@ export async function clawbackStarterPack(input: { userId: string; paymentIntent
   if (input.reason === 'refunded') {
     await admin.from('starter_pack_purchases').update({ refunded_pence: Math.max(num(row.refunded_pence), Math.round(input.refundedPence)) }).eq('payment_intent_id', input.paymentIntentId);
   }
+  // Batch 21 (C17): a pack refunded in full was the member's only payment, so
+  // they are a free account again for early access (last_topup_at was the
+  // pack's); a member with any other top-up or a subscription keeps the tier.
+  if (input.chargedPence > 0 && input.refundedPence >= input.chargedPence && row.user_id) await dropPaidTierIfNothingElse(row.user_id, `pi:${input.paymentIntentId}`);
   await queueFunnelSync(input.userId, 'refund');
   return Math.max(0, num(data));
+}
+
+/** Clears last_topup_at when the refunded payment was the account's only one: no other top-up grant and no subscription history. */
+async function dropPaidTierIfNothingElse(userId: string, refundedSourceRef: string): Promise<void> {
+  const admin = createAdminClient();
+  const [others, profile] = await Promise.all([
+    admin.from('credit_grants').select('id').eq('user_id', userId).eq('kind', 'topup').neq('source_ref', refundedSourceRef).limit(1),
+    admin.from('profiles').select('subscription_started_at, stripe_subscription_id, plan_code').eq('id', userId).maybeSingle(),
+  ]);
+  if (others.error || profile.error) return;
+  const p = (profile.data ?? {}) as { subscription_started_at?: string | null; stripe_subscription_id?: string | null; plan_code?: string | null };
+  if ((others.data?.length ?? 0) > 0 || p.subscription_started_at || p.stripe_subscription_id || p.plan_code) return;
+  const { error } = await admin.from('profiles').update({ last_topup_at: null }).eq('id', userId);
+  if (error) console.error('[starter-pack] last_topup_at not cleared after a full refund:', error.message);
 }

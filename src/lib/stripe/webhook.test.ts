@@ -71,6 +71,10 @@ function fakeDeps() {
     logActivity: async (input) => {
       activity.push(input);
     },
+    restoreDisputedCredit: async (...a) => {
+      rec('restoreDisputedCredit')(...a);
+      return 2500;
+    },
     log: () => {},
   };
   return deps;
@@ -812,4 +816,65 @@ test('Batch 20: a refund whose payment cannot be read fails the delivery, so Str
   // No such payment (not ours): not a pack, and the delivery goes on as before.
   deps.retrievePaymentIntentStrict = async () => null;
   assert.equal((await handleStripeEvent(ev('charge.refunded', { id: 'ch_x', payment_intent: 'pi_gone', customer: 'cus_1', captured: true, amount: 500, amount_refunded: 500 }), deps)).handled, true);
+});
+
+// ── Batch 21 ──
+
+test('invoice.paid with no linked subscription or customer is matched by the invoice email (B19)', async () => {
+  const deps = fakeDeps();
+  const invoice = { id: 'in_19', customer: 'cus_other', customer_email: 'a@example.com', billing_reason: 'subscription_create', parent: { subscription_details: { subscription: 'sub_new' } }, lines: { data: [{ period: { end: 1_800_000_000 }, pricing: { price_details: { price: 'price_starter' } } }] } };
+  deps.setSub(null);
+  const r = await handleStripeEvent(ev('invoice.paid', invoice), deps);
+  assert.equal(r.handled, true);
+  assert.equal(deps.calls.grantPlanCycle![0][0], 'u1');
+});
+
+test('a subscription that is still incomplete is neither ended nor mirrored (B42)', async () => {
+  const deps = fakeDeps();
+  const r = await handleStripeEvent(ev('customer.subscription.updated', { id: 'sub_1', status: 'incomplete', customer: 'cus_1', cancel_at_period_end: false, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } }), deps);
+  assert.equal(r.handled, true);
+  assert.equal(deps.calls.expirePlanGrants, undefined);
+  assert.equal(deps.calls.updateProfile, undefined);
+  assert.deepEqual(deps.events, []);
+});
+
+test('a failed one-off invoice does not mark the member past due (B43)', async () => {
+  const deps = fakeDeps();
+  const r = await handleStripeEvent(ev('invoice.payment_failed', { id: 'in_43', customer: 'cus_1', parent: null }), deps);
+  assert.equal(r.handled, false);
+  assert.equal(deps.calls.updateProfile, undefined);
+  assert.equal(deps.calls.paymentFailedEmail, undefined);
+});
+
+test('a top-up checkout completed before the money arrived grants nothing yet (B15)', async () => {
+  const deps = fakeDeps();
+  const session = { id: 'cs_15', mode: 'payment', payment_status: 'unpaid', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_15', amount_total: 2500, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } };
+  const r = await handleStripeEvent(ev('checkout.session.completed', session), deps);
+  assert.equal(r.handled, true);
+  assert.ok(!('grantTopup' in deps.calls), 'nothing granted while unpaid');
+  const paid = await handleStripeEvent(ev('checkout.session.completed', { ...session, payment_status: 'paid' }), deps);
+  assert.equal(paid.handled, true);
+  assert.equal((deps.calls['grantTopup'] ?? []).length, 1);
+});
+
+test('a refund of a VAT-inclusive charge claws back the same share of the ex-VAT credit (B18)', async () => {
+  const deps = fakeDeps();
+  deps.retrievePaymentIntent = async (id) => ({ id, amount: 3000, amount_received: 3000, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } }) as unknown as Stripe.PaymentIntent;
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_18', payment_intent: 'pi_18', amount: 3000, amount_refunded: 1500, refunded: false }), deps);
+  const [userId, sourceRef, amount, reason] = deps.calls.refundTopup![0];
+  assert.equal(userId, 'u1');
+  assert.equal(sourceRef, 'pi:pi_18');
+  assert.equal(amount, 1250);
+  assert.equal(reason, 'refunded');
+});
+
+test('a dispute won gives the credit back; one lost does not (B17)', async () => {
+  const deps = fakeDeps();
+  deps.retrievePaymentIntentStrict = async (id) => ({ id, amount: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500' } }) as unknown as Stripe.PaymentIntent;
+  const won = await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_1', status: 'won', payment_intent: 'pi_17', amount: 2500 }), deps);
+  assert.equal(won.handled, true);
+  assert.deepEqual(deps.calls.restoreDisputedCredit![0], ['u1', 'pi_17']);
+  const lost = await handleStripeEvent(ev('charge.dispute.closed', { id: 'dp_2', status: 'lost', payment_intent: 'pi_17', amount: 2500 }), deps);
+  assert.equal(lost.handled, false);
+  assert.equal(deps.calls.restoreDisputedCredit!.length, 1);
 });

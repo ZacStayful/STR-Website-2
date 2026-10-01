@@ -40,6 +40,14 @@ export async function removeMember(input: { ownerId: string; memberId: string; b
   }
 
   let loginDeleted = false;
+  if (!createdViaInvite) {
+    // Batch 21 (B33): an account that existed before the invite keeps its login
+    // and is its own payer again; the welcome decision it never had (stamped
+    // 'team_member' on joining) is reopened for the next sign-in, so the £5
+    // profile credit and the first-week £1s can follow it.
+    const { error: reopenErr } = await admin.from('profiles').update({ welcome_checked_at: null, welcome_withheld_reason: null }).eq('id', input.memberId).eq('welcome_withheld_reason', 'team_member');
+    if (reopenErr) console.error('[team] welcome reopen failed:', reopenErr.message);
+  }
   if (createdViaInvite) {
     // Reports they ran for the team were paid for by the team: hand them to
     // the owner first, or they would cascade away with the login.

@@ -25,10 +25,20 @@ export async function packShownAction(surface: string): Promise<void> {
   if (userId) recordPackShown(userId, surface);
 }
 
-/** "Not now" on the welcome screen or a dead end: recorded, nothing hidden. */
+/**
+ * "Not now" on the welcome screen or a dead end. Batch 21 (B48): from the
+ * welcome quiz it snoozes the Today card too (as the card's own Not now
+ * does), so the member does not land on Today to the same offer they just
+ * declined; from a dead end it is recorded only.
+ */
 export async function packNotNowAction(surface: string): Promise<void> {
   const userId = await signedInUser();
-  if (userId) logActivity(userId, 'starter_pack_not_now', { extras: { surface: surface === 'welcome' || surface === 'modal' || surface === 'deal' ? surface : 'other' } });
+  if (!userId) return;
+  if (surface === 'welcome') {
+    await snoozeStarterPack(userId, 'welcome');
+    return;
+  }
+  logActivity(userId, 'starter_pack_not_now', { extras: { surface: surface === 'modal' || surface === 'deal' ? surface : 'other' } });
 }
 
 /** "Not now" on the Today card: hidden for the snooze days (billing_settings.starter_pack_snooze_days). */

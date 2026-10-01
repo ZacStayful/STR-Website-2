@@ -124,7 +124,9 @@ export async function renewDueSeats(opts: { dry?: boolean; now?: Date } = {}): P
         .eq('seat_paid_until', r.seat_paid_until);
       summary.renewed += 1;
     } else if (outcome === 'insufficient') {
-      await admin.from('team_members').update({ suspended_at: now.toISOString() }).eq('member_id', r.member_id).is('suspended_at', null);
+      // Batch 21 (D17): email only when this run is the one that suspended it.
+      const { data: marked } = await admin.from('team_members').update({ suspended_at: now.toISOString() }).eq('member_id', r.member_id).is('suspended_at', null).select('member_id');
+      if ((marked?.length ?? 0) === 0) continue;
       summary.suspended += 1;
       const team = await teamName(r.owner_id);
       await send(names.get(r.owner_id)?.email, seatSuspendedEmail({ to: 'owner', memberName, teamName: team }));
@@ -139,7 +141,9 @@ export async function renewDueSeats(opts: { dry?: boolean; now?: Date } = {}): P
 /**
  * Brings suspended seats back once the owner's balance covers them, starting
  * a fresh 30-day period from now. Called straight after a top-up lands, and
- * hourly as a fallback for credit that arrives any other way.
+ * hourly as a fallback for credit that arrives any other way. The charge's
+ * period key is the suspension time (Batch 21, D1), so two callers at once
+ * charge once; seat_paid_until still runs from now.
  */
 export async function reinstateSeats(opts: { ownerId?: string; dry?: boolean; now?: Date } = {}): Promise<SeatRunSummary> {
   const summary: SeatRunSummary = { renewed: 0, suspended: 0, reinstated: 0, errors: [] };
@@ -170,8 +174,13 @@ export async function reinstateSeats(opts: { ownerId?: string; dry?: boolean; no
   const broke = new Set<string>();
   for (const r of rows) {
     if (broke.has(r.owner_id)) continue;
+    if (!r.suspended_at) continue;
     const memberName = personName(names.get(r.member_id));
-    const outcome = await chargeSeat({ ownerId: r.owner_id, memberId: r.member_id, memberName, periodStart: now });
+    // Batch 21 (D1): the charge is keyed on when the seat was suspended, not on
+    // the clock, so the hourly cron and the top-up webhook (or a top-up's two
+    // Stripe events) reinstating the same seat at once charge the owner once:
+    // the second gets 'already_paid' from the claim's unique key.
+    const outcome = await chargeSeat({ ownerId: r.owner_id, memberId: r.member_id, memberName, periodStart: new Date(r.suspended_at) });
     if (outcome === 'insufficient') {
       broke.add(r.owner_id);
       continue;
@@ -180,10 +189,16 @@ export async function reinstateSeats(opts: { ownerId?: string; dry?: boolean; no
       summary.errors.push(`reinstate ${r.member_id}: ${outcome}`);
       continue;
     }
-    await admin
+    // Batch 21 (D17): the mark first, conditionally; the emails only when this
+    // run is the one that reinstated the seat, so an overlapping run tells
+    // nobody twice.
+    const { data: moved } = await admin
       .from('team_members')
       .update({ suspended_at: null, seat_paid_until: periodEnd(now).toISOString() })
-      .eq('member_id', r.member_id);
+      .eq('member_id', r.member_id)
+      .eq('suspended_at', r.suspended_at)
+      .select('member_id');
+    if ((moved?.length ?? 0) === 0) continue;
     summary.reinstated += 1;
     const team = await teamName(r.owner_id);
     await send(names.get(r.owner_id)?.email, seatRestoredEmail({ to: 'owner', memberName, teamName: team }));

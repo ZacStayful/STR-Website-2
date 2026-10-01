@@ -1,4 +1,5 @@
 import type Stripe from 'stripe';
+import { cookies } from 'next/headers';
 import { currentMember } from '@/lib/credit/auth';
 import { getBillingSettings } from '@/lib/credit/unit-costs';
 import { getBalance } from '@/lib/credit/ledger';
@@ -12,11 +13,13 @@ import { logConversion } from '@/lib/meta/conversions';
 import { clientDetails } from '@/lib/tracking/request';
 import { paymentFromIntent } from '@/lib/payments/rules';
 import { recordPayment } from '@/lib/payments/server';
-import { latestPurchaseFor, starterPackStateFor } from '@/lib/starter-pack/server';
+import { latestPurchaseFor, starterPackStateFor, PACK_CHECKOUT_COOKIE } from '@/lib/starter-pack/server';
 import { grantStarterPack, settleStarterPack, type SettleOutcome } from '@/lib/starter-pack/grant-server';
-import { CONSENT_VERSION, returnMessage, type OfferBlock } from '@/lib/starter-pack/rules';
+import { CHECKOUT_PENDING_MS, CONSENT_VERSION, returnMessage, type OfferBlock } from '@/lib/starter-pack/rules';
 
 export const dynamic = 'force-dynamic';
+// Batch 21 (G14): the Stripe client gives up at 20 s; the route stops before the platform does.
+export const maxDuration = 30;
 
 /**
  * Batch 20: POST { consent: true, nonce, returnTo? } buys the £10 starter pack.
@@ -34,6 +37,7 @@ const BLOCKED: Record<OfferBlock, string> = {
   bought: 'You already have your starter pack.',
   already_had: 'A starter pack has already been used with this email address or mobile number (one per person).',
   on_plan: 'You are on a plan, so the starter pack is not needed.',
+  pending: 'Your payment is being confirmed. Give it a moment and refresh the page.',
 };
 
 // The Stripe price is checked against the setting (so what is charged is what the member was told), a few minutes at a time.
@@ -152,18 +156,30 @@ export async function POST(request: Request) {
       if (pi && pi.status !== 'canceled') await stripe.paymentIntents.cancel(pi.id).catch(() => undefined);
     }
 
+    // Batch 21 (B30): cards only, so every pack carries a card fingerprint for
+    // the once-per-person claim. Batch 21 (B31): no Stripe Tax here: the pack
+    // is sold at the one price the member was told, as the saved-card path
+    // charges it.
     const session = await createCheckoutSession({
       mode: 'payment',
       customer,
       client_reference_id: member.id,
+      payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       payment_intent_data: { capture_method: 'manual', setup_future_usage: 'off_session', description: `Stayful starter pack: ${state.copy.credit} of credit`, metadata },
       metadata,
       custom_text: { submit: { message: state.copy.checkoutText } },
       success_url: returnUrl('/today', { pack: '1' }),
       cancel_url: returnUrl(back),
-      ...(process.env.STRIPE_TAX === 'true' ? { automatic_tax: { enabled: true }, customer_update: { address: 'auto' } } : {}),
     });
+    // Batch 21 (B47): the offer hides in this browser until the webhook has
+    // settled the payment (or the cookie lapses), so a member back from
+    // Checkout before the webhook cannot start a second one.
+    try {
+      (await cookies()).set(PACK_CHECKOUT_COOKIE, String(Date.now()), { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: Math.round(CHECKOUT_PENDING_MS / 1000) });
+    } catch {
+      /* the offer is still hidden on the return page itself */
+    }
     return Response.json({ url: session.url, via: 'checkout' });
   } catch (err) {
     console.error('[billing/starter-pack] failed:', err);

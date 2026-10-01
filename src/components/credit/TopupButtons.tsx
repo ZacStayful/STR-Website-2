@@ -15,14 +15,19 @@ export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, 
   const credit = useCreditOptional();
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Batch 21 (B7): one Stripe idempotency key per attempt, kept across a
+  // retry (a 502, a dropped connection) so the card is charged once; a new
+  // one after each top-up that went through, so the next is a new charge.
+  const [nonce, setNonce] = useState(() => crypto.randomUUID());
 
   async function topup(amountPence: number) {
     setBusy(amountPence);
     setError(null);
     try {
-      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence, nonce: crypto.randomUUID(), ...(via ? { via } : {}) }) });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; url?: string; error?: string };
+      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence, nonce, ...(via ? { via } : {}) }) });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; pending?: boolean; url?: string; error?: string };
       if (data.url) {
+        setNonce(crypto.randomUUID());
         window.location.href = data.url;
         return;
       }
@@ -30,8 +35,9 @@ export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, 
         setError(data.error || "Couldn't complete the top-up. Please try again.");
         return;
       }
+      setNonce(crypto.randomUUID());
       notifyCreditChanged();
-      credit?.toast(`Topped up ${formatGbp(amountPence)}`);
+      credit?.toast(data.pending ? `Payment taken: your ${formatGbp(amountPence)} shows in a moment` : `Topped up ${formatGbp(amountPence)}`);
       onDone?.(amountPence);
     } catch {
       setError("Couldn't reach the billing service. Please try again.");

@@ -34,7 +34,13 @@ export async function ensureReferralCode(userId: string): Promise<{ code: string
     }
     if (!code) throw new Error('could not allocate a referral code');
   }
-  const { data: row } = await admin.from('credit_codes').select('redeemed_count').eq('code', code).maybeSingle();
+  const { data: row } = await admin.from('credit_codes').select('redeemed_count, amount_pence').eq('code', code).maybeSingle();
   const redemptions = Number(row?.redeemed_count ?? 0) || 0;
+  // Batch 21 (B34): the redeemer's credit is the code's amount, frozen when the
+  // code was made; the owner's reward reads the live setting. Keep them equal.
+  if (row && Number(row.amount_pence) !== settings.referralPence) {
+    const { error } = await admin.from('credit_codes').update({ amount_pence: settings.referralPence }).eq('code', code).eq('kind', 'referral');
+    if (error) console.error('[credit] referral code amount not updated:', error.message);
+  }
   return { code, url: siteUrl(`/signup?ref=${code}`), rewardPence: settings.referralPence, earnedPence: redemptions * settings.referralPence, redemptions };
 }

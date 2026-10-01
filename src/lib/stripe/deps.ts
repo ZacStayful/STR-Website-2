@@ -36,15 +36,43 @@ type UserRow = {
 const SELECT =
   'id, email, plan_code, plan_source, cancel_reason, cancel_reason_comment, subscription_cancel_at, subscription_paused_until, stripe_subscription_status';
 
+/** The pence already taken back under `base` and `base:<n>`: the negative adjustments a refund or dispute wrote. */
+async function takenUnder(userId: string, base: string): Promise<number> {
+  const admin = createAdminClient();
+  const [exact, later] = await Promise.all([
+    admin.from('credit_grants').select('amount_pence').eq('user_id', userId).eq('kind', 'adjustment').eq('source_ref', base),
+    admin.from('credit_grants').select('amount_pence').eq('user_id', userId).eq('kind', 'adjustment').like('source_ref', `${base}:%`),
+  ]);
+  if (exact.error) throw new Error(exact.error.message);
+  if (later.error) throw new Error(later.error.message);
+  return [...(exact.data ?? []), ...(later.data ?? [])].reduce((sum, r) => sum + Math.max(0, -(Number((r as { amount_pence: unknown }).amount_pence) || 0)), 0);
+}
+
 /** The real dependencies for handleStripeEvent (the tests inject fakes). */
 export function liveWebhookDeps(): WebhookDeps {
   const admin = createAdminClient();
   const stripe = getStripe();
-  const one = async (q: PromiseLike<{ data: unknown }>): Promise<UserRow | null> => ((await q).data as UserRow | null) ?? null;
+  // Batch 21 (B3): a failed read throws, so the route answers 500 and Stripe
+  // sends the event again. Reading `.data` alone turned a transient Supabase
+  // error into "no user", which marked the event processed for ever: the
+  // member was charged and never credited.
+  const one = async (q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<UserRow | null> => {
+    const { data, error } = await q;
+    if (error) throw new Error(`profile lookup failed: ${error.message}`);
+    return (data as UserRow | null) ?? null;
+  };
+  // Batch 21 (B39): an email that matches more than one profile matches none.
+  const byEmail = async (email: string): Promise<UserRow | null> => {
+    const { data, error } = await admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(2);
+    if (error) throw new Error(`profile lookup failed: ${error.message}`);
+    const rows = (data ?? []) as UserRow[];
+    if (rows.length > 1) console.error(`[stripe/webhook] ${rows.length} profiles share an email; not matching the payment by email`);
+    return rows.length === 1 ? rows[0] : null;
+  };
   return {
     findUserBySubscription: (id) => one(admin.from('profiles').select(SELECT).eq('stripe_subscription_id', id).maybeSingle()),
     findUserByCustomer: (id) => one(admin.from('profiles').select(SELECT).eq('stripe_customer_id', id).maybeSingle()),
-    findUserByEmail: (email) => one(admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(1).maybeSingle()),
+    findUserByEmail: byEmail,
     findUserById: (id) => one(admin.from('profiles').select(SELECT).eq('id', id).maybeSingle()),
     updateProfile: async (userId, patch) => {
       const { error } = await admin.from('profiles').update(patch).eq('id', userId);
@@ -88,12 +116,32 @@ export function liveWebhookDeps(): WebhookDeps {
     refundTopup: async (userId, sourceRef, amountPence, reason) => {
       // Claw back what was refunded / disputed as a negative adjustment (the
       // member may have spent some of it; the ledger goes negative until the
-      // next credit repays it). Idempotent per (source, reason).
-      await grant(userId, 'adjustment', -Math.abs(amountPence), { sourceRef: `${sourceRef}:${reason}`, description: reason === 'disputed' ? 'Top-up disputed — credit reversed' : 'Top-up refunded — credit reversed' });
+      // next credit repays it). A dispute is one amount, once per source. A
+      // refund is cumulative (Batch 21, B36): `amountPence` is the charge's
+      // total refunded so far, and only the part not yet taken back is taken,
+      // under `<source>:refunded` the first time and `<source>:refunded:<total>`
+      // for a later partial refund, as the starter pack does.
+      const base = `${sourceRef}:${reason}`;
+      const target = Math.abs(amountPence);
+      if (reason !== 'refunded') {
+        await grant(userId, 'adjustment', -target, { sourceRef: base, description: 'Top-up disputed — credit reversed' });
+        return;
+      }
+      const taken = await takenUnder(userId, base);
+      const diff = Math.round(target - taken);
+      if (diff <= 0) return;
+      await grant(userId, 'adjustment', -diff, { sourceRef: taken > 0 ? `${base}:${Math.round(target)}` : base, description: 'Top-up refunded — credit reversed' });
+    },
+    // Batch 21 (B17): a dispute closed in the member's favour gives back what was taken under `pi:<id>:disputed` (a top-up's one adjustment, or a pack's cumulative clawback).
+    restoreDisputedCredit: async (userId, paymentIntentId) => {
+      const taken = await takenUnder(userId, `pi:${paymentIntentId}:disputed`);
+      if (taken <= 0) return 0;
+      await grant(userId, 'adjustment', taken, { sourceRef: `pi:${paymentIntentId}:dispute_won`, description: 'Dispute closed in your favour — credit restored' });
+      return taken;
     },
     // Batch 20: Monday's row (plan, group, First payment, Cancel date) follows through the funnel queue.
-    onSubscriptionStarted: async (email) => queueFunnelSync((await one(admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(1).maybeSingle()))?.id, 'plan'),
-    onSubscriptionCancelled: async (email) => queueFunnelSync((await one(admin.from('profiles').select(SELECT).eq('email', emailKey(email)).limit(1).maybeSingle()))?.id, 'plan'),
+    onSubscriptionStarted: async (email) => queueFunnelSync((await byEmail(email))?.id, 'plan'),
+    onSubscriptionCancelled: async (email) => queueFunnelSync((await byEmail(email))?.id, 'plan'),
     paymentFailedEmail: async (email, planCode) => paymentFailedEmail(email, { planName: (await getPlan(planCode))?.name ?? null }),
     cardNeedsUpdateEmail: (email) => cardNeedsUpdateEmail(email),
     logActivity: (a) => recordActivity(a.userId, a.kind, { dedupeKey: a.dedupeKey, source: a.source, extras: a.extras }),
