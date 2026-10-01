@@ -113,7 +113,7 @@ export async function requestCode(userId: string, rawPhone: string, now: Date = 
 
 export type CheckCodeResult = { ok: true; firstNumber: boolean } | { ok: false; error: string; expired?: boolean };
 
-export async function checkCode(userId: string, verificationId: string, rawCode: unknown, consentSource: 'signup' | 'account', now: Date = new Date()): Promise<CheckCodeResult> {
+export async function checkCode(userId: string, verificationId: string, rawCode: unknown, consentSource: 'signup' | 'account', now: Date = new Date(), opts: { textsOn?: boolean } = {}): Promise<CheckCodeResult> {
   const code = normaliseCode(rawCode);
   if (!code) return { ok: false, error: 'Enter the 6-digit code from the text.' };
   if (!UUID.test(verificationId)) return { ok: false, error: 'Send a new code and try again.', expired: true };
@@ -156,6 +156,7 @@ export async function checkCode(userId: string, verificationId: string, rawCode:
   // Batch 21 (D6): a verified number is what SMS OK is made of: Monday follows within ten minutes.
   await queueFunnelSync(userId, 'notifications');
   // A member's first number: every text alert on (they asked for texts by verifying).
-  if (firstNumber) await setNotifications(userId, SMS_NOTIFICATION_KEYS, true);
+  // Batch 22 (Q10): not when they verified it for calls from Stayful Intelligence: texts stay off.
+  if (firstNumber && opts.textsOn !== false) await setNotifications(userId, SMS_NOTIFICATION_KEYS, true);
   return { ok: true, firstNumber };
 }

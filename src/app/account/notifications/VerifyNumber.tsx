@@ -13,7 +13,7 @@ const link = "text-sm font-semibold text-[#5d8156] underline disabled:opacity-60
  * code by text, type the code. The number only becomes the texting number
  * once the code matches; until then any current number keeps its texts.
  */
-export function VerifyNumber({ defaultPhone, label = "Send code", onCancel }: { defaultPhone: string; label?: string; onCancel?: () => void }) {
+export function VerifyNumber({ defaultPhone, label = "Send code", onCancel, purpose = "texts", source }: { defaultPhone: string; label?: string; onCancel?: () => void; /** Batch 22: "calls" verifies for calls from Stayful Intelligence (texts stay off). */ purpose?: "texts" | "calls"; source?: "welcome" | "settings" }) {
   const [sendState, send, sending] = useActionState(requestSmsCodeAction, INITIAL);
   const [checkState, check, checking] = useActionState(verifySmsCodeAction, INITIAL);
   const [phone, setPhone] = useState(defaultPhone);
@@ -47,6 +47,8 @@ export function VerifyNumber({ defaultPhone, label = "Send code", onCancel }: { 
     <div className="space-y-2">
       <form action={check} className="space-y-2">
         <input type="hidden" name="verificationId" value={verificationId} />
+        {purpose === "calls" && <input type="hidden" name="purpose" value="calls" />}
+        {purpose === "calls" && source && <input type="hidden" name="source" value={source} />}
         <label className="block text-sm font-medium" htmlFor="sms-code">Code from the text</label>
         <div className="flex flex-wrap gap-2">
           <input id="sms-code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 \-]{6,7}" maxLength={7} required placeholder="123456" className={`${input} w-36 tracking-widest`} />

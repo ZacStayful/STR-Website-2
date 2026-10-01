@@ -55,7 +55,8 @@ export default async function RevealPage({ searchParams }: { searchParams: Promi
   const cards = intelligenceCards(data, now);
   const unanswered = data.cards.filter((c) => !data.answered.has(c.id)).map((c) => c.id);
   const savedAll = (Array.isArray(params.saved) ? params.saved[0] : params.saved) === "all";
-  const continueHref = next;
+  // Part C: the notification choices come next, once; then where they were going.
+  const continueHref = row?.choicesAt ? next : `/welcome/choices?next=${encodeURIComponent(next)}`;
 
   return (
     <CreditProvider initial={data.credit}>

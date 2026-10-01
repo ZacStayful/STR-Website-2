@@ -3,16 +3,16 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
-import { ALWAYS_SENT_NOTE, EMAIL_NOTIFICATION_TYPES, notificationState } from '@/lib/notifications/registry';
+import { ALWAYS_SENT_NOTE, CALL_NOTIFICATION_TYPES, EMAIL_NOTIFICATION_TYPES, notificationState } from '@/lib/notifications/registry';
+import { callPriceLine } from '@/lib/intelligence/choices';
 import { readNotifications } from '@/lib/notifications/server';
 import { isSmsConfigured, isSmsDryRun } from '@/lib/sms/config';
 import { ukMobile } from '@/lib/sms/phone';
 import { DEFAULT_MONTHLY_CAP, getContact, smsMonthlyCap } from '@/lib/sms/store';
 import { setNotificationAction } from './actions';
 import { isAdminEmail } from '@/lib/admin';
-import { payerFor } from '@/lib/team';
-import { quoterFor } from '@/lib/credit/quote-server';
-import { dailyDealsLineFor, dailyDealsMode } from '@/lib/listing/daily-deals';
+import { dailyPriceLineFor } from '@/lib/notifications/daily-line-server';
+import { getBillingSettings } from '@/lib/credit/unit-costs';
 import { SmsSection } from './SmsSection';
 import { GOALS_EDITOR_HREF, NAV_TARGETS } from '@/lib/nav';
 
@@ -42,18 +42,9 @@ export default async function NotificationsPage({ searchParams }: { searchParams
 
   const state = (await readNotifications(user.id)) ?? notificationState(null);
 
-  // Batch 10: what daily deals cost THIS member, next to their switch.
-  const quoter = await quoterFor((await payerFor(user.id)).payerId, isAdminEmail(user.email));
-  const dailyPence = quoter.pricing.todays5DailyPence;
-  const dailyLine = dailyDealsLineFor(quoter.label(quoter.admin ? 0 : dailyPence), dailyPence);
-  const from = quoter.pricing.newPricingFrom ? new Date(quoter.pricing.newPricingFrom) : null;
-  const dailyPrice = quoter.admin
-    ? 'Admin account: never charged.'
-    : dailyDealsMode(quoter.pricing) === 'per_day'
-      ? `${dailyLine}.`
-      : from && Number.isFinite(from.getTime())
-        ? `Until ${from.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' })} each pick is charged from your credit, its price shown with it. From then: ${dailyLine}.`
-        : 'Each pick is charged from your credit, its price shown with it.';
+  // Batch 10: what daily deals cost THIS member, next to their switch (shared with the welcome choices, Batch 22).
+  const [dailyPrice, settings] = await Promise.all([dailyPriceLineFor(user.id, isAdminEmail(user.email)), getBillingSettings()]);
+  const callLine = callPriceLine(settings.intelligence);
 
   // Texts (Batch 8): the member's number and its state, read server-side.
   const admin = hasServiceRole() ? createAdminClient() : null;
@@ -109,6 +100,32 @@ export default async function NotificationsPage({ searchParams }: { searchParams
           suggestedPhone={ukMobile(profile?.mobile ?? null)}
           monthlyCap={monthlyCap}
         />
+
+        {/* Batch 22: calls from Stayful Intelligence (off until ticked; a verified mobile is needed). */}
+        <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5" aria-labelledby="calls-heading">
+          <h2 id="calls-heading" className="text-sm font-semibold uppercase tracking-widest text-[#5d8156]">Calls</h2>
+          {CALL_NOTIFICATION_TYPES.map((t) => {
+            const on = state[t.key];
+            const verified = Boolean(contact?.verified_at && !contact.stopped_at);
+            return (
+              <div key={t.key} className="mt-3 flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-semibold">{t.label}</p>
+                  <p className="mt-0.5 text-sm text-[#7a8274]">{callLine}</p>
+                  {!verified && !on && <p className="mt-1 text-sm text-[#7a8274]">Verify your mobile under Texts first.</p>}
+                </div>
+                <form action={setNotificationAction} className="shrink-0">
+                  <input type="hidden" name="key" value={t.key} />
+                  <input type="hidden" name="on" value={on ? '0' : '1'} />
+                  <button type="submit" role="switch" aria-checked={on} aria-label={`${t.label}: turn ${on ? 'off' : 'on'}`} disabled={!on && !verified} className={on ? ON : OFF}>
+                    {on ? 'On' : 'Off'}
+                  </button>
+                </form>
+              </div>
+            );
+          })}
+        </section>
+        {msg === 'calls_number' && <p className="mt-3 rounded-lg bg-[#fbeceb] px-3 py-2 text-sm text-[#b3261e]">Calls need a verified mobile. Verify yours under Texts, then switch calls on.</p>}
 
         <p className="mt-4 text-xs text-[#7a8274]">
           Press a switch to change it. {ALWAYS_SENT_NOTE} Today’s 5 are on <Link href={NAV_TARGETS.today.href} className="underline">Today</Link>; change what they’re picked for in <Link href={GOALS_EDITOR_HREF} className="underline">What you’re looking for</Link>.

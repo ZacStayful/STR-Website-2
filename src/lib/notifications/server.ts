@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, NOTIFICATION_COLUMNS_BEFORE_BATCH_8, notificationPatch, notificationsPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
+import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, NOTIFICATION_COLUMNS_BEFORE_BATCH_8, NOTIFICATION_COLUMNS_BEFORE_BATCH_22, notificationPatch, notificationsPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 
 /**
@@ -41,7 +41,7 @@ export async function readNotifications(userId: string): Promise<NotificationSta
   console.warn('[notifications] select failed (schema behind?):', full.error.message);
   // Each fallback only drops columns; a missing one reads as its default
   // (on for the emails, off for the Batch 8 texts).
-  for (const columns of [NOTIFICATION_COLUMNS_BEFORE_BATCH_8, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, 'sourcing_alerts, sourcing_opted_out_at, alert_weekly']) {
+  for (const columns of [NOTIFICATION_COLUMNS_BEFORE_BATCH_22, NOTIFICATION_COLUMNS_BEFORE_BATCH_8, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, 'sourcing_alerts, sourcing_opted_out_at, alert_weekly']) {
     const older = await admin.from('profiles').select(columns).eq('id', userId).maybeSingle();
     if (!older.error) return older.data ? notificationState(older.data as NotificationRow) : null;
   }

@@ -7,6 +7,7 @@ import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { checkCode, requestCode } from '@/lib/sms/verify-server';
 import { setContactEnabled } from '@/lib/sms/store';
 import { logActivity } from '@/lib/activity/log';
+import { setSiCalls } from '@/lib/intelligence/consent';
 
 /**
  * Account → Notifications, texts: send a code, check it, and the member's own
@@ -52,11 +53,19 @@ export async function verifySmsCodeAction(prev: SmsFormState, formData: FormData
   const user = await signedInUser();
   const verificationId = String(formData.get('verificationId') ?? prev.verificationId ?? '');
   const consent = user.user_metadata?.sms_opt_in === true ? 'signup' : 'account';
-  const result = await checkCode(user.id, verificationId, formData.get('code'), consent);
+  // Batch 22: verified from the calls box, the number turns calls on and leaves the texts off.
+  const forCalls = formData.get('purpose') === 'calls';
+  const result = await checkCode(user.id, verificationId, formData.get('code'), consent, new Date(), { textsOn: !forCalls });
   // Tied to the code it was about, so a newer code does not show an old error.
   if (!result.ok) return { step: 'code', verificationId, error: result.error };
   logActivity(user.id, 'sms_verified');
   revalidatePath('/account/notifications');
+  if (forCalls) {
+    const source = formData.get('source') === 'settings' ? 'settings' : 'welcome';
+    const on = await setSiCalls(user.id, true, source);
+    revalidatePath('/welcome/choices');
+    return { step: 'number', done: true, notice: on.ok ? 'Your number is verified and calls are on.' : 'Your number is verified. Calls could not be switched on — try again.' };
+  }
   return { step: 'number', done: true, notice: result.firstNumber ? 'Your number is verified and texts are on.' : 'Your new number is verified.' };
 }
 

@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isNotificationKey } from '@/lib/notifications/registry';
 import { setNotification } from '@/lib/notifications/server';
 import { logActivity } from '@/lib/activity/log';
+import { setSiCalls } from '@/lib/intelligence/consent';
 
 /**
  * Moves one switch. The key comes from the form but is validated against the
@@ -20,6 +21,12 @@ export async function setNotificationAction(formData: FormData): Promise<void> {
   const key = formData.get('key');
   if (!isNotificationKey(key)) redirect('/account/notifications?msg=error');
   const on = formData.get('on') === '1';
+  // Batch 22: the call switch has its own writer (a verified mobile, a consent record).
+  if (key === 'si_calls') {
+    const r = await setSiCalls(user.id, on, 'settings');
+    revalidatePath('/account/notifications');
+    redirect(`/account/notifications?msg=${r.ok ? 'saved' : r.reason === 'no_number' ? 'calls_number' : 'error'}`);
+  }
   const ok = await setNotification(user.id, key, on);
   if (ok) logActivity(user.id, 'notification_settings', { extras: { key, on } });
   revalidatePath('/account/notifications');
