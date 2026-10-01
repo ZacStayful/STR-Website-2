@@ -25,6 +25,7 @@ import { tailoringForMember } from "@/lib/tailoring/server";
 import { withTailoring } from "@/lib/tailoring/numbers";
 import { bestForYouPage, type BestPage } from "@/lib/tailoring/browse-server";
 import { TAILORING } from "@/lib/tailoring/config";
+import { starterPackStateFor } from "@/lib/starter-pack/server";
 import { DealCard } from "./_components/DealCard";
 import { GoalsStrip } from "./_components/GoalsStrip";
 import { DealsFilterBar } from "./_components/DealsFilterBar";
@@ -116,6 +117,8 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   for (const c of counts) countMap[c.code] = countFor(counts, c.code, countKind);
   const message = typeof raw.msg === "string" ? MESSAGES[raw.msg] ?? null : null;
   const banner = earlyAccessBanner(waiting, isFiltered(filters));
+  // Batch 21 (C32): the banner offers the starter pack while it is on offer.
+  const packState = banner ? await starterPackStateFor(user.id) : null;
   const totalLive = counts.reduce((n, c) => n + c.total, 0);
 
   // What this member was shown goes to the front of the recheck queue.
@@ -140,7 +143,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
         {message && <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{message}</p>}
 
         <GoalsStrip total={matching} fromWelcome={cameFromWelcome(raw.from)} />
-        <EarlyAccessBanner text={banner} />
+        <EarlyAccessBanner text={banner} pack={packState?.offer.eligible ? { href: "/today?offer=pack", label: packState.copy.cardCta } : null} />
         <DealsFilterBar filters={filters} counts={counts} total={matching} ownTypes={browseFilters(DEFAULT_FILTERS, false, ownTypes).types} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">

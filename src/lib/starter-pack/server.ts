@@ -41,7 +41,7 @@ async function claimed(column: 'user_id' | 'email_key' | 'mobile_key', value: st
 async function load(userId: string): Promise<PackState> {
   const settings = await getBillingSettings();
   const lc = settings.lifecycle;
-  const copy = packCopy(lc, settings.dealPricing.fullAnalysisPence, settings.spendRates);
+  const copy = packCopy(lc, settings.dealPricing.fullAnalysisPence, settings.spendRates, { freeDealDelayHours: settings.freeDealDelayHours });
   const off = (reason: 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan'): PackState => ({
     offer: { eligible: false, reason },
     showTodayCard: false,
@@ -103,7 +103,7 @@ export const starterPackStateFor = cache(async (userId: string): Promise<PackSta
       offer: { eligible: false, reason: 'off' },
       showTodayCard: false,
       snoozedUntil: null,
-      copy: packCopy(settings.lifecycle, settings.dealPricing.fullAnalysisPence, settings.spendRates),
+      copy: packCopy(settings.lifecycle, settings.dealPricing.fullAnalysisPence, settings.spendRates, { freeDealDelayHours: settings.freeDealDelayHours }),
       pricePence: settings.lifecycle.starterPackPricePence,
       creditPence: settings.lifecycle.starterPackCreditPence,
     };

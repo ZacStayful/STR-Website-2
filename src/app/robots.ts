@@ -25,7 +25,6 @@ export default function robots(): MetadataRoute.Robots {
           "/account",
           "/upgrade",
           "/markets/",
-          "/report/",
           "/auth/",
           "/login",
           "/signup",

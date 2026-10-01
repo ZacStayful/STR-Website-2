@@ -109,24 +109,31 @@ export interface PackCopy {
   pricingLine: string;
 }
 
-/** Everything the pack says, from the settings and today's Full analysis price. */
-export function packCopy(s: Pick<LifecycleSettings, 'starterPackPricePence' | 'starterPackCreditPence'>, fullAnalysisPence: number, rates: { welcome: number; topup: number }): PackCopy {
+/**
+ * Everything the pack says, from the settings and today's Full analysis
+ * price. Batch 21 (C5): with `freeDealDelayHours` the pack screen and card
+ * also say what buying it changes about early access (a pack counts as a
+ * paid account for the delay, review question 13).
+ */
+export function packCopy(s: Pick<LifecycleSettings, 'starterPackPricePence' | 'starterPackCreditPence'>, fullAnalysisPence: number, rates: { welcome: number; topup: number }, opts: { freeDealDelayHours?: number } = {}): PackCopy {
   const price = pounds(s.starterPackPricePence);
   const credit = pounds(s.starterPackCreditPence);
   const analyses = fullAnalysesFor(s, fullAnalysisPence, rates);
   const about = analyses > 0 ? `about ${analyses} Full ${analyses === 1 ? 'analysis' : 'analyses'}, plus daily deals picked for you` : 'daily deals picked for you and Full analyses of the ones you like';
+  const hours = opts.freeDealDelayHours ?? 0;
+  const early = hours > 0 ? ` You also see new deals as soon as they go live: free members wait ${hours} hours.` : '';
   return {
     price,
     credit,
     analyses,
     headline: `Start with ${credit} of credit for ${price}`,
-    body: `${price} gets you ${credit} of credit: ${about}. It never expires.`,
+    body: `${price} gets you ${credit} of credit: ${about}. It never expires.${early}`,
     buy: `Buy for ${price}`,
     notNow: 'Not now',
     consent: CONSENT_TEXT,
     smallPrint: 'One starter pack per person. Paid securely with Stripe; we save your card for one-tap top-ups.',
     cardTitle: `${price} gets you ${credit} of credit`,
-    cardBody: `${about.charAt(0).toUpperCase()}${about.slice(1)}. One per person.`,
+    cardBody: `${about.charAt(0).toUpperCase()}${about.slice(1)}.${early} One per person.`,
     cardCta: `Get ${credit} for ${price}`,
     accountLine: `New members: ${price} gets you ${credit} of credit.`,
     accountCta: 'Get the starter pack',

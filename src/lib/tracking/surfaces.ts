@@ -35,7 +35,6 @@ const NEVER: readonly string[] = [
   '/team/join',
   '/extension/connect',
   '/presentation',
-  '/report',
   '/demo-report',
   '/str-report',
   '/m',

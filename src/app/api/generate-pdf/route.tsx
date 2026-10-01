@@ -3,7 +3,7 @@ import type { PdfExpenses } from "@/lib/pdf/derive";
 import { renderReportPdf, pdfBrandForFunnel, reportFilename } from "@/lib/pdf/render";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { funnelByToken } from "@/lib/funnels";
-import { leadByReportToken } from "@/lib/leads/report";
+import { leadByReportToken, type LeadReport } from "@/lib/leads/report";
 import { touchLeadByReportToken } from "@/lib/leads/activity";
 import type { PdfBrand } from "@/lib/pdf/theme";
 import { logActivity } from "@/lib/activity/log";
@@ -28,6 +28,8 @@ interface Caller {
   email?: string;
   /** The signed-in member, when it is one (not a funnel prospect or a lead's report). */
   userId?: string;
+  /** A lead's report (`?r=`): the stored analysis is what gets rendered, never the body's. */
+  lead?: LeadReport;
 }
 
 async function authorised(request: Request): Promise<Caller> {
@@ -36,7 +38,7 @@ async function authorised(request: Request): Promise<Caller> {
   if (report) {
     // The cover names the prospect it was prepared for, as /r/<token>/pdf does.
     const lead = await leadByReportToken(report);
-    return { ok: Boolean(lead), email: lead?.email ?? undefined };
+    return lead ? { ok: true, email: lead.email ?? undefined, lead } : { ok: false };
   }
   const token = params.get("f");
   if (token) return { ok: Boolean(await funnelByToken(token)) };
@@ -55,13 +57,9 @@ async function authorised(request: Request): Promise<Caller> {
  * properties a reader shows — or the white-label promise breaks at the last
  * step, after the page itself got it right.
  */
-async function brandFor(request: Request): Promise<PdfBrand | undefined> {
+async function brandFor(request: Request, caller: Caller): Promise<PdfBrand | undefined> {
+  if (caller.lead) return pdfBrandForFunnel(caller.lead.brand);
   const params = new URL(request.url).searchParams;
-  const report = params.get("r");
-  if (report) {
-    const lead = await leadByReportToken(report);
-    return lead ? pdfBrandForFunnel(lead.brand) : undefined;
-  }
   const token = params.get("f");
   if (!token) return undefined;
   const funnel = await funnelByToken(token);
@@ -101,20 +99,24 @@ export async function POST(request: Request) {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  if (!body?.property?.address || !body?.financials) {
+  // Batch 21 (C23): a lead's token renders the lead's stored report, never a
+  // body of the caller's choosing with the prospect's email on the cover. The
+  // body may still carry the prospect's own setup and expense edits.
+  const analysis: AnalysisResult = caller.lead ? caller.lead.result : body;
+  if (!analysis?.property?.address || !analysis?.financials) {
     return new Response("Missing required analysis data", { status: 400 });
   }
 
-  const brand = await brandFor(request);
-  const buffer = await renderReportPdf(body, {
+  const brand = await brandFor(request, caller);
+  const buffer = await renderReportPdf(analysis, {
     brand,
-    expenses: body.expenses,
-    setup: body.setup,
+    expenses: body?.expenses,
+    setup: body?.setup,
     preparedFor: caller.email,
     // Only a signed-in member's own download carries their figures; a funnel or lead report never has any.
     projectMine: caller.userId ? parseReportProjectMine(body.projectMine) : null,
   });
-  const filename = reportFilename(body, brand);
+  const filename = reportFilename(analysis, brand);
 
   // Downloading a lead's report is using it (retention.ts).
   const report = new URL(request.url).searchParams.get("r");

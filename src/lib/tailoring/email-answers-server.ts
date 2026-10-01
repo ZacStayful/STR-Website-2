@@ -9,6 +9,7 @@ import 'server-only';
  * Nothing here returns an address, a postcode, a photo or a listing link:
  * the card is the grid's public columns (CARD_COLUMNS), as the teaser was.
  */
+import { emailActionFresh } from '../listing/picks';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { isAdminEmail } from '../admin';
 import { isSendToken } from '../notify/cap';
@@ -38,13 +39,15 @@ export interface TeaserAnswerContext {
 export async function teaserAnswerContext(token: string, dealId: string): Promise<TeaserAnswerContext | null> {
   if (!isSendToken(token) || !isDealId(dealId) || !hasServiceRole()) return null;
   const admin = createAdminClient();
-  const { data: send, error } = await admin.from('notification_sends').select('user_id, status, summary').eq('unsubscribe_token', token).maybeSingle();
+  const { data: send, error } = await admin.from('notification_sends').select('user_id, status, summary, sent_at').eq('unsubscribe_token', token).maybeSingle();
   if (error) {
     console.error('[email-answers] send read failed:', error.message);
     return null;
   }
-  const row = send as { user_id: string; status: string; summary: unknown } | null;
+  const row = send as { user_id: string; status: string; summary: unknown; sent_at: string | null } | null;
   if (!row || row.status !== 'sent') return null;
+  // Batch 21 (C16): a link in an old email no longer answers for the member.
+  if (!emailActionFresh(row.sent_at)) return null;
   const inSend = teaserInSend(row.summary, dealId);
   if (!inSend) return null;
   const { data: member } = await admin.from('profiles').select('email, market_goals').eq('id', row.user_id).maybeSingle();

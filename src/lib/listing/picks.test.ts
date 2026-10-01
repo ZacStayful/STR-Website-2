@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { houseQueries, topScoredAreas, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation } from './picks.ts';
+import { houseQueries, topScoredAreas, applyQueryFeedback, applyCandidateFeedback, confirmedNegatives, cleanReasons, isPickToken, newPickToken, startOfTodayUtc, pickEmail, pickLinks, unsubscribeHeaders, summarisePicks, pickPrice, spreadPick, PER_LISTING_CAP, dealScoreOf, reasonLabel, reasonEffect, feedbackRules, ruleApplied, type HouseAreaCard, type PickFeedback, type PickRow, describeMotivation, emailActionFresh, EMAIL_ACTION_MAX_AGE_MS } from './picks.ts';
 import { queriesForGoals, rentPcm, withinQueryPrice, type SourcedListing, type SourcedPick, type AreaRef, type SourcingQuery } from './sourcing.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import { purchaseDeal } from './deal.ts';
@@ -446,4 +446,13 @@ test('a pick drawn from the marketplace pool links to its deal sheet and to more
   const without = pickEmail({ pick, siteUrl: 'https://x.test', id: 'p1', token: newPickToken(), basis: 'goals', goalsChips: [], firstEver: false, chargedBasePence: 10 });
   assert.ok(!without.html.includes('/deals/'));
   assert.ok(!without.text.includes('Open the deal sheet'));
+});
+
+test('a token in an email acts for a month, then only shows the page (Batch 21, C16)', () => {
+  const now = new Date('2026-10-01T12:00:00Z');
+  assert.equal(emailActionFresh('2026-10-01T07:00:00Z', now), true);
+  assert.equal(emailActionFresh(new Date(now.getTime() - EMAIL_ACTION_MAX_AGE_MS + 1000).toISOString(), now), true);
+  assert.equal(emailActionFresh(new Date(now.getTime() - EMAIL_ACTION_MAX_AGE_MS - 1000).toISOString(), now), false);
+  assert.equal(emailActionFresh(null, now), false);
+  assert.equal(emailActionFresh('not a date', now), false);
 });

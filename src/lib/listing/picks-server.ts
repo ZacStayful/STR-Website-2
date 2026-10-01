@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { areaMetaForCode } from '../market/areas';
-import { isPickToken, cleanReasons, dealScoreOf, PICK_REASONS, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource } from './picks';
+import { isPickToken, cleanReasons, dealScoreOf, PICK_REASONS, type PickBasis, type PickReaction, type PickReason, type PickStatus, type ReactionSource, emailActionFresh } from './picks';
 import type { SourcedListing } from './sourcing';
 import { atCurrentMortgage, type Deal } from './deal';
 import { parseStoredRelaxation, type StoredRelaxation } from './relax';
@@ -229,6 +229,11 @@ async function currentReasons(where: { token: string } | { id: string; userId: s
 
 export async function recordReaction(where: { token: string } | { id: string; userId: string }, input: ReactionInput): Promise<boolean> {
   if (!hasServiceRole()) return false;
+  // Batch 21 (C16): a token in an old email no longer answers for the member.
+  if ('token' in where) {
+    const pick = await pickByToken(where.token);
+    if (!pick || !emailActionFresh(pick.sentAt)) return false;
+  }
   const patch: Record<string, unknown> = { reaction: input.reaction, reaction_source: input.source, responded_at: new Date().toISOString() };
   if (input.reaction === 'yes') {
     // A yes never carries reasons, whichever way it arrived: a stored row that
@@ -262,6 +267,8 @@ export async function addTypeFromPickFeedback(where: { token: string } | { id: s
   const type = typeFromPickReasons(cleanReasons(reasons));
   if (!type || !hasServiceRole()) return null;
   const pick = 'token' in where ? await pickByToken(where.token) : await pickForMember(where.id, where.userId);
+  // Batch 21 (C16): a token in an old email no longer changes the profile.
+  if ('token' in where && pick && !emailActionFresh(pick.sentAt)) return null;
   if (!pick) return null;
   const admin = createAdminClient();
   const own = await pickProfileRow(admin, pick.id, pick.userId);
@@ -311,6 +318,8 @@ export async function applyPickRelaxation(token: string): Promise<{ field: strin
   const pick = await pickByToken(token);
   const offer = pick?.relaxation ?? null;
   if (!pick || !offer?.applyField || offer.value === null) return null;
+  // Batch 21 (C16): a token in an old email no longer changes the filter.
+  if (!emailActionFresh(pick.sentAt)) return null;
 
   const admin = createAdminClient();
   // Saved profiles (Batch 13): the offer was about one profile's filter. When

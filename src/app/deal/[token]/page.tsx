@@ -6,6 +6,7 @@ import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { MORTGAGE_NOTE, type Deal } from "@/lib/listing/deal";
 import { basisLine, mostYouCanPayForDeal } from "@/lib/marketplace/most-you-can-pay";
+import { areaMetaForCode } from "@/lib/market/areas";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +38,17 @@ export default async function DealSheetPage({ params }: { params: Promise<{ toke
       <div className="mx-auto max-w-3xl px-5 py-10">
         <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Stayful deal sheet</p>
         <h1 className="mt-1 text-2xl font-bold">{l.title}</h1>
-        <p className="mt-1 text-sm text-[#7a8274]">
-          {l.displayAddress ?? l.postcode ?? ""}{l.bedrooms !== null ? ` · ${l.bedrooms} bed` : ""}{price ? ` · ${price}` : ""} ·{" "}
-          <a href={l.canonicalUrl} target="_blank" rel="noopener noreferrer" className="underline">View on {SOURCE_LABELS[l.source]}</a>
-        </p>
+        {l.withheld ? (
+          // Batch 21 (C19): a feed deal in early access: the area and the figures, never the address or the link.
+          <p className="mt-1 text-sm text-[#7a8274]">
+            {(l.postcodeArea ? areaMetaForCode(l.postcodeArea)?.name : null) ?? ""}{l.bedrooms !== null ? ` · ${l.bedrooms} bed` : ""}{price ? ` · ${price}` : ""} · the address and listing link are with Stayful members now
+          </p>
+        ) : (
+          <p className="mt-1 text-sm text-[#7a8274]">
+            {l.displayAddress ?? l.postcode ?? ""}{l.bedrooms !== null ? ` · ${l.bedrooms} bed` : ""}{price ? ` · ${price}` : ""} ·{" "}
+            <a href={l.canonicalUrl} target="_blank" rel="noopener noreferrer" className="underline">View on {SOURCE_LABELS[l.source]}</a>
+          </p>
+        )}
 
         <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Tile label="Est. revenue / yr" value={est ? gbp(est.grossRevenue) : "—"} sub={est?.adr ? `${gbp(est.adr)} / night${est.occupancy !== null ? ` · ${Math.round(est.occupancy)}% occ.` : ""}` : undefined} />
