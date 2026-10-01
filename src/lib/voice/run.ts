@@ -60,7 +60,17 @@ export async function runCalls(o: { apply: boolean; now?: Date; onlyUserId?: str
       const { data: had, error: e2 } = await admin.from('si_calls_log').select('user_id').eq('call_type', 'intro').in('user_id', ids);
       if (e2) throw e2;
       const done = new Set(((had ?? []) as { user_id: string }[]).map((r) => r.user_id));
-      const owed = ids.filter((id) => !done.has(id));
+      // Only owners with a number that can be called: team members are never
+      // called, and a number that sent STOP waits for START. Shuffled so a few
+      // that can't be called yet never starve the rest.
+      const [members, numbers] = await Promise.all([
+        admin.from('team_members').select('member_id').in('member_id', ids),
+        admin.from('sms_contacts').select('user_id').in('user_id', ids).not('verified_at', 'is', null).is('stopped_at', null),
+      ]);
+      if (members.error || numbers.error) throw members.error ?? numbers.error;
+      const teamMembers = new Set(((members.data ?? []) as { member_id: string }[]).map((r) => r.member_id));
+      const callable = new Set(((numbers.data ?? []) as { user_id: string }[]).map((r) => r.user_id));
+      const owed = ids.filter((id) => !done.has(id) && !teamMembers.has(id) && callable.has(id)).sort(() => Math.random() - 0.5);
       out.intros.due = owed.length;
       if (o.apply && out.enabled) {
         for (const id of owed.slice(0, INTROS_PER_RUN)) {

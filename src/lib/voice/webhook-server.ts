@@ -25,6 +25,9 @@ import { callByConversation, claimEvent, finishEvent, updateCall, type CallRow }
 
 export type HandleResult = { status: number; body: Record<string, unknown> };
 
+/** An event that arrived before what it is about: answered 409, so the provider redelivers it. */
+class RetryLater extends Error {}
+
 const PROVIDER = 'elevenlabs';
 
 function eventKey(e: WebhookEvent): string | null {
@@ -46,8 +49,9 @@ export async function handleWebhookEvent(e: WebhookEvent): Promise<HandleResult>
     return { status: 200, body: result };
   } catch (err) {
     const message = String((err as Error)?.message ?? err);
-    console.error('[voice] webhook failed:', message);
     await finishEvent(admin, PROVIDER, key, message);
+    if (err instanceof RetryLater) return { status: 409, body: { retry: message } };
+    console.error('[voice] webhook failed:', message);
     return { status: 500, body: { error: 'failed' } };
   }
 }
@@ -66,7 +70,8 @@ async function dispatch(e: WebhookEvent): Promise<Record<string, unknown>> {
   }
   if (e.type === 'call_initiation_failure') {
     const call = await callByConversation(admin, e.conversationId, e.callSid);
-    if (!call) return { unknown_call: true };
+    // A busy line can answer before the call's ids are saved: let ElevenLabs deliver it again.
+    if (!call) throw new RetryLater('call not recorded yet');
     const status = failureStatus(e.reason);
     const updated = await updateCall(admin, call.id, { status, ended_at: new Date().toISOString(), seconds: 0, error: e.reason.slice(0, 200) }, ['ringing', 'queued']);
     if (updated && status === 'missed') await sendMissedCallFallback(updated);

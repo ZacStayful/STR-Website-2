@@ -25,7 +25,7 @@ import { addTurns, recordQuestion, startConversation } from '../conversations/lo
 import { SMS_REPLY_OTHER, SMS_REPLY_WHO } from './templates';
 import { replyKind } from './sms-replies';
 import { ukDay } from './hours';
-import { claimEvent } from './store-server';
+import { claimEvent, finishEvent } from './store-server';
 import { callerHash } from './inbound-server';
 import { claimCharge, settleText } from './charge-server';
 import { memberFacts } from './member-server';
@@ -89,6 +89,7 @@ export async function replyToText(o: { phone: string; body: string; messageSid: 
       }).catch(() => false);
     }
   }
+  await finishEvent(admin, 'twilio_sms', o.messageSid, null);
   return reply;
 }
 

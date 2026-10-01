@@ -55,15 +55,21 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
     conversation_config_override: { agent: { first_message: fill(openerFor(context), vars) } },
   });
 
-  // An outbound call we placed already carries its own variables.
+  const base = { topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence };
+
+  // An outbound call we placed already carries its own variables; if asked anyway, answer with the same ones.
   if (req.conversation_id) {
     const existing = await callByConversation(admin, req.conversation_id, req.call_sid ?? null);
-    if (existing && existing.direction === 'outbound') return { type: 'conversation_initiation_client_data', dynamic_variables: withSecret({}) };
+    if (existing && existing.direction === 'outbound' && existing.user_id) {
+      const m = await memberFacts(existing.user_id);
+      const context: CallContext = existing.call_type === 'low_credit' ? 'low_credit' : 'intro';
+      const vars = callVariables({ callType: existing.call_type, context, firstName: m?.firstName ?? null, member: true, cardSent: await contactCardSent(admin, existing.user_id), minutesAvailable: Math.floor(settings.voice.maxCallSeconds / 60), ...base });
+      return { type: 'conversation_initiation_client_data', dynamic_variables: withSecret(vars) };
+    }
   }
 
   const phone = ukMobile(req.caller_id ?? null);
   const userId = phone ? await memberByNumber(phone) : null;
-  const base = { topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence };
 
   if (!userId) {
     const vars = callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: Math.floor(settings.voice.maxCallSeconds / 60), ...base });

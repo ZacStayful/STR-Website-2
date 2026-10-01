@@ -32,6 +32,9 @@ import { startConversation } from '../conversations/log-server';
 
 type OutboundType = Exclude<CallType, 'callback'>;
 
+/** Reasons the once-ever intro waits for (no row when queueing; a day's wait when dialling). */
+const INTRO_WAITS: ReadonlySet<BlockedReason> = new Set(['no_number', 'no_credit']);
+
 export type EnqueueResult =
   | { outcome: 'queued'; call: CallRow }
   | { outcome: 'blocked'; reason: BlockedReason; call: CallRow | null }
@@ -74,7 +77,8 @@ export async function enqueueCall(o: { userId: string; type: OutboundType; trigg
   const settings = await getBillingSettings();
   const base = { user_id: o.userId, direction: 'outbound' as const, call_type: o.type, trigger_ref: o.triggerRef ?? null, context: o.type, persona_version: PERSONA_VERSION };
   if (!e.ok && e.defer === undefined) {
-    if (e.skip) return { outcome: 'skipped', reason: e.reason };
+    // The intro is once ever: a missing number or credit now must not use it up.
+    if (e.skip || (o.type === 'intro' && INTRO_WAITS.has(e.reason))) return { outcome: 'skipped', reason: e.reason };
     const r = await insertCall(admin, { ...base, status: 'blocked', blocked_reason: e.reason });
     if (!r.ok) return r.reason === 'duplicate' ? { outcome: 'exists' } : { outcome: 'error' };
     console.log(`[voice] ${o.type} call blocked (${e.reason})`);
@@ -119,6 +123,12 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
   if (!e.ok) {
     if (e.defer !== undefined) {
       const until = (e.defer === 'next_day' ? nextDayOpening(now, settings.voice) : nextOpening(now, settings.voice)).toISOString();
+      if (o.apply) await updateCall(admin, call.id, { not_before: until }, ['queued']);
+      return { outcome: 'deferred', until };
+    }
+    // An intro waits a day for a number or credit rather than being used up.
+    if (type === 'intro' && INTRO_WAITS.has(e.reason)) {
+      const until = nextDayOpening(now, settings.voice).toISOString();
       if (o.apply) await updateCall(admin, call.id, { not_before: until }, ['queued']);
       return { outcome: 'deferred', until };
     }
