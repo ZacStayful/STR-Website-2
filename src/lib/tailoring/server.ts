@@ -274,7 +274,7 @@ export async function saveFilterMode(userId: string, key: CriterionKey, mode: Mo
  * saved in this same request, which a cached read could miss. Never charges.
  * Null when there is nothing to re-choose (no list yet today, not tailored).
  */
-export async function rechooseForMember(input: { userId: string; email: string | null; goals?: MarketGoals | null; savedAreas?: readonly string[]; answered?: AnsweredMap; now?: Date }): Promise<TodaySelection | null> {
+export async function rechooseForMember(input: { userId: string; email: string | null; goals?: MarketGoals | null; savedAreas?: readonly string[]; answered?: AnsweredMap; now?: Date; answeredAt?: string | null }): Promise<TodaySelection | null> {
   if (!hasServiceRole()) return null;
   try {
     const now = input.now ?? new Date();
@@ -289,7 +289,8 @@ export async function rechooseForMember(input: { userId: string; email: string |
       tailoringForMember(input.userId, active, goals, savedAreas, now, { answered: input.answered }),
     ]);
     if (!usesTailoring(tailoring)) return null;
-    return await rechooseToday({ userId: input.userId, payerId: payer.payerId, goals, savedAreas, visibility, profileId: active.id, profileActive: true, tailoring }, now);
+    // Batch 22: the answer's own time, so a re-choose from older answers never wins (selection.ts).
+    return await rechooseToday({ userId: input.userId, payerId: payer.payerId, goals, savedAreas, visibility, profileId: active.id, profileActive: true, tailoring }, now, { answeredAt: input.answeredAt ?? null });
   } catch (err) {
     console.error('[tailoring] re-choose failed:', (err as Error)?.message ?? err);
     return null;

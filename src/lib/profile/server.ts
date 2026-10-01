@@ -292,7 +292,7 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     }
 
     // Batch 14: today's list follows the answer (after the response: it never holds the quiz up, and never charges).
-    after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered }).then(() => undefined));
+    after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered, answeredAt: nowIso }).then(() => undefined));
     matchCount = await matchCountFor({ userId, email: input.email, answers: next, answered });
   } catch (err) {
     console.error('[profile] answer bookkeeping failed (the answer itself is saved):', (err as Error)?.message ?? err);

@@ -34,6 +34,9 @@ import { usesTailoring, type TailoringProfile } from '../tailoring/profile';
 import type { TailoredOptions } from '../tailoring/today';
 import { widenOptions, type WidenOption } from '../tailoring/widen';
 import { chooseDay, type DayChoice } from './choose-day';
+import { answersFingerprint, parseStoredChoice, poolTally, rechooseAllowed, type StoredChoice } from './choice';
+import { refreshList } from './refresh';
+import { TODAY_LIST_MAX } from '../intelligence/config';
 import { feedbackForMember } from './feedback';
 import { todayKey, todayStart } from './day';
 
@@ -57,6 +60,8 @@ export interface TodaySelection {
   mustMatches: number | null;
   /** The pool read hit its limit when the count was taken: it is "at least". */
   mustCapped?: boolean;
+  /** Batch 22: what the choice read ("I checked N live deals"); null before the column exists or for a legacy list. */
+  choice?: StoredChoice | null;
 }
 
 export interface MemberContext {
@@ -113,9 +118,10 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   }
 
   let chosen: DayChoice;
+  let tally: Omit<StoredChoice, 'fp' | 'answeredAt' | 'finds'>;
   try {
     const exclude = await excludedFor(admin, member, day);
-    chosen = await chooseToday(admin, member, exclude, now);
+    ({ chosen, tally } = await chooseToday(admin, member, exclude, now));
   } catch (err) {
     // The page says the day's deals are not ready rather than failing.
     console.error('[today] choosing failed:', (err as Error)?.message ?? err);
@@ -125,18 +131,138 @@ export async function todaySelection(member: MemberContext, now: Date = new Date
   // may find something (a deal leaving the early-access window, a read that
   // failed this time).
   if (chosen.dealIds.length === 0) return { day, dealIds: [], nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
-  const { error } = profileId
+  const { data: inserted, error } = profileId
     ? await admin
         .from('profile_today_lists')
         .upsert({ profile_id: profileId, user_id: member.userId, day, deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice }, { onConflict: 'profile_id,day', ignoreDuplicates: true })
+        .select('day')
     : await admin
         .from('today_selections')
         .upsert({ user_id: member.userId, day, deal_ids: chosen.dealIds, near_miss: chosen.nearMiss, advice: chosen.advice }, { onConflict: 'user_id,day', ignoreDuplicates: true });
   if (error) console.error('[today] selection insert failed:', error.message);
   if (!error && profileId && chosen.mustMatches !== null) await storeTailoring(admin, profileId, day, chosen, []);
+  // Batch 22: what this choice read, written only by the request whose list was stored (bug 9).
+  if (!error && profileId && Array.isArray(inserted) && inserted.length > 0) {
+    await storeChoice(admin, profileId, day, { ...tally, finds: 0, fp: fingerprintFor(member), answeredAt: null });
+  }
   // Read back: when two devices chose at once, both show the one stored first.
   const again = await read();
   return again.data ? fromRow(again.data) : { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
+}
+
+/** The answers a list is chosen with (choice.ts answersFingerprint). */
+function fingerprintFor(member: Pick<MemberContext, 'goals' | 'savedAreas' | 'tailoring'>): string {
+  return answersFingerprint({ goals: member.goals, savedAreas: member.savedAreas, modes: member.tailoring?.modes ?? null, answers: member.tailoring?.about ?? null });
+}
+
+let warnedChoiceColumn = 0;
+/** Batch 22's choice column; best effort (until the section is run, nothing else is lost). */
+async function storeChoice(admin: Admin, profileId: string, day: string, choice: StoredChoice): Promise<void> {
+  const { error } = await admin.from('profile_today_lists').update({ choice }).eq('profile_id', profileId).eq('day', day);
+  if (error && Date.now() - warnedChoiceColumn > 60_000) {
+    warnedChoiceColumn = Date.now();
+    console.warn('[today] choice not stored (Batch 22 schema not run?):', error.message);
+  }
+}
+
+/** A profile's stored choice for a day; null when there is none or the column is missing. */
+async function readChoice(admin: Admin, profileId: string, day: string): Promise<StoredChoice | null> {
+  const { data, error } = await admin.from('profile_today_lists').select('choice').eq('profile_id', profileId).eq('day', day).maybeSingle();
+  if (error || !data) return null;
+  return parseStoredChoice((data as { choice?: unknown }).choice);
+}
+
+/** "I checked N live deals": today's stored choice for a profile (Batch 22; the reveal and the calls batch). */
+export async function checkedCountFor(profileId: string, now: Date = new Date()): Promise<StoredChoice | null> {
+  if (!hasServiceRole()) return null;
+  return readChoice(createAdminClient(), profileId, todayKey(now));
+}
+
+/**
+ * Today's choice worked out without storing anything (Batch 22, layer 1 of
+ * the signup search): the same ranking, exclusions and mix the list would
+ * get. Null on any failure.
+ */
+export async function previewToday(member: MemberContext, now: Date = new Date()): Promise<{ chosen: DayChoice; tally: Omit<StoredChoice, 'fp' | 'answeredAt' | 'finds'> } | null> {
+  if (!hasServiceRole()) return null;
+  const admin = createAdminClient();
+  try {
+    const exclude = await excludedFor(admin, member, todayKey(now));
+    return await chooseToday(admin, member, exclude, now);
+  } catch (err) {
+    console.error('[today] preview failed:', (err as Error)?.message ?? err);
+    return null;
+  }
+}
+
+/**
+ * Batch 22, Part G: a member's search has finished; finds that rank better
+ * than an unanswered, un-revealed card take its place (refresh.ts). Pinned:
+ * `keep` (the revealed cards) and anything kept, passed or opened. Checked
+ * update, like rechooseToday; replaced cards go into shown_ids. Returns the
+ * deals added (empty when nothing changed or there is no list yet).
+ */
+export async function refreshTodayAfterSearch(member: MemberContext, finds: readonly string[], keep: readonly string[], now: Date = new Date()): Promise<string[]> {
+  if (!hasServiceRole() || !member.profileId || finds.length === 0) return [];
+  const admin = createAdminClient();
+  const day = todayKey(now);
+  const profileId = member.profileId;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { data, error } = await readProfileList(admin, profileId, day);
+    if (error || !data) return [];
+    const stored = fromRow(data);
+    const current = stored.dealIds;
+    let ranking: string[];
+    let pinned: Set<string>;
+    let stillShownable: Set<string>;
+    let tally: Omit<StoredChoice, 'fp' | 'answeredAt' | 'finds'>;
+    let nearMissNow: boolean;
+    try {
+      const [exclude, answered] = await Promise.all([excludedFor(admin, member, day), answeredOrOpened(admin, member, current)]);
+      // Today's ranking over the pool as it is now (finds included), with this list's own cards allowed back in.
+      const res = await chooseToday(admin, member, new Set([...exclude].filter((id) => !current.includes(id))), now);
+      tally = res.tally;
+      nearMissNow = res.chosen.nearMiss;
+      ranking = [...res.chosen.dealIds, ...current.filter((id) => !res.chosen.dealIds.includes(id))];
+      pinned = new Set([...answered, ...keep]);
+      stillShownable = new Set(finds.filter((id) => !exclude.has(id)));
+    } catch (err) {
+      console.error('[today] refresh after search failed:', (err as Error)?.message ?? err);
+      return [];
+    }
+    // A near-miss list whose day now has real matches: the near miss gives way
+    // (unless the member answered it) and the list is a real one again.
+    const nowMatches = stored.nearMiss && !nearMissNow && [...stillShownable].some((id) => ranking.includes(id));
+    const base = nowMatches ? current.filter((id) => pinned.has(id)) : current;
+    const dropped = nowMatches ? current.filter((id) => !pinned.has(id)) : [];
+    const r = refreshList({ current: base, pinned, ranking, finds: stillShownable, max: TODAY_LIST_MAX });
+    if (!r.changed) return [];
+    r.replaced.push(...dropped);
+    const patch: Record<string, unknown> = { deal_ids: r.dealIds };
+    if (nowMatches) Object.assign(patch, { near_miss: false, advice: null });
+    const { data: updated, error: updErr } = await admin
+      .from('profile_today_lists')
+      .update(patch)
+      .eq('profile_id', profileId)
+      .eq('day', day)
+      .filter('deal_ids', 'eq', `{${current.join(',')}}`)
+      .select('day');
+    if (updErr) {
+      console.error('[today] refresh save failed:', updErr.message);
+      return [];
+    }
+    if (!updated || updated.length === 0) continue;
+    if (r.replaced.length > 0) await storeShown(admin, profileId, day, [...ids(data.shown_ids), ...r.replaced]);
+    const before = await readChoice(admin, profileId, day);
+    await storeChoice(admin, profileId, day, { ...(before ?? { fp: null, answeredAt: null }), ...tally, meeting: before?.meeting ?? tally.meeting, finds: (before?.finds ?? 0) + r.added.length });
+    return r.added;
+  }
+  return [];
+}
+
+async function storeShown(admin: Admin, profileId: string, day: string, shown: readonly string[]): Promise<void> {
+  const { error } = await admin.from('profile_today_lists').update({ shown_ids: [...new Set(shown)] }).eq('profile_id', profileId).eq('day', day);
+  if (error) console.warn('[today] shown ids not stored:', error.message);
 }
 
 interface ListRow {
@@ -302,7 +428,7 @@ async function keepsByType(admin: Admin, member: MemberContext, since: Date): Pr
  * order, as before. Batch 17: the profile's deal types, each chosen on its
  * own and mixed (the mix's numbers and the Keeps it shifts on read here).
  */
-async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date, opts: TailoredOptions = {}): Promise<DayChoice> {
+async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<string>, now: Date, opts: TailoredOptions = {}): Promise<{ chosen: DayChoice; tally: Omit<StoredChoice, 'fp' | 'answeredAt' | 'finds'> }> {
   const feedback = await feedbackForMember(admin, member.userId, now, member.profileId ?? null);
   // The market snapshot scores areas for fit. On a cold cache the page does
   // not wait for a rebuild: without it the deal's own figures carry the fit.
@@ -310,15 +436,18 @@ async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<str
   const types = typesFor(member);
   const mix = await readTodayMix(admin);
   const typeKeeps = types.length > 1 ? await keepsByType(admin, member, new Date(now.getTime() - mix.windowDays * 86_400_000)) : {};
-  return chooseDay(
+  // Batch 22: what the choice reads is tallied for "I checked N live deals" (choice.ts); the choosing itself is untouched.
+  const tally = poolTally<Awaited<ReturnType<typeof rankingPool>>[number]>(exclude);
+  const chosen = await chooseDay(
     { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null, types, typeKeeps, mix },
     {
-      pool: (filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit),
+      pool: tally.wrap((filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit)),
       fullListings: (dealIds) => fullListingsFor(admin, dealIds),
       dealTypes: (dealIds) => dealTypesByIds(dealIds),
     },
     opts,
   );
+  return { chosen, tally: tally.result(chosen.mustMatches, chosen.capped === true) };
 }
 
 /** Of these deals, the ones the member has kept, passed or opened: a re-choose never takes those off. */
@@ -347,28 +476,39 @@ async function answeredOrOpened(admin: Admin, member: MemberContext, dealIds: re
  * devices cannot overwrite each other: on a clash it reads again. It writes
  * nothing but the list: no pick, no open, no charge.
  */
-export async function rechooseToday(member: MemberContext, now: Date = new Date()): Promise<TodaySelection | null> {
+export async function rechooseToday(member: MemberContext, now: Date = new Date(), opts: { answeredAt?: string | null } = {}): Promise<TodaySelection | null> {
   if (!hasServiceRole() || !member.profileId || !usesTailoring(member.tailoring)) return null;
   const admin = createAdminClient();
   const day = todayKey(now);
   const profileId = member.profileId;
+  const fp = fingerprintFor(member);
+  const answeredAt = opts.answeredAt ?? null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const { data, error } = await readProfileList(admin, profileId, day);
     if (error || !data) return null;
     const stored = fromRow(data);
     const current = stored.dealIds;
+    // Batch 22 (bugs 7–8): the same answers change nothing (a no-op re-choose
+    // would rotate a near-miss card the member was just shown), and a
+    // re-choose from answers older than the stored list's never wins.
+    const before = await readChoice(admin, profileId, day);
+    const allowed = rechooseAllowed(before, fp, answeredAt);
+    if (allowed !== 'go') return { ...stored, choice: before };
     let chosen: DayChoice;
+    let tally: Omit<StoredChoice, 'fp' | 'answeredAt' | 'finds'>;
     try {
       const [exclude, pinned] = await Promise.all([excludedFor(admin, member, day), answeredOrOpened(admin, member, current)]);
-      chosen = await chooseToday(admin, member, exclude, now, { current, pinned });
+      ({ chosen, tally } = await chooseToday(admin, member, exclude, now, { current, pinned }));
     } catch (err) {
       console.error('[today] re-choosing failed:', (err as Error)?.message ?? err);
       return null;
     }
     const same = chosen.dealIds.length === current.length && chosen.dealIds.every((id, i) => id === current[i]);
+    const choice: StoredChoice = { ...tally, finds: before?.finds ?? 0, fp, answeredAt: answeredAt ?? before?.answeredAt ?? null };
     if (same && chosen.nearMiss === stored.nearMiss && chosen.advice === stored.advice) {
       await storeTailoring(admin, profileId, day, chosen, []);
-      return { ...stored, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
+      await storeChoice(admin, profileId, day, choice);
+      return { ...stored, mustMatches: chosen.mustMatches, mustCapped: chosen.capped, choice };
     }
     const { data: updated, error: updErr } = await admin
       .from('profile_today_lists')
@@ -385,7 +525,8 @@ export async function rechooseToday(member: MemberContext, now: Date = new Date(
     if (!updated || updated.length === 0) continue;
     const replaced = current.filter((id) => !chosen.dealIds.includes(id));
     await storeTailoring(admin, profileId, day, chosen, [...ids(data.shown_ids), ...replaced]);
-    return { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped };
+    await storeChoice(admin, profileId, day, choice);
+    return { day, dealIds: chosen.dealIds, nearMiss: chosen.nearMiss, advice: chosen.advice, mustMatches: chosen.mustMatches, mustCapped: chosen.capped, choice };
   }
   return null;
 }
