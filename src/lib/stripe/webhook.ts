@@ -239,8 +239,15 @@ async function logEvent(deps: WebhookDeps, input: SubscriptionEventInput): Promi
  * doing. Never throws.
  */
 async function logPlanActivity(deps: WebhookDeps, input: SubscriptionEventInput): Promise<void> {
-  const kind = planActivityKind(input.kind, 'stripe');
-  if (!deps.logActivity || !kind || input.source === 'manual') return;
+  // The event's own source decides whose action this is (E20). A change the
+  // member made in the app is already logged there as self_serve, so the
+  // webhook's copy is dropped; one Stripe reports with no portal feedback is
+  // treated as the dashboard's and is not the member's (planActivityKind gates
+  // the member kinds on it). An event with no recorded source is 'stripe', the
+  // same default recordSubscriptionEvent uses.
+  const source = input.source ?? 'stripe';
+  const kind = planActivityKind(input.kind, source);
+  if (!deps.logActivity || !kind || source === 'manual' || source === 'self_serve') return;
   const dedupeKey =
     kind === 'plan_start' && input.stripeSubscriptionId ? `plan_start:${input.stripeSubscriptionId}` : input.stripeEventId ? `sub:${input.stripeEventId}:${input.kind}` : undefined;
   try {

@@ -393,6 +393,9 @@ test('undoing a cancellation logs cancel_reverted', async () => {
   const live = { id: 'sub_1', status: 'active', cancel_at_period_end: false, cancel_at: null, customer: 'cus_1', start_date: 1_700_000_000, items: { data: [{ price: { id: 'price_starter' }, current_period_end: 1_800_000_000 }] } } as unknown as Stripe.Subscription;
   await handleStripeEvent(ev('customer.subscription.updated', live), deps);
   assert.equal(deps.events.filter((e) => e.kind === 'cancel_reverted').length, 1);
+  // The webhook sees no portal source on a revert, so it leaves the activity
+  // log to the app, which records the member's own undo as self_serve (E20).
+  assert.equal(deps.activity.some((a) => a.kind === 'plan_cancel_undone'), false);
 });
 
 test('a failed invoice logs past_due once per episode', async () => {
@@ -471,7 +474,9 @@ test('a new subscription reported twice is one plan start', async () => {
 
 test('a cancellation booked in the portal is logged; Stripe ending or resuming by itself is not', async () => {
   const deps = fakeDeps();
-  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000 })), deps);
+  // A portal cancellation carries Stripe's own cancellation feedback, which is
+  // how the webhook tells it from an admin cancelling in the dashboard (E20).
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000, cancellation_details: { feedback: 'too_expensive' } })), deps);
   assert.deepEqual(deps.activity.map((a) => a.kind), ['plan_cancel']);
   assert.match(deps.activity[0].dedupeKey ?? '', /^sub:evt_customer\.subscription\.updated:cancel_scheduled$/);
 
@@ -483,6 +488,32 @@ test('a cancellation booked in the portal is logged; Stripe ending or resuming b
   const ended = fakeDeps();
   await handleStripeEvent(ev('customer.subscription.deleted', subObj({ status: 'canceled' })), ended);
   assert.equal(ended.activity.length, 0);
+});
+
+test('a cancellation made in the Stripe dashboard is recorded for churn but not logged as the member cancelling (E20)', async () => {
+  const deps = fakeDeps();
+  // No in-app reason and no Stripe feedback: the webhook labels it 'stripe',
+  // which may be the admin acting in the dashboard, so it is not the member's.
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000 })), deps);
+  assert.equal(deps.events.filter((e) => e.kind === 'cancel_scheduled').length, 1, 'still recorded in the churn log');
+  assert.equal(deps.events.find((e) => e.kind === 'cancel_scheduled')?.source, 'stripe');
+  assert.equal(
+    deps.activity.some((a) => a.kind === 'plan_cancel'),
+    false,
+    'a dashboard cancellation is not a weekly-active action',
+  );
+});
+
+test('a cancellation the member made in the app is logged by the app, not a second time by the webhook (E20)', async () => {
+  const deps = fakeDeps();
+  deps.user.cancel_reason = 'too_expensive';
+  await handleStripeEvent(ev('customer.subscription.updated', subObj({ cancel_at_period_end: true, cancel_at: 1_800_000_000 })), deps);
+  assert.equal(deps.events.find((e) => e.kind === 'cancel_scheduled')?.source, 'self_serve');
+  assert.equal(
+    deps.activity.some((a) => a.kind === 'plan_cancel'),
+    false,
+    'the app already logged the self-serve cancellation; the webhook does not repeat it',
+  );
 });
 
 test('a subscription on a plan granted by hand is not the member starting a plan', async () => {

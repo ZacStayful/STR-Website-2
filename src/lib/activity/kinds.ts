@@ -221,16 +221,16 @@ export type PlanChangeSource = 'self_serve' | 'portal' | 'stripe' | 'manual' | '
  * the member's whoever reports it (Stripe is the only place it is seen),
  * unless the plan was granted by hand.
  *
- * Batch 21 (E15, E19): a pause, a resume or a plan change is the member's
- * only when they made it themselves, in the app (self_serve) or in Stripe's
- * portal; seen from Stripe otherwise it may be the admin's in the dashboard,
- * and the app has already logged its own, so Stripe's copy is not logged
- * twice. A cancellation (or its reversal) seen from Stripe is still logged:
- * the webhook labels every change it sees 'stripe' (src/lib/stripe/webhook.ts
- * logPlanActivity), so a cancellation booked in the portal, which is the
- * member's and which the app never sees, would otherwise be lost. Once the
- * webhook passes the event's own source, 'stripe' can leave that rule too
- * (E20).
+ * Batch 21 (E15, E19, E20): a pause, a resume, a plan change or a
+ * cancellation (and its reversal) is the member's only when they made it
+ * themselves, in the app (self_serve) or in Stripe's portal; seen from
+ * Stripe otherwise it may be the admin's in the dashboard, and the app has
+ * already logged its own, so Stripe's copy is not logged twice. The webhook
+ * now passes each event's own source (src/lib/stripe/webhook.ts
+ * logPlanActivity): a cancellation booked in the portal, which is the
+ * member's and which the app never sees, carries a portal source and is
+ * kept, while one made in the dashboard — which Stripe reports with no
+ * portal feedback, so the webhook labels it 'stripe' — is not.
  */
 export function planActivityKind(subscriptionEvent: string, source: PlanChangeSource): ActivityKind | null {
   if (source === 'manual' || source === 'backfill') return null;
@@ -243,9 +243,9 @@ export function planActivityKind(subscriptionEvent: string, source: PlanChangeSo
     case 'paused':
       return own ? 'plan_pause' : null;
     case 'cancel_scheduled':
-      return 'plan_cancel';
+      return own ? 'plan_cancel' : null;
     case 'cancel_reverted':
-      return 'plan_cancel_undone';
+      return own ? 'plan_cancel_undone' : null;
     case 'resumed':
       return own ? 'plan_resume' : null;
     default:
