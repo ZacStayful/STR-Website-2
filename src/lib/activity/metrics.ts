@@ -36,6 +36,12 @@ export interface FactMember {
   paused_from: string | null;
   paused_until: string | null;
   owner: string | null;
+  /**
+   * auth.users.last_sign_in_at is set: the account confirmed its email (or was
+   * signed in by a magic link) at least once. Absent from facts made before the
+   * Batch 21 schema, when every sign-up form counted as a member.
+   */
+  signed_in?: boolean | null;
 }
 
 export interface WeeklyFacts {
@@ -110,7 +116,10 @@ export interface WeekMetrics {
   keep: { shown: number; kept: number } | null;
 }
 
-export type ExclusionReason = 'admin' | 'staff' | 'manual';
+/** Why an account's own details leave it out of every figure (exclusionFor). */
+export type AccountExclusion = 'admin' | 'staff' | 'manual';
+/** AccountExclusion, plus the sign-up that never signed in (Batch 21, E3): only the weekly-active base applies it. */
+export type ExclusionReason = AccountExclusion | 'never_signed_in';
 
 export interface MemberWeek {
   week: string;
@@ -161,7 +170,7 @@ export function exclusionFor(
   manualNote: string | null | undefined,
   adminEmails: ReadonlySet<string>,
   staffDomain: string = STAFF_DOMAIN,
-): ExclusionReason | null {
+): AccountExclusion | null {
   const key = email ? emailKey(email) : '';
   if (key && adminEmails.has(key)) return 'admin';
   if (key.endsWith(`@${staffDomain}`)) return 'staff';
@@ -216,7 +225,9 @@ export function computeWeeklyActive(facts: WeeklyFacts, opts: { adminEmails: rea
   const excluded: ExcludedRow[] = [];
   const included: FactMember[] = [];
   for (const m of facts.members) {
-    const reason = exclusionFor(m.email, manual.get(m.id), admins, opts.staffDomain);
+    // Batch 21 (E3): a sign-up that never confirmed its email is not a member
+    // yet; it is listed as excluded, never counted in the base.
+    const reason = exclusionFor(m.email, manual.get(m.id), admins, opts.staffDomain) ?? (m.signed_in === false ? 'never_signed_in' : null);
     if (reason) excluded.push({ id: m.id, email: m.email, name: m.name, reason, note: reason === 'manual' ? manual.get(m.id) ?? null : null });
     else included.push(m);
   }
