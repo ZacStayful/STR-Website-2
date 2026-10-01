@@ -8,6 +8,8 @@ import { intelligenceCards } from "@/components/intelligence/cards";
 import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
 import { SearchProgress } from "@/components/intelligence/SearchProgress";
 import { DeepSearchOffer } from "@/components/intelligence/DeepSearchOffer";
+import { RevealAnalyses } from "@/components/intelligence/RevealAnalyses";
+import { AutoTopupOffer } from "@/components/intelligence/AutoTopupOffer";
 import { profileSummaryFor } from "@/lib/profile/server";
 import { quizPathFor } from "@/lib/auth/landing";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
@@ -28,8 +30,10 @@ export const metadata: Metadata = {
  * never repeats them. Outside AppShell (no header), with its own
  * CreditProvider for the out-of-credit window. Recorded before it renders.
  */
-export default async function RevealPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; saved?: string | string[] }> }) {
+export default async function RevealPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; saved?: string | string[]; resume?: string | string[] }> }) {
   const params = await searchParams;
+  const resumeRaw = Array.isArray(params.resume) ? params.resume[0] : params.resume;
+  const resumeId = resumeRaw && /^[0-9a-f-]{36}$/i.test(resumeRaw) ? resumeRaw : null;
   const nextRaw = Array.isArray(params.next) ? params.next[0] : params.next;
   const next = revealNext(nextRaw);
   const supabase = await createSupabaseServerClient();
@@ -93,6 +97,14 @@ export default async function RevealPage({ searchParams }: { searchParams: Promi
         note={
           <>
             <SearchProgress running={data.searching} />
+            <RevealAnalyses
+              resumeId={resumeId}
+              returnPath={`/welcome/reveal?next=${encodeURIComponent(next)}`}
+              items={data.cards
+                .filter((c) => data.analyses.has(c.id))
+                .map((c) => ({ dealId: c.id, title: [c.bedrooms ? `${c.bedrooms}-bed` : null, c.town ?? c.postcode_area].filter(Boolean).join(" · ") || "This deal", ...data.analyses.get(c.id)! }))}
+            />
+            <AutoTopupOffer amountPence={data.settings.intelligence.revealAutoTopupAmountPence} thresholdPence={data.settings.intelligence.revealAutoTopupThresholdPence} />
             {data.deepQuote && <DeepSearchOffer aboutBasePence={data.deepQuote.aboutBasePence} upToBasePence={data.deepQuote.upToBasePence} firstDiscount={data.deepQuote.firstDiscount} surface="reveal" />}
           </>
         }

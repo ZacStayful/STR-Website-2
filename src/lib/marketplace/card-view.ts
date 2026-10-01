@@ -103,6 +103,8 @@ export interface CardView {
   /** The one-tap total when unopened, the difference when opened; null once analysed. */
   fullAnalysis: PriceLabel | null;
   fullAnalysisBasePence: number;
+  /** Batch 22: "welcome price" / "first-time price" when the Full analysis is offer-priced. */
+  offerNote?: string | null;
 }
 
 export function cardView(input: {
@@ -110,6 +112,8 @@ export function cardView(input: {
   state: CardState;
   admin: boolean;
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
+  /** Batch 22: the offer the pricing above carries, for the button's note. */
+  offerNote?: string | null;
   ladder: DealOpenLadder;
   finance?: Partial<FinanceDefaults> | null;
   /** They buy with cash: nothing is borrowed, so no price is too high for the profit. */
@@ -155,5 +159,6 @@ export function cardView(input: {
     quickLook: state.opened ? null : input.label(input.admin ? 0 : ladderPence),
     fullAnalysis: analysed ? null : input.label(quote.due.purchaseBasePence),
     fullAnalysisBasePence: quote.due.purchaseBasePence,
+    offerNote: analysed ? null : input.offerNote ?? null,
   };
 }

@@ -202,7 +202,7 @@ function PriceButtons({ dealId, live, view }: { dealId: string; live: boolean; v
       <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
     </form>
   ) : null;
-  const analysis = view.opened || live ? <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}</Link> : null;
+  const analysis = view.opened || live ? <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}{full && view.offerNote ? ` ${view.offerNote}` : ""}</Link> : null;
   // Batch 14, Part E: "Knowing the numbers" holds them back, so the Full analysis comes first, with one line.
   if (view.lead === "analysis" && analysis) {
     return (

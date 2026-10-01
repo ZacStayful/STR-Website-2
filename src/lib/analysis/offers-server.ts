@@ -85,3 +85,27 @@ export async function offeredPmiAddonFor(userId: string): Promise<ReturnType<typ
   const payer = await payerFor(userId);
   return pmiAddonOffer({ listPmiPence: settings.dealPricing.pmiAddonPence, hadDeepReport: await hadDeepReport(payer.payerId), settings: s, floors });
 }
+
+/**
+ * Batch 22: every price a page shows for a Full analysis or Deep report, with
+ * this member's offers applied, loaded once per request. The card, the deal
+ * page and the reveal all price through it, and startDealAnalysis re-works
+ * the same offer, so the button and the charge always agree.
+ */
+export async function offerPricingFor(userId: string, adminUser: boolean, now: Date = new Date()) {
+  const settings = await getBillingSettings();
+  const list = { fullPence: settings.dealPricing.fullAnalysisPence, pmiPence: settings.dealPricing.pmiAddonPence };
+  if (adminUser) return { pricing: () => settings.dealPricing, offer: (): OfferedPrices | null => null };
+  const [member, floors, s] = await Promise.all([offerMemberFor(userId), offerFloors(), offerSettings()]);
+  const offer = (dealId: string, withPmi: boolean) => analysisOffer({ dealId, withPmi, list, member, settings: s, floors, now });
+  return {
+    pricing: (dealId: string, withPmi: boolean) => {
+      const o = offer(dealId, withPmi);
+      return o.offer ? { ...settings.dealPricing, fullAnalysisPence: o.fullPence, pmiAddonPence: o.pmiPence } : settings.dealPricing;
+    },
+    offer: (dealId: string, withPmi: boolean) => {
+      const o = offer(dealId, withPmi);
+      return o.offer ? o : null;
+    },
+  };
+}

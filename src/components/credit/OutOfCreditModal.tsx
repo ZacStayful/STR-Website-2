@@ -128,6 +128,7 @@ export function OutOfCreditModal({ detail, onClose }: { detail: OutOfCreditDetai
                   presets={presets}
                   hasSavedCard={hasSavedCard}
                   autoFocusFirst={topupMode}
+                  resumeId={detail?.resumeId}
                   onDone={() => {
                     setBusy(false);
                     onClose();

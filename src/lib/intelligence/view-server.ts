@@ -32,8 +32,11 @@ import { checkedCountFor } from '../today/selection';
 import { checkedLine } from '../today/checked';
 import type { StoredChoice } from '../today/choice';
 import { todayKey } from '../today/day';
-import { analysisOffer } from '../analysis/offers';
-import { offerFloors, offerMemberFor, offerSettings } from '../analysis/offers-server';
+import { analysisOffer, offerLabel } from '../analysis/offers';
+import { quoterFor } from '../credit/quote-server';
+import { enhancedEnabled } from '../analysis/run';
+import type { PriceLabel } from '../credit/deal-pricing';
+import { offerFloors, offerMemberFor, offerPricingFor, offerSettings } from '../analysis/offers-server';
 import { accuracySettings, accuracyView, profileSummaryFor } from '../profile/server';
 import type { Level } from '../profile/levels';
 import { answersFor, type Answer, type AnswerFacts } from './answers';
@@ -64,6 +67,8 @@ export interface IntelligenceData {
   answers: Answer[];
   /** Part F: when the match is low or there is none. */
   whatIfs: WhatIfView | null;
+  /** Part H: each card's Full analysis and Deep report, priced with the member's offers. */
+  analyses: Map<string, { full: PriceLabel | null; deep: PriceLabel | null; fullNote: string | null; deepNote: string | null; fullList: number | null; deepList: number | null }>;
   /** Part G: the member's own search is still running; the deep search's quote when there is no strong match. */
   searching: boolean;
   deepQuote: DeepQuoteView | null;
@@ -123,6 +128,28 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     offerSettings(),
   ]);
   const views = withTailoring(baseViews, cards, tailoring, snapshot, now, { why: true });
+
+  // Part H: the Full analysis and the Deep report for each card, priced as startDealAnalysis will price them.
+  const [offers, quoter] = await Promise.all([offerPricingFor(user.id, adminUser, now), quoterFor(payer.payerId, adminUser)]);
+  const analyses = new Map<string, IntelligenceData['analyses'] extends Map<string, infer V> ? V : never>();
+  for (const c of cards) {
+    const v = views.get(c.id);
+    if (!v || v.analysed || v.fullAnalysisBasePence === undefined) continue;
+    const full = offers.pricing(c.id, false);
+    const deep = offers.pricing(c.id, true);
+    // The deep purchase is the full one with the Deep report's own full + PMI prices in place of the Full analysis price.
+    const deepBase = Math.max(0, v.fullAnalysisBasePence - full.fullAnalysisPence + deep.fullAnalysisPence + deep.pmiAddonPence);
+    const fo = offers.offer(c.id, false);
+    const dO = offers.offer(c.id, true);
+    analyses.set(c.id, {
+      full: quoter.label(v.fullAnalysisBasePence),
+      deep: enhancedEnabled(true) ? quoter.label(deepBase) : null,
+      fullNote: offerLabel(fo?.offer),
+      deepNote: offerLabel(dO?.offer),
+      fullList: fo ? fo.listTotalPence : null,
+      deepList: dO ? dO.listTotalPence : null,
+    });
+  }
   const tailored = usesTailoring(tailoring);
   const topPct = cards[0] ? matchPctOf(views.get(cards[0].id)?.explanation?.match ?? null) : null;
   const nearMiss = today.selection?.nearMiss === true;
@@ -175,6 +202,7 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
   return {
     profile,
     whatIfs,
+    analyses,
     searching: status.running,
     deepQuote: status.running ? null : deepQuote,
     cards,

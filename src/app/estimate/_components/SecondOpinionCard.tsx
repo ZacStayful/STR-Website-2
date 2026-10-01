@@ -3,15 +3,18 @@
 import { Scale } from 'lucide-react';
 import type { AnalysisResult } from '@/lib/types';
 import { gbp, pct0 } from './format';
+import { comparableRows, monthRows } from '@/lib/analysis/second-opinion';
 
 /**
  * Property Market Intel's projection beside ours, with the gap in plain terms.
  * Batch 21 (C10): `oursLabel` names whose estimate the first figure is; on a
  * white-label funnel that is the customer, never Stayful.
  */
-export function SecondOpinionCard({ ours, opinion, oursLabel = 'Stayful estimate' }: { ours: number; opinion: NonNullable<AnalysisResult['secondOpinion']>; oursLabel?: string }) {
+export function SecondOpinionCard({ ours, opinion, oursLabel = 'Stayful estimate', oursMonthly = null }: { ours: number; opinion: NonNullable<AnalysisResult['secondOpinion']>; oursLabel?: string; /** Batch 22: our month-by-month revenue, beside PMI's. */ oursMonthly?: readonly number[] | null }) {
   const gap = ours > 0 ? Math.round(((opinion.annualRevenue - ours) / ours) * 100) : null;
   const agree = gap !== null && Math.abs(gap) <= 15;
+  const months = monthRows(oursMonthly, opinion.monthly);
+  const comps = comparableRows(opinion.comparables);
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex items-start gap-2">
@@ -28,6 +31,45 @@ export function SecondOpinionCard({ ours, opinion, oursLabel = 'Stayful estimate
           <p className="mt-2 text-[11px] text-muted-foreground">
             {agree ? 'The two datasets agree within 15%, which is a good sign the estimate is robust.' : 'The datasets differ by more than 15%. Treat the estimate as a range and look at the comparables before deciding.'}
           </p>
+          {/* Batch 22, Part H: month by month, ours beside PMI's. */}
+          {months.some((m) => m.pmi !== null) && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[320px] text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <th className="py-1 pr-2 font-medium">Month</th>
+                    <th className="py-1 pr-2 text-right font-medium">{oursLabel.replace(/ estimate$/, '')}</th>
+                    <th className="py-1 text-right font-medium">PMI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {months.map((m) => (
+                    <tr key={m.month} className="border-t border-border">
+                      <td className="py-1 pr-2">{m.month}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{m.ours === null ? '—' : gbp(m.ours)}</td>
+                      <td className="py-1 text-right tabular-nums">{m.pmi === null ? '—' : gbp(m.pmi)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {/* PMI's comparables, laid out like ours. */}
+          {comps.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">PMI’s comparables</p>
+              <ul className="mt-1 divide-y divide-border text-xs">
+                {comps.map((c, i) => (
+                  <li key={i} className="flex flex-wrap items-baseline justify-between gap-2 py-1.5">
+                    <span className="min-w-0 flex-1 truncate">{c.url ? <a href={c.url} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">{c.title}</a> : c.title}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {[c.annual !== null ? `${gbp(c.annual)}/yr` : null, c.nightly !== null ? `${gbp(c.nightly)}/night` : null, c.occupancyPct !== null ? `${c.occupancyPct}%` : null, c.rating !== null ? `★ ${c.rating}` : null, c.distance].filter(Boolean).join(' · ')}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </div>

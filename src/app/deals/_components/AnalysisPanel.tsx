@@ -192,7 +192,7 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
                 <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-md border border-border p-2 text-xs text-foreground">
                   <input type="checkbox" className="mt-0.5" checked={withPmi} disabled={busy} onChange={(e) => setWithPmi(e.target.checked)} />
                   <span>
-                    <span className="font-semibold">Add a second opinion from PMI · +{priceText(pmi)}.</span> {recommendPmi ? "Recommended now you’re making an offer." : "Recommended before you make an offer."}
+                    <span className="font-semibold">Make it a Deep report: add a second opinion from PMI · +{priceText(pmi)}.</span> {recommendPmi ? "Recommended now you’re making an offer." : "Recommended before you make an offer."} PMI’s month-by-month figures and comparables sit beside ours, in the report and the PDF.
                   </span>
                 </label>
               )}

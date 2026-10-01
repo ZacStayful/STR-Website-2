@@ -17,6 +17,8 @@ export interface OutOfCreditDetail {
   error?: string;
   /** Open straight on the top-up buttons (banner / badge clicks). */
   mode?: 'blocked' | 'topup';
+  /** Batch 22: a resume intent: the top-up's Checkout brings the member back to what they were buying. */
+  resumeId?: string;
 }
 
 export function openOutOfCredit(detail: OutOfCreditDetail = {}): void {

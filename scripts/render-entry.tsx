@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { renderToFile } from "@react-pdf/renderer";
 import React from "react";
 import { StayfulReport } from "../src/lib/pdf/StayfulReport";
-import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildPdfProject, buildSetupSnapshot } from "../src/lib/pdf/derive";
+import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildPdfProject, buildPdfSecondOpinion, buildSetupSnapshot } from "../src/lib/pdf/derive";
 import { estimateFromFindings } from "../src/lib/project/estimate";
 import { LINE_SPECS, type LineFinding, type LineKey } from "../src/lib/project/costing";
 import { reportProjectFrom, type ReportProjectMine } from "../src/lib/project/report";
@@ -126,6 +126,30 @@ const VARIANTS: Array<{ name: string; sheets: number; build: Build }> = [
       const d = deriveReportData(r);
       d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
       d.diligence = buildPdfDiligence(r);
+      return d;
+    },
+  },
+  {
+    // Batch 22: a Deep report — PMI's second opinion gets its own page after the market.
+    name: "with-second-opinion",
+    sheets: 7,
+    build: () => {
+      const r = sampleAnalysis();
+      r.secondOpinion = {
+        provider: "pmi",
+        updatedAt: null,
+        annualRevenue: Math.round(r.shortLet.annualRevenue * 1.08),
+        adr: 142,
+        occupancy: 71,
+        confidence: "medium",
+        rangeLow: Math.round(r.shortLet.annualRevenue * 0.9),
+        rangeHigh: Math.round(r.shortLet.annualRevenue * 1.25),
+        monthly: r.shortLet.monthlyRevenue.map((v, i) => ({ month: `2025-${String(i + 1).padStart(2, "0")}`, revenue: Math.round(v * 1.08) })),
+        comparables: Array.from({ length: 6 }, (_, i) => ({ listingId: String(1000 + i), title: `Comparable ${i + 1} · 2-bed apartment`, revenue: 26000 + i * 900, adr: 120 + i * 4, occupancy: 0.66 + i * 0.01, rating: 4.7, url: `https://www.airbnb.co.uk/rooms/${1000 + i}`, distanceM: 250 + i * 300 })),
+      };
+      const d = deriveReportData(r);
+      d.setup = buildSetupSnapshot(sampleSetup()) ?? undefined;
+      d.secondOpinion = buildPdfSecondOpinion(r);
       return d;
     },
   },

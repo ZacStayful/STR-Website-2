@@ -11,7 +11,7 @@ import { useCreditOptional } from "./CreditProvider";
  * the balance updates in place; otherwise the member is sent to Stripe
  * Checkout, which saves the card for next time.
  */
-export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, autoFocusFirst, via, label }: { presets: number[]; hasSavedCard: boolean; size?: "default" | "lg" | "sm"; onDone?: (amountPence: number) => void; autoFocusFirst?: boolean; /** Batch 20: where the choice was made ("low_credit"), recorded with it. */ via?: string; /** Batch 20: the button's words ("Top up £10") instead of the bare amount. */ label?: (amountPence: number) => string }) {
+export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, autoFocusFirst, via, label, resumeId }: { presets: number[]; hasSavedCard: boolean; size?: "default" | "lg" | "sm"; onDone?: (amountPence: number) => void; autoFocusFirst?: boolean; /** Batch 20: where the choice was made ("low_credit"), recorded with it. */ via?: string; /** Batch 20: the button's words ("Top up £10") instead of the bare amount. */ label?: (amountPence: number) => string; /** Batch 22: Checkout returns to the purchase this intent holds. */ resumeId?: string }) {
   const credit = useCreditOptional();
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function TopupButtons({ presets, hasSavedCard, size = "default", onDone, 
     setBusy(amountPence);
     setError(null);
     try {
-      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence, nonce, ...(via ? { via } : {}) }) });
+      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence, nonce, ...(via ? { via } : {}), ...(resumeId ? { resume: resumeId } : {}) }) });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; pending?: boolean; url?: string; error?: string };
       if (data.url) {
         setNonce(crypto.randomUUID());

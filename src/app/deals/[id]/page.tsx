@@ -52,6 +52,7 @@ import { dealTrackingFor } from "@/lib/listing/tracked-server";
 import { myDealsFocusPath } from "@/lib/listing/return-path";
 import { KEPT_STATUS } from "@/lib/listing/pipeline";
 import { readableReportFor } from "@/lib/analysis/deal-analysis";
+import { offerPricingFor } from "@/lib/analysis/offers-server";
 import { analysisQuote } from "@/lib/analysis/deal-analysis-rules";
 import { dealAnalysisInput, dealListingPrice } from "@/lib/analysis/deal-input";
 import { enhancedEnabled } from "@/lib/analysis/run";
@@ -180,7 +181,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
     const check = snapshot ? dealAnalysisInput(snapshot, { canonicalUrl: deal.canonical_url, kind: deal.kind, price: dealListingPrice(deal.price_amount, deal.price_period), withPmi: false, checkedListingId: null }) : null;
     blocked = !check ? "We couldn’t read this listing well enough to analyse it. You can still take a Quick look." : check.ok ? null : check.message;
   }
-  const quoteFor = (withPmi: boolean) => analysisQuote({ admin: adminUser, pricing, opened, openPaidBasePence: openPaid, openPricePence: ladderPence, withPmi }).due.purchaseBasePence;
+  // Batch 22: the member's offers (welcome / first-time price), exactly as startDealAnalysis will work them out.
+  const offers = await offerPricingFor(user.id, adminUser);
+  const quoteFor = (withPmi: boolean) => analysisQuote({ admin: adminUser, pricing: offers.pricing(deal.id, withPmi), opened, openPaidBasePence: openPaid, openPricePence: ladderPence, withPmi }).due.purchaseBasePence;
   const analysisPrice = { without: quoter.label(quoteFor(false)), withPmi: quoter.label(quoteFor(true)) };
   const pmiLabel = enhancedEnabled(true) ? quoter.label(adminUser ? 0 : pricing.pmiAddonPence) : null;
   const quickLook = quoter.label(adminUser ? 0 : ladderPence);

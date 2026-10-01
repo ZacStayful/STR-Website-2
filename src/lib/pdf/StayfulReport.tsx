@@ -9,6 +9,7 @@ import { Page6Plan } from "./report/Page6Plan";
 import { PageDeal } from "./report/PageDeal";
 import { PageDiligence } from "./report/PageDiligence";
 import { PageProject } from "./report/PageProject";
+import { PageSecondOpinion } from "./report/PageSecondOpinion";
 import type { ReportChrome } from "./design/Chrome";
 import { contentsFor, navFor, sectionsFor } from "./sections";
 import type { PdfReportData } from "./derive";
@@ -34,6 +35,7 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
     deal: Boolean(data.deal),
     diligence: Boolean(data.diligence),
     project: Boolean(data.project),
+    secondOpinion: Boolean(data.secondOpinion),
     // Batch 21 (C9): the plan page sells Stayful's management service in the
     // brand's name. Only our own report carries it.
     plan: ours,
@@ -57,6 +59,7 @@ export function StayfulReport({ data }: { data: PdfReportData }) {
       <Page1Verdict data={data} chrome={chrome} nav={nav("verdict")} contents={contentsFor(sections)} />
       <Page2Numbers data={data} chrome={chrome} nav={nav("numbers")} />
       <Page3Market data={data} chrome={chrome} nav={nav("market")} />
+      {data.secondOpinion ? <PageSecondOpinion data={data.secondOpinion} oursLabel={ours ? "Stayful estimate" : `${brand.companyName} estimate`} chrome={chrome} nav={nav("second_opinion")} /> : null}
       <Page4Location data={data} chrome={chrome} nav={nav("location")} />
       {/* `cond ? x : null`, never `cond && x`: a false child is a render error. */}
       {data.setup ? (
