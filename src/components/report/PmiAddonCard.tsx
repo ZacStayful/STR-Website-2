@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { creditFetch, notifyCreditChanged } from "@/lib/credit/client";
+import { creditFetch, notifyCreditChanged, openOutOfCredit } from "@/lib/credit/client";
 import { priceText, type PriceLabel } from "@/lib/credit/deal-pricing";
 
 /**
@@ -17,6 +17,12 @@ export function PmiAddonCard({ reportId, label }: { reportId: string; label: Pri
 
   async function add() {
     if (busy) return;
+    // Batch 21 (B5): as the Full analysis button: "Top up to add it" opens the
+    // top-up dialog and never the purchase.
+    if (label.state === "short") {
+      openOutOfCredit({ action: "pmi_addon", requiredPence: label.basePence, mode: "topup" });
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {

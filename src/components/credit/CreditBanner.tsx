@@ -36,12 +36,15 @@ export function CreditBanner() {
     );
   }
   if (c.pack) {
-    const text = out ? c.pack.deadEnd : `You have ${formatGbp(c.totalPence)} of credit left. ${c.pack.cardTitle}.`;
+    // Batch 21 (B12): an account that can still buy the pack has had no credit
+    // to run out of (the pack era grants none at sign-up), so its strip is the
+    // amber offer, never the red "You're out of credit" on its first page.
+    const text = out ? `${c.pack.headline}.` : `You have ${formatGbp(c.totalPence)} of credit left. ${c.pack.cardTitle}.`;
     return (
-      <div className="sticky top-0 z-40 w-full border-b border-black/10 shadow-sm" style={{ backgroundColor: out ? "#991b1b" : "#b45309" }}>
+      <div className="sticky top-0 z-40 w-full border-b border-black/10 shadow-sm" style={{ backgroundColor: "#b45309" }}>
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-2.5 text-center text-sm font-medium text-white">
           <span>{text}</span>
-          <button type="button" onClick={() => openOutOfCredit({ mode: "topup" })} className="inline-flex items-center rounded-full bg-white px-4 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-white/90" style={{ color: out ? "#991b1b" : "#b45309" }}>
+          <button type="button" onClick={() => openOutOfCredit({ mode: "topup" })} className="inline-flex items-center rounded-full bg-white px-4 py-1.5 text-xs font-semibold shadow-sm transition hover:bg-white/90" style={{ color: "#b45309" }}>
             {c.pack.cardCta}
           </button>
         </div>

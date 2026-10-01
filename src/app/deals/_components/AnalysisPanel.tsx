@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { creditFetch, notifyCreditChanged } from "@/lib/credit/client";
+import { creditFetch, notifyCreditChanged, openOutOfCredit } from "@/lib/credit/client";
 import { priceText, type PriceLabel } from "@/lib/credit/deal-pricing";
 
 /**
@@ -57,6 +57,12 @@ export function AnalysisPanel({ dealId, initialOpen, blocked, price, pmi, opensD
 
   async function confirm() {
     if (busy || blocked) return;
+    // Batch 21 (B5): "Top up to run it" opens the top-up dialog. It never starts
+    // the run, which in shadow mode went ahead and debited into overdraft.
+    if (label.state === "short") {
+      openOutOfCredit({ action: "full_analysis", requiredPence: label.basePence, mode: "topup" });
+      return;
+    }
     setPhase({ kind: "starting" });
     // Set once the purchase has started: from then on a lost connection may
     // have left a Quick look charged (a one-tap opens the deal first).
