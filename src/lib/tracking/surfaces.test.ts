@@ -76,4 +76,8 @@ test('a Stripe return is recognised before the flags are tidied away', () => {
   assert.equal(isStripeReturn(`${SITE}/account/billing?subscribed=1&plan=pro`), true);
   assert.equal(isStripeReturn(`${SITE}/account/billing`), false);
   assert.equal(isStripeReturn(`${SITE}/today?topup=1`), false);
+  // Batch 21 (E28): the starter pack's Checkout return is a Stripe return too.
+  assert.equal(isStripeReturn(`${SITE}/today?pack=1`), true);
+  assert.equal(isStripeReturn(`${SITE}/today`), false);
+  assert.equal(isStripeReturn(`${SITE}/today?offer=pack`), false);
 });

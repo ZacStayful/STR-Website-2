@@ -28,8 +28,10 @@ test('aggregateActivity counts each source per member and sums debits as positiv
   assert.equal(a.reports, 1);
   assert.equal(a.picks, 1);
   assert.equal(a.creditSpentPence, 495);
-  // Last active is the latest thing the member DID; a pick received does not count.
-  assert.equal(a.lastActiveAt, '2026-09-24T07:00:00Z');
+  // Last seen is the latest page load, deal open or report. A pick received does
+  // not count, and (Batch 21, E9) nor does a debit: the daily picks charge runs
+  // for members who never open the app, so the 09-24 debit above is ignored.
+  assert.equal(a.lastActiveAt, '2026-09-20T00:00:00Z');
   const b = rows.find((r) => r.id === 'b')!;
   assert.deepEqual([b.dealOpens, b.reports, b.picks, b.creditSpentPence, b.lastActiveAt, b.planCode, b.name], [0, 0, 1, 0, null, null, null]);
 });

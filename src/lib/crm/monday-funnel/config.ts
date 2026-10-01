@@ -56,8 +56,7 @@ export function groupOf(groupId: string | null | undefined): FunnelGroup | null 
   return null;
 }
 
-/** The only columns the site writes. */
-export const COLUMNS = {
+const FIXED_COLUMNS = {
   name: 'text_mm3ad9y7',
   email: 'text_mm3a8s7c',
   mobile: 'text_mm3ah0bk',
@@ -82,6 +81,22 @@ export const COLUMNS = {
   smsOk: 'boolean_mm7m4tvb',
   reengageSince: 'date_mm7mzn1p',
 } as const;
+
+/**
+ * Batch 21 (E2, Q11): "Weeks since sign-up", counted as Active weeks is (ISO
+ * weeks, Monday to Sunday, UK time), for the board's Engagement % to divide
+ * by instead of its ROUNDUP(days / 7). The board has no such column yet:
+ * create a Numbers column, put its id in MONDAY_FUNNEL_WEEKS_COLUMN and point
+ * the Engagement % formula at it. Until then the column does not exist here
+ * at all: never read from the board, never written.
+ */
+const WEEKS_COLUMN = process.env.MONDAY_FUNNEL_WEEKS_COLUMN?.trim() || null;
+
+/** The only columns the site writes. */
+export const COLUMNS: typeof FIXED_COLUMNS & { readonly weeksSinceSignup?: string } = {
+  ...FIXED_COLUMNS,
+  ...(WEEKS_COLUMN ? { weeksSinceSignup: WEEKS_COLUMN } : {}),
+};
 
 export type ColumnKey = keyof typeof COLUMNS;
 
@@ -116,6 +131,7 @@ export const COLUMN_TYPES: Readonly<Record<ColumnKey, 'text' | 'numbers' | 'date
   emailOk: 'checkbox',
   smsOk: 'checkbox',
   reengageSince: 'date',
+  weeksSinceSignup: 'numbers',
 };
 
 /** Written only when the row has none: who they are, and the two "first" dates. */

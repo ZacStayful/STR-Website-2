@@ -17,7 +17,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import { BANNER_ONLY_PREFIXES, ONE_SHOT_PARAMS, PAGEVIEW_AREA_PREFIXES, PAGEVIEW_PATHS, STRIPE_RETURN, TRACKING_PARAMS } from './config.ts';
+import { BANNER_ONLY_PREFIXES, ONE_SHOT_PARAMS, PAGEVIEW_AREA_PREFIXES, PAGEVIEW_PATHS, STRIPE_RETURNS, TRACKING_PARAMS } from './config.ts';
 
 export type Surface = 'tracked' | 'banner' | 'none';
 
@@ -120,6 +120,7 @@ export function isCleanForSend(href: string | null | undefined): boolean {
 export function isStripeReturn(href: string | null | undefined): boolean {
   if (typeof href !== 'string') return false;
   const url = parse(href);
-  if (!url || normalise(url.pathname) !== STRIPE_RETURN.path) return false;
-  return STRIPE_RETURN.params.some((p) => url.searchParams.has(p));
+  if (!url) return false;
+  // Batch 21 (E28): the pack's return (/today?pack=1) is a Stripe return too.
+  return STRIPE_RETURNS.some((r) => normalise(url.pathname) === r.path && r.params.some((p) => url.searchParams.has(p)));
 }

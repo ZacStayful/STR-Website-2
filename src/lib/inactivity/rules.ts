@@ -17,9 +17,10 @@
  * empty the rules are off.
  *
  * Who can be quiet at all: nobody on a live, trialling, past-due or paused
- * plan, unless they booked its cancellation (counted as cancelled from the
- * booking). A team member follows their owner's plan; their own activity
- * counts. Never an admin or a Stayful (@stayful.co.uk) account.
+ * plan, a booked cancellation included until the plan actually ends (Batch
+ * 21, E24, Q9: they have paid for the term). A team member follows their
+ * owner's plan; their own activity counts. Never an admin or a Stayful
+ * (@stayful.co.uk) account.
  *
  * Pure: no network, no database, no server-only.
  */
@@ -37,8 +38,15 @@ import type { LifecycleSettings } from '../lifecycle/settings.ts';
  */
 export const EMAIL_ENGAGEMENT_KINDS: readonly ActivityKind[] = ['email_click', 'sms_click', 'email_feedback', 'email_settings', 'profile_email_click', 'feedback_email_click'];
 
-/** Everything that keeps a member from being quiet: the weekly-active kinds and engaging by email or text. */
-export const ENGAGED_KINDS: readonly ActivityKind[] = [...QUALIFYING_KINDS, ...EMAIL_ENGAGEMENT_KINDS];
+/**
+ * Batch 21 (E7): using the product away from the site. A listing checked in
+ * the browser extension or a report run through the API is the member at
+ * work; record-only for weekly active, but never quiet.
+ */
+export const ENGAGED_EXTRA_KINDS: readonly ActivityKind[] = ['extension_check', 'api_report'];
+
+/** Everything that keeps a member from being quiet: the weekly-active kinds, engaging by email or text, and the extension or API. */
+export const ENGAGED_KINDS: readonly ActivityKind[] = [...QUALIFYING_KINDS, ...EMAIL_ENGAGEMENT_KINDS, ...ENGAGED_EXTRA_KINDS];
 
 /**
  * Does this action keep a member from being quiet? Every weekly-active kind,
@@ -48,6 +56,7 @@ export const ENGAGED_KINDS: readonly ActivityKind[] = [...QUALIFYING_KINDS, ...E
  */
 export function isEngagement(kind: string, extras?: Record<string, unknown> | null): boolean {
   if ((QUALIFYING_KINDS as readonly string[]).includes(kind)) return true;
+  if ((ENGAGED_EXTRA_KINDS as readonly string[]).includes(kind)) return true;
   if (!(EMAIL_ENGAGEMENT_KINDS as readonly string[]).includes(kind)) return false;
   return extras?.on !== false;
 }
@@ -65,7 +74,8 @@ export function isStaffEmail(email: string | null | undefined): boolean {
 export function inactivityEligible(input: { planStatus: AccountStatus; cancelBooked: boolean; admin: boolean; email: string | null }): boolean {
   if (input.admin || isStaffEmail(input.email)) return false;
   const onPlan = input.planStatus === 'paid' || input.planStatus === 'subscription_trial' || input.planStatus === 'paused';
-  return !onPlan || input.cancelBooked;
+  // Batch 21 (E24, Q9): a booked cancellation is still a paid plan until it ends (`cancelBooked` is kept for the record).
+  return !onPlan;
 }
 
 function dayNumber(ymd: string): number {

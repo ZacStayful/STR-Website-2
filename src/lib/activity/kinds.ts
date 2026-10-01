@@ -30,6 +30,9 @@ export const ACTIVITY_KINDS = {
   today_view: inApp('Viewed Today'),
   deal_view: inApp('Looked at a deal'),
   report_view: inApp('Opened a saved report'),
+  // Batch 21 (E6): the Explorer (its search and area pages) and My deals on screen, once a UK day each.
+  explorer_view: inApp('Looked at the Market Explorer'),
+  my_deals_view: inApp('Looked at My deals'),
 
   // Deals
   keep: inApp('Kept a deal'),
@@ -66,6 +69,15 @@ export const ACTIVITY_KINDS = {
   sms_verified: inApp('Verified a mobile for texts'),
   team_invite: inApp('Invited a team member'),
   team_join: inApp('Joined a team'),
+  // Batch 21 (E18): leaving or removing, and connecting the extension, are the member's doing too.
+  team_leave: inApp('Left a team'),
+  team_remove: inApp('Removed a team member'),
+  extension_connected: inApp('Connected the browser extension'),
+
+  // Batch 21 (E5): Leads (funnel owners). Lead and funnel ids, the action and a stage name only.
+  lead_action: inApp('Worked a lead'),
+  funnel_edited: inApp('Set up or changed a funnel'),
+  api_key_created: inApp('Created an API key'),
 
   // Money
   topup: inApp('Topped up'),
@@ -85,12 +97,14 @@ export const ACTIVITY_KINDS = {
   reminder_shown: recordOnly('Was shown a reminder'),
 
   // Batch 12: the profile quiz (logged from src/lib/profile/server.ts).
-  // Question ids only, never an answer.
-  profile_started: inApp('Started the profile quiz'),
+  // Question ids only, never an answer. Batch 21 (E1, Q15): opening the quiz
+  // is where every new sign-in is sent, so it is recorded, never weekly
+  // active; the first answer is the first thing a member does.
+  profile_started: recordOnly('Started the profile quiz'),
   profile_answered: inApp('Answered a profile question'),
   profile_not_sure: inApp('Said "not sure" to a profile question'),
   profile_finish_later: inApp('Left the profile quiz for later'),
-  profile_resumed: inApp('Came back to the profile quiz'),
+  profile_resumed: recordOnly('Came back to the profile quiz'),
   profile_completed: inApp('Completed their profile'),
   profile_viewed: inApp('Viewed their profile'),
   profile_edited: inApp('Changed a profile answer'),
@@ -157,6 +171,10 @@ export const ACTIVITY_KINDS = {
   welcome_skipped: recordOnly('Skipped the welcome questions'),
   extension_check: recordOnly('Checked a listing in the browser extension'),
   api_report: recordOnly('Ran a report through the API'),
+  // Batch 21 (E17, E18): a STOP or START by text, and a PDF fetched through the API.
+  sms_stop: recordOnly('Texted STOP'),
+  sms_start: recordOnly('Texted START'),
+  api_pdf: recordOnly('Downloaded a PDF through the API'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;
@@ -186,27 +204,44 @@ export function kindLabel(kind: string): string {
   return isActivityKind(kind) ? ACTIVITY_KINDS[kind].label : kind.replace(/_/g, ' ');
 }
 
+/** Who made a subscription change, as billing/subscription-events.ts records it (SubEventSource). */
+export type PlanChangeSource = 'self_serve' | 'portal' | 'stripe' | 'manual' | 'backfill';
+
 /**
  * A subscription change (billing/subscription-events.ts kinds) as an
  * activity, or null when it is not something the member did: a plan ending
  * at the end of its term, a failed or recovered payment, or a resume Stripe
- * reports on its own (that may be the pause simply running out). A resume
- * the member asked for in the app is theirs.
+ * reports on its own (that may be the pause simply running out). A start is
+ * the member's whoever reports it (Stripe is the only place it is seen),
+ * unless the plan was granted by hand.
+ *
+ * Batch 21 (E15, E19): a pause, a resume or a plan change is the member's
+ * only when they made it themselves, in the app (self_serve) or in Stripe's
+ * portal; seen from Stripe otherwise it may be the admin's in the dashboard,
+ * and the app has already logged its own, so Stripe's copy is not logged
+ * twice. A cancellation (or its reversal) seen from Stripe is still logged:
+ * the webhook labels every change it sees 'stripe' (src/lib/stripe/webhook.ts
+ * logPlanActivity), so a cancellation booked in the portal, which is the
+ * member's and which the app never sees, would otherwise be lost. Once the
+ * webhook passes the event's own source, 'stripe' can leave that rule too
+ * (E20).
  */
-export function planActivityKind(subscriptionEvent: string, source: 'self_serve' | 'stripe'): ActivityKind | null {
+export function planActivityKind(subscriptionEvent: string, source: PlanChangeSource): ActivityKind | null {
+  if (source === 'manual' || source === 'backfill') return null;
+  const own = source === 'self_serve' || source === 'portal';
   switch (subscriptionEvent) {
     case 'started':
       return 'plan_start';
     case 'plan_changed':
-      return 'plan_change';
+      return own ? 'plan_change' : null;
     case 'paused':
-      return 'plan_pause';
+      return own ? 'plan_pause' : null;
     case 'cancel_scheduled':
       return 'plan_cancel';
     case 'cancel_reverted':
       return 'plan_cancel_undone';
     case 'resumed':
-      return source === 'self_serve' ? 'plan_resume' : null;
+      return own ? 'plan_resume' : null;
     default:
       return null;
   }

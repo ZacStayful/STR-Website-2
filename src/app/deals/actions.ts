@@ -75,6 +75,8 @@ export async function savePipelineAction(formData: FormData): Promise<void> {
   const payer = await payerFor(user.id);
   const result = await saveOpenedDealToPipeline(user.id, id, adminUser, payer.payerId);
   if (!result.ok) redirect(`/deals/${encodeURIComponent(id)}?msg=${result.code === 'missing' ? 'missing' : result.code === 'not_open' ? 'not_open' : 'save_failed'}`);
+  // Batch 21 (E11): saving an opened deal to My deals is the member's doing (a Keep by another door).
+  if (result.created) logActivity(user.id, 'stage_move', { dealId: id, extras: { to: 'kept', via: 'save', item: `l-${result.checkedListingId}` } });
   // The deal's place on My deals (the Explorer's listings pane still takes old links).
   redirect(myDealsFocusPath(`d-${id}`));
 }

@@ -35,7 +35,8 @@ const COLUMNS: { key: SortKey; label: string; right?: boolean }[] = [
   // Batch 7: deals at these stages right now.
   { key: "offer", label: "At Offer", right: true },
   { key: "secured", label: "At Secured", right: true },
-  { key: "lastActive", label: "Last active" },
+  // Batch 21 (E9): any page load, a deal open or a report; actions are /admin/weekly-active's and Monday's "Last active".
+  { key: "lastActive", label: "Last seen" },
 ];
 
 /**

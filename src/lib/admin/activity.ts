@@ -93,8 +93,11 @@ export function aggregateActivity(input: ActivityInput): MemberActivity[] {
     creditSpentPence: spent.get(p.id)?.pence ?? 0,
     atOffer: atOffer.get(p.id) ?? 0,
     atSecured: atSecured.get(p.id) ?? 0,
-    // A pick received is not the member doing something; the rest are.
-    lastActiveAt: latestOf(p.last_seen_at, opens.get(p.id)?.last, reports.get(p.id)?.last, spent.get(p.id)?.last),
+    // Batch 21 (E9): "Last seen": any page load, a deal open or a report they
+    // ran. Not a credit debit: the automatic daily-picks and daily-deals
+    // charges made a member who never opened the app read as "active today".
+    // Monday's "Last active" and /admin/weekly-active are actions only.
+    lastActiveAt: latestOf(p.last_seen_at, opens.get(p.id)?.last, reports.get(p.id)?.last),
   }));
 }
 

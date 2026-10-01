@@ -1,6 +1,7 @@
 import { requireScope, isResponse, apiError } from '@/lib/api/auth';
 import { getReport } from '@/lib/api/reports-query';
 import { renderReportPdf, reportFilename } from '@/lib/pdf/render';
+import { logActivity } from '@/lib/activity/log';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -20,6 +21,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!report?.result) return apiError('not_found', 'No report with that id.');
 
   const buffer = await renderReportPdf(report.result);
+  // Batch 21 (E18): recorded (never weekly active: an agent, not the member in the app).
+  logActivity(auth.userId, 'api_pdf', { source: 'system', extras: { report: id } });
   return new Response(new Uint8Array(buffer), {
     status: 200,
     headers: {

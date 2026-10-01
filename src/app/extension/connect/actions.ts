@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { getMarketAccess } from '@/lib/market/gate';
 import { mintExtensionToken, revokeExtensionToken } from '@/lib/extension/tokens';
+import { logActivity } from '@/lib/activity/log';
 
 export interface MintResult {
   token: string | null;
@@ -18,6 +19,8 @@ export async function mintExtensionTokenAction(_prev: MintResult, formData: Form
   const label = typeof labelRaw === 'string' && labelRaw.trim() ? labelRaw.trim().slice(0, 80) : 'Chrome';
   const minted = await mintExtensionToken(access.user.id, label);
   if (!minted) return { token: null, error: 'Could not create a token right now. Please try again.' };
+  // Batch 21 (E18): connecting the extension is the member's doing.
+  logActivity(access.user.id, 'extension_connected');
   revalidatePath('/extension/connect');
   return { token: minted.raw, error: null };
 }

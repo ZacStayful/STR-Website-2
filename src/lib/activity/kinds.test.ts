@@ -44,12 +44,20 @@ test('unknown kinds are refused and read as themselves', () => {
 
 test('subscription changes the member made become activity; the rest do not', () => {
   assert.equal(planActivityKind('started', 'stripe'), 'plan_start');
-  assert.equal(planActivityKind('plan_changed', 'stripe'), 'plan_change');
+  assert.equal(planActivityKind('started', 'manual'), null, 'a plan granted by hand is not the member starting one');
+  assert.equal(planActivityKind('plan_changed', 'self_serve'), 'plan_change');
   assert.equal(planActivityKind('paused', 'self_serve'), 'plan_pause');
   assert.equal(planActivityKind('cancel_scheduled', 'self_serve'), 'plan_cancel');
-  assert.equal(planActivityKind('cancel_reverted', 'stripe'), 'plan_cancel_undone');
+  assert.equal(planActivityKind('cancel_reverted', 'self_serve'), 'plan_cancel_undone');
+  // Batch 21 (E15, E19): a pause or a plan change seen from Stripe is the app's own (already logged) or the admin's; one made in the portal is the member's.
+  for (const k of ['plan_changed', 'paused', 'resumed']) assert.equal(planActivityKind(k, 'stripe'), null, k);
+  assert.equal(planActivityKind('plan_changed', 'portal'), 'plan_change');
+  assert.equal(planActivityKind('paused', 'portal'), 'plan_pause');
+  // A cancellation seen from Stripe is still logged: the webhook labels a portal cancellation 'stripe' today (E20).
+  assert.equal(planActivityKind('cancel_scheduled', 'stripe'), 'plan_cancel');
+  assert.equal(planActivityKind('cancel_reverted', 'portal'), 'plan_cancel_undone');
+  assert.equal(planActivityKind('cancel_scheduled', 'manual'), null);
   assert.equal(planActivityKind('resumed', 'self_serve'), 'plan_resume');
-  assert.equal(planActivityKind('resumed', 'stripe'), null);
   assert.equal(planActivityKind('ended', 'stripe'), null);
   assert.equal(planActivityKind('past_due', 'stripe'), null);
   assert.equal(planActivityKind('recovered', 'stripe'), null);
@@ -83,5 +91,16 @@ test("Batch 20's kinds: buying the pack and choosing at low credit count; being 
     assert.equal(isActivityKind(k), true, k);
     assert.equal(isQualifying(k), false, k);
     assert.equal(isCounted(k), false, k);
+  }
+});
+
+test("Batch 21's kinds: looking at the Explorer or My deals, working leads and funnels, leaving or removing a seat and connecting the extension count; a STOP, a START and an API PDF only record", () => {
+  for (const k of ['explorer_view', 'my_deals_view', 'lead_action', 'funnel_edited', 'api_key_created', 'team_leave', 'team_remove', 'extension_connected']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), true, k);
+  }
+  for (const k of ['sms_stop', 'sms_start', 'api_pdf', 'profile_started', 'profile_resumed']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
   }
 });
