@@ -49,12 +49,11 @@ test('subscription changes the member made become activity; the rest do not', ()
   assert.equal(planActivityKind('paused', 'self_serve'), 'plan_pause');
   assert.equal(planActivityKind('cancel_scheduled', 'self_serve'), 'plan_cancel');
   assert.equal(planActivityKind('cancel_reverted', 'self_serve'), 'plan_cancel_undone');
-  // Batch 21 (E15, E19): a pause or a plan change seen from Stripe is the app's own (already logged) or the admin's; one made in the portal is the member's.
-  for (const k of ['plan_changed', 'paused', 'resumed']) assert.equal(planActivityKind(k, 'stripe'), null, k);
+  // Batch 21 (E15, E19, E20): a pause, a plan change or a cancellation seen from Stripe is the app's own (already logged) or the admin's in the dashboard; one made in the portal is the member's.
+  for (const k of ['plan_changed', 'paused', 'resumed', 'cancel_scheduled', 'cancel_reverted']) assert.equal(planActivityKind(k, 'stripe'), null, k);
   assert.equal(planActivityKind('plan_changed', 'portal'), 'plan_change');
   assert.equal(planActivityKind('paused', 'portal'), 'plan_pause');
-  // A cancellation seen from Stripe is still logged: the webhook labels a portal cancellation 'stripe' today (E20).
-  assert.equal(planActivityKind('cancel_scheduled', 'stripe'), 'plan_cancel');
+  assert.equal(planActivityKind('cancel_scheduled', 'portal'), 'plan_cancel');
   assert.equal(planActivityKind('cancel_reverted', 'portal'), 'plan_cancel_undone');
   assert.equal(planActivityKind('cancel_scheduled', 'manual'), null);
   assert.equal(planActivityKind('resumed', 'self_serve'), 'plan_resume');
