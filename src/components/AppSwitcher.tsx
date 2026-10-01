@@ -6,22 +6,22 @@ import { HeaderEyeLink } from "@/components/intelligence/HeaderEyeLink";
 import type { EyeLevel } from "@/components/StayfulEye";
 import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type ActiveNav } from "@/lib/nav";
 
-// Thin strip shown to signed-in members: Today, My deals and Account — the
-// three places the app now lives — plus Leads for anyone whose team owns a
+// Thin strip shown to signed-in members: Today, the three tools (Browse,
+// Markets, Analyser), My deals and Account — plus Leads for anyone whose team owns a
 // funnel (existing funnel customers keep their door), the admin dashboard for
 // admins, and the usage chip (Batch 10), which reads the balance from the
 // surrounding CreditProvider (see AppShell). A team member's team is on their
 // Account page (Batch 11), so it has no header item of its own.
 //
 // Where each item points is decided in src/lib/nav.ts, one line per item. A
-// page that left the strip (the analyser, the Market Explorer, daily picks)
-// still announces the section it always did, and NAV_FOR_SECTION says which
-// item that lights up.
+// page with no item of its own (daily picks, the profile page) still
+// announces the section it always did, and NAV_FOR_SECTION says which item
+// that lights up.
 //
 // The Stayful Intelligence eye (Batch 22) comes first, then the nav items;
 // the pill, the usage chip, the admin's Dashboard chip and Feedback sit in
 // one group after them, so on a phone the group wraps onto its own row
-// rather than splitting the three items.
+// rather than splitting the nav items.
 export function AppSwitcher({ active, admin, leads, profile = null, saved = null, eyeLevel = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null; eyeLevel?: EyeLevel | null }) {
   const current = activeNavFor(active);
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
@@ -44,7 +44,7 @@ export function AppSwitcher({ active, admin, leads, profile = null, saved = null
       aria-label="Stayful apps"
       style={{
         display: "flex",
-        gap: 18,
+        gap: 12,
         justifyContent: "center",
         alignItems: "center",
         flexWrap: "wrap",

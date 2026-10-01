@@ -5,8 +5,8 @@ import { parseDealFilters } from './marketplace/grid.ts';
 
 const SECTIONS: Section[] = ['today', 'estimate', 'markets', 'deals', 'picks', 'reports', 'leads', 'account', 'profile'];
 
-test('the nav has exactly three items, each with a label and an internal href', () => {
-  assert.deepEqual(NAV_ORDER, ['today', 'myDeals', 'account']);
+test('the nav: Today, the three tools, My deals and Account, each with a label and an internal href', () => {
+  assert.deepEqual(NAV_ORDER, ['today', 'browse', 'markets', 'analyser', 'myDeals', 'account']);
   for (const key of NAV_ORDER) {
     assert.ok(NAV_TARGETS[key].label.length > 0, key);
     assert.ok(NAV_TARGETS[key].href.startsWith('/'), key);
@@ -14,6 +14,9 @@ test('the nav has exactly three items, each with a label and an internal href', 
   assert.ok(LEADS_NAV.href.startsWith('/'));
   assert.equal(NAV_TARGETS.today.href, '/today');
   assert.equal(NAV_TARGETS.myDeals.href, '/my-deals');
+  assert.equal(NAV_TARGETS.browse.href, '/deals');
+  assert.equal(NAV_TARGETS.markets.href, '/markets');
+  assert.equal(NAV_TARGETS.analyser.href, '/estimate');
 });
 
 test('every section highlights one of the nav items (or Leads)', () => {
@@ -23,7 +26,9 @@ test('every section highlights one of the nav items (or Leads)', () => {
     assert.equal(active, NAV_FOR_SECTION[s]);
   }
   assert.equal(activeNavFor('today'), 'today');
-  assert.equal(activeNavFor('deals'), 'today');
+  assert.equal(activeNavFor('deals'), 'browse');
+  assert.equal(activeNavFor('markets'), 'markets');
+  assert.equal(activeNavFor('estimate'), 'analyser');
   assert.equal(activeNavFor('picks'), 'today');
   assert.equal(activeNavFor('reports'), 'myDeals');
   assert.equal(activeNavFor('account'), 'account');
