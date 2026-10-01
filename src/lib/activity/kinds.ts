@@ -160,6 +160,10 @@ export const ACTIVITY_KINDS = {
   low_credit_starter: inApp('Chose Starter when credit was low'),
   low_credit_topup: inApp('Chose a top-up when credit was low'),
 
+  // Batch 22: the signup reveal and Stayful Intelligence
+  reveal_viewed: inApp('Saw their signup matches'),
+  deep_search_run: inApp('Ran a deep search'),
+
   // Recorded, but not the member doing something in the app
   email_click: recordOnly('Came in from an email'),
   sms_click: recordOnly('Came in from a text'),
@@ -175,6 +179,8 @@ export const ACTIVITY_KINDS = {
   sms_stop: recordOnly('Texted STOP'),
   sms_start: recordOnly('Texted START'),
   api_pdf: recordOnly('Downloaded a PDF through the API'),
+  // Batch 22: opening the Stayful Intelligence view from the header, asking it a question, a what-if preview, the deep-search line shown.
+  si_view: recordOnly('Looked at Stayful Intelligence'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;

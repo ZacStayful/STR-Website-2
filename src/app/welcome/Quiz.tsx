@@ -21,6 +21,7 @@ import type { PackCopy } from "@/lib/starter-pack/rules";
 import { StayfulEye } from "@/components/StayfulEye";
 import { levelUpLabel } from "@/lib/profile/levels";
 import { LEVEL_UP_MS } from "@/lib/intelligence/config";
+import { publishThinking } from "@/lib/intelligence/thinking-signal";
 
 export interface QuizStart {
   answers: Answers;
@@ -38,6 +39,8 @@ export interface QuizStart {
   areas: QuizArea[];
   /** Batch 20: the starter pack, offered once the welcome questions are answered (eligible new members only). */
   pack?: { copy: PackCopy; returnTo: string } | null;
+  /** Batch 22: a new member's signup reveal: the end of the quiz and "Finish later" go there. */
+  revealHref?: string | null;
   profileHref: string;
   privacyHref: string;
   todayHref: string;
@@ -66,6 +69,12 @@ export function Quiz(start: QuizStart) {
   const [busy, startTransition] = useTransition();
   // Batch 22: a level reached plays the eye's power-up and says so, under a second; nothing waits for it.
   const [levelUp, setLevelUp] = useState<{ seq: number; text: string } | null>(null);
+  // Batch 22, Part D2: the same numbers, for the thinking background (a burst per real answer, a wave per level).
+  const [answerSeq, setAnswerSeq] = useState(0);
+  useEffect(() => {
+    const a = progress.accuracy;
+    publishThinking({ level: a.level, realAnswers: a.real, levelAt: a.levelAt, nextAt: a.nextAt, answerSeq, levelUpSeq: levelUp?.seq ?? 0 });
+  }, [progress, answerSeq, levelUp?.seq]);
   useEffect(() => {
     if (!levelUp) return;
     const t = setTimeout(() => setLevelUp((l) => (l && l.seq === levelUp.seq ? { ...l, text: "" } : l)), LEVEL_UP_MS);
@@ -96,6 +105,10 @@ export function Quiz(start: QuizStart) {
       }
       const next = view.progress.next;
       if (!next) {
+        if (start.revealHref) {
+          router.push(start.revealHref);
+          return;
+        }
         setScreen({ kind: "done" });
         return;
       }
@@ -110,7 +123,7 @@ export function Quiz(start: QuizStart) {
       }
       setScreen({ kind: "question", id: next });
     },
-    [router, samplesShown, start.returnTo],
+    [router, samplesShown, start.returnTo, start.revealHref],
   );
 
   const answer = (id: QuestionId, value: unknown, notSure: boolean) => {
@@ -125,6 +138,7 @@ export function Quiz(start: QuizStart) {
         return;
       }
       setAnswers(r.view.answers);
+      if (r.view.progress.accuracy.real > progress.accuracy.real) setAnswerSeq((n) => n + 1);
       if (r.view.progress.accuracy.level > progress.accuracy.level) {
         const text = levelUpLabel(r.view.progress.accuracy.level) ?? "";
         setLevelUp((l) => ({ seq: (l?.seq ?? 0) + 1, text }));
@@ -155,7 +169,7 @@ export function Quiz(start: QuizStart) {
   const finishLater = (id: QuestionId) => {
     startTransition(async () => {
       await finishLaterAction(id).catch(() => {});
-      router.push(start.returnTo);
+      router.push(start.revealHref ?? start.returnTo);
     });
   };
 
@@ -305,7 +319,12 @@ function PackScreen({ pack, onNotNow, onContinue }: { pack: { copy: PackCopy; re
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-8">{children}</div>;
+  // data-quiz-card: the thinking background draws nothing behind it (Batch 22).
+  return (
+    <div data-quiz-card className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-8">
+      {children}
+    </div>
+  );
 }
 
 /**

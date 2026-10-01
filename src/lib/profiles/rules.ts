@@ -221,3 +221,20 @@ export function profilePriceLine(dailyLine: string | null): string | null {
 export function entryProfile(tags: { pipeline?: string | null; reaction?: string | null; pick?: string | null; open?: string | null }): string | null {
   return tags.pipeline ?? tags.reaction ?? tags.pick ?? tags.open ?? null;
 }
+
+/**
+ * Batch 22: the member's PRIMARY profile, defined here once (the signup
+ * reveal, the signup search and Batch 25 all use it): the earliest-created
+ * profile that is not deleted, ties by id. For a new member it is the first
+ * profile, "My deals". Null when there is none.
+ */
+export function primaryOf(profiles: readonly Pick<SavedProfile, 'id' | 'createdAt' | 'deletedAt'>[]): string | null {
+  const live = profiles.filter((p) => !p.deletedAt);
+  if (live.length === 0) return null;
+  const t = (iso: string) => {
+    const n = Date.parse(iso);
+    return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+  };
+  const best = [...live].sort((a, b) => t(a.createdAt) - t(b.createdAt) || a.id.localeCompare(b.id))[0];
+  return best.id;
+}

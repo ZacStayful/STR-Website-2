@@ -13,6 +13,7 @@ import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditP
 import { CreditBanner } from "@/components/credit/CreditBanner";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 import { accuracySettings, accuracyView, requireProfileStart } from "@/lib/profile/server";
+import { revealPending } from "@/lib/intelligence/reveal-server";
 import { profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import type { PillProfiles } from "@/components/ProfilePill";
@@ -68,6 +69,11 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
   // read feeds the Profile pill. It throws a redirect, so it sits outside
   // the try below.
   const profile = await requireProfileStart(user.id, redirectTo);
+  // Batch 22: a new member's signup reveal, once, before anything else (a
+  // closed tab brings it back until it has been seen). Fails open.
+  if (profile && !profile.teamMember && profile.progress.mandatoryDone && (await revealPending(user.id, user.created_at))) {
+    redirect(`/welcome/reveal?next=${encodeURIComponent(redirectTo)}`);
+  }
   // Batch 18: what's new, for this member. Started now so it runs alongside
   // the reads below; it never rejects, and shows nothing on any failure.
   const announcementsRead = unseenAnnouncementsFor(user.id, user.created_at ?? null);

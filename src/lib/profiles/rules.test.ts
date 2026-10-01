@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_GOALS } from '../market/goals.ts';
-import { chargeOrder, checkName, labelFor, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile, typesFromForm } from './rules.ts';
+import { chargeOrder, checkName, labelFor, criteriaForNewProfile, entryProfile, isRunning, labelsShown, limitReached, maxProfilesFor, parseProfileRow, primaryOf, profileLabel, profileLinks, profilePriceLine, seatsFor, SHARED_QUESTION_IDS, type SavedProfile, typesFromForm } from './rules.ts';
 
 const p = (over: Partial<{ id: string; name: string; isActive: boolean; createdAt: string; pausedAt: string | null; deletedAt: string | null }> = {}) => ({
   id: over.id ?? 'a',
@@ -130,4 +130,12 @@ test('labelFor: a name only once labels show, deleted ones marked', () => {
   assert.equal(labelFor(two, 'zzz'), null);
   assert.equal(labelFor(undefined, 'a'), null);
   assert.equal(labelFor(two, null), null);
+});
+
+test('Batch 22: the primary profile is the earliest undeleted one, ties by id', () => {
+  const p = (id: string, createdAt: string, deletedAt: string | null = null) => ({ id, createdAt, deletedAt });
+  assert.equal(primaryOf([p('b', '2026-10-01T10:00:00Z'), p('a', '2026-10-02T10:00:00Z')]), 'b');
+  assert.equal(primaryOf([p('b', '2026-10-01T10:00:00Z', '2026-10-03T00:00:00Z'), p('a', '2026-10-02T10:00:00Z')]), 'a');
+  assert.equal(primaryOf([p('b', '2026-10-01T10:00:00Z'), p('a', '2026-10-01T10:00:00Z')]), 'a');
+  assert.equal(primaryOf([]), null);
 });

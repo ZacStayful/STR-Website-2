@@ -70,6 +70,7 @@ import { projectChecksOn, readProjectSettings } from "../project/settings-server
 import { projectClearedUrls } from "../project/read-server";
 import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
+import { revealedFor } from "../intelligence/reveal-server";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
 // Every member with picks on (profiles.sourcing_alerts, default on) who has
@@ -812,6 +813,19 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       }
     }
     addUnlocked(sentByUser, memberIds, (id) => payerIn(payers, id).payerId, unlockedByPayer);
+  }
+
+  // Batch 22 (bug 5, revealed deals): a deal a member's signup reveal showed
+  // is never their morning pick. Its list's own exclusion keeps it off Today.
+  if (urlToDealId.size > 0) {
+    const revealed = await revealedFor([...new Set(members.map((m) => m.id))]);
+    if (revealed.size > 0) {
+      const urlOf = new Map([...urlToDealId].map(([url, id]) => [id, url]));
+      for (const [userId, dealIds] of revealed) {
+        const urls = [...dealIds].map((id) => urlOf.get(id)).filter((u): u is string => Boolean(u));
+        if (urls.length > 0) sentByUser.set(userId, new Set([...(sentByUser.get(userId) ?? []), ...urls]));
+      }
+    }
   }
 
   // What "slow" means round here. Computed from the listings each query already

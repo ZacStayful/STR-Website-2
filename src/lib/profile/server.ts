@@ -35,11 +35,11 @@ import { applyAnswer, clearAnswer, emptyAnswers, questionById, questionsFor, SEC
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type AnsweredMap, type Progress, type QuizRecord } from './state';
 import { profileFilters, profileFiltersByType } from './matching';
 import { typesShown } from './deal-types';
-import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIND, type CreditDecision } from './credit';
+import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIND, realAnswersNeeded, type CreditDecision } from './credit';
 import { rewardEligibility, type Eligibility } from '../today/checklist';
 import { grant, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings } from '../credit/unit-costs';
-import { accuracyHint, accuracyLabel, accuracyLevel, levelMarkers, type Level } from './levels';
+import { accuracyHint, accuracyLabel, accuracyLevel, advancedNeeded, levelMarkers, type Level } from './levels';
 import { startAction, welcomeGranted } from '../credit/action';
 import { newActionId, runMetered } from '../credit/context';
 import { geocodePostcode } from '../apis/geocode';
@@ -181,6 +181,12 @@ export interface AccuracyView {
   /** Where each level's marker sits on the bar, and how far the member is (0–100). */
   markers: Record<1 | 2 | 3, number>;
   at: number;
+  /** The next level and the real answers it needs; null at the top. */
+  next: { name: string; needed: number } | null;
+  /** Real answers so far, where this level started and where the next begins (the thinking background's growth). */
+  real: number;
+  levelAt: number;
+  nextAt: number | null;
 }
 
 /** The level settings: Advanced's share, and the profile credit's for the top level. */
@@ -215,7 +221,25 @@ export function accuracyView(p: Progress, s: AccuracySettings): AccuracyView {
   const input = { questions: p.questions.length, mandatory: p.mandatory.length, mandatoryDone: p.mandatoryDone, answered: p.answered.length, real: p.real, realMandatory };
   const l = accuracyLevel(input, s);
   const total = Math.max(1, p.questions.length);
-  return { level: l.level, name: l.name, label: accuracyLabel(l), hint: accuracyHint(l), markers: levelMarkers(input, s), at: Math.min(100, Math.round((p.real / total) * 100)) };
+  return {
+    level: l.level,
+    name: l.name,
+    label: accuracyLabel(l),
+    hint: accuracyHint(l),
+    markers: levelMarkers(input, s),
+    at: Math.min(100, Math.round((p.real / total) * 100)),
+    next: l.next ? { name: l.next.name, needed: l.next.needed } : null,
+    real: p.real,
+    ...levelSpan(input, s, l.level),
+  };
+}
+
+/** Real answers at which this level started and the next one begins. */
+function levelSpan(p: { questions: number; mandatory: number }, s: AccuracySettings, level: Level): { levelAt: number; nextAt: number | null } {
+  const adv = p.mandatory + advancedNeeded(p, s.advancedPct);
+  const top = Math.max(adv, realAnswersNeeded({ questions: p.questions, mandatory: p.mandatory, minRealPct: s.siPct }));
+  const at = [0, p.mandatory, adv, top];
+  return { levelAt: at[level], nextAt: level >= 3 ? null : at[level + 1] };
 }
 
 /** The live level settings (billing_settings, 60 s cache). */

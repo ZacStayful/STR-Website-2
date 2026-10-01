@@ -6,6 +6,8 @@ import { quizPathFor, welcomeReturnPath, HOME_PATH } from "@/lib/auth/landing";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { rankedAreasForQuiz } from "@/lib/onboarding/server";
 import { isQuestionId, questionsFor } from "@/lib/profile/questions";
+import { isRevealMember } from "@/lib/intelligence/reveal-server";
+import { ThinkingBackgroundMount } from "./_components/ThinkingBackgroundMount";
 import { accuracySettings, creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progressView } from "@/lib/profile/server";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
@@ -78,6 +80,9 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
         })
       : false;
 
+  // Batch 22: a new member goes from the last answer (or "Finish later") straight to their signup reveal.
+  const revealHref = !editing && !summary.teamMember && (await isRevealMember(user.id, user.created_at)) ? `/welcome/reveal?next=${encodeURIComponent(returnTo)}` : null;
+
   // Batch 20: the starter pack, offered as the welcome questions are finished (only looked up when it could show).
   const packState = !editing && !summary.teamMember && !summary.progress.mandatoryDone ? await starterPackStateFor(user.id) : null;
   const pack = packState?.offer.eligible ? { copy: packState.copy, returnTo: quizPathFor(returnTo) } : null;
@@ -85,7 +90,9 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
   return (
     <main className="min-h-screen bg-background px-4 py-6 sm:py-12">
       <VisitHeartbeat />
-      <div className="mx-auto w-full max-w-lg">
+      {/* Batch 22: the thinking background, new members only and never while changing one answer. */}
+      {revealHref && <ThinkingBackgroundMount />}
+      <div className="relative z-10 mx-auto w-full max-w-lg">
         <Quiz
           answers={summary.answers}
           progress={progressView(summary.progress, levelSettings)}
@@ -97,6 +104,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
           consentCheckbox={consentCheckbox}
           areas={areas}
           pack={pack}
+          revealHref={revealHref}
           profileHref={GOALS_EDITOR_HREF}
           privacyHref="/privacy"
           todayHref={HOME_PATH}
