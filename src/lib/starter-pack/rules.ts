@@ -22,7 +22,31 @@
 import { formatGbp } from '../credit/pricing.ts';
 import { starterPackBonusPence, isPackAccount, type LifecycleSettings } from '../lifecycle/settings.ts';
 
-export type OfferBlock = 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan';
+/** Batch 21 (B47): 'pending' is a Checkout this browser started minutes ago that the webhook has not settled yet. */
+export type OfferBlock = 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan' | 'pending';
+
+/** How long after starting a Checkout the offer stays hidden in that browser, so the member cannot pay twice while the webhook is on its way. */
+export const CHECKOUT_PENDING_MS = 10 * 60_000;
+
+/**
+ * The email key the pack's once-per-person claim is made on (Batch 21,
+ * B21): trimmed and lower-cased as profiles.email is (emailKey), with a
+ * plus-tag dropped and, for Gmail, the dots in the local part removed and
+ * googlemail.com read as gmail.com, since those all deliver to one inbox.
+ * The profile's own key is left alone: this is only for the claim.
+ */
+export function packEmailKey(email: string | null | undefined): string | null {
+  const key = (email ?? '').trim().toLowerCase();
+  const at = key.lastIndexOf('@');
+  if (at <= 0) return null;
+  let local = key.slice(0, at);
+  let domain = key.slice(at + 1);
+  const plus = local.indexOf('+');
+  if (plus > 0) local = local.slice(0, plus);
+  if (domain === 'googlemail.com') domain = 'gmail.com';
+  if (domain === 'gmail.com') local = local.replace(/\./g, '');
+  return local ? `${local}@${domain}` : null;
+}
 
 export interface PackFacts {
   createdAt: string | null;
@@ -38,6 +62,8 @@ export interface PackFacts {
   alreadyHad: boolean;
   /** A live, trialling, past-due or paused subscription, or a plan granted by hand. */
   onPlan: boolean;
+  /** Batch 21 (B47): this browser started a pack Checkout in the last CHECKOUT_PENDING_MS and no purchase row has arrived yet. */
+  checkoutPending?: boolean;
 }
 
 export type PackOffer = { eligible: true } | { eligible: false; reason: OfferBlock };
@@ -49,6 +75,7 @@ export function packOffer(f: PackFacts, s: Pick<LifecycleSettings, 'starterPackF
   if (f.bought) return { eligible: false, reason: 'bought' };
   if (f.alreadyHad) return { eligible: false, reason: 'already_had' };
   if (f.onPlan) return { eligible: false, reason: 'on_plan' };
+  if (f.checkoutPending) return { eligible: false, reason: 'pending' };
   return { eligible: true };
 }
 

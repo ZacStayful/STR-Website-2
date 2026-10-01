@@ -7,6 +7,7 @@ import { isDisposableEmail, normaliseMobile } from './abuse';
 import { teamOf, hasOpenInvite } from '../team';
 import { isPackAccount, welcomeGrantRef } from '../lifecycle/settings';
 import { readStarterPackCutover } from '../lifecycle/settings-server';
+import { welcomeOutcome, withheldReason } from './welcome-rules';
 
 /**
  * Grants the one-off welcome credit to a member the first time we see them
@@ -37,15 +38,36 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
   }
   if (await hasOpenInvite(email)) return { granted: false, withheld: null };
 
-  let withheld: string | null = null;
-  if (isDisposableEmail(email)) withheld = 'disposable_email';
-
+  // Batch 21 (G3): the facts, then the one decision (src/lib/credit/welcome-rules.ts, tested).
   const mobileKey = normaliseMobile(profile.mobile as string | null);
-  if (!withheld && mobileKey) {
+  let mobileAlreadyUsed = false;
+  if (mobileKey) {
     const { data: clash } = await admin.from('profiles').select('id').eq('mobile_key', mobileKey).neq('id', userId).limit(1);
-    if ((clash?.length ?? 0) > 0) withheld = 'mobile_already_used';
+    mobileAlreadyUsed = (clash?.length ?? 0) > 0;
+  }
+  // Batch 20: the starter pack replaces the welcome credit for new members.
+  // Read directly, never from a default: when the setting cannot be read
+  // nothing is stamped and the next sign-in decides, so a bad read can never
+  // grant £20 to a member the pack was meant for.
+  const cutover = await readStarterPackCutover();
+  // Batch 21 (B45): a pack bought or being paid for (the cutover moved later
+  // while a Checkout was in flight) is never topped with the £20 as well.
+  const { data: packRows } = await admin.from('starter_pack_purchases').select('payment_intent_id').eq('user_id', userId).in('status', ['reserved', 'granted']).limit(1);
+  const outcome = welcomeOutcome({
+    teamMember: false,
+    openInvite: false,
+    disposableEmail: isDisposableEmail(email),
+    mobileAlreadyUsed,
+    cutoverKnown: cutover.ok,
+    packAccount: cutover.ok ? isPackAccount(profile.created_at as string | null, { starterPackFrom: cutover.from }) : false,
+    hasPack: (packRows?.length ?? 0) > 0,
+  });
+  if (outcome === 'postpone') {
+    console.warn(`[credit] welcome decision for ${userId} postponed: the starter pack setting could not be read`);
+    return { granted: false, withheld: null };
   }
 
+  let withheld: string | null = withheldReason(outcome);
   const update: Record<string, unknown> = { welcome_checked_at: new Date().toISOString(), welcome_withheld_reason: withheld };
   if (mobileKey && !withheld) {
     // Claim the number; a race with another signup loses on the unique index.
@@ -62,17 +84,7 @@ export async function ensureWelcomeGrant(userId: string, email: string | null): 
     console.warn(`[credit] welcome credit withheld for ${userId}: ${withheld}`);
     return { granted: false, withheld };
   }
-  // Batch 20: the starter pack replaces the welcome credit for new members.
-  // Read directly, never from a default: when the setting cannot be read the
-  // stamp is cleared and the next sign-in decides, so a bad read can never
-  // grant £20 to a member the pack was meant for.
-  const cutover = await readStarterPackCutover();
-  if (!cutover.ok) {
-    await admin.from('profiles').update({ welcome_checked_at: null }).eq('id', userId);
-    console.warn(`[credit] welcome decision for ${userId} postponed: the starter pack setting could not be read`);
-    return { granted: false, withheld: null };
-  }
-  if (isPackAccount(profile.created_at as string | null, { starterPackFrom: cutover.from })) {
+  if (outcome === 'pack') {
     await redeemPendingReferral(userId);
     return { granted: false, withheld: null };
   }

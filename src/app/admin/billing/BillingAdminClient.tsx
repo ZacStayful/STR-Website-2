@@ -123,7 +123,7 @@ function DealPricingForm({ settings, guards }: { settings: BillingSettings; guar
   );
 }
 
-export function BillingAdminClient({ rows, settings, guards, codes }: { rows: Row[]; settings: BillingSettings; guards: PricingGuards; codes: Code[] }) {
+export function BillingAdminClient({ rows, settings, guards, codes, adjNonce }: { rows: Row[]; settings: BillingSettings; guards: PricingGuards; codes: Code[]; /** Batch 21 (B37): keys the adjustment grant; the page renders a new one after each save. */ adjNonce: string }) {
   const [rates, ratesAction, ratesPending] = useActionState(updateRatesAction, idle);
   const [adj, adjAction, adjPending] = useActionState(grantAdjustmentAction, idle);
   const [promo, promoAction, promoPending] = useActionState(createPromoCodeAction, idle);
@@ -191,6 +191,7 @@ export function BillingAdminClient({ rows, settings, guards, codes }: { rows: Ro
           <h2 className="text-base font-semibold text-foreground">Manual adjustment</h2>
           <p className="mt-1 text-xs text-muted-foreground">Add (or remove, with a negative amount) credit on an account. Spent at the adjustment rate.</p>
           <form action={adjAction} className="mt-3 flex flex-wrap items-center gap-2">
+            <input type="hidden" name="nonce" value={adjNonce} />
             <Input name="email" placeholder="member@email" className="h-8 w-56" required />
             <Input name="pence" type="number" placeholder="pence, e.g. 500" className="h-8 w-32" required />
             <Input name="note" placeholder="reason" className="h-8 w-48" />
