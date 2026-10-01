@@ -244,7 +244,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
               {dayCards.length > 0 && (
                 <section aria-labelledby="todays-deals">
                   <h2 id="todays-deals" className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {selection?.nearMiss ? "The closest we found" : pickCard ? "More picked for you today" : "Picked for you today"}
+                    {selection?.nearMiss ? "The closest I found" : pickCard ? "More I picked for you today" : "I picked these for you today"}
                   </h2>
                   {selection?.nearMiss && whatIfs && (
                     // Batch 22, Part F: what would find a real match, with real counts, in place of the old advice line.

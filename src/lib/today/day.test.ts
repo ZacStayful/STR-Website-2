@@ -60,14 +60,14 @@ test('the greeting follows the clock in the UK and uses the first name only', ()
 });
 
 test('the match line is the real count, worded for one or many', () => {
-  assert.equal(matchLine(342, true), '342 deals match what you’re looking for');
-  assert.equal(matchLine(1, true), '1 deal matches what you’re looking for');
-  assert.equal(matchLine(0, true), '0 deals match what you’re looking for');
-  assert.equal(matchLine(12_450, true), '12,450 deals match what you’re looking for');
-  assert.equal(matchLine(80, false), '80 deals on the market in Stayful’s top areas');
+  assert.equal(matchLine(342, true), 'I found 342 deals that match what you’re looking for');
+  assert.equal(matchLine(1, true), 'I found 1 deal that matches what you’re looking for');
+  assert.equal(matchLine(0, true), 'I found 0 deals that match what you’re looking for');
+  assert.equal(matchLine(12_450, true), 'I found 12,450 deals that match what you’re looking for');
+  assert.equal(matchLine(80, false), 'I’m watching 80 deals in Stayful’s top areas');
   assert.equal(matchLine(null, true), null, 'a count that could not be read says nothing rather than zero');
   // Batch 14: a tailored day's count of the must-haves, "at least" when the pool read hit its limit.
-  assert.equal(matchLine(3, true, true), '3 deals meet your must-haves');
-  assert.equal(matchLine(1, true, true), '1 deal meets your must-haves');
-  assert.equal(matchLine(1_000, true, true, true), '1,000+ deals meet your must-haves');
+  assert.equal(matchLine(3, true, true), 'I found 3 deals that meet your must-haves');
+  assert.equal(matchLine(1, true, true), 'I found 1 deal that meets your must-haves');
+  assert.equal(matchLine(1_000, true, true, true), 'I found 1,000+ deals that meet your must-haves');
 });

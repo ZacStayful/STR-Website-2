@@ -18,7 +18,7 @@ import { cellKey, planSearches, type DemandPlan, type SkipReason } from "@/lib/s
 import { DEFAULT_DEMAND_SETTINGS } from "@/lib/sourcing-demand/settings";
 import { demandSourcingEnabled } from "@/lib/sourcing-demand/run";
 import { addedSince, areaDataFrom, cachedAnswerKeys, lastSearches, livePool, loadDemand, monthFigures, readDemandSettings, sweepAreaSet, sweepDoneToday, todaysSearches } from "@/lib/sourcing-demand/server";
-import { defaultDir, demandRows, isSortKey, planView, sortRows, STATUS_LABELS, supplyFrom, type SortDir, type SortKey } from "@/lib/sourcing-demand/table";
+import { defaultDir, demandRows, isSortKey, planView, sortRows, STATUS_LABELS, supplyFrom, type DemandRow, type SortDir, type SortKey } from "@/lib/sourcing-demand/table";
 import { calibrationView } from "@/lib/deal-quality/calibrate-run";
 import { latestBackfillRuns } from "@/lib/deal-quality/backfill-run";
 import { CALIBRATION_GATE_PCT, CALIBRATION_MAX_CALLS, VARIANTS, VARIANT_LABELS } from "@/lib/deal-quality/calibration";
@@ -58,6 +58,13 @@ function money(pence: number | null): string {
 function nextMonthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   return new Date(Date.UTC(y, m, 1)).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/** Batch 22: members whose signup reveal found no match. Null before the schema section is run. */
+async function noMatchMembers(admin: ReturnType<typeof createAdminClient>): Promise<Set<string> | null> {
+  const { data, error } = await admin.from("signup_reveals").select("user_id").eq("no_match", true).limit(5000);
+  if (error) return null;
+  return new Set((data ?? []).map((r) => String((r as { user_id: string }).user_id)));
 }
 
 const KIND_LABEL: Record<string, string> = { sale: "Buy", rent: "R2R" };
@@ -117,7 +124,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
   const month = londonMonthStart(now);
   const settings = await readDemandSettings(admin);
   const since = new Date(now.getTime() - NEW_DEALS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash, calibration, backfill] = await Promise.all([
+  const [ctx, demand, figures, today, live, added, doneToday, searches, cached, table, pmi, flash, calibration, backfill, noMatch] = await Promise.all([
     loadScreenContext(SNAPSHOT_WAIT_MS),
     loadDemand(admin, settings, now),
     monthFigures(admin, month),
@@ -132,6 +139,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
     readFlash(),
     calibrationView(admin, now),
     latestBackfillRuns(admin),
+    noMatchMembers(admin),
   ]);
 
   const schemaReady = figures !== null && searches !== null;
@@ -146,6 +154,15 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
   const plan: DemandPlan = demand && ctx ? planSearches(demand, { minMembers: settings.minMembers, payingWeight: settings.payingWeight, sweepAreas, areaData: areaDataFrom(ctx.cards), searchedToday: today?.searched ?? new Set(), gaveUpToday: today?.gaveUp ?? new Set(), liveDeals }) : { searches: [], skipped: [] };
   const view = planView(plan, reserve, cached, MAX_SEARCHES_PER_PASS);
   const rows = demand ? sortRows(demandRows({ demand, plan, sweepAreas, sweepDoneToday: doneToday, live: liveSupply, added: supplyFrom(added ?? []), capReached, includeUnwanted: showAll }).filter((r) => !kindFilter || r.kind === kindFilter), sort, dir) : [];
+  // Batch 22: members in this area × kind whose signup reveal found no match (their areas already count as demand above).
+  const noMatchIn = (area: string, kind: DemandRow["kind"]): number | null => {
+    if (!noMatch || !demand) return null;
+    const cell = demand.cells.get(cellKey(area, kind));
+    if (!cell) return 0;
+    let n = 0;
+    for (const id of cell.members) if (noMatch.has(id)) n += 1;
+    return n;
+  };
   const unknownTypes = [...liveSupply.unknown.entries()].sort((a, b) => b[1] - a[1]);
   const skippedCounts = new Map<SkipReason, number>();
   for (const s of view.skipped) skippedCounts.set(s.reason, (skippedCounts.get(s.reason) ?? 0) + 1);
@@ -359,6 +376,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
                       <Link href={href(c.key)} className="hover:text-foreground">{c.label}{arrow(c.key)}</Link>
                     </th>
                   ))}
+                  <th className="px-3 py-2 text-right" title="Members wanting this area × kind whose signup reveal found no match (Batch 22)">No match at signup</th>
                   <th className="px-3 py-2">Wants</th>
                 </tr>
               </thead>
@@ -375,6 +393,7 @@ export default async function DemandAdminPage({ searchParams }: { searchParams: 
                     <td className="px-3 text-right">{r.newDeals}</td>
                     <td className="px-3">{r.status === "below_threshold" ? `${STATUS_LABELS[r.status]} (${r.members} of ${settings.minMembers})` : STATUS_LABELS[r.status]}{r.early ? " · early data" : ""}</td>
                     <td className={`px-3 text-right font-medium ${r.gap > 0 ? "text-foreground" : "text-muted-foreground"}`}>{r.gap}</td>
+                    <td className="px-3 text-right">{noMatchIn(r.area, r.kind) ?? "—"}</td>
                     <td className="px-3 text-xs text-muted-foreground">{r.mustHaves ?? "—"}</td>
                   </tr>
                 ))}

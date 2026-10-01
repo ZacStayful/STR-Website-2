@@ -213,9 +213,9 @@ export function Quiz(start: QuizStart) {
       <Frame>
         <QuizPhoto image="done" priority />
         <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-primary">Profile 100%</p>
-        <h1 className="mt-1 text-2xl font-semibold text-foreground">That’s everything. Nice work.</h1>
+        <h1 className="mt-1 text-2xl font-semibold text-foreground">That’s everything — thank you.</h1>
         {credit.line && <p className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${credit.paid ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}>{credit.line}</p>}
-        {matchCount !== null && <p className="mt-3 text-sm text-muted-foreground">{matchLabel(matchCount, false)}. Your Today’s 5 is picked from them, starting now.</p>}
+        {matchCount !== null && <p className="mt-3 text-sm text-muted-foreground">I found {matchCount.toLocaleString("en-GB")} deal{matchCount === 1 ? "" : "s"} that match{matchCount === 1 ? "es" : ""} you. I’ll pick your Today’s 5 from them, starting now.</p>}
         <div className="mt-5 space-y-3">
           <PrimaryButton onClick={() => router.push(start.todayHref)}>See your Today’s 5</PrimaryButton>
           <Link href={start.profileHref} className="block text-center text-sm font-medium text-foreground underline-offset-4 hover:underline">
