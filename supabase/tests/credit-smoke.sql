@@ -232,6 +232,39 @@ begin
   if not (select (m->>'signed_in')::boolean from jsonb_array_elements(j->'members') m where (m->>'id')::uuid = u) then raise exception 'u has signed in now (E3)'; end if;
   raise notice 'weekly facts ok';
 
+  -- ── Batch 23: the call safety rules are unique indexes ──
+  insert into si_calls_log (user_id, direction, call_type, status, uk_day) values (u, 'outbound', 'intro', 'answered', current_date);
+  begin
+    insert into si_calls_log (user_id, direction, call_type, status, uk_day, trigger_ref) values (u, 'outbound', 'low_credit', 'ringing', current_date, 'g1');
+    raise exception 'a second outbound call the same UK day must be refused';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into si_calls_log (user_id, direction, call_type, status) values (u, 'outbound', 'intro', 'queued');
+    raise exception 'a second intro call must be refused';
+  exception when unique_violation then null;
+  end;
+  insert into si_calls_log (user_id, direction, call_type, status, trigger_ref) values (u, 'outbound', 'low_credit', 'queued', 'g1');
+  begin
+    insert into si_calls_log (user_id, direction, call_type, status, trigger_ref) values (u, 'outbound', 'low_credit', 'blocked', 'g1');
+    raise exception 'one low-credit call per credit landing';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into si_calls_log (user_id, direction, call_type, status, trigger_ref) values (u, 'outbound', 'low_credit', 'queued', 'g2');
+    raise exception 'one outbound call in flight per member';
+  exception when unique_violation then null;
+  end;
+  -- Callbacks don't count towards the day.
+  insert into si_calls_log (user_id, direction, call_type, status) values (u, 'inbound', 'callback', 'answered');
+  insert into si_call_charges (charge_key, user_id, kind, charged_pence) values ('call:smoke:minutes', u, 'minutes', 44);
+  begin
+    insert into si_call_charges (charge_key, user_id, kind, charged_pence) values ('call:smoke:minutes', u, 'minutes', 44);
+    raise exception 'a charge key is charged once';
+  exception when unique_violation then null;
+  end;
+  raise notice 'call safety indexes ok';
+
   -- ── Batch 21 (A10): the SQL fallback when the setting is missing ──
   delete from billing_settings where key = 'spend_rates';
   if credit_spend_rate('topup') <> 1.3 or credit_spend_rate('plan') <> 1 then raise exception 'credit_spend_rate fallback should be 1.3 / 1 (A10)'; end if;

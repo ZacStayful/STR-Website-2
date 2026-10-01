@@ -7,6 +7,7 @@ import { parseR2rBar, R2R_QUALIFIED_PROFIT } from '../listing/screen.ts';
 import { DEAL_CHECKS_KEY, DEFAULT_DEAL_CHECKS, DEFAULT_LOW_ENTRY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '../deal-quality/config.ts';
 import { DEFAULT_LIFECYCLE, parseLifecycle, type LifecycleSettings } from '../lifecycle/settings.ts';
 import { DEFAULT_INTELLIGENCE, parseIntelligence, type IntelligenceSettings } from '../intelligence/settings.ts';
+import { DEFAULT_VOICE, parseVoice, type VoiceSettings } from '../voice/settings.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -66,6 +67,8 @@ export interface BillingSettings {
   lifecycle: LifecycleSettings;
   /** Batch 22: the reveal, accuracy levels, member searches, welcome and first-time prices, call prices (src/lib/intelligence/settings.ts). */
   intelligence: IntelligenceSettings;
+  /** Batch 23: calls from Stayful Intelligence — hours, limits, the low-credit trigger, retention (src/lib/voice/settings.ts). */
+  voice: VoiceSettings;
 }
 
 export const DEFAULT_AREA_RENT_DAILY_ATTEMPTS = 40;
@@ -92,6 +95,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   dealChecks: DEFAULT_DEAL_CHECKS,
   lifecycle: DEFAULT_LIFECYCLE,
   intelligence: DEFAULT_INTELLIGENCE,
+  voice: DEFAULT_VOICE,
 };
 
 /** Whole attempts from 0 to 1,000; anything else is the default. */
@@ -172,6 +176,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       dealChecks: parseDealChecks(kv.get(DEAL_CHECKS_KEY)),
       lifecycle: parseLifecycle((key) => kv.get(key)),
       intelligence: parseIntelligence((key) => kv.get(key)),
+      voice: parseVoice((key) => kv.get(key)),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

@@ -97,6 +97,11 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'anthropic', unit: 'sonnet55_output_token', label: 'Anthropic output token (Sonnet 5.5)', unitCostPence: (10 * USD) / 1_000_000, notes: '$10 per MTok, thinking included' },
   // ── ElevenLabs turbo: Creator plan ≈ $22 per 100k characters ──
   { provider: 'elevenlabs', unit: 'character', label: 'ElevenLabs speech (per character)', unitCostPence: (22 * USD) / 100_000, notes: 'Creator plan; turbo models bill 0.5 credit/char on some tiers — reconcile' },
+  // ── Batch 23: Stayful Intelligence call minutes (charged to the member per answered second) ──
+  // One blended row so every call type has one price: raw ≈ 13p a minute =
+  // ElevenLabs agent ≈ 8p + Twilio UK mobile voice ≈ 3p + the agent's LLM ≈ 2p,
+  // × 5 = 65p. Reconcile against the ElevenLabs and Twilio invoices here.
+  { provider: 'si', unit: 'call_minute', label: 'Stayful Intelligence call (per minute)', unitCostPence: 13, notes: 'ESTIMATE — ElevenLabs agent ≈ 8p + Twilio UK mobile voice ≈ 3p + LLM ≈ 2p a minute (Oct 2026); reconcile against both invoices' },
   // ── Twilio SMS (house spend: texts are free to members, never charged) ──
   { provider: 'twilio', unit: 'sms', label: 'Twilio SMS to a UK mobile (per segment)', unitCostPence: 0.056 * USD, notes: 'ESTIMATE — Twilio UK list price $0.056 per outbound segment (Sep 2026); confirm against the Twilio console. House spend: never charged to a member' },
 ];

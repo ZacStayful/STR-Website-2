@@ -6105,3 +6105,195 @@ revoke all on function public.member_search_true_up(jsonb) from public, anon, au
 grant execute on function public.member_search_true_up(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 23: Stayful Intelligence calls
+-- =========================
+-- Calls and texts from Stayful Intelligence (src/lib/voice): the intro call,
+-- the low-credit call and callbacks to the Batch 8 number, through ElevenLabs
+-- Conversational AI on Twilio. Every table is service role only. Nothing is
+-- added to profiles or to ACCESS_COLUMNS. Until this section is run the
+-- calls code reads "schema missing" and places nothing.
+--
+-- The safety rules live in the database as unique indexes, so no race can
+-- break them:
+--   one outbound call per member per UK day   si_calls_log_one_a_day_uidx
+--   one call in flight per member             si_calls_log_in_flight_uidx
+--   one intro call per member, ever           si_calls_log_intro_uidx
+--   one low-credit call per credit landing    si_calls_log_low_credit_uidx
+-- and every charge has one guard row (si_call_charges.charge_key), so a
+-- webhook redelivery never charges or texts twice.
+
+-- ── Settings (inserted only when missing, so an admin edit survives a re-run) ──
+-- Reused, not duplicated: low_credit_pence (the £5 trigger),
+-- reveal_auto_topup_amount_pence / reveal_auto_topup_threshold_pence (£25 /
+-- £5), si_text_pence, si_email_pence, feedback_admin_email (the handoff
+-- address).
+insert into public.billing_settings (key, value) values
+  ('si_outbound_start_hour', '9'),
+  ('si_outbound_end_hour', '19'),
+  ('si_outbound_weekdays', '[1, 2, 3, 4, 5]'),
+  ('si_max_outbound_calls_per_uk_day', '1'),
+  ('si_low_credit_spent_ratio', '0.8'),
+  ('si_low_credit_window_days', '7'),
+  ('si_low_credit_min_member_days', '3'),
+  ('si_max_call_seconds', '600'),
+  ('si_texts_per_call_max', '2'),
+  ('si_wrap_up_seconds', '45'),
+  ('si_transcript_retention_days', '90'),
+  ('si_sms_auto_replies_per_number_day', '3')
+on conflict (key) do nothing;
+
+-- ── si_conversations: one conversation, any channel (call now; sms; chat in Batch 26) ──
+-- Batch 24's learning loop reads these. Turns are deleted after
+-- si_transcript_retention_days (transcript_purged_at); questions are kept.
+create table if not exists public.si_conversations (
+  id uuid primary key default gen_random_uuid(),
+  channel text not null check (channel in ('call', 'sms', 'chat')),
+  user_id uuid references public.profiles(id) on delete set null,
+  persona_version text,
+  started_at timestamptz not null default now(),
+  ended_at timestamptz,
+  transcript_purged_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists si_conversations_user_idx on public.si_conversations (user_id, started_at desc);
+create index if not exists si_conversations_started_idx on public.si_conversations (started_at desc);
+alter table public.si_conversations enable row level security;  -- no policies: service role only
+revoke all on public.si_conversations from anon, authenticated;
+
+-- Each member question and each agent reply, in order. knowledge_ref is the
+-- knowledge entry used to answer (Batch 24), when there is one.
+create table if not exists public.si_conversation_turns (
+  id bigint generated always as identity primary key,
+  conversation_id uuid not null references public.si_conversations(id) on delete cascade,
+  seq integer not null,
+  role text not null check (role in ('member', 'agent')),
+  text text not null,
+  at timestamptz not null default now(),
+  knowledge_ref text
+);
+create unique index if not exists si_conversation_turns_seq_uidx on public.si_conversation_turns (conversation_id, seq);
+create index if not exists si_conversation_turns_at_idx on public.si_conversation_turns (at);
+alter table public.si_conversation_turns enable row level security;  -- no policies: service role only
+revoke all on public.si_conversation_turns from anon, authenticated;
+
+-- One row per question, with how it went. Kept after the transcript purge.
+create table if not exists public.si_conversation_questions (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.si_conversations(id) on delete cascade,
+  question text not null check (char_length(question) between 1 and 500),
+  outcome text not null check (outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off')),
+  knowledge_ref text,
+  source text not null default 'tool' check (source in ('tool', 'analysis', 'sms')),
+  at timestamptz not null default now()
+);
+create index if not exists si_conversation_questions_conv_idx on public.si_conversation_questions (conversation_id, at);
+create index if not exists si_conversation_questions_outcome_idx on public.si_conversation_questions (outcome, at desc);
+alter table public.si_conversation_questions enable row level security;  -- no policies: service role only
+revoke all on public.si_conversation_questions from anon, authenticated;
+
+-- ── si_calls_log: every call, placed, received or blocked ──
+--   call_type      the one list is src/lib/voice/config.ts CALL_TYPES (Batch
+--                  25 adds 'deal' by rebuilding the check below)
+--   status         queued | ringing (placed, in progress) | answered | missed |
+--                  voicemail | failed | blocked (the safety rule said no;
+--                  blocked_reason says why)
+--   uk_day         the UK day an outbound call was placed (null until then)
+--   trigger_ref    what fired it (the low-credit call: the credit landing's grant id)
+--   context        why we called / what the agent was told (intro, low_credit,
+--                  missed_intro, missed_low_credit, member, unknown)
+--   caller_hash    unknown inbound callers: a hash of the number, never the number
+create table if not exists public.si_calls_log (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete set null,
+  direction text not null check (direction in ('outbound', 'inbound')),
+  call_type text not null,
+  status text not null,
+  blocked_reason text,
+  trigger_ref text,
+  context text,
+  uk_day date,
+  not_before timestamptz,
+  queued_at timestamptz not null default now(),
+  placed_at timestamptz,
+  started_at timestamptz,
+  ended_at timestamptz,
+  seconds integer,
+  charged_pence integer not null default 0,
+  raw_cost_pence numeric(12, 4),
+  texts_sent integer not null default 0,
+  fallback_sent_at timestamptz,
+  handoff boolean not null default false,
+  el_conversation_id text,
+  twilio_call_sid text,
+  caller_hash text,
+  conversation_id uuid references public.si_conversations(id) on delete set null,
+  persona_version text,
+  error text,
+  updated_at timestamptz not null default now()
+);
+do $$ begin
+  alter table public.si_calls_log drop constraint if exists si_calls_log_call_type_check;
+  alter table public.si_calls_log add constraint si_calls_log_call_type_check check (call_type in ('intro', 'low_credit', 'callback'));
+  alter table public.si_calls_log drop constraint if exists si_calls_log_status_check;
+  alter table public.si_calls_log add constraint si_calls_log_status_check check (status in ('queued', 'ringing', 'answered', 'missed', 'voicemail', 'failed', 'blocked'));
+end $$;
+create unique index if not exists si_calls_log_el_conv_uidx on public.si_calls_log (el_conversation_id) where el_conversation_id is not null;
+create unique index if not exists si_calls_log_call_sid_uidx on public.si_calls_log (twilio_call_sid) where twilio_call_sid is not null;
+create unique index if not exists si_calls_log_one_a_day_uidx on public.si_calls_log (user_id, uk_day) where direction = 'outbound' and uk_day is not null;
+create unique index if not exists si_calls_log_in_flight_uidx on public.si_calls_log (user_id) where direction = 'outbound' and status in ('queued', 'ringing');
+create unique index if not exists si_calls_log_intro_uidx on public.si_calls_log (user_id) where call_type = 'intro';
+create unique index if not exists si_calls_log_low_credit_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'low_credit';
+create index if not exists si_calls_log_user_idx on public.si_calls_log (user_id, queued_at desc);
+create index if not exists si_calls_log_queued_idx on public.si_calls_log (queued_at desc);
+create index if not exists si_calls_log_due_idx on public.si_calls_log (not_before) where status = 'queued';
+alter table public.si_calls_log enable row level security;  -- no policies: service role only
+revoke all on public.si_calls_log from anon, authenticated;
+
+-- ── si_call_charges: one guard row per charge ──
+-- charge_key: call:<id>:minutes, call:<id>:text:<template>,
+-- call:<id>:email:fallback, sms:<MessageSid>. Inserted before the debit; a
+-- duplicate key means "already charged".
+create table if not exists public.si_call_charges (
+  id uuid primary key default gen_random_uuid(),
+  charge_key text not null unique,
+  call_id uuid references public.si_calls_log(id) on delete set null,
+  user_id uuid references public.profiles(id) on delete set null,
+  kind text not null check (kind in ('minutes', 'text', 'email')),
+  quantity numeric(12, 4) not null default 1,
+  charged_pence integer not null default 0,
+  transaction_id bigint,
+  created_at timestamptz not null default now()
+);
+create index if not exists si_call_charges_call_idx on public.si_call_charges (call_id);
+create index if not exists si_call_charges_user_idx on public.si_call_charges (user_id, created_at desc);
+alter table public.si_call_charges enable row level security;  -- no policies: service role only
+revoke all on public.si_call_charges from anon, authenticated;
+
+-- ── si_webhook_events: claim-then-process, like stripe_events ──
+create table if not exists public.si_webhook_events (
+  provider text not null,
+  event_key text not null,
+  received_at timestamptz not null default now(),
+  processed_at timestamptz,
+  error text,
+  primary key (provider, event_key)
+);
+alter table public.si_webhook_events enable row level security;  -- no policies: service role only
+revoke all on public.si_webhook_events from anon, authenticated;
+
+-- ── si_tool_calls: every server-tool call the agent makes (rate limits count these) ──
+create table if not exists public.si_tool_calls (
+  id bigint generated always as identity primary key,
+  call_id uuid references public.si_calls_log(id) on delete cascade,
+  tool text not null,
+  ok boolean not null,
+  detail jsonb,
+  at timestamptz not null default now()
+);
+create index if not exists si_tool_calls_call_idx on public.si_tool_calls (call_id, tool);
+alter table public.si_tool_calls enable row level security;  -- no policies: service role only
+revoke all on public.si_tool_calls from anon, authenticated;
+
+notify pgrst, 'reload schema';
