@@ -909,3 +909,35 @@ test('a dispute won gives the credit back; one lost does not (B17)', async () =>
   assert.equal(lost.handled, false);
   assert.equal(deps.calls.restoreDisputedCredit!.length, 1);
 });
+
+test('Batch 23: the auto top-up link\'s checkout switches auto top-up on (only if off) and records it once', async () => {
+  const deps = fakeDeps();
+  const switched: unknown[][] = [];
+  let off = true;
+  deps.enableAutoTopup = async (...a) => {
+    switched.push(a);
+    const was = off;
+    off = false;
+    return was;
+  };
+  deps.retrievePaymentIntent = async (id) => ({ id, payment_method: 'pm_1', customer: 'cus_1', amount: 2500, amount_received: 2500, metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500', auto_topup_on: '1', auto_topup_threshold_pence: '500' } }) as unknown as Stripe.PaymentIntent;
+  const session = { id: 'cs_9', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_9', amount_total: 2500, payment_status: 'paid', customer_details: { email: 'a@example.com' } };
+  await handleStripeEvent(ev('checkout.session.completed', session), deps);
+  assert.deepEqual(switched[0], ['u1', 2500, 500]);
+  assert.equal(deps.activity.filter((a) => a.kind === 'auto_topup_settings').length, 1);
+  assert.equal(deps.activity.find((a) => a.kind === 'auto_topup_settings')?.source, 'sms_link');
+  // The payment_intent.succeeded for the same payment: already on, nothing more recorded.
+  await handleStripeEvent(ev('payment_intent.succeeded', { id: 'pi_9', customer: 'cus_1', payment_method: 'pm_1', amount: 2500, amount_received: 2500, currency: 'gbp', metadata: { kind: 'topup', user_id: 'u1', amount_pence: '2500', auto_topup_on: '1', auto_topup_threshold_pence: '500' } }), deps);
+  assert.equal(deps.activity.filter((a) => a.kind === 'auto_topup_settings').length, 1);
+});
+
+test('Batch 23: an ordinary top-up never switches auto top-up on', async () => {
+  const deps = fakeDeps();
+  let called = false;
+  deps.enableAutoTopup = async () => {
+    called = true;
+    return true;
+  };
+  await handleStripeEvent(ev('checkout.session.completed', { id: 'cs_1', mode: 'payment', client_reference_id: 'u1', customer: 'cus_1', payment_intent: 'pi_7', amount_total: 2500, customer_details: { email: 'a@example.com' } }), deps);
+  assert.equal(called, false);
+});
