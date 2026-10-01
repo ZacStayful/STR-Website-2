@@ -23,19 +23,21 @@ test("cron bearer is accepted only against CRON_SECRET", () => {
   assert.equal(authoriseInternal(req({ "x-internal-secret": "cron" })), false);
 });
 
-test("x-internal-secret accepts INTERNAL_API_SECRET or N8N_SHARED_SECRET, nothing else", () => {
+test("x-internal-secret accepts INTERNAL_API_SECRET everywhere and N8N_SHARED_SECRET only where asked (Batch 21, D25), nothing else", () => {
   process.env.INTERNAL_API_SECRET = "operator";
   process.env.N8N_SHARED_SECRET = "n8n";
   assert.equal(authoriseInternal(req({ "x-internal-secret": "operator" })), true);
-  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n" })), true);
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n" })), false);
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n" }), { n8n: true }), true);
   assert.equal(authoriseInternal(req({ "x-internal-secret": "wrong" })), false);
   assert.equal(authoriseInternal(req({})), false);
 });
 
-test("N8N_SHARED_SECRET alone is enough to configure the routes", () => {
+test("N8N_SHARED_SECRET alone is enough to configure the routes, and opens the ones n8n calls", () => {
   process.env.N8N_SHARED_SECRET = "n8n";
   assert.equal(internalSecretsConfigured(), true);
-  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n" })), true);
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n" }), { n8n: true }), true);
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n" })), false);
   assert.equal(authoriseInternal(req({ "x-internal-secret": "operator" })), false);
 });
 
@@ -50,4 +52,14 @@ test("outbound webhooks prefer the n8n secret and fall back to the operator one"
   assert.equal(outboundInternalSecret(), "operator");
   process.env.N8N_SHARED_SECRET = "n8n";
   assert.equal(outboundInternalSecret(), "n8n");
+});
+
+test("Batch 21 (D25): the n8n secret opens only the routes that ask for it; the operator's secret opens every route", () => {
+  process.env.INTERNAL_API_SECRET = "ops-secret";
+  process.env.N8N_SHARED_SECRET = "n8n-secret";
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n-secret" })), false, "a send, a backfill, a sweep");
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "n8n-secret" }), { n8n: true }), true, "lead provisioning");
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "ops-secret" })), true);
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "ops-secret" }), { n8n: true }), true);
+  assert.equal(authoriseInternal(req({ "x-internal-secret": "wrong" }), { n8n: true }), false);
 });

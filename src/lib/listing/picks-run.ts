@@ -7,7 +7,7 @@ import { personaliseScore, personalInputFor } from "../market/personalise";
 import { areaCentroid } from "../market/area-centroids";
 import { ask, sourcingListings } from "../broker";
 import { runMetered, newActionId } from "../credit/context";
-import { getBalance, debit } from "../credit/ledger";
+import { getBalance, debit, refund } from "../credit/ledger";
 import { payerIn } from "../team";
 import { getUnitCostTable } from "../credit/unit-costs";
 import { afterDebit } from "../credit/after-debit";
@@ -39,7 +39,7 @@ import type { AppliedRules } from "./picks";
 import { sendEmail, isEmailConfigured } from "../email/send";
 import { buildDaily, type ProfileDeals, type Unsubscribe } from "../notify/message";
 import { renderEmail } from "../notify/render-email";
-import { claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from "../notify/sends";
 import { capDay, newSendToken, sendKey, testSendKey } from "../notify/cap";
 import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
@@ -49,6 +49,7 @@ import { projectNumbersFor, projectRangeLine, rangeLineFor } from "../project/di
 import type { ProjectCardData } from "../project/headline";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
+import { mandatoryIncompleteFor } from "../profile/mandatory-server";
 import { lowCreditNoticesFor, markLowCreditTold } from "../credit/low-credit-server";
 import { lowCreditSection } from "../credit/low-credit";
 import { inactivePausedIds } from "../inactivity/server";
@@ -480,6 +481,18 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       m.paid = m.admin || hasEverPaid(owner);
     }
   }
+  // Batch 21 (B49, Q16): no pick, and no day charge, for a member who has not
+  // answered the mandatory questions (the ones a pick is chosen on): the 08:10
+  // digest sends them the rest of their Today uncharged, with the profile
+  // line. Members who pay for themselves only; a team member is never asked.
+  {
+    const incomplete = (await mandatoryIncompleteFor(admin, memberIds.filter((id) => payerIn(payers, id).payerId === id))) ?? new Set<string>();
+    if (incomplete.size > 0) {
+      for (const m of members.filter((x) => incomplete.has(x.id))) skipped.push({ user: m.id, ...(m.profile ? { profile: m.profile.id } : {}), reason: "profile_incomplete" });
+      members.splice(0, members.length, ...members.filter((m) => !incomplete.has(m.id)));
+      memberIds.splice(0, memberIds.length, ...new Set(members.map((m) => m.id)));
+    }
+  }
 
   // Shared query set, capped per run. Searches that carry a member's own
   // filter (their budget, bedrooms, kind, areas) go first: they are wanted by
@@ -526,7 +539,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       trackedAlertsOn(admin, ids),
       pendingChanges(admin, ids),
       // Batch 20, Part B: who would get the £5 low-credit decision at the top of their email.
-      lowCreditNoticesFor(admin, [...new Set(ids)].filter((id) => payerIn(payers, id).payerId === id)),
+      lowCreditNoticesFor(admin, [...new Set(ids)].filter((id) => payerIn(payers, id).payerId === id), new Date(), { preview: true }),
     ]);
     return done({
       status: 200,
@@ -579,12 +592,15 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const seenUrls = new Set<string>();
   const urlToDealId = new Map<string, string>();
   const urlToLiveSince = new Map<string, string | null>();
+  // Batch 21 (F9): the pool deal's stored annual profit, so the pick's price
+  // is the ladder band every other path uses, not a fresh re-screen's.
+  const urlToProfit = new Map<string, number | null>();
   // Batch 16: the deal's own comparables check, when the row carries one, so the pick is screened on it.
   const urlToCheck = new Map<string, StoredCheck | null>();
   const poolFor = async (query: SourcingQuery): Promise<SourcedListing[] | null> => {
     const { data, error } = await admin
       .from("marketplace_deals")
-      .select("canonical_url, id, live_since, screening")
+      .select("canonical_url, id, live_since, screening, annual_profit")
       .eq("status", "live")
       .eq("kind", query.kind)
       .eq("postcode_area", query.area)
@@ -595,13 +611,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       console.error("[sourcing] pool read failed:", error.message);
       return null;
     }
-    const rows = (data ?? []) as { canonical_url: string; id: string; live_since: string | null; screening: unknown }[];
+    const rows = (data ?? []) as { canonical_url: string; id: string; live_since: string | null; screening: unknown; annual_profit?: unknown }[];
     // Batch 17: a Project deal waits for its check before it goes live, so it is
     // new from when it went live, not from when the feed first had it.
     if (query.kind === "sale") {
       const { data: late, error: lateErr } = await admin
         .from("marketplace_deals")
-        .select("canonical_url, id, live_since, screening")
+        .select("canonical_url, id, live_since, screening, annual_profit")
         .eq("status", "live")
         .eq("kind", "sale")
         .eq("postcode_area", query.area)
@@ -622,6 +638,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       urlToDealId.set(r.canonical_url, r.id);
       urlToLiveSince.set(r.canonical_url, r.live_since);
       urlToCheck.set(r.canonical_url, checkOf(r.screening));
+      urlToProfit.set(r.canonical_url, r.annual_profit !== null && Number.isFinite(Number(r.annual_profit)) ? Number(r.annual_profit) : null);
     }
     return out;
   };
@@ -1025,7 +1042,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (m.admin) return 0;
     if (mode === "per_day") return dailyPence;
     if (!cand) return pickBasePence;
-    return urlToDealId.has(cand.listing.canonicalUrl) ? openPricePence(cand.screening?.surplus ?? null, ladder) : pickBasePence;
+    return urlToDealId.has(cand.listing.canonicalUrl) ? openPricePence(urlToProfit.get(cand.listing.canonicalUrl) ?? cand.screening?.surplus ?? null, ladder) : pickBasePence;
   };
 
   // ── Credit: only members who have a candidate ──
@@ -1285,7 +1302,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   const seatsByUser = new Map<string, Member[]>();
   for (const m of members) seatsByUser.set(m.id, [...(seatsByUser.get(m.id) ?? []), m]);
   type SentRow = { id: string; token: string; sending: Ranked; charge: number; dealId: string | null };
-  type Part = { member: Member; deals: ProfileDeals; row: SentRow | null; candidates: number };
+  type Part = { member: Member; deals: ProfileDeals; row: SentRow | null; candidates: number; unsubscribe: Unsubscribe | null };
   for (const userId of [...new Set(picks.map((x) => x.member.id))]) {
     const seats = seatsByUser.get(userId) ?? [];
     const withPick = seats.map((m) => pickByKey.get(m.key)).filter((x): x is (typeof picks)[number] => x !== undefined);
@@ -1329,6 +1346,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       const entry = pickByKey.get(m.key);
       let row: SentRow | null = null;
       let pickPart: ProfileDeals["pick"] = null;
+      let partUnsubscribe: Unsubscribe | null = null;
       if (entry) {
         const { pick, alternates, candidates, nearMiss } = entry;
         const relaxation = nearMiss ? relaxationFor.get(m.key) ?? null : null;
@@ -1414,6 +1432,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
             project: sending.project ? pickProjectLine(sending.project, sending.screening ?? null, memberFinance(m.goals), settings.dealPricing.profitRangePct) : null,
             profileLinks: links,
           });
+          partUnsubscribe = section.unsubscribe;
           unsubscribe ??= section.unsubscribe;
           row = { id: rowId, token, sending, charge, dealId: pickDealId };
           pickPart = { section: section.section, headline: section.headline };
@@ -1444,6 +1463,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       parts.push({
         member: m,
         row,
+        unsubscribe: partUnsubscribe,
         candidates: entry?.candidates ?? candidateCount.get(m.key) ?? 0,
         deals: {
           heading: m.heading,
@@ -1458,6 +1478,49 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         },
       });
     }
+    // Batch 21 (C15): a pick (the address, the photo, the listing link) is
+    // paid for before it is sent, never after. A debit that fails drops that
+    // profile's pick from the email (its row marked failed, so nothing is
+    // open for free); a send that fails after the debits refunds them.
+    const prepaid = new Map<string, number | null>();
+    for (const part of parts) {
+      const row = part.row;
+      if (!row || row.charge <= 0) continue;
+      try {
+        // allowNegative only covers the race between the balance check above and this debit.
+        const memberMeta = payer.memberId ? { member_id: payer.memberId } : {};
+        const profileMeta = part.member.profile ? { profile_id: part.member.profile.id } : {};
+        const tx = await debit(payer.payerId, row.charge, {
+          allowNegative: true,
+          meta: row.dealId
+            ? { action: "cron:sourcing", action_id: row.id, provider: "marketplace", unit: "deal_open", quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily pick (deal sheet): ${row.sending.listing.address ?? row.sending.listing.title}`, ...memberMeta, ...profileMeta }
+            : { action: "cron:sourcing", action_id: row.id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${row.sending.listing.address ?? row.sending.listing.title}`, ...memberMeta, ...profileMeta },
+        });
+        prepaid.set(row.id, tx);
+      } catch (err) {
+        console.error("[sourcing] pick debit failed; the pick is not sent:", (err as Error)?.message ?? err);
+        const { error: failErr } = await admin.from("sourcing_sent").update({ status: "failed", charged_base_pence: 0 }).eq("id", row.id);
+        if (failErr) console.error("[sourcing] failed-status update failed:", failErr.message);
+        perUser.push({ user: userId, ...seatOf(part.member), basis: part.member.basis, candidates: part.candidates, sent: false, reason: "debit_failed" });
+        unholdSeat(part.member);
+        part.row = null;
+        part.unsubscribe = null;
+        part.deals = { ...part.deals, pick: null, pickDealId: null };
+      }
+    }
+    // A profile left with neither a pick nor teasers has nothing to say.
+    parts.splice(0, parts.length, ...parts.filter((p) => p.row || p.deals.teasers.length > 0));
+    unsubscribe = parts.find((p) => p.unsubscribe)?.unsubscribe ?? null;
+    const refundPrepaid = async (why: string) => {
+      for (const [rowId, tx] of prepaid) {
+        if (tx === null) continue;
+        try {
+          await refund(tx, undefined, why);
+        } catch (err) {
+          console.error(`[sourcing] pick refund failed (row ${rowId}):`, (err as Error)?.message ?? err);
+        }
+      }
+    };
     const sentRows = parts.flatMap((p) => (p.row ? [p.row] : []));
     if (sentRows.length === 0 || !unsubscribe) {
       // Every pick collided or failed: nothing is sent, and the slot goes back for the 08:10 digest.
@@ -1501,6 +1564,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (!built || !mail) {
       // Unreachable with a pick in hand; kept so a future change cannot send nothing and charge.
       if (claimId) await releaseClaim(admin, claimId);
+      await refundPrepaid("Daily email not built");
       await failRows();
       unholdAll();
       fail("build_failed", withRows);
@@ -1527,8 +1591,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       fail(res.reason ?? "send_failed", withRows);
       // Kept as failed: Resend may have accepted the message even though we saw an error.
       await failRows();
-      // The slot is spent for today and its alerts stay pending for tomorrow's email.
-      if (claimId) await finishSend(admin, claimId, false, sendSummary, []);
+      // Batch 21 (C15): the picks were paid for and did not go: the debits come back.
+      await refundPrepaid("Daily pick email not sent");
+      // Batch 21 (D5, D15): the slot goes back, so the 08:10 digest can still
+      // send today's Today's 5 (without a pick) under the same key.
+      if (claimId) await abandonSend(admin, claimId);
       continue;
     }
     // The slot sent and its alerts told, straight away: nothing between the
@@ -1551,25 +1618,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
         const { error: sentErr } = await admin.from("sourcing_sent").update({ status: "sent", sent_at: sentAt }).eq("id", row.id);
         if (sentErr) console.error("[sourcing] sent-status update failed:", sentErr.message);
         if (row.charge > 0) {
-          try {
-            // allowNegative only covers the race between the balance check above and this debit.
-            const memberMeta = payer.memberId ? { member_id: payer.memberId } : {};
-            const profileMeta = m.profile ? { profile_id: m.profile.id } : {};
-            transactionId = await debit(payer.payerId, row.charge, {
-              allowNegative: true,
-              meta: row.dealId
-                ? { action: "cron:sourcing", action_id: row.id, provider: "marketplace", unit: "deal_open", quantity: 1, unit_cost_pence: 0, markup: 1, raw_cost_pence: 0, description: `Daily pick (deal sheet): ${row.sending.listing.address ?? row.sending.listing.title}`, ...memberMeta, ...profileMeta }
-                : { action: "cron:sourcing", action_id: row.id, provider: "pmi", unit: "daily_pick", quantity: 1, unit_cost_pence: price.unitCostPence, markup: price.markup, raw_cost_pence: price.rawPence, description: `Daily pick: ${row.sending.listing.address ?? row.sending.listing.title}`, ...memberMeta, ...profileMeta },
-            });
-            charged = row.charge;
-            summary.chargedBasePence += row.charge;
-            void afterDebit(payer.payerId).catch(() => {});
-          } catch (err) {
-            console.error("[sourcing] pick debit failed:", (err as Error)?.message ?? err);
-            // The pick went uncharged: its row must not say otherwise.
-            const { error: zeroErr } = await admin.from("sourcing_sent").update({ charged_base_pence: 0 }).eq("id", row.id);
-            if (zeroErr) console.error("[sourcing] pick price reset failed:", zeroErr.message);
-          }
+          // Batch 21 (C15): paid for above, before the send.
+          transactionId = prepaid.get(row.id) ?? null;
+          charged = row.charge;
+          summary.chargedBasePence += row.charge;
+          void afterDebit(payer.payerId).catch(() => {});
         }
       }
       // From the new pricing date: one day of daily deals for each profile the

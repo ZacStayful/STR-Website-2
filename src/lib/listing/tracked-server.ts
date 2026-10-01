@@ -222,12 +222,17 @@ export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | '
   }
 
   // What trackedDeals may use. A deal nobody opened, that no row points at,
-  // and that is still inside this account's early-access window is left out,
-  // so a kept deal cannot surface before the grid shows it.
+  // that the viewer never answered, and that is still inside this account's
+  // early-access window is left out, so a kept deal cannot surface before the
+  // grid shows it. Batch 21 (C18): the viewer's own Keep or Pass was given
+  // when the deal was visible to them, so a deal that went and came back (a
+  // revival restarts the window) stays on their list rather than vanishing
+  // for the length of the delay.
+  const reactedIds = new Set(reactions.filter((r) => r.userId === userId).map((r) => r.dealId));
   const deals = new Map<string, TrackedDealFacts>();
   const cards = new Map<string, TrackedCard>();
   for (const [id, c] of loaded) {
-    if (!openedIds.has(id) && !rowUrls.has(c.canonical_url) && !dealVisible(c.live_since ?? null, visibility.cutoffIso)) continue;
+    if (!openedIds.has(id) && !rowUrls.has(c.canonical_url) && !reactedIds.has(id) && !dealVisible(c.live_since ?? null, visibility.cutoffIso)) continue;
     deals.set(id, factsOf(c));
     // The card never carries the canonical URL: it is drawn in the browser.
     const { canonical_url: _url, ...card } = c;

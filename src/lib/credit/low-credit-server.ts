@@ -13,7 +13,8 @@ import { starterPackStateFor } from '../starter-pack/server';
 import { siteUrl } from '../url';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { renderEmail } from '../notify/render-email';
-import { claimSlot, finishSend, markSending, releaseClaim } from '../notify/sends';
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim } from '../notify/sends';
+import { isEnforcing } from './http';
 import { newSendToken, sendKey } from '../notify/cap';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { lowCreditDue, lowCreditMessage, type LowCreditNotice } from './low-credit';
@@ -67,16 +68,19 @@ export async function decisionOffer(now: Date = new Date()): Promise<DecisionOff
 }
 
 /** What the notice offers this member: the pack while they can buy it, else Starter (when it can be bought) and the £10 top-up. */
-export async function noticeFor(input: { userId: string; createdAt: string | null; paymentMethodId: string | null; balancePence: number; now?: Date }): Promise<LowCreditNotice> {
+export async function noticeFor(input: { userId: string; createdAt: string | null; paymentMethodId: string | null; balancePence: number; now?: Date; preview?: boolean }): Promise<LowCreditNotice> {
   const now = input.now ?? new Date();
   const settings = await getBillingSettings();
   const offer = await decisionOffer(now);
+  // Batch 21 (B6): the notice's words follow the mode.
+  const enforcing = isEnforcing();
   if (isPackAccount(input.createdAt, settings.lifecycle)) {
     const state = await starterPackStateFor(input.userId);
-    if (state.offer.eligible) return { balancePence: input.balancePence, kind: 'pack', starter: null, topupPence: offer.topupPence, card: null, pack: { body: state.copy.body, cta: state.copy.cardCta } };
+    if (state.offer.eligible) return { balancePence: input.balancePence, kind: 'pack', starter: null, topupPence: offer.topupPence, card: null, pack: { body: state.copy.body, cta: state.copy.cardCta }, enforcing };
   }
-  const card = await cardSummary(input.paymentMethodId);
-  return { balancePence: input.balancePence, kind: 'decision', ...offer, card: card ? { brand: card.brand, last4: card.last4 } : null, pack: null };
+  // Batch 21 (D22): a dry run (preview) reads no card from Stripe.
+  const card = input.preview ? null : await cardSummary(input.paymentMethodId);
+  return { balancePence: input.balancePence, kind: 'decision', ...offer, card: card ? { brand: card.brand, last4: card.last4 } : null, pack: null, enforcing };
 }
 
 /**
@@ -84,7 +88,7 @@ export async function noticeFor(input: { userId: string; createdAt: string | nul
  * the notice today, and what it says. Anything unreadable (the balances
  * function before the schema is run) means no notices, never a wrong one.
  */
-export async function lowCreditNoticesFor(admin: Admin, userIds: readonly string[], now: Date = new Date()): Promise<Map<string, LowCreditNotice>> {
+export async function lowCreditNoticesFor(admin: Admin, userIds: readonly string[], now: Date = new Date(), opts: { preview?: boolean } = {}): Promise<Map<string, LowCreditNotice>> {
   const out = new Map<string, LowCreditNotice>();
   if (userIds.length === 0) return out;
   const settings = await getBillingSettings();
@@ -124,7 +128,7 @@ export async function lowCreditNoticesFor(admin: Admin, userIds: readonly string
     while (next < due.length) {
       const p = due[next++];
       try {
-        out.set(p.id, await noticeFor({ userId: p.id, createdAt: p.created_at, paymentMethodId: p.stripe_default_payment_method_id, balancePence: balances.get(p.id)!.total, now }));
+        out.set(p.id, await noticeFor({ userId: p.id, createdAt: p.created_at, paymentMethodId: p.stripe_default_payment_method_id, balancePence: balances.get(p.id)!.total, now, preview: opts.preview }));
       } catch (err) {
         console.warn('[low-credit] notice not built:', err instanceof Error ? err.message : String(err));
       }
@@ -161,8 +165,12 @@ export async function sendLowCreditAlone(admin: Admin, input: { userId: string; 
   }
   const mail = renderEmail(message);
   const res = await sendEmail({ to: input.email, subject: mail.subject, html: mail.html, text: mail.text, headers: mail.headers, idempotencyKey: sendKey('daily', input.userId, claim.day) });
-  await finishSend(admin, claim.id, res.sent, summary, []);
-  if (!res.sent) return 'failed';
+  if (!res.sent) {
+    // Batch 21 (D5): the slot goes back for a later send today.
+    await abandonSend(admin, claim.id);
+    return 'failed';
+  }
+  await finishSend(admin, claim.id, true, summary, []);
   await markLowCreditTold(admin, input.userId, now);
   return 'sent';
 }

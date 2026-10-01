@@ -12,7 +12,13 @@ test('Today, deal pages and saved reports are views; nothing else is', () => {
   assert.equal(viewFor('/deals'), null);
   assert.equal(viewFor('/deals/not-an-id'), null);
   assert.equal(viewFor(`/deals/${ID}/extra`), null);
-  assert.equal(viewFor('/my-deals'), null);
+  // Batch 21 (E6): the Explorer and My deals count as looking; the area is never sent.
+  assert.deepEqual(viewFor('/my-deals'), { type: 'my_deals' });
+  assert.deepEqual(viewFor('/markets'), { type: 'explorer' });
+  assert.deepEqual(viewFor('/markets/leeds'), { type: 'explorer' });
+  assert.equal(viewFor('/markets/leeds/extra'), null);
+  assert.deepEqual(parsePing({ kind: 'page', view: { type: 'explorer' } }), { kind: 'page', view: { type: 'explorer' } });
+  assert.deepEqual(parsePing({ kind: 'page', view: { type: 'my_deals' } }), { kind: 'page', view: { type: 'my_deals' } });
   assert.equal(viewFor(null), null);
 });
 

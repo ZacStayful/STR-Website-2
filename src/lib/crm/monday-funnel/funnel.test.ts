@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { COLUMNS, GROUPS, NEVER_WRITTEN, groupOf } from './config.ts';
-import { adSourceText, earliest, emailOkFor, legacyPayments, type MemberFacts } from './facts.ts';
+import { adSourceText, earliest, emailOkFor, legacyPayments, weeksSinceSignup, type MemberFacts } from './facts.ts';
 import { updateRequest } from './mutations.ts';
 import { billingStatus, funnelGroup, planTier } from './precedence.ts';
 import { changedColumns, columnValuesJson, currentRow, desiredRow, planLabel } from './values.ts';
@@ -162,6 +162,8 @@ test('email OK and the ad source', () => {
   assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: false, alert_missed: true }), true);
   assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: false, alert_missed: false }), false, 'unsubscribed from both');
   assert.equal(emailOkFor({ email: null, sourcing_alerts: true, alert_missed: true }), false);
+  assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: true, alert_missed: true, welcome_checked_at: null }), false, 'Batch 21 (D4): never signed in');
+  assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: true, alert_missed: true, welcome_checked_at: '2026-09-01T00:00:00Z' }), true);
   assert.equal(adSourceText(null), 'direct / unknown');
   assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'Autumn Leads', utm_content: 'carousel_2' }), 'facebook / Autumn Leads / carousel_2');
   assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'https://evil.example.com/x', utm_content: 'NG1 1AA' }), 'facebook / - / -', 'no links, no postcodes');
@@ -334,3 +336,18 @@ test('a number is looked for on the board as the board types numbers', () => {
   assert.deepEqual(mobileVariants('12'), []);
 });
 
+
+test('Batch 21 (E2): weeks since sign-up are ISO weeks, the sign-up week being week 1, as Active weeks counts', () => {
+  // A Sunday sign-up (27 Sep 2026) looked at Today that day and on the Monday: Active weeks 2, so weeks since sign-up must be 2, not ROUNDUP(2 / 7) = 1.
+  assert.equal(weeksSinceSignup('2026-09-27T15:00:00Z', new Date('2026-09-29T09:00:00Z')), 2);
+  assert.equal(weeksSinceSignup('2026-09-27T15:00:00Z', new Date('2026-09-27T16:00:00Z')), 1, 'never zero on the sign-up day');
+  assert.equal(weeksSinceSignup('2026-09-28T00:30:00Z', new Date('2026-10-12T09:00:00Z')), 3);
+  assert.equal(weeksSinceSignup(null, new Date('2026-10-12T09:00:00Z')), null);
+});
+
+test('Batch 21 (E2): every column id is a real Monday id; the weeks column exists only once MONDAY_FUNNEL_WEEKS_COLUMN names it', () => {
+  for (const [key, id] of Object.entries(COLUMNS)) assert.match(id, /^[a-z]+_[a-z0-9]+$/, key);
+  assert.equal('weeksSinceSignup' in COLUMNS, Boolean(process.env.MONDAY_FUNNEL_WEEKS_COLUMN?.trim()));
+  const row = desiredRow(facts({ activeWeeks: 2, weeksSinceSignup: 3 }), LOW);
+  assert.equal(row.weeksSinceSignup, COLUMNS.weeksSinceSignup ? 3 : undefined, 'written only once the board has the column');
+});

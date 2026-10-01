@@ -12,7 +12,9 @@ import { motivationLine } from "@/lib/marketplace/motivation-line";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { sharedDealByToken } from "@/lib/marketplace/share";
 import { joinPath, shareState, shareTitle, type ShareState } from "@/lib/marketplace/share-view";
-import { publicDealVisibility } from "@/lib/marketplace/tier";
+import { dealVisibilityFor, publicDealVisibility } from "@/lib/marketplace/tier";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { isAdminEmail } from "@/lib/admin";
 import { siteUrl } from "@/lib/url";
 
 export const dynamic = "force-dynamic";
@@ -27,14 +29,18 @@ const DESCRIPTIONS: Record<ShareState, string> = {
 
 /**
  * Everything the page and its link preview may use, decided once. The state
- * is judged against what a signed-out visitor may see (Batch 1's delay), so a
- * share link can never be a way round early access — whoever shared it.
+ * is judged against what the viewer may see (Batch 1's delay): a signed-out
+ * visitor gets the public cutoff, so a share link can never be a way round
+ * early access, whoever shared it. Batch 21 (C6): a signed-in member is
+ * judged as they are on the grid, so a paying member sent a fresh deal by a
+ * colleague sees the card and a way into the deal, not a dead end.
  */
 async function load(token: string) {
   const shared = await sharedDealByToken(token);
   if (!shared) return null;
   const { card } = shared;
-  const visibility = await publicDealVisibility();
+  const user = await viewer();
+  const visibility = user ? await dealVisibilityFor(user.id, isAdminEmail(user.email)) : await publicDealVisibility();
   const state = shareState(card, visibility.cutoffIso);
   const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
   const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ");
@@ -52,10 +58,22 @@ async function load(token: string) {
     range,
     pn,
     join: joinPath(shared.referralCode),
+    signedIn: Boolean(user),
     // In early access: the area and nothing narrower.
     place: state === "card" ? where : (area?.name ?? ""),
     photoUrl: state === "card" ? photoUrlFor(card, now) : null,
   };
+}
+
+/** The signed-in member looking at the link, or null (a link preview, a stranger). */
+async function viewer(): Promise<{ id: string; email: string | null } | null> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data } = await supabase.auth.getUser();
+    return data.user ? { id: data.user.id, email: data.user.email ?? null } : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
@@ -109,9 +127,15 @@ export default async function SharedDealPage({ params }: Params) {
           <SharedCard card={card} kind={kind} where={v.place} photoUrl={v.photoUrl} now={now} range={v.range} pn={v.pn} />
         )}
 
-        <Link href={v.join} className="mt-6 block rounded-xl bg-[#2e3d2b] px-5 py-3 text-center text-base font-semibold text-white hover:opacity-90">
-          Join free to see deals like this
-        </Link>
+        {v.signedIn ? (
+          <Link href={state === "gone" ? "/today" : `/deals/${card.id}`} className="mt-6 block rounded-xl bg-[#2e3d2b] px-5 py-3 text-center text-base font-semibold text-white hover:opacity-90">
+            {state === "gone" ? "See today's deals" : "Open this deal on Stayful"}
+          </Link>
+        ) : (
+          <Link href={v.join} className="mt-6 block rounded-xl bg-[#2e3d2b] px-5 py-3 text-center text-base font-semibold text-white hover:opacity-90">
+            Join free to see deals like this
+          </Link>
+        )}
         <BasicVsDetailed className="mt-4" />
       </div>
     </main>

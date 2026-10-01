@@ -81,6 +81,13 @@ interface DeliveryRow {
   attempts: number;
 }
 
+/**
+ * Batch 21 (D12): how long a claimed delivery is held before it may be
+ * claimed again. A push that dies mid-way (a function killed at its limit)
+ * frees the row when this runs out; `finish()` sets the real next attempt.
+ */
+const LEASE_MS = 5 * 60 * 1000;
+
 interface LeadRow {
   id: string;
   user_id: string;
@@ -110,18 +117,33 @@ function baseUrl(): string | null {
   );
 }
 
-/** Runs one queued delivery, recording whatever happened. */
+/**
+ * Runs one queued delivery, recording whatever happened.
+ *
+ * Batch 21 (D12): the row is claimed first. The every-ten-minutes cron and a
+ * "send now" (or two crons that overlap) used to both pick up the same
+ * pending row and push the same lead to the customer's CRM twice; now only
+ * the caller whose claim lands runs it, and the other gets null.
+ */
 export async function runDelivery(deliveryId: string): Promise<CrmResult | null> {
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
 
-  const { data: delivery } = await admin
+  const now = new Date();
+  const { data: claimed, error: claimError } = await admin
     .from('crm_deliveries')
-    .select('id, lead_id, connection_id, attempts')
+    .update({ next_attempt_at: new Date(now.getTime() + LEASE_MS).toISOString(), updated_at: now.toISOString() })
     .eq('id', deliveryId)
+    .eq('status', 'pending')
+    .lte('next_attempt_at', now.toISOString())
+    .select('id, lead_id, connection_id, attempts')
     .maybeSingle();
-  if (!delivery) return null;
-  const row = delivery as DeliveryRow;
+  if (claimError) {
+    console.error('[crm] claim failed:', claimError.message);
+    return null;
+  }
+  if (!claimed) return null;
+  const row = claimed as DeliveryRow;
 
   const { data: leadData } = await admin
     .from('leads')
@@ -248,35 +270,56 @@ async function finish(row: DeliveryRow, result: CrmResult): Promise<void> {
     .eq('id', row.id);
 }
 
+export interface DrainSummary {
+  attempted: number;
+  sent: number;
+  failed: number;
+  /** Batch 21 (D12): due rows left for the next run because the time budget ran out. */
+  skipped: number;
+  /** Batch 21 (C31): what a dry run would have attempted (ids only). */
+  due?: DeliveryRow[];
+}
+
 /**
  * Drains what is due. Bounded per run because each Monday delivery renders
- * a PDF, and the cron has sixty seconds.
+ * a PDF, and the cron has sixty seconds: Batch 21 (D12) stops starting new
+ * rows once `budgetMs` has gone, and Batch 21 (C31) lists the due rows
+ * without touching them when `dry` is set.
  */
-export async function drainDeliveries(limit = 10): Promise<{ attempted: number; sent: number; failed: number }> {
-  if (!hasServiceRole()) return { attempted: 0, sent: 0, failed: 0 };
+export async function drainDeliveries(limit = 10, opts: { dry?: boolean; budgetMs?: number } = {}): Promise<DrainSummary> {
+  const none: DrainSummary = { attempted: 0, sent: 0, failed: 0, skipped: 0 };
+  if (!hasServiceRole()) return none;
 
+  const started = Date.now();
   const { data, error } = await createAdminClient()
     .from('crm_deliveries')
-    .select('id')
+    .select('id, lead_id, connection_id, attempts')
     .eq('status', 'pending')
     .lte('next_attempt_at', new Date().toISOString())
     .order('next_attempt_at', { ascending: true })
     .limit(limit);
   if (error) {
     console.error('[crm] drain query failed:', error.message);
-    return { attempted: 0, sent: 0, failed: 0 };
+    return none;
   }
+  const due = (data ?? []) as DeliveryRow[];
+  if (opts.dry) return { ...none, due };
 
   let sent = 0;
   let failed = 0;
-  for (const d of (data ?? []) as Array<{ id: string }>) {
+  let skipped = 0;
+  for (const d of due) {
+    if (Date.now() - started > (opts.budgetMs ?? 40_000)) {
+      skipped += 1;
+      continue;
+    }
     // Sequential on purpose: a customer with a backlog would otherwise fire
     // ten PDF renders at once inside one function.
     const result = await runDelivery(d.id);
     if (result?.ok) sent += 1;
     else failed += 1;
   }
-  return { attempted: (data ?? []).length, sent, failed };
+  return { attempted: due.length - skipped, sent, failed, skipped };
 }
 
 export type { LeadPayload };

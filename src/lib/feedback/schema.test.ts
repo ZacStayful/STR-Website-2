@@ -35,8 +35,10 @@ test('every table is service role only: RLS on, no policies, nothing granted to 
 
 test('every statement can run twice', () => {
   for (const m of section.matchAll(/create (unique )?(table|index)\b(?! if not exists)/gi)) assert.fail(`not idempotent: ${m[0]}`);
+  // Batch 21 (A15): a check constraint is dropped and re-added, so a changed
+  // value list applies on re-run; the old name guard is accepted for the rest.
   for (const m of section.matchAll(/add constraint (\w+)/g)) {
-    assert.ok(section.includes(`conname = '${m[1]}'`), `${m[1]} is added without a guard`);
+    assert.ok(section.includes(`drop constraint if exists ${m[1]};`) || section.includes(`conname = '${m[1]}'`), `${m[1]} is added without a guard`);
   }
   for (const m of section.matchAll(/create (or replace )?function/gi)) assert.ok(m[1], `${m[0]} must be "create or replace"`);
   assert.match(section, /on conflict \(key\) do nothing;/);

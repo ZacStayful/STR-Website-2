@@ -1,8 +1,9 @@
 import 'server-only';
 
 import { cache } from 'react';
+import { cookies } from 'next/headers';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { emailKey } from '../supabase/email-key';
+import { priceIdForStarterPack } from '../stripe/prices';
 import { getBillingSettings } from '../credit/unit-costs';
 import { normaliseMobile } from '../credit/abuse';
 import { teamOf } from '../team';
@@ -10,7 +11,20 @@ import { ACCESS_COLUMNS, accountStatus, type AccessProfile } from '../access';
 import { isPackAccount, welcomeGrantRef } from '../lifecycle/settings';
 import { todayKey } from '../today/day';
 import { logActivity } from '../activity/log';
-import { packCopy, packOffer, snoozeUntil, todayCardShown, type PackCopy, type PackOffer } from './rules';
+import { CHECKOUT_PENDING_MS, packCopy, packEmailKey, packOffer, snoozeUntil, todayCardShown, type PackCopy, type PackOffer } from './rules';
+
+/** The cookie the pack route sets when it sends a member to Checkout (Batch 21, B47): when, so the offer hides for CHECKOUT_PENDING_MS. */
+export const PACK_CHECKOUT_COOKIE = 'sf_pack_checkout';
+
+/** Whether this browser started a pack Checkout in the last CHECKOUT_PENDING_MS. False outside a request (a cron) or without the cookie. */
+async function checkoutPending(now: Date): Promise<boolean> {
+  try {
+    const at = Number((await cookies()).get(PACK_CHECKOUT_COOKIE)?.value ?? '');
+    return Number.isFinite(at) && at > 0 && now.getTime() - at < CHECKOUT_PENDING_MS;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Who is offered the starter pack, read for one member (Batch 20, Part A).
@@ -29,7 +43,7 @@ export interface PackState {
   creditPence: number;
 }
 
-type ProfileRow = { created_at: string | null; email: string | null; mobile: string | null } & AccessProfile;
+type ProfileRow = { created_at: string | null; email: string | null; mobile: string | null; mobile_key: string | null } & AccessProfile;
 
 async function claimed(column: 'user_id' | 'email_key' | 'mobile_key', value: string | null): Promise<boolean | null> {
   if (!value) return false;
@@ -41,8 +55,8 @@ async function claimed(column: 'user_id' | 'email_key' | 'mobile_key', value: st
 async function load(userId: string): Promise<PackState> {
   const settings = await getBillingSettings();
   const lc = settings.lifecycle;
-  const copy = packCopy(lc, settings.dealPricing.fullAnalysisPence, settings.spendRates);
-  const off = (reason: 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan'): PackState => ({
+  const copy = packCopy(lc, settings.dealPricing.fullAnalysisPence, settings.spendRates, { freeDealDelayHours: settings.freeDealDelayHours });
+  const off = (reason: 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan' | 'pending'): PackState => ({
     offer: { eligible: false, reason },
     showTodayCard: false,
     snoozedUntil: null,
@@ -50,9 +64,10 @@ async function load(userId: string): Promise<PackState> {
     pricePence: lc.starterPackPricePence,
     creditPence: lc.starterPackCreditPence,
   });
-  if (!lc.starterPackFrom || !hasServiceRole()) return off('off');
+  // Batch 21 (G27): without the Stripe price the pack cannot be sold, so it is not offered.
+  if (!lc.starterPackFrom || !hasServiceRole() || !priceIdForStarterPack()) return off('off');
   const admin = createAdminClient();
-  const { data, error } = await admin.from('profiles').select(`created_at, email, mobile, ${ACCESS_COLUMNS}`).eq('id', userId).maybeSingle();
+  const { data, error } = await admin.from('profiles').select(`created_at, email, mobile, mobile_key, ${ACCESS_COLUMNS}`).eq('id', userId).maybeSingle();
   const p = (data as ProfileRow | null) ?? null;
   if (error || !p) return off('off');
   // Existing members never see it: stop before any other read.
@@ -63,8 +78,9 @@ async function load(userId: string): Promise<PackState> {
     admin.from('profiles').select('starter_pack_bought_at, starter_pack_snoozed_until').eq('id', userId).maybeSingle(),
     teamOf(userId),
     claimed('user_id', userId),
-    claimed('email_key', p.email ? emailKey(p.email) : null),
-    claimed('mobile_key', normaliseMobile(p.mobile)),
+    // Batch 21 (B21, B22): the claim's own email key, and the number the account holds, not the editable one.
+    claimed('email_key', packEmailKey(p.email)),
+    claimed('mobile_key', p.mobile_key ?? normaliseMobile(p.mobile)),
     admin.from('credit_grants').select('id').eq('user_id', userId).eq('source_ref', welcomeGrantRef(userId)).limit(1),
   ]);
   if (cols.error || welcome.error || byAccount === null || byEmail === null || byMobile === null) return off('off');
@@ -78,6 +94,7 @@ async function load(userId: string): Promise<PackState> {
       bought: Boolean(c.starter_pack_bought_at),
       alreadyHad: byAccount || byEmail || byMobile,
       onPlan: status === 'paid' || status === 'subscription_trial' || status === 'paused',
+      checkoutPending: await checkoutPending(new Date()),
     },
     lc,
   );
@@ -103,7 +120,7 @@ export const starterPackStateFor = cache(async (userId: string): Promise<PackSta
       offer: { eligible: false, reason: 'off' },
       showTodayCard: false,
       snoozedUntil: null,
-      copy: packCopy(settings.lifecycle, settings.dealPricing.fullAnalysisPence, settings.spendRates),
+      copy: packCopy(settings.lifecycle, settings.dealPricing.fullAnalysisPence, settings.spendRates, { freeDealDelayHours: settings.freeDealDelayHours }),
       pricePence: settings.lifecycle.starterPackPricePence,
       creditPence: settings.lifecycle.starterPackCreditPence,
     };

@@ -6,7 +6,7 @@ import { ACCESS_COLUMNS, accountStatus, isCancelScheduled, type AccessProfile } 
 import { getBillingSettings } from '../credit/unit-costs';
 import { QUALIFYING_KINDS } from '../activity/kinds';
 import { payersForStrict } from '../team';
-import { EMAIL_ENGAGEMENT_KINDS, inactivityChange, inactivityEligible, inactivityState } from './rules';
+import { EMAIL_ENGAGEMENT_KINDS, ENGAGED_EXTRA_KINDS, ENGAGED_KINDS, inactivityChange, inactivityEligible, inactivityState } from './rules';
 
 /**
  * Inactivity (Batch 20, Part C; the rules are in ./rules.ts).
@@ -35,7 +35,7 @@ type Admin = ReturnType<typeof createAdminClient>;
 const PAGE = 1000;
 const ID_CHUNK = 300;
 
-type ProfileRow = AccessProfile & { id: string; email: string | null; created_at: string | null };
+type ProfileRow = AccessProfile & { id: string; email: string | null; created_at: string | null; welcome_checked_at: string | null };
 type MarkRow = { id: string; reengage_since: string | null; picks_paused_inactive_at: string | null };
 
 export interface InactivityOutcome {
@@ -70,7 +70,8 @@ async function syncActiveDays(admin: Admin, apply: boolean, deadline: number): P
   let upTo: number | null = null;
   const pending = new Map<string, string>();
   for (;;) {
-    const { data, error } = await admin.rpc('lifecycle_active_days_sync', { p: { qualifying: QUALIFYING_KINDS, engaged: EMAIL_ENGAGEMENT_KINDS, apply, limit: 50000 } });
+    // Batch 21 (E7): the extension and the API count as engaging too.
+    const { data, error } = await admin.rpc('lifecycle_active_days_sync', { p: { qualifying: QUALIFYING_KINDS, engaged: [...EMAIL_ENGAGEMENT_KINDS, ...ENGAGED_EXTRA_KINDS], apply, limit: 50000 } });
     if (error) return { error: `active days not synced (schema behind?): ${error.message}` };
     const r = (data ?? {}) as { added?: number; to?: number | null; more?: boolean; pending?: { u: string; day: string }[] | null };
     added += Number(r.added) || 0;
@@ -99,7 +100,7 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
   // Everyone, with the plan columns (the rules need the plan holder's).
   const profiles: ProfileRow[] = [];
   for (let from = 0; ; from += PAGE) {
-    const { data, error } = await admin.from('profiles').select(`id, email, created_at, ${ACCESS_COLUMNS}`).order('id', { ascending: true }).range(from, from + PAGE - 1);
+    const { data, error } = await admin.from('profiles').select(`id, email, created_at, welcome_checked_at, ${ACCESS_COLUMNS}`).order('id', { ascending: true }).range(from, from + PAGE - 1);
     if (error) return fail(`profiles read failed: ${error.message}`);
     profiles.push(...((data ?? []) as unknown as ProfileRow[]));
     if ((data?.length ?? 0) < PAGE) break;
@@ -118,6 +119,14 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
   // A team member follows their owner's plan: never guessed, so a failed lookup stops the step.
   const payers = await payersForStrict(ids);
   if (!payers) return fail('team lookup failed: nobody marked');
+  // Batch 21 (E8, Q10): the admin's "Exclude from metrics" switch leaves an
+  // account out of the nightly entirely (never marked; marks cleared).
+  const excluded = new Set<string>();
+  {
+    const { data, error } = await admin.from('activity_excluded_accounts').select('user_id');
+    if (error) return fail(`excluded accounts unreadable: ${error.message}`);
+    for (const r of (data ?? []) as { user_id: string }[]) excluded.add(r.user_id);
+  }
   const lastDay = new Map<string, string | null>();
   for (let i = 0; i < ids.length; i += ID_CHUNK) {
     const { data, error } = await admin.rpc('lifecycle_member_stats', { p: { users: ids.slice(i, i + ID_CHUNK) } });
@@ -137,7 +146,8 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
     const holder = byId.get(payers.get(p.id)?.payerId ?? p.id) ?? p;
     // A cancellation booked and still to come; a plan granted by hand is never one (a stale date may be left on it).
     const cancelBooked = holder.plan_source !== 'manual' && isCancelScheduled(holder, now.getTime());
-    const eligible = inactivityEligible({ planStatus: accountStatus(holder, now.getTime()), cancelBooked, admin: isAdminEmail(p.email), email: p.email });
+    // Batch 21 (E3): an account that never signed in (welcome_checked_at unset) is not a quiet member, it is an unconfirmed sign-up.
+    const eligible = Boolean(p.welcome_checked_at) && !excluded.has(p.id) && inactivityEligible({ planStatus: accountStatus(holder, now.getTime()), cancelBooked, admin: isAdminEmail(p.email), email: p.email });
     if (eligible) out.eligible += 1;
     const target = inactivityState({ eligible, lastActiveDay: lastDay.get(p.id) ?? null, createdAt: p.created_at }, settings, now);
     const mark = marks.get(p.id);
@@ -154,6 +164,24 @@ export async function runInactivityStep(opts: { apply: boolean; now?: Date; budg
   out.paused = { set: groups.setPaused.length, cleared: groups.clearPaused.length };
   if (!opts.apply) return { ...out, ms: Date.now() - started };
 
+  // Batch 21 (E22): a member who engaged in the seconds between the sync's
+  // read and this write is not marked tonight: one read of the log past the
+  // watermark for the members about to be marked.
+  if (synced.upTo !== null && (groups.setReengage.length > 0 || groups.setPaused.length > 0)) {
+    const about = [...new Set([...groups.setReengage, ...groups.setPaused])];
+    const back = new Set<string>();
+    for (let i = 0; i < about.length; i += ID_CHUNK) {
+      const { data, error } = await admin.from('activity_events').select('user_id').gt('id', synced.upTo).in('kind', ENGAGED_KINDS).in('user_id', about.slice(i, i + ID_CHUNK));
+      if (error) return fail(`late activity unreadable: ${error.message}`);
+      for (const r of (data ?? []) as { user_id: string }[]) back.add(r.user_id);
+    }
+    if (back.size > 0) {
+      groups.setReengage = groups.setReengage.filter((id) => !back.has(id));
+      groups.setPaused = groups.setPaused.filter((id) => !back.has(id));
+      out.reengage.set = groups.setReengage.length;
+      out.paused.set = groups.setPaused.length;
+    }
+  }
   const nowIso = now.toISOString();
   const write = async (list: string[], patch: Record<string, unknown>, onlyIfNull?: string): Promise<string | null> => {
     for (let i = 0; i < list.length; i += ID_CHUNK) {

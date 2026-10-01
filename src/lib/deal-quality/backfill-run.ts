@@ -178,8 +178,12 @@ export async function runReportBackfill(opts: { dry: boolean; triggeredBy: strin
   let keptForBulkJob = 0;
   if (p.removals.length > 0) {
     const ids = p.removals.map((r) => r.id);
-    const { data: referenced } = await admin.from('bulk_jobs').select('report_id').in('report_id', ids);
-    const held = new Set(((referenced ?? []) as { report_id: string }[]).map((r) => r.report_id));
+    // Batch 21 (A5): report_id lives on bulk_job_rows, not bulk_jobs (the old
+    // read matched nothing, so the guard never held a report back); and a
+    // failed read keeps every row rather than treating it as "none held".
+    const { data: referenced, error: refErr } = await admin.from('bulk_job_rows').select('report_id').in('report_id', ids);
+    if (refErr) return { status: 500, body: { error: `Could not read the bulk-job references; nothing removed: ${refErr.message}`, ...summary } };
+    const held = new Set(((referenced ?? []) as { report_id: string | null }[]).flatMap((r) => (r.report_id ? [r.report_id] : [])));
     keptForBulkJob = held.size;
     const removable = p.removals.filter((r) => !held.has(r.id));
     const { data: full, error: readErr } = await admin.from('analyser_reports').select('*').in('id', removable.map((r) => r.id));

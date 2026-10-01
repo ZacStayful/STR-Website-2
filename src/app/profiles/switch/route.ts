@@ -13,7 +13,12 @@ import { switchProfile } from "@/lib/profiles/server";
  */
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
-  const next = safeInternalPath(url.searchParams.get("next"), "/today");
+  let next = safeInternalPath(url.searchParams.get("next"), "/today");
+  // Batch 21 (E4): a link from the daily email or a text carries ?via=; it goes
+  // on to the page, where the heartbeat records the click (an email click,
+  // never an in-app action).
+  const via = url.searchParams.get("via");
+  if ((via === "email" || via === "sms") && !/[?&]via=/.test(next)) next = `${next}${next.includes("?") ? "&" : "?"}via=${via}`;
   const to = url.searchParams.get("to") ?? "";
   const supabase = await createSupabaseServerClient();
   const {

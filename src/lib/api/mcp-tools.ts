@@ -405,7 +405,8 @@ export function registerTools(server: McpServer, access: ApiAccess): string[] {
         const parsed = parseAnalysisInput(args);
         if (!parsed.ok) return failure(parsed.error);
 
-        const opts = { billedUserId: userId, requireCredit: true };
+        // Batch 21 (B35): the site's own credit rule, as /api/v1/analyse.
+        const opts = { billedUserId: userId };
         try {
           const prepared = await reserveAnalysis(parsed.input, opts);
           const { result } = await runAnalysis(prepared, parsed.input, opts);

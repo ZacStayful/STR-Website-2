@@ -24,3 +24,49 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+
+  # The database half of CI (Batch 21, G4): supabase/schema.sql on a fresh
+  # Postgres 16 behind a Supabase stand-in, run twice so every statement is
+  # proven idempotent, then the ledger and schema checks. Nothing in the unit
+  # tests reaches the credit_* functions, where the money actually moves.
+  schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Supabase stand-in (roles, auth.users, storage, pgcrypto)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shim.sql
+      - name: schema.sql on a fresh database
+        run: psql -v ON_ERROR_STOP=1 -f supabase/schema.sql
+      - name: Dump after the first run
+        run: |
+          docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --schema-only --no-owner | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/schema1.sql
+          docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --data-only --inserts --no-owner --exclude-schema=auth --exclude-schema=storage | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/data1.sql
+      - name: schema.sql again (every statement must be idempotent)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/schema.sql
+      - name: The second run changed nothing
+        run: |
+          docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --schema-only --no-owner | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/schema2.sql
+          docker exec ${{ job.services.postgres.id }} pg_dump -U postgres -d postgres --data-only --inserts --no-owner --exclude-schema=auth --exclude-schema=storage | grep -vE '^(-- Dumped|SET |SELECT pg_catalog|\\restrict |\\unrestrict )' > /tmp/data2.sql
+          diff /tmp/schema1.sql /tmp/schema2.sql
+          diff /tmp/data1.sql /tmp/data2.sql
+      - name: Ledger and schema checks
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/credit-smoke.sql

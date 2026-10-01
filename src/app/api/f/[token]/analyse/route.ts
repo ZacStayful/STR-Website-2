@@ -1,5 +1,7 @@
 import { parseAnalysisInput } from '@/lib/analysis/input';
 import { reserveAnalysis, runAnalysis, GeocodeError } from '@/lib/analysis/run';
+import { analysisComplete } from '@/lib/analysis/reuse';
+import { actionSpend, refundAction } from '@/lib/credit/action';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { getBalance } from '@/lib/credit/ledger';
 import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
@@ -7,7 +9,7 @@ import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { ownedFunnelByToken } from '@/lib/funnels';
 import { countAttempt, reserveSpend, settleSpend, capMessage } from '@/lib/funnels/caps';
 import { raiseFunnelAlert } from '@/lib/funnels/alerts';
-import { captureLead, completeLead } from '@/lib/leads/store';
+import { captureLead, completeLead, leaseQueuedLead } from '@/lib/leads/store';
 import { isDisposableEmail } from '@/lib/credit/abuse';
 import { verifyTurnstile } from '@/lib/turnstile/verify';
 
@@ -32,6 +34,12 @@ import { verifyTurnstile } from '@/lib/turnstile/verify';
  *      reconciled to the actual afterwards
  *
  * Short of credit at 5 or 6, the lead stays `queued` and nothing is spent.
+ *
+ * Batch 21 (C3): a run that fails is refunded and its lead stays queued for
+ * the drain; a report with no short-let figures is refunded and not saved;
+ * and the same enquiry submitted again inside the hour reuses the lead it
+ * already has (its report resent, or one run) rather than making a second
+ * lead that is run and charged on its own.
  */
 
 export const maxDuration = 60;
@@ -131,7 +139,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   // ── 4. Capture first. An enquiry costs nothing to keep, and losing a real
   //      prospect because a balance ran dry is the outcome worth designing
   //      against. ──
-  const leadId = await captureLead({
+  const captured = await captureLead({
     userId: funnel.userId,
     funnelId: funnel.id,
     contact: {
@@ -146,9 +154,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       bedrooms: input.property.bedrooms,
     },
     status: 'queued',
+    analysis: input,
   });
-  if (!leadId) {
+  if (!captured) {
     return sseOnce({ stage: 'error', progress: 0, message: 'We could not start your report just now. Please try again shortly.' });
+  }
+  const leadId = captured.id;
+  if (captured.reused) {
+    // The report already ran: it is theirs, resent for nothing.
+    if (captured.result) {
+      return sseOnce({ stage: 'complete', progress: 100, message: 'Analysis complete', data: captured.result });
+    }
+    // Still queued. Claim it, or leave it to whoever has it (a run in
+    // progress, or the drain) and say what the funnel already said.
+    if (!(await leaseQueuedLead(leadId))) {
+      return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });
+    }
   }
 
   const settings = await getBillingSettings();
@@ -203,6 +224,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
         });
         actualBasePence = spend.basePence;
 
+        // A report with no short-let figures (the provider failed) is no
+        // report: whatever it charged the owner is refunded and nothing is
+        // saved, so the lead stays queued and the drain runs it again later.
+        if (!analysisComplete(result)) {
+          await refundAction(prepared.ctx.actionId, 'Report could not get short-let figures').catch(() => 0);
+          actualBasePence = (await actionSpend(prepared.ctx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 }))).basePence;
+          send({ stage: 'error', progress: 0, message: 'We could not get short-let figures for this property just now. Your report will be sent to you once they are available.' });
+          return;
+        }
+
         // Null means the report could not be attached to the lead. The run
         // itself succeeded and has been paid for, so the prospect below still
         // gets it — but the customer's copy is gone, and completeLead has
@@ -223,6 +254,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
         // about the customer's credit — that is the customer's business.
         send({ stage: 'complete', progress: 100, message: 'Analysis complete', data: result });
       } catch (err) {
+        // Whatever the failed run had already charged the owner is refunded,
+        // and the day's spend is settled to what stayed charged (below), not
+        // to nothing. The lead stays queued: the drain runs it again, once.
+        await refundAction(prepared.ctx.actionId, 'Report failed').catch(() => 0);
+        actualBasePence = (await actionSpend(prepared.ctx.actionId).catch(() => ({ basePence: 0, chargedPence: 0 }))).basePence;
         if (err instanceof GeocodeError) {
           send({ stage: 'error', progress: 0, message: err.message });
         } else {

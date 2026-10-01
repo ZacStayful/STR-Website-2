@@ -7,6 +7,7 @@ import { leadScopeOrPaused, type LeadScope } from '@/lib/leads/scope';
 import { touchLeads } from '@/lib/leads/activity';
 import { parseStage, STAGE_LABELS } from '@/lib/leads/stage';
 import { purgeAfter, retentionDate } from '@/lib/leads/retention';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Stage, archive and restore for a customer's own leads.
@@ -21,13 +22,19 @@ const UUID = /^[0-9a-f-]{36}$/i;
 /** Enough for a page of bulk selection; more is not a click, it is a script. */
 const MAX_BATCH = 200;
 
-async function scope(): Promise<LeadScope | null> {
+/**
+ * The scope plus who is acting: a team member works their owner's leads, and
+ * the activity log (Batch 21, E5) records the member, not the owner.
+ */
+type ActingScope = LeadScope & { userId: string };
+
+async function scope(): Promise<ActingScope | null> {
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
   // A paused seat can do nothing to the team's leads until it is paid.
   const s = await leadScopeOrPaused(user);
-  return s === 'paused' ? null : s;
+  return s === 'paused' ? null : { ...s, userId: user.id };
 }
 
 function ids(formData: FormData): string[] {
@@ -78,6 +85,8 @@ export async function archiveLeadsAction(_prev: LeadActionState, formData: FormD
   revalidatePath('/leads');
   for (const id of leadIds) revalidatePath(`/leads/${id}`);
   const n = (data ?? []).length;
+  // Batch 21 (E5): working leads is the member at work (ids and counts only, never a prospect's details).
+  if (n > 0) logActivity(s.userId, 'lead_action', { extras: { action: 'archive', count: n } });
   return {
     notice: `${n} lead${n === 1 ? '' : 's'} archived. ${n === 1 ? 'It' : 'They'} will be deleted permanently on ${retentionDate(purgeAfter(now))} unless restored.`,
   };
@@ -115,6 +124,7 @@ export async function restoreLeadsAction(_prev: LeadActionState, formData: FormD
   revalidatePath('/leads');
   for (const id of leadIds) revalidatePath(`/leads/${id}`);
   const n = (data ?? []).length;
+  if (n > 0) logActivity(s.userId, 'lead_action', { extras: { action: 'restore', count: n } });
   return { notice: `${n} lead${n === 1 ? '' : 's'} restored.` };
 }
 
@@ -138,6 +148,8 @@ export async function setLeadStageAction(_prev: LeadActionState, formData: FormD
   }
 
   await touchLeads(s.ownerId, [leadId]);
+  // The lead id keeps two moves on different leads within a minute apart (the log's repeat guard).
+  logActivity(s.userId, 'lead_action', { extras: { action: 'stage', stage, lead: leadId } });
   revalidatePath('/leads');
   revalidatePath(`/leads/${leadId}`);
   return { notice: `Moved to ${STAGE_LABELS[stage]}.` };

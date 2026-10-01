@@ -109,13 +109,11 @@ export async function GET(request: Request) {
         summary.warned += leads.length;
         continue;
       }
-      const email = archiveWarningEmail({ leads, archiveOn });
-      const sent = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
-      if (!sent.sent) {
-        summary.errors.push(`warn ${ownerId}: ${sent.reason ?? 'not sent'}`);
-        continue;
-      }
-      const { error: upErr } = await admin
+      // Batch 21 (D17): the mark first, conditionally, so an overlapping run
+      // cannot warn the same customer twice; then the email, for the leads
+      // this run marked. A send that fails leaves them marked-but-unwarned,
+      // which the archive step treats as warned, so the mark is undone.
+      const { data: marked, error: upErr } = await admin
         .from('leads')
         .update({ archive_warned_at: now.toISOString() })
         .eq('user_id', ownerId)
@@ -123,9 +121,23 @@ export async function GET(request: Request) {
         .is('archived_at', null)
         .is('archive_warned_at', null)
         // Opened between the read and now? Then it no longer needs warning.
-        .lte('last_activity_at', cutoff);
-      if (upErr) summary.errors.push(`warn mark ${ownerId}: ${upErr.message}`);
-      else summary.warned += leads.length;
+        .lte('last_activity_at', cutoff)
+        .select('id');
+      if (upErr) {
+        summary.errors.push(`warn mark ${ownerId}: ${upErr.message}`);
+        continue;
+      }
+      const markedIds = new Set(((marked ?? []) as { id: string }[]).map((r) => r.id));
+      const mine = leads.filter((l) => markedIds.has(l.id));
+      if (mine.length === 0) continue;
+      const email = archiveWarningEmail({ leads: mine, archiveOn });
+      const sent = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
+      if (!sent.sent) {
+        summary.errors.push(`warn ${ownerId}: ${sent.reason ?? 'not sent'}`);
+        await admin.from('leads').update({ archive_warned_at: null }).eq('user_id', ownerId).in('id', mine.map((l) => l.id)).eq('archive_warned_at', now.toISOString());
+        continue;
+      }
+      summary.warned += mine.length;
     }
   } catch (err) {
     summary.errors.push(`warn: ${(err as Error).message}`);
@@ -186,22 +198,31 @@ export async function GET(request: Request) {
         summary.notified += leads.length;
         continue;
       }
-      const email = archivedEmail({ leads, deleteOn });
-      const sent = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
-      if (!sent.sent) {
-        summary.errors.push(`notify ${ownerId}: ${sent.reason ?? 'not sent'}`);
-        continue;
-      }
-      const { error: upErr } = await admin
+      // Batch 21 (D17): the mark first, then the notice for the leads this run marked (undone if the send fails).
+      const { data: marked, error: upErr } = await admin
         .from('leads')
         .update({ archive_notified_at: now.toISOString(), purge_after: deleteOn.toISOString() })
         .eq('user_id', ownerId)
         .in('id', leads.map((l) => l.id))
         // Restored in the meantime? Then it must not pick up a deletion date.
         .not('archived_at', 'is', null)
-        .is('archive_notified_at', null);
-      if (upErr) summary.errors.push(`notify mark ${ownerId}: ${upErr.message}`);
-      else summary.notified += leads.length;
+        .is('archive_notified_at', null)
+        .select('id');
+      if (upErr) {
+        summary.errors.push(`notify mark ${ownerId}: ${upErr.message}`);
+        continue;
+      }
+      const markedIds = new Set(((marked ?? []) as { id: string }[]).map((r) => r.id));
+      const mine = leads.filter((l) => markedIds.has(l.id));
+      if (mine.length === 0) continue;
+      const email = archivedEmail({ leads: mine, deleteOn });
+      const sent = await sendEmail({ to, subject: email.subject, html: email.html, text: email.text });
+      if (!sent.sent) {
+        summary.errors.push(`notify ${ownerId}: ${sent.reason ?? 'not sent'}`);
+        await admin.from('leads').update({ archive_notified_at: null, purge_after: null }).eq('user_id', ownerId).in('id', mine.map((l) => l.id)).eq('archive_notified_at', now.toISOString());
+        continue;
+      }
+      summary.notified += mine.length;
     }
   } catch (err) {
     summary.errors.push(`notify: ${(err as Error).message}`);

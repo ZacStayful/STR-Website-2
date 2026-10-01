@@ -5,7 +5,7 @@ import { isCleanForSend, isStripeReturn, surfaceFor, tidiedHref } from './surfac
 const SITE = 'https://intelligence.stayful.co.uk';
 
 test('white-label, admin, token and unknown pages get nothing at all', () => {
-  for (const p of ['/f/abc123', '/r/tok', '/r/tok/pdf', '/admin', '/admin/signups', '/api/consent', '/auth/callback', '/team/join', '/extension/connect', '/presentation', '/report', '/demo-report', '/m', '/profiles/switch', '/no-such-page', '/deals-nope', '', 'relative']) {
+  for (const p of ['/f/abc123', '/r/tok', '/r/tok/pdf', '/admin', '/admin/signups', '/api/consent', '/auth/callback', '/team/join', '/extension/connect', '/presentation', '/demo-report', '/m', '/profiles/switch', '/no-such-page', '/deals-nope', '', 'relative']) {
     assert.equal(surfaceFor(p), 'none', p);
   }
 });
@@ -76,4 +76,8 @@ test('a Stripe return is recognised before the flags are tidied away', () => {
   assert.equal(isStripeReturn(`${SITE}/account/billing?subscribed=1&plan=pro`), true);
   assert.equal(isStripeReturn(`${SITE}/account/billing`), false);
   assert.equal(isStripeReturn(`${SITE}/today?topup=1`), false);
+  // Batch 21 (E28): the starter pack's Checkout return is a Stripe return too.
+  assert.equal(isStripeReturn(`${SITE}/today?pack=1`), true);
+  assert.equal(isStripeReturn(`${SITE}/today`), false);
+  assert.equal(isStripeReturn(`${SITE}/today?offer=pack`), false);
 });

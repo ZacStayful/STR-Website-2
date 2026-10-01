@@ -80,9 +80,12 @@ const resolve = cache(async (token: string, mode: PreviewMode): Promise<Resolved
   const lookup = await funnelPageByToken(token);
   if (lookup.state === "missing") return { view: "missing" };
   if (lookup.state === "live") {
-    return mode === "none"
-      ? { view: "live", funnel: lookup.funnel }
-      : { view: "preview", funnel: lookup.funnel, paused: false };
+    if (mode === "none") return { view: "live", funnel: lookup.funnel };
+    // Batch 21 (C27): the preview is the owner's. Anyone else asking for it on
+    // a live funnel gets the live form, not a banner addressed to its owner
+    // with submissions switched off.
+    const owned = await ownerOf(token);
+    return owned ? { view: "preview", funnel: owned, paused: false } : { view: "live", funnel: lookup.funnel };
   }
   // Paused. Only its owner sees anything but the closed page, and only when
   // they asked for a preview — a bare link is a not-found page for them too,
@@ -114,7 +117,8 @@ export async function generateMetadata({
     robots: { index: false, follow: false },
     // The root layout's Stayful favicons would otherwise carry through onto a
     // page that is supposed to look like someone else's.
-    icons: funnel?.brand.logoUrl ? { icon: funnel.brand.logoUrl } : { icon: "/favicon.ico" },
+    // Batch 21 (C8): the fallback is a neutral mark, not Stayful's (or Next's default) icon.
+    icons: funnel?.brand.logoUrl ? { icon: funnel.brand.logoUrl } : { icon: "/icon-neutral.svg" },
   };
 }
 
@@ -145,9 +149,13 @@ export default async function FunnelPage({
     // `after` so a prospect is not kept waiting on our bookkeeping, and behind
     // `firstPausedHit` because this runs on an unauthenticated public GET —
     // otherwise hammering a paused link would make us do an upsert, a profile
-    // read and an email attempt per request. The owner's own preview never
-    // reaches here, so checking their own funnel does not alert them.
+    // read and an email attempt per request. Batch 21 (C28): the owner opening
+    // their own paused link without ?preview is not a prospect being turned
+    // away, so it raises nothing. Their session is read here, in the render:
+    // a page's after() cannot read cookies.
+    const owner = await ownerOf(token);
     after(async () => {
+      if (owner) return;
       if (await firstPausedHit(resolved.funnel.id)) {
         await raiseFunnelAlertById("paused_hit", resolved.funnel.id);
       }
@@ -160,7 +168,9 @@ export default async function FunnelPage({
   }
 
   const isPreview = resolved.view === "preview";
-  const previewReport = mode === "report";
+  // Batch 21 (C27): the demo report is the owner's preview only; a stranger's
+  // ?preview=report on a live funnel is the live form.
+  const previewReport = isPreview && mode === "report";
   const funnelMode: FunnelMode = {
     token,
     brand: resolved.funnel.brand,

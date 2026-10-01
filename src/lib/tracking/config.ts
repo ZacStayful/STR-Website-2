@@ -166,6 +166,9 @@ export const ONE_SHOT_PARAMS: readonly { path: string; param: string; when?: str
 /** Where a Stripe return lands, and the flags that mark it. */
 export const STRIPE_RETURN = { path: '/account/billing', params: ['topup', 'subscribed'] as readonly string[] } as const;
 
+/** Batch 21 (E28): every Stripe return, the starter pack's (/today?pack=1) included, so the browser's Purchase can fire there. */
+export const STRIPE_RETURNS: readonly { path: string; params: readonly string[] }[] = [STRIPE_RETURN, { path: '/today', params: ['pack'] }];
+
 /** The page each server event is reported against (never with a query string). */
 export const EVENT_SOURCE_PATHS = {
   CompleteRegistration: '/signup',

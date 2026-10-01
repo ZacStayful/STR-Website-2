@@ -4,8 +4,12 @@ import { Scale } from 'lucide-react';
 import type { AnalysisResult } from '@/lib/types';
 import { gbp, pct0 } from './format';
 
-/** Property Market Intel's projection beside ours, with the gap in plain terms. */
-export function SecondOpinionCard({ ours, opinion }: { ours: number; opinion: NonNullable<AnalysisResult['secondOpinion']> }) {
+/**
+ * Property Market Intel's projection beside ours, with the gap in plain terms.
+ * Batch 21 (C10): `oursLabel` names whose estimate the first figure is; on a
+ * white-label funnel that is the customer, never Stayful.
+ */
+export function SecondOpinionCard({ ours, opinion, oursLabel = 'Stayful estimate' }: { ours: number; opinion: NonNullable<AnalysisResult['secondOpinion']>; oursLabel?: string }) {
   const gap = ours > 0 ? Math.round(((opinion.annualRevenue - ours) / ours) * 100) : null;
   const agree = gap !== null && Math.abs(gap) <= 15;
   return (
@@ -16,7 +20,7 @@ export function SecondOpinionCard({ ours, opinion }: { ours: number; opinion: No
           <p className="text-sm font-semibold text-foreground">Second opinion: Property Market Intel</p>
           <p className="text-xs text-muted-foreground">An independent projection from a separate UK dataset, run for this property.</p>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Stayful estimate</p><p className="text-lg font-bold">{gbp(ours)}</p></div>
+            <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">{oursLabel}</p><p className="text-lg font-bold">{gbp(ours)}</p></div>
             <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">PMI projection</p><p className="text-lg font-bold">{gbp(opinion.annualRevenue)}</p>{opinion.rangeLow !== null && opinion.rangeHigh !== null && <p className="text-[10px] text-muted-foreground">{gbp(opinion.rangeLow)} – {gbp(opinion.rangeHigh)}</p>}</div>
             <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Nightly · occupancy</p><p className="text-lg font-bold">{opinion.adr !== null ? gbp(opinion.adr) : '—'} · {pct0(opinion.occupancy)}</p></div>
             <div><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Agreement</p><p className={`text-lg font-bold ${agree ? 'text-success' : 'text-warning-foreground'}`}>{gap === null ? '—' : `${gap > 0 ? '+' : ''}${gap}%`}</p><p className="text-[10px] text-muted-foreground">PMI confidence: {opinion.confidence}</p></div>

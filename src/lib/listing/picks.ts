@@ -732,3 +732,17 @@ export function summarisePicks(rows: PickRow[]): PickSummary {
   s.areas = [...areas.values()].sort((a, b) => b.yes - a.yes || b.sent - a.sent).slice(0, 10);
   return s;
 }
+
+/**
+ * How long a token in an email keeps acting for the member (Batch 21, C16):
+ * a pick's Yes / No / reasons form, the filter change offered with a near
+ * miss, a deal type added from the form, and a teaser's Yes / No. After this
+ * the link only shows the page; unsubscribing is never time-limited.
+ */
+export const EMAIL_ACTION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Whether a message sent at `sentAtIso` may still act for the member. */
+export function emailActionFresh(sentAtIso: string | null | undefined, now: Date = new Date()): boolean {
+  const sent = sentAtIso ? Date.parse(sentAtIso) : NaN;
+  return Number.isFinite(sent) && now.getTime() - sent < EMAIL_ACTION_MAX_AGE_MS;
+}

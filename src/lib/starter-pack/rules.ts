@@ -22,7 +22,31 @@
 import { formatGbp } from '../credit/pricing.ts';
 import { starterPackBonusPence, isPackAccount, type LifecycleSettings } from '../lifecycle/settings.ts';
 
-export type OfferBlock = 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan';
+/** Batch 21 (B47): 'pending' is a Checkout this browser started minutes ago that the webhook has not settled yet. */
+export type OfferBlock = 'off' | 'existing_member' | 'team_member' | 'bought' | 'already_had' | 'on_plan' | 'pending';
+
+/** How long after starting a Checkout the offer stays hidden in that browser, so the member cannot pay twice while the webhook is on its way. */
+export const CHECKOUT_PENDING_MS = 10 * 60_000;
+
+/**
+ * The email key the pack's once-per-person claim is made on (Batch 21,
+ * B21): trimmed and lower-cased as profiles.email is (emailKey), with a
+ * plus-tag dropped and, for Gmail, the dots in the local part removed and
+ * googlemail.com read as gmail.com, since those all deliver to one inbox.
+ * The profile's own key is left alone: this is only for the claim.
+ */
+export function packEmailKey(email: string | null | undefined): string | null {
+  const key = (email ?? '').trim().toLowerCase();
+  const at = key.lastIndexOf('@');
+  if (at <= 0) return null;
+  let local = key.slice(0, at);
+  let domain = key.slice(at + 1);
+  const plus = local.indexOf('+');
+  if (plus > 0) local = local.slice(0, plus);
+  if (domain === 'googlemail.com') domain = 'gmail.com';
+  if (domain === 'gmail.com') local = local.replace(/\./g, '');
+  return local ? `${local}@${domain}` : null;
+}
 
 export interface PackFacts {
   createdAt: string | null;
@@ -38,6 +62,8 @@ export interface PackFacts {
   alreadyHad: boolean;
   /** A live, trialling, past-due or paused subscription, or a plan granted by hand. */
   onPlan: boolean;
+  /** Batch 21 (B47): this browser started a pack Checkout in the last CHECKOUT_PENDING_MS and no purchase row has arrived yet. */
+  checkoutPending?: boolean;
 }
 
 export type PackOffer = { eligible: true } | { eligible: false; reason: OfferBlock };
@@ -49,6 +75,7 @@ export function packOffer(f: PackFacts, s: Pick<LifecycleSettings, 'starterPackF
   if (f.bought) return { eligible: false, reason: 'bought' };
   if (f.alreadyHad) return { eligible: false, reason: 'already_had' };
   if (f.onPlan) return { eligible: false, reason: 'on_plan' };
+  if (f.checkoutPending) return { eligible: false, reason: 'pending' };
   return { eligible: true };
 }
 
@@ -109,24 +136,31 @@ export interface PackCopy {
   pricingLine: string;
 }
 
-/** Everything the pack says, from the settings and today's Full analysis price. */
-export function packCopy(s: Pick<LifecycleSettings, 'starterPackPricePence' | 'starterPackCreditPence'>, fullAnalysisPence: number, rates: { welcome: number; topup: number }): PackCopy {
+/**
+ * Everything the pack says, from the settings and today's Full analysis
+ * price. Batch 21 (C5): with `freeDealDelayHours` the pack screen and card
+ * also say what buying it changes about early access (a pack counts as a
+ * paid account for the delay, review question 13).
+ */
+export function packCopy(s: Pick<LifecycleSettings, 'starterPackPricePence' | 'starterPackCreditPence'>, fullAnalysisPence: number, rates: { welcome: number; topup: number }, opts: { freeDealDelayHours?: number } = {}): PackCopy {
   const price = pounds(s.starterPackPricePence);
   const credit = pounds(s.starterPackCreditPence);
   const analyses = fullAnalysesFor(s, fullAnalysisPence, rates);
   const about = analyses > 0 ? `about ${analyses} Full ${analyses === 1 ? 'analysis' : 'analyses'}, plus daily deals picked for you` : 'daily deals picked for you and Full analyses of the ones you like';
+  const hours = opts.freeDealDelayHours ?? 0;
+  const early = hours > 0 ? ` You also see new deals as soon as they go live: free members wait ${hours} hours.` : '';
   return {
     price,
     credit,
     analyses,
     headline: `Start with ${credit} of credit for ${price}`,
-    body: `${price} gets you ${credit} of credit: ${about}. It never expires.`,
+    body: `${price} gets you ${credit} of credit: ${about}. It never expires.${early}`,
     buy: `Buy for ${price}`,
     notNow: 'Not now',
     consent: CONSENT_TEXT,
     smallPrint: 'One starter pack per person. Paid securely with Stripe; we save your card for one-tap top-ups.',
     cardTitle: `${price} gets you ${credit} of credit`,
-    cardBody: `${about.charAt(0).toUpperCase()}${about.slice(1)}. One per person.`,
+    cardBody: `${about.charAt(0).toUpperCase()}${about.slice(1)}.${early} One per person.`,
     cardCta: `Get ${credit} for ${price}`,
     accountLine: `New members: ${price} gets you ${credit} of credit.`,
     accountCta: 'Get the starter pack',

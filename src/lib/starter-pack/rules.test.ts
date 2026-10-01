@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CONSENT_TEXT, fullAnalysesFor, packClawbackPence, packCopy, packGrants, packLive, packOffer, publicOffer, returnMessage, snoozeUntil, todayCardShown, type PackFacts } from './rules.ts';
+import { CONSENT_TEXT, fullAnalysesFor, packClawbackPence, packCopy, packGrants, packLive, packOffer, publicOffer, returnMessage, snoozeUntil, todayCardShown, type PackFacts, packEmailKey } from './rules.ts';
 import { DEFAULT_LIFECYCLE } from '../lifecycle/settings.ts';
 
 const on = { ...DEFAULT_LIFECYCLE, starterPackFrom: '2026-10-01T09:00:00.000Z' };
@@ -52,6 +52,11 @@ test('the copy says what the settings say', () => {
   assert.match(c.checkoutText, /14-day right to cancel ends once you use any of it/);
   const odd = packCopy({ starterPackPricePence: 1250, starterPackCreditPence: 3000 }, 400, rates);
   assert.equal(odd.price, '£12.50');
+  // Batch 21 (C5): the pack lifts the early-access delay, and says so when told the delay.
+  const early = packCopy(on, 400, rates, { freeDealDelayHours: 48 });
+  assert.equal(early.body, '£10 gets you £30 of credit: about 7 Full analyses, plus daily deals picked for you. It never expires. You also see new deals as soon as they go live: free members wait 48 hours.');
+  assert.equal(early.cardBody, 'About 7 Full analyses, plus daily deals picked for you. You also see new deals as soon as they go live: free members wait 48 hours. One per person.');
+  assert.equal(packCopy(on, 400, rates, { freeDealDelayHours: 0 }).body, c.body);
 });
 
 test('a refund takes back the same share of the credit as of the payment', () => {
@@ -85,4 +90,22 @@ test('the public pages promise the welcome credit until the cutover, and the sta
   assert.equal(after.checkEmailLine, 'Click it to activate your account.');
   assert.equal(after.costLead, 'New members can start with a £10 starter pack: £30 of credit, about 7 Full analyses of deals. It never expires.');
   for (const v of Object.values(after)) if (typeof v === 'string') assert.ok(!v.includes('£20'), `no £20 once the pack is live: ${v}`);
+});
+
+test('the claim\'s email key folds plus-tags and Gmail dots (Batch 21, B21)', () => {
+  assert.equal(packEmailKey(' Jane.Doe+promo@Gmail.com '), 'janedoe@gmail.com');
+  assert.equal(packEmailKey('jane.doe@googlemail.com'), 'janedoe@gmail.com');
+  assert.equal(packEmailKey('jane.doe+x@example.co.uk'), 'jane.doe@example.co.uk');
+  assert.equal(packEmailKey('+tag@example.com'), '+tag@example.com');
+  assert.equal(packEmailKey(''), null);
+  assert.equal(packEmailKey(null), null);
+  assert.equal(packEmailKey('nobody'), null);
+});
+
+test('a Checkout started moments ago hides the offer until the webhook settles it (Batch 21, B47)', () => {
+  const s = { starterPackFrom: '2026-10-01T00:00:00.000Z' };
+  const facts = { createdAt: '2026-10-02T00:00:00Z', hadWelcome: false, teamMember: false, bought: false, alreadyHad: false, onPlan: false };
+  assert.deepEqual(packOffer({ ...facts, checkoutPending: true }, s), { eligible: false, reason: 'pending' });
+  assert.deepEqual(packOffer({ ...facts, checkoutPending: false }, s), { eligible: true });
+  assert.deepEqual(packOffer({ ...facts, bought: true, checkoutPending: true }, s), { eligible: false, reason: 'bought' });
 });

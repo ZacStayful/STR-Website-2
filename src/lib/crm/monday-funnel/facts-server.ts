@@ -12,14 +12,15 @@ import { parseAboutYou } from '../../profile/about';
 import { contactCanReceive } from '../../sms/choose';
 import { isStaffEmail } from '../../inactivity/rules';
 import { monthlyValuePence, totalPaidPence } from '../../payments/rules';
-import { adSourceText, earliest, emailOkFor, legacyPayments, type MemberFacts } from './facts';
+import { adSourceText, earliest, emailOkFor, legacyPayments, weeksSinceSignup, type MemberFacts } from './facts';
 
 /**
  * The Monday funnel's view of members (Batch 20, Part F): one MemberFacts
  * each, from batched reads (profiles, the Batch 20 columns in a read of their
  * own, member stats and balances from the Batch 20 functions, SMS contacts,
- * Batch 19's attribution). Admins, Stayful accounts and team members are
- * left out: they never have funnel rows.
+ * Batch 19's attribution). Admins, Stayful accounts, team members and, Batch
+ * 21 (E8, Q10), accounts the admin excluded from the metrics are left out:
+ * they never have funnel rows, and a row they already have is left alone.
  */
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -42,13 +43,17 @@ type ProfileRow = AccessProfile & {
   sourcing_alerts: boolean | null;
   alert_missed: boolean | null;
   about_you: unknown;
+  /** Batch 21 (D4): the first sign-in; null for an unconfirmed sign-up, which is not OK to email. */
+  welcome_checked_at: string | null;
 };
 
 type Stats = { u: string; last_day: string | null; days: number; weeks: number; paid: number; refunded: number; first_paid: string | null; topups: number; last_topup: string | null; pack_at: string | null };
 
-const PROFILE_COLUMNS = `id, email, full_name, mobile, mobile_key, created_at, monday_item_id, hit_zero_at, last_topup_at, subscription_started_at, subscription_ended_at, sourcing_alerts, alert_missed, about_you, ${ACCESS_COLUMNS}`;
+const PROFILE_COLUMNS = `id, email, full_name, mobile, mobile_key, created_at, monday_item_id, hit_zero_at, last_topup_at, subscription_started_at, subscription_ended_at, sourcing_alerts, alert_missed, about_you, welcome_checked_at, ${ACCESS_COLUMNS}`;
 
-export type FactsResult = { ok: true; facts: MemberFacts[]; left: { userId: string; reason: 'admin' | 'staff' | 'team_member' | 'no_email' }[] } | { ok: false; error: string };
+export type LeftReason = 'admin' | 'staff' | 'team_member' | 'no_email' | 'excluded';
+
+export type FactsResult = { ok: true; facts: MemberFacts[]; left: { userId: string; reason: LeftReason }[] } | { ok: false; error: string };
 
 function chunks<T>(list: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -81,12 +86,19 @@ export async function loadFacts(admin: Admin, opts: { userIds?: readonly string[
     }
   }
 
-  const left: { userId: string; reason: 'admin' | 'staff' | 'team_member' | 'no_email' }[] = [];
+  const left: { userId: string; reason: LeftReason }[] = [];
   // Never guessed: a failed team lookup would give every team member a row.
   const payers = await payersForStrict(profiles.map((p) => p.id));
   if (!payers) return { ok: false, error: 'team lookup failed' };
+  // Batch 21 (E8, Q10): the admin's "Exclude from metrics" switch. Unreadable: nobody is given a row by mistake.
+  const excluded = new Set<string>();
+  {
+    const { data, error } = await admin.from('activity_excluded_accounts').select('user_id');
+    if (error) return { ok: false, error: `excluded accounts unreadable: ${error.message}` };
+    for (const r of (data ?? []) as { user_id: string }[]) excluded.add(r.user_id);
+  }
   const members = profiles.filter((p) => {
-    const reason = !p.email ? 'no_email' : isAdminEmail(p.email) ? 'admin' : isStaffEmail(p.email) ? 'staff' : payers.get(p.id)?.memberId ? 'team_member' : null;
+    const reason: LeftReason | null = !p.email ? 'no_email' : isAdminEmail(p.email) ? 'admin' : isStaffEmail(p.email) ? 'staff' : payers.get(p.id)?.memberId ? 'team_member' : excluded.has(p.id) ? 'excluded' : null;
     if (reason) left.push({ userId: p.id, reason });
     return reason === null;
   });
@@ -162,6 +174,7 @@ export async function loadFacts(admin: Admin, opts: { userIds?: readonly string[
       lastActiveDay: st?.last_day ?? null,
       activeDays: Number(st?.days ?? 0),
       activeWeeks: Number(st?.weeks ?? 0),
+      weeksSinceSignup: weeksSinceSignup(p.created_at, now),
       reengageSince: mark?.reengage_since ?? null,
       emailOk: emailOkFor(p),
       smsOk: sms.get(p.id) ?? false,

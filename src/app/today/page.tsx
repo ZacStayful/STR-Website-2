@@ -279,7 +279,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
         {!paused && ids.length > 0 && short && <WidenAndSee count={widenCount} options={widen} />}
         </div>
 
-        <EarlyAccessBanner text={banner} returnTo="/today" />
+        <EarlyAccessBanner text={banner} returnTo="/today" pack={pack.offer.eligible ? { href: "/today?offer=pack", label: pack.copy.cardCta } : null} />
 
         <p className="border-t border-border pt-4 text-sm">
           <Link href="/deals" className="font-medium text-foreground underline-offset-4 hover:underline">Browse all deals</Link>

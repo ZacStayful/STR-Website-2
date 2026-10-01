@@ -7,13 +7,14 @@ import { QUESTIONS, SECTION_TOKENS } from './questions.ts';
 const USER = '11111111-2222-4333-8444-555555555555';
 const prod = { now: new Date('2026-09-28T09:00:00Z'), env: 'production', background: false };
 
-test('the quiz’s events are registered: the member’s actions count, the reminder shown and the email click only record', () => {
-  for (const k of ['profile_started', 'profile_answered', 'profile_not_sure', 'profile_finish_later', 'profile_resumed', 'profile_completed', 'profile_viewed', 'profile_edited', 'profile_reminder_collapsed', 'profile_reminder_tapped']) {
+test('the quiz’s events are registered: the member’s answers count; opening or coming back to the quiz (Batch 21, E1), the reminder shown and the email click only record', () => {
+  for (const k of ['profile_answered', 'profile_not_sure', 'profile_finish_later', 'profile_completed', 'profile_viewed', 'profile_edited', 'profile_reminder_collapsed', 'profile_reminder_tapped']) {
     assert.equal(isActivityKind(k), true, k);
     assert.equal(isQualifying(k), true, k);
     assert.equal(isCounted(k), true, k);
   }
-  for (const k of ['profile_reminder_shown', 'profile_email_click']) {
+  // Every sign-in is sent to /welcome until the mandatory questions are answered, so landing there is not an action.
+  for (const k of ['profile_started', 'profile_resumed', 'profile_reminder_shown', 'profile_email_click']) {
     assert.equal(isActivityKind(k), true, k);
     assert.equal(isQualifying(k), false, k);
     assert.equal(isCounted(k), false, k);

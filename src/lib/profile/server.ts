@@ -39,8 +39,8 @@ import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIN
 import { rewardEligibility, type Eligibility } from '../today/checklist';
 import { grant, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings } from '../credit/unit-costs';
-import { startAction } from '../credit/action';
-import { runMetered } from '../credit/context';
+import { startAction, welcomeGranted } from '../credit/action';
+import { newActionId, runMetered } from '../credit/context';
 import { geocodePostcode } from '../apis/geocode';
 import { countDealsAcross, listDeals, photoUrlFor } from '../marketplace/queries';
 import { dealVisibilityFor } from '../marketplace/tier';
@@ -227,14 +227,17 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   let warning: string | null = null;
 
   // A new home postcode is placed on the map once (metered, as before); if
-  // it cannot be, the picks and the grid at least get its own area.
-  if (q.id === 'where' && next.goals.home && next.goals.home.lat === null) {
+  // it cannot be, the picks and the grid at least get its own area. Batch 21
+  // (B4): tried again on every later answer while the home is unplaced, so a
+  // placement that failed at question 3 (no credit, a provider blip) does not
+  // leave the radius a postcode area for ever; the warning only on the question.
+  if (next.goals.home && next.goals.home.lat === null) {
     const placed = await placeHome(userId, input.email, next.goals);
     next = { ...next, goals: placed.goals };
     if (!placed.placed) {
       const own = areaCodeFrom(next.goals.home!.postcode);
       if (own && !next.savedAreas.includes(own)) next = { ...next, savedAreas: [...next.savedAreas, own] };
-      warning = placed.why === 'out of credit' ? 'You’re out of credit, so we couldn’t place your postcode on the map yet. Your area still counts.' : null;
+      if (q.id === 'where') warning = placed.why === 'out of credit' ? 'You’re out of credit, so we couldn’t place your postcode on the map yet. Your area still counts.' : null;
     }
   }
 
@@ -258,32 +261,43 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
   await syncSavedAreas(supabase, userId, s.answers.savedAreas, next.savedAreas);
 
   // ── The bookkeeping, as the service role ──
-  const admin = createAdminClient();
   const answered: AnsweredMap = { ...s.quiz.answered, [q.id]: { at: nowIso, notSure: input.notSure } };
   const quiz: QuizRecord = { ...s.quiz, answered, startedAt: s.quiz.startedAt ?? nowIso, lastQuestion: q.id };
   const prog = progress(next, quiz);
   if (prog.complete && !quiz.completedAt) quiz.completedAt = nowIso;
-  const { error: rowErr } = await admin
-    .from('profile_quiz')
-    .upsert({ user_id: userId, started_at: quiz.startedAt, completed_at: quiz.completedAt, last_question: q.id, answered, updated_at: nowIso }, { onConflict: 'user_id' });
-  if (rowErr) console.error('[profile] quiz row save failed:', rowErr.message);
+  // Batch 21 (G6): the answer is saved above; nothing from here may throw out
+  // of the server action, or the member lands on Next's error page mid-quiz
+  // (the Quiz has no boundary). A failure is logged and the view falls back
+  // to what is known: the credit as the page would show it, the count unknown.
+  let credit: CreditView = { paid: false, state: 'off', line: '', pence: 0 };
+  let matchCount: number | null = null;
+  try {
+    const admin = createAdminClient();
+    const { error: rowErr } = await admin
+      .from('profile_quiz')
+      .upsert({ user_id: userId, started_at: quiz.startedAt, completed_at: quiz.completedAt, last_question: q.id, answered, updated_at: nowIso }, { onConflict: 'user_id' });
+    if (rowErr) console.error('[profile] quiz row save failed:', rowErr.message);
 
-  const credit = await settleProfileCredit(admin, userId, quiz, prog, s.eligibility);
+    credit = await settleProfileCredit(admin, userId, quiz, prog, s.eligibility);
 
-  // ── What happened, for the log (question ids, never an answer) ──
-  const extras = { question: q.id, section: SECTION_TOKENS[q.section] };
-  if (input.editing) logActivity(userId, 'profile_edited', { extras });
-  else logActivity(userId, input.notSure ? 'profile_not_sure' : 'profile_answered', { extras });
-  if (!s.progress.mandatoryDone && prog.mandatoryDone) logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
-  if (!s.quiz.completedAt && prog.complete) {
-    logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
-    // Batch 19: Meta's ProfileComplete, at the first completion (the £5 may come later, or never).
-    await logConversion({ name: 'ProfileComplete', userId });
+    // ── What happened, for the log (question ids, never an answer) ──
+    const extras = { question: q.id, section: SECTION_TOKENS[q.section] };
+    if (input.editing) logActivity(userId, 'profile_edited', { extras });
+    else logActivity(userId, input.notSure ? 'profile_not_sure' : 'profile_answered', { extras });
+    if (!s.progress.mandatoryDone && prog.mandatoryDone) logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
+    if (!s.quiz.completedAt && prog.complete) {
+      logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
+      // Batch 19: Meta's ProfileComplete, at the first completion (the £5 may come later, or never).
+      await logConversion({ name: 'ProfileComplete', userId });
+    }
+
+    // Batch 14: today's list follows the answer (after the response: it never holds the quiz up, and never charges).
+    after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered }).then(() => undefined));
+    matchCount = await matchCountFor({ userId, email: input.email, answers: next, answered });
+  } catch (err) {
+    console.error('[profile] answer bookkeeping failed (the answer itself is saved):', (err as Error)?.message ?? err);
+    credit = await creditViewFor(s).catch(() => credit);
   }
-
-  // Batch 14: today's list follows the answer (after the response: it never holds the quiz up, and never charges).
-  after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered }).then(() => undefined));
-  const matchCount = await matchCountFor({ userId, email: input.email, answers: next, answered });
   return { ok: true, warning, view: { answers: next, answered, progress: progressView(prog), matchCount, credit } };
 }
 
@@ -304,7 +318,19 @@ async function syncSavedAreas(supabase: SupabaseClient, userId: string, before: 
 async function placeHome(userId: string, email: string | null, goals: MarketGoals): Promise<{ goals: MarketGoals; placed: boolean; why: string | null }> {
   if (!goals.home) return { goals, placed: false, why: null };
   try {
-    const action = await startAction({ userId, admin: isAdminEmail(email), action: 'geocode' });
+    const admin = isAdminEmail(email);
+    // Batch 21 (B4, B46): an account that was not given the welcome credit (a
+    // pack-era sign-up at "Where should we look?", three screens before the
+    // pack is offered) has its placement billed to the house. It costs under
+    // a penny; refusing it (CREDIT_ENFORCE on) left the home unplaced and the
+    // radius a postcode area for ever, and debiting it (shadow mode) sent
+    // "You're out of credit" mid-quiz. Logged with the member as the actor.
+    const house = !admin && !(await welcomeGranted(userId));
+    if (house) {
+      const { lat, lng } = await runMetered({ userId: null, memberId: userId, admin: false, action: 'geocode', actionId: newActionId() }, () => geocodePostcode(goals.home!.postcode));
+      return { goals: { ...goals, home: { ...goals.home, lat, lng } }, placed: true, why: null };
+    }
+    const action = await startAction({ userId, admin, action: 'geocode' });
     try {
       const { lat, lng } = await runMetered(action.ctx, () => geocodePostcode(goals.home!.postcode));
       return { goals: { ...goals, home: { ...goals.home, lat, lng } }, placed: true, why: null };
@@ -313,7 +339,8 @@ async function placeHome(userId: string, email: string | null, goals: MarketGoal
     }
   } catch (err) {
     const why = err instanceof InsufficientCreditError ? 'out of credit' : ((err as Error)?.message ?? String(err));
-    console.warn(`[profile] could not place ${goals.home.postcode}: ${why}`);
+    // Batch 21 (C13): the postcode area, never the postcode, in the log.
+    console.warn(`[profile] could not place the home (${areaCodeFrom(goals.home.postcode) ?? 'no area'}): ${why}`);
     return { goals, placed: false, why };
   }
 }

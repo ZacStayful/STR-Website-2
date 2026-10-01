@@ -12,7 +12,8 @@ import { drainDeliveries } from '@/lib/crm/deliver';
  *
  * Same auth as every other internal route: Vercel Cron's bearer or the
  * shared header. This one sends a customer's prospects' personal data to a
- * third party, so it never runs open.
+ * third party, so it never runs open. Batch 21 (C31): `?dry=1` lists what is
+ * due (ids only) and sends nothing.
  */
 
 export const maxDuration = 60;
@@ -25,7 +26,8 @@ export async function GET(request: Request) {
   if (!authoriseInternal(request)) return new Response('Unauthorised', { status: 401 });
   if (!hasServiceRole()) return Response.json({ error: 'service role not configured' }, { status: 503 });
 
+  const dry = new URL(request.url).searchParams.get('dry') === '1';
   const started = Date.now();
-  const summary = await drainDeliveries(MAX_PER_RUN);
-  return Response.json({ ...summary, ms: Date.now() - started });
+  const summary = await drainDeliveries(MAX_PER_RUN, { dry, budgetMs: 40_000 });
+  return Response.json({ ...summary, dry, ms: Date.now() - started });
 }

@@ -22,6 +22,8 @@ export function LowCreditChoice({ credit }: { credit: CreditSnapshot }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Batch 21 (B7): one Stripe idempotency key per attempt, kept across a retry, renewed after a top-up that went through.
+  const [nonce, setNonce] = useState(() => crypto.randomUUID());
   const decision = credit.decision!;
   const starter = decision.starter;
   const out = credit.state === "out";
@@ -32,9 +34,10 @@ export function LowCreditChoice({ credit }: { credit: CreditSnapshot }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence: decision.topupPence, nonce: crypto.randomUUID(), via: "low_credit" }) });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; url?: string; error?: string };
+      const res = await fetch("/api/billing/topup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ amountPence: decision.topupPence, nonce, via: "low_credit" }) });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; pending?: boolean; url?: string; error?: string };
       if (data.url) {
+        setNonce(crypto.randomUUID());
         window.location.href = data.url;
         return;
       }
@@ -42,8 +45,9 @@ export function LowCreditChoice({ credit }: { credit: CreditSnapshot }) {
         setError(data.error || "Couldn't complete the top-up.");
         return;
       }
+      setNonce(crypto.randomUUID());
       notifyCreditChanged();
-      ctx?.toast(`Topped up ${money(decision.topupPence)}`);
+      ctx?.toast(data.pending ? `Payment taken: your ${money(decision.topupPence)} shows in a moment` : `Topped up ${money(decision.topupPence)}`);
     } catch {
       setError("Couldn't reach the billing service.");
     } finally {

@@ -6,6 +6,7 @@
  */
 import type { AccountStatus } from '../../access.ts';
 import { cleanExtras } from '../../activity/event.ts';
+import { ukWeekStart } from '../../activity/week.ts';
 
 export interface MemberFacts {
   userId: string;
@@ -53,6 +54,8 @@ export interface MemberFacts {
   lastActiveDay: string | null;
   activeDays: number;
   activeWeeks: number;
+  /** Batch 21 (E2): ISO weeks from the sign-up week to this week, inclusive, counted as activeWeeks is. */
+  weeksSinceSignup?: number | null;
   /** Part C: set at 14 quiet days, cleared when they come back. */
   reengageSince: string | null;
 
@@ -66,12 +69,31 @@ export interface MemberFacts {
 }
 
 /**
+ * Batch 21 (E2): weeks since sign-up, counted exactly as Active weeks is (the
+ * nightly's lifecycle_member_stats counts distinct Monday-to-Sunday UK weeks),
+ * so Engagement % (Active weeks ÷ this) can never pass 100% or divide by zero:
+ * the sign-up week is week 1.
+ */
+export function weeksSinceSignup(createdAt: string | null | undefined, now: Date): number | null {
+  const created = createdAt ? Date.parse(createdAt) : Number.NaN;
+  if (!Number.isFinite(created)) return null;
+  const first = Date.parse(`${ukWeekStart(new Date(created))}T12:00:00Z`);
+  const current = Date.parse(`${ukWeekStart(now)}T12:00:00Z`);
+  return Math.max(1, Math.round((current - first) / 604_800_000) + 1);
+}
+
+/**
  * Email OK (F2): they have an email address and still get the emails a
  * re-engagement message would be: "Daily picks" or "Weekly: deals I missed"
  * is on (profiles.sourcing_alerts, profiles.alert_missed). One-click
  * unsubscribe turns those off, so it unticks too.
  */
-export function emailOkFor(p: { email: string | null; sourcing_alerts: boolean | null; alert_missed: boolean | null }): boolean {
+export function emailOkFor(p: { email: string | null; sourcing_alerts: boolean | null; alert_missed: boolean | null; welcome_checked_at?: string | null }): boolean {
+  // Batch 21 (D4): an account that has never signed in (welcome_checked_at
+  // unset) confirmed nothing, so it is not OK to email: the site's own emails
+  // all wait for that first sign-in. A caller that does not pass the column
+  // is unchanged until facts-server reads it (Batch 21f).
+  if (p.welcome_checked_at === null) return false;
   return Boolean(p.email && p.email.includes('@')) && (p.sourcing_alerts === true || p.alert_missed === true);
 }
 

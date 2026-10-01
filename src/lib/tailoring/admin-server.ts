@@ -51,6 +51,8 @@ async function membersFor(admin: Admin): Promise<MemberFact[]> {
     admin.from('activity_excluded_accounts').select('user_id, reason'),
   ]);
   if (profilesRes.error) throw new Error(profilesRes.error.message);
+  // Batch 21 (E26): a failed read of the exclusions is a failure, not "nobody excluded".
+  if (excludedRes.error) throw new Error(excludedRes.error.message);
   const admins = new Set(adminEmails().map((e) => emailKey(e)));
   const manual = new Map<string, string | null>();
   for (const r of (excludedRes.data ?? []) as { user_id: string; reason: string | null }[]) manual.set(r.user_id, r.reason);

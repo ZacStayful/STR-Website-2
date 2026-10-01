@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { areaMetaForSlug } from "@/lib/market/areas";
-import { teaserForArea, photoUrlFor } from "@/lib/marketplace/queries";
+import { teaserForArea } from "@/lib/marketplace/queries";
 import { publicDealVisibility } from "@/lib/marketplace/tier";
 import { describeType } from "@/lib/marketplace/grid";
 import { priceLine } from "@/app/deals/_components/DealCard";
@@ -30,8 +30,9 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 /**
  * The public, indexable teaser for one area: how many deals are live, what
- * they make, and the top three with their figures but no address, photo
- * detail or link. A signed-in member is sent straight to the grid.
+ * they make, and the top three with their figures but no address, photo or
+ * link (Batch 21, C12: the blurred photo was the real file behind a CSS
+ * filter). A signed-in member is sent straight to the grid.
  */
 export default async function AreaDealsTeaserPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -45,7 +46,6 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
   // Visitors see the delayed set: never more than a free member would.
   const [teaser, settings, offer] = await Promise.all([teaserForArea(meta.code, (await publicDealVisibility()).hourCutoffIso), getBillingSettings(), publicOfferNow()]);
   const widths = settings.dealPricing.profitRangePct;
-  const now = new Date();
   const signup = `/signup?next=${encodeURIComponent(`/deals?areas=${meta.code}`)}`;
   return (
     <div className="mx-auto max-w-4xl px-5 py-14">
@@ -66,14 +66,9 @@ export default async function AreaDealsTeaserPage({ params }: { params: Promise<
             // Batch 10: the profit as an area-estimate range at the house finance, never one figure.
             const range = profitRange({ kind: card.kind, priceAmount: card.price_amount, pricePeriod: card.price_period, bedrooms: card.bedrooms, grossRevenue: card.screening_gross ?? null, confidence: card.screening_confidence ?? null, finance: null, widths });
             const uplift = card.kind === "sale" ? upliftTag(card.uplift_pct) : null;
-            const photo = photoUrlFor(card, now);
             return (
               <li key={card.id} className="overflow-hidden rounded-xl border border-[#e4e7dc] bg-white">
                 <div className="relative aspect-[4/3] bg-[#e8ebe3]">
-                  {photo && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={photo} alt="" loading="lazy" className="h-full w-full object-cover blur-md" />
-                  )}
                   <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{card.kind === "rent" ? "Rent-to-rent" : "To buy"}</span>
                 </div>
                 <div className="p-3">
