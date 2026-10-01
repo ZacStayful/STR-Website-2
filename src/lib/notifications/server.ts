@@ -2,6 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { NOTIFICATION_COLUMNS, NOTIFICATION_COLUMNS_BEFORE_BATCH_6, NOTIFICATION_COLUMNS_BEFORE_BATCH_8, notificationPatch, notificationsPatch, notificationState, type NotificationKey, type NotificationRow, type NotificationState } from './registry';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 
 /**
  * The only writer of the notification columns. Service role, because the
@@ -13,6 +14,8 @@ export async function setNotification(userId: string, key: NotificationKey, on: 
   if (!hasServiceRole()) return false;
   const { error } = await createAdminClient().from('profiles').update(notificationPatch(key, on)).eq('id', userId);
   if (error) console.error('[notifications] profile update failed:', error.message);
+  // Batch 21 (D6): Monday's Email OK / SMS OK follow the switch within ten minutes, not at the next nightly.
+  if (!error) await queueFunnelSync(userId, 'notifications');
   return !error;
 }
 
@@ -21,6 +24,7 @@ export async function setNotifications(userId: string, keys: readonly Notificati
   if (!hasServiceRole() || keys.length === 0) return false;
   const { error } = await createAdminClient().from('profiles').update(notificationsPatch(keys, on)).eq('id', userId);
   if (error) console.error('[notifications] profile update failed:', error.message);
+  if (!error) await queueFunnelSync(userId, 'notifications');
   return !error;
 }
 

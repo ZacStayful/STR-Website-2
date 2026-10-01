@@ -78,7 +78,8 @@ function welcomeEmail(input: { name: string | null; link: string; areaName: stri
 
 export async function POST(request: Request) {
   if (!internalSecretsConfigured()) return Response.json({ error: "Not found" }, { status: 404 });
-  if (!authoriseInternal(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  // Batch 21 (D25): the one route n8n calls with its own secret.
+  if (!authoriseInternal(request, { n8n: true })) return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (!hasServiceRole()) return Response.json({ error: "Storage not configured" }, { status: 503 });
   let body: Record<string, unknown>;
   try {

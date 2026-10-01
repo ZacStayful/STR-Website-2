@@ -7,6 +7,7 @@ import { ensureEnquiry } from '@/lib/apis/monday'
 import { isTeamBound } from '@/lib/team'
 import { outboundInternalSecret } from '@/lib/internal-auth'
 import { queueFunnelSync } from '@/lib/crm/monday-funnel/queue-server'
+import { memberConsentFor } from '@/lib/tracking/consent-server'
 
 // Runs once a member has a session, from whichever route signed them in:
 // /auth/callback (OAuth and PKCE email links) and /auth/confirm (token-hash
@@ -30,7 +31,7 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
     if (!user) return
     const { data: profile } = await supabase
       .from('profiles')
-      .select('email, full_name, mobile, trial_ends_at, monday_item_id, lead_source, lead_activated_at')
+      .select('email, full_name, mobile, trial_ends_at, monday_item_id, lead_source, lead_activated_at, created_at')
       .eq('id', user.id)
       .single()
     if (!profile) return
@@ -47,6 +48,14 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
           if (!stamped || stamped.length === 0) return // already stamped by a concurrent request
           const hook = process.env.LEAD_ACTIVATION_WEBHOOK_URL
           if (!hook) return
+          // Batch 21 (C33): the hook tells an ad platform that this person became
+          // a member, which is what Batch 19 gates on the member's cookie choice:
+          // without an Accept nothing is posted (the stamp stands: they did sign in).
+          const consent = await memberConsentFor(userId).catch(() => null)
+          if (consent?.choice !== 'accept') {
+            console.info('[auth] lead activation not sent: no consent')
+            return
+          }
           const secret = outboundInternalSecret()
           await fetch(hook, {
             method: 'POST',
@@ -63,7 +72,8 @@ export async function runSignInHooks(supabase: SupabaseClient): Promise<void> {
     // their team: not trial signups for the sales board.
     if (!profile.monday_item_id && !(await isTeamBound(user.id, profile.email ?? user.email ?? null))) {
       const userId = user.id
-      const input = { name: profile.full_name ?? '', email: profile.email ?? user.email ?? '', mobile: profile.mobile ?? '', trialStartedAt: new Date().toISOString(), userId }
+      // Batch 21 (D27): "Signed up" is the account's date, not the first sign-in's (the estimate layout already does this).
+      const input = { name: profile.full_name ?? '', email: profile.email ?? user.email ?? '', mobile: profile.mobile ?? '', trialStartedAt: (profile.created_at as string | null) ?? new Date().toISOString(), userId }
       after(async () => {
         try {
           const mondayId = await ensureEnquiry(input)

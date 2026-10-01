@@ -277,6 +277,27 @@ async function recordRun(admin: Admin, kind: string, startedAt: Date, summary: R
   if (error) console.error('[deal-checks] run record failed:', error.message);
 }
 
+/**
+ * Batch 21 (D21): the run is on the record BEFORE it spends, with its worst
+ * case as the day's spend, so an overlapping run (a double-fired cron, the
+ * admin's press during a run) reads it and cannot spend the same cap again;
+ * the real figures replace it at the end. A run killed mid-way leaves its
+ * worst case standing for the rest of the UK day, which is the safe side.
+ */
+async function openRun(admin: Admin, kind: string, startedAt: Date, summary: Record<string, unknown>): Promise<string | null> {
+  const { data, error } = await admin.from('marketplace_runs').insert({ kind, dry: false, started_at: startedAt.toISOString(), finished_at: null, summary }).select('id').single();
+  if (error) {
+    console.error('[deal-checks] run open failed:', error.message);
+    return null;
+  }
+  return (data?.id as string | undefined) ?? null;
+}
+
+async function closeRun(admin: Admin, id: string, summary: Record<string, unknown>): Promise<void> {
+  const { error } = await admin.from('marketplace_runs').update({ finished_at: new Date().toISOString(), summary }).eq('id', id);
+  if (error) console.error('[deal-checks] run close failed:', error.message);
+}
+
 /** Every stream's checks interleaved, so a run that runs out of time has advanced each. */
 function interleave(byStream: Record<Stream, DealRow[]>): DealRow[] {
   const out: DealRow[] = [];
@@ -370,6 +391,9 @@ export async function runDealChecks(opts: ChecksRunOptions): Promise<ChecksRunRe
   if (plan.length === 0 && expired === 0) return done({ status: 200, body: { ...summary, planned: 0, note: 'Nothing to check: the shortlist is empty or the day is spent.' } });
   const listings = await loadSourcedListings(admin, plan.map((d) => d.canonical_url));
   const spentBefore = Number.isFinite(spent.pence) ? spent.pence : s.dailyCapPence;
+  // Batch 21 (D21): on the record before the first call, worst case first.
+  const worst = plan.reduce((sum, d) => sum + worstCasePence(s, COST_PENCE.airbticsBounds, (listings.get(d.canonical_url)?.listing.lat ?? null) === null), 0);
+  const runId = await openRun(admin, DEAL_CHECKS_KIND, startedAt, { ...summary, inProgress: true, rawCostPence: Math.round(Math.min(worst, capLeft) * 100) / 100, checked: perStream(() => 0) });
   const book = claimBook(s.dailyCapPence, spentBefore);
   const stop: { by: 'time' | 'cap' | null } = { by: null };
   const cc: CheckContext = { admin, ctx, settings, via: 'daily', action: DEAL_CHECKS_ACTION, tag: 'deal-checks', claim: book.claim, release: book.release, now: startedAt };
@@ -397,7 +421,8 @@ export async function runDealChecks(opts: ChecksRunOptions): Promise<ChecksRunRe
   const calls = results.reduce((n, r) => n + r.calls, 0);
   const rawCostPence = Math.round(results.reduce((n, r) => n + r.pence, 0) * 100) / 100;
   Object.assign(summary, { planned: plan.length, checked, outcomes, calls, rawCostPence, stoppedBy, results, ms: elapsed() });
-  await recordRun(admin, DEAL_CHECKS_KIND, startedAt, summary);
+  if (runId) await closeRun(admin, runId, summary);
+  else await recordRun(admin, DEAL_CHECKS_KIND, startedAt, summary);
   revalidateDeals();
   return done({ status: 200, body: summary });
 }

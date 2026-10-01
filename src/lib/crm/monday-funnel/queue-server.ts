@@ -33,7 +33,9 @@ export type FunnelReason =
   | 'low_credit'
   | 'next_deal'
   | 'came_back'
-  | 'inactive';
+  | 'inactive'
+  /** Batch 21 (D6): a notification switch, Texts on/off, STOP, START or a verified number: Email OK / SMS OK follow within ten minutes. */
+  | 'notifications';
 
 export async function queueFunnelSync(userId: string | null | undefined, reason: FunnelReason): Promise<void> {
   if (!userId || !hasServiceRole()) return;

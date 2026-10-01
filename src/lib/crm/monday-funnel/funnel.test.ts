@@ -162,6 +162,8 @@ test('email OK and the ad source', () => {
   assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: false, alert_missed: true }), true);
   assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: false, alert_missed: false }), false, 'unsubscribed from both');
   assert.equal(emailOkFor({ email: null, sourcing_alerts: true, alert_missed: true }), false);
+  assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: true, alert_missed: true, welcome_checked_at: null }), false, 'Batch 21 (D4): never signed in');
+  assert.equal(emailOkFor({ email: 'a@b.com', sourcing_alerts: true, alert_missed: true, welcome_checked_at: '2026-09-01T00:00:00Z' }), true);
   assert.equal(adSourceText(null), 'direct / unknown');
   assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'Autumn Leads', utm_content: 'carousel_2' }), 'facebook / Autumn Leads / carousel_2');
   assert.equal(adSourceText({ utm_source: 'facebook', utm_campaign: 'https://evil.example.com/x', utm_content: 'NG1 1AA' }), 'facebook / - / -', 'no links, no postcodes');

@@ -5,8 +5,10 @@ import { sendEmail, isEmailConfigured } from "../email/send";
 import { dailyNoticeEmail } from "../email/daily-notice";
 import { siteUrl } from "../url";
 import type { RunResult } from "./picks-run";
-import { claimSlot, finishSend, markSending, releaseClaim } from "../notify/sends";
-import { capDay, sendKey } from "../notify/cap";
+import { abandonSend, claimSlot, finishSend, markSending, releaseClaim } from "../notify/sends";
+import { capDay, newSendToken, sendKey } from "../notify/cap";
+import { listUnsubscribeHeaders } from "../notify/render-email";
+import { LOW_CREDIT_ALONE_FROM_MINUTE_UTC } from "../credit/low-credit";
 
 // ─── One-off "picks are now daily" notice ─────────────────────────────
 // Pressed by hand from /admin/picks, dry run first. Goes to every member
@@ -17,7 +19,9 @@ import { capDay, sendKey } from "../notify/cap";
 //
 // It counts toward the one-a-day cap (src/lib/notify/cap.ts): a member who
 // has already had their daily email today is skipped, unstamped, and gets
-// the notice from a later press.
+// the notice from a later press. Batch 21 (D26): a real press is refused
+// before 08:30 UTC, when it would take the day's slot from that morning's
+// Today's 5; and each notice carries one-click unsubscribe (daily picks).
 
 const TIME_BUDGET_MS = 50_000;
 const SAMPLE = 20;
@@ -51,6 +55,11 @@ export async function runDailyNotice(opts: { dry: boolean }): Promise<RunResult>
   if (opts.dry) {
     return { status: 200, body: { dry: true, audience: rows.length, sample: rows.slice(0, SAMPLE).map((r) => r.email), ms: Date.now() - started } };
   }
+  const now = new Date();
+  if (now.getUTCHours() * 60 + now.getUTCMinutes() < LOW_CREDIT_ALONE_FROM_MINUTE_UTC) {
+    return { status: 400, body: { error: "Press this after 08:30 UTC: before then it would take the day's slot from that morning's daily email." } };
+  }
+  const base = siteUrl();
   if (!isEmailConfigured()) return { status: 200, body: { dry: false, audience: rows.length, sent: 0, failed: 0, remaining: rows.length, error: "email_not_configured" } };
   let sent = 0;
   let failed = 0;
@@ -68,16 +77,22 @@ export async function runDailyNotice(opts: { dry: boolean }): Promise<RunResult>
       continue;
     }
     const claimId = claim.ok ? claim.id : null;
-    const mail = dailyNoticeEmail({ siteUrl: siteUrl(), firstName: firstNameOf(r.full_name) });
-    if (claimId && !(await markSending(admin, claimId, { notice: "daily_picks" }, null))) {
+    const mail = dailyNoticeEmail({ siteUrl: base, firstName: firstNameOf(r.full_name) });
+    // The one-click unsubscribe token, stored with the slot (a slot the table could not record gets no link).
+    const token = claimId ? newSendToken() : null;
+    const unsubscribeUrl = token ? `${base.replace(/\/$/, "")}/api/notify/unsubscribe/${token}` : null;
+    if (claimId && !(await markSending(admin, claimId, { notice: "daily_picks" }, token))) {
       await releaseClaim(admin, claimId);
       capped += 1;
       continue;
     }
     // Always under the slot's key, claimed or not: a slot the table could not
     // record still cannot be sent a second, different daily email.
-    const res = await sendEmail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text, idempotencyKey: sendKey("daily", r.id, claim.ok ? claim.day : capDay()) });
-    if (claimId) await finishSend(admin, claimId, res.sent, null, []);
+    const res = await sendEmail({ to: r.email, subject: mail.subject, html: mail.html, text: mail.text, ...(unsubscribeUrl ? { headers: listUnsubscribeHeaders({ url: unsubscribeUrl, oneClickUrl: unsubscribeUrl }) } : {}), idempotencyKey: sendKey("daily", r.id, claim.ok ? claim.day : capDay()) });
+    if (claimId) {
+      if (res.sent) await finishSend(admin, claimId, true, null, []);
+      else await abandonSend(admin, claimId);
+    }
     if (!res.sent) {
       failed += 1;
       if (failures.length < SAMPLE) failures.push(`${r.email} (${res.reason ?? "failed"})`);
