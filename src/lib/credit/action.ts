@@ -3,7 +3,7 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { newActionId, type MeterContext } from './context';
 import { InsufficientCreditError, refund, release, reserve } from './ledger';
-import { isEnforcing } from './http';
+import { isEnforcing, shadowModeAllows } from './http';
 import { round4 } from './pricing';
 import { payerFor } from '../team';
 
@@ -45,15 +45,23 @@ export async function startAction(opts: { userId: string | null; admin?: boolean
     payerId = payer.payerId;
     memberId = payer.memberId;
   }
-  const ctx: MeterContext = { userId: payerId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit: opts.requireCredit, funnelId: opts.funnelId ?? null, memberId, ...(opts.fixedPrice ? { fixedPrice: true } : {}) };
+  // Batch 21 (B2): shadow mode is for the members who were given the welcome
+  // credit. A payer who was not (a pack-era account, pack bought or not; an
+  // account whose welcome credit was withheld) is treated as a requireCredit
+  // caller: the reservation and every known-cost call must be affordable, so
+  // the account can never run up an overdraft for its next grant to repay.
+  // One indexed read, and only in shadow mode.
+  const welcomed = payerId && !opts.admin && !opts.requireCredit && !isEnforcing() ? await welcomeGranted(payerId) : true;
+  const requireCredit = Boolean(opts.requireCredit) || !welcomed;
+  const ctx: MeterContext = { userId: payerId, admin: Boolean(opts.admin), action: opts.action, actionId, oncePerAction: opts.oncePerAction, markupOverride: opts.markupOverride, requireCredit, funnelId: opts.funnelId ?? null, memberId, ...(opts.fixedPrice ? { fixedPrice: true } : {}) };
   let reservationId: string | null = null;
   if (payerId && !opts.admin && (opts.maxBasePence ?? 0) > 0) {
     try {
       reservationId = await reserve(payerId, opts.action, actionId, opts.maxBasePence!);
     } catch (err) {
       if (err instanceof InsufficientCreditError) {
-        // requireCredit callers opt out of shadow mode: see MeterContext.
-        if (opts.requireCredit || isEnforcing()) throw err;
+        // requireCredit callers (and payers never welcomed) opt out of shadow mode: see MeterContext.
+        if (!shadowModeAllows({ requireCredit: opts.requireCredit, welcomeGranted: welcomed })) throw err;
         console.warn(`[credit] shadow mode: ${opts.action} would be blocked (need ${err.requiredPence}, have ${err.availablePence})`);
       } else {
         console.error('[credit] reservation failed, continuing unreserved:', err);
@@ -67,6 +75,23 @@ export async function startAction(opts: { userId: string | null; admin?: boolean
       await release(reservationId);
     },
   };
+}
+
+/**
+ * Batch 21 (B2): whether this account was given the welcome credit: the
+ * `welcome:<user>` grant, which every pre-pack member has (backfilled) and
+ * no pack-era account or withheld account ever gets (the pack's bonus is
+ * keyed on its payment). A read failure counts as yes, so a database blip
+ * never blocks what shadow mode would allow.
+ */
+export async function welcomeGranted(userId: string): Promise<boolean> {
+  if (!hasServiceRole()) return true;
+  const { data, error } = await createAdminClient().from('credit_grants').select('id').eq('user_id', userId).eq('source_ref', `welcome:${userId}`).limit(1);
+  if (error) {
+    console.warn('[credit] welcome grant read failed; treating the account as welcomed:', error.message);
+    return true;
+  }
+  return (data?.length ?? 0) > 0;
 }
 
 /** Base pence debited so far under one action id, less anything refunded (for "this report used £X"). */
