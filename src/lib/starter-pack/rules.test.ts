@@ -52,6 +52,11 @@ test('the copy says what the settings say', () => {
   assert.match(c.checkoutText, /14-day right to cancel ends once you use any of it/);
   const odd = packCopy({ starterPackPricePence: 1250, starterPackCreditPence: 3000 }, 400, rates);
   assert.equal(odd.price, '£12.50');
+  // Batch 21 (C5): the pack lifts the early-access delay, and says so when told the delay.
+  const early = packCopy(on, 400, rates, { freeDealDelayHours: 48 });
+  assert.equal(early.body, '£10 gets you £30 of credit: about 7 Full analyses, plus daily deals picked for you. It never expires. You also see new deals as soon as they go live: free members wait 48 hours.');
+  assert.equal(early.cardBody, 'About 7 Full analyses, plus daily deals picked for you. You also see new deals as soon as they go live: free members wait 48 hours. One per person.');
+  assert.equal(packCopy(on, 400, rates, { freeDealDelayHours: 0 }).body, c.body);
 });
 
 test('a refund takes back the same share of the credit as of the payment', () => {

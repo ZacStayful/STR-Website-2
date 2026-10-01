@@ -17,7 +17,9 @@ export async function submitPickFeedbackAction(formData: FormData): Promise<void
   logActivityForPick(token, 'email_feedback', { extras: { answer: reaction, via: 'form', reasons: reaction === 'no' ? cleanReasons(formData.getAll('reasons')) : undefined } });
   // Batch 17 (Q25): "I want rent-to-rent, not to buy" adds the type to the pick's profile.
   const added = reaction === 'no' ? await addTypeFromPickFeedback({ token }, formData.getAll('reasons')) : null;
-  if (added) logActivity(added.userId, 'profile_edited', { profileId: added.profileId, source: 'email_link', extras: { question: 'deal_types', via: 'pick_feedback', added: added.added } });
+  // Batch 21 (E14): logged as the email answer it is, never as the qualifying
+  // profile_edited: an answer from an email cannot make a member weekly active.
+  if (added) logActivity(added.userId, 'email_feedback', { profileId: added.profileId, source: 'email_link', extras: { answer: reaction, via: 'form', question: 'deal_types', added: added.added } });
   redirect(`/p/${token}?a=${reaction}&thanks=1`);
 }
 

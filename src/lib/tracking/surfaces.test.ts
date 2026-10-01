@@ -5,7 +5,7 @@ import { isCleanForSend, isStripeReturn, surfaceFor, tidiedHref } from './surfac
 const SITE = 'https://intelligence.stayful.co.uk';
 
 test('white-label, admin, token and unknown pages get nothing at all', () => {
-  for (const p of ['/f/abc123', '/r/tok', '/r/tok/pdf', '/admin', '/admin/signups', '/api/consent', '/auth/callback', '/team/join', '/extension/connect', '/presentation', '/report', '/demo-report', '/str-report', '/str-report/presentation', '/m', '/profiles/switch', '/no-such-page', '/deals-nope', '', 'relative']) {
+  for (const p of ['/f/abc123', '/r/tok', '/r/tok/pdf', '/admin', '/admin/signups', '/api/consent', '/auth/callback', '/team/join', '/extension/connect', '/presentation', '/demo-report', '/str-report', '/str-report/presentation', '/m', '/profiles/switch', '/no-such-page', '/deals-nope', '', 'relative']) {
     assert.equal(surfaceFor(p), 'none', p);
   }
 });

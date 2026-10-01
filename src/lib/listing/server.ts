@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { createSupabaseServerClient } from '../supabase/server';
 import { detectListingUrl, SERVER_FETCHABLE, SOURCE_LABELS } from './detect';
@@ -72,7 +74,8 @@ export async function resolveListing(url: string, opts: { html?: string; refresh
     }
     snapshot = parseListing(detected.source, html, { id: detected.id, canonicalUrl: detected.canonicalUrl });
     if (!snapshot) {
-      console.error(`[listing] ${detected.source} parser v${PARSER_VERSIONS[detected.source]} could not read ${detected.canonicalUrl}`);
+      // Batch 21 (C14): the member's pasted URL names a property; the log gets a hash of it.
+      console.error(`[listing] ${detected.source} parser v${PARSER_VERSIONS[detected.source]} could not read listing ${createHash('sha256').update(detected.canonicalUrl).digest('hex').slice(0, 12)}`);
       return { ok: false, code: 'unreadable', message: 'We could not read that listing page. Enter the details manually.', detected };
     }
     if (!snapshot.postcode && typeof snapshot.lat === 'number' && typeof snapshot.lng === 'number') {
@@ -129,7 +132,7 @@ export type CheckListingOutcome =
  */
 export async function checkListingForMember(url: string, input: CheckListingInput): Promise<CheckListingOutcome> {
   const cap = Number(process.env.LISTING_RESOLVES_PER_DAY ?? DEFAULT_RESOLVES_PER_DAY);
-  const used = await resolvesToday(input.userId, { admin: input.admin });
+  const used = await resolvesToday(input.userId);
   if (Number.isFinite(cap) && cap > 0 && used >= cap) {
     return { ok: false, code: 'cap', message: `You have checked ${cap} listings today. Try again tomorrow.`, detected: detectListingUrl(url) };
   }
@@ -220,14 +223,18 @@ export async function recordCheckedListing(userId: string, snapshot: ListingSnap
   }
 }
 
-/** How many listings this member has resolved today (for the daily cap). */
-export async function resolvesToday(userId: string, opts?: ClientChoice): Promise<number> {
+/**
+ * How many listings this member has checked today (for the daily cap).
+ * Batch 21 (A6): counted from the quick views' credit reservations, which
+ * only the service role writes, not from checked_listings, whose rows the
+ * member can delete to start the count again.
+ */
+export async function resolvesToday(userId: string): Promise<number> {
+  if (!hasServiceRole()) return 0;
   try {
-    const supabase = await clientFor(opts);
     const start = new Date();
     start.setUTCHours(0, 0, 0, 0);
-    // last_checked_at is set only when a listing is resolved; pipeline edits touch updated_at, not this.
-    const { count } = await supabase.from('checked_listings').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('last_checked_at', start.toISOString());
+    const { count } = await createAdminClient().from('credit_reservations').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('action', 'quick_view').gte('created_at', start.toISOString());
     return count ?? 0;
   } catch {
     return 0;
