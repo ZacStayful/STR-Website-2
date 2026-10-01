@@ -594,15 +594,15 @@ export function pickSection(input: PickEmailInput): { section: Section; subject:
   const motivationLine = describeMotivation(pick.motivation ?? null);
   // Said first and said plainly. A near miss presented as a match is a small
   // lie that costs more trust than the empty day it was avoiding.
-  const nearMissLine = input.nearMiss ? `Nothing matched your filter exactly today — this is the closest we found.` : null;
+  const nearMissLine = input.nearMiss ? `Nothing matched your filter exactly today — this is the closest I found.` : null;
   const relaxLine = input.nearMiss ? input.relaxation ?? null : null;
   // What it costs, said once and truly: by the day from the new pricing date
   // (the member's own price is on their Notifications page), else this pick's own price.
   const perDay = typeof input.dailyPence === 'number' && input.dailyPence > 0;
   const intro = firstEver
     ? perDay
-      ? `Stayful Intelligence now sends you Today's 5 each morning: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one, and more deals to look at. Daily deals are charged by the day, only on days we send them; the price is on your Notifications page. Turn them off any time with the link at the bottom.`
-      : `Stayful Intelligence now finds you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. ${input.chargedBasePence > 0 ? `Each pick is charged from your credit, and this one used ${penceLabel(input.chargedBasePence)}.` : 'This one cost you nothing.'} Turn it off any time with the link at the bottom.`
+      ? `I'll send you Today's 5 each morning: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one, and more deals to look at. I charge daily deals by the day, only on days I send them; the price is on your Notifications page. Turn them off any time with the link at the bottom.`
+      : `I'll find you one property a day: the listing that best fits your filter, or a house pick from our best-scoring areas when you have not set one. ${input.chargedBasePence > 0 ? `Each pick is charged from your credit, and this one used ${penceLabel(input.chargedBasePence)}.` : 'This one cost you nothing.'} Turn it off any time with the link at the bottom.`
     : null;
   const costNote = !perDay && input.chargedBasePence > 0 ? ` This pick used ${penceLabel(input.chargedBasePence)} of your credit.` : '';
 

@@ -41,6 +41,7 @@ import {
   limitMessage,
   maxProfilesFor,
   parseProfileRow,
+  primaryOf,
   profilePriceLine,
   PROFILE_COLUMNS,
   SHARED_QUESTION_IDS,
@@ -136,6 +137,14 @@ export const profilesFor = cache(async (userId: string): Promise<ProfilesView> =
 
 export async function activeProfileFor(userId: string): Promise<SavedProfile | null> {
   return (await profilesFor(userId)).active;
+}
+
+/** Batch 22: the member's primary profile (rules.ts primaryOf): the reveal, the signup search and Batch 25 use it. */
+export async function primaryProfileFor(userId: string): Promise<SavedProfile | null> {
+  const view = await profilesFor(userId);
+  if (!view.readable) return null;
+  const id = primaryOf(view.all);
+  return view.all.find((p) => p.id === id) ?? null;
 }
 
 /**

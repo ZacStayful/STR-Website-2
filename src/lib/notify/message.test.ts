@@ -86,7 +86,7 @@ test('the early-access backstop drops (and reports) a deal a free account may no
   const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [fresh, old], changes: [], freeCutoffIso: cutoff, unsubscribe: null })!;
   assert.deepEqual(built.teaserIds, ['old']);
   assert.deepEqual(built.droppedTeasers, ['fresh']);
-  assert.match(built.message.subject, /^2 deals today/);
+  assert.match(built.message.subject, /^I found 2 deals for you this morning/);
 });
 
 test('a change names the address only when the member opened the deal, and never links the listing', () => {
@@ -120,10 +120,10 @@ test('the subject is counted from what is in the email', () => {
   const teasers = ['a', 'b', 'c', 'd'].map((id) => card({ id }));
   const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers, changes: [change()], freeCutoffIso: null, unsubscribe: null })!;
   assert.equal(built.message.kind, 'todays_5');
-  assert.equal(built.message.subject, '5 deals today · 1 price drop on a deal you kept');
+  assert.equal(built.message.subject, 'I found 5 deals for you this morning · 1 price drop on a deal you kept');
   assert.deepEqual(built.changeIds, ['a1']);
   const quiet = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers, changes: [], freeCutoffIso: null, unsubscribe: null })!;
-  assert.equal(quiet.message.subject, '5 deals today · top pick: 2-bed to buy in Nottingham, 42% above a long let');
+  assert.equal(quiet.message.subject, 'I found 5 deals for you this morning · top pick: 2-bed to buy in Nottingham, 42% above a long let');
   // A change the builder refuses is not counted either.
   const refused = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers, changes: [change({ newAmount: 999_999 })], freeCutoffIso: null, unsubscribe: null })!;
   assert.doesNotMatch(refused.message.subject, /price drop/);
@@ -225,7 +225,7 @@ test('saved profiles: one headed part per profile, no deal twice, counts from ev
     unfunded: ['Old'],
   })!;
   assert.deepEqual(built.teasersByPart, [['a', 'shared'], ['b']], 'a deal already told, or another profile’s pick, is left out');
-  assert.equal(built.message.subject, '5 deals today · top pick: 2-bed to buy in Nottingham, 42% above a long let');
+  assert.equal(built.message.subject, 'I found 5 deals for you this morning · top pick: 2-bed to buy in Nottingham, 42% above a long let');
   const titles = built.message.sections.map((s) => s.title);
   assert.ok(titles.includes('For My deals') && titles.includes('For Client: JS'));
   assert.ok(titles.indexOf('For My deals') < titles.indexOf('For Client: JS'), 'the active profile first');

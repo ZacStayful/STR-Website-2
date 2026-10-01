@@ -67,6 +67,12 @@
   --popover-foreground: #5d8156;
   --primary: #5d8156;
   --primary-foreground: #e6ebd7;
+  /* Batch 22: the Stayful Intelligence eye (StayfulEye, intelligence variant). */
+  --si-eye: #5d8156;
+  --si-eye-bright: #7aba6e;
+  --si-eye-glow: #a9c9a1;
+  --si-eye-iris: #2e3d2b;
+  --si-eye-iris-deep: #1a2118;
   --secondary: #bad6c7;
   --secondary-foreground: #5d8156;
   --muted: #c3cdaf;
@@ -140,6 +146,11 @@
   --popover-foreground: #d0d6ba;
   --primary: #8ab382;
   --primary-foreground: #1a2118;
+  --si-eye: #8ab382;
+  --si-eye-bright: #b5d9ab;
+  --si-eye-glow: #1a3018;
+  --si-eye-iris: #2e3d2b;
+  --si-eye-iris-deep: #0f150e;
   --secondary: #2e3d2b;
   --secondary-foreground: #d0d6ba;
   --muted: #2e3d2b;
@@ -3849,6 +3860,12 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   0%, 100% { opacity: 0.12; transform: scale(1); }
   50%      { opacity: 0.42; transform: scale(1.03); }
 }
+/* Batch 22: a level reached (StayfulEye powerUp): one outer-ring flash, under a second. */
+@keyframes siPowerUp {
+  0%   { opacity: 0;   transform: scale(0.85); }
+  30%  { opacity: 0.9; transform: scale(1.04); }
+  100% { opacity: 0;   transform: scale(1.18); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   @keyframes glowBreathe { 0%, 100% { opacity: 0.7; transform: none; } }
@@ -3858,6 +3875,7 @@ table.sf-table td:first-child { font-weight: 700; color: var(--sf-green); }
   @keyframes irisPulse  { 0%, 100% { transform: none; } }
   @keyframes pupilScan  { 0%, 100% { transform: none; } }
   @keyframes ringPulse  { 0%, 100% { opacity: 0.25; transform: none; } }
+  @keyframes siPowerUp  { 0%, 100% { opacity: 0; transform: none; } }
 
   .sf-page-v3 .acc-table.is-visible .acc-row {
     animation: none;

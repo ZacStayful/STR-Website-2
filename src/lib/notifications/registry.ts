@@ -10,15 +10,15 @@
  * Pure: no server-only, no Supabase. Tested.
  */
 
-export type NotificationKey = 'daily_picks' | 'deal_changes' | 'weekly_missed' | 'weekly_alerts' | 'credit_alerts' | SmsNotificationKey;
+export type NotificationKey = 'daily_picks' | 'deal_changes' | 'weekly_missed' | 'weekly_alerts' | 'credit_alerts' | SmsNotificationKey | 'si_calls';
 
 /** Batch 8: one text switch per kind of change on a tracked deal. */
 export type SmsNotificationKey = 'sms_price_drop' | 'sms_back_on_market' | 'sms_nearly_gone' | 'sms_gone';
 
-export type NotificationColumn = 'sourcing_alerts' | 'alert_tracked' | 'alert_missed' | 'alert_weekly' | 'alert_credit' | SmsNotificationKey;
+export type NotificationColumn = 'sourcing_alerts' | 'alert_tracked' | 'alert_missed' | 'alert_weekly' | 'alert_credit' | SmsNotificationKey | 'si_calls';
 
 /** How it reaches the member. The panel lists each channel separately. */
-export type NotificationChannel = 'email' | 'sms';
+export type NotificationChannel = 'email' | 'sms' | 'call';
 
 export interface NotificationType {
   key: NotificationKey;
@@ -111,6 +111,17 @@ export const NOTIFICATION_TYPES: readonly NotificationType[] = [
     description: 'A deal you track goes under offer, sells or is let.',
     defaultOn: false,
   },
+  // ── Calls (Batch 22, src/lib/intelligence/consent.ts). Off until the member
+  // ticks it, with a verified mobile; every change is kept in si_call_consents.
+  // The panel's Calls section writes it through setSiCalls, never directly. ──
+  {
+    key: 'si_calls',
+    channel: 'call',
+    column: 'si_calls',
+    label: 'Calls from Stayful Intelligence',
+    description: 'A short intro call, calls about standout deals, and calls when your credit is low. Charged per minute from your credit; missed calls are free.',
+    defaultOn: false,
+  },
 ];
 
 export function channelOf(t: Pick<NotificationType, 'channel'>): NotificationChannel {
@@ -120,9 +131,13 @@ export function channelOf(t: Pick<NotificationType, 'channel'>): NotificationCha
 export const EMAIL_NOTIFICATION_TYPES: readonly NotificationType[] = NOTIFICATION_TYPES.filter((t) => channelOf(t) === 'email');
 export const SMS_NOTIFICATION_TYPES: readonly NotificationType[] = NOTIFICATION_TYPES.filter((t) => channelOf(t) === 'sms');
 export const SMS_NOTIFICATION_KEYS: readonly SmsNotificationKey[] = SMS_NOTIFICATION_TYPES.map((t) => t.key as SmsNotificationKey);
+export const CALL_NOTIFICATION_TYPES: readonly NotificationType[] = NOTIFICATION_TYPES.filter((t) => channelOf(t) === 'call');
 
 /** Every column the registry reads: select these together. */
-export const NOTIFICATION_COLUMNS = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit, sms_price_drop, sms_back_on_market, sms_nearly_gone, sms_gone';
+export const NOTIFICATION_COLUMNS = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit, sms_price_drop, sms_back_on_market, sms_nearly_gone, sms_gone, si_calls';
+
+/** The same, before Batch 22's call switch: what a database without si_calls can still answer (it reads as off). */
+export const NOTIFICATION_COLUMNS_BEFORE_BATCH_22 = 'sourcing_alerts, sourcing_opted_out_at, alert_tracked, alert_missed, alert_weekly, alert_credit, sms_price_drop, sms_back_on_market, sms_nearly_gone, sms_gone';
 
 /**
  * The same, as it was before the Batch 8 text switches: what a database that

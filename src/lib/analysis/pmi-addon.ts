@@ -16,6 +16,7 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import type { createSupabaseServerClient } from '../supabase/server';
 import { payerFor } from '../team';
+import { offeredPmiAddonFor } from './offers-server';
 import { getBillingSettings } from '../credit/unit-costs';
 import { debit, getBalance, release, reserve, InsufficientCreditError } from '../credit/ledger';
 import { isEnforcing } from '../credit/http';
@@ -87,10 +88,12 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
 
   const payer = await payerFor(input.userId);
   if (payer.suspended) return fail('seat_paused');
-  const pricing = (await getBillingSettings()).dealPricing;
-  const price = input.adminUser ? 0 : pricing.pmiAddonPence;
+  // Batch 22, Part H: PMI added later is +the first-run extra the first time for the paying account (never welcome-priced).
+  const offered = input.adminUser ? null : await offeredPmiAddonFor(input.userId).catch(() => null);
+  const price = input.adminUser ? 0 : offered ? offered.pmiPence : (await getBillingSettings()).dealPricing.pmiAddonPence;
+  const mustAfford = isEnforcing() || Boolean(offered?.offer);
   if (!quoteMatches(input.quotedBasePence, { purchaseBasePence: price })) return fail('price_changed', { pricePence: price });
-  if (price > 0 && isEnforcing()) {
+  if (price > 0 && mustAfford) {
     const bal = await getBalance(payer.payerId).catch(() => null);
     const available = bal?.spendableBasePence ?? 0;
     if (available < price) return fail('insufficient_credit', { requiredPence: price, availablePence: Math.max(0, Math.round(available)) });
@@ -114,10 +117,10 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
   }
   const { data: claimed, error: claimErr } = await admin
     .from('analysis_purchases')
-    .insert({ user_id: payer.payerId, buyer_id: input.userId, kind: 'pmi_addon', status: 'pending', deal_id: report.deal_id, report_id: input.reportId, analysis_id: full.analysis_id, with_pmi: true, quoted_base_pence: price, pmi_base_pence: price, ready_at: new Date().toISOString(), run_started_at: new Date().toISOString() })
+    .insert({ user_id: payer.payerId, buyer_id: input.userId, kind: 'pmi_addon', status: 'pending', deal_id: report.deal_id, report_id: input.reportId, analysis_id: full.analysis_id, with_pmi: true, quoted_base_pence: price, pmi_base_pence: price, ready_at: new Date().toISOString(), run_started_at: new Date().toISOString(), ...(offered?.offer ? { offer: offered.offer } : {}), ...(offered?.firstDeep ? { first_deep: true } : {}) })
     .select('id')
     .single();
-  if (claimErr?.code === '23505') return fail('running');
+  if (claimErr?.code === '23505') return /first_deep_uidx/.test(claimErr.message ?? '') ? fail('price_changed', { pricePence: (await getBillingSettings()).dealPricing.pmiAddonPence }) : fail('running');
   if (claimErr || !claimed?.id) {
     console.error('[pmi-addon] claim failed:', claimErr?.message);
     return fail('failed');
@@ -135,7 +138,7 @@ export async function addSecondOpinion(input: { supabase: ServerClient; userId: 
       // Kept on the purchase, so an abandoned one lets its hold go (above).
       if (reservationId) await admin.from('analysis_purchases').update({ reservation_id: reservationId }).eq('id', purchaseId);
     } catch (err) {
-      if (err instanceof InsufficientCreditError && isEnforcing()) {
+      if (err instanceof InsufficientCreditError && mustAfford) {
         await finish('failed', { failure: 'insufficient_credit' });
         return fail('insufficient_credit', { requiredPence: price, availablePence: Math.max(0, Math.round(err.availablePence)) });
       }

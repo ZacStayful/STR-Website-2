@@ -713,6 +713,34 @@ Nothing in 21h needs a setting: the new optional variables are documented in
 `.env.example` (`EMAIL_FROM_WHITELABEL`, `MONDAY_FUNNEL_WEEKS_COLUMN`,
 `CRON_SECRET`, the PriceLabs and broker budget lines).
 
+### 18. The signup reveal and Stayful Intelligence (Batch 22)
+
+1. **Before the branch merges, run `supabase/schema.sql`** (the "Batch 22:
+   signup reveal" section). Idempotent and additive: service-role tables
+   `signup_reveals`, `member_searches`, `member_search_finds`,
+   `resume_intents` and `si_call_consents`; `profile_today_lists.choice`;
+   `analysis_purchases.offer` and `first_deep` with their unique indexes;
+   `profiles.si_calls` and `si_calls_changed_at`; the `member_search_claim`
+   and `member_search_true_up` functions; and the `billing_settings` rows
+   (thresholds, caps, offers, call prices). Nothing is added to
+   `ACCESS_COLUMNS`. **Its first run stamps `reveal_from`**: only members
+   created after that moment get the reveal and the notification choices,
+   so run it at deploy time, not days before. Until it is run the reveal
+   gate fails open (members go straight to Today) and `/admin/intelligence`
+   says so.
+2. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/member-searches` (every 5 minutes). `?dry=1` lists the
+   searches it would continue or settle and writes nothing.
+3. **Then switch member searches on:** set `MEMBER_SEARCH_ENABLED=true` (off
+   until then). Off, the reveal still ranks the stock we have and offers the
+   what-ifs; the free signup search and the paid deep search do nothing. Its
+   spend is capped per search and per month (`signup_search_cap_pence`,
+   `signup_search_monthly_cap_pence`, `deep_search_max_raw_pence`,
+   `deep_search_monthly_cap_pence`).
+4. **Watch it on `/admin/intelligence`:** reveals viewed, time to first Keep,
+   strong-match and no-match shares, search cost per sign-up and deep-search
+   revenue. No-match members by area are a column on `/admin/demand`.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,

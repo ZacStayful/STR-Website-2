@@ -1,4 +1,6 @@
 import 'server-only';
+import { offerPricingFor } from '../analysis/offers-server';
+import { offerLabel } from '../analysis/offers';
 
 /**
  * For a page of deal cards: which are open to the member's account (and for
@@ -73,6 +75,12 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
 /** Every card's view for this member, from one read of each kind (cardView, src/lib/marketplace/card-view.ts). */
 export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean }): Promise<Map<string, CardView>> {
   const { payerId } = await payerFor(input.userId);
-  const [settings, quoter, states] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, input.cards.map((c) => c.id))]);
-  return new Map(input.cards.map((c) => [c.id, cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntryMaxCashIn: settings.lowEntry.maxCashIn, label: quoter.label })]));
+  const [settings, quoter, states, offers] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, input.cards.map((c) => c.id)), offerPricingFor(input.userId, input.adminUser)]);
+  // Batch 22: each card priced with this member's offers (the welcome price on their revealed deals).
+  return new Map(
+    input.cards.map((c) => [
+      c.id,
+      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntryMaxCashIn: settings.lowEntry.maxCashIn, label: quoter.label }),
+    ]),
+  );
 }

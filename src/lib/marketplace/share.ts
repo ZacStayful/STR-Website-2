@@ -17,7 +17,7 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { CARD_COLUMNS, type DealCard } from './grid';
 import { isShareToken } from './share-view';
 import { withProjectCards } from './queries';
-import { dealVisible, type DealVisibility } from './visibility';
+import { type DealVisibility, dealVisibleTo } from './visibility';
 
 /**
  * The member's link to a deal they can see (an account inside the
@@ -31,7 +31,7 @@ export async function createDealShare(userId: string, dealId: string, visibility
     console.error('[deal-share] deal read failed:', error.message);
     return { ok: false, code: 'failed' };
   }
-  if (!deal || !dealVisible(deal.live_since as string | null, visibility.cutoffIso)) return { ok: false, code: 'missing' };
+  if (!deal || !dealVisibleTo({ id: dealId, live_since: deal.live_since as string | null }, visibility)) return { ok: false, code: 'missing' };
   const token = await ensureDealShare(userId, dealId);
   return token ? { ok: true, token } : { ok: false, code: 'failed' };
 }

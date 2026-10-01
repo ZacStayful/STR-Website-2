@@ -113,12 +113,12 @@ export function greeting(now: Date, name: string | null): string {
   return first ? `${part}, ${first}` : part;
 }
 
-/** "342 deals match what you’re looking for" — the real count, never a guess. */
+/** "I found 342 deals that match what you’re looking for" — the real count, never a guess (Batch 22: in Stayful Intelligence's voice). */
 export function matchLine(count: number | null, hasGoals: boolean, mustHaves = false, atLeast = false): string | null {
   if (count === null || !Number.isFinite(count)) return null;
   const n = Math.max(0, Math.floor(count));
   const deals = `${n.toLocaleString('en-GB')}${atLeast ? '+' : ''} deal${n === 1 && !atLeast ? '' : 's'}`;
-  if (mustHaves) return `${deals} meet${n === 1 && !atLeast ? 's' : ''} your must-haves`;
-  if (!hasGoals) return `${deals} on the market in Stayful’s top areas`;
-  return `${deals} match${n === 1 ? 'es' : ''} what you’re looking for`;
+  if (mustHaves) return `I found ${deals} that meet${n === 1 && !atLeast ? 's' : ''} your must-haves`;
+  if (!hasGoals) return `I’m watching ${deals} in Stayful’s top areas`;
+  return `I found ${deals} that match${n === 1 ? 'es' : ''} what you’re looking for`;
 }

@@ -35,10 +35,12 @@ import { applyAnswer, clearAnswer, emptyAnswers, questionById, questionsFor, SEC
 import { EMPTY_QUIZ, parseQuizRow, progress, seedFromGoals, type AnsweredMap, type Progress, type QuizRecord } from './state';
 import { profileFilters, profileFiltersByType } from './matching';
 import { typesShown } from './deal-types';
-import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIND, type CreditDecision } from './credit';
+import { creditLine, profileCreditDecision, profileCreditRef, PROFILE_CREDIT_KIND, realAnswersNeeded, type CreditDecision } from './credit';
 import { rewardEligibility, type Eligibility } from '../today/checklist';
 import { grant, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings } from '../credit/unit-costs';
+import { accuracyHint, accuracyLabel, accuracyLevel, advancedNeeded, levelMarkers, type Level } from './levels';
+import { queueSignupSearch } from '../sourcing-demand/member-search';
 import { startAction, welcomeGranted } from '../credit/action';
 import { newActionId, runMetered } from '../credit/context';
 import { geocodePostcode } from '../apis/geocode';
@@ -168,6 +170,30 @@ export interface ProgressView {
   complete: boolean;
   mandatoryDone: boolean;
   questions: QuestionId[];
+  /** Batch 22, Part A: match accuracy (levels.ts), worked out with the live settings. */
+  accuracy: AccuracyView;
+}
+
+export interface AccuracyView {
+  level: Level;
+  name: string;
+  label: string;
+  hint: string;
+  /** Where each level's marker sits on the bar, and how far the member is (0–100). */
+  markers: Record<1 | 2 | 3, number>;
+  at: number;
+  /** The next level and the real answers it needs; null at the top. */
+  next: { name: string; needed: number } | null;
+  /** Real answers so far, where this level started and where the next begins (the thinking background's growth). */
+  real: number;
+  levelAt: number;
+  nextAt: number | null;
+}
+
+/** The level settings: Advanced's share, and the profile credit's for the top level. */
+export interface AccuracySettings {
+  advancedPct: number;
+  siPct: number;
 }
 
 export interface CreditView {
@@ -186,8 +212,41 @@ export interface QuizView {
   credit: CreditView;
 }
 
-export function progressView(p: Progress): ProgressView {
-  return { percent: p.percent, minutesLeft: p.minutesLeft, next: p.next, complete: p.complete, mandatoryDone: p.mandatoryDone, questions: p.questions };
+export function progressView(p: Progress, s: AccuracySettings): ProgressView {
+  return { percent: p.percent, minutesLeft: p.minutesLeft, next: p.next, complete: p.complete, mandatoryDone: p.mandatoryDone, questions: p.questions, accuracy: accuracyView(p, s) };
+}
+
+/** Mandatory questions have no "Not sure", so every one answered is real. */
+export function accuracyView(p: Progress, s: AccuracySettings): AccuracyView {
+  const realMandatory = p.mandatory.filter((id) => p.answered.includes(id)).length;
+  const input = { questions: p.questions.length, mandatory: p.mandatory.length, mandatoryDone: p.mandatoryDone, answered: p.answered.length, real: p.real, realMandatory };
+  const l = accuracyLevel(input, s);
+  const total = Math.max(1, p.questions.length);
+  return {
+    level: l.level,
+    name: l.name,
+    label: accuracyLabel(l),
+    hint: accuracyHint(l),
+    markers: levelMarkers(input, s),
+    at: Math.min(100, Math.round((p.real / total) * 100)),
+    next: l.next ? { name: l.next.name, needed: l.next.needed } : null,
+    real: p.real,
+    ...levelSpan(input, s, l.level),
+  };
+}
+
+/** Real answers at which this level started and the next one begins. */
+function levelSpan(p: { questions: number; mandatory: number }, s: AccuracySettings, level: Level): { levelAt: number; nextAt: number | null } {
+  const adv = p.mandatory + advancedNeeded(p, s.advancedPct);
+  const top = Math.max(adv, realAnswersNeeded({ questions: p.questions, mandatory: p.mandatory, minRealPct: s.siPct }));
+  const at = [0, p.mandatory, adv, top];
+  return { levelAt: at[level], nextAt: level >= 3 ? null : at[level + 1] };
+}
+
+/** The live level settings (billing_settings, 60 s cache). */
+export async function accuracySettings(): Promise<AccuracySettings> {
+  const settings = await getBillingSettings();
+  return { advancedPct: settings.intelligence.accuracyAdvancedPct, siPct: settings.profileCreditMinRealPct };
 }
 
 export interface AnswerInput {
@@ -284,7 +343,11 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     const extras = { question: q.id, section: SECTION_TOKENS[q.section] };
     if (input.editing) logActivity(userId, 'profile_edited', { extras });
     else logActivity(userId, input.notSure ? 'profile_not_sure' : 'profile_answered', { extras });
-    if (!s.progress.mandatoryDone && prog.mandatoryDone) logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
+    if (!s.progress.mandatoryDone && prog.mandatoryDone) {
+      logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
+      // Batch 22, Part G: a new member's own search, queued now (the quiz kicks it; the cron finishes it).
+      await queueSignupSearch(userId).catch((err) => console.error('[profile] signup search not queued:', err));
+    }
     if (!s.quiz.completedAt && prog.complete) {
       logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
       // Batch 19: Meta's ProfileComplete, at the first completion (the £5 may come later, or never).
@@ -292,13 +355,13 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     }
 
     // Batch 14: today's list follows the answer (after the response: it never holds the quiz up, and never charges).
-    after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered }).then(() => undefined));
+    after(() => rechooseForMember({ userId, email: input.email, goals: next.goals, savedAreas: next.savedAreas, answered, answeredAt: nowIso }).then(() => undefined));
     matchCount = await matchCountFor({ userId, email: input.email, answers: next, answered });
   } catch (err) {
     console.error('[profile] answer bookkeeping failed (the answer itself is saved):', (err as Error)?.message ?? err);
     credit = await creditViewFor(s).catch(() => credit);
   }
-  return { ok: true, warning, view: { answers: next, answered, progress: progressView(prog), matchCount, credit } };
+  return { ok: true, warning, view: { answers: next, answered, progress: progressView(prog, await accuracySettings()), matchCount, credit } };
 }
 
 /** The "specific areas" answer is the member's saved areas: add the new ones, drop the old. */

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import { answerLabel, currentValue, imageOf, optionsOf, questionById, text, type Answers, type Question, type QuestionId, type WhereAnswer } from "@/lib/profile/questions";
-import { minutesLeftLabel, pillLabel } from "@/lib/profile/state";
+import { minutesLeftLabel } from "@/lib/profile/state";
 import { DEFAULT_FINANCE } from "@/lib/listing/deal";
 import { matchLabel } from "@/lib/profile/matching";
 import type { QuizArea } from "@/lib/onboarding/server";
@@ -18,6 +18,10 @@ import { SignupConsentCheckbox } from "@/components/tracking/SignupConsentCheckb
 import { StarterPackOffer } from "@/components/starter-pack/StarterPackOffer";
 import { packNotNowAction, packShownAction } from "@/components/starter-pack/actions";
 import type { PackCopy } from "@/lib/starter-pack/rules";
+import { StayfulEye } from "@/components/StayfulEye";
+import { levelUpLabel } from "@/lib/profile/levels";
+import { LEVEL_UP_MS } from "@/lib/intelligence/config";
+import { publishThinking } from "@/lib/intelligence/thinking-signal";
 
 export interface QuizStart {
   answers: Answers;
@@ -35,6 +39,8 @@ export interface QuizStart {
   areas: QuizArea[];
   /** Batch 20: the starter pack, offered once the welcome questions are answered (eligible new members only). */
   pack?: { copy: PackCopy; returnTo: string } | null;
+  /** Batch 22: a new member's signup reveal: the end of the quiz and "Finish later" go there. */
+  revealHref?: string | null;
   profileHref: string;
   privacyHref: string;
   todayHref: string;
@@ -61,6 +67,19 @@ export function Quiz(start: QuizStart) {
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [busy, startTransition] = useTransition();
+  // Batch 22: a level reached plays the eye's power-up and says so, under a second; nothing waits for it.
+  const [levelUp, setLevelUp] = useState<{ seq: number; text: string } | null>(null);
+  // Batch 22, Part D2: the same numbers, for the thinking background (a burst per real answer, a wave per level).
+  const [answerSeq, setAnswerSeq] = useState(0);
+  useEffect(() => {
+    const a = progress.accuracy;
+    publishThinking({ level: a.level, realAnswers: a.real, levelAt: a.levelAt, nextAt: a.nextAt, answerSeq, levelUpSeq: levelUp?.seq ?? 0 });
+  }, [progress, answerSeq, levelUp?.seq]);
+  useEffect(() => {
+    if (!levelUp) return;
+    const t = setTimeout(() => setLevelUp((l) => (l && l.seq === levelUp.seq ? { ...l, text: "" } : l)), LEVEL_UP_MS);
+    return () => clearTimeout(t);
+  }, [levelUp]);
 
   // Scroll to the top of each new screen: on a phone the answer cards are below the fold.
   useEffect(() => {
@@ -86,6 +105,10 @@ export function Quiz(start: QuizStart) {
       }
       const next = view.progress.next;
       if (!next) {
+        if (start.revealHref) {
+          router.push(start.revealHref);
+          return;
+        }
         setScreen({ kind: "done" });
         return;
       }
@@ -100,7 +123,7 @@ export function Quiz(start: QuizStart) {
       }
       setScreen({ kind: "question", id: next });
     },
-    [router, samplesShown, start.returnTo],
+    [router, samplesShown, start.returnTo, start.revealHref],
   );
 
   const answer = (id: QuestionId, value: unknown, notSure: boolean) => {
@@ -115,11 +138,24 @@ export function Quiz(start: QuizStart) {
         return;
       }
       setAnswers(r.view.answers);
+      if (r.view.progress.accuracy.real > progress.accuracy.real) setAnswerSeq((n) => n + 1);
+      if (r.view.progress.accuracy.level > progress.accuracy.level) {
+        const text = levelUpLabel(r.view.progress.accuracy.level) ?? "";
+        setLevelUp((l) => ({ seq: (l?.seq ?? 0) + 1, text }));
+      }
       setProgress(r.view.progress);
       setMatchCount(r.view.matchCount);
       if (r.view.credit.paid && !credit.paid) notifyCreditChanged();
       setCredit(r.view.credit);
       if (r.warning) setWarning(r.warning);
+      // Batch 22, Part G: the mandatory answers are done: start the member's own search now (it runs on while they carry on).
+      if (start.revealHref && !wasEditing && !progress.mandatoryDone && r.view.progress.mandatoryDone) {
+        try {
+          fetch("/api/welcome/search", { method: "POST", keepalive: true }).catch(() => {});
+        } catch {
+          /* the cron picks it up */
+        }
+      }
       // Batch 20: the answer that opens the app offers the starter pack first, once; "Not now" carries on.
       if (start.pack && !wasEditing && !progress.mandatoryDone && r.view.progress.mandatoryDone) {
         setScreen({ kind: "pack", view: r.view, listBefore });
@@ -141,7 +177,7 @@ export function Quiz(start: QuizStart) {
   const finishLater = (id: QuestionId) => {
     startTransition(async () => {
       await finishLaterAction(id).catch(() => {});
-      router.push(start.returnTo);
+      router.push(start.revealHref ?? start.returnTo);
     });
   };
 
@@ -177,9 +213,9 @@ export function Quiz(start: QuizStart) {
       <Frame>
         <QuizPhoto image="done" priority />
         <p className="mt-5 text-xs font-semibold uppercase tracking-wider text-primary">Profile 100%</p>
-        <h1 className="mt-1 text-2xl font-semibold text-foreground">That’s everything. Nice work.</h1>
+        <h1 className="mt-1 text-2xl font-semibold text-foreground">That’s everything — thank you.</h1>
         {credit.line && <p className={`mt-3 rounded-lg px-3 py-2 text-sm font-medium ${credit.paid ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}>{credit.line}</p>}
-        {matchCount !== null && <p className="mt-3 text-sm text-muted-foreground">{matchLabel(matchCount, false)}. Your Today’s 5 is picked from them, starting now.</p>}
+        {matchCount !== null && <p className="mt-3 text-sm text-muted-foreground">I found {matchCount.toLocaleString("en-GB")} deal{matchCount === 1 ? "" : "s"} that match{matchCount === 1 ? "es" : ""} you. I’ll pick your Today’s 5 from them, starting now.</p>}
         <div className="mt-5 space-y-3">
           <PrimaryButton onClick={() => router.push(start.todayHref)}>See your Today’s 5</PrimaryButton>
           <Link href={start.profileHref} className="block text-center text-sm font-medium text-foreground underline-offset-4 hover:underline">
@@ -210,7 +246,7 @@ export function Quiz(start: QuizStart) {
   if (screen.kind === "samples") {
     return (
       <Frame>
-        <ProgressHeader progress={progress} matchCount={matchCount} />
+        <ProgressHeader progress={progress} matchCount={matchCount} busy={busy} levelUp={levelUp} />
         <h1 className="mt-4 text-2xl font-semibold text-foreground">Deals that match you so far</h1>
         <p className="mt-1 text-sm text-muted-foreground">A taste of what your Today’s 5 will be picked from. One more question and you’re done.</p>
         <div className="mt-4">{samples === null ? <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">Finding your matches…</p> : <SampleDeals deals={samples} />}</div>
@@ -229,7 +265,7 @@ export function Quiz(start: QuizStart) {
 
   return (
     <Frame>
-      <ProgressHeader progress={progress} matchCount={matchCount} />
+      <ProgressHeader progress={progress} matchCount={matchCount} busy={busy} levelUp={levelUp} />
       {image !== "cards" && (
         <div className="mt-4">
           <QuizPhoto image={image} priority />
@@ -291,21 +327,47 @@ function PackScreen({ pack, onNotNow, onContinue }: { pack: { copy: PackCopy; re
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-8">{children}</div>;
+  // data-quiz-card: the thinking background draws nothing behind it (Batch 22).
+  return (
+    <div data-quiz-card className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-8">
+      {children}
+    </div>
+  );
 }
 
-/** "Profile 45%", the bar, "about 3 minutes left", and the live count. */
-function ProgressHeader({ progress, matchCount }: { progress: ProgressView; matchCount: number | null }) {
+/**
+ * Batch 22: "Match accuracy · Basic", the bar with its three level markers,
+ * the eye (thinking only while an answer saves), the hint, "about 3 minutes
+ * left", and the live count.
+ */
+function ProgressHeader({ progress, matchCount, busy, levelUp }: { progress: ProgressView; matchCount: number | null; busy: boolean; levelUp: { seq: number; text: string } | null }) {
   const line = matchLabel(matchCount, !progress.complete);
+  const a = progress.accuracy;
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        <span className="text-primary">{pillLabel(progress)}</span>
-        {progress.minutesLeft > 0 && <span className="normal-case tracking-normal">{minutesLeftLabel(progress.minutesLeft)}</span>}
+      <div className="flex items-center gap-3">
+        <StayfulEye size={28} level={a.level} state={busy ? "thinking" : "idle"} powerUp={levelUp?.seq} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            <span className="text-primary">{a.label}</span>
+            {progress.minutesLeft > 0 && <span className="shrink-0 normal-case tracking-normal">{minutesLeftLabel(progress.minutesLeft)}</span>}
+          </div>
+          <div className="relative mt-2 h-2 w-full rounded-full bg-muted" role="progressbar" aria-valuenow={a.at} aria-valuemin={0} aria-valuemax={100} aria-label="Match accuracy" aria-valuetext={a.name}>
+            <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${a.at}%` }} />
+            {([1, 2, 3] as const).map((k) => (
+              <span key={k} aria-hidden className={`absolute top-1/2 h-3 w-0.5 -translate-y-1/2 rounded ${a.level >= k ? "bg-primary-foreground/80" : "bg-foreground/30"}`} style={{ left: `calc(${a.markers[k]}% - 1px)` }} />
+            ))}
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] font-medium text-muted-foreground" aria-hidden>
+            <span>Basic</span>
+            <span>Advanced</span>
+            <span>Stayful Intelligence</span>
+          </div>
+        </div>
       </div>
-      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={progress.percent} aria-valuemin={0} aria-valuemax={100} aria-label="Profile progress">
-        <div className="h-full rounded-full bg-primary transition-[width] duration-300" style={{ width: `${progress.percent}%` }} />
-      </div>
+      <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+        {levelUp?.text ? <span className="font-semibold text-primary">{levelUp.text}</span> : a.hint}
+      </p>
       {line && (
         <p className="mt-2 text-sm font-medium text-foreground" aria-live="polite">
           {line}

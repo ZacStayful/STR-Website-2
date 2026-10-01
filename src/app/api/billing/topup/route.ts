@@ -14,6 +14,7 @@ import { logConversion } from '@/lib/meta/conversions';
 import { clientDetails } from '@/lib/tracking/request';
 import { paymentFromIntent } from '@/lib/payments/rules';
 import { recordPayment } from '@/lib/payments/server';
+import { resumeReturnFor } from '@/lib/billing/resume-server';
 
 export const dynamic = 'force-dynamic';
 // Batch 21 (G14): the Stripe client gives up at 20 s; the route stops before the platform does.
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
   if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   if (!stripeConfigured()) return Response.json({ error: 'Payments are not configured yet. Email hello@stayful.co.uk to top up.' }, { status: 503 });
 
-  let body: { amountPence?: unknown; nonce?: unknown; via?: unknown };
+  let body: { amountPence?: unknown; nonce?: unknown; via?: unknown; resume?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
   // Batch 20, Part B: the top-up chosen from the low-credit decision (weekly active).
   if (body.via === 'low_credit') logActivity(member.id, 'low_credit_topup', { dedupeKey: `low_credit_topup:${new Date().toISOString().slice(0, 10)}`, extras: { amount_pence: amount } });
 
+  const resumeBack = typeof body.resume === 'string' ? await resumeReturnFor(member.id, body.resume) : null;
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });
 
@@ -107,8 +109,9 @@ export async function POST(request: Request) {
       line_items: [{ price: priceId, quantity: 1 }],
       payment_intent_data: { setup_future_usage: 'off_session', metadata: { user_id: member.id, kind: 'topup', amount_pence: String(amount) } },
       metadata: { user_id: member.id, kind: 'topup', amount_pence: String(amount) },
-      success_url: returnUrl('/account/billing', { topup: '1' }),
-      cancel_url: returnUrl('/account/billing'),
+      // Batch 22: a resume intent sends the member back to what they were buying (their own intent, an internal path).
+      success_url: resumeBack ? returnUrl(resumeBack, { topup: '1', resume: String(body.resume) }) : returnUrl('/account/billing', { topup: '1' }),
+      cancel_url: returnUrl(resumeBack ?? '/account/billing'),
       ...(process.env.STRIPE_TAX === 'true' ? { automatic_tax: { enabled: true }, customer_update: { address: 'auto' } } : {}),
     });
     return Response.json({ url: session.url, via: 'checkout' });

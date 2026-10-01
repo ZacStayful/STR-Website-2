@@ -1981,7 +1981,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     billsPcm={r.deal.billsPcm}
                   />
                 )}
-                {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} oursLabel={funnel ? `${funnelLabel(funnel)} estimate` : "Stayful estimate"} />}
+                {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} oursMonthly={r.shortLet.monthlyRevenue} opinion={r.secondOpinion} oursLabel={funnel ? `${funnelLabel(funnel)} estimate` : "Stayful estimate"} />}
                 {/* An enhanced report that came back without its second
                     opinion says so here rather than looking like a standard
                     one. The charge already reflects what actually ran. */}

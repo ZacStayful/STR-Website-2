@@ -26,7 +26,7 @@ import { loadDealById, loadDealsByUrls } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { setDealReaction } from '../marketplace/reactions-server';
 import { dealVisibilityFor } from '../marketplace/tier';
-import { dealVisible } from '../marketplace/visibility';
+import { dealVisibleTo } from '../marketplace/visibility';
 import { saveOpenedDealToPipeline } from '../marketplace/open';
 import { stageNeedsOpen, type PipelineStatus } from './pipeline';
 
@@ -140,7 +140,7 @@ export async function setStageForMember(input: { userId: string; adminUser: bool
     // has never paid, by id or otherwise: not its price, not whether it is
     // live. A deal they already kept or passed is one they saw.
     const visibility = await dealVisibilityFor(userId, input.adminUser);
-    if (!reacted && !dealVisible(deal.live_since, visibility.cutoffIso)) return { ok: false, code: 'missing' };
+    if (!reacted && !dealVisibleTo({ id: deal.id, live_since: deal.live_since }, visibility)) return { ok: false, code: 'missing' };
     if (stageNeedsOpen(stage)) {
       // Refused here, not just in the dropdown: past Kept needs the address.
       if (deal.status !== 'live') return { ok: false, code: 'gone' };

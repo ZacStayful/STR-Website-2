@@ -19,6 +19,13 @@ export interface DealVisibility {
   cutoffIso: string | null;
   /** The same cutoff floored to the hour: the cache key for the shared readers (counts, teaser). */
   hourCutoffIso: string | null;
+  /**
+   * Batch 22: deals this member's own search first inserted
+   * (member_search_finds), visible to them at once whatever the cutoff. Set
+   * only by dealVisibilityFor in tier.ts, for free members; never on a shared
+   * or cached reader, so nobody else sees them early.
+   */
+  ownFinds?: readonly string[];
 }
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -45,3 +52,29 @@ export function dealVisible(liveSinceIso: string | null | undefined, cutoffIso: 
   if (!Number.isFinite(live) || !Number.isFinite(cutoff)) return false;
   return live <= cutoff;
 }
+
+/**
+ * Whether one deal is visible to this member: under the cutoff, or one of
+ * their own search's finds. Member-scoped readers use this; shared readers
+ * keep dealVisible.
+ */
+export function dealVisibleTo(deal: { id: string; live_since?: string | null }, v: Pick<DealVisibility, 'cutoffIso' | 'ownFinds'>): boolean {
+  if (dealVisible(deal.live_since ?? null, v.cutoffIso)) return true;
+  return Boolean(v.ownFinds && v.ownFinds.includes(deal.id));
+}
+
+/**
+ * The PostgREST `.or()` filter for a member-scoped deals query that has own
+ * finds: live before the cutoff, or one of them. Null when the plain cutoff
+ * applies (no finds) or nothing is filtered (paid): the caller keeps its
+ * `.lte('live_since', cutoff)`. Ids are UUIDs from our own table; anything
+ * else is dropped, so the filter string can never be broken out of.
+ */
+export function visibilityOrFilter(v: Pick<DealVisibility, 'cutoffIso' | 'ownFinds'>): string | null {
+  if (v.cutoffIso === null) return null;
+  const ids = (v.ownFinds ?? []).filter((id) => UUID.test(id));
+  if (ids.length === 0) return null;
+  return `live_since.lte.${v.cutoffIso},id.in.(${ids.join(',')})`;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

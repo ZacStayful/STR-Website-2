@@ -13,6 +13,7 @@ export type SectionId =
   | "verdict"
   | "numbers"
   | "market"
+  | "second_opinion"
   | "location"
   | "setup"
   | "deal"
@@ -44,6 +45,7 @@ const ALL: readonly Section[] = [
   { id: "verdict", label: "THE VERDICT" },
   { id: "numbers", label: "THE NUMBERS" },
   { id: "market", label: "THE MARKET" },
+  { id: "second_opinion", label: "SECOND OPINION" },
   { id: "location", label: "LOCATION & RISK" },
   { id: "setup", label: "SETUP COSTS" },
   { id: "deal", label: "THE DEAL" },
@@ -59,6 +61,8 @@ export interface SectionAvailability {
   diligence?: boolean;
   /** Only a Project deal's Full analysis has one. */
   project?: boolean;
+  /** Batch 22: only a report with PMI's second opinion (a Deep report). */
+  secondOpinion?: boolean;
   /**
    * Batch 21 (C9): the closing page is Stayful's management pitch ("How
    * {company} grows your returns", "{COMPANY} HANDLES EVERYTHING", the free
@@ -70,7 +74,7 @@ export interface SectionAvailability {
 
 export function sectionsFor(has: SectionAvailability): Section[] {
   return ALL.filter((s) =>
-    s.id === "setup" ? has.setup : s.id === "deal" ? has.deal : s.id === "diligence" ? Boolean(has.diligence) : s.id === "project" ? Boolean(has.project) : s.id === "plan" ? has.plan !== false : true,
+    s.id === "setup" ? has.setup : s.id === "deal" ? has.deal : s.id === "diligence" ? Boolean(has.diligence) : s.id === "project" ? Boolean(has.project) : s.id === "second_opinion" ? Boolean(has.secondOpinion) : s.id === "plan" ? has.plan !== false : true,
   );
 }
 

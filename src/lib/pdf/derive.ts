@@ -1,3 +1,4 @@
+import { comparableRows, monthRows, type ComparableRow, type MonthRow } from "../analysis/second-opinion.ts";
 import type { AnalysisResult, ShortLetComparable } from "@/lib/types";
 import { directBookingScore as computeDirectBookingScore, overallRiskScore100, riskFactors100 } from "../scores.ts";
 import { scoreAmenities, differentiatorPremium, type AmenityStat } from "./amenities.ts";
@@ -179,6 +180,8 @@ export interface PdfReportData {
   diligence?: PdfDiligence;
   /** Present only on a Project deal's Full analysis. */
   project?: PdfProject;
+  /** Batch 22: present only on a report with PMI's second opinion (a Deep report). */
+  secondOpinion?: PdfSecondOpinion;
   overview: {
     grossRevenue: number;
     netRevenue: number;
@@ -911,5 +914,30 @@ export function buildPdfProject(result: AnalysisResult, mine: ReportProjectMine 
         }
       : null,
     disclaimer: `${WORKS_DISCLAIMER} ${VALUE_DISCLAIMER}`,
+  };
+}
+
+/** Batch 22, Part H: the Deep report's PDF page (PageSecondOpinion). */
+export interface PdfSecondOpinion {
+  ours: number;
+  pmi: number;
+  rangeLow: number | null;
+  rangeHigh: number | null;
+  confidence: string;
+  months: MonthRow[];
+  comparables: ComparableRow[];
+}
+
+export function buildPdfSecondOpinion(result: AnalysisResult): PdfSecondOpinion | undefined {
+  const o = result.secondOpinion;
+  if (!o || !(o.annualRevenue > 0)) return undefined;
+  return {
+    ours: result.shortLet.annualRevenue,
+    pmi: o.annualRevenue,
+    rangeLow: o.rangeLow,
+    rangeHigh: o.rangeHigh,
+    confidence: o.confidence,
+    months: monthRows(result.shortLet.monthlyRevenue, o.monthly),
+    comparables: comparableRows(o.comparables),
   };
 }

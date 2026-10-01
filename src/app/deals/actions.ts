@@ -16,6 +16,7 @@ import { dealReturnPath, myDealsFocusPath, withParam } from '@/lib/listing/retur
 import { applyStageAfterOpen } from '@/lib/listing/stage-server';
 import { activeProfileFor } from '@/lib/profiles/server';
 import { logActivity } from '@/lib/activity/log';
+import { noteRevealKeep } from '@/lib/intelligence/reveal-server';
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
@@ -109,7 +110,9 @@ export async function setDealReactionAction(dealId: unknown, target: unknown): P
   const visibility = await dealVisibilityFor(me.user.id, me.adminUser);
   const profileId = (await activeProfileFor(me.user.id))?.id ?? null;
   const outcome = await setDealReaction(me.user.id, dealId, target, visibility, profileId);
-  if (outcome.ok) logActivity(me.user.id, outcome.reaction ?? 'reaction_clear', { dealId, profileId });
+  // Batch 22: the first Keep after the signup reveal records how long it took.
+  const timing = outcome.ok && outcome.reaction === 'keep' ? await noteRevealKeep(me.user.id) : null;
+  if (outcome.ok) logActivity(me.user.id, outcome.reaction ?? 'reaction_clear', { dealId, profileId, ...(timing ? { extras: { from: 'reveal', ms: timing.ms } } : {}) });
   return outcome.ok ? { ok: true, reaction: outcome.reaction } : { ok: false, error: outcome.code };
 }
 

@@ -1,12 +1,14 @@
 /**
- * The members' navigation: three items, one config object.
+ * The members' navigation: one config object. Today, the three tools
+ * (Browse, Markets, Analyser — back in the strip in Batch 22) and My deals,
+ * then Account.
  *
  * Every members-only surface still announces itself with the section name it
  * always used (`Section`, the AppShell `active` prop), and `NAV_FOR_SECTION`
- * says which of the three items that section lights up — so a page that
- * leaves the nav (the analyser, the Market Explorer, daily picks) still
- * highlights the item it lives under. My deals (/my-deals) announces itself
- * as `reports`, the section it replaced.
+ * says which item that section lights up — so a page with no item of its
+ * own (daily picks, the profile page) still highlights the item it lives
+ * under. My deals (/my-deals) announces itself as `reports`, the section it
+ * replaced.
  *
  * Below the nav itself: the few other "where does this live" rules that more
  * than one page needs, so each is decided once (Batch 11).
@@ -15,6 +17,11 @@
  */
 export const NAV_TARGETS = {
   today: { label: 'Today', href: '/today' },
+  // Batch 22: the three tools back in the strip. Batch 21h took the marketing
+  // menu off /markets, which was the last visible way to the Market Explorer.
+  browse: { label: 'Browse', href: '/deals' },
+  markets: { label: 'Markets', href: '/markets' },
+  analyser: { label: 'Analyser', href: '/estimate' },
   myDeals: { label: 'My deals', href: '/my-deals' },
   account: { label: 'Account', href: '/account' },
 } as const;
@@ -22,7 +29,7 @@ export const NAV_TARGETS = {
 export type NavKey = keyof typeof NAV_TARGETS;
 
 /** Left to right. */
-export const NAV_ORDER: readonly NavKey[] = ['today', 'myDeals', 'account'];
+export const NAV_ORDER: readonly NavKey[] = ['today', 'browse', 'markets', 'analyser', 'myDeals', 'account'];
 
 /** Leads stays a nav item only for members whose team owns a funnel. */
 export const LEADS_NAV = { label: 'Leads', href: '/leads' } as const;
@@ -34,9 +41,9 @@ export type ActiveNav = NavKey | 'leads';
 
 export const NAV_FOR_SECTION: Record<Section, ActiveNav> = {
   today: 'today',
-  estimate: 'today',
-  markets: 'today',
-  deals: 'today',
+  estimate: 'analyser',
+  markets: 'markets',
+  deals: 'browse',
   picks: 'today',
   reports: 'myDeals',
   leads: 'leads',

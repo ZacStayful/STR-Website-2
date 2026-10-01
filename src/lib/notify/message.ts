@@ -456,7 +456,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   let subject: string;
   if (kind === 'deal_changes') subject = capitalise(phrase ?? 'Changes on your deals');
   else {
-    const head = `${plural(dealCount, 'deal')} today`;
+    // Batch 22: Stayful Intelligence speaks in the first person.
+    const head = `I found ${plural(dealCount, 'deal')} for you this morning`;
     subject = phrase ? `${head} · ${phrase}` : anyPick ? `${head} · top pick: ${picks[0].part.pick!.headline}` : head;
   }
   return {

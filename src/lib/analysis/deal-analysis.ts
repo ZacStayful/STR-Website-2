@@ -59,7 +59,7 @@ import { openDeal, existingOpen, dealListingFor } from '../marketplace/open';
 import { loadDealById } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { dealVisibilityFor } from '../marketplace/tier';
-import { dealVisible } from '../marketplace/visibility';
+import { dealVisibleTo } from '../marketplace/visibility';
 import type { AnalysisResult } from '../types';
 import type { AnalysisInput } from './input';
 import { enhancedEnabled, fetchSecondOpinion, runAnalysis, type PreparedAnalysis } from './run';
@@ -69,11 +69,21 @@ import { analysisComplete, rebuildForMember, reusable, sharedInputs, toShared, t
 import { logActivity, recordActivity } from '../activity/log';
 import { activeProfileIdOf } from '../profiles/server';
 import { reminderEvent } from './take-up';
+import { offeredPricesFor } from './offers-server';
+import { offerLabel, type OfferKind } from './offers';
 import { reportProjectFor } from '../project/report-server';
 import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type Admin = ReturnType<typeof createAdminClient>;
+
+/** The offer a purchase was priced at (Batch 22); its own read, so a database without the column still charges. */
+async function purchaseOfferOf(admin: ReturnType<typeof createAdminClient>, id: string): Promise<OfferKind | null> {
+  const { data, error } = await admin.from('analysis_purchases').select('offer').eq('id', id).maybeSingle();
+  if (error) return null;
+  const o = (data as { offer?: unknown } | null)?.offer;
+  return o === 'welcome' || o === 'welcome_deep' || o === 'first_deep' || o === 'first_pmi' ? o : null;
+}
 
 const PURCHASE_COLUMNS = 'id, user_id, buyer_id, kind, status, deal_id, canonical_url, report_id, analysis_id, with_pmi, input_key, inputs, quoted_base_pence, analysis_base_pence, pmi_base_pence, open_credit_base_pence, opened_by_purchase, open_action_id, reservation_id, reused, created_at, ready_at, run_started_at';
 
@@ -283,7 +293,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   const isOpen = open?.status === 'open';
   const visibility = isOpen || input.adminUser ? null : await dealVisibilityFor(input.userId, input.adminUser);
   if (visibility) {
-    if (!dealVisible(deal.live_since, visibility.cutoffIso)) return fail('missing');
+    if (!dealVisibleTo({ id: deal.id, live_since: deal.live_since }, visibility)) return fail('missing');
     if (deal.status === 'retired') return fail('gone');
     if (deal.status === 'pending_verify') return fail('checking');
     // On the shortlist for its own check (Batch 16), or its Project check (Batch 17): nothing to analyse yet.
@@ -301,11 +311,16 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
 
   // ── The price, exactly as the button showed it ──
   const settings = await getBillingSettings();
-  const pricing = settings.dealPricing;
+  // Batch 22, Part H: the welcome / first-time price, worked out here (offers-server.ts), never from the page.
+  // It reaches BOTH price calculations below (the quote and the one after the open).
+  const offered = input.adminUser ? null : await offeredPricesFor(input.userId, deal.id, withPmi).catch(() => null);
+  const pricing = offered && offered.offer ? { ...settings.dealPricing, fullAnalysisPence: offered.fullPence, pmiAddonPence: offered.pmiPence } : settings.dealPricing;
+  // An offer-priced purchase is never run into an overdraft, whatever the enforcement setting.
+  const mustAfford = isEnforcing() || Boolean(offered?.offer);
   const ladderPence = openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
   const quote = analysisQuote({ admin: input.adminUser, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladderPence, withPmi });
   if (!quoteMatches(input.quotedBasePence, quote.due)) return fail('price_changed', { quote });
-  if (!input.adminUser && quote.due.purchaseBasePence > 0 && isEnforcing()) {
+  if (!input.adminUser && quote.due.purchaseBasePence > 0 && mustAfford) {
     const bal = await getBalance(accountId).catch(() => null);
     const available = bal?.spendableBasePence ?? 0;
     if (available < quote.due.purchaseBasePence) return fail('insufficient_credit', { requiredPence: quote.due.purchaseBasePence, availablePence: Math.max(0, Math.round(available)) });
@@ -334,10 +349,19 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
       analysis_base_pence: quote.due.analysisBasePence,
       pmi_base_pence: quote.due.pmiBasePence,
       open_credit_base_pence: quote.openPaidBasePence,
+      // Batch 22: the offer it was priced at; its unique indexes allow one welcome price per deal and one first deep report per account.
+      ...(offered?.offer ? { offer: offered.offer } : {}),
+      ...(offered?.firstDeep ? { first_deep: true } : {}),
     })
     .select('id')
     .single();
-  if (claimErr?.code === '23505') return fail('running');
+  if (claimErr?.code === '23505') {
+    // An offer already used (another tab, a double tap) is not "already running": the price is now the list price.
+    if (/welcome_uidx|first_deep_uidx/.test(claimErr.message ?? '')) {
+      return fail('price_changed', { quote: analysisQuote({ admin: input.adminUser, pricing: settings.dealPricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladderPence, withPmi }) });
+    }
+    return fail('running');
+  }
   if (claimErr || !claimed?.id) {
     console.error('[deal-analysis] claim failed:', claimErr?.message);
     return fail('failed');
@@ -376,7 +400,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
     try {
       reservationId = await reserve(accountId, 'full_analysis', purchaseId, due.totalBasePence, ANALYSIS_RESERVATION_MINUTES);
     } catch (err) {
-      if (err instanceof InsufficientCreditError && isEnforcing()) {
+      if (err instanceof InsufficientCreditError && mustAfford) {
         await failPurchase(admin, { id: purchaseId, reservation_id: null }, 'insufficient_credit');
         return fail('insufficient_credit', { requiredPence: due.totalBasePence, availablePence: Math.max(0, Math.round(err.availablePence)), openedByPurchase: openedNow });
       }
@@ -606,12 +630,16 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
         console.error(`[deal-analysis] debit failed for purchase ${purchase.id}:`, err);
       }
     };
+    // Batch 22: an offer-priced purchase says so on the ledger line ("— welcome price").
+    const offer = await purchaseOfferOf(admin, purchase.id);
+    const offerSuffix = offerLabel(offer);
     await charge(purchase.analysis_base_pence, {
       action: 'full_analysis',
       provider: 'marketplace',
       unit: 'full_analysis',
       raw_cost_pence: Math.round((rawCost.total - rawCost.pmi) * 10000) / 10000,
-      description: analysisDescription(deal, reused),
+      description: offerSuffix ? analysisDescription(deal, reused).replace(/^Full analysis/, `Full analysis — ${offerSuffix}`) : analysisDescription(deal, reused),
+      ...(offer ? { offer } : {}),
       reused,
       open_credit_base_pence: purchase.open_credit_base_pence,
       ...(purchase.open_action_id ? { open_action_id: purchase.open_action_id } : {}),

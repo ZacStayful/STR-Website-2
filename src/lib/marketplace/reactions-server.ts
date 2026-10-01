@@ -13,7 +13,7 @@ import 'server-only';
  * (loadTrackedDeals), which is what My deals, the alerts and the checklist use.
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { dealVisible, type DealVisibility } from './visibility';
+import { type DealVisibility, dealVisibleTo } from './visibility';
 import { cleanPassReasons, dealReactionToFeedback, isDealReaction, type DealFeedbackFacts, type DealReaction, type FeedbackEntry } from './reactions';
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -51,7 +51,7 @@ export async function setDealReaction(userId: string, dealId: string, target: De
     console.error('[deal-reactions] deal read failed:', dealErr.message);
     return { ok: false, code: 'failed' };
   }
-  if (!deal || !dealVisible(deal.live_since as string | null, visibility.cutoffIso)) return { ok: false, code: 'missing' };
+  if (!deal || !dealVisibleTo({ id: dealId, live_since: deal.live_since as string | null }, visibility)) return { ok: false, code: 'missing' };
   if (deal.status !== 'live') return { ok: false, code: 'gone' };
   // A keep never carries pass reasons (they would go on training the picks).
   // A pass leaves reasons alone, so a repeated pass cannot wipe the answer

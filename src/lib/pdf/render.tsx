@@ -1,6 +1,6 @@
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
-import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildPdfProject, buildSetupSnapshot, sanitiseAddressForFilename } from "./derive";
+import { deriveReportData, buildPdfDeal, buildPdfDiligence, buildPdfProject, buildPdfSecondOpinion, buildSetupSnapshot, sanitiseAddressForFilename } from "./derive";
 import type { ReportProjectMine } from "../project/report";
 import type { PdfExpenses } from "./derive";
 import { StayfulReport } from "./StayfulReport";
@@ -45,6 +45,7 @@ export async function renderReportPdf(result: AnalysisResult, opts: RenderOption
   data.deal = buildPdfDeal(result);
   data.diligence = buildPdfDiligence(result);
   data.project = buildPdfProject(result, opts.projectMine ?? null);
+  data.secondOpinion = buildPdfSecondOpinion(result);
   if (opts.setup) {
     const snap = buildSetupSnapshot(opts.setup);
     if (snap) data.setup = snap;

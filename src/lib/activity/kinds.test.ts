@@ -103,3 +103,14 @@ test("Batch 21's kinds: looking at the Explorer or My deals, working leads and f
     assert.equal(isQualifying(k), false, k);
   }
 });
+
+test("Batch 22's kinds: seeing the reveal and running a deep search count; looking at the view or asking it only records", () => {
+  for (const k of ['reveal_viewed', 'deep_search_run']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), true, k);
+    assert.equal(isCounted(k), true, k);
+  }
+  assert.equal(isActivityKind('si_view'), true);
+  assert.equal(isQualifying('si_view'), false);
+  assert.equal(isCounted('si_view'), false);
+});
