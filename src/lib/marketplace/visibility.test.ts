@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dealVisibility, dealVisible, PAID_VISIBILITY } from './visibility.ts';
+import { dealVisibility, dealVisible, dealVisibleTo, PAID_VISIBILITY, visibilityOrFilter } from './visibility.ts';
 
 const NOW = new Date('2026-09-25T14:37:00Z');
 
@@ -40,4 +40,21 @@ test('the setting is read in hours, so 1 hour hides only the last hour', () => {
   assert.equal(v.cutoffIso, '2026-09-25T13:37:00.000Z');
   assert.equal(dealVisible('2026-09-25T13:00:00.000Z', v.cutoffIso), true);
   assert.equal(dealVisible('2026-09-25T14:00:00.000Z', v.cutoffIso), false);
+});
+
+test('Batch 22: a free member sees their own search finds at once; nobody else does', () => {
+  const finder = { ...dealVisibility('free', NOW, 48), ownFinds: ['11111111-1111-4111-8111-111111111111'] };
+  const other = dealVisibility('free', NOW, 48);
+  const fresh = { id: '11111111-1111-4111-8111-111111111111', live_since: '2026-09-25T14:00:00.000Z' };
+  assert.equal(dealVisibleTo(fresh, finder), true);
+  assert.equal(dealVisibleTo(fresh, other), false);
+  assert.equal(dealVisibleTo({ id: 'x', live_since: '2026-09-25T14:00:00.000Z' }, finder), false);
+});
+
+test('Batch 22: the own-finds filter only names UUIDs, and is null without finds', () => {
+  const v = dealVisibility('free', NOW, 48);
+  assert.equal(visibilityOrFilter(v), null);
+  assert.equal(visibilityOrFilter(PAID_VISIBILITY), null);
+  const f = visibilityOrFilter({ ...v, ownFinds: ['11111111-1111-4111-8111-111111111111', 'x),or(id.not.is.null'] });
+  assert.equal(f, `live_since.lte.${v.cutoffIso},id.in.(11111111-1111-4111-8111-111111111111)`);
 });
