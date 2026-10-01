@@ -8,6 +8,7 @@
  */
 import { escapeHtml as esc } from './escape.ts'
 import { siteUrl } from '../url.ts'
+import { seatPriceLabel } from '../team/rules.ts'
 
 export interface Email {
   subject: string
@@ -51,7 +52,7 @@ export function memberJoinedEmail(input: { memberName: string; nextChargeOn: str
     `${input.memberName} joined your team`,
     [
       `${input.memberName} accepted your invite and now has access to your team's leads.`,
-      `Their seat costs £10 a month from your credit. The first £10 has been taken; the next is due on ${input.nextChargeOn}.`,
+      `Their seat costs ${seatPriceLabel()} a month from your credit. The first ${seatPriceLabel()} has been taken; the next is due on ${input.nextChargeOn}.`,
     ],
     { label: 'Manage your team', href: `${siteUrl()}/account/team` },
   )
@@ -62,7 +63,7 @@ export function joinBlockedByCreditEmail(input: { memberEmail: string }): Email 
   return build(
     `${input.memberEmail} couldn't join — top up to add them`,
     [
-      `${input.memberEmail} tried to accept your team invite, but your balance doesn't cover the £10 seat.`,
+      `${input.memberEmail} tried to accept your team invite, but your balance doesn't cover the ${seatPriceLabel()} seat.`,
       'Top up, then ask them to open the invite link again. It still works until it expires.',
     ],
     { label: 'Top up', href: `${siteUrl()}/account/billing` },
@@ -75,7 +76,7 @@ export function seatSuspendedEmail(input: { to: 'owner' | 'member'; memberName: 
     return build(
       `${input.memberName}'s seat is paused — your balance is too low`,
       [
-        `We couldn't take the £10 monthly seat for ${input.memberName}, so their access to your team is paused.`,
+        `We couldn't take the ${seatPriceLabel()} monthly seat for ${input.memberName}, so their access to your team is paused.`,
         'Top up and it comes back automatically — nothing else to do.',
       ],
       { label: 'Top up', href: `${siteUrl()}/account/billing` },
@@ -95,7 +96,7 @@ export function seatRestoredEmail(input: { to: 'owner' | 'member'; memberName: s
   if (input.to === 'owner') {
     return build(
       `${input.memberName}'s seat is active again`,
-      [`Your top-up covered ${input.memberName}'s £10 seat, so their access to your team is back.`],
+      [`Your top-up covered ${input.memberName}'s ${seatPriceLabel()} seat, so their access to your team is back.`],
       { label: 'Manage your team', href: `${siteUrl()}/account/team` },
     )
   }

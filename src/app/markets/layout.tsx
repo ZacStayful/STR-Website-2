@@ -51,16 +51,16 @@ export default async function MarketsLayout({ children }: { children: React.Reac
 
   // 'blocked' falls through: the page itself redirects to /upgrade with its
   // own return path, and renders nothing meanwhile.
-  // The marketing nav/footer need the `.sf-page-v3` scope, but the explorer
-  // itself must not sit inside it — its element-level heading rules would
-  // compete with the `.mx` styles.
+  // A member gets the members' chrome only (the strip, the credit banner,
+  // the feedback footer): the marketing header's "Sign in" and "Start free
+  // trial" are for visitors, and the explorer must not sit inside
+  // `.sf-page-v3` — its element-level heading rules would compete with the
+  // `.mx` styles.
   return (
     <div className={fontVars}>
-      <div className="sf-page-v3"><Nav /></div>
       <AppShell active="markets" redirectTo="/markets">
         <div className="mx">{children}</div>
       </AppShell>
-      <div className="sf-page-v3"><Footer /></div>
     </div>
   );
 }

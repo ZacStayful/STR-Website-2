@@ -6,6 +6,9 @@
 import type { NearbyEvent } from '../types';
 import { meter } from '../credit/meter.ts';
 
+/** Batch 21 (G7): give up before the report's 60 s kill; the caller treats a throw as "no events". */
+const EVENTS_TIMEOUT_MS = 8_000;
+
 export async function getNearbyEvents(
   lat: number,
   lng: number,
@@ -27,7 +30,7 @@ export async function getNearbyEvents(
   url.searchParams.set('countryCode', 'GB');
   url.searchParams.set('startDateTime', now);
 
-  const response = await meter({ provider: 'ticketmaster', unit: 'event_search', key: `${lat.toFixed(3)},${lng.toFixed(3)}`, failed: (r) => !r.ok }, () => fetch(url.toString()));
+  const response = await meter({ provider: 'ticketmaster', unit: 'event_search', key: `${lat.toFixed(3)},${lng.toFixed(3)}`, failed: (r) => !r.ok }, () => fetch(url.toString(), { signal: AbortSignal.timeout(EVENTS_TIMEOUT_MS) }));
 
   if (!response.ok) {
     throw new Error(

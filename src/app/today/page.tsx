@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { payerFor } from "@/lib/team";
@@ -66,7 +67,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) redirect("/login?redirect=/today");
 
   const now = new Date();
   const adminUser = isAdminEmail(user.email);

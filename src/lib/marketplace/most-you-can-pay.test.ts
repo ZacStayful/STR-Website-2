@@ -115,6 +115,16 @@ test('from a deal already worked out: a Full analysis exactly, a shared listing 
   assert.equal(cashBuyerOf(null), false);
 });
 
+test('a cash buyer’s profit range, through memberFinance, has no mortgage taken off (Today, /picks, the quiz and Your week agree)', () => {
+  const g = { ...DEFAULT_GOALS, path: 'buy' as const, finance: { ...DEFAULT_GOALS.finance, depositPct: 25, mortgageRatePct: 5.5 }, buyer: { ...DEFAULT_GOALS.buyer, funding: 'cash' as const } };
+  const input = { kind: 'sale' as const, priceAmount: 200_000, pricePeriod: null, bedrooms: 2, grossRevenue: 30_000, confidence: 'high', widths: WIDTHS };
+  const raw = profitRange({ ...input, finance: g.finance })!;
+  const theirs = profitRange({ ...input, finance: memberFinance(g) })!;
+  const noMortgage = profitRange({ ...input, finance: { ...g.finance, depositPct: 100 } })!;
+  assert.deepEqual(theirs, noMortgage, 'memberFinance is the 100%-deposit range');
+  assert.ok(theirs.lowPcm > raw.lowPcm && theirs.highPcm > raw.highPcm, 'the raw finance subtracts a mortgage the cash buyer does not pay');
+});
+
 test('memberFinance: a cash buyer borrows nothing; everyone else keeps their own deposit', () => {
   const g = { ...DEFAULT_GOALS, path: 'buy' as const, finance: { ...DEFAULT_GOALS.finance, depositPct: 25 } };
   assert.equal(memberFinance({ ...g, buyer: { ...g.buyer, funding: 'cash' } })?.depositPct, 100);

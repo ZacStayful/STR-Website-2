@@ -14,6 +14,7 @@ import { resumeFromUpgradeAction } from "@/app/account/actions";
 import { Pricing } from "@/components/marketing-v3/Pricing";
 import { TopupCard } from "@/components/credit/TopupCard";
 import { DEFAULT_SPEND_RATES } from "@/lib/credit/pricing";
+import { marketingFontClasses } from "@/lib/fonts";
 
 export const metadata: Metadata = {
   title: "Choose a plan — Stayful Intelligence",
@@ -26,15 +27,21 @@ export const dynamic = "force-dynamic";
 /**
  * The plan chooser for signed-in members: current balance, the four tiers
  * (Stripe Checkout / portal), and a one-click top-up as the secondary option.
+ * Inside the members' shell (layout.tsx); the marketing grid's styles are
+ * scoped under `.sf-page-v3`, so the page wraps itself in it.
+ *
+ * `?plan=<code>` (the pricing page's plan buttons, carried through sign-up)
+ * draws that plan highlighted; `?redirect=` is where "← Back" goes.
  */
 export default async function UpgradePage({
   searchParams,
 }: {
-  searchParams: Promise<{ redirect?: string }>;
+  searchParams: Promise<{ redirect?: string; plan?: string }>;
 }) {
-  const { redirect: redirectParam } = await searchParams;
+  const { redirect: redirectParam, plan: planParam } = await searchParams;
   const wanted = safeInternalPath(redirectParam, HOME_PATH);
   const back = /^\/(upgrade|login|signup|welcome)(\/|\?|$)/.test(wanted) ? HOME_PATH : wanted;
+  const chosenPlan = typeof planParam === "string" && /^[a-z_]{1,32}$/.test(planParam) ? planParam : null;
 
   const supabase = await createSupabaseServerClient();
   const {
@@ -58,7 +65,7 @@ export default async function UpgradePage({
   const out = summary?.outOfCredit ?? false;
 
   return (
-    <>
+    <div className={`sf-page-v3 ${marketingFontClasses}`}>
       <section className="upgrade section">
         <div className="wrap-narrow">
           <div className="eyebrow">{profile?.plan_code ? "Your plan" : "Choose a plan"}</div>
@@ -101,7 +108,7 @@ export default async function UpgradePage({
         </div>
       </section>
 
-      <Pricing signedIn currentPlanCode={profile?.plan_code ?? null} compact />
+      <Pricing signedIn currentPlanCode={profile?.plan_code ?? null} compact highlightPlanCode={chosenPlan} />
 
       {profile && !admin && summary && (
         <section className="section">
@@ -113,6 +120,6 @@ export default async function UpgradePage({
           </div>
         </section>
       )}
-    </>
+    </div>
   );
 }

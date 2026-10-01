@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { payerFor, personName, profileNames } from "@/lib/team";
@@ -37,6 +37,7 @@ import { openPricePence } from "@/lib/marketplace/ladder";
 import { AUCTION_LABEL, badgesFor, describeType, isAuctionCard, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/marketplace/profit-range";
+import { dealReturnPath, returnLabel } from "@/lib/listing/return-path";
 import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
@@ -89,22 +90,28 @@ const MESSAGES: Record<string, { text: string; tone: "ok" | "warn" }> = {
   stage_failed: { text: "Unlocked, but we couldn’t move it to that stage just now. Choose it again below.", tone: "warn" },
 };
 
-export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string; analysis?: string; from?: string }> }) {
+export default async function DealPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ msg?: string; need?: string; have?: string; analysis?: string; from?: string; back?: string }> }) {
   const { id } = await params;
-  const { msg, analysis, from } = await searchParams;
+  const { msg, analysis, from, back: backParam } = await searchParams;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  // Where the member came from (My deals carries ?back=): the back link, else the grid.
+  const back = dealReturnPath(backParam);
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) redirect(`/login?redirect=${encodeURIComponent(`/deals/${id}`)}`);
   const adminUser = isAdminEmail(user.email);
   // Deals opened by anyone on the team are open for everyone on it, and the
-  // balance shown is the team's (the owner's), which is what pays.
-  const { payerId } = await payerFor(user.id);
+  // balance shown is the team's (the owner's), which is what pays. A paused
+  // (suspended) seat is shut out of the team's opens, as it is from the
+  // team's leads, reports and My deals: it sees only what it opened itself.
+  const payer = await payerFor(user.id);
+  const payerId = payer.payerId;
+  const opensOf = payer.suspended ? user.id : payer.payerId;
   // Inside its early-access window a deal is a 404 for an account that has never paid.
   const visibility = await dealVisibilityFor(user.id, adminUser);
-  const sheet = await dealSheet(id, payerId, adminUser, visibility);
+  const sheet = await dealSheet(id, opensOf, adminUser, visibility);
   if (!sheet) notFound();
   const { deal, priv } = sheet;
   // Batch 17: a deal held for its Project check says so (the stream is read on its own, tolerantly).
@@ -256,7 +263,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
         <div className="mb-3 flex items-center justify-between gap-2 text-xs">
-          <Link href="/deals" className="text-muted-foreground hover:underline">← All deals</Link>
+          <Link href={back ?? "/deals"} className="text-muted-foreground hover:underline">← {back ? returnLabel(back) : "All deals"}</Link>
           {/* Batch 3: a public link showing only what the card shows (never the address), on the member's referral code. */}
           {/* Batch 14: a deal sourcer's share leads, as "Share with an investor". */}
           {sharesWithInvestors(tailoring) ? <ShareDealButton dealId={deal.id} label="Share with an investor" className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" /> : <ShareDealButton dealId={deal.id} />}
@@ -283,10 +290,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
           <section className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-sm">
             <p className="font-semibold text-destructive">Not enough credit for a Quick look.</p>
             <p className="mt-1 text-muted-foreground">
-              A Quick look at this deal is {formatPence(ladderPence)} on a plan{credit ? `; your balance is ${formatPence(Math.max(0, credit.totalPence))}` : ""}. Top up or upgrade and you’ll come straight back here.
+              A Quick look at this deal is {formatPence(ladderPence)} on a plan{credit ? `; your balance is ${formatPence(Math.max(0, credit.totalPence))}` : ""}. Top up or upgrade, then open it again from Today or My deals.
             </p>
             <p className="mt-3 flex flex-wrap gap-2">
-              <Link href={`/account/billing?redirect=${encodeURIComponent(`/deals/${id}`)}#topup`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Top up</Link>
+              <Link href="/account/billing#topup" className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Top up</Link>
               <Link href={`/upgrade?redirect=${encodeURIComponent(`/deals/${id}`)}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">See plans</Link>
             </p>
           </section>

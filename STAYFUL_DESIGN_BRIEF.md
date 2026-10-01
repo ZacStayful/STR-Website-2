@@ -70,7 +70,8 @@ the analyser and app UI render in.
 
 **DM Sans is route-scoped, not the site font.** It is loaded only by
 `src/app/markets/layout.tsx` (alongside Playfair Display, for `markets.css`)
-and `src/app/str-report/layout.tsx`. Do not reach for it anywhere else.
+and the members' pages that keep the marketing grid (`/upgrade`). Do not
+reach for it anywhere else.
 
 Headings are a **serif** on marketing v3. If you are writing a heading in a
 bold grotesque, you are either on the analyser side or doing it wrong.

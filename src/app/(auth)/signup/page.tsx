@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { SignupForm } from './signup-form'
 import { GoogleButton } from '../google-button'
@@ -6,9 +7,15 @@ import { bannerEnabled } from '@/lib/meta/env'
 import { deviceConsent } from '@/lib/tracking/consent-server'
 import { publicOfferNow } from '@/lib/starter-pack/public'
 
-export const metadata = { title: 'Start your free trial · Stayful Intelligence' }
-
 type SearchParams = Promise<{ next?: string }>
+
+// Batch 20: "Start with £20 of free credit" until the starter pack's cutover, the pack's headline from then; a team invite is neither.
+export async function generateMetadata({ searchParams }: { searchParams: SearchParams }): Promise<Metadata> {
+  const { next } = await searchParams
+  if (safeInternalPath(next, '').startsWith('/team/join')) return { title: 'Create your login · Stayful Intelligence' }
+  const offer = await publicOfferNow()
+  return { title: `${offer.signupHeadline} · Stayful Intelligence` }
+}
 
 export default async function SignupPage({ searchParams }: { searchParams: SearchParams }) {
   const { next } = await searchParams

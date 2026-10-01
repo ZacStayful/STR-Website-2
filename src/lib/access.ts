@@ -45,10 +45,6 @@ export type Profile = {
   subscription_current_period_end: string | null
 }
 
-export function isPro(profile: { plan_code?: string | null } | null | undefined): boolean {
-  return Boolean(profile?.plan_code)
-}
-
 export const PLAN_NAMES: Record<string, string> = {
   starter: 'Starter',
   pro: 'Pro',
@@ -146,12 +142,6 @@ function status(profile: PartialAccount): string | null {
   return profile.stripe_subscription_status?.trim().toLowerCase() ?? null
 }
 
-/** True when Stripe currently reports a live subscription for this account. */
-export function hasLiveSubscription(profile: PartialAccount): boolean {
-  const s = status(profile)
-  return !!s && LIVE_STATUSES.has(s)
-}
-
 /** True when the account has ever been attached to a Stripe subscription. */
 export function hasSubscriptionHistory(profile: PartialAccount): boolean {
   return !!profile.stripe_subscription_id || !!status(profile)
@@ -201,15 +191,6 @@ export function isSubscriber(profile: PartialAccount, now: number = Date.now()):
 /** Strictly a paying customer (excludes Stripe free trials). */
 export function isPaid(profile: PartialAccount, now: number = Date.now()): boolean {
   return accountStatus(profile, now) === 'paid'
-}
-
-/**
- * Someone who subscribed at least once but isn't currently a subscriber —
- * i.e. they cancelled or their subscription lapsed. They stay a member on
- * whatever credit they have left.
- */
-export function isLapsedSubscriber(profile: PartialAccount, now: number = Date.now()): boolean {
-  return accountStatus(profile, now) === 'lapsed'
 }
 
 /**

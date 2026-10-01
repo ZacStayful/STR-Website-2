@@ -20,6 +20,8 @@ import { teamOf } from '../team';
 import { parseMarketGoals } from '../market/goals';
 import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibility, rewardLine, rewardRef, STEP_REWARD_PENCE, stepsDone, type Eligibility, type Evidence, type StepKey } from './checklist';
 import { logActivity } from '../activity/log';
+import { loadTrackedDeals } from '../listing/tracked-server';
+import { KEPT_STATUS } from '../listing/pipeline';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -174,8 +176,20 @@ async function evidenceFor(admin: Admin, userId: string, marketGoals: unknown): 
     return count ?? 0;
   };
   const head = { count: 'exact' as const, head: true };
+  // "Keep 3 deals" counts what My deals counts as kept: the member's own
+  // items at the kept stage, whether they came from a Keep on a card or a
+  // listing they pasted and kept. Scope 'own', never the team's.
+  const keptOnMyDeals = async (): Promise<number> => {
+    try {
+      const load = await loadTrackedDeals(userId, { scope: 'own' });
+      return load.view.filter((v) => v.mine && v.stage === KEPT_STATUS).length;
+    } catch (err) {
+      console.warn('[checklist] kept read failed:', (err as Error).message);
+      return 0;
+    }
+  };
   const [keeps, opened, reported, dealShares, listingShares] = await Promise.all([
-    exists('keeps', admin.from('deal_reactions').select('deal_id', head).eq('user_id', userId).eq('reaction', 'keep')),
+    keptOnMyDeals(),
     ownOpens(admin, userId),
     exists('reports', admin.from('saved_searches').select('id', head).eq('user_id', userId)),
     exists('deal shares', admin.from('deal_shares').select('token', head).eq('user_id', userId)),

@@ -64,6 +64,8 @@ export async function POST(request: Request) {
               "content-type": "application/json",
               accept: "audio/mpeg",
             },
+            // Batch 21 (G7): give up inside the route's 30 s, so the credit reservation is released rather than held to its TTL.
+            signal: AbortSignal.timeout(15_000),
             body: JSON.stringify({
               text,
               // Turbo v2.5: low-latency (~250ms TTFB), good quality — best fit for

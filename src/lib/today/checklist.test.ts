@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibility, rewardLine, rewardRef, stepsDone, STEP_KEYS, type Evidence } from './checklist.ts';
+import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibility, rewardLabel, rewardLine, rewardRef, stepsDone, STEP_KEYS, STEP_REWARD_PENCE, type Evidence } from './checklist.ts';
 import { GOALS_EDITOR_HREF, TODAY_LIST_HREF } from '../nav.ts';
 
 const NOTHING: Evidence = { goals: false, keeps: 0, opened: false, reported: false, shared: false };
@@ -49,6 +49,13 @@ test('the confirmation says what landed and how far along they are', () => {
   assert.equal(rewardLine(1, 2), '+£1 credit — 2 of 5 done');
   assert.equal(rewardLine(2, 2), '+£2 credit — 2 of 5 done');
   assert.equal(rewardLine(0, 3), null);
+});
+
+test('the reward is one constant, formatted wherever it is shown', () => {
+  assert.equal(rewardLabel(), '£1');
+  assert.equal(rewardLabel(STEP_REWARD_PENCE), rewardLabel());
+  assert.equal(rewardLabel(150), '£1.50');
+  assert.equal(rewardLine(3, 3), `+${rewardLabel(3 * STEP_REWARD_PENCE)} credit — 3 of 5 done`);
 });
 
 test('the card shows until everything is done, says so once, then disappears for good', () => {

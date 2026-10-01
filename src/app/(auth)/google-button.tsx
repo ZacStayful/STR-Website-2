@@ -1,12 +1,33 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser'
 import { currentTouchValue } from '@/lib/tracking/runtime'
+import { authErrorMessage } from '@/lib/auth/error-message'
+import { isInAppBrowser } from '@/lib/auth/in-app-browser'
+
+// The user agent never changes: nothing to subscribe to.
+const noSubscription = () => () => {}
 
 export function GoogleButton({ next = '' }: { next?: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Google refuses to sign anyone in from Facebook's or Instagram's in-app
+  // browser (and a confirmation email opened from there lands in the real
+  // browser, without this one's session). Read from the user agent once
+  // hydrated (false on the server, so both render the same page); see
+  // src/lib/auth/in-app-browser.ts.
+  const inApp = useSyncExternalStore(noSubscription, () => isInAppBrowser(navigator.userAgent), () => false)
+  const [copied, setCopied] = useState(false)
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   async function handleClick() {
     setLoading(true)
@@ -29,9 +50,22 @@ export function GoogleButton({ next = '' }: { next?: string }) {
       },
     })
     if (error) {
-      setError(error.message)
+      setError(authErrorMessage(error))
       setLoading(false)
     }
+  }
+
+  if (inApp) {
+    return (
+      <div className="rounded-lg border border-border bg-muted p-3 text-sm text-muted-foreground">
+        <p>
+          <span className="font-medium text-foreground">Opening from Facebook or Instagram?</span> Google sign-in doesn&apos;t work inside their browser. Tap the menu (⋯) and choose <span className="font-medium text-foreground">Open in browser</span>, or copy this page&apos;s link into Safari or Chrome. Email sign-up works here as it is.
+        </p>
+        <button type="button" onClick={() => void copyLink()} className="mt-2 inline-flex h-9 items-center rounded-lg border border-border bg-background px-3 text-sm font-medium text-foreground hover:bg-muted">
+          {copied ? 'Link copied' : 'Copy this page’s link'}
+        </button>
+      </div>
+    )
   }
 
   return (

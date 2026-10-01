@@ -103,7 +103,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid analysis payload." }, { status: 400 });
   }
 
-  const client = new Anthropic({ apiKey });
+  // Batch 21 (G16): the SDK's default is a 10-minute timeout with retries, on a 30 s route;
+  // a slow call must fail inside the route so the credit reservation is released, not held to its TTL.
+  const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 0 });
   const facts = buildFacts(result);
 
   // Credit: reserve the ceiling (prompt tokens + max_tokens of output), then

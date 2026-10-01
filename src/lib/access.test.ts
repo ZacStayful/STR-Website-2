@@ -7,11 +7,9 @@ import {
   hasEverPaid,
   PAID_TIER_COLUMNS,
   isCancelScheduled,
-  isLapsedSubscriber,
   isPaid,
   isPauseScheduled,
   isPaused,
-  isPro,
   isSubscriber,
   planName,
 } from './access.ts';
@@ -34,7 +32,6 @@ test('a brand new user is pay-as-you-go, not a subscriber', () => {
   const p = profile();
   assert.equal(accountStatus(p), 'free');
   assert.equal(isSubscriber(p), false);
-  assert.equal(isPro(p), false);
   assert.equal(planName(null), 'Pay as you go');
 });
 
@@ -43,7 +40,6 @@ test('a paying subscriber is paid', () => {
   assert.equal(accountStatus(p), 'paid');
   assert.equal(isPaid(p), true);
   assert.equal(isSubscriber(p), true);
-  assert.equal(isPro(p), true);
   assert.equal(planName('pro'), 'Pro');
 });
 
@@ -60,7 +56,6 @@ test('a manually granted plan with no Stripe record still counts as paid', () =>
 test('a dead Stripe status beats a stale plan=pro column', () => {
   const p = profile({ plan: 'pro', stripe_subscription_id: 'sub_1', stripe_subscription_status: 'canceled' });
   assert.equal(accountStatus(p), 'lapsed');
-  assert.equal(isLapsedSubscriber(p), true);
 });
 
 test('a manual grant outranks a dead Stripe status', () => {

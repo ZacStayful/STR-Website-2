@@ -68,6 +68,8 @@ export function BillingClient(props: Props) {
 
   const cycle = summary.cycle;
   const pct = cycle && cycle.allowancePence > 0 ? Math.min(100, Math.round((cycle.usedPence / cycle.allowancePence) * 100)) : 0;
+  // The credit the plan card states is the live grant for this cycle (the usage bar's figure), not the plan seed.
+  const planCreditPence = props.plan && cycle?.planCode === props.plan.code && cycle.allowancePence > 0 ? cycle.allowancePence : props.plan?.monthlyCreditPence ?? 0;
 
   return (
     <div className="mx-auto max-w-5xl px-5 py-8">
@@ -92,7 +94,7 @@ export function BillingClient(props: Props) {
             <>
               <p className="text-2xl font-semibold text-foreground">{props.plan.name}</p>
               <p className="text-sm text-muted-foreground">
-                {formatGbp(props.plan.pricePence)}/{props.plan.interval === "year" ? "year" : "month"} · {formatGbp(props.plan.monthlyCreditPence)} credit a month
+                {formatGbp(props.plan.pricePence)}/{props.plan.interval === "year" ? "year" : "month"} · {formatGbp(planCreditPence)} credit a month
                 {props.subscription.status && props.subscription.status !== "active" ? ` · ${props.subscription.status.replace("_", " ")}` : ""}
               </p>
               <p className="mt-1 text-sm text-muted-foreground">

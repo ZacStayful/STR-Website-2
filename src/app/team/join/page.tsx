@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { joinCheck, inviteByToken } from "@/lib/team/invites";
 import { JOIN_BLOCKER_COPY } from "@/lib/team/rules";
 import { teamName } from "@/lib/team";
+import { SignOutForm } from "@/app/account/AccountSections";
 import { AcceptForm } from "./AcceptForm";
 
 export const dynamic = "force-dynamic";
@@ -53,8 +54,19 @@ export default async function JoinPage({ searchParams }: { searchParams: Promise
     );
   } else {
     const { blocker } = await joinCheck({ id: user.id, email: user.email ?? null }, token);
+    // Signed in but unable to join: say why, and give them somewhere to go.
+    // The wrong account gets a sign-out, so they can sign in with the invited one.
     body = blocker ? (
-      <p className="mt-3 text-sm text-muted-foreground">{JOIN_BLOCKER_COPY[blocker]}</p>
+      <>
+        <p className="mt-3 text-sm text-muted-foreground">{JOIN_BLOCKER_COPY[blocker]}</p>
+        {blocker === "wrong_email" ? (
+          <SignOutForm />
+        ) : (
+          <Link href="/today" className="mt-6 inline-block rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90">
+            Go to Today
+          </Link>
+        )}
+      </>
     ) : (
       <>
         <p className="mt-3 text-sm text-muted-foreground">

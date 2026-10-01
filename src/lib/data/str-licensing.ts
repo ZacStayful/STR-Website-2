@@ -69,6 +69,8 @@ export interface LicensingEntry {
 }
 
 const VERIFIED = '2026-07-18';
+/** "July 2026": the review date as the notes print it, so a re-verification updates every note at once. */
+const VERIFIED_WORDS = new Date(`${VERIFIED}T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 // ─── Shared authoritative sources (cited per nation) ────────────────
 const SRC_SCOTLAND = [
@@ -94,9 +96,9 @@ const SRC_NI = [
 
 // Standing note for England (ex-London): a national scheme is coming but not live.
 const ENGLAND_CHANGE =
-  'A national registration scheme (Levelling-Up & Regeneration Act 2023) is legislated but not yet live as of July 2026; a proposed C5 short-let use class has not yet come into force.';
+  `A national registration scheme (Levelling-Up & Regeneration Act 2023) is legislated but was not yet live when last checked (${VERIFIED_WORDS}); a proposed C5 short-let use class had not come into force.`;
 const WALES_CHANGE =
-  'Wales’ statutory visitor-accommodation registration (Welsh Revenue Authority) is due to open in autumn 2026; a licensing scheme is expected around 2029.';
+  `Wales’ statutory visitor-accommodation registration (Welsh Revenue Authority) was due to open in autumn 2026 when last checked (${VERIFIED_WORDS}); a licensing scheme is expected around 2029.`;
 
 // ─── Helpers to build the repetitive-but-flat national entries ──────
 // These keep every postcode entry explicit and greppable while avoiding

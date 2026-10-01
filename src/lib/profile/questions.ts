@@ -40,6 +40,7 @@ import {
   type ManagerGoals,
 } from '../market/goals.ts';
 import { BUDGET_LABELS, isBudget } from '../market/filters.ts';
+import { DEFAULT_FINANCE } from '../listing/deal.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, type AboutYou, type Role } from './about.ts';
 import { AVAILABLE_DEAL_TYPES, availableTypes, COMING_SOON_DEAL_TYPES, DEAL_TYPE_LABELS, DEAL_TYPE_LONG_LABELS, DEAL_TYPES, dealTypesFor, isAvailableDealType, kindsFor } from './deal-types.ts';
@@ -934,13 +935,13 @@ export function clearAnswer(id: QuestionId, a: Answers): Answers {
     case 'funding':
       return setBuyer(a, { funding: null });
     case 'finance':
-      return { ...a, goals: { ...goals, finance: { ...goals.finance, depositPct: 25, mortgageRatePct: 5.5 } } };
+      return { ...a, goals: { ...goals, finance: { ...goals.finance, depositPct: DEFAULT_FINANCE.depositPct, mortgageRatePct: DEFAULT_FINANCE.mortgageRatePct } } };
     case 'entity':
       return setBuyer(a, { entity: null });
     case 'main_goal':
       return setBuyer(a, { mainGoal: null });
     case 'min_profit':
-      return { ...a, goals: { ...goals, finance: { ...goals.finance, targetMarginPcm: 500 } } };
+      return { ...a, goals: { ...goals, finance: { ...goals.finance, targetMarginPcm: DEFAULT_FINANCE.targetMarginPcm } } };
     case 'r2r_min_profit':
       return setR2r(a, { minMarginPcm: null });
     case 'property_type':

@@ -27,7 +27,7 @@ export default async function ExtensionConnectPage() {
   const storeUrl = chromeStoreUrl();
 
   return (
-    <main className="min-h-screen bg-[#f7f8f4] text-[#2e3d2b]">
+    <main className="bg-[#f7f8f4] text-[#2e3d2b]">
       <div className="mx-auto max-w-2xl px-5 py-10">
         <p className="text-xs font-semibold uppercase tracking-widest text-[#5d8156]">Stayful browser extension</p>
         <h1 className="mt-1 text-2xl font-bold">Connect the extension</h1>

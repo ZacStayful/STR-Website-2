@@ -69,7 +69,7 @@ const playfair = localFont({
   adjustFontFallback: "Times New Roman",
 });
 
-/** 400–700 is the superset of what /markets and /str-report each asked for. */
+/** 400–700: every weight the Explorer and the marketing pages use. */
 const dmSans = localFont({
   src: "./webfonts/DMSans.woff2",
   weight: "400 700",

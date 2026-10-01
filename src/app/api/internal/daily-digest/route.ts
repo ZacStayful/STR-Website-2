@@ -4,8 +4,8 @@ import { emailKey } from "@/lib/supabase/email-key";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Daily digest cron (Batch 6) ──────────────────────────────────────
-// Vercel cron (vercel.json: 08:10 UTC, after the three picks passes and the
-// 08:00 picks-paused letter). The daily email for everyone who has not had
+// Vercel cron (vercel.json: 08:10 UTC, after the four picks passes, 07:00 to
+// 07:50; the picks-paused letter follows at 08:20). The daily email for everyone who has not had
 // one today: Today's 5 without a pick for members with picks on, or the
 // changes on deals they track. Never a second email: it claims the same one
 // daily slot every other daily email does (src/lib/notify/cap.ts).

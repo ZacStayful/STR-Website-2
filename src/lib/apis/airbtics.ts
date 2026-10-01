@@ -563,6 +563,9 @@ async function fetchReportAll(
         },
         body: JSON.stringify(reportBody),
         cache: 'no-store',
+        // Batch 21: a hang here used to run the report into the 60 s kill, which
+        // skips the refund and leaves the member's reservation held for ten minutes.
+        signal: AbortSignal.timeout(REPORT_CREATE_TIMEOUT_MS),
       });
       console.log(`[DEBUG] report/all HTTP status: ${res.status}`);
       if (!res.ok) {
@@ -603,6 +606,7 @@ async function fetchReportAll(
     const readRes = await fetch(`${BASE_URL}/report?id=${reportId}`, {
       headers: { 'x-api-key': apiKey },
       cache: 'no-store',
+      signal: AbortSignal.timeout(REPORT_READ_TIMEOUT_MS),
     });
 
     if (!readRes.ok) {
@@ -636,6 +640,7 @@ async function readReport(reportId: string, apiKey: string): Promise<ReportAllRe
   const res = await fetch(`${BASE_URL}/report?id=${reportId}`, {
     headers: { 'x-api-key': apiKey },
     cache: 'no-store',
+    signal: AbortSignal.timeout(REPORT_READ_TIMEOUT_MS),
   });
   if (!res.ok) return null;
   const data = await res.json();
@@ -1451,18 +1456,6 @@ function buildDataFromReportComps(
   const headlineForecast = buildForecast(adjusted_ADR, base_occ);
   const headlineAnnualRevenue = headlineForecast.reduce((s, m) => s + m.revenue, 0);
 
-  // TEMPORARY (remove once a few weeks of reports have been compared): what
-  // the all-history curves (2021 onwards) would have produced.
-  if (seasonWindow) {
-    const allAdr = seasonalMultipliers(enrichedComps.map((c) => c.booked_daily_rate_ltm_monthly));
-    const allOcc = seasonalMultipliers(enrichedComps.map((c) => c.occupancy_rate_ltm_monthly));
-    const allHistory = DAYS_IN_MONTH.reduce((sum, days, i) => sum + Math.round(adjusted_ADR * allAdr[i] * Math.min(base_occ * allOcc[i], 1.0) * days), 0);
-    const delta = allHistory > 0 ? ((headlineAnnualRevenue - allHistory) / allHistory) * 100 : 0;
-    console.log(`[V4] seasonal window ${windowLabel(seasonWindow)}: annual £${headlineAnnualRevenue} (all-history £${allHistory}, Δ${delta.toFixed(1)}%)`);
-  } else {
-    console.log('[V4] seasonal window: none (no dated history) — all-history curves used');
-  }
-
   // ── Step 9 (V3 FIX): Scenarios (worst/base/best) ──
   // V2 had a copy-paste bug where `bestForecast = worstForecast`. V3 properly
   // differentiates: best adds +5% ADR and +5% occupancy on top of quality multiplier.
@@ -1908,6 +1901,10 @@ function extractComparables(
 }
 
 const BOUNDS_TIMEOUT_MS = 15_000;
+/** Batch 21 (G7): every other Airbtics call gives up before the route's 60 s kill, so the catch paths (refund, "you haven't been charged") run instead. */
+const REPORT_CREATE_TIMEOUT_MS = 20_000;
+const REPORT_READ_TIMEOUT_MS = 8_000;
+const MARKET_TIMEOUT_MS = 8_000;
 
 interface AirbticsReply {
   ok: boolean;
@@ -2203,6 +2200,7 @@ async function fetchMarketSummary(
   const response = await airbticsCall('market_summary', `${marketId}|${bedrooms}`, url.toString(), {
     headers: { 'x-api-key': apiKey },
     cache: 'no-store',
+    signal: AbortSignal.timeout(MARKET_TIMEOUT_MS),
   });
 
   console.log(`[DEBUG] markets/summary HTTP status: ${response.status}`);
@@ -2289,6 +2287,7 @@ async function findMarketId(postcode: string, apiKey: string): Promise<number | 
   const response = await airbticsCall('market_search', cacheKey, url.toString(), {
     headers: { 'x-api-key': apiKey },
     cache: 'no-store',
+    signal: AbortSignal.timeout(MARKET_TIMEOUT_MS),
   });
 
   if (!response.ok || !response.data) {
@@ -2334,6 +2333,7 @@ async function fetchMetric(
   const response = await airbticsCall(`metric_${metric}`, `${marketId}|${bedrooms}`, url.toString(), {
     headers: { 'x-api-key': apiKey },
     cache: 'no-store',
+    signal: AbortSignal.timeout(MARKET_TIMEOUT_MS),
   });
 
   console.log(`[DEBUG] markets/metrics/${metric} HTTP status: ${response.status}`);

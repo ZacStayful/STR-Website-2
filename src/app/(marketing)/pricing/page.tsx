@@ -11,6 +11,7 @@ import {
 } from "@/lib/schema";
 import { siteUrl } from "@/lib/url";
 import { faqsWith } from "@/lib/faqs-data";
+import { costFiguresNow } from "@/lib/faqs-server";
 import { publicOfferNow } from "@/lib/starter-pack/public";
 
 const PAGE_URL = siteUrl("/pricing");
@@ -31,7 +32,7 @@ export default async function PricingPage() {
   const offer = await publicOfferNow();
   const PAGE_TITLE = offer.pricingTitle;
   const PAGE_DESCRIPTION = offer.pricingDescription;
-  const faqs = faqsWith(offer);
+  const faqs = faqsWith(offer, await costFiguresNow());
   return (
     <>
       <Schema

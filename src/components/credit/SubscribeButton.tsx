@@ -6,8 +6,23 @@ import { Loader2 } from "lucide-react";
 import { Icon } from "@/lib/icons";
 
 /**
+ * Where a signed-out visitor's plan button goes: sign-up, and after it the
+ * plan chooser with that plan marked (`/upgrade?plan=<code>`). The proxy and
+ * the quiz both honour `next`, so the plan survives sign-up, email
+ * confirmation and the welcome questions; a member who is already signed in
+ * is bounced off /signup straight to the same `next`.
+ */
+export function planSignupHref(signupHref: string, planCode: string): string {
+  const [path, query = ""] = signupHref.split("?");
+  const params = new URLSearchParams(query);
+  params.set("next", `/upgrade?plan=${encodeURIComponent(planCode)}`);
+  return `${path}?${params.toString()}`;
+}
+
+/**
  * Starts Stripe Checkout for a plan (or opens the portal to switch plans
- * when a subscription already exists). Signed-out visitors go to sign-up.
+ * when a subscription already exists). Signed-out visitors go to sign-up,
+ * and from there to /upgrade with the plan they chose.
  */
 export function SubscribeButton({ planCode, label, className, signedIn, signupHref = "/signup", current }: { planCode: string; label: string; className?: string; signedIn: boolean; signupHref?: string; current?: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -15,7 +30,7 @@ export function SubscribeButton({ planCode, label, className, signedIn, signupHr
 
   if (!signedIn) {
     return (
-      <Link href={`${signupHref}${signupHref.includes("?") ? "&" : "?"}plan=${encodeURIComponent(planCode)}`} className={className} style={{ width: "100%", justifyContent: "center" }}>
+      <Link href={planSignupHref(signupHref, planCode)} className={className} style={{ width: "100%", justifyContent: "center" }}>
         {label} <Icon name="arrow" size={14} />
       </Link>
     );

@@ -5,6 +5,9 @@
 import type { DemandDrivers, NearbyAmenity } from '../types';
 import { meter } from '../credit/meter.ts';
 
+/** Batch 21 (G7): give up before the report's 60 s kill, so the refund path runs. */
+const PLACES_TIMEOUT_MS = 8_000;
+
 const SEARCH_RADIUS = 5000; // metres
 const AIRPORT_SEARCH_RADIUS = 50_000; // metres — real airports are further away
 const MAX_RESULTS_TRANSPORT = 5;
@@ -83,6 +86,7 @@ async function searchNearbyByType(
           'X-Goog-FieldMask': FIELD_MASK,
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(PLACES_TIMEOUT_MS),
       }),
   );
 

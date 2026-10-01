@@ -97,10 +97,16 @@ export function rewardRef(step: StepKey, userId: string): string {
   return `checklist:${step}:${userId}`;
 }
 
+/** "£1": the reward, formatted. */
+export function rewardLabel(pence: number = STEP_REWARD_PENCE): string {
+  const pounds = pence / 100;
+  return `£${Number.isInteger(pounds) ? pounds : pounds.toFixed(2)}`;
+}
+
 /** "+£1 credit — 2 of 5 done" (or "+£2" when two steps landed since the last look). */
 export function rewardLine(newlyPaid: number, doneCount: number): string | null {
   if (newlyPaid <= 0) return null;
-  return `+£${newlyPaid} credit — ${doneCount} of ${STEP_KEYS.length} done`;
+  return `+${rewardLabel(newlyPaid * STEP_REWARD_PENCE)} credit — ${doneCount} of ${STEP_KEYS.length} done`;
 }
 
 /**

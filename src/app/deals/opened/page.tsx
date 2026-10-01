@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { payerFor } from "@/lib/team";
 import { areaMetaForCode } from "@/lib/market/areas";
@@ -42,8 +43,11 @@ export default async function OpenedDealsPage() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
-  const [rows, settings, profileRes] = await Promise.all([listOpened((await payerFor(user.id)).payerId), getBillingSettings(), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle()]);
+  if (!user) redirect("/login?redirect=/deals/opened");
+  // A paused (suspended) seat sees only its own opens, not the team's.
+  const payer = await payerFor(user.id);
+  const opensOf = payer.suspended ? user.id : payer.payerId;
+  const [rows, settings, profileRes] = await Promise.all([listOpened(opensOf), getBillingSettings(), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle()]);
   const finance = parseMarketGoals(profileRes.data?.market_goals)?.finance ?? null;
   // What each open actually took from the balance (top-up credit at its rate), not its plan price.
   const paid = new Map<number, number>();

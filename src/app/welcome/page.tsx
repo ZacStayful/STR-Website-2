@@ -10,6 +10,7 @@ import { creditViewFor, markQuizOpened, matchCountFor, profileSummaryFor, progre
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
 import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
 import { MembersFooter } from "@/components/feedback/MembersFooter";
+import { SignOutForm } from "@/app/account/AccountSections";
 import { bannerEnabled } from "@/lib/meta/env";
 import { isTeamBound } from "@/lib/team";
 import { quizCheckboxShown } from "@/lib/tracking/consent";
@@ -102,8 +103,10 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
         />
       </div>
       {/* Batch 18: the quiz is the first screen a new member sees, so they can tell us if it goes wrong. */}
+      {/* The quiz gates /account, where Sign out lives, so it is offered here too: a member who signed in on the wrong account, or a shared phone, is not stuck. */}
       <div className="mx-auto mt-10 w-full max-w-lg">
         <MembersFooter />
+        <SignOutForm />
       </div>
       <FeedbackDialog />
     </main>

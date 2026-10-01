@@ -2,15 +2,15 @@ import type { Metadata } from "next";
 import EstimatePage from "@/app/estimate/page";
 import { DEMO_MAP } from "@/lib/demo-data";
 
-// ─── TEMPORARY public preview route ──────────────────────────────────────
+// ─── The sample report ────────────────────────────────────────────────────
 // Renders the /estimate analyser UI with a seeded demo report injected as
-// initial state, so the report (including the self-managed expense toggle and
-// the matching PDF) renders immediately for anyone — no login, no live API
-// calls, no redirect/URL-param dance. It sits OUTSIDE the /estimate route
-// tree, so it skips the Supabase auth layout + middleware gate.
+// initial state, so a complete report (the expense toggle, the matching PDF)
+// renders for anyone — no login, no live API calls. It sits OUTSIDE the
+// /estimate route tree, so it skips the members' layout and the proxy's gate.
 //
-// Only ever shows hard-coded demo properties (DEMO_MAP) — no user data.
-// noindex. Remove this folder when the design review is done.
+// Public on purpose: it is the "see a sample report" link on every deal sheet
+// (src/app/deals/[id]/page.tsx, SAMPLE_REPORT) and the public demo. Only ever
+// shows hard-coded demo properties (DEMO_MAP) — no member data. noindex.
 
 export const metadata: Metadata = {
   title: "Demo report (preview) — Stayful Intelligence",

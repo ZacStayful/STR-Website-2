@@ -10,16 +10,18 @@ import { SampleArea } from "./SampleArea";
 import { MarketPulse } from "../explorer/MarketPulse";
 import { publicOfferNow } from "@/lib/starter-pack/public";
 
-const SIGNUP = "/signup?next=/markets";
-const LOGIN = "/login?redirect=/markets";
-
 /**
  * Public, members-only-teaser page for the Market Explorer. Rendered by the
- * /markets layout for signed-out visitors instead of the explorer itself.
+ * /markets pages for signed-out visitors instead of the explorer itself.
  * Explains in depth what the tool is and does, with illustrative visuals and
  * ONE live sample area — never the full dataset.
+ *
+ * `returnTo` is where sign-in and sign-up bring the visitor back to: the
+ * area page they clicked (an email's /markets/<area> link), else the Explorer.
  */
-export async function MarketExplorerProductPage() {
+export async function MarketExplorerProductPage({ returnTo = "/markets" }: { returnTo?: string } = {}) {
+  const SIGNUP = `/signup?next=${encodeURIComponent(returnTo)}`;
+  const LOGIN = `/login?redirect=${encodeURIComponent(returnTo)}`;
   const [sample, national, offer] = await Promise.all([getSampleArea(), getNationalSeries().catch(() => []), publicOfferNow()]);
   const licensingEntries = Object.keys(STR_LICENSING).length;
   const areaCount = sample?.totalAreas ?? null;

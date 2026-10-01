@@ -2,7 +2,9 @@ import { runPausedEmails } from "@/lib/listing/picks-paused-run";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── "Your picks have paused" cron ────────────────────────────────────
-// Vercel cron (vercel.json: 08:00 UTC, after the three daily-picks passes).
+// Vercel cron (vercel.json: 08:20 UTC, after the daily-picks passes and the
+// 08:10 digest, so the day's daily email has gone first; Batch 21 moved it
+// from 08:00).
 // Emails every member whose picks paused for want of credit, under the rules
 // in src/lib/listing/picks-paused.ts. The run itself lives in
 // src/lib/listing/picks-paused-run.ts, shared with the admin page.
