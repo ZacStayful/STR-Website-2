@@ -78,7 +78,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Presentation from "@/components/Presentation";
-import HeatmapOverlay from "@/components/HeatmapOverlay";
 import { AddressAutocomplete, splitAddressAndPostcode } from "@/components/AddressAutocomplete";
 import { AccuracyPanel } from "@/components/AccuracyPanel";
 import { SetupCalculator } from "@/components/SetupCalculator";
@@ -89,6 +88,7 @@ import { dealReturnPath, returnLabel } from "@/lib/listing/return-path";
 import { averageReviewCount, averageRating } from "@/lib/listing/competitors";
 import { creditFetch, preflight, notifyCreditChanged, formatGbp as formatCredit } from "@/lib/credit/client";
 import { type FunnelMode, type FunnelPrefill, funnelAnalyseUrl, funnelLabel, reportPdfUrl } from "@/lib/funnels/mode";
+import { stripStayfulPitch } from "@/lib/funnels/whitelabel";
 import { consentText } from "@/lib/funnels/brand";
 import { TurnstileWidget, resetTurnstile } from "@/components/TurnstileWidget";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
@@ -111,7 +111,6 @@ import { readMonthlyOccupancy, readStayProfile, staySentence, turnoversByMonth }
 import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "./_components/listing-client-types";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
 import { DEMO_MAP } from "@/lib/demo-data";
-import { initTracker, endSession, trackCtaClick } from "@/lib/tracker";
 import {
   BarChart,
   Bar,
@@ -447,41 +446,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
   const urlListingRef = useRef<string | null>(null);
   // Whether this render is a public white-label funnel. A ref because the
   // unload handlers below read it without wanting to re-register.
-  const isFunnelRef = useRef(Boolean(funnel));
-  isFunnelRef.current = Boolean(funnel);
-
-  // ── Session timer: pushed to Monday via sendBeacon on tab close ──
-  const sessionStartRef = useRef(Date.now());
-  const emailRef = useRef(email);
-  emailRef.current = email;
-
-  useEffect(() => {
-    const pushTime = () => {
-      const seconds = Math.round((Date.now() - sessionStartRef.current) / 1000);
-      const currentEmail = emailRef.current;
-      // Never on a funnel: the email belongs to the customer's prospect, and
-      // beaconing it to our own tracking from their branded page would be
-      // sending their lead's personal data somewhere neither party expects.
-      // Read through a ref so this effect keeps its empty dependency array —
-      // the flag is set once by the server and cannot change.
-      if (!isFunnelRef.current && seconds > 0 && currentEmail && currentEmail.includes("@")) {
-        navigator.sendBeacon(
-          "/api/track",
-          new Blob(
-            [JSON.stringify({ type: "time_on_site", email: currentEmail, seconds })],
-            { type: "application/json" },
-          ),
-        );
-      }
-    };
-    const onVisChange = () => { if (document.visibilityState === "hidden") pushTime(); };
-    window.addEventListener("beforeunload", pushTime);
-    document.addEventListener("visibilitychange", onVisChange);
-    return () => {
-      window.removeEventListener("beforeunload", pushTime);
-      document.removeEventListener("visibilitychange", onVisChange);
-    };
-  }, []);
 
   // Address input mode: "auto" uses Google Places autocomplete (default),
   // "manual" falls back to the original two freeform fields. selectedAutoAddress
@@ -702,14 +666,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
       setGuests(String(demoData.property.guests));
     }
   }, []);
-
-  // Session analytics tracker
-  useEffect(() => {
-    if (result) {
-      initTracker(result.property.address, result.property.postcode);
-      return () => { endSession(); };
-    }
-  }, [result]);
 
   const scrollToSection = (id: string) => {
     const el = sectionRefs.current[id];
@@ -1022,7 +978,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
     // presentation route via localStorage, then open it in a new tab.
     const openPresentation = () => {
       if (!result) return;
-      trackCtaClick("presentation_view");
       try {
         localStorage.setItem(
           "stayful_presentation",
@@ -1378,7 +1333,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
 
     return (
       <>
-      <HeatmapOverlay />
       {showPresentation && (
         <Presentation data={r} onClose={() => setShowPresentation(false)} />
       )}
@@ -1436,7 +1390,9 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
             })}
           </nav>
 
-          {/* Presentation view — opens the branded slide deck in a new tab */}
+          {/* Presentation view — opens the branded slide deck in a new tab.
+              Batch 21 (C2): members only; /presentation is Stayful's own deck. */}
+          {!funnel && (
           <div className={`border-t border-border ${sidebarCollapsed ? "px-2 py-3" : "px-4 py-3"}`}>
             <button
               type="button"
@@ -1452,6 +1408,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               )}
             </button>
           </div>
+          )}
 
           {/* Progress at bottom */}
           <div className={`border-t border-border ${sidebarCollapsed ? "px-2 py-3" : "px-4 py-3"}`}>
@@ -1513,7 +1470,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                   disabled={pdfLoading}
                   onClick={async () => {
                     if (!result) return;
-                    trackCtaClick("download_pdf");
                     setPdfLoading(true);
                     try {
                       const res = await fetch(reportPdfUrl(funnel), {
@@ -1964,7 +1920,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
               <AccuracyPanel />
             </div>
 
-            {/* Presentation view CTA banner */}
+            {/* Presentation view CTA banner. Batch 21 (C2): members only; the deck is Stayful's. */}
+            {!funnel && (
             <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-5 rounded-xl bg-primary p-6 sm:p-7">
               <div>
                 <p className="text-base font-semibold text-primary-foreground" style={{ marginBottom: 6 }}>
@@ -1983,6 +1940,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                 Presentation view →
               </button>
             </div>
+            )}
           </section>
 
           {/* ══════════════════════════════════════════════════════════
@@ -2023,7 +1981,7 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                     billsPcm={r.deal.billsPcm}
                   />
                 )}
-                {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} />}
+                {r.secondOpinion && <SecondOpinionCard ours={r.shortLet.annualRevenue} opinion={r.secondOpinion} oursLabel={funnel ? `${funnelLabel(funnel)} estimate` : "Stayful estimate"} />}
                 {/* An enhanced report that came back without its second
                     opinion says so here rather than looking like a standard
                     one. The charge already reflects what actually ran. */}
@@ -2058,11 +2016,11 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                 <p className="font-medium mb-1">
                   {r.dataQuality.level === "low" ? "Limited Data Available" : "Data Note"}
                 </p>
-                <p className="text-xs">{r.dataQuality.disclaimer}</p>
+                {/* Batch 21 (C1): on a funnel or a prospect's report the provider's "Book a web meeting with Stayful" sentence is dropped. */}
+                <p className="text-xs">{funnel ? stripStayfulPitch(r.dataQuality.disclaimer) : r.dataQuality.disclaimer}</p>
                 {r.dataQuality.level === "low" && !funnel && (
                   <a href="https://calendly.com/zac-stayful/call" target="_blank" rel="noopener noreferrer"
-                    className="mt-2 inline-block text-xs font-medium text-primary underline"
-                    onClick={() => trackCtaClick("book_call")}>
+                    className="mt-2 inline-block text-xs font-medium text-primary underline">
                     Book your profitability action plan
                   </a>
                 )}
@@ -2472,7 +2430,6 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                             target="_blank"
                             rel="noopener noreferrer"
                             className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
-                            onClick={() => trackCtaClick("book_call")}
                           >
                             <Phone className="h-3 w-3" />
                             Book your profitability action plan

@@ -36,7 +36,11 @@ export async function sendLeadReportEmail(input: LeadReportEmailInput): Promise<
   if (!isEmailConfigured()) return false;
 
   const company = input.brand.companyName;
-  const from = brandedFrom(process.env.EMAIL_FROM, company);
+  // Batch 21 (C24): a neutral sending identity (EMAIL_FROM_WHITELABEL, a
+  // verified address on a domain that is not ours) when one is set, so the
+  // prospect's email is never "from" Stayful; otherwise the customer's name
+  // on our address, as before.
+  const from = brandedFrom(process.env.EMAIL_FROM_WHITELABEL || process.env.EMAIL_FROM, company);
   if (!from) return false;
 
   const replyTo = safeReplyTo(input.brand.replyToEmail);

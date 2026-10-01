@@ -8,6 +8,7 @@
  * on its items, and a line's price at line.pricing.price_details.price.
  */
 
+import { addMonthsClamped } from './annual.ts';
 import type Stripe from 'stripe';
 import { planForPriceId, topupPenceForPriceId, type Env } from './prices.ts';
 import { subscriptionStateFromStripe } from '../subscription.ts';
@@ -103,6 +104,12 @@ export interface WebhookDeps {
   settleStarterPack?(paymentIntentId: string): Promise<string>;
   grantStarterPack?(input: { paymentIntent: Stripe.PaymentIntent; email: string | null }): Promise<'granted' | 'already' | 'blocked' | 'ignored'>;
   clawbackStarterPack?(input: { userId: string; paymentIntentId: string; refundedPence: number; chargedPence: number; reason: 'refunded' | 'disputed' }): Promise<unknown>;
+  /**
+   * Batch 21 (B17): a dispute closed in our favour (won, or an inquiry that
+   * closed with nothing taken) gives back what charge.dispute.created took
+   * from a top-up or a starter pack. Returns the pence restored; idempotent.
+   */
+  restoreDisputedCredit?(userId: string, paymentIntentId: string): Promise<number>;
   log?: (msg: string) => void;
 }
 
@@ -415,6 +422,9 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
         if (pm) await deps.savePaymentMethod(user.id, customerId, pm);
         const amount = Number(pi?.metadata?.amount_pence ?? session.amount_total ?? 0) || Number(session.amount_total ?? 0);
         if (pi?.metadata?.kind === 'topup' || session.metadata?.kind === 'topup') {
+          // Batch 21 (B15): a delayed-notification payment method completes the
+          // session before the money arrives; the credit waits for payment_intent.succeeded.
+          if (session.payment_status && session.payment_status !== 'paid') return { handled: true, note: `top-up checkout ${session.payment_status}: credit follows the payment` };
           if (amount > 0) await deps.grantTopup(user.id, amount, `pi:${piId}`, user.email ?? email);
           if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
           // Meta's Purchase: payment_intent.succeeded carries the same key, so one is recorded.
@@ -469,6 +479,8 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       if (!subId) return { handled: false, note: 'invoice without subscription' };
       let user = await deps.findUserBySubscription(subId);
       if (!user && id(invoice.customer)) user = await deps.findUserByCustomer(id(invoice.customer)!);
+      // Batch 21 (B19): a subscriber with no linked customer or subscription yet (a Payment Link, invoice.paid beating checkout.session.completed) is matched by the invoice's email, as a Checkout session is.
+      if (!user && invoice.customer_email) user = await deps.findUserByEmail(invoice.customer_email);
       if (!user) return { handled: false, note: 'no user for invoice' };
       const sub = await deps.retrieveSubscription(subId);
       const linePrice = invoice.lines?.data?.[0]?.pricing?.price_details?.price;
@@ -514,12 +526,14 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       }
 
       const reason = invoice.billing_reason;
+      // A £0 invoice (a 100%-off code, a trial's first invoice) grants the full
+      // cycle: a promotion is a promotion (Batch 21 review, question 5).
       if (reason === 'subscription_create' || reason === 'subscription_cycle' || reason === 'manual' || reason === null) {
         if (planCode === 'pro_annual') {
           // Annual: the first month now; the sweep cron grants the rest month by month.
           const start = new Date();
-          const slotEnd = new Date(start);
-          slotEnd.setUTCMonth(start.getUTCMonth() + 1);
+          // Batch 21 (B8): a month added with the day clamped, as the sweep's slots are (src/lib/stripe/annual.ts).
+          const slotEnd = addMonthsClamped(start, 1);
           await deps.grantPlanCycle(user.id, planCode, `annual:${subId}:${start.toISOString().slice(0, 7)}`, periodEnd && slotEnd > periodEnd ? periodEnd : slotEnd, user.email);
         } else {
           await deps.grantPlanCycle(user.id, planCode, `inv:${invoice.id}`, periodEnd, user.email);
@@ -557,6 +571,10 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       let user = await deps.findUserBySubscription(sub.id);
       if (!user && customerId) user = await deps.findUserByCustomer(customerId);
       if (!user) return { handled: false, note: 'no user for subscription' };
+      // Batch 21 (B42): a subscription made by hand that has not had its first
+      // payment is not over; treating 'incomplete' as ended expired credit and
+      // wrote an 'ended' churn row for a plan that never started.
+      if (event.type !== 'customer.subscription.deleted' && sub.status === 'incomplete') return { handled: true, note: 'subscription incomplete: awaiting its first payment' };
       const ended = event.type === 'customer.subscription.deleted' || !LIVE_STATUSES.has(sub.status);
 
       // Don't let a dead subscription end the plan when the customer still has
@@ -665,7 +683,9 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
     case 'invoice.payment_failed': {
       const invoice = event.data.object as Stripe.Invoice;
       const subId = invoice.parent?.subscription_details?.subscription ? id(invoice.parent.subscription_details.subscription) : null;
-      let user = subId ? await deps.findUserBySubscription(subId) : null;
+      // Batch 21 (B43): a one-off invoice that fails is not a subscription past due.
+      if (!subId) return { handled: false, note: 'invoice without subscription' };
+      let user = await deps.findUserBySubscription(subId);
       if (!user && id(invoice.customer)) user = await deps.findUserByCustomer(id(invoice.customer)!);
       if (!user) return { handled: false, note: 'no user for failed invoice' };
       await deps.updateProfile(user.id, { stripe_subscription_status: 'past_due' });
@@ -709,9 +729,32 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       if (!piId) return { handled: false, note: 'no payment intent' };
       const pi = await deps.retrievePaymentIntent(piId);
       if (pi?.metadata?.kind !== 'topup' || !pi.metadata.user_id) return { handled: false, note: 'not a top-up' };
-      const amount = charge ? charge.amount_refunded : (obj as Stripe.Dispute).amount;
+      const taken = charge ? charge.amount_refunded : (obj as Stripe.Dispute).amount;
+      // Batch 21 (B18): with Stripe Tax the charge is VAT-inclusive while the
+      // credit (metadata.amount_pence) is not: the same SHARE of the credit
+      // comes back, never more credit than was granted.
+      const creditPence = Number(pi.metadata.amount_pence) || 0;
+      const chargedPence = Number(pi.amount) || 0;
+      const amount = creditPence > 0 && chargedPence > 0 ? Math.round((creditPence * Math.min(taken, chargedPence)) / chargedPence) : taken;
       await deps.refundTopup(pi.metadata.user_id, `pi:${piId}`, amount, event.type === 'charge.refunded' ? 'refunded' : 'disputed');
       return { handled: true, note: 'top-up clawed back' };
+    }
+
+    // Batch 21 (B17): the dispute's outcome. Won, or an inquiry closed with
+    // nothing taken, gives back what charge.dispute.created took; lost leaves
+    // the clawback where it is.
+    case 'charge.dispute.closed': {
+      const dispute = event.data.object as Stripe.Dispute;
+      if (dispute.status !== 'won' && dispute.status !== 'warning_closed') return { handled: false, note: `dispute ${dispute.status}: nothing to give back` };
+      if (!deps.restoreDisputedCredit) return { handled: false, note: 'no restore configured' };
+      const piId = id(dispute.payment_intent);
+      if (!piId) return { handled: false, note: 'no payment intent' };
+      const pi = deps.retrievePaymentIntentStrict ? await deps.retrievePaymentIntentStrict(piId) : await deps.retrievePaymentIntent(piId);
+      const kind = pi?.metadata?.kind;
+      const userId = pi?.metadata?.user_id;
+      if (!userId || (kind !== 'topup' && kind !== 'starter_pack')) return { handled: false, note: 'not a top-up or starter pack' };
+      const restored = await deps.restoreDisputedCredit(userId, piId);
+      return { handled: true, note: `dispute ${dispute.status}: ${restored}p restored` };
     }
 
     default:

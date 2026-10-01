@@ -7,7 +7,7 @@
 		},
 		{
 			"path": "/api/internal/listing-recheck",
-			"schedule": "0 6 * * *"
+			"schedule": "3 6 * * *"
 		},
 		{
 			"path": "/api/internal/deal-alerts",
@@ -38,8 +38,12 @@
 			"schedule": "40 7 * * *"
 		},
 		{
+			"path": "/api/internal/sourcing",
+			"schedule": "50 7 * * *"
+		},
+		{
 			"path": "/api/internal/picks-paused",
-			"schedule": "0 8 * * *"
+			"schedule": "20 8 * * *"
 		},
 		{
 			"path": "/api/internal/daily-digest",
@@ -55,7 +59,7 @@
 		},
 		{
 			"path": "/api/internal/funnel-queue",
-			"schedule": "*/30 * * * *"
+			"schedule": "7,37 * * * *"
 		},
 		{
 			"path": "/api/internal/crm-deliveries",
@@ -119,7 +123,7 @@
 		},
 		{
 			"path": "/api/internal/project-checks",
-			"schedule": "5,15,25,35,45,55 5 * * *"
+			"schedule": "2,12,22,32,42,52 5 * * *"
 		},
 		{
 			"path": "/api/internal/marketplace-recheck",

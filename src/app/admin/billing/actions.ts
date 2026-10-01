@@ -146,11 +146,15 @@ export async function grantAdjustmentAction(_prev: ActionState, formData: FormDa
     const target = String(formData.get('email') ?? '').trim().toLowerCase();
     const pence = Math.round(Number(formData.get('pence')));
     const note = String(formData.get('note') ?? '').trim();
+    // Batch 21 (B37): the form's own nonce keys the grant, so a double submit
+    // (or a resubmitted page) is a replay and grants once.
+    const rawNonce = String(formData.get('nonce') ?? '');
+    const nonce = /^[0-9a-f-]{8,64}$/i.test(rawNonce) ? rawNonce : crypto.randomUUID();
     if (!target || !Number.isFinite(pence) || pence === 0) return { ok: false, message: 'Email and a non-zero amount are required.' };
     const admin = createAdminClient();
     const { data: user } = await admin.from('profiles').select('id').eq('email', emailKey(target)).limit(1).maybeSingle();
     if (!user) return { ok: false, message: `No account for ${target}` };
-    await grant(String(user.id), 'adjustment', pence, { description: note || `Adjustment by ${email}`, sourceRef: `admin:${email}:${Date.now()}` });
+    await grant(String(user.id), 'adjustment', pence, { description: note || `Adjustment by ${email}`, sourceRef: `admin:${email}:${nonce}` });
     revalidatePath('/admin/billing');
     return { ok: true, message: `£${(pence / 100).toFixed(2)} ${pence > 0 ? 'added to' : 'removed from'} ${target}` };
   } catch (err) {

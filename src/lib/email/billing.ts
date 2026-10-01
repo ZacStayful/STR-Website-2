@@ -4,6 +4,17 @@ import { sendEmail, isEmailConfigured } from './send';
 import { escapeHtml } from './escape';
 import { siteUrl, manageNotificationsUrl } from '../url';
 import { formatGbp } from '../credit/pricing';
+import { isEnforcing } from '../credit/http';
+
+/**
+ * Batch 21 (B6): what runs out follows the mode. With CREDIT_ENFORCE on, the
+ * paid doors (reports, Quick looks, the daily pick) are refused at £0; in
+ * shadow mode nothing is, and new usage counts against the next credit. The
+ * daily email itself still comes either way (Batch 21, Q2).
+ */
+function pausedClause(): string {
+  return isEnforcing() ? 'reports, Quick looks and your daily pick pause' : 'new usage counts against your next credit';
+}
 
 /**
  * Billing emails (Resend). Each is a short, plain message with one link to
@@ -31,7 +42,7 @@ async function send(to: string | null | undefined, subject: string, body: { html
 
 export function lowBalanceEmail(to: string, opts: { remainingPence: number; planName: string | null; topupRate?: number }) {
   return send(to, "You're running low on Stayful credit", layout("You're running low on credit", [
-    `You have ${formatGbp(opts.remainingPence)} of credit left${opts.planName ? ` on your ${opts.planName} plan this month` : ''}. When it runs out, reports and listing checks pause until you top up or upgrade.`,
+    `You have ${formatGbp(opts.remainingPence)} of credit left${opts.planName ? ` on your ${opts.planName} plan this month` : ''}. When it runs out, ${pausedClause()}${isEnforcing() ? ' until you top up or upgrade' : ''}.`,
     `Upgrading gives you monthly credit at the standard rate; top-up credit never expires but is spent at ${opts.topupRate ?? 1.3}× the plan rate.`,
   ], { label: 'Top up or upgrade', path: '/account/billing' }));
 }
@@ -56,7 +67,9 @@ export function outOfCreditEmail(to: string, opts: { planName: string | null; pa
   // Batch 20: with no plan it is just "your credit" (a member from the starter
   // pack's cutover never had welcome credit), and a new member who can still
   // buy the pack is offered it.
-  const used = `${opts.planName ? `Your ${opts.planName} plan credit` : 'Your credit'} is used up, so reports and listing checks are paused.`;
+  const used = isEnforcing()
+    ? `${opts.planName ? `Your ${opts.planName} plan credit` : 'Your credit'} is used up, so reports, Quick looks and your daily pick are paused.`
+    : `${opts.planName ? `Your ${opts.planName} plan credit` : 'Your credit'} is used up. New usage counts against your next credit.`;
   if (opts.pack) return send(to, "You're out of Stayful credit", layout("You're out of credit", [used, opts.pack.body], { label: opts.pack.cta, path: '/today?offer=pack' }));
   return send(to, "You're out of Stayful credit", layout("You're out of credit", [
     used,
@@ -90,14 +103,6 @@ export function cardNeedsUpdateEmail(to: string) {
     'A one-click top-up on your saved card was declined or needs authentication, so auto top-up has been switched off.',
     'Add a new card or top up manually to keep going.',
   ], { label: 'Update card', path: '/account/billing#topup' }));
-}
-
-export function subscriberTransitionEmail(to: string, opts: { firstName: string | null; creditPence: number; renewsAt: string | null }) {
-  return send(to, 'A change to how your Stayful subscription works', layout(`${opts.firstName ? `${opts.firstName}, a` : 'A'} change to your subscription`, [
-    "We're moving Stayful to usage-based credit. Your Pro subscription stays exactly the same price, and from your next renewal it gives you " + formatGbp(opts.creditPence) + ' of credit every month instead of unlimited reports.',
-    'Every report shows what it will use before you run it (about £4.85 for a standard report, or £8.60 with the PMI second opinion), so you always know where you stand. If you ever need more, you can top up in one click or move to the Scale plan.',
-    opts.renewsAt ? `Your next renewal is on ${new Date(opts.renewsAt).toLocaleDateString('en-GB')}. Until then nothing changes.` : 'Until your next renewal nothing changes.',
-  ], { label: 'See your billing page', path: '/account/billing' }));
 }
 
 /**

@@ -186,3 +186,15 @@ test('number helpers', () => {
   assert.equal(formatDuration(200), '3 min 20 s');
   assert.equal(formatDuration(3900), '1 h 5 min');
 });
+
+test('a sign-up that never signed in is listed as excluded, not counted in the base (Batch 21, E3)', () => {
+  const report = computeWeeklyActive(facts({ members: [member('a', { signed_in: true }), member('i', { signed_in: false }), member('j')], excluded: [] }), { adminEmails: [] });
+  assert.deepEqual(report.excluded.map((x) => [x.id, x.reason, x.note]), [['i', 'never_signed_in', null]]);
+  assert.deepEqual(report.members.map((m) => m.id).sort(), ['a', 'j']);
+  // Facts from before the Batch 21 schema carry no flag: everyone counts, as before.
+  const older = computeWeeklyActive(facts({ members: [member('a'), member('i')], excluded: [] }), { adminEmails: [] });
+  assert.deepEqual(older.excluded, []);
+  // The weekly base counts a and j only.
+  const w3 = report.weeks[report.weeks.length - 1];
+  assert.equal(w3.members.base, 2);
+});

@@ -143,6 +143,25 @@ export async function POST(request: Request) {
   const release = async () => {
     if (userId && claimedRow) await releaseReportRun(userId, claimedRow);
   };
+  // Batch 21 (B13): a typed-address report (no pipeline row) has no claim, so a
+  // dropped stream then "try again" ran and charged a second, identical report.
+  // The same address, postcode and bedrooms saved by this member in the last
+  // ten minutes is that report: answer with it instead of running again.
+  if (userId && !input.checkedListingId) {
+    const since = new Date(Date.now() - 10 * 60_000).toISOString();
+    const { data: recent } = await createAdminClient()
+      .from('saved_searches')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('address', input.property.address)
+      .eq('postcode', input.property.postcode)
+      .eq('bedrooms', input.property.bedrooms)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    const again = (recent ?? [])[0] as { id: string } | undefined;
+    if (again?.id) return Response.json({ error: 'You ran this report a moment ago. It is saved under My deals › Reports.', code: 'already_reported', reportId: again.id }, { status: 409 });
+  }
 
   const runOpts: AnalysisRunOptions = {
     billedUserId: userId,

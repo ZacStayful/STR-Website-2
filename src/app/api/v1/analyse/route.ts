@@ -39,8 +39,12 @@ export async function POST(request: Request) {
 
   // Charged at the standard member markup, not the funnel's ×2: this is the
   // customer running their own analysis through a different door, not a
-  // prospect completing their funnel.
-  const opts = { billedUserId: auth.userId, requireCredit: true };
+  // prospect completing their funnel. Batch 21 (B35): and under the site's
+  // own credit rule, not a stricter one: refused at £0 once CREDIT_ENFORCE is
+  // on (always, for an account that has never held credit), shadow-metered
+  // otherwise, as the browser analyser is. requireCredit stays on the funnel
+  // doors, where an unaffordable run spends our money.
+  const opts = { billedUserId: auth.userId };
 
   let prepared;
   try {

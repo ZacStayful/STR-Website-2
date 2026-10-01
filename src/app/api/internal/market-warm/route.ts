@@ -1,4 +1,4 @@
-import { getAreaCards } from "@/lib/market/cached";
+import { getAreaCardsWithin } from "@/lib/market/cached";
 import { ask, pdMortgageRates } from "@/lib/broker";
 import { planAllRegionKeyStats, warmAllRegionKeyStats } from "@/lib/market/key-stats-cache";
 import { getUnitCostTable } from "@/lib/credit/unit-costs";
@@ -20,6 +20,11 @@ import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-aut
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+/** Batch 21 (D23): what the run may spend of the 60 s; the rest is left so a kill never loses the build. */
+const TIME_BUDGET_MS = 50_000;
+/** The key-stats warm (up to four regions) starts only while this much of the budget is left. */
+const KEY_STATS_BY_MS = 20_000;
 
 function marketWarmEnabled(): boolean {
   return process.env.MARKET_WARM_ENABLED !== "false";
@@ -52,21 +57,25 @@ export async function GET(request: Request) {
   // (one PropertyData credit) so a member's report only ever reads them.
   const rates = await ask(pdMortgageRates, {}, { mode: "cron" });
   // Region key stats: 30 credits a region, at most four regions a run, so a
-  // full refresh spreads over three days each month.
-  const keyStats = await warmAllRegionKeyStats().catch((err) => {
-    console.error("[market-warm] key stats warm-up failed:", (err as Error)?.message ?? err);
-    return null;
-  });
-  const cards = await getAreaCards().catch((err) => {
-    console.error("[market-warm] snapshot build failed:", (err as Error)?.message ?? err);
-    return [];
-  });
+  // full refresh spreads over three days each month. Batch 21 (D23): skipped
+  // when the rates took too long, so the snapshot below always gets its time.
+  const keyStats =
+    Date.now() - started > KEY_STATS_BY_MS
+      ? "skipped"
+      : await warmAllRegionKeyStats().catch((err) => {
+          console.error("[market-warm] key stats warm-up failed:", (err as Error)?.message ?? err);
+          return null;
+        });
+  // Batch 21 (D23): the snapshot build is waited for only as long as the
+  // budget allows; a slower cold build carries on in the background (the
+  // cache keeps it alive) and the picks passes find it ready later.
+  const cards = await getAreaCardsWithin(Math.max(5_000, TIME_BUDGET_MS - (Date.now() - started)));
   const body = {
-    cards: cards.length,
+    cards: cards === null ? "building" : cards.length,
     mortgageRates: rates.value ? (rates.cached ? "cached" : "bought") : "unavailable",
-    keyStats: keyStats ? { warmed: keyStats.warmed, fresh: keyStats.fresh.length, deferred: keyStats.deferred, failed: keyStats.failed } : "failed",
+    keyStats: keyStats === "skipped" ? "skipped (out of time)" : keyStats ? { warmed: keyStats.warmed, fresh: keyStats.fresh.length, deferred: keyStats.deferred, failed: keyStats.failed } : "failed",
     ms: Date.now() - started,
   };
   console.log("[market-warm]", JSON.stringify(body));
-  return Response.json(body, { status: cards.length > 0 ? 200 : 503 });
+  return Response.json(body, { status: cards !== null && cards.length === 0 ? 503 : 200 });
 }

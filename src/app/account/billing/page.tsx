@@ -9,6 +9,8 @@ import { getPlan } from "@/lib/credit/plans";
 import { cardSummary } from "@/lib/stripe/customer";
 import { stripeConfigured } from "@/lib/stripe/client";
 import { WELCOME_WITHHELD_COPY } from "@/lib/credit/welcome";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { isPackAccount } from "@/lib/lifecycle/settings";
 import { recordPackShown, starterPackStateFor } from "@/lib/starter-pack/server";
 import { BillingClient } from "./BillingClient";
 
@@ -31,19 +33,23 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("plan_code, stripe_subscription_status, stripe_default_payment_method_id, current_period_end, cancel_at_period_end, auto_topup_amount_pence, auto_topup_threshold_pence, referral_code, welcome_withheld_reason")
+    .select("plan_code, stripe_subscription_status, stripe_default_payment_method_id, current_period_end, cancel_at_period_end, auto_topup_amount_pence, auto_topup_threshold_pence, referral_code, welcome_withheld_reason, created_at")
     .eq("id", user.id)
     .single();
   if (!profile) redirect("/upgrade");
 
   const admin = isAdminEmail(user.email);
-  const [summary, history, plan, card, pack] = await Promise.all([
+  const [summary, history, plan, card, pack, settings] = await Promise.all([
     getCreditSummary(user.id),
     usageHistory(user.id, { limit: 40 }).catch(() => ({ items: [], nextCursor: null })),
     getPlan(profile.plan_code),
     cardSummary(profile.stripe_default_payment_method_id ?? null),
     starterPackStateFor(user.id),
+    getBillingSettings(),
   ]);
+  // Batch 21 (B24): a pack-era account was never due the welcome credit, so it
+  // is not told that credit was withheld (its one claim is the pack's).
+  const packAccount = isPackAccount(profile.created_at as string | null, settings.lifecycle);
   // Batch 20: the starter pack line on "Pay as you go", for a new member who can still buy it.
   const packLine = !plan && pack.offer.eligible;
   if (packLine) recordPackShown(user.id, "account");
@@ -58,7 +64,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       card={card}
       stripeReady={stripeConfigured()}
       initialHistory={history}
-      welcomeWithheld={profile.welcome_withheld_reason ? (WELCOME_WITHHELD_COPY[profile.welcome_withheld_reason] ?? null) : null}
+      welcomeWithheld={!packAccount && profile.welcome_withheld_reason ? (WELCOME_WITHHELD_COPY[profile.welcome_withheld_reason] ?? null) : null}
       justToppedUp={params.topup === "1"}
       justSubscribed={params.subscribed === "1"}
       pack={packLine ? pack.copy : null}

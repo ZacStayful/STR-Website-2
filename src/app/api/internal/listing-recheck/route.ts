@@ -8,9 +8,11 @@ import type { ListingSnapshot, ListingSource, ListingStatus } from "@/lib/listin
 import type { QuickEstimate } from "@/lib/listing/quick-types";
 import type { Deal } from "@/lib/listing/deal";
 import { runMetered, newActionId } from "@/lib/credit/context";
-import { getBalance } from "@/lib/credit/ledger";
+import { getBalance, InsufficientCreditError } from "@/lib/credit/ledger";
 import { isEnforcing } from "@/lib/credit/http";
 import { isAdminEmail } from "@/lib/admin";
+import { inactivePausedIds } from "@/lib/inactivity/server";
+import { recheckBillFor, type RecheckWatcher } from "@/lib/listing/recheck-billing";
 import { authoriseInternal, internalSecretsConfigured } from "@/lib/internal-auth";
 
 // ─── Daily re-check of saved listings ──────────────────────────────────
@@ -174,28 +176,39 @@ export async function GET(request: Request) {
   // Airbnb listings: monthly figure refresh through the broker, a few per run.
   const airbnb = rows.filter((r) => r.source === "airbnb" && now.getTime() - lastSeen(r) >= AIRBNB_MIN_AGE_MS).sort((a, b) => lastSeen(a) - lastSeen(b)).slice(0, AIRBNB_MAX_PER_RUN);
 
-  const summary = { dry, candidates: rows.length, portalUrls: urls.length, airbnb: airbnb.length, fetched: 0, changed: 0, removed: 0, skipped: 0, paused: false, airbnbRefreshed: 0, ranOutOfTime: false };
+  // Batch 21 (B16): members whose daily picks are paused for inactivity are
+  // away; nothing is bought for them until they are back. Read once per run.
+  const away = await inactivePausedIds(admin);
+  // Batch 21 (D16): with CREDIT_ENFORCE on, a payer at or below £0 is not
+  // charged for a fetch (the Airbnb branch's rule, now on both); one balance
+  // read per payer per run. Unreadable counts as payable, as before.
+  const spendable = new Map<string, number>();
+  const canPay = async (payerId: string): Promise<boolean> => {
+    if (!isEnforcing()) return true;
+    if (!spendable.has(payerId)) spendable.set(payerId, (await getBalance(payerId).catch(() => null))?.spendableBasePence ?? 1);
+    return (spendable.get(payerId) ?? 1) > 0;
+  };
+
+  const summary = { dry, candidates: rows.length, portalUrls: urls.length, airbnb: airbnb.length, fetched: 0, changed: 0, removed: 0, skipped: 0, away: 0, unbilled: 0, errors: 0, paused: false, airbnbRefreshed: 0, ranOutOfTime: false };
   if (dry) {
-    return Response.json({ ...summary, wouldFetch: urls.map(([u, rs]) => ({ url: u, members: rs.length, lastSeen: new Date(Math.min(...rs.map(lastSeen))).toISOString() })), wouldRefresh: airbnb.map((r) => r.canonical_url) });
+    return Response.json({ ...summary, wouldFetch: urls.map(([u, rs]) => ({ url: u, members: rs.length, away: rs.filter((r) => away.has(r.user_id)).length, lastSeen: new Date(Math.min(...rs.map(lastSeen))).toISOString() })), wouldRefresh: airbnb.map((r) => r.canonical_url) });
   }
 
   // Airbnb first: no page fetch, bounded by its own slice so a long portal
   // queue can never starve the monthly refresh.
   for (const r of airbnb) {
     if (Date.now() - started > AIRBNB_BUDGET_MS) break;
+    if (away.has(r.user_id)) {
+      summary.skipped += 1;
+      summary.away += 1;
+      continue;
+    }
     const snap = r.snapshot;
     // A team member's tracked listings re-check on their owner's credit.
     const payer = await payerFor(r.user_id);
-    if (payer.suspended) {
+    if (payer.suspended || !(await canPay(payer.payerId))) {
       summary.skipped += 1;
       continue;
-    }
-    if (isEnforcing()) {
-      const bal = await getBalance(payer.payerId).catch(() => null);
-      if (bal && bal.spendableBasePence <= 0) {
-        summary.skipped += 1;
-        continue;
-      }
     }
     const quick = await runMetered({ userId: payer.payerId, memberId: payer.memberId, admin: false, action: "cron:recheck", actionId: newActionId() }, () =>
       quickEstimate(
@@ -219,54 +232,81 @@ export async function GET(request: Request) {
       summary.ranOutOfTime = true;
       break;
     }
-    if (!first) await sleep(1000);
-    first = false;
-    // One page fetch however many members watch it; the nominal cost goes to the first.
-    const watcher = members[0]?.user_id ?? null;
-    // A team member's share is billed to their owner, like everything else they do.
-    const pagePayer = watcher ? await payerFor(watcher) : null;
-    const res = await runMetered({ userId: pagePayer && !pagePayer.suspended ? pagePayer.payerId : null, memberId: pagePayer?.memberId ?? null, admin: false, action: "cron:recheck", actionId: newActionId() }, () => resolveListing(url, { refresh: true }));
-    summary.fetched += 1;
-    if (!res.ok && res.code === "paused") {
-      summary.paused = true;
-      break;
-    }
-    let next: { price?: ListingSnapshot["price"]; status?: ListingStatus } | null = null;
-    let fresh: ListingSnapshot | null = null;
-    if (res.ok) {
-      fresh = res.snapshot;
-      next = { price: fresh.price, status: fresh.status };
-    } else if (res.code === "not_found") {
-      next = { status: "removed" };
-      summary.removed += 1;
-    } else {
-      summary.skipped += 1;
-      // Blocked / unreadable: nothing to record, but move the rows to the back
-      // of the queue so one bad page cannot pin it. They are retried tomorrow.
-      deferred.push(...members.map((r) => r.id));
-      continue;
-    }
-    for (const r of members) {
-      const prev = { price: r.snapshot.price, status: r.listing_status ?? r.snapshot.status };
-      const history = parseHistory(r.price_history);
-      const entry = diffListing(prev, next, nowIso);
-      const update: Record<string, unknown> = { rechecked_at: nowIso };
-      if (fresh) update.snapshot = { ...fresh, fetchedAt: r.snapshot.fetchedAt ?? fresh.fetchedAt };
-      if (entry) {
-        history.push(entry);
-        update.price_history = history;
-        if (next.status) update.listing_status = next.status;
-        if (fresh?.price && entry.previousAmount !== null) {
-          const deal = dealAtNewPrice(r.quick_estimate, r.deal, fresh.price, r.kind, fresh.bedrooms ?? r.snapshot.bedrooms ?? null);
-          if (deal) {
-            update.deal = deal;
-            if (r.quick_estimate) update.quick_estimate = { ...r.quick_estimate, deal };
-          }
+    // Batch 21 (B10): nothing thrown inside one URL (a refused preflight once
+    // CREDIT_ENFORCE is on, a provider error) ends the run: its rows go to
+    // the back of the queue and the next URL is read.
+    try {
+      // One page fetch however many members watch it; the nominal cost goes to
+      // the first watcher who can carry it (src/lib/listing/recheck-billing.ts):
+      // not away, not a paused seat, not at £0 under enforcement.
+      const watchers: RecheckWatcher[] = [];
+      for (const m of members) {
+        if (away.has(m.user_id)) {
+          watchers.push({ userId: m.user_id, away: true, suspended: false, payerId: m.user_id, memberId: null, canPay: false });
+          continue;
         }
-        summary.changed += 1;
+        // A team member's share is billed to their owner, like everything else they do.
+        const payer = await payerFor(m.user_id);
+        watchers.push({ userId: m.user_id, away: false, suspended: payer.suspended, payerId: payer.payerId, memberId: payer.memberId, canPay: payer.suspended ? false : await canPay(payer.payerId) });
       }
-      const { error: upErr } = await admin.from("checked_listings").update(update).eq("id", r.id);
-      if (upErr) console.error("[recheck] update failed:", upErr.message);
+      const bill = recheckBillFor(watchers);
+      if (!bill) {
+        // Nobody to bill today: the rows wait at the back of the queue.
+        summary.skipped += 1;
+        summary.unbilled += 1;
+        deferred.push(...members.map((r) => r.id));
+        continue;
+      }
+      if (!first) await sleep(1000);
+      first = false;
+      const res = await runMetered({ userId: bill.userId, memberId: bill.memberId, admin: false, action: "cron:recheck", actionId: newActionId() }, () => resolveListing(url, { refresh: true }));
+      summary.fetched += 1;
+      if (!res.ok && res.code === "paused") {
+        summary.paused = true;
+        break;
+      }
+      let next: { price?: ListingSnapshot["price"]; status?: ListingStatus } | null = null;
+      let fresh: ListingSnapshot | null = null;
+      if (res.ok) {
+        fresh = res.snapshot;
+        next = { price: fresh.price, status: fresh.status };
+      } else if (res.code === "not_found") {
+        next = { status: "removed" };
+        summary.removed += 1;
+      } else {
+        summary.skipped += 1;
+        // Blocked / unreadable: nothing to record, but move the rows to the back
+        // of the queue so one bad page cannot pin it. They are retried tomorrow.
+        deferred.push(...members.map((r) => r.id));
+        continue;
+      }
+      for (const r of members) {
+        const prev = { price: r.snapshot.price, status: r.listing_status ?? r.snapshot.status };
+        const history = parseHistory(r.price_history);
+        const entry = diffListing(prev, next, nowIso);
+        const update: Record<string, unknown> = { rechecked_at: nowIso };
+        if (fresh) update.snapshot = { ...fresh, fetchedAt: r.snapshot.fetchedAt ?? fresh.fetchedAt };
+        if (entry) {
+          history.push(entry);
+          update.price_history = history;
+          if (next.status) update.listing_status = next.status;
+          if (fresh?.price && entry.previousAmount !== null) {
+            const deal = dealAtNewPrice(r.quick_estimate, r.deal, fresh.price, r.kind, fresh.bedrooms ?? r.snapshot.bedrooms ?? null);
+            if (deal) {
+              update.deal = deal;
+              if (r.quick_estimate) update.quick_estimate = { ...r.quick_estimate, deal };
+            }
+          }
+          summary.changed += 1;
+        }
+        const { error: upErr } = await admin.from("checked_listings").update(update).eq("id", r.id);
+        if (upErr) console.error("[recheck] update failed:", upErr.message);
+      }
+    } catch (err) {
+      summary.skipped += 1;
+      summary.errors += 1;
+      console.error(`[recheck] one listing ${err instanceof InsufficientCreditError ? "refused for credit" : "failed"}; its rows wait for tomorrow:`, (err as Error)?.message ?? err);
+      deferred.push(...members.map((r) => r.id));
     }
   }
 

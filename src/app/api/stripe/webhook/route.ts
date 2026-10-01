@@ -11,6 +11,11 @@ import { SECRET_VARS, verifyWebhook, webhookSecrets } from "@/lib/billing/webhoo
 // Runs on Node (needs the raw request body for signature verification).
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Batch 21 (B23): the handler awaits emails and Stripe; every cron sets the same.
+export const maxDuration = 60;
+
+/** How long a claimed event is assumed to be still running (the function limit, with slack). */
+const IN_FLIGHT_MS = 2 * 60_000;
 
 export async function POST(request: Request) {
   const secretKey = process.env.STRIPE_SECRET_KEY;
@@ -48,9 +53,19 @@ export async function POST(request: Request) {
     console.error("[stripe/webhook] could not record event:", claimError.message);
   }
   if (!claimed && claimError?.code === "23505") {
-    const { data: prior } = await admin.from("stripe_events").select("processed_at").eq("id", event.id).maybeSingle();
+    const { data: prior } = await admin.from("stripe_events").select("processed_at, received_at, error").eq("id", event.id).maybeSingle();
     if (prior?.processed_at) return Response.json({ received: true, duplicate: true });
-    // Claimed earlier but never finished (handler error): fall through and retry.
+    // Batch 21 (B1): claimed moments ago and not failed, so the first delivery
+    // is still running (a second endpoint, a fast redelivery). Running the
+    // handler twice at once let the second run zero the plan credit the first
+    // had just granted. Refused instead: Stripe retries later, by which time
+    // the first run has finished and the duplicate is skipped above.
+    const receivedAt = prior?.received_at ? Date.parse(String(prior.received_at)) : NaN;
+    if (!prior?.error && Number.isFinite(receivedAt) && Date.now() - receivedAt < IN_FLIGHT_MS) {
+      console.warn(`[stripe/webhook] ${event.id} is still being handled by an earlier delivery; asking Stripe to retry`);
+      return new Response("Duplicate delivery while the first is in flight; retry later.", { status: 409 });
+    }
+    // Claimed earlier but never finished (handler error, or a run cut off): fall through and retry.
   }
 
   try {

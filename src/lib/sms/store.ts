@@ -1,4 +1,5 @@
 import 'server-only';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 
 /**
  * Reads and writes for the SMS tables (supabase/schema.sql, "Batch 8: sms").
@@ -100,7 +101,10 @@ export async function saveVerifiedNumber(admin: Admin, userId: string, phone: st
 export async function setContactEnabled(admin: Admin, userId: string, on: boolean): Promise<boolean> {
   const { data, error } = await admin.from('sms_contacts').update({ enabled: on, updated_at: new Date().toISOString() }).eq('user_id', userId).select('user_id');
   if (error) console.error('[sms] enable write failed:', error.message);
-  return !error && (data?.length ?? 0) === 1;
+  const ok = !error && (data?.length ?? 0) === 1;
+  // Batch 21 (D6): Monday's SMS OK follows within ten minutes.
+  if (ok) await queueFunnelSync(userId, 'notifications');
+  return ok;
 }
 
 /** STOP: every account with this number stops receiving, at once. Returns how many rows changed. */
@@ -115,6 +119,8 @@ export async function stopNumber(admin: Admin, phone: string, source: 'keyword' 
     console.error('[sms] stop write failed:', error.message);
     return null;
   }
+  // Batch 21 (D6): every account on the number: Monday's SMS OK follows within ten minutes.
+  for (const r of (data ?? []) as { user_id: string }[]) await queueFunnelSync(r.user_id, 'notifications');
   return data?.length ?? 0;
 }
 
@@ -130,6 +136,7 @@ export async function startNumber(admin: Admin, phone: string, now: Date = new D
     console.error('[sms] start write failed:', error.message);
     return null;
   }
+  for (const r of (data ?? []) as { user_id: string }[]) await queueFunnelSync(r.user_id, 'notifications');
   return data?.length ?? 0;
 }
 

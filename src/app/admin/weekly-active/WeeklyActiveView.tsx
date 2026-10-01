@@ -35,6 +35,7 @@ const EXCLUSION_LABELS: Record<ExcludedRow["reason"], string> = {
   admin: "Admin (ADMIN_EMAILS)",
   staff: "Stayful staff (@stayful.co.uk)",
   manual: "Switched off here",
+  never_signed_in: "Never signed in (unconfirmed sign-up)",
 };
 
 const KIND_NAMES = Object.keys(ACTIVITY_KINDS) as ActivityKind[];

@@ -177,8 +177,15 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
     }
     row = data as DealOpenRow;
   } else {
-    const { error } = await admin.from('deal_opens').update({ charged_base_pence: pence, verified_via: input.adminUser ? 'admin' : decision.verifiedVia, band_at_open: verifiedDeal.band, annual_profit_at_open: verifiedDeal.annual_profit, fetched: row.fetched || fetched, opened_at: now.toISOString() }).eq('id', row.id);
-    if (error) console.error('[marketplace] pending refresh failed:', error.message);
+    // Batch 21 (B26): the refresh is conditional on the row's opened_at, so of
+    // two requests taking over the same stale pending row only one goes on to
+    // debit; the other finds it refreshed and stands down.
+    const { data: taken, error } = await admin.from('deal_opens').update({ charged_base_pence: pence, verified_via: input.adminUser ? 'admin' : decision.verifiedVia, band_at_open: verifiedDeal.band, annual_profit_at_open: verifiedDeal.annual_profit, fetched: row.fetched || fetched, opened_at: now.toISOString() }).eq('id', row.id).eq('opened_at', row.opened_at).select('id');
+    if (error) {
+      console.error('[marketplace] pending refresh failed:', error.message);
+      return { ok: false, code: 'failed' };
+    }
+    if ((taken?.length ?? 0) === 0) return { ok: false, code: 'failed' };
   }
 
   let transactionId: number | null = null;

@@ -34,7 +34,7 @@ export async function generateMetadata({ params }: { params: Promise<{ token: st
     title: `Your property report · ${name}`,
     description: `Your short-term let income analysis from ${name}.`,
     robots: { index: false, follow: false },
-    icons: lead?.brand.logoUrl ? { icon: lead.brand.logoUrl } : { icon: "/favicon.ico" },
+    icons: lead?.brand.logoUrl ? { icon: lead.brand.logoUrl } : { icon: "/icon-neutral.svg" },
   };
 }
 

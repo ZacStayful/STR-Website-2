@@ -180,6 +180,32 @@ export async function expirePlanGrants(userId: string, reason: string): Promise<
   return Number(data ?? 0) || 0;
 }
 
+/**
+ * A new plan cycle in one transaction (Batch 21, B1): under the member's row
+ * lock the source_ref is checked, the open plan grants are expired and the
+ * new one is made, so a second, concurrent delivery of the same invoice can
+ * never zero the credit the first one granted. A replay returns the existing
+ * grant with `created: false` and expires nothing.
+ */
+export async function planCycle(
+  userId: string,
+  amountPence: number,
+  opts: { expiresAt?: string | Date | null; sourceRef: string; description?: string | null },
+): Promise<{ grantId: string | null; created: boolean; expired: number }> {
+  if (!hasServiceRole()) return { grantId: null, created: false, expired: 0 };
+  const expires = opts.expiresAt instanceof Date ? opts.expiresAt.toISOString() : (opts.expiresAt ?? null);
+  const { data, error } = await (await adminClient()).rpc('credit_plan_cycle', {
+    p_user: userId,
+    p_amount: round4(amountPence),
+    p_expires_at: expires,
+    p_source_ref: opts.sourceRef,
+    p_description: opts.description ?? null,
+  });
+  if (error) throwRpc(error, 'credit_plan_cycle');
+  const d = (data ?? {}) as { grant_id?: string | null; created?: boolean; expired?: number };
+  return { grantId: d.grant_id ?? null, created: Boolean(d.created), expired: Number(d.expired ?? 0) || 0 };
+}
+
 export async function expireDueGrants(): Promise<number> {
   if (!hasServiceRole()) return 0;
   const { data, error } = await (await adminClient()).rpc('credit_expire_due');

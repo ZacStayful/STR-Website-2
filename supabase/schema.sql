@@ -106,12 +106,13 @@ update public.profiles
 
 -- `plan` only ever holds 'free' or 'pro' (the paid tier is plan_code). The
 -- check is inline in the create-table block above; this adds it to a table
--- created before it was.
+-- created before it was. Batch 21 (A15): every check constraint in this file
+-- is dropped and re-added rather than guarded by its name, so a changed
+-- value list applies on re-run instead of leaving the old one in place.
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.profiles'::regclass and conname = 'profiles_plan_check') then
-    alter table public.profiles add constraint profiles_plan_check check (plan in ('free', 'pro'));
-  end if;
+  alter table public.profiles drop constraint if exists profiles_plan_check;
+  alter table public.profiles add constraint profiles_plan_check check (plan in ('free', 'pro'));
 end $$;
 
 alter table public.profiles enable row level security;
@@ -121,18 +122,13 @@ create policy "Users can view own profile"
   on public.profiles for select
   using (auth.uid() = id);
 
--- On the live project from before this file tracked it. Every row is made by
--- the on_auth_user_created trigger below, so the primary key refuses a
--- member's own insert unless their row is missing.
+-- Batch 21 (A1): members never insert their own row. Every row is made by the
+-- on_auth_user_created trigger below (security definer) or by the service
+-- role; the old insert policy let a member whose row was missing create one
+-- with any billing column set. Dropped and not re-created.
 drop policy if exists "Users can insert own profile" on public.profiles;
-create policy "Users can insert own profile"
-  on public.profiles for insert
-  with check (auth.uid() = id);
-
-drop policy if exists "Users can update own profile" on public.profiles;
-create policy "Users can update own profile"
-  on public.profiles for update
-  using (auth.uid() = id);
+-- Batch 21 (A11): "Users can update own profile" is defined once, below the
+-- column grants, with both halves.
 
 -- Auto-create a profile row whenever a new auth user is created.
 -- Pulls full_name and mobile out of raw_user_meta_data — these are set
@@ -144,12 +140,16 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, email, full_name, mobile)
+  -- Batch 21 (A17): created_at is the auth user's, not the trigger's clock,
+  -- so every date cut-off (the starter-pack cutover, the welcome backfill,
+  -- Monday's "Signed up") keys on when the account was made.
+  insert into public.profiles (id, email, full_name, mobile, created_at)
   values (
     new.id,
     new.email,
     nullif(new.raw_user_meta_data->>'full_name', ''),
-    nullif(new.raw_user_meta_data->>'mobile', '')
+    nullif(new.raw_user_meta_data->>'mobile', ''),
+    coalesce(new.created_at, now())
   )
   on conflict (id) do nothing;
   return new;
@@ -429,10 +429,13 @@ alter table public.profiles add column if not exists cancel_reason_at timestampt
 -- grant on a column that does not exist fails the whole statement.
 alter table public.profiles add column if not exists sourcing_opted_out_at timestamptz;
 revoke update on public.profiles from anon, authenticated;
+-- Batch 21 (A4): monday_item_id is not in this list any more. The Monday
+-- fallbacks (src/app/estimate/layout.tsx, src/lib/auth/sign-in-hooks.ts)
+-- write it with the service role, so a member can no longer re-point their
+-- own row at another Monday item.
 grant update (
   full_name,
   mobile,
-  monday_item_id,
   last_seen_at,
   market_goals,
   market_goals_updated_at,
@@ -443,8 +446,8 @@ grant update (
   updated_at
 ) on public.profiles to authenticated;
 
--- The update policy had no `with check`, so a row could be re-pointed at
--- another user id. Re-create it with both halves.
+-- The one definition of the update policy (Batch 21, A11): both halves, so a
+-- row can never be re-pointed at another user id.
 drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile"
   on public.profiles for update
@@ -458,7 +461,7 @@ create policy "Users can update own profile"
 --   plan (subscription, expires at cycle end) → welcome → top-up / adjustment.
 -- Each grant carries a spend_rate frozen at creation: plan and welcome
 -- credit spend at 1.0 (×5 overall), top-ups / promo / referral / admin
--- adjustments at 1.5 (×7.5 overall). Displayed balances are always grant
+-- adjustments at 1.3 (×6.5 overall; 1.5 until Batch 10). Displayed balances are always grant
 -- pence (what was paid); sufficiency checks use "spendable base pence" =
 -- Σ remaining ÷ spend_rate minus open reservations.
 -- All mutations go through the security-definer functions below, which take
@@ -477,6 +480,14 @@ create table if not exists public.billing_plans (
   active boolean not null default true
 );
 alter table public.billing_plans add column if not exists perks jsonb not null default '{}'::jsonb;
+-- Batch 21 (A2, A3): this file is the source of truth for the four plans.
+-- Change a name, price or credit here and re-run it: the seed is `on conflict
+-- do update` on purpose, and nothing else edits these rows (never change them
+-- by hand in the dashboard, a re-run would put them back). monthly_credit_pence
+-- is the credit for a billing period that began BEFORE new_pricing_from; a
+-- period from that date on is granted plan_credit_pence (billing_settings,
+-- Batch 10) instead, so the account pages must read the member's live grant
+-- rather than this column (review finding A3; branch 21h).
 insert into public.billing_plans (code, name, price_pence, interval, monthly_credit_pence, perks, sort) values
   ('starter',    'Starter',      1900,  'month', 1900,  '{"sourcingCadence":"daily","priorityRefresh":false,"phoneSupport":false,"quarterlyBriefing":false}', 1),
   ('pro',        'Pro',          3999,  'month', 5000,  '{"sourcingCadence":"daily","priorityRefresh":true,"phoneSupport":false,"quarterlyBriefing":false}', 2),
@@ -525,7 +536,9 @@ insert into public.billing_settings (key, value) values
   -- Kept apart from base_markup so repricing leads cannot reprice the
   -- members-only analyser by accident.
   ('funnel_markup', '2'),
-  ('spend_rates', '{"plan":1,"welcome":1,"topup":1.5,"adjustment":1.5}'),
+  -- Batch 21 (A10): seeded at the rate in force since Batch 10 (1.3), and the
+  -- SQL fallback below says the same, so the file states one rate.
+  ('spend_rates', '{"plan":1,"welcome":1,"topup":1.3,"adjustment":1.3}'),
   ('topup_presets_pence', '[1000,2500,5000]'),
   ('referral_pence', '1000')
 on conflict (key) do nothing;
@@ -696,7 +709,7 @@ $$;
 
 create or replace function public.credit_spend_rate(p_kind text)
 returns numeric language sql security definer set search_path = public stable as $$
-  select coalesce((select (value ->> p_kind)::numeric from billing_settings where key = 'spend_rates'), case when p_kind in ('plan', 'welcome') then 1 else 1.5 end);
+  select coalesce((select (value ->> p_kind)::numeric from billing_settings where key = 'spend_rates'), case when p_kind in ('plan', 'welcome') then 1 else 1.3 end);
 $$;
 
 create or replace function public.credit_available(p_user uuid)
@@ -969,6 +982,12 @@ begin
   if c.kind = 'referral' and exists (select 1 from credit_code_redemptions r join credit_codes cc on cc.code = r.code where r.user_id = p_user and cc.kind = 'referral') then
     raise exception 'referral_already_used' using errcode = 'P0403';
   end if;
+  -- Batch 21 (B9): an account whose welcome credit was withheld (a disposable
+  -- email, a re-used mobile, a team seat) earns no referral credit and pays
+  -- the code's owner nothing; referral codes were the one abuse check left open.
+  if c.kind = 'referral' and exists (select 1 from profiles where id = p_user and welcome_withheld_reason is not null) then
+    raise exception 'referral_withheld' using errcode = 'P0403';
+  end if;
   insert into credit_code_redemptions (code, user_id) values (v_code, p_user);
   update credit_codes set redeemed_count = redeemed_count + 1 where code = v_code;
   v_grant := credit_grant(p_user, 'adjustment', c.amount_pence, null, 'code:' || v_code || ':' || p_user::text,
@@ -1000,14 +1019,10 @@ revoke execute on function public.credit_redeem_code(uuid, text) from public, an
 -- this file must never hand £20 to a newer account, which would skip the abuse
 -- checks, a team seat's "no welcome credit" and, from Batch 20, the starter
 -- pack that replaces the welcome credit for new members.
-do $$
-declare p record;
-begin
-  for p in select id from profiles where profiles.created_at < timestamptz '2026-09-13 00:00:00+00' and not exists (select 1 from credit_grants g where g.user_id = profiles.id and g.kind = 'welcome') loop
-    perform credit_grant(p.id, 'welcome', credit_setting_num('welcome_grant_pence', 2000), null, 'welcome:' || p.id::text, 'Welcome credit');
-    update profiles set welcome_checked_at = now() where id = p.id;
-  end loop;
-end $$;
+-- Batch 21 (A16): the loop itself now runs in the Batch 21 section at the end
+-- of this file, where welcome_withheld_reason and team_members exist: an
+-- account whose credit was withheld, or a team seat, is never granted by a
+-- re-run.
 
 -- =========================
 -- Market Explorer: planning signals (direct-booking "contractor projects")
@@ -2016,15 +2031,9 @@ alter table public.profiles add column if not exists daily_notice_sent_at timest
 -- =========================
 -- Batch 2: signup questions and nav
 -- =========================
--- onboarding_skips: how many times the member has tapped "Skip for now" on
--- the welcome questions (/welcome). The screen stops appearing after 3 (see
--- src/lib/onboarding/status.ts); answering writes market_goals, which ends
--- it for good. Written by the member's own session, so it needs a column
--- grant like market_goals above. Deliberately NOT in ACCESS_COLUMNS: if this
--- section has not been run yet, /welcome fails closed (straight to /deals)
--- and nothing else is affected.
-alter table public.profiles add column if not exists onboarding_skips smallint not null default 0;
-grant update (onboarding_skips) on public.profiles to authenticated;
+-- onboarding_skips (Batch 2's "Skip for now" counter) was dropped in Batch 21
+-- (A7): nothing has read or written it since the welcome quiz replaced that
+-- screen. See the Batch 21 section at the end of this file.
 
 -- =========================
 -- Batch 3: deal card
@@ -2129,8 +2138,9 @@ revoke all on public.checklist_steps from anon, authenticated;
 -- there first, then mirror it here.
 -- This app only reads analyser_reports (the market explorer, planning
 -- signals and the internal broker provider). The live project also has the
--- `allotment`, `outreach` and `private` schemas, which belong to other tools
--- and are not tracked in this file. `outreach` (the n8n WhatsApp outreach
+-- `allotment` and `outreach` schemas, which belong to other tools and are not
+-- tracked in this file (`private` is this file's: it creates the schema and
+-- the private.* helpers above; Batch 21, A18). `outreach` (the n8n WhatsApp outreach
 -- tool) is service_role only: RLS on every table, its v_due_* views
 -- security_invoker, nothing granted to anon or authenticated (set live by the
 -- `security_advisor_fixes` migration).
@@ -2409,12 +2419,10 @@ create index if not exists notification_sends_day_idx on public.notification_sen
 create unique index if not exists notification_sends_unsub_uidx on public.notification_sends (unsubscribe_token) where unsubscribe_token is not null;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.notification_sends'::regclass and conname = 'notification_sends_slot_check') then
-    alter table public.notification_sends add constraint notification_sends_slot_check check (slot in ('daily', 'weekly'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.notification_sends'::regclass and conname = 'notification_sends_status_check') then
-    alter table public.notification_sends add constraint notification_sends_status_check check (status in ('claimed', 'sending', 'sent', 'failed'));
-  end if;
+  alter table public.notification_sends drop constraint if exists notification_sends_slot_check;
+  alter table public.notification_sends add constraint notification_sends_slot_check check (slot in ('daily', 'weekly'));
+  alter table public.notification_sends drop constraint if exists notification_sends_status_check;
+  alter table public.notification_sends add constraint notification_sends_status_check check (status in ('claimed', 'sending', 'sent', 'failed'));
 end $$;
 alter table public.notification_sends enable row level security;  -- no policies: service role only
 revoke all on public.notification_sends from anon, authenticated;
@@ -2485,12 +2493,10 @@ create index if not exists deal_alerts_pending_idx on public.deal_alerts (user_i
 create index if not exists deal_alerts_user_idx on public.deal_alerts (user_id, created_at desc);
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.deal_alerts'::regclass and conname = 'deal_alerts_type_check') then
-    alter table public.deal_alerts add constraint deal_alerts_type_check check (alert_type in ('price_drop', 'back_on_market', 'nearly_gone', 'gone'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.deal_alerts'::regclass and conname = 'deal_alerts_source_check') then
-    alter table public.deal_alerts add constraint deal_alerts_source_check check (source in ('pipeline', 'marketplace'));
-  end if;
+  alter table public.deal_alerts drop constraint if exists deal_alerts_type_check;
+  alter table public.deal_alerts add constraint deal_alerts_type_check check (alert_type in ('price_drop', 'back_on_market', 'nearly_gone', 'gone'));
+  alter table public.deal_alerts drop constraint if exists deal_alerts_source_check;
+  alter table public.deal_alerts add constraint deal_alerts_source_check check (source in ('pipeline', 'marketplace'));
 end $$;
 alter table public.deal_alerts enable row level security;  -- no policies: service role only
 revoke all on public.deal_alerts from anon, authenticated;
@@ -2713,15 +2719,12 @@ create index if not exists sms_messages_phone_idx on public.sms_messages (phone_
 create index if not exists sms_messages_unpriced_idx on public.sms_messages (created_at) where twilio_sid is not null and price is null;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.sms_messages'::regclass and conname = 'sms_messages_direction_check') then
-    alter table public.sms_messages add constraint sms_messages_direction_check check (direction in ('outbound', 'inbound'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.sms_messages'::regclass and conname = 'sms_messages_kind_check') then
-    alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.sms_messages'::regclass and conname = 'sms_messages_outcome_check') then
-    alter table public.sms_messages add constraint sms_messages_outcome_check check (outcome in ('pending', 'accepted', 'refused', 'unknown', 'dry_run', 'received'));
-  end if;
+  alter table public.sms_messages drop constraint if exists sms_messages_direction_check;
+  alter table public.sms_messages add constraint sms_messages_direction_check check (direction in ('outbound', 'inbound'));
+  alter table public.sms_messages drop constraint if exists sms_messages_kind_check;
+  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword'));
+  alter table public.sms_messages drop constraint if exists sms_messages_outcome_check;
+  alter table public.sms_messages add constraint sms_messages_outcome_check check (outcome in ('pending', 'accepted', 'refused', 'unknown', 'dry_run', 'received'));
 end $$;
 alter table public.sms_messages enable row level security;  -- no policies: service role only
 revoke all on public.sms_messages from anon, authenticated;
@@ -3010,10 +3013,15 @@ grant execute on function public.activity_visit_touch(jsonb) to service_role;
 --   now         default now
 --   qualifying  kinds that count towards weekly active
 --   counted     kinds that count as actions
+-- Batch 21: members carry signed_in (auth.users.last_sign_in_at is set), so
+-- a sign-up that never confirmed its email can be left out of the base (E3);
+-- events a preview deployment stamped with extras.env never count (E27).
+-- Security definer so it can read auth.users.
 create or replace function public.activity_weekly_facts(p jsonb)
 returns jsonb
 language plpgsql
 stable
+security definer
 set search_path = ''
 as $$
 declare
@@ -3054,10 +3062,12 @@ begin
         'sub_ended', pr.subscription_ended_at,
         'paused_from', pr.subscription_paused_from,
         'paused_until', pr.subscription_paused_until,
-        'owner', tm.owner_id
+        'owner', tm.owner_id,
+        'signed_in', (au.last_sign_in_at is not null)
       ) order by pr.created_at), '[]'::jsonb)
       from public.profiles pr
       left join public.team_members tm on tm.member_id = pr.id
+      left join auth.users au on au.id = pr.id
     ),
     'excluded', (
       select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'reason', x.reason)), '[]'::jsonb)
@@ -3092,7 +3102,7 @@ begin
       from (
         select e.user_id, jsonb_agg(distinct (e.occurred_at at time zone 'Europe/London')::date) as days
         from public.activity_events e
-        where e.occurred_at >= v_t0 - interval '31 days' and e.occurred_at < v_t1 and e.kind = any(v_qual)
+        where e.occurred_at >= v_t0 - interval '31 days' and e.occurred_at < v_t1 and e.kind = any(v_qual) and not (e.extras ? 'env')
         group by e.user_id
       ) q
     ),
@@ -3104,7 +3114,7 @@ begin
                count(*) filter (where e.kind = any(v_counted)) as c,
                count(*) filter (where e.kind = 'report_run') as r
         from public.activity_events e
-        where e.occurred_at >= v_t0 and e.occurred_at < v_t1
+        where e.occurred_at >= v_t0 and e.occurred_at < v_t1 and not (e.extras ? 'env')
         group by 1, 2
       ) w
     ),
@@ -3140,7 +3150,7 @@ begin
                      and r.occurred_at >= e.occurred_at and r.occurred_at < e.occurred_at + interval '14 days'
                  ) as reported
           from public.activity_events e
-          where e.kind = 'deal_open' and e.deal_id is not null and e.occurred_at >= v_t0 and e.occurred_at < v_t1
+          where e.kind = 'deal_open' and e.deal_id is not null and e.occurred_at >= v_t0 and e.occurred_at < v_t1 and not (e.extras ? 'env')
         ) op
         group by 1, 2
       ) o
@@ -3170,7 +3180,7 @@ begin
                      (((((e.occurred_at - interval '7 hours') at time zone 'UTC')::date)::timestamp + interval '7 hours') at time zone 'UTC') as day_start,
                      min(e.occurred_at) as first_view
               from public.activity_events e
-              where e.kind = 'today_view' and e.occurred_at >= v_t0 and e.occurred_at < v_t1
+              where e.kind = 'today_view' and e.occurred_at >= v_t0 and e.occurred_at < v_t1 and not (e.extras ? 'env')
               group by 1, 2, 3
             ) vw
             left join public.today_selections ts on ts.user_id = vw.user_id and ts.day = vw.td
@@ -3193,7 +3203,7 @@ begin
       from (
         select distinct on (e.user_id) e.user_id, e.kind, e.occurred_at
         from public.activity_events e
-        where e.kind = any(v_counted) or e.kind = any(v_qual)
+        where (e.kind = any(v_counted) or e.kind = any(v_qual)) and not (e.extras ? 'env')
         order by e.user_id, e.occurred_at desc
       ) la
     )
@@ -3721,9 +3731,8 @@ create table if not exists public.search_profiles (
 );
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.search_profiles'::regclass and conname = 'search_profiles_name_check') then
-    alter table public.search_profiles add constraint search_profiles_name_check check (char_length(btrim(name)) between 1 and 40);
-  end if;
+  alter table public.search_profiles drop constraint if exists search_profiles_name_check;
+  alter table public.search_profiles add constraint search_profiles_name_check check (char_length(btrim(name)) between 1 and 40);
 end $$;
 create unique index if not exists search_profiles_active_uidx on public.search_profiles (user_id) where is_active and deleted_at is null;
 create unique index if not exists search_profiles_name_uidx on public.search_profiles (user_id, lower(btrim(name))) where deleted_at is null;
@@ -4082,12 +4091,10 @@ create index if not exists demand_searches_reserved_idx on public.demand_searche
 create unique index if not exists demand_searches_daily_uidx on public.demand_searches (day, postcode_area, kind) where status in ('reserved', 'answered');
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.demand_searches'::regclass and conname = 'demand_searches_kind_check') then
-    alter table public.demand_searches add constraint demand_searches_kind_check check (kind in ('sale', 'rent'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.demand_searches'::regclass and conname = 'demand_searches_status_check') then
-    alter table public.demand_searches add constraint demand_searches_status_check check (status in ('reserved', 'answered', 'unavailable', 'failed'));
-  end if;
+  alter table public.demand_searches drop constraint if exists demand_searches_kind_check;
+  alter table public.demand_searches add constraint demand_searches_kind_check check (kind in ('sale', 'rent'));
+  alter table public.demand_searches drop constraint if exists demand_searches_status_check;
+  alter table public.demand_searches add constraint demand_searches_status_check check (status in ('reserved', 'answered', 'unavailable', 'failed'));
 end $$;
 alter table public.demand_searches enable row level security;  -- no policies: service role only
 revoke all on public.demand_searches from anon, authenticated;
@@ -4609,21 +4616,16 @@ create index if not exists feedback_reports_duplicate_idx on public.feedback_rep
 create index if not exists feedback_reports_unemailed_idx on public.feedback_reports (created_at) where admin_emailed_at is null;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_kind_check') then
-    alter table public.feedback_reports add constraint feedback_reports_kind_check check (kind in ('bug', 'feature'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_status_check') then
-    alter table public.feedback_reports add constraint feedback_reports_status_check check (status in ('new', 'planned', 'done', 'not_doing'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_body_check') then
-    alter table public.feedback_reports add constraint feedback_reports_body_check check (char_length(body) between 1 and 2000);
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_message_check') then
-    alter table public.feedback_reports add constraint feedback_reports_message_check check (status_message is null or char_length(status_message) <= 200);
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_reports'::regclass and conname = 'feedback_reports_not_own_duplicate') then
-    alter table public.feedback_reports add constraint feedback_reports_not_own_duplicate check (duplicate_of is null or duplicate_of <> id);
-  end if;
+  alter table public.feedback_reports drop constraint if exists feedback_reports_kind_check;
+  alter table public.feedback_reports add constraint feedback_reports_kind_check check (kind in ('bug', 'feature'));
+  alter table public.feedback_reports drop constraint if exists feedback_reports_status_check;
+  alter table public.feedback_reports add constraint feedback_reports_status_check check (status in ('new', 'planned', 'done', 'not_doing'));
+  alter table public.feedback_reports drop constraint if exists feedback_reports_body_check;
+  alter table public.feedback_reports add constraint feedback_reports_body_check check (char_length(body) between 1 and 2000);
+  alter table public.feedback_reports drop constraint if exists feedback_reports_message_check;
+  alter table public.feedback_reports add constraint feedback_reports_message_check check (status_message is null or char_length(status_message) <= 200);
+  alter table public.feedback_reports drop constraint if exists feedback_reports_not_own_duplicate;
+  alter table public.feedback_reports add constraint feedback_reports_not_own_duplicate check (duplicate_of is null or duplicate_of <> id);
 end $$;
 alter table public.feedback_reports enable row level security;  -- no policies: service role only
 revoke all on public.feedback_reports from anon, authenticated;
@@ -4673,12 +4675,10 @@ create unique index if not exists feedback_status_emails_uidx on public.feedback
 create index if not exists feedback_status_emails_user_idx on public.feedback_status_emails (user_id);
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_status_emails'::regclass and conname = 'feedback_status_emails_status_check') then
-    alter table public.feedback_status_emails add constraint feedback_status_emails_status_check check (status in ('planned', 'done', 'not_doing'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.feedback_status_emails'::regclass and conname = 'feedback_status_emails_state_check') then
-    alter table public.feedback_status_emails add constraint feedback_status_emails_state_check check (state in ('claimed', 'sent', 'failed', 'skipped'));
-  end if;
+  alter table public.feedback_status_emails drop constraint if exists feedback_status_emails_status_check;
+  alter table public.feedback_status_emails add constraint feedback_status_emails_status_check check (status in ('planned', 'done', 'not_doing'));
+  alter table public.feedback_status_emails drop constraint if exists feedback_status_emails_state_check;
+  alter table public.feedback_status_emails add constraint feedback_status_emails_state_check check (state in ('claimed', 'sent', 'failed', 'skipped'));
 end $$;
 alter table public.feedback_status_emails enable row level security;  -- no policies: service role only
 revoke all on public.feedback_status_emails from anon, authenticated;
@@ -4780,21 +4780,17 @@ create table if not exists public.announcements (
 create index if not exists announcements_live_idx on public.announcements (published_at desc) where published_at is not null and unpublished_at is null;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_kind_check') then
-    alter table public.announcements add constraint announcements_kind_check check (kind in ('feature', 'fix'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_title_check') then
-    alter table public.announcements add constraint announcements_title_check check (char_length(title) between 1 and 80);
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_body_check') then
-    alter table public.announcements add constraint announcements_body_check check (char_length(body) between 1 and 300);
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.announcements'::regclass and conname = 'announcements_link_check') then
-    alter table public.announcements add constraint announcements_link_check check (
-      link_path is null
-      or (char_length(link_path) <= 300 and link_path ~ '^/[!-~]*$' and link_path !~ '^//' and strpos(link_path, E'\\') = 0)
-    );
-  end if;
+  alter table public.announcements drop constraint if exists announcements_kind_check;
+  alter table public.announcements add constraint announcements_kind_check check (kind in ('feature', 'fix'));
+  alter table public.announcements drop constraint if exists announcements_title_check;
+  alter table public.announcements add constraint announcements_title_check check (char_length(title) between 1 and 80);
+  alter table public.announcements drop constraint if exists announcements_body_check;
+  alter table public.announcements add constraint announcements_body_check check (char_length(body) between 1 and 300);
+  alter table public.announcements drop constraint if exists announcements_link_check;
+  alter table public.announcements add constraint announcements_link_check check (
+    link_path is null
+    or (char_length(link_path) <= 300 and link_path ~ '^/[!-~]*$' and link_path !~ '^//' and strpos(link_path, E'\\') = 0)
+  );
 end $$;
 alter table public.announcements enable row level security;  -- no policies: service role only
 revoke all on public.announcements from anon, authenticated;
@@ -4913,15 +4909,12 @@ create index if not exists consent_records_visitor_idx on public.consent_records
 create index if not exists consent_records_user_idx on public.consent_records (user_id, created_at desc) where user_id is not null;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.consent_records'::regclass and conname = 'consent_records_choice_check') then
-    alter table public.consent_records add constraint consent_records_choice_check check (choice in ('accept', 'reject'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.consent_records'::regclass and conname = 'consent_records_source_check') then
-    alter table public.consent_records add constraint consent_records_source_check check (source in ('banner', 'signup', 'settings'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.consent_records'::regclass and conname = 'consent_records_version_check') then
-    alter table public.consent_records add constraint consent_records_version_check check (char_length(version) between 1 and 40);
-  end if;
+  alter table public.consent_records drop constraint if exists consent_records_choice_check;
+  alter table public.consent_records add constraint consent_records_choice_check check (choice in ('accept', 'reject'));
+  alter table public.consent_records drop constraint if exists consent_records_source_check;
+  alter table public.consent_records add constraint consent_records_source_check check (source in ('banner', 'signup', 'settings'));
+  alter table public.consent_records drop constraint if exists consent_records_version_check;
+  alter table public.consent_records add constraint consent_records_version_check check (char_length(version) between 1 and 40);
 end $$;
 alter table public.consent_records enable row level security;  -- no policies: service role only
 revoke all on public.consent_records from anon, authenticated;
@@ -4951,9 +4944,8 @@ create table if not exists public.member_consent (
 );
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.member_consent'::regclass and conname = 'member_consent_choice_check') then
-    alter table public.member_consent add constraint member_consent_choice_check check (choice in ('accept', 'reject'));
-  end if;
+  alter table public.member_consent drop constraint if exists member_consent_choice_check;
+  alter table public.member_consent add constraint member_consent_choice_check check (choice in ('accept', 'reject'));
 end $$;
 alter table public.member_consent enable row level security;  -- no policies: service role only
 revoke all on public.member_consent from anon, authenticated;
@@ -5033,20 +5025,17 @@ create table if not exists public.member_attribution (
 create index if not exists member_attribution_created_idx on public.member_attribution (created_at);
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.member_attribution'::regclass and conname = 'member_attribution_method_check') then
-    alter table public.member_attribution add constraint member_attribution_method_check check (signup_method in ('email', 'google'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.member_attribution'::regclass and conname = 'member_attribution_via_check') then
-    alter table public.member_attribution add constraint member_attribution_via_check check (captured_via in ('form', 'cookie', 'redirect', 'none'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.member_attribution'::regclass and conname = 'member_attribution_lengths_check') then
-    alter table public.member_attribution add constraint member_attribution_lengths_check check (
-      coalesce(char_length(utm_source), 0) <= 200 and coalesce(char_length(utm_medium), 0) <= 200
-      and coalesce(char_length(utm_campaign), 0) <= 200 and coalesce(char_length(utm_content), 0) <= 200
-      and coalesce(char_length(utm_term), 0) <= 200 and coalesce(char_length(fbclid), 0) <= 500
-      and coalesce(char_length(landing_path), 0) <= 200 and coalesce(char_length(referrer_domain), 0) <= 200
-    );
-  end if;
+  alter table public.member_attribution drop constraint if exists member_attribution_method_check;
+  alter table public.member_attribution add constraint member_attribution_method_check check (signup_method in ('email', 'google'));
+  alter table public.member_attribution drop constraint if exists member_attribution_via_check;
+  alter table public.member_attribution add constraint member_attribution_via_check check (captured_via in ('form', 'cookie', 'redirect', 'none'));
+  alter table public.member_attribution drop constraint if exists member_attribution_lengths_check;
+  alter table public.member_attribution add constraint member_attribution_lengths_check check (
+    coalesce(char_length(utm_source), 0) <= 200 and coalesce(char_length(utm_medium), 0) <= 200
+    and coalesce(char_length(utm_campaign), 0) <= 200 and coalesce(char_length(utm_content), 0) <= 200
+    and coalesce(char_length(utm_term), 0) <= 200 and coalesce(char_length(fbclid), 0) <= 500
+    and coalesce(char_length(landing_path), 0) <= 200 and coalesce(char_length(referrer_domain), 0) <= 200
+  );
 end $$;
 alter table public.member_attribution enable row level security;  -- no policies: service role only
 revoke all on public.member_attribution from anon, authenticated;
@@ -5092,15 +5081,12 @@ create index if not exists meta_conversions_created_idx on public.meta_conversio
 create index if not exists meta_conversions_event_idx on public.meta_conversions (event_id);
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.meta_conversions'::regclass and conname = 'meta_conversions_event_check') then
-    alter table public.meta_conversions add constraint meta_conversions_event_check check (event_name in ('CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.meta_conversions'::regclass and conname = 'meta_conversions_status_check') then
-    alter table public.meta_conversions add constraint meta_conversions_status_check check (server_status in ('held', 'pending', 'sending', 'sent', 'failed', 'skipped'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.meta_conversions'::regclass and conname = 'meta_conversions_note_check') then
-    alter table public.meta_conversions add constraint meta_conversions_note_check check (server_note is null or char_length(server_note) <= 300);
-  end if;
+  alter table public.meta_conversions drop constraint if exists meta_conversions_event_check;
+  alter table public.meta_conversions add constraint meta_conversions_event_check check (event_name in ('CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase'));
+  alter table public.meta_conversions drop constraint if exists meta_conversions_status_check;
+  alter table public.meta_conversions add constraint meta_conversions_status_check check (server_status in ('held', 'pending', 'sending', 'sent', 'failed', 'skipped'));
+  alter table public.meta_conversions drop constraint if exists meta_conversions_note_check;
+  alter table public.meta_conversions add constraint meta_conversions_note_check check (server_note is null or char_length(server_note) <= 300);
 end $$;
 alter table public.meta_conversions enable row level security;  -- no policies: service role only
 revoke all on public.meta_conversions from anon, authenticated;
@@ -5229,8 +5215,14 @@ create table if not exists public.starter_pack_purchases (
   consent_version text,
   refunded_pence integer not null default 0,
   created_at timestamptz not null default now(),
-  granted_at timestamptz
+  granted_at timestamptz,
+  -- Batch 21 (B44): when the card hold was captured (the money taken), stamped
+  -- by src/lib/starter-pack/grant-server.ts from Batch 21c. The 8-day sweep in
+  -- starter_pack_claim leaves a captured row alone, so a pack that was paid
+  -- for but not yet granted can never be re-sold or turned into a plain top-up.
+  captured_at timestamptz
 );
+alter table public.starter_pack_purchases add column if not exists captured_at timestamptz;
 create unique index if not exists starter_pack_user_uidx on public.starter_pack_purchases (user_id) where status in ('reserved', 'granted') and user_id is not null;
 create unique index if not exists starter_pack_email_uidx on public.starter_pack_purchases (email_key) where status in ('reserved', 'granted') and email_key is not null;
 create unique index if not exists starter_pack_mobile_uidx on public.starter_pack_purchases (mobile_key) where status in ('reserved', 'granted') and mobile_key is not null;
@@ -5238,12 +5230,10 @@ create unique index if not exists starter_pack_card_uidx on public.starter_pack_
 create index if not exists starter_pack_purchases_user_idx on public.starter_pack_purchases (user_id);
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.starter_pack_purchases'::regclass and conname = 'starter_pack_status_check') then
-    alter table public.starter_pack_purchases add constraint starter_pack_status_check check (status in ('reserved', 'granted', 'blocked', 'failed'));
-  end if;
-  if not exists (select 1 from pg_constraint where conrelid = 'public.starter_pack_purchases'::regclass and conname = 'starter_pack_blocked_by_check') then
-    alter table public.starter_pack_purchases add constraint starter_pack_blocked_by_check check (blocked_by is null or blocked_by in ('account', 'email', 'mobile', 'card', 'race'));
-  end if;
+  alter table public.starter_pack_purchases drop constraint if exists starter_pack_status_check;
+  alter table public.starter_pack_purchases add constraint starter_pack_status_check check (status in ('reserved', 'granted', 'blocked', 'failed'));
+  alter table public.starter_pack_purchases drop constraint if exists starter_pack_blocked_by_check;
+  alter table public.starter_pack_purchases add constraint starter_pack_blocked_by_check check (blocked_by is null or blocked_by in ('account', 'email', 'mobile', 'card', 'race'));
 end $$;
 alter table public.starter_pack_purchases enable row level security;  -- no policies: service role only
 revoke all on public.starter_pack_purchases from anon, authenticated;
@@ -5253,7 +5243,8 @@ revoke all on public.starter_pack_purchases from anon, authenticated;
 --     consent_at, consent_version}. Serialised on the member's profile row;
 -- the partial unique indexes settle two accounts racing with the same email,
 -- number or card. A reservation that was never captured stops blocking after
--- 8 days (Stripe drops an uncaptured hold after 7).
+-- 8 days (Stripe drops an uncaptured hold after 7); one marked captured_at
+-- (Batch 21, B44) keeps blocking until it is granted.
 -- Returns {status, replay, blocked_by}: replay is true when this PaymentIntent
 -- was already claimed (a redelivery), with the status it has.
 create or replace function public.starter_pack_claim(p jsonb)
@@ -5274,7 +5265,7 @@ begin
     return jsonb_build_object('status', v_row.status, 'replay', true, 'blocked_by', v_row.blocked_by);
   end if;
   update public.starter_pack_purchases set status = 'failed'
-   where status = 'reserved' and created_at < now() - interval '8 days';
+   where status = 'reserved' and captured_at is null and created_at < now() - interval '8 days';
   v_by := case
     when exists (select 1 from public.starter_pack_purchases s where s.user_id = v_user and s.status in ('reserved', 'granted')) then 'account'
     when v_email is not null and exists (select 1 from public.starter_pack_purchases s where s.email_key = v_email and s.status in ('reserved', 'granted')) then 'email'
@@ -5351,9 +5342,8 @@ create index if not exists member_payments_user_idx on public.member_payments (u
 create index if not exists member_payments_pi_idx on public.member_payments (payment_intent_id) where payment_intent_id is not null;
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.member_payments'::regclass and conname = 'member_payments_kind_check') then
-    alter table public.member_payments add constraint member_payments_kind_check check (kind in ('starter_pack', 'topup', 'auto_topup', 'subscription'));
-  end if;
+  alter table public.member_payments drop constraint if exists member_payments_kind_check;
+  alter table public.member_payments add constraint member_payments_kind_check check (kind in ('starter_pack', 'topup', 'auto_topup', 'subscription'));
 end $$;
 alter table public.member_payments enable row level security;  -- no policies: service role only
 revoke all on public.member_payments from anon, authenticated;
@@ -5426,9 +5416,8 @@ create table if not exists public.member_active_days_state (
 );
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.member_active_days_state'::regclass and conname = 'member_active_days_state_one_row') then
-    alter table public.member_active_days_state add constraint member_active_days_state_one_row check (id = 1);
-  end if;
+  alter table public.member_active_days_state drop constraint if exists member_active_days_state_one_row;
+  alter table public.member_active_days_state add constraint member_active_days_state_one_row check (id = 1);
 end $$;
 insert into public.member_active_days_state (id) values (1) on conflict (id) do nothing;
 alter table public.member_active_days_state enable row level security;  -- no policies: service role only
@@ -5443,6 +5432,11 @@ revoke all on public.member_active_days_state from anon, authenticated;
 -- and lists each member's latest day of either among them (`pending`), so a
 -- dry run's preview counts actions since the last nightly. Returns
 -- {from, to, added, engaged_added, more, pending}.
+-- Batch 21 (E23): only rows older than two minutes are taken, so a row whose
+-- insert commits after the read but whose id is below the new watermark is
+-- never skipped for good (an id is handed out when the insert starts; the
+-- watermark only moves past rows that have had time to commit). Batch 21
+-- (E27): a preview deployment's rows (extras.env) never count.
 create or replace function public.lifecycle_active_days_sync(p jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -5450,6 +5444,7 @@ declare
   v_engaged text[] := coalesce(array(select jsonb_array_elements_text(p->'engaged')), '{}'::text[]);
   v_apply boolean := coalesce((p->>'apply')::boolean, false);
   v_limit integer := least(greatest(coalesce((p->>'limit')::integer, 50000), 1), 200000);
+  v_cutoff timestamptz := now() - interval '2 minutes';
   v_from bigint;
   v_to bigint;
   v_added integer := 0;
@@ -5465,7 +5460,7 @@ begin
     select last_event_id into v_from from public.member_active_days_state where id = 1;
   end if;
   v_from := coalesce(v_from, 0);
-  select max(x.id) into v_to from (select e.id from public.activity_events e where e.id > v_from order by e.id limit v_limit) x;
+  select max(x.id) into v_to from (select e.id from public.activity_events e where e.id > v_from and e.occurred_at < v_cutoff order by e.id limit v_limit) x;
   if v_to is null then
     return jsonb_build_object('from', v_from, 'to', v_from, 'added', 0, 'engaged_added', 0, 'more', false);
   end if;
@@ -5473,7 +5468,7 @@ begin
     insert into public.member_active_days (user_id, day)
     select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date
       from public.activity_events e
-     where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
+     where e.id > v_from and e.id <= v_to and e.kind = any(v_qual) and not (e.extras ? 'env')
     on conflict do nothing;
     get diagnostics v_added = row_count;
     if cardinality(v_engaged) > 0 then
@@ -5481,7 +5476,7 @@ begin
       select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date
         from public.activity_events e
        where e.id > v_from and e.id <= v_to and e.kind = any(v_engaged)
-         and coalesce(e.extras->>'on', '') <> 'false'
+         and coalesce(e.extras->>'on', '') <> 'false' and not (e.extras ? 'env')
       on conflict do nothing;
       get diagnostics v_engaged_added = row_count;
     end if;
@@ -5490,19 +5485,19 @@ begin
     select count(*) into v_added from (
       select distinct e.user_id, (e.occurred_at at time zone 'Europe/London')::date as day
         from public.activity_events e
-       where e.id > v_from and e.id <= v_to and e.kind = any(v_qual)
+       where e.id > v_from and e.id <= v_to and e.kind = any(v_qual) and not (e.extras ? 'env')
     ) n
     where not exists (select 1 from public.member_active_days d where d.user_id = n.user_id and d.day = n.day);
     select coalesce(jsonb_agg(jsonb_build_object('u', x.user_id, 'day', x.day)), '[]'::jsonb) into v_pending from (
       select e.user_id, max((e.occurred_at at time zone 'Europe/London')::date) as day
         from public.activity_events e
-       where e.id > v_from and e.id <= v_to
+       where e.id > v_from and e.id <= v_to and not (e.extras ? 'env')
          and (e.kind = any(v_qual) or (e.kind = any(v_engaged) and coalesce(e.extras->>'on', '') <> 'false'))
        group by e.user_id
     ) x;
   end if;
   return jsonb_build_object('from', v_from, 'to', v_to, 'added', v_added, 'engaged_added', v_engaged_added,
-    'more', exists (select 1 from public.activity_events e where e.id > v_to), 'pending', v_pending);
+    'more', exists (select 1 from public.activity_events e where e.id > v_to and e.occurred_at < v_cutoff), 'pending', v_pending);
 end $$;
 revoke all on function public.lifecycle_active_days_sync(jsonb) from public, anon, authenticated;
 grant execute on function public.lifecycle_active_days_sync(jsonb) to service_role;
@@ -5658,15 +5653,15 @@ grant execute on function public.monday_funnel_enqueue(jsonb) to service_role;
 
 -- ── monday_funnel_runs / monday_funnel_lock: the nightly's progress and the one-writer lease ──
 -- One row per UK day of the nightly pass: when it started and finished, the
--- inactivity step, how far it got (a pass resumes where the last one stopped)
--- and what it did. The lease makes sure only one run (the cron, or a
--- backfill from /admin/lifecycle) writes to Monday at a time.
+-- inactivity step and what it did (stats; a pass resumes where the last one
+-- stopped; Batch 21 (A13) dropped the unused `cursor` column). The lease makes
+-- sure only one run (the cron, or a backfill from /admin/lifecycle) writes to
+-- Monday at a time.
 create table if not exists public.monday_funnel_runs (
   day date primary key,
   started_at timestamptz,
   finished_at timestamptz,
   inactivity_at timestamptz,
-  cursor text,
   stats jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
@@ -5680,9 +5675,8 @@ create table if not exists public.monday_funnel_lock (
 );
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conrelid = 'public.monday_funnel_lock'::regclass and conname = 'monday_funnel_lock_one_row') then
-    alter table public.monday_funnel_lock add constraint monday_funnel_lock_one_row check (id = 1);
-  end if;
+  alter table public.monday_funnel_lock drop constraint if exists monday_funnel_lock_one_row;
+  alter table public.monday_funnel_lock add constraint monday_funnel_lock_one_row check (id = 1);
 end $$;
 insert into public.monday_funnel_lock (id) values (1) on conflict (id) do nothing;
 alter table public.monday_funnel_lock enable row level security;  -- no policies: service role only
@@ -5712,5 +5706,142 @@ begin
 end $$;
 revoke all on function public.monday_funnel_lease(jsonb) from public, anon, authenticated;
 grant execute on function public.monday_funnel_lease(jsonb) to service_role;
+
+-- =========================
+-- Batch 21: review fixes
+-- =========================
+-- The schema half of the Batch 21 review (docs/reviews/batch-21-review.md,
+-- branch 21a). Everything here is idempotent; the one-off block is marked by a
+-- billing_settings row. The in-place edits elsewhere in this file carry a
+-- "Batch 21 (Xn)" comment naming the finding. CI runs this file twice on a
+-- fresh Postgres and then supabase/tests/credit-smoke.sql (G4).
+
+-- (A7) onboarding_skips: dead since the welcome quiz; nothing reads or writes it.
+alter table public.profiles drop column if exists onboarding_skips;
+
+-- (A13) monday_funnel_runs.cursor: never written or read; progress is in stats.
+alter table public.monday_funnel_runs drop column if exists cursor;
+
+-- (A9) profiles.updated_at was never maintained: it always equalled
+-- created_at. A trigger keeps it honest for every writer.
+create or replace function private.profiles_touch_updated_at()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+revoke execute on function private.profiles_touch_updated_at() from public;
+drop trigger if exists profiles_touch_updated_at on public.profiles;
+create trigger profiles_touch_updated_at
+  before update on public.profiles
+  for each row execute function private.profiles_touch_updated_at();
+
+-- (A12) The funnel counters were left executable by anon and authenticated.
+-- Every caller (src/lib/funnels/caps.ts, alerts.ts, the sweep) uses the
+-- service role. safe_numeric is left as it was: a pure parser that other
+-- tools on the live project may call.
+revoke all on function public.funnel_hit(uuid, text, timestamptz, integer) from public, anon, authenticated;
+revoke all on function public.funnel_spend_reserve(uuid, timestamptz, numeric, numeric) from public, anon, authenticated;
+revoke all on function public.funnel_spend_settle(uuid, timestamptz, numeric, numeric) from public, anon, authenticated;
+revoke all on function public.funnel_hits_sweep(timestamptz) from public, anon, authenticated;
+revoke all on function public.funnel_alert_claim(uuid, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.funnel_hit(uuid, text, timestamptz, integer), public.funnel_spend_reserve(uuid, timestamptz, numeric, numeric), public.funnel_spend_settle(uuid, timestamptz, numeric, numeric), public.funnel_hits_sweep(timestamptz), public.funnel_alert_claim(uuid, text, timestamptz) to service_role;
+
+-- (D24) provider_calls is read by action_id when a demand search settles its
+-- claim (src/lib/sourcing-demand/server.ts) and when an action's spend is
+-- summed (src/lib/credit/action.ts): a scan of the whole table each time.
+create index if not exists provider_calls_action_idx on public.provider_calls (action_id) where action_id is not null;
+
+-- (C4) leads.input: the whole parsed analysis input (property type,
+-- bathrooms, parking, outdoor space, ...), so a queued lead is re-run as the
+-- prospect described the property, not from address, postcode and bedrooms
+-- alone. Written by the funnel route from Batch 21g; null for older leads.
+alter table public.leads add column if not exists input jsonb;
+
+-- (B1) credit_plan_cycle: a new plan cycle in ONE transaction under the
+-- member's row lock: the source_ref check, the expiry of the open plan grants
+-- and the new grant. As three separate calls (src/lib/stripe/grants.ts before
+-- Batch 21c) a second, concurrent delivery of the same invoice could pass the
+-- check and zero the grant the first delivery had just made. Returns
+-- {grant_id, created, expired}: a replay returns the existing grant, creates
+-- nothing and expires nothing.
+create or replace function public.credit_plan_cycle(p_user uuid, p_amount numeric, p_expires_at timestamptz, p_source_ref text, p_description text default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_id uuid;
+  v_expired int := 0;
+begin
+  if p_source_ref is null or p_source_ref = '' then raise exception 'credit_plan_cycle needs a source_ref'; end if;
+  perform 1 from profiles where id = p_user for update;
+  select id into v_id from credit_grants where source_ref = p_source_ref;
+  if v_id is not null then
+    return jsonb_build_object('grant_id', v_id, 'created', false, 'expired', 0);
+  end if;
+  v_expired := credit_expire_plan_grants(p_user, 'renewal');
+  v_id := credit_grant(p_user, 'plan', p_amount, p_expires_at, p_source_ref, p_description);
+  return jsonb_build_object('grant_id', v_id, 'created', true, 'expired', v_expired);
+end $$;
+revoke all on function public.credit_plan_cycle(uuid, numeric, timestamptz, text, text) from public, anon, authenticated;
+grant execute on function public.credit_plan_cycle(uuid, numeric, timestamptz, text, text) to service_role;
+
+-- (B2) Shadow-mode overdrafts. With CREDIT_ENFORCE off every metered action
+-- ran at £0 and debited into the member's 'overdraft:<user>' grant, which
+-- every later grant (the £10 pack's £30 included) repaid first, and which
+-- would refuse the member everything the day enforcement is switched on.
+-- Decided 1 Oct 2026 (review question 1): forgive them, once. The function
+-- stays for the admin tools; the block below runs once, marked in
+-- billing_settings (batch21_overdrafts_forgiven_at holds the count).
+create or replace function public.credit_forgive_overdrafts(p_reason text default 'forgiven')
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  g record;
+  v_debt numeric;
+  n int := 0;
+  v_total numeric := 0;
+begin
+  for g in select id, user_id from credit_grants where source_ref like 'overdraft:%' and remaining_pence < 0 order by user_id loop
+    -- The member's row lock serialises this with their debits and grants, so
+    -- the amount written off is the amount still owed at that moment.
+    perform 1 from profiles where id = g.user_id for update;
+    select -remaining_pence into v_debt from credit_grants where id = g.id and remaining_pence < 0 for update;
+    if v_debt is null then continue; end if;
+    insert into credit_transactions (user_id, kind, amount_pence, base_pence, grant_id, description, metadata)
+    values (g.user_id, 'adjust', v_debt, v_debt, g.id, 'Overdraft forgiven', jsonb_build_object('reason', p_reason, 'overdraft_grant', g.id));
+    update credit_grants set remaining_pence = 0 where id = g.id;
+    n := n + 1;
+    v_total := v_total + v_debt;
+  end loop;
+  return jsonb_build_object('members', n, 'pence', v_total);
+end $$;
+revoke all on function public.credit_forgive_overdrafts(text) from public, anon, authenticated;
+grant execute on function public.credit_forgive_overdrafts(text) to service_role;
+do $$
+declare r jsonb;
+begin
+  if not exists (select 1 from public.billing_settings where key = 'batch21_overdrafts_forgiven_at') then
+    r := public.credit_forgive_overdrafts('batch21_shadow_mode');
+    insert into public.billing_settings (key, value) values ('batch21_overdrafts_forgiven_at', jsonb_build_object('at', now()) || r);
+  end if;
+end $$;
+
+-- (A16) The welcome-credit backfill, moved here from the credit section so it
+-- can see welcome_withheld_reason and team_members: an account whose credit
+-- was withheld, or that is a team seat, is never granted by a re-run. Frozen
+-- to accounts created before 13 Sep 2026 (it ran on 12 Sep 2026); new
+-- accounts are decided by src/lib/credit/welcome.ts.
+do $$
+declare p record;
+begin
+  for p in
+    select id from public.profiles
+     where profiles.created_at < timestamptz '2026-09-13 00:00:00+00'
+       and profiles.welcome_withheld_reason is null
+       and not exists (select 1 from public.credit_grants g where g.user_id = profiles.id and g.kind = 'welcome')
+       and not exists (select 1 from public.team_members tm where tm.member_id = profiles.id)
+  loop
+    perform public.credit_grant(p.id, 'welcome', public.credit_setting_num('welcome_grant_pence', 2000), null, 'welcome:' || p.id::text, 'Welcome credit');
+    update public.profiles set welcome_checked_at = now() where id = p.id;
+  end loop;
+end $$;
 
 notify pgrst, 'reload schema';

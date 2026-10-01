@@ -1,4 +1,5 @@
 import 'server-only';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 
 /**
  * Verifying a member's mobile (the rules are in ./verify.ts).
@@ -152,6 +153,8 @@ export async function checkCode(userId: string, verificationId: string, rawCode:
   const saved = await saveVerifiedNumber(admin, userId, row.phone_e164, consentSource, now);
   if (saved === 'taken') return { ok: false, error: 'That number already gets our texts on another account.', expired: true };
   if (saved === 'error') return { ok: false, error: UNAVAILABLE };
+  // Batch 21 (D6): a verified number is what SMS OK is made of: Monday follows within ten minutes.
+  await queueFunnelSync(userId, 'notifications');
   // A member's first number: every text alert on (they asked for texts by verifying).
   if (firstNumber) await setNotifications(userId, SMS_NOTIFICATION_KEYS, true);
   return { ok: true, firstNumber };
