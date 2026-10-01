@@ -162,6 +162,12 @@ export default async function AdminPage() {
           <Link href="/admin/intelligence" className="text-sm font-medium text-primary hover:underline">
             Stayful Intelligence
           </Link>
+          <Link href="/admin/calls" className="text-sm font-medium text-primary hover:underline">
+            Calls
+          </Link>
+          <Link href="/admin/conversations" className="text-sm font-medium text-primary hover:underline">
+            Conversations
+          </Link>
           <Link href="/estimate" className="text-sm font-medium text-primary hover:underline">
             → Analyser
           </Link>

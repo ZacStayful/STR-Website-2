@@ -741,6 +741,61 @@ Nothing in 21h needs a setting: the new optional variables are documented in
    strong-match and no-match shares, search cost per sign-up and deep-search
    revenue. No-match members by area are a column on `/admin/demand`.
 
+### 19. Calls from Stayful Intelligence (Batch 23)
+
+Stayful Intelligence calls members who said yes (Batch 22's call choice):
+an intro call once, and a low-credit call offering auto top-up; it answers
+callbacks to the one SI number at any hour and replies to texts. Everything
+is in `src/lib/voice` (the persona is `src/lib/persona`); `/admin/calls`
+shows every call, including the ones a safety rule blocked and why.
+
+1. **Run `supabase/schema.sql`** (the "Batch 23: Stayful Intelligence calls"
+   section). Idempotent and additive, service role only: `si_calls_log`,
+   `si_call_charges`, `si_webhook_events`, `si_tool_calls`, the conversation
+   log (`si_conversations`, `si_conversation_turns`,
+   `si_conversation_questions`) and the `si_*` settings rows. Nothing on
+   `profiles`, nothing in `ACCESS_COLUMNS`. The safety rules are unique
+   indexes: one outbound call a member a UK day, one in flight, one intro
+   ever, one low-credit call per credit landing.
+2. **Twilio:** open the existing UK 07 number and check **Voice** is ticked
+   under Capabilities; allow the UK under Voice → Geo permissions. Leave the
+   Messaging Service's incoming-message webhook as it is
+   (`/api/twilio/inbound`). Create a Standard API key for ElevenLabs.
+   Set `TWILIO_FROM_NUMBER` to the number (+447…) if it isn't already.
+3. **ElevenLabs → Agents → Phone numbers → Import from Twilio:** the number,
+   the API key SID and secret, and the account auth token. Afterwards check
+   in Twilio that only the **Voice** webhook changed and SMS still points at
+   `/api/twilio/inbound`. Copy the phone number id.
+4. **Create the agent** ("Stayful Intelligence") and copy its id. Choose the
+   voice (British, female, warm, mid-pace) and paste its id into
+   `ELEVENLABS_VOICE_ID` on Production and Preview: the analyser and the
+   calls use the one voice.
+5. **ElevenLabs settings:** a post-call webhook to
+   `https://stayful.co.uk/api/voice/elevenlabs/webhook` with transcription and
+   call-initiation-failure events (no audio), and copy its HMAC secret; the
+   conversation-initiation webhook `…/api/voice/elevenlabs/initiate` with a
+   header `x-si-secret` set to a random string; conversation retention 90
+   days.
+6. **Vercel (Production):** `ELEVENLABS_AGENT_ID`,
+   `ELEVENLABS_PHONE_NUMBER_ID`, `ELEVENLABS_WEBHOOK_SECRET`,
+   `ELEVENLABS_INITIATE_SECRET` (the x-si-secret), `ELEVENLABS_TOOL_SECRET`
+   (another random string). On Preview, `SI_CALLS_DRY_RUN=true`. Redeploy.
+7. **Sync the agent:** `/admin/calls` → The agent → **Dry run**, read what
+   would change, then **Sync to ElevenLabs** (the prompt from the persona,
+   the scripts, the knowledge, the four tools, the voice and the limits).
+8. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/si-calls` (every 5 minutes; that makes 36 cron entries —
+   check your plan's limit). `?dry=1` lists what it would place, block,
+   reconcile and purge, and changes nothing.
+9. **Switch calls on:** `SI_CALLS_ENABLED=true`, last. Members who said yes
+   before now get their intro within minutes (inside 9am–7pm on weekdays).
+   Then run the click-through checklist with your own phone.
+
+Prices: a call minute is the `si:call_minute` unit row on Billing admin (raw
+13p ESTIMATE × 5); texts and the missed-call email are `si_text_pence` and
+`si_email_pence` on `/admin/calls`. Handoffs and forwarded texts go to the
+address on `/admin/feedback`.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,

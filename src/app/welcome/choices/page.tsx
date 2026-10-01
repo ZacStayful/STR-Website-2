@@ -13,6 +13,7 @@ import { hasVerifiedMobile, siCallsOn } from "@/lib/intelligence/consent";
 import { isRevealMember } from "@/lib/intelligence/reveal-server";
 import { revealNext } from "@/lib/intelligence/reveal";
 import { CALL_BOX_LABEL, callBoxNote } from "@/lib/intelligence/choices";
+import { callPencePerMinute } from "@/lib/voice/charge-server";
 import { CallBox } from "./CallBox";
 import { finishChoicesAction, setDailyEmailAction } from "./actions";
 
@@ -69,7 +70,7 @@ export default async function ChoicesPage({ searchParams }: { searchParams: Prom
 
         {/* The call box sits outside the Continue form (its code check has forms of its own); its checkbox joins the form by id. */}
         <section className="mt-5 rounded-xl border border-border bg-background p-4">
-          <CallBox form="choices-form" label={CALL_BOX_LABEL} note={callBoxNote(settings.intelligence)} verified={mobile.verified} phone={phone} available={isSmsConfigured() || isSmsDryRun()} on={callsOn} />
+          <CallBox form="choices-form" label={CALL_BOX_LABEL} note={callBoxNote({ ...settings.intelligence, siCallPencePerMin: await callPencePerMinute() })} verified={mobile.verified} phone={phone} available={isSmsConfigured() || isSmsDryRun()} on={callsOn} />
         </section>
         <form id="choices-form" action={finishChoicesAction} className="mt-5">
           <input type="hidden" name="next" value={next} />
