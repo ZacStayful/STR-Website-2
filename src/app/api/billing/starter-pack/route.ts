@@ -7,6 +7,7 @@ import { priceIdForStarterPack } from '@/lib/stripe/prices';
 import { stripeConfigured, getStripe } from '@/lib/stripe/client';
 import { ensureStripeCustomer, loadBillingProfile } from '@/lib/stripe/customer';
 import { createCheckoutSession, returnUrl } from '@/lib/stripe/checkout';
+import { WELCOME_PATH } from '@/lib/auth/landing';
 import { safeInternalPath } from '@/lib/safe-path';
 import { logActivity } from '@/lib/activity/log';
 import { logConversion } from '@/lib/meta/conversions';
@@ -169,7 +170,9 @@ export async function POST(request: Request) {
       payment_intent_data: { capture_method: 'manual', setup_future_usage: 'off_session', description: `Stayful starter pack: ${state.copy.credit} of credit`, metadata },
       metadata,
       custom_text: { submit: { message: state.copy.checkoutText } },
-      success_url: returnUrl('/today', { pack: '1' }),
+      // Batch 21 (F32): a pack bought from the quiz returns there to finish the
+      // remaining questions; every other surface keeps the Today confirmation.
+      success_url: returnUrl(back === WELCOME_PATH || back.startsWith(`${WELCOME_PATH}?`) ? back : '/today', { pack: '1' }),
       cancel_url: returnUrl(back),
     });
     // Batch 21 (B47): the offer hides in this browser until the webhook has
