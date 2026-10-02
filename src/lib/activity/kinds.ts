@@ -33,6 +33,13 @@ export const ACTIVITY_KINDS = {
   // Batch 21 (E6): the Explorer (its search and area pages) and My deals on screen, once a UK day each.
   explorer_view: inApp('Looked at the Market Explorer'),
   my_deals_view: inApp('Looked at My deals'),
+  // Batch 22e: Home on screen, once a UK day. Login lands there, so logging in now counts as active.
+  home_view: inApp('Looked at Home'),
+  // Batch 22e: a change to the Browse filters (a deliberate choice, so it counts).
+  browse_filter: inApp('Changed the Browse filters'),
+  // Batch 22e: a Home tile or "This week" item tapped. Record only: the page it opens logs its own view.
+  home_tile_tap: recordOnly('Tapped a Home tile'),
+  home_feed_tap: recordOnly('Tapped a "This week" item on Home'),
 
   // Deals
   keep: inApp('Kept a deal'),

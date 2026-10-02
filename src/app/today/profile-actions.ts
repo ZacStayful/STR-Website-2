@@ -5,7 +5,8 @@ import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { collapseReminder } from '@/lib/profile/server';
 import { logActivity } from '@/lib/activity/log';
-import { quizPathFor, HOME_PATH } from '@/lib/auth/landing';
+import { quizPathFor } from '@/lib/auth/landing';
+import { NAV_TARGETS } from '@/lib/nav';
 
 /**
  * The profile reminder card on Today (Batch 12): "Continue" goes into the
@@ -18,7 +19,7 @@ export async function tapProfileReminderAction(): Promise<void> {
     data: { user },
   } = await supabase.auth.getUser();
   if (user) logActivity(user.id, 'profile_reminder_tapped');
-  redirect(quizPathFor(HOME_PATH));
+  redirect(quizPathFor(NAV_TARGETS.today.href));
 }
 
 export async function collapseProfileReminderAction(): Promise<void> {
@@ -28,5 +29,5 @@ export async function collapseProfileReminderAction(): Promise<void> {
   } = await supabase.auth.getUser();
   if (!user) return;
   await collapseReminder(user.id, new Date());
-  revalidatePath(HOME_PATH);
+  revalidatePath(NAV_TARGETS.today.href);
 }

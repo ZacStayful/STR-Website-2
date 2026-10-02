@@ -6489,3 +6489,159 @@ revoke all on function public.reset_search_profile(jsonb) from public, anon, aut
 grant execute on function public.reset_search_profile(jsonb) to service_role;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 22e: Home, "properties scanned for you"
+-- =========================
+-- Home (/home) shows how many properties Stayful Intelligence has screened
+-- for the member since they joined (src/lib/home/scan-days.ts holds the
+-- definition). Every screening job already writes each listing once into
+-- sourced_listings (first_seen_at is set on insert and never moves), so:
+--
+--   listing_scan_days      per UK day, postcode area and kind: how many
+--                          listings were first screened that day. RECOUNTED
+--                          from sourced_listings by record_listing_scan_days,
+--                          never added to, so a job run twice or a listing
+--                          re-screened on three days cannot move a count.
+--                          The sweep, the daily picks and the low-entry
+--                          search each call it once when they finish
+--                          (yesterday and today); dry runs never reach it.
+--   member_scan_baselines  what was live in the member's areas when they
+--                          joined: worked out once, the first time Home
+--                          loads after their joining day has ended.
+--
+-- Below, the table is filled from the listings already stored: a recount of
+-- real rows, not an estimate. Nothing was recorded before sourced_listings
+-- began, so members who joined earlier are counted from then. Everything is
+-- additive, idempotent and service role only; nothing here is in
+-- ACCESS_COLUMNS (src/lib/access.ts). No cron.
+
+create table if not exists public.listing_scan_days (
+  day date not null,
+  postcode_area text not null,
+  kind text not null,
+  new_listings integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (day, postcode_area, kind)
+);
+do $$
+begin
+  alter table public.listing_scan_days drop constraint if exists listing_scan_days_kind_check;
+  alter table public.listing_scan_days add constraint listing_scan_days_kind_check check (kind in ('sale', 'rent'));
+end $$;
+alter table public.listing_scan_days enable row level security;  -- no policies: service role only
+revoke all on public.listing_scan_days from anon, authenticated;
+
+-- Recount the given UK days from sourced_listings and replace their rows.
+create or replace function public.record_listing_scan_days(p_days date[])
+returns integer language plpgsql security definer set search_path = '' as $$
+declare
+  v_days date[] := coalesce((select array_agg(distinct d) from unnest(p_days) d where d is not null), '{}');
+  v_from timestamptz;
+  v_to timestamptz;
+  v_rows integer := 0;
+begin
+  if cardinality(v_days) = 0 then return 0; end if;
+  if cardinality(v_days) > 4000 then raise exception 'scan_days_too_many'; end if;
+  v_from := (select min(d) from unnest(v_days) d)::timestamp at time zone 'Europe/London';
+  v_to := ((select max(d) from unnest(v_days) d) + 1)::timestamp at time zone 'Europe/London';
+
+  with recount as (
+    select (l.first_seen_at at time zone 'Europe/London')::date as day, upper(l.postcode_area) as postcode_area, l.kind, count(*)::integer as n
+      from public.sourced_listings l
+     where l.first_seen_at >= v_from and l.first_seen_at < v_to
+       and l.postcode_area is not null and l.kind in ('sale', 'rent')
+       and (l.first_seen_at at time zone 'Europe/London')::date = any (v_days)
+     group by 1, 2, 3
+  ), gone as (
+    delete from public.listing_scan_days s
+     where s.day = any (v_days)
+       and not exists (select 1 from recount r where r.day = s.day and r.postcode_area = s.postcode_area and r.kind = s.kind)
+    returning 1
+  ), written as (
+    insert into public.listing_scan_days (day, postcode_area, kind, new_listings, updated_at)
+    select r.day, r.postcode_area, r.kind, r.n, now() from recount r
+    on conflict (day, postcode_area, kind) do update
+       set new_listings = excluded.new_listings,
+           updated_at = case when public.listing_scan_days.new_listings = excluded.new_listings then public.listing_scan_days.updated_at else now() end
+    returning 1
+  )
+  select (select count(*) from written)::integer + (select count(*) from gone)::integer into v_rows;
+  return v_rows;
+end;
+$$;
+revoke all on function public.record_listing_scan_days(date[]) from public, anon, authenticated;
+grant execute on function public.record_listing_scan_days(date[]) to service_role;
+
+create table if not exists public.member_scan_baselines (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  join_day date not null,
+  baseline integer not null default 0,
+  areas text[],                        -- null: every area
+  kinds text[] not null,
+  computed_at timestamptz not null default now()
+);
+alter table public.member_scan_baselines enable row level security;  -- no policies: service role only
+revoke all on public.member_scan_baselines from anon, authenticated;
+
+-- A member's two numbers. p: {user, join_day, today, areas (null = every
+-- area), kinds}. The baseline is read back once stored; until the joining
+-- day has ended it is worked out live and not stored. Returns
+-- {baseline, new_since, stored}.
+create or replace function public.member_scanned(p jsonb)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_join date := (p->>'join_day')::date;
+  v_today date := (p->>'today')::date;
+  v_areas text[] := case when jsonb_typeof(p->'areas') = 'array' then (select array_agg(upper(x)) from jsonb_array_elements_text(p->'areas') x) end;
+  v_kinds text[] := coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'kinds', '[]'::jsonb)) x where x in ('sale', 'rent')), '{}');
+  v_base integer;
+  v_new integer;
+  v_stored boolean := false;
+begin
+  if v_user is null or v_join is null or v_today is null then raise exception 'member_scanned_bad_input'; end if;
+  if v_areas is not null and cardinality(v_areas) = 0 then v_areas := '{}'; end if;
+
+  select b.baseline into v_base from public.member_scan_baselines b where b.user_id = v_user;
+  if found then
+    v_stored := true;
+  else
+    select count(*)::integer into v_base
+      from public.sourced_listings l
+     where l.first_seen_at < ((v_join + 1)::timestamp at time zone 'Europe/London')
+       and l.last_seen_at >= (v_join::timestamp at time zone 'Europe/London')
+       and l.kind = any (v_kinds)
+       and (v_areas is null or upper(l.postcode_area) = any (v_areas));
+    if v_join < v_today then
+      insert into public.member_scan_baselines (user_id, join_day, baseline, areas, kinds)
+      values (v_user, v_join, v_base, v_areas, v_kinds)
+      on conflict (user_id) do nothing;
+      v_stored := true;
+    end if;
+  end if;
+
+  select coalesce(sum(s.new_listings), 0)::integer into v_new
+    from public.listing_scan_days s
+   where s.day > v_join
+     and s.kind = any (v_kinds)
+     and (v_areas is null or s.postcode_area = any (v_areas));
+
+  return jsonb_build_object('baseline', coalesce(v_base, 0), 'new_since', v_new, 'stored', v_stored);
+end;
+$$;
+revoke all on function public.member_scanned(jsonb) from public, anon, authenticated;
+grant execute on function public.member_scanned(jsonb) to service_role;
+
+-- Fill listing_scan_days from what is already stored (every day since the
+-- first listing), exactly; re-running recounts the same rows.
+do $$
+declare
+  v_first date := (select (min(first_seen_at) at time zone 'Europe/London')::date from public.sourced_listings);
+begin
+  if v_first is not null then
+    perform public.record_listing_scan_days(array(select generate_series(v_first, (now() at time zone 'Europe/London')::date, interval '1 day')::date));
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';

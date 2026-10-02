@@ -26,9 +26,9 @@ test('the best match and two alternatives, in Today’s order', () => {
 
 test('next paths and staleness', () => {
   assert.equal(revealNext('/deals?x=1'), '/deals?x=1');
-  assert.equal(revealNext('//evil.example'), '/today');
-  assert.equal(revealNext('/welcome/reveal'), '/today');
-  assert.equal(revealNext(undefined), '/today');
+  assert.equal(revealNext('//evil.example'), '/home', 'Batch 22e: the fallback is Home');
+  assert.equal(revealNext('/welcome/reveal'), '/home', 'Batch 22e: the fallback is Home');
+  assert.equal(revealNext(undefined), '/home', 'Batch 22e: the fallback is Home');
   assert.equal(revealStale('2026-10-01', '2026-10-02'), true);
   assert.equal(revealStale('2026-10-02', '2026-10-02'), false);
   assert.equal(revealStale(null, '2026-10-02'), false);

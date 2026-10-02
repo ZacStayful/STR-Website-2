@@ -27,9 +27,11 @@ import type { MarketGoals } from '../market/goals.ts';
 import { DEFAULT_FILTERS, type DealCard } from '../marketplace/grid.ts';
 import { motivationFor } from '../today/candidates.ts';
 import { candidateContext } from '../today/choose.ts';
-import { factsFromRow, judgeDeal, rentalFromCard, wantsFor } from './criteria.ts';
+import { CRITERIA, factsFromRow, judgeDeal, rentalFromCard, wantsFor } from './criteria.ts';
+import { dealTypeOf } from '../profile/deal-types.ts';
+import type { DealType } from '../market/goals.ts';
 import { adjustmentsFor, areaLookup, bonusOf, compareKeys, leaningsFor, orderKey, type OrderKey } from './order.ts';
-import { usesTailoring, type TailoringProfile } from './profile.ts';
+import { usesTailoring, type CriterionKey, type TailoringProfile } from './profile.ts';
 
 /** What the order reads on top of the card: the short-let check and the fit's figures. No address, no link. */
 export const BROWSE_RANK_COLUMNS = 'suitability, deal_yield:deal->>grossYieldPct, deal_target_yield:deal->>targetYieldPct, deal_target_margin:deal->>targetMarginPcm';
@@ -110,4 +112,74 @@ export function bestForYouOrder(rows: readonly BrowseRow[], input: BestForYouInp
     return { id: row.id, profit, key: orderKey(c, judgement, bonus, profit, row.id), mustMissed: judgement.mustFails.length };
   });
   return scored.sort(compare).map((s) => s.id);
+}
+
+// ── Batch 22e: Browse is the deals picked for you ──
+
+/** Why a deal is not in the member's list: a check it fails, or a deal type they did not choose. */
+export type MissKey = CriterionKey | 'deal_type';
+
+export interface ProfileFit {
+  /** Empty: the deal matches the active profile. */
+  misses: MissKey[];
+}
+
+/** "Budget", "Location", "Deal type": what a near miss misses, for its line on Browse. */
+export function missLabel(k: MissKey): string {
+  return k === 'deal_type' ? 'Deal type' : CRITERIA[k].label;
+}
+
+/**
+ * Batch 22e, Part D: whether each deal matches the active profile, through the
+ * one matcher (Batch 14's judgeDeal, the profile's deal types from Batch 17,
+ * Batch 22c's budget brackets inside wantsFor, legacy 'u200' included). A deal
+ * matches when it is one of the profile's deal types, is in its areas and
+ * budget (whether the member made those must-haves or nice-to-haves: Browse
+ * shows what was picked for them), and fails no must-have. A check that
+ * cannot be made (unknown) is not a miss. The three questions every member
+ * answers (where, budget, deal types) are enough: no further answers are
+ * needed. Null when the profile has no answers at all: nothing to narrow,
+ * Browse shows every deal.
+ */
+export function profileFits(rows: readonly BrowseRow[], p: TailoringProfile | null | undefined, types: readonly DealType[], now: Date): Map<string, ProfileFit> | null {
+  if (!p || !p.goals) return null;
+  const wants = wantsFor(p);
+  const wanted = new Set(types);
+  const out = new Map<string, ProfileFit>();
+  for (const row of rows) {
+    const misses: MissKey[] = [];
+    if (wanted.size > 0 && !wanted.has(dealTypeOf(row))) misses.push('deal_type');
+    const { qualifies } = motivationFor(row, p.goals, now);
+    const m = parseMotivation(row.motivation);
+    const facts = factsFromRow(row, rentalFromCard(row), { qualifies, score: m?.score ?? 0, fired: m?.fired });
+    const { judgement } = judgeDeal(facts, p, wants);
+    for (const c of judgement.checks) {
+      if (c.verdict !== 'fail') continue;
+      if (c.mode === 'must' || c.key === 'location' || c.key === 'budget') misses.push(c.key);
+    }
+    out.set(row.id, { misses: [...new Set(misses)] });
+  }
+  return out;
+}
+
+/** The nearest deals when none matches: fewest misses first, then the given order; at most `n`. */
+export function nearestMisses(order: readonly string[], fits: ReadonlyMap<string, ProfileFit>, n = 10): string[] {
+  const at = new Map(order.map((id, i) => [id, i]));
+  return order
+    .filter((id) => (fits.get(id)?.misses.length ?? 0) > 0)
+    .sort((a, b) => fits.get(a)!.misses.length - fits.get(b)!.misses.length || at.get(a)! - at.get(b)!)
+    .slice(0, n);
+}
+
+const numOr = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+
+/** The grid's other sorts, applied to the member's own list (the SQL order, in memory). */
+export function sortRows(rows: readonly BrowseRow[], sort: 'profit' | 'uplift' | 'newest' | 'price'): string[] {
+  const id = (a: BrowseRow, b: BrowseRow) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const list = [...rows];
+  if (sort === 'uplift') list.sort((a, b) => numOr(b.uplift_pct, -Infinity) - numOr(a.uplift_pct, -Infinity) || numOr(b.annual_profit, -Infinity) - numOr(a.annual_profit, -Infinity) || id(a, b));
+  else if (sort === 'newest') list.sort((a, b) => Date.parse(b.first_seen_at) - Date.parse(a.first_seen_at) || id(a, b));
+  else if (sort === 'price') list.sort((a, b) => numOr(a.price_amount, Infinity) - numOr(b.price_amount, Infinity) || id(a, b));
+  else list.sort((a, b) => numOr(b.annual_profit, -Infinity) - numOr(a.annual_profit, -Infinity) || id(a, b));
+  return list.map((r) => r.id);
 }

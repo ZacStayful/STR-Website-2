@@ -4,6 +4,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { REVEAL_ALTERNATIVES } from './config.ts';
+import { HOME_PATH } from '../auth/landing.ts';
 
 /** "83% match · 5 of 6" → 83; null when there is no match % (fewer than two checks, untailored). */
 export function matchPctOf(match: string | null | undefined): number | null {
@@ -37,13 +38,13 @@ export function revealIntro(count: number): string {
 }
 
 /** Where the reveal may send the member on: an internal path, never the reveal itself. */
-export function revealNext(raw: string | null | undefined, fallback = '/today'): string {
+export function revealNext(raw: string | null | undefined, fallback = HOME_PATH): string {
   if (typeof raw !== 'string' || !raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\')) return fallback;
   if (raw.startsWith('/welcome')) return fallback;
   return raw;
 }
 
-/** The reveal is shown once: a reveal first viewed on an earlier Today-day goes to /today. */
+/** The reveal is shown once: a reveal first viewed on an earlier Today-day goes on (to Home by default, Batch 22e). */
 export function revealStale(viewedDay: string | null, today: string): boolean {
   return viewedDay !== null && viewedDay !== today;
 }

@@ -1,12 +1,16 @@
 import Link from "next/link";
 import { filtersToSearch, PAGE_SIZE, type DealFilters } from "@/lib/marketplace/grid";
 
-export function Pagination({ filters, total, pages }: { filters: DealFilters; total: number; pages: number }) {
+/** `extra`: a query the page keeps on every link (Batch 22e: `all=1`, every deal rather than the member's own list). */
+export function Pagination({ filters, total, pages, extra }: { filters: DealFilters; total: number; pages: number; extra?: string }) {
   if (pages <= 1) return null;
   const page = Math.min(filters.page, pages);
   const from = (page - 1) * PAGE_SIZE + 1;
   const to = Math.min(total, page * PAGE_SIZE);
-  const link = (p: number) => `/deals${filtersToSearch({ ...filters, page: p })}`;
+  const link = (p: number) => {
+    const s = filtersToSearch({ ...filters, page: p });
+    return `/deals${extra ? (s ? `${s}&${extra}` : `?${extra}`) : s}`;
+  };
   const btn = "rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted";
   return (
     <nav className="mt-6 flex items-center justify-between gap-3 text-sm" aria-label="Pages">

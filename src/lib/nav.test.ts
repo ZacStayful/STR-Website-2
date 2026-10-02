@@ -1,12 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NAV_TARGETS, NAV_ORDER, NAV_FOR_SECTION, activeNavFor, LEADS_NAV, MY_DEALS_PASSED_HREF, dealsViewRedirect, myDealsShowsPassed, GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF, TODAY_LIST_ID, TODAY_LIST_HREF, samePageAnchor, joinLandingPath, ACCOUNT_MORE, accountMoreLinks, type Section } from './nav.ts';
+import { NAV_TARGETS, NAV_ORDER, NAV_FOR_SECTION, activeNavFor, LEADS_NAV, MY_DEALS_PASSED_HREF, dealsViewRedirect, myDealsShowsPassed, GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF, TODAY_LIST_ID, TODAY_LIST_HREF, samePageAnchor, joinLandingPath, ACCOUNT_MORE, accountMoreLinks, EYE_NAV, NAV_DESTINATIONS, type Section } from './nav.ts';
 import { parseDealFilters } from './marketplace/grid.ts';
 
-const SECTIONS: Section[] = ['today', 'estimate', 'markets', 'deals', 'picks', 'reports', 'leads', 'account', 'profile'];
+const SECTIONS: Section[] = ['home', 'today', 'estimate', 'markets', 'deals', 'picks', 'reports', 'leads', 'account', 'profile'];
 
-test('the nav: Today, the three tools, My deals and Account, each with a label and an internal href', () => {
-  assert.deepEqual(NAV_ORDER, ['today', 'browse', 'markets', 'analyser', 'myDeals', 'account']);
+test('the nav (Batch 22e, decided by Zac): Home, Today, My deals, Browse, Market Explorer, Analyser, Account', () => {
+  assert.deepEqual(NAV_ORDER, ['home', 'today', 'myDeals', 'browse', 'markets', 'analyser', 'account']);
+  assert.deepEqual(
+    NAV_ORDER.map((k) => NAV_TARGETS[k].label),
+    ['Home', 'Today', 'My deals', 'Browse', 'Market Explorer', 'Analyser', 'Account'],
+  );
+  assert.equal(NAV_TARGETS.home.href, '/home');
   for (const key of NAV_ORDER) {
     assert.ok(NAV_TARGETS[key].label.length > 0, key);
     assert.ok(NAV_TARGETS[key].href.startsWith('/'), key);
@@ -76,7 +81,7 @@ test('a link is followed in place only when it stays on this page', () => {
 
 test('joining a team lands on its Leads only when it has a funnel', () => {
   assert.equal(joinLandingPath(true), LEADS_NAV.href);
-  assert.equal(joinLandingPath(false), NAV_TARGETS.today.href);
+  assert.equal(joinLandingPath(false), NAV_TARGETS.home.href);
 });
 
 test('Account › More: Team for account owners only, Leads only for a team with a funnel', () => {
@@ -90,4 +95,30 @@ test('Account › More: Team for account owners only, Leads only for a team with
     assert.ok(link.href.startsWith('/') && !link.href.startsWith('//'), `${key} is internal`);
     assert.notEqual(link.href, '/reports', 'reports are a tab on My deals, not an Account door');
   }
+});
+
+test('the eye item: Talk to Stayful Intelligence, "Talk" on a phone, opening /intelligence', () => {
+  assert.equal(EYE_NAV.label, 'Talk to Stayful Intelligence');
+  assert.equal(EYE_NAV.shortLabel, 'Talk');
+  assert.equal(EYE_NAV.href, '/intelligence');
+});
+
+test('no header label says Jarvis or plain Markets', () => {
+  const labels = [EYE_NAV.label, EYE_NAV.shortLabel, LEADS_NAV.label, ...NAV_ORDER.map((k) => NAV_TARGETS[k].label)];
+  for (const l of labels) {
+    assert.ok(!/jarvis/i.test(l), l);
+    assert.notEqual(l, 'Markets');
+  }
+  assert.equal(activeNavFor('home'), 'home');
+});
+
+test('destinations for "take me there" are internal paths with encoded ids', () => {
+  assert.equal(NAV_DESTINATIONS.home(), '/home');
+  assert.equal(NAV_DESTINATIONS.today(), '/today');
+  assert.equal(NAV_DESTINATIONS.marketArea(' LS '), '/markets/ls');
+  assert.equal(NAV_DESTINATIONS.deal('abc-123'), '/deals/abc-123');
+  assert.equal(NAV_DESTINATIONS.deal('../admin'), '/deals/..%2Fadmin');
+  assert.equal(NAV_DESTINATIONS.myDealsStage('viewing'), '/my-deals#stage-viewing');
+  assert.equal(NAV_DESTINATIONS.myDealsStage('offer', 'p1'), '/my-deals?profile=p1#stage-offer');
+  assert.equal(NAV_DESTINATIONS.analyser(), '/estimate');
 });

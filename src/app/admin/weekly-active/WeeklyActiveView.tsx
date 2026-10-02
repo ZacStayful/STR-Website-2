@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
-import type { WeeklyActiveStatus } from "@/lib/activity/admin-server";
+import type { HomeOnlyLoad, WeeklyActiveStatus } from "@/lib/activity/admin-server";
 import { ACTIVITY_KINDS, type ActivityKind } from "@/lib/activity/kinds";
 import { DRILL_WEEKS, pct, type ExcludedRow, type WeekMetrics, type WeeklyActiveReport } from "@/lib/activity/metrics";
 import {
@@ -84,7 +84,7 @@ function GroupCard({ group, thisWeek, lastWeek }: { group: Group; thisWeek: Week
  * them after checking the admin session). No reads here, so the same view
  * can be checked against made-up figures.
  */
-export function WeeklyActiveView({ status, message, report, msg, showAll }: { status: WeeklyActiveStatus; message: string | null; report: WeeklyActiveReport; msg: string | null; showAll: boolean }) {
+export function WeeklyActiveView({ status, message, report, msg, showAll, homeOnly = null }: { status: WeeklyActiveStatus; message: string | null; report: WeeklyActiveReport; msg: string | null; showAll: boolean; homeOnly?: HomeOnlyLoad | null }) {
   const weeks = report.weeks;
   const newestFirst = [...weeks].reverse();
   const thisWeek = weeks.at(-1) ?? null;
@@ -160,6 +160,8 @@ export function WeeklyActiveView({ status, message, report, msg, showAll }: { st
           </tbody>
         </table>
       </div>
+
+      {homeOnly && <HomeOnlySection data={homeOnly} />}
 
       <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">How they use it</h2>
       <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -407,4 +409,48 @@ export function WeeklyActiveView({ status, message, report, msg, showAll }: { st
 
 function Notice({ children }: { children: ReactNode }) {
   return <div className="mb-4 rounded-lg border border-border bg-card p-3 text-sm text-muted-foreground">{children}</div>;
+}
+
+/**
+ * Batch 22e: login lands on Home, and looking at Home (home_view, once a UK
+ * day) counts as active. How many members that alone made active each week,
+ * and what it does to the 14-day quiet and the 25-day picks pause.
+ */
+function HomeOnlySection({ data }: { data: HomeOnlyLoad }) {
+  const rows = [...data.weeks].reverse();
+  return (
+    <>
+      <h2 className="mt-10 mb-3 text-lg font-semibold text-foreground">Active only because they looked at Home</h2>
+      <p className="mb-3 text-sm text-muted-foreground">
+        Since Batch 22e, logging in lands on Home and a Home visit counts as active (once a UK day). These members did nothing else that week.
+      </p>
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <table className="w-full text-sm">
+          <thead className="text-left text-xs text-muted-foreground">
+            <tr>
+              <th className="px-4 py-2 font-medium">Week of</th>
+              <th className="px-4 py-2 font-medium">Members active only through Home</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((w) => (
+              <tr key={w.week} className="border-t border-border/60">
+                <td className="px-4 py-2 whitespace-nowrap">{w.label}</td>
+                <td className="px-4 py-2 tabular-nums">{w.members.toLocaleString("en-GB")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-sm text-foreground">
+        {data.rulesOn ? (
+          <>
+            Tonight, Home visits alone keep <strong>{data.quiet.toLocaleString("en-GB")}</strong> member{data.quiet === 1 ? "" : "s"} out of the 14-day quiet, and <strong>{data.paused.toLocaleString("en-GB")}</strong> out of the 25-day picks pause (members not on a plan; the day counts follow the inactivity settings).
+          </>
+        ) : (
+          <>The inactivity rules are off (no inactivity start date set), so no one is quiet either way. Once they are on, a Home visit resets the 14-day and 25-day clocks like any other action.</>
+        )}
+      </p>
+    </>
+  );
 }

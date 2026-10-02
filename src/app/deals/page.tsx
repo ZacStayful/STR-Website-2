@@ -7,7 +7,7 @@ import { payerFor } from "@/lib/team";
 import { isAdminEmail } from "@/lib/admin";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { barsText } from "@/lib/listing/screen";
-import { browseFilters, DEFAULT_FILTERS, kindOfTypes, parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
+import { browseFilters, DEFAULT_FILTERS, filtersToSearch, kindOfTypes, parseDealFilters, type DealFilters } from "@/lib/marketplace/grid";
 import { MY_DEALS_PASSED_HREF, NAV_TARGETS, dealsViewRedirect } from "@/lib/nav";
 import { listDeals, liveCountsByArea, recordShown, photoUrlFor, openedDealIds, countFor, countDeals, earlyAccessCount, type DealPage } from "@/lib/marketplace/queries";
 import { earlyAccessBanner, earlyAccessFor, isFiltered } from "@/lib/marketplace/early-access";
@@ -23,7 +23,12 @@ import { getAreaCardsWithin } from "@/lib/market/cached";
 import { profilesFor } from "@/lib/profiles/server";
 import { tailoringForMember } from "@/lib/tailoring/server";
 import { withTailoring } from "@/lib/tailoring/numbers";
-import { bestForYouPage, type BestPage } from "@/lib/tailoring/browse-server";
+import { bestForYouPage, forYouPage, type BestPage, type ForYouPage } from "@/lib/tailoring/browse-server";
+import { missLabel } from "@/lib/tailoring/browse";
+import { emailedDealDates } from "@/lib/home/server";
+import { logActivity } from "@/lib/activity/log";
+import { ukDay } from "@/lib/activity/week";
+import { createHash } from "node:crypto";
 import { TAILORING } from "@/lib/tailoring/config";
 import { starterPackStateFor } from "@/lib/starter-pack/server";
 import { DealCard } from "./_components/DealCard";
@@ -54,6 +59,13 @@ const MESSAGES: Record<string, string> = {
  *
  * The member's kept and passed deals live on My deals (Batch 11): an old
  * ?view=kept or ?view=passed link goes there before anything is read.
+ *
+ * Batch 22e: by default Browse is the deals picked for the member: only the
+ * live deals that match their active profile (its deal types, areas, budget
+ * and must-haves; src/lib/tailoring/browse.ts profileFits), in "Best for
+ * you" order, with the filters working inside that list. `?all=1` is every
+ * deal, as before. A deal already emailed to them says "Emailed <date>".
+ * The early-access window, passes and the address rules are unchanged.
  */
 export default async function DealsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const raw = await searchParams;
@@ -65,6 +77,8 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
+  // Batch 22e: every deal (the old grid), or only the ones picked for this member (the default).
+  const showAll = (Array.isArray(raw.all) ? raw.all[0] : raw.all) === "1";
 
   // An account that has never paid sees a deal 48 hours (free_deal_delay_hours) after it went live.
   // The member's own row: their answers, and (Batch 17) the deal types the grid starts on.
@@ -86,8 +100,9 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   });
   // The member's own passes shape the grid: a passed deal leaves it (and is on My deals, under Passed).
   // "Best for you" (the default): the member's own order; on any failure, the grid's own query by profit, so Browse never goes blank.
-  const pageReady: Promise<BestPage | DealPage> =
-    filters.sort === "best"
+  const pageReady: Promise<ForYouPage | BestPage | DealPage> = !showAll
+    ? Promise.all([answersReady, snapshotReady]).then(async ([a, cards]) => (await forYouPage(filters, visibility, { userId: user.id, profileId: a.profileId, goals: a.goals, tailoring: a.tailoring, types: ownTypes }, cards)) ?? listDeals({ ...filters, sort: filters.sort === "best" ? "profit" : filters.sort }, visibility, { userId: user.id }))
+    : filters.sort === "best"
       ? Promise.all([answersReady, snapshotReady]).then(async ([a, cards]) => (await bestForYouPage(filters, visibility, { userId: user.id, profileId: a.profileId, goals: a.goals, tailoring: a.tailoring }, cards)) ?? listDeals({ ...filters, sort: "profit" }, visibility, { userId: user.id }))
       : listDeals(filters, visibility, { userId: user.id });
   // Early access: a free member gets one line with the real count of deals they are waiting on (matching this search); a paying member gets a badge on each of those deals.
@@ -99,17 +114,31 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
     answersReady,
     snapshotReady,
   ]);
-  const ids = page.cards.map((c) => c.id);
+  // Batch 22e: the member's own list (narrowed), and when nothing in it is live, the nearest deals and what each misses.
+  const narrowed = "narrowed" in page && page.narrowed;
+  const nearest = "nearest" in page ? page.nearest : null;
+  const shownCards = nearest ? [...page.cards, ...nearest.cards] : page.cards;
+  const ids = shownCards.map((c) => c.id);
   // Batch 10: each card's profit range at this member's finance, and its buttons at their price.
-  const [opened, reactions, baseViews] = await Promise.all([
+  const [opened, reactions, baseViews, emailed] = await Promise.all([
     openedDealIds((await payerFor(user.id)).payerId, ids),
     reactionsFor(user.id, ids),
-    cardViewsFor({ supabase, userId: user.id, adminUser, cards: page.cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
+    cardViewsFor({ supabase, userId: user.id, adminUser, cards: shownCards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
+    emailedDealDates(user.id, ids),
   ]);
   const capped = "capped" in page && page.capped;
   // "Best for you" orders at most TAILORING.poolLimit deals; the counts still say how many match.
-  const matching = capped ? (await countDeals(filters, visibility, { userId: user.id })) ?? page.total : page.total;
-  const views = withTailoring(baseViews, page.cards, tailoring, snapshot, now);
+  // The member's own list is counted as it is drawn (the SQL count cannot apply the profile).
+  const matching = capped && !narrowed ? (await countDeals(filters, visibility, { userId: user.id })) ?? page.total : page.total;
+  const views = withTailoring(baseViews, shownCards, tailoring, snapshot, now);
+  // Batch 22e: a change made in the filter bar counts as an in-app action, once per search per UK day.
+  if ((Array.isArray(raw.f) ? raw.f[0] : raw.f) === "1") {
+    const search = filtersToSearch({ ...filters, page: 1 });
+    logActivity(user.id, "browse_filter", { extras: { search: search.slice(0, 300), all: showAll }, dedupeKey: `browse_filter:${ukDay(now)}:${createHash("sha256").update(`${search}|${showAll}`).digest("hex").slice(0, 16)}` });
+  }
+  const allHref = `/deals${filtersToSearch({ ...filters, page: 1 }) ? `${filtersToSearch({ ...filters, page: 1 })}&all=1` : "?all=1"}`;
+  const mineHref = `/deals${filtersToSearch({ ...filters, page: 1 })}`;
+  const profileName = (await profilesFor(user.id)).active?.name ?? null;
   // Nothing left in the grid: say so if it is because they passed on all of it.
   const passedHere = page.total === 0 ? await countDeals({ ...filters, view: "passed" }, visibility, { userId: user.id }) : null;
   const countMap: Record<string, number> = {};
@@ -129,10 +158,20 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Deals</h1>
+            <h1 className="text-2xl font-bold text-foreground">{narrowed ? "Deals picked for you" : "Deals"}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Every listing on the market in Stayful’s top areas that nets {barsText(settings.r2rQualifiedProfit)}. Profit is an area estimate at your finance: take a Quick look for the address, photos and listing link, or a Full analysis for the exact figures for the property.
+              {narrowed ? <>Live deals that match {profileName ? <>your profile “{profileName}”</> : "your profile"}: its deal types, areas, budget and must-haves. </> : <>Every listing on the market in Stayful’s top areas that nets {barsText(settings.r2rQualifiedProfit)}. </>}
+              Profit is an area estimate at your finance: take a Quick look for the address, photos and listing link, or a Full analysis for the exact figures for the property.
             </p>
+            {narrowed ? (
+              <p className="mt-1 text-sm">
+                <Link href={allHref} className="font-medium text-foreground underline-offset-4 hover:underline">Show all deals</Link>
+              </p>
+            ) : showAll ? (
+              <p className="mt-1 text-sm">
+                Showing every deal. <Link href={mineHref} className="font-medium text-foreground underline-offset-4 hover:underline">Show only the deals picked for you</Link>
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             <Link href={NAV_TARGETS.myDeals.href} className="rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-muted">Your kept deals</Link>
@@ -144,13 +183,35 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
 
         <GoalsStrip total={matching} fromWelcome={cameFromWelcome(raw.from)} />
         <EarlyAccessBanner text={banner} pack={packState?.offer.eligible ? { href: "/today?offer=pack", label: packState.copy.cardCta } : null} />
-        <DealsFilterBar filters={filters} counts={counts} total={matching} ownTypes={browseFilters(DEFAULT_FILTERS, false, ownTypes).types} />
+        <DealsFilterBar filters={filters} counts={counts} total={matching} ownTypes={browseFilters(DEFAULT_FILTERS, false, ownTypes).types} showAll={showAll} />
 
         <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
           <section>
-            {page.cards.length === 0 ? (
+            {page.cards.length === 0 && nearest && nearest.cards.length > 0 ? (
+              <div>
+                <div className="mb-4 rounded-xl border border-dashed border-border p-5 text-center">
+                  <p className="text-sm font-medium text-foreground">Nothing live matches {profileName ? `“${profileName}”` : "your profile"} right now.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Here are the {nearest.cards.length} nearest, with what each one misses. New deals arrive every morning.{" "}
+                    <Link href={allHref} className="font-medium text-foreground underline-offset-4 hover:underline">Show all deals</Link>
+                  </p>
+                </div>
+                <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {nearest.cards.map((card) => (
+                    <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} share={<ShareDealButton dealId={card.id} />} view={views.get(card.id)} emailedOn={emailed.get(card.id) ?? null} misses={(nearest.misses[card.id] ?? []).map(missLabel)} />
+                  ))}
+                </ul>
+              </div>
+            ) : page.cards.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center">
-                {passedHere ? (
+                {narrowed && !passedHere ? (
+                  <>
+                    <p className="text-sm font-medium text-foreground">Nothing live matches {profileName ? `“${profileName}”` : "your profile"} right now.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      New deals arrive every morning. <Link href={allHref} className="font-medium text-foreground underline-offset-4 hover:underline">Show all deals</Link>
+                    </p>
+                  </>
+                ) : passedHere ? (
                   <>
                     <p className="text-sm font-medium text-foreground">You’ve passed on every deal that matches.</p>
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -169,12 +230,12 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {page.cards.map((card) => (
-                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} share={<ShareDealButton dealId={card.id} />} view={views.get(card.id)} />
+                  <DealCard key={card.id} card={card} photoUrl={photoUrlFor(card, now)} ladder={settings.dealOpenLadder} now={now} opened={opened.has(card.id)} reaction={reactions.get(card.id) ?? null} earlyAccess={visibility.tier === "paid" ? earlyAccessFor(card.live_since, settings.freeDealDelayHours, now) : null} share={<ShareDealButton dealId={card.id} />} view={views.get(card.id)} emailedOn={emailed.get(card.id) ?? null} />
                 ))}
               </ul>
             )}
             {capped && <p className="mt-3 text-xs text-muted-foreground">Showing your best {TAILORING.poolLimit.toLocaleString("en-GB")} for this search. Narrow the filters to see the rest.</p>}
-            <Pagination filters={{ ...filters, page: page.page }} total={page.total} pages={page.pages} />
+            <Pagination filters={{ ...filters, page: page.page }} total={page.total} pages={page.pages} extra={showAll ? "all=1" : undefined} />
           </section>
           <aside className="order-first lg:order-none">
             <DealsMap counts={countMap} filters={filters} />

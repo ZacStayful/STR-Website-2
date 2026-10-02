@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect, notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
-import { loadWeeklyActive } from "@/lib/activity/admin-server";
+import { loadHomeOnly, loadWeeklyActive } from "@/lib/activity/admin-server";
 import { WeeklyActiveView } from "./WeeklyActiveView";
 
 export const metadata: Metadata = { title: "Weekly active — Stayful Intelligence", robots: { index: false, follow: false } };
@@ -24,5 +24,7 @@ export default async function WeeklyActivePage({ searchParams }: { searchParams:
   if (!isAdminEmail(user.email)) notFound();
 
   const { status, message, report } = await loadWeeklyActive({ weeks: 12 });
-  return <WeeklyActiveView status={status} message={message} report={report} msg={msg ?? null} showAll={all === "1"} />;
+  // Batch 22e: members active only because they looked at Home, and its effect on the quiet / pause rules.
+  const homeOnly = status === "ok" ? await loadHomeOnly(report, { weeks: 12 }) : null;
+  return <WeeklyActiveView status={status} message={message} report={report} msg={msg ?? null} showAll={all === "1"} homeOnly={homeOnly} />;
 }

@@ -1,10 +1,12 @@
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { StayfulEye, type EyeLevel } from "@/components/StayfulEye";
+import { EYE_NAV } from "@/lib/nav";
 
 /**
  * Batch 22: the eye in the app header, first in the row as the brand mark;
- * it opens the Stayful Intelligence view. The header is the dark brand
+ * it opens the Stayful Intelligence view. Batch 22e gives it its words:
+ * "Talk" on a phone, "Talk to Stayful Intelligence" from the sm breakpoint. The header is the dark brand
  * surface in both themes, so the eye takes the dark-theme tokens here.
  */
 const ON_DARK = {
@@ -15,10 +17,14 @@ const ON_DARK = {
   "--si-eye-iris-deep": "#0f150e",
 } as CSSProperties;
 
-export function HeaderEyeLink({ level }: { level: EyeLevel }) {
+export function HeaderEyeLink({ level, style }: { level: EyeLevel; style?: CSSProperties }) {
   return (
-    <Link href="/intelligence" aria-label="Stayful Intelligence" title="Stayful Intelligence" style={{ ...ON_DARK, display: "inline-flex", alignItems: "center", lineHeight: 0 }}>
-      <StayfulEye size={24} level={level} />
+    <Link href={EYE_NAV.href} aria-label={EYE_NAV.label} title={EYE_NAV.label} style={{ ...ON_DARK, ...style, display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+      <span style={{ lineHeight: 0 }}>
+        <StayfulEye size={24} level={level} />
+      </span>
+      <span aria-hidden="true" className="sm:hidden">{EYE_NAV.shortLabel}</span>
+      <span aria-hidden="true" className="hidden sm:inline">{EYE_NAV.label}</span>
     </Link>
   );
 }

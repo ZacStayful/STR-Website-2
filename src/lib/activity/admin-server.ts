@@ -16,7 +16,9 @@ import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { adminEmails } from '../admin';
 import { COUNTED_KINDS, QUALIFYING_KINDS } from './kinds';
 import { computeWeeklyActive, emptyFacts, type WeeklyActiveReport, type WeeklyFacts } from './metrics';
-import { retentionCutoff, ukWeekStart } from './week';
+import { retentionCutoff, ukDay, ukWeekStart } from './week';
+import { homeKeepsActive, homeOnlyWeeks, type HomeOnlyWeek } from './home-only';
+import { getBillingSettings } from '../credit/unit-costs';
 
 /**
  * 'ok', or why the page shows empty figures: no service role key, the Batch 9
@@ -56,6 +58,62 @@ export async function loadWeeklyActive(opts: { weeks?: number; now?: Date } = {}
     const message = err instanceof Error ? err.message : String(err);
     console.error('[activity] weekly facts failed:', message);
     return { status: 'failed', message, report: empty() };
+  }
+}
+
+export interface HomeOnlyLoad {
+  /** Per week (oldest first): members active only because they looked at Home. */
+  weeks: HomeOnlyWeek[];
+  /** Members Home visits alone keep out of the 14-day quiet, and out of the 25-day picks pause, tonight. */
+  quiet: number;
+  paused: number;
+  /** False until billing_settings.inactivity_from is set: then no one is quiet either way. */
+  rulesOn: boolean;
+}
+
+/**
+ * Batch 22e: what home_view (login lands on Home) does to the figures. The
+ * weekly facts once more without it, and each counted member's latest Home
+ * view against their latest other action. Null on any failure: the page
+ * leaves the section out.
+ */
+export async function loadHomeOnly(report: WeeklyActiveReport, opts: { weeks?: number; now?: Date } = {}): Promise<HomeOnlyLoad | null> {
+  if (!hasServiceRole()) return null;
+  const now = opts.now ?? new Date();
+  const weeks = opts.weeks ?? 12;
+  try {
+    const admin = createAdminClient();
+    const without = QUALIFYING_KINDS.filter((k) => k !== 'home_view');
+    const { data, error } = await admin.rpc('activity_weekly_facts', { p: { weeks, now: now.toISOString(), qualifying: without, counted: COUNTED_KINDS } });
+    if (error) throw new Error(error.message);
+    const withoutReport = computeWeeklyActive(data as WeeklyFacts, { adminEmails: adminEmails() });
+
+    const settings = (await getBillingSettings()).lifecycle;
+    const ids = report.members.map((m) => m.id);
+    const lastHome = new Map<string, string>();
+    const lastOther = new Map<string, string>();
+    const since = new Date(now.getTime() - 60 * 86_400_000).toISOString();
+    for (let i = 0; i < ids.length; i += 200) {
+      for (let from = 0; ; from += 1000) {
+        const { data: rows, error: e } = await admin.from('activity_events').select('user_id, kind, occurred_at').in('user_id', ids.slice(i, i + 200)).in('kind', QUALIFYING_KINDS).gte('occurred_at', since).order('occurred_at', { ascending: true }).range(from, from + 999);
+        if (e) throw new Error(e.message);
+        for (const r of (rows ?? []) as { user_id: string; kind: string; occurred_at: string }[]) (r.kind === 'home_view' ? lastHome : lastOther).set(r.user_id, ukDay(new Date(r.occurred_at)));
+        if ((rows?.length ?? 0) < 1000) break;
+      }
+    }
+    let quiet = 0;
+    let paused = 0;
+    for (const m of report.members) {
+      // Members on a plan (paying or paused) are never quiet (inactivity/rules.ts inactivityEligible).
+      const eligible = m.category === 'never_paid' || m.category === 'cancelled';
+      const keeps = homeKeepsActive({ lastHomeDay: lastHome.get(m.id) ?? null, lastOtherDay: lastOther.get(m.id) ?? null, createdAt: m.joined, eligible }, settings, now);
+      if (keeps.quiet) quiet += 1;
+      if (keeps.paused) paused += 1;
+    }
+    return { weeks: homeOnlyWeeks(report.weeks, withoutReport.weeks), quiet, paused, rulesOn: Boolean(settings.inactivityFrom) };
+  } catch (err) {
+    console.error('[activity] home-only figures failed:', err instanceof Error ? err.message : String(err));
+    return null;
   }
 }
 

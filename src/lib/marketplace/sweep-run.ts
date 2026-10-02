@@ -24,6 +24,7 @@ import { runMetered, newActionId } from '../credit/context';
 import { pmiAccount, pmiConfigured } from '../broker/providers/pmi';
 import { COST_PENCE } from '../broker/config';
 import { absorbListings, cohortLoader, emptyAbsorbCounters, type AbsorbCounters } from './absorb';
+import { recordScanDays } from '../home/scan-record';
 import { loadScreenContext, recordRun, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
 import { HISTORY_DAYS, planPass, sweepAreaLimit, sweepEnabled, sweepHistory, sweepMaxQueries, sweepQueries, type SweepHistory, type SweepRunRecord } from './sweep-plan';
 import { sweepDemandScores } from '../sourcing-demand/server';
@@ -197,6 +198,8 @@ export async function runSweep(opts: SweepOptions): Promise<SweepResult> {
   }
 
   summary.ms = elapsed();
+  // Batch 22e: "properties scanned" (recounted, so a second pass cannot double a day).
+  await recordScanDays(admin, startedAt);
   await recordRun(admin, 'sweep', false, startedAt, summary);
   revalidateDeals();
   return done({ status: 200, body: summary });

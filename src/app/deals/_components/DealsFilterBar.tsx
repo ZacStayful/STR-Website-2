@@ -16,7 +16,7 @@ const BEDS = ["any", "1", "2", "3", "4+"] as const;
  * old buy-or-rent choice. With none in the URL the grid shows the profile's
  * own types (`ownTypes`); "All types" is one click (Q29).
  */
-export function DealsFilterBar({ filters, counts, total, ownTypes }: { filters: DealFilters; counts: AreaCount[]; total: number; ownTypes: readonly DealType[] }) {
+export function DealsFilterBar({ filters, counts, total, ownTypes, showAll = false }: { filters: DealFilters; counts: AreaCount[]; total: number; ownTypes: readonly DealType[]; showAll?: boolean }) {
   const select = "rounded-md border border-border bg-card px-2.5 py-1.5 text-sm";
   const input = "w-28 rounded-md border border-border bg-card px-2.5 py-1.5 text-sm";
   const areasWithDeals = counts.filter((c) => c.total > 0);
@@ -28,6 +28,9 @@ export function DealsFilterBar({ filters, counts, total, ownTypes }: { filters: 
   const countKind = filters.kind !== "both" ? filters.kind : kindOfTypes(filters.types);
   return (
     <form method="get" action="/deals" className="rounded-xl border border-border bg-card p-3">
+      {/* Batch 22e: marks a change made here (logged as browse_filter), and keeps "every deal" when that is what is shown. */}
+      <input type="hidden" name="f" value="1" />
+      {showAll && <input type="hidden" name="all" value="1" />}
       <div className="flex flex-wrap items-end gap-2">
         <fieldset className="text-xs text-muted-foreground">
           <legend className="block">Deals{isOwn && narrowed ? " · your profile’s" : ""}</legend>

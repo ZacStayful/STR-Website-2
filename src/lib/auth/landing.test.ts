@@ -38,7 +38,7 @@ test('open redirects are refused', () => {
 });
 
 test('the quiz returns the member to their destination, else home', () => {
-  assert.equal(HOME_PATH, '/today', 'home is the Today screen');
+  assert.equal(HOME_PATH, '/home', 'Batch 22e: login lands on Home');
   assert.equal(welcomeReturnPath(null), HOME_PATH);
   assert.equal(welcomeReturnPath('/markets'), '/markets');
   assert.equal(welcomeReturnPath('/team/join?token=abc'), '/team/join?token=abc');
