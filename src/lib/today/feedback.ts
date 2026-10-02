@@ -15,6 +15,8 @@ import type { SourcedListing } from '../listing/sourcing';
 import { withoutKindFlips, type PickFeedback } from '../listing/picks';
 import { mergeFeedback, type FeedbackEntry } from '../marketplace/reactions';
 import { dealFeedbackFor } from '../marketplace/reactions-server';
+import { latestRestartsFor } from '../profiles/server';
+import { learningSince } from '../profiles/reset';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -26,7 +28,10 @@ const URL_CHUNK = 150;
  * active. Without it, every answer the member has given, as before.
  */
 export async function feedbackForMember(admin: Admin, userId: string, now: Date = new Date(), profileId: string | null = null): Promise<PickFeedback[]> {
-  const since = new Date(now.getTime() - FEEDBACK_WINDOW_MS).toISOString();
+  const windowStart = new Date(now.getTime() - FEEDBACK_WINDOW_MS);
+  // Batch 22d: after Start again only the profile's answers since then count (the records stay).
+  const restartAt = profileId ? (await latestRestartsFor(admin, [profileId], windowStart)).get(profileId) : undefined;
+  const since = learningSince(windowStart, restartAt).toISOString();
   type Row = { canonical_url: string; reaction: unknown; reaction_source: unknown; reasons: unknown; kind: unknown; postcode_area: unknown; responded_at: unknown };
   let q = admin
     .from('sourcing_sent')

@@ -55,6 +55,7 @@ import { logConversion } from '../meta/conversions';
 import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
 import { todayKey } from '../today/day';
 import { mustHaveCountFor, rechooseForMember, tailoringPreview } from '../tailoring/server';
+import { hasRestartFor } from '../profiles/server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -346,7 +347,8 @@ export async function answerQuestion(input: AnswerInput): Promise<AnswerOutcome>
     if (!s.progress.mandatoryDone && prog.mandatoryDone) {
       logActivity(userId, 'welcome_completed', { dedupeKey: 'welcome_completed' });
       // Batch 22, Part G: a new member's own search, queued now (the quiz kicks it; the cron finishes it).
-      await queueSignupSearch(userId).catch((err) => console.error('[profile] signup search not queued:', err));
+      // Batch 22d: never after Start again or Start blank (no house spend; the unique index already stops a second one).
+      if (!(await hasRestartFor(userId))) await queueSignupSearch(userId).catch((err) => console.error('[profile] signup search not queued:', err));
     }
     if (!s.quiz.completedAt && prog.complete) {
       logActivity(userId, 'profile_completed', { extras: { real: prog.real, not_sure: prog.notSure, credit: credit.state }, dedupeKey: 'profile_completed' });
@@ -413,7 +415,8 @@ async function placeHome(userId: string, email: string | null, goals: MarketGoal
 async function settleProfileCredit(admin: Admin, userId: string, quiz: QuizRecord, prog: Progress, eligibility: Eligibility): Promise<CreditView> {
   const settings = await getBillingSettings();
   const pence = settings.profileCompletePence;
-  if (quiz.creditGrantId) return { paid: true, state: 'paid', line: creditLine({ paid: true, decision: null, pence }), pence };
+  // Paid before this answer (Batch 22d: after Start again, or on a blank profile): said so, never offered again.
+  if (quiz.creditGrantId) return { paid: true, state: 'paid', line: creditLine({ paid: true, decision: null, pence, already: true }), pence };
   if (pence <= 0) return { paid: false, state: 'off', line: '', pence };
   let decision: CreditDecision;
   if (quiz.creditSkippedReason === 'team_member' || quiz.creditSkippedReason === 'welcome_withheld') decision = { kind: 'never', reason: quiz.creditSkippedReason };
@@ -443,7 +446,7 @@ async function settleProfileCredit(admin: Admin, userId: string, quiz: QuizRecor
 export async function creditViewFor(s: ProfileSummary): Promise<CreditView> {
   const settings = await getBillingSettings();
   const pence = settings.profileCompletePence;
-  if (s.quiz.creditGrantId) return { paid: true, state: 'paid', line: creditLine({ paid: true, decision: null, pence }), pence };
+  if (s.quiz.creditGrantId) return { paid: true, state: 'paid', line: creditLine({ paid: true, decision: null, pence, already: await hasRestartFor(s.userId) }), pence };
   if (pence <= 0) return { paid: false, state: 'off', line: '', pence };
   const decision: CreditDecision =
     s.quiz.creditSkippedReason === 'team_member' || s.quiz.creditSkippedReason === 'welcome_withheld'

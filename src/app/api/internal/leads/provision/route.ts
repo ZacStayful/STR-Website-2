@@ -11,6 +11,7 @@ import { confirmLink } from "@/lib/auth/magic-link";
 import { HOME_PATH } from "@/lib/auth/landing";
 import { getBillingSettings } from "@/lib/credit/unit-costs";
 import { pounds } from "@/lib/starter-pack/rules";
+import { hasRestartFor } from "@/lib/profiles/server";
 
 // ─── Lead-form provisioning ───────────────────────────────────────────
 // Turns a Meta lead-form submission (relayed by n8n) into a member: the
@@ -120,10 +121,12 @@ export async function POST(request: Request) {
 
   // ── Goals, area, provenance. Never overwrite goals a member set themselves. ──
   const update: Record<string, unknown> = { lead_source: { source, leadId, provisionedAt: nowIso, ...(existingRow?.lead_source && typeof existingRow.lead_source === "object" ? { first: existingRow.lead_source } : {}) } };
-  if (!existingRow?.market_goals) Object.assign(update, { market_goals: goals, market_goals_updated_at: nowIso });
+  // Batch 22d: a member who used Start again has no goals on purpose: a lead form never refills them.
+  const noGoals = !existingRow?.market_goals && !(existingRow && (await hasRestartFor(userId)));
+  if (noGoals) Object.assign(update, { market_goals: goals, market_goals_updated_at: nowIso });
   // A member who turned picks off in Notifications stays off: only an account
   // that never made that choice is enrolled here.
-  if (!existingRow?.market_goals && !existingRow?.sourcing_opted_out_at) Object.assign(update, { sourcing_alerts: true, sourcing_opted_out_at: null });
+  if (noGoals && !existingRow?.sourcing_opted_out_at) Object.assign(update, { sourcing_alerts: true, sourcing_opted_out_at: null });
   if (mobile && !existingRow?.mobile) update.mobile = mobile;
   if (name && created) update.full_name = name;
   // The trigger creates the profile on auth.users insert; it may lag a fresh createUser by a moment.

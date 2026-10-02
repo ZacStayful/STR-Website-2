@@ -9,6 +9,10 @@ import { logActivity } from '@/lib/activity/log';
 import { GOALS_EDITOR_HREF } from '@/lib/nav';
 import { isSwitchable } from '@/lib/tailoring/profile';
 import { rechooseForMember, saveFilterMode } from '@/lib/tailoring/server';
+import { isAdminEmail } from '@/lib/admin';
+import { quizPathFor } from '@/lib/auth/landing';
+import { resetActiveProfile } from '@/lib/profiles/server';
+import { isResetAnswers, isResetDeals } from '@/lib/profiles/reset';
 
 /**
  * The profile page's "Advanced" answers: the four ranking priorities, the
@@ -86,4 +90,27 @@ export async function setFilterModeAction(formData: FormData): Promise<void> {
   revalidatePath(GOALS_EDITOR_HREF);
   revalidatePath('/today');
   redirect(`${GOALS_EDITOR_HREF}?mode=1${back}`);
+}
+
+/**
+ * Batch 22d: "Start again" on the active saved profile. The member comes from
+ * the session only and the profile is always their active one (never a posted
+ * id); the two choices are checked against closed lists, and only the active
+ * profile's own deals that were shown can be cleared. Then straight into the
+ * quiz, from the first unanswered question.
+ */
+export async function startAgainAction(formData: FormData): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/login?redirect=/profile/start-again');
+  const answers = formData.get('answers');
+  const deals = formData.get('deals');
+  if (!isResetAnswers(answers) || !isResetDeals(deals)) redirect(`/profile/start-again?error=${encodeURIComponent('Choose what to clear.')}`);
+  const keys = (k: string) => formData.getAll(k).filter((v): v is string => typeof v === 'string');
+  const out = await resetActiveProfile({ userId: user.id, adminUser: isAdminEmail(user.email), answers, deals, shown: keys('shown'), keep: keys('keep') });
+  if (!out.ok) redirect(`/profile/start-again?error=${encodeURIComponent(out.error)}`);
+  revalidatePath('/', 'layout');
+  redirect(quizPathFor(GOALS_EDITOR_HREF));
 }

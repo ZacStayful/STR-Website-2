@@ -39,3 +39,11 @@ test('the line says what happened', () => {
   assert.match(creditLine({ paid: false, decision: { kind: 'never', reason: 'team_member' }, pence: 500 }), /team/);
   assert.match(creditLine({ paid: false, decision: { kind: 'wait', reason: 'welcome_pending', needed: 0 }, pence: 750 }), /£7\.50/);
 });
+
+test('Batch 22d: paid before this completion (Start again, a blank profile): says so and never offers it again', () => {
+  const again = creditLine({ paid: true, already: true, decision: null, pence: 500 });
+  assert.equal(again, 'You’ve already had your £5 for completing your profile, so there’s none for answering again.');
+  assert.equal(creditLine({ paid: true, already: true, decision: { kind: 'pay' }, pence: 500 }), again, 'whatever the decision, a paid account is never offered it');
+  assert.equal(creditLine({ paid: true, decision: null, pence: 500 }), '£5 of credit is on your account for completing your profile.', 'a first completion reads as before');
+  assert.equal(creditLine({ paid: false, already: true, decision: null, pence: 500 }), 'Complete your profile for £5 of credit.', '`already` means nothing until it has been paid');
+});

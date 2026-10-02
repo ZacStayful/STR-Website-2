@@ -40,6 +40,8 @@ import { TODAY_LIST_MAX, WHAT_IF_NEARBY_AREAS } from '../intelligence/config';
 import { whatIfChanges, whatIfResults, type WhatIf, type WhatIfResult } from '../intelligence/what-if';
 import { nearestAreas, referencePoint } from './candidates';
 import { feedbackForMember } from './feedback';
+import { latestRestartsFor } from '../profiles/server';
+import { learningSince } from '../profiles/reset';
 import { todayKey, todayStart } from './day';
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -410,7 +412,9 @@ export function typesFor(member: Pick<MemberContext, 'goals' | 'tailoring'>): De
  * Batch 13's column. Empty on any failure: the mix then starts where it
  * starts.
  */
-async function keepsByType(admin: Admin, member: MemberContext, since: Date): Promise<Partial<Record<DealType, number>>> {
+async function keepsByType(admin: Admin, member: MemberContext, windowStart: Date): Promise<Partial<Record<DealType, number>>> {
+  // Batch 22d: after Start again only the profile's Keeps since then shift the mix.
+  const since = member.profileId ? learningSince(windowStart, (await latestRestartsFor(admin, [member.profileId], windowStart)).get(member.profileId)) : windowStart;
   let q = admin.from('deal_reactions').select('deal_id').eq('user_id', member.userId).eq('reaction', 'keep').gte('updated_at', since.toISOString()).limit(PAGE);
   if (member.profileId) q = q.eq('profile_id', member.profileId);
   const { data, error } = await q;

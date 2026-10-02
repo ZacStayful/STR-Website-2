@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { areaMetaForCode } from "@/lib/market/areas";
+import { dealRowTitle } from "@/lib/listing/row-title";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
 import { pipelineStatusInfo } from "@/lib/listing/pipeline";
@@ -81,8 +81,6 @@ export function DealRow({
   let sub: string;
   let motivation: string[] = [];
   if (card) {
-    const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
-    const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ") || "Location on the sheet";
     const figure = headlineFigure(card);
     // The deal page's back link reads this (src/lib/listing/return-path.ts).
     href = `/deals/${card.id}?back=${encodeURIComponent("/my-deals")}`;
@@ -91,8 +89,8 @@ export function DealRow({
     // Batch 17: a Project deal adds its works and value added.
     small = view ? [`${view.caption}${view.range ? ` · ${view.range.basis}` : ""}`, view.uplift, view.projectLine].filter(Boolean).join(" · ") : figure.small;
     price = priceLine(card);
-    // The address rule: only for a deal the member may see the whole of.
-    title = item.opened ? (item.listing?.address ?? address ?? where) : where;
+    // The address rule: only for a deal the member may see the whole of (shared with Start again and Cleared deals).
+    title = dealRowTitle(item, card, address);
     sub = [kindWordFor(card), describeType(card)].filter(Boolean).join(" · ");
     motivation = motivationLine(card, now);
   } else {
@@ -100,7 +98,7 @@ export function DealRow({
     href = item.checkedListingId ? `/markets?pane=listings&listing=${encodeURIComponent(item.checkedListingId)}` : "/markets?pane=listings";
     photo = l?.photo ?? null;
     big = formatListingPrice(item.price);
-    title = l?.address ?? l?.title ?? "Listing";
+    title = dealRowTitle(item, null, null);
     sub = [KIND[item.kind] ?? null, l?.bedrooms ? `${l.bedrooms} bed` : null, l ? SOURCE_LABELS[l.source] : null].filter(Boolean).join(" · ");
   }
   const gone = card?.status === "retired";

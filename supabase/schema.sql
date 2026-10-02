@@ -6349,3 +6349,143 @@ begin
 end $$;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 22d: start again
+-- =========================
+-- "Start again" on /profile resets the ACTIVE saved profile's answers (and
+-- optionally "About you"), hides the tracked deals the member chooses from
+-- My deals, and restarts what Today learns from their Keeps, Passes and opens
+-- for that profile. "Start blank" on /profiles makes a new profile with no
+-- answers. src/lib/profiles/reset.ts holds the rules.
+--
+--   profile_restarts      one row per reset or blank profile. The admin
+--                         resets panel, the learning cutoff (only what came
+--                         after a profile's latest restart counts), the
+--                         "no daily deals until the mandatory questions are
+--                         answered" rule and the "no signup reveal" rule
+--                         all read it.
+--   hidden_tracked_deals  My deals entries the member cleared, by the entry's
+--                         key ('d-<deal id>' or 'l-<checked listing id>',
+--                         src/lib/listing/tracked.ts). Hidden, never deleted:
+--                         nothing here writes deal_reactions (a clear is not a
+--                         Pass), deal_opens or checked_listings. Restorable
+--                         for 30 days (restored_at); an entry the member acts
+--                         on again after it was hidden shows again.
+--
+-- The £5 is untouched: reset_search_profile never writes credit_grant_id,
+-- credit_skipped_reason or completed_at. Everything is additive, idempotent
+-- and service role only; nothing here is in ACCESS_COLUMNS (src/lib/access.ts),
+-- nor may it become so. No backfill and no cron. Every read of these tables is
+-- a query of its own that fails open, so this section can be run before or
+-- after the code is deployed.
+
+create table if not exists public.profile_restarts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  profile_id uuid references public.search_profiles(id) on delete set null,
+  kind text not null,                 -- reset | blank
+  answers text,                       -- reset only: search | everything
+  deals text,                         -- reset only: keep_all | clear_all | choose
+  deals_kept integer not null default 0,
+  deals_cleared integer not null default 0,
+  created_at timestamptz not null default now()
+);
+do $$
+begin
+  alter table public.profile_restarts drop constraint if exists profile_restarts_kind_check;
+  alter table public.profile_restarts add constraint profile_restarts_kind_check check (kind in ('reset', 'blank'));
+  alter table public.profile_restarts drop constraint if exists profile_restarts_answers_check;
+  alter table public.profile_restarts add constraint profile_restarts_answers_check check (answers is null or answers in ('search', 'everything'));
+  alter table public.profile_restarts drop constraint if exists profile_restarts_deals_check;
+  alter table public.profile_restarts add constraint profile_restarts_deals_check check (deals is null or deals in ('keep_all', 'clear_all', 'choose'));
+end $$;
+create index if not exists profile_restarts_created_idx on public.profile_restarts (created_at);
+create index if not exists profile_restarts_user_idx on public.profile_restarts (user_id, created_at desc);
+create index if not exists profile_restarts_profile_idx on public.profile_restarts (profile_id, created_at desc) where profile_id is not null;
+alter table public.profile_restarts enable row level security;  -- no policies: service role only
+revoke all on public.profile_restarts from anon, authenticated;
+
+create table if not exists public.hidden_tracked_deals (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  item_key text not null,
+  profile_id uuid references public.search_profiles(id) on delete set null,
+  restart_id uuid references public.profile_restarts(id) on delete set null,
+  hidden_at timestamptz not null default now(),
+  restored_at timestamptz,
+  primary key (user_id, item_key)
+);
+do $$
+begin
+  alter table public.hidden_tracked_deals drop constraint if exists hidden_tracked_deals_key_check;
+  alter table public.hidden_tracked_deals add constraint hidden_tracked_deals_key_check check (item_key ~ '^[dl]-[0-9A-Za-z-]{1,64}$');
+end $$;
+create index if not exists hidden_tracked_deals_hidden_idx on public.hidden_tracked_deals (user_id, hidden_at desc);
+alter table public.hidden_tracked_deals enable row level security;  -- no policies: service role only
+revoke all on public.hidden_tracked_deals from anon, authenticated;
+
+-- ── Reset: one transaction under the member's row lock ──
+-- p: {user, answers: 'search'|'everything', deals: 'keep_all'|'clear_all'|'choose',
+--     kept, cleared, shared: [question ids stored in about_you], hide: [entry keys]}
+-- Always the member's ACTIVE live profile: no profile id is taken from the
+-- caller. The live copies (profiles.market_goals, saved_areas,
+-- profile_quiz.answered) are cleared, and Batch 13's triggers carry that into
+-- the active profile's row only; other profiles are not touched (except
+-- "About you", which is shared, under 'everything'). The £5 columns and
+-- completed_at are never written. Raises profile_not_found (P0404).
+create or replace function public.reset_search_profile(p jsonb)
+returns uuid language plpgsql set search_path = '' as $$
+declare
+  v_user uuid := nullif(p->>'user', '')::uuid;
+  v_answers text := p->>'answers';
+  v_deals text := p->>'deals';
+  v_shared text[] := coalesce((select array_agg(x) from jsonb_array_elements_text(coalesce(p->'shared', '[]'::jsonb)) x), '{}');
+  v_profile uuid;
+  v_id uuid;
+begin
+  if v_user is null then raise exception 'profile_user_required'; end if;
+  if v_answers is null or v_answers not in ('search', 'everything') then raise exception 'reset_answers_invalid'; end if;
+  if v_deals is null or v_deals not in ('keep_all', 'clear_all', 'choose') then raise exception 'reset_deals_invalid'; end if;
+  perform 1 from public.profiles where id = v_user for no key update;
+  select id into v_profile from public.search_profiles where user_id = v_user and is_active and deleted_at is null;
+  if v_profile is null then
+    raise exception 'profile_not_found' using errcode = 'P0404';
+  end if;
+
+  insert into public.profile_restarts (user_id, profile_id, kind, answers, deals, deals_kept, deals_cleared)
+  values (v_user, v_profile, 'reset', v_answers, v_deals, greatest(coalesce((p->>'kept')::integer, 0), 0), greatest(coalesce((p->>'cleared')::integer, 0), 0))
+  returning id into v_id;
+
+  if v_answers = 'everything' then
+    update public.profiles set market_goals = null, market_goals_updated_at = now(), about_you = null, about_you_updated_at = now() where id = v_user;
+  else
+    update public.profiles set market_goals = null, market_goals_updated_at = now() where id = v_user;
+  end if;
+  delete from public.saved_areas where user_id = v_user;
+
+  insert into public.profile_quiz as q (user_id, answered, updated_at)
+  values (v_user, '{}'::jsonb, now())
+  on conflict (user_id) do update
+     set answered = case
+                      when v_answers = 'everything' then '{}'::jsonb
+                      else coalesce((select jsonb_object_agg(e.key, e.value) from jsonb_each(q.answered) e where e.key = any (v_shared)), '{}'::jsonb)
+                    end,
+         last_question = null,
+         finish_later_at = null,
+         updated_at = now();
+
+  update public.search_profiles set filter_modes = '{}'::jsonb, updated_at = now() where id = v_profile;
+
+  insert into public.hidden_tracked_deals (user_id, item_key, profile_id, restart_id, hidden_at, restored_at)
+  select v_user, k, v_profile, v_id, now(), null
+    from (select distinct x as k from jsonb_array_elements_text(coalesce(p->'hide', '[]'::jsonb)) x) keys
+  on conflict (user_id, item_key) do update
+     set profile_id = excluded.profile_id, restart_id = excluded.restart_id, hidden_at = excluded.hidden_at, restored_at = null;
+
+  return v_id;
+end;
+$$;
+revoke all on function public.reset_search_profile(jsonb) from public, anon, authenticated;
+grant execute on function public.reset_search_profile(jsonb) to service_role;
+
+notify pgrst, 'reload schema';

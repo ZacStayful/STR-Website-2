@@ -57,6 +57,12 @@ export interface SavedProfile {
   pausedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
+  /**
+   * Batch 22d: reset or made blank and its own mandatory search questions not
+   * answered yet (reset.ts awaitingAnswers). Set by the server reads that feed
+   * the daily runs, never stored; absent means no.
+   */
+  awaitingAnswers?: boolean;
 }
 
 export const PROFILE_COLUMNS = 'id, user_id, name, criteria, areas, answered, for_client, copied_from, is_active, paused_at, deleted_at, created_at';
@@ -173,7 +179,10 @@ export function seatKey(userId: string, profileId: string | null): string {
  */
 export function seatsFor(userId: string, profiles: readonly SavedProfile[] | undefined): { seats: Seat[]; allPaused: boolean } {
   if (!profiles || profiles.every((p) => p.deletedAt)) return { seats: [{ userId, profile: null, key: seatKey(userId, null), heading: null }], allPaused: false };
-  const running = chargeOrder(profiles);
+  // Batch 22d: a profile waiting for its answers (reset, or made blank) gets no
+  // daily deals and no charge until they are given. The active one is left to
+  // the member-level rule the runs already apply (mandatoryIncompleteFor).
+  const running = chargeOrder(profiles).filter((p) => p.isActive || !p.awaitingAnswers);
   const labelled = labelsShown(profiles);
   return {
     seats: running.map((p) => ({ userId, profile: p, key: seatKey(userId, p.id), heading: labelled ? p.name : null })),

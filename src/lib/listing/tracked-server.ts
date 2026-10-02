@@ -31,6 +31,7 @@ import { dealVisibilityFor } from '../marketplace/tier';
 import { loadSourcedListings } from '../marketplace/server';
 import type { DealRow } from '../marketplace/types';
 import { KEPT_STATUS, toCheckedListingRow, type PipelineStatus } from './pipeline';
+import { hiddenNow, restorable, RESTORE_DAYS, type HiddenRow } from '../profiles/reset';
 import { forViewer, trackedDeals, type TrackedDeal, type TrackedDealFacts, type TrackedOpenInput, type TrackedPickAnswerInput, type TrackedPipelineInput, type TrackedReactionInput, type ViewerDeal } from './tracked';
 
 const PAGE = 1000;
@@ -62,6 +63,12 @@ export interface TrackedLoad {
   /** The account that pays: whose opens these are. */
   payerId: string;
   visibility: DealVisibility;
+  /**
+   * Batch 22d: the viewer's cleared entries that can still be brought back
+   * from "Cleared deals" (src/lib/profiles/reset.ts). With `hidden: 'only'`
+   * they are `view` itself.
+   */
+  cleared: number;
 }
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -182,9 +189,22 @@ function toPipeline(rows: Record<string, unknown>[], scope: TrackedScope, viewer
  * 'own' is only the person's own stages (plus the team's opens nobody has
  * moved), which is what an alert about "your deals" should read.
  */
-export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | 'team'; adminUser?: boolean } = {}): Promise<TrackedLoad> {
+/**
+ * Batch 22d: the viewer's cleared My deals entries, by entry key. Read in a
+ * query of its own: a database without the table hides nothing.
+ */
+async function hiddenRowsFor(admin: Admin, userId: string): Promise<Map<string, HiddenRow>> {
+  const out = new Map<string, HiddenRow>();
+  const rows = await paged<{ item_key: string; hidden_at: string; restored_at: string | null }>('cleared deals', ALL, (from, to) =>
+    admin.from('hidden_tracked_deals').select('item_key, hidden_at, restored_at').eq('user_id', userId).is('restored_at', null).order('item_key', { ascending: true }).range(from, to),
+  );
+  for (const r of rows) out.set(r.item_key, { itemKey: r.item_key, hiddenAt: r.hidden_at, restoredAt: r.restored_at });
+  return out;
+}
+
+export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | 'team'; adminUser?: boolean; hidden?: 'exclude' | 'only' } = {}): Promise<TrackedLoad> {
   const visibility = await dealVisibilityFor(userId, Boolean(opts.adminUser));
-  const empty: TrackedLoad = { items: [], view: [], cards: new Map(), addresses: new Map(), people: [userId], payerId: userId, visibility };
+  const empty: TrackedLoad = { items: [], view: [], cards: new Map(), addresses: new Map(), people: [userId], payerId: userId, visibility, cleared: 0 };
   if (!hasServiceRole()) return empty;
   const admin = createAdminClient();
   const scope = await trackedScope(userId, opts.scope ?? 'team');
@@ -240,8 +260,18 @@ export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | '
     cards.set(id, card);
   }
 
-  const items = trackedDeals({ viewerId: userId, pipeline, reactions, opens, pickAnswers, deals });
-  const view = forViewer(items, userId);
+  const all = trackedDeals({ viewerId: userId, pipeline, reactions, opens, pickAnswers, deals });
+  // Batch 22d: entries the viewer cleared (Start again) leave their list, and
+  // the alerts that read it, until restored or acted on again. Only their own
+  // entries: a teammate's stays on the teammate's list.
+  const hiddenRows = await hiddenRowsFor(admin, userId);
+  const isHidden = (it: { userId: string; key: string; lastChangedAt: string }) => it.userId === userId && hiddenNow(it, hiddenRows.get(it.key));
+  const now = new Date();
+  const whole = forViewer(all, userId);
+  const clearedView = whole.filter((v) => v.mine && isHidden(v) && restorable(hiddenRows.get(v.key)!, now));
+  const clearedKeys = new Set(clearedView.map((v) => v.key));
+  const items = opts.hidden === 'only' ? all.filter((it) => it.userId === userId && clearedKeys.has(it.key)) : all.filter((it) => !isHidden(it));
+  const view = opts.hidden === 'only' ? clearedView : whole.filter((v) => !(v.mine && isHidden(v)));
 
   // Opened deals with no row of their own: the address is theirs, so read it.
   const needAddress = view.filter((v) => v.opened && v.dealId && !v.listing && v.canonicalUrl);
@@ -253,7 +283,7 @@ export async function loadTrackedDeals(userId: string, opts: { scope?: 'own' | '
       if (address) addresses.set(v.dealId!, address);
     }
   }
-  return { items, view, cards, addresses, people, payerId, visibility };
+  return { items, view, cards, addresses, people, payerId, visibility, cleared: clearedView.length };
 }
 
 /** One deal, for its own page: this person's stage, whether it is on My deals, and any report to open. */
@@ -305,4 +335,27 @@ export async function dealTrackingFor(input: { userId: string; deal: Pick<DealRo
     checkedListingId: own?.checkedListingId ?? null,
     reportCandidates: candidates.map((it) => ({ id: it.reportId!, userId: it.userId })),
   };
+}
+
+/**
+ * Batch 22d: brings a cleared deal back to My deals, at the stage it had
+ * (nothing about its stage was ever changed). Only the member's own, and only
+ * within RESTORE_DAYS of clearing it. False when there was nothing to restore.
+ */
+export async function restoreClearedDeal(userId: string, itemKey: string, now: Date = new Date()): Promise<boolean> {
+  if (!hasServiceRole() || !/^[dl]-[0-9A-Za-z-]{1,64}$/.test(itemKey)) return false;
+  const since = new Date(now.getTime() - RESTORE_DAYS * 86_400_000).toISOString();
+  const { data, error } = await createAdminClient()
+    .from('hidden_tracked_deals')
+    .update({ restored_at: now.toISOString() })
+    .eq('user_id', userId)
+    .eq('item_key', itemKey)
+    .is('restored_at', null)
+    .gte('hidden_at', since)
+    .select('item_key');
+  if (error) {
+    console.error('[tracked] restore failed:', error.message);
+    return false;
+  }
+  return (data ?? []).length > 0;
 }

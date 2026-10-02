@@ -90,6 +90,8 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
                   {" · "}
                   {running ? "Daily deals on" : "Daily deals paused: nothing is charged for this profile"}
                 </p>
+                {/* Batch 22d: reset or blank, and not answered yet: no daily deals or charge for it until it is. */}
+                {running && !p.isActive && p.awaitingAnswers && <p className="mt-1 text-xs text-muted-foreground">Waiting for its answers: no daily deals or charge for it until you switch to it and answer the first questions.</p>}
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   {p.isActive ? (
@@ -150,7 +152,23 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
               <p className="mt-2 text-sm text-foreground">{limitMessage(view.max)}</p>
             ) : (
               <form action={createProfileAction} className="mt-3 space-y-3">
-                <p className="text-sm text-muted-foreground">It starts as a copy of one you have, so you only change what’s different.</p>
+                <fieldset className="space-y-2 text-sm">
+                  <legend className="font-medium text-foreground">Start with</legend>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" name="start" value="copy" defaultChecked className="mt-1" />
+                    <span>
+                      <span className="font-medium text-foreground">A copy of my current answers</span>
+                      <span className="block text-xs text-muted-foreground">You only change what’s different.</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" name="start" value="blank" className="mt-1" />
+                    <span>
+                      <span className="font-medium text-foreground">Start blank</span>
+                      <span className="block text-xs text-muted-foreground">I’ll ask the questions from the start (“About you” is shared, so it stays). No daily deals or charge for it until its first questions are answered.</span>
+                    </span>
+                  </label>
+                </fieldset>
                 {priceLine && <p className="text-sm font-medium text-foreground">{priceLine}.</p>}
                 <label className="flex flex-col gap-1 text-sm">
                   <span className="font-medium text-foreground">Name</span>
@@ -158,7 +176,7 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
                   <span className="text-xs text-muted-foreground">{NAME_HINT}</span>
                 </label>
                 <label className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-foreground">Copy from</span>
+                  <span className="font-medium text-foreground">Copy from (not used for a blank profile)</span>
                   <select name="copy_from" defaultValue={view.active?.id ?? ""} className="rounded-md border border-border bg-background px-2 py-1.5">
                     {view.live.map((p) => (
                       <option key={p.id} value={p.id}>{p.name}</option>
@@ -167,6 +185,7 @@ export default async function ProfilesPage({ searchParams }: { searchParams: Pro
                 </label>
                 <fieldset className="text-sm">
                   <legend className="font-medium text-foreground">Which deals should this profile show?</legend>
+                  <p className="text-xs text-muted-foreground">For a copy. A blank profile asks this first.</p>
                   <div className="mt-1 flex flex-wrap gap-3">
                     {TYPE_CHOICES.map((c) =>
                       c.soon ? (

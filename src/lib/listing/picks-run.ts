@@ -53,7 +53,8 @@ import { mandatoryIncompleteFor } from "../profile/mandatory-server";
 import { lowCreditNoticesFor, markLowCreditTold } from "../credit/low-credit-server";
 import { lowCreditSection } from "../credit/low-credit";
 import { inactivePausedIds } from "../inactivity/server";
-import { allProfilesFor } from "../profiles/server";
+import { allProfilesFor, latestRestartsFor } from "../profiles/server";
+import { afterRestart } from "../profiles/reset";
 import { labelFor, profileLinks, seatKey, seatsFor, type SavedProfile } from "../profiles/rules";
 import { GOALS_EDITOR_HREF } from "../nav";
 import { closingIds, type Settled } from "../notify/alerts";
@@ -395,10 +396,14 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // A seat for a saved profile learns only from the answers given under it
   // (as Today does, src/lib/today/feedback.ts); a seat with no profile from all of them.
   const grid = await dealFeedbackFor(admin, ids, feedbackSince, { byProfile: tagged });
+  // Batch 22d: after Start again a profile learns only from what came later (the records stay).
+  const restarts = profileRows ? await latestRestartsFor(admin, [...profileRows.values()].flat().map((r) => r.id), new Date(feedbackSince)) : new Map<string, string>();
   const feedbackFor = (userId: string, profileId: string | null): PickFeedback[] => {
-    const picked = (pickEntries.get(userId) ?? []).filter((x) => !profileId || x.profileId === profileId).map((x) => x.entry);
+    const restartAt = profileId ? restarts.get(profileId) : undefined;
+    const picked = afterRestart((pickEntries.get(userId) ?? []).filter((x) => !profileId || x.profileId === profileId).map((x) => x.entry), (e) => e.at, restartAt);
+    const onGrid = afterRestart((profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? [], (e) => e.at, restartAt);
     // Batch 17 (Q25): "rent-to-rent, not buying" added the type when it was given; the searches never switch kind on it.
-    return withoutKindFlips(mergeFeedback(picked, (profileId ? grid.byProfile.get(profileId) : grid.entries.get(userId)) ?? []));
+    return withoutKindFlips(mergeFeedback(picked, onGrid));
   };
 
   const members: Member[] = [];

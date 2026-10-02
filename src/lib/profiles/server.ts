@@ -25,6 +25,7 @@ import 'server-only';
  * the app then behaves exactly as it did before this batch.
  */
 import { cache } from 'react';
+import { after } from 'next/server';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { teamOf, payerFor } from '../team';
 import { logActivity } from '../activity/log';
@@ -32,6 +33,11 @@ import { quoterFor } from '../credit/quote-server';
 import { dailyDealsLineFor } from '../listing/daily-deals';
 import { copyFilterModes } from '../tailoring/modes-server';
 import type { DealType } from '../market/goals';
+import { loadTrackedDeals, type TrackedLoad } from '../listing/tracked-server';
+import type { ViewerDeal } from '../listing/tracked';
+import { queueFunnelSync } from '../crm/monday-funnel/queue-server';
+import { profileTagsOrNull } from './deal-tags';
+import { awaitingAnswers, blankProfileInput, dealsToHide, resetCandidates, resetPayload, restartActivity, type ResetAnswers, type ResetDeals } from './reset';
 import {
   checkName,
   criteriaForNewProfile,
@@ -130,7 +136,7 @@ export const profilesFor = cache(async (userId: string): Promise<ProfilesView> =
     else rows = rows.map((p) => (p.id === live[0].id ? { ...p, isActive: true } : p));
     live = rows.filter((p) => !p.deletedAt);
   }
-  const [team, max] = await Promise.all([teamOf(userId), maxProfilesSetting(admin)]);
+  const [team, max] = await Promise.all([teamOf(userId), maxProfilesSetting(admin), markAwaiting(admin, rows)]);
   const teamMember = team.role === 'member';
   return { readable: true, all: rows, live, active: live.find((p) => p.isActive) ?? null, max: maxProfilesFor(teamMember, max), teamMember };
 });
@@ -190,6 +196,7 @@ export async function runningProfilesFor(admin: Admin, userIds: readonly string[
       if ((data?.length ?? 0) < PAGE) break;
     }
   }
+  await markAwaiting(admin, [...out.values()].flat());
   return out;
 }
 
@@ -224,6 +231,7 @@ export async function allProfilesFor(admin: Admin, userIds: readonly string[]): 
       if ((data?.length ?? 0) < PAGE) break;
     }
   }
+  await markAwaiting(admin, [...out.values()].flat());
   return out;
 }
 
@@ -263,25 +271,29 @@ function own(view: ProfilesView, id: string): SavedProfile | null {
   return view.live.find((p) => p.id === id) ?? null;
 }
 
-export async function createProfile(input: { userId: string; name: unknown; copyFrom: string | null; types: DealType[]; forClient: boolean }): Promise<ProfileOutcome> {
+export async function createProfile(input: { userId: string; name: unknown; copyFrom: string | null; types: DealType[]; forClient: boolean; blank?: boolean }): Promise<ProfileOutcome> {
   const view = await profilesFor(input.userId);
   if (!view.readable) return fail('Saved profiles are not available yet. Please try again shortly.');
   if (view.teamMember) return fail('Team members use the team’s profile.');
   if (view.live.length >= view.max) return fail(limitMessage(view.max));
   const name = checkName(input.name, view.all);
   if (!name.ok) return fail(name.error);
-  const source = (input.copyFrom ? own(view, input.copyFrom) : null) ?? view.active;
+  // Batch 22d: "Start blank" copies nothing (and ignores the ticked types: the quiz asks them).
+  const blank = input.blank === true;
+  const source = blank ? null : ((input.copyFrom ? own(view, input.copyFrom) : null) ?? view.active);
   const { data, error } = await createAdminClient().rpc('create_search_profile', {
-    p: {
-      user: input.userId,
-      name: name.name,
-      criteria: criteriaForNewProfile(source?.goals ?? null, input.types),
-      areas: source?.areas ?? [],
-      // The types ticked here are this profile's answer to "Which deals do you want to see?".
-      answered: source && input.types.length > 0 ? { ...source.answered, deal_types: { at: new Date().toISOString(), notSure: false } } : (source?.answered ?? {}),
-      for_client: input.forClient,
-      copied_from: source?.id ?? null,
-    },
+    p: blank
+      ? blankProfileInput({ userId: input.userId, name: name.name, forClient: input.forClient })
+      : {
+          user: input.userId,
+          name: name.name,
+          criteria: criteriaForNewProfile(source?.goals ?? null, input.types),
+          areas: source?.areas ?? [],
+          // The types ticked here are this profile's answer to "Which deals do you want to see?".
+          answered: source && input.types.length > 0 ? { ...source.answered, deal_types: { at: new Date().toISOString(), notSure: false } } : (source?.answered ?? {}),
+          for_client: input.forClient,
+          copied_from: source?.id ?? null,
+        },
   });
   if (error) {
     if (error.code === 'P0409' || /profile_limit/.test(error.message)) return fail(limitMessage(view.max));
@@ -292,7 +304,10 @@ export async function createProfile(input: { userId: string; name: unknown; copy
   const id = String(data);
   // Batch 14: the must-have / nice-to-have switches come with the copy.
   if (source) await copyFilterModes(source.id, id);
-  logActivity(input.userId, 'saved_profile_created', { profileId: id, extras: { copied: Boolean(source), for_client: input.forClient, deal_types: input.types.length > 0 ? input.types.join(',') : null } });
+  // Batch 22d: a blank profile is a restart: no daily deals until it is answered, no signup reveal.
+  // So is a copy of one still waiting for its answers (it would otherwise be charged on house picks).
+  if (blank || source?.awaitingAnswers) await recordBlank(input.userId, id);
+  logActivity(input.userId, 'saved_profile_created', { profileId: id, extras: { copied: Boolean(source), blank, for_client: input.forClient, deal_types: !blank && input.types.length > 0 ? input.types.join(',') : null } });
   return { ok: true, id };
 }
 
@@ -370,4 +385,127 @@ export async function deleteProfile(userId: string, profileId: string): Promise<
   if ((data ?? []).length === 0) return fail('Switch to another profile before deleting this one.');
   logActivity(userId, 'saved_profile_deleted', { profileId });
   return { ok: true, id: profileId };
+}
+
+// ── Batch 22d: Start again and Start blank (rules in reset.ts) ──
+
+/**
+ * Marks the profiles that were reset or made blank and have not answered
+ * their own mandatory search questions (seatsFor then gives them no daily
+ * deals and no charge). Only profiles with a restart are ever marked, so a
+ * member who never used either is served exactly as before. Fails open.
+ */
+async function markAwaiting(admin: Admin, rows: SavedProfile[]): Promise<void> {
+  const ids = [...new Set(rows.map((p) => p.id))];
+  const restarted = new Set<string>();
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('profile_restarts').select('profile_id').in('profile_id', ids.slice(i, i + ID_CHUNK));
+    if (error) {
+      console.warn('[profiles] restarts unreadable (schema behind?):', error.message);
+      return;
+    }
+    for (const r of (data ?? []) as { profile_id: string | null }[]) if (r.profile_id) restarted.add(r.profile_id);
+  }
+  for (const p of rows) if (restarted.has(p.id)) p.awaitingAnswers = awaitingAnswers(p);
+}
+
+async function recordBlank(userId: string, profileId: string): Promise<void> {
+  const { error } = await createAdminClient().from('profile_restarts').insert({ user_id: userId, profile_id: profileId, kind: 'blank' });
+  if (error) console.warn('[profiles] blank restart not recorded (schema behind?):', error.message);
+}
+
+/**
+ * Each profile's latest restart at or after `since` (profile id → ISO), for
+ * the learning cutoff: only what came after it counts. Empty when unreadable.
+ */
+export async function latestRestartsFor(admin: Admin, profileIds: readonly (string | null | undefined)[], since: Date): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = [...new Set(profileIds.filter((x): x is string => Boolean(x)))];
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('profile_restarts').select('profile_id, created_at').in('profile_id', ids.slice(i, i + ID_CHUNK)).gte('created_at', since.toISOString());
+    if (error) {
+      console.warn('[profiles] restarts unreadable (schema behind?):', error.message);
+      return out;
+    }
+    for (const r of (data ?? []) as { profile_id: string; created_at: string }[]) {
+      const prev = out.get(r.profile_id);
+      if (!prev || Date.parse(r.created_at) > Date.parse(prev)) out.set(r.profile_id, r.created_at);
+    }
+  }
+  return out;
+}
+
+/**
+ * Whether this profile (or, with none, any of the member's) was restarted at
+ * or after `since`: something from before a restart (an old pick email's
+ * link) then changes nothing. False on any failure.
+ */
+export async function restartedSince(admin: Admin, p: { userId: string; profileId: string | null }, since: string): Promise<boolean> {
+  let q = admin.from('profile_restarts').select('id').eq('user_id', p.userId).eq('kind', 'reset').gte('created_at', since).limit(1);
+  if (p.profileId) q = q.eq('profile_id', p.profileId);
+  const { data, error } = await q;
+  if (error) return false;
+  return (data ?? []).length > 0;
+}
+
+/** Whether this member has ever reset a profile or made a blank one: no signup reveal or search after that. False on any failure. */
+export const hasRestartFor = cache(async (userId: string): Promise<boolean> => {
+  if (!hasServiceRole()) return false;
+  const { data, error } = await createAdminClient().from('profile_restarts').select('id').eq('user_id', userId).limit(1);
+  if (error) return false;
+  return (data ?? []).length > 0;
+});
+
+export interface ResetChoices {
+  /** False: saved profiles cannot be read, so there is nothing to reset. */
+  readable: boolean;
+  active: SavedProfile | null;
+  teamMember: boolean;
+  /** Everything My deals shows, for drawing the rows. */
+  load: TrackedLoad | null;
+  /** The active profile's own tracked deals, as My deals shows them: what the reset may clear. */
+  deals: ViewerDeal[];
+  /** False: which profile each deal is for cannot be read, so every deal is kept. */
+  tagsReadable: boolean;
+}
+
+/** The confirm screen's choices: the active profile and its tracked deals. */
+export async function resetChoicesFor(userId: string, adminUser: boolean): Promise<ResetChoices> {
+  const view = await profilesFor(userId);
+  if (!view.readable || !view.active) return { readable: false, active: null, teamMember: view.teamMember, load: null, deals: [], tagsReadable: false };
+  const load = await loadTrackedDeals(userId, { scope: 'team', adminUser });
+  const tags = await profileTagsOrNull(userId, load.payerId, load.view);
+  if (!tags) return { readable: true, active: view.active, teamMember: view.teamMember, load, deals: [], tagsReadable: false };
+  const keys = new Set(resetCandidates(load.view, tags, view.active.id));
+  return { readable: true, active: view.active, teamMember: view.teamMember, load, deals: load.view.filter((v) => keys.has(v.key)), tagsReadable: true };
+}
+
+/**
+ * Start again: always the signed-in member's ACTIVE profile (never one named
+ * by the form). `shown` are the deal keys the confirm screen listed and `keep`
+ * the ticked ones; whatever is posted, only the active profile's own entries
+ * that were shown can be cleared (reset.ts dealsToHide). Logs profile_reset
+ * once. The £5 is never touched.
+ */
+export async function resetActiveProfile(input: { userId: string; adminUser: boolean; answers: ResetAnswers; deals: ResetDeals; shown: readonly string[]; keep: readonly string[] }): Promise<ProfileOutcome> {
+  const choices = await resetChoicesFor(input.userId, input.adminUser);
+  if (!choices.readable || !choices.active) return fail('Your profile can’t be reset right now. Please try again shortly.');
+  if (input.deals !== 'keep_all' && !choices.tagsReadable) return fail('Your tracked deals can’t be read right now. Please try again, or keep them all.');
+  const candidates = choices.deals.map((d) => d.key);
+  const hide = dealsToHide({ candidates, choice: input.deals, shown: input.shown, keep: input.keep });
+  const shown = new Set(input.shown);
+  const kept = candidates.filter((k) => shown.has(k)).length - hide.length;
+  const payload = resetPayload({ userId: input.userId, answers: input.answers, deals: input.deals, hide, kept });
+  const { data, error } = await createAdminClient().rpc('reset_search_profile', { p: payload });
+  if (error) {
+    if (error.code === 'P0404') return fail('That profile no longer exists.');
+    console.error('[profiles] reset failed:', error.message);
+    return fail('Could not start again. Please try again.');
+  }
+  const id = String(data);
+  const event = restartActivity(id, { answers: input.answers, kept: payload.kept, cleared: payload.cleared });
+  logActivity(input.userId, event.kind, { profileId: choices.active.id, extras: event.extras, dedupeKey: event.dedupeKey });
+  // "About you" went too: Monday's "Next deal" follows (queued, after the response).
+  if (input.answers === 'everything') after(() => queueFunnelSync(input.userId, 'next_deal'));
+  return { ok: true, id };
 }
