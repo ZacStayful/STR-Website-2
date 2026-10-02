@@ -669,14 +669,20 @@ Nine branches from the review of Batches 1–20 (`docs/reviews/batch-21-review.m
 merged in the order 21a, 21d, then the rest. What each needs by hand, in the
 order it is needed:
 
-1. **Before the ads, and before `starter_pack_from` is set:** set
-   `CREDIT_ENFORCE=true` on Vercel (Production), then **run
-   `supabase/schema.sql`** (the "Batch 21: review fixes" section, 21a):
-   the atomic `credit_plan_cycle` function the webhook uses, the one-off
-   forgiveness of every shadow-mode overdraft (an `adjust` row per member;
-   the count is printed), the referral guard in `credit_redeem_code`, and
-   `leads.input`. Idempotent; nothing is added to `ACCESS_COLUMNS`. Flipping
-   the flag first means no pack-era account can overdraw in between.
+1. **Before the ads, and before `starter_pack_from` is set:** first add the
+   `@stayful.co.uk` staff logins that use the product to `ADMIN_EMAILS` on
+   Vercel (Production). Only `ADMIN_EMAILS` accounts bypass the credit gate,
+   so a staff account left off the list is blocked at £0 the moment the flag
+   flips (B41); being on the list also grants the `/admin` dashboard, so list
+   only staff you are happy to make admins (a credit-only staff exemption,
+   without admin access, would need a one-line change in `src/lib/credit/auth.ts`).
+   Then set `CREDIT_ENFORCE=true`, and **run `supabase/schema.sql`** (the
+   "Batch 21: review fixes" section, 21a): the atomic `credit_plan_cycle`
+   function the webhook uses, the one-off forgiveness of every shadow-mode
+   overdraft (an `adjust` row per member; the count is printed), the referral
+   guard in `credit_redeem_code`, and `leads.input`. Idempotent; nothing is
+   added to `ACCESS_COLUMNS`. Flipping the flag before the schema runs means
+   no pack-era account can overdraw in between.
 2. **Stripe:** enable `charge.dispute.closed` on the webhook endpoint (21c):
    a dispute that is won or withdrawn gives the clawed-back credit back.
 3. **n8n:** `N8N_SHARED_SECRET` now opens only `/api/internal/leads/provision`
