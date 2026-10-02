@@ -145,6 +145,15 @@ export function liveWebhookDeps(): WebhookDeps {
     paymentFailedEmail: async (email, planCode) => paymentFailedEmail(email, { planName: (await getPlan(planCode))?.name ?? null }),
     cardNeedsUpdateEmail: (email) => cardNeedsUpdateEmail(email),
     logActivity: (a) => recordActivity(a.userId, a.kind, { dedupeKey: a.dedupeKey, source: a.source, extras: a.extras }),
+    // Batch 23: the auto top-up link's checkout switches auto top-up on, only if it is still off.
+    enableAutoTopup: async (userId, amountPence, thresholdPence) => {
+      const { data, error } = await createAdminClient().from('profiles').update({ auto_topup_amount_pence: amountPence, auto_topup_threshold_pence: thresholdPence }).eq('id', userId).is('auto_topup_amount_pence', null).select('id');
+      if (error) {
+        console.error('[stripe/webhook] auto top-up switch-on failed:', error.message);
+        return false;
+      }
+      return (data ?? []).length === 1;
+    },
     // Batch 19: awaited, as the webhook has no browser and must not return before it is recorded.
     recordConversion: (c) => recordConversion(c),
     // Batch 20: the rows behind "Total paid" (src/lib/payments).

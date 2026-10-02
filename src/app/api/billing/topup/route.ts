@@ -15,6 +15,7 @@ import { clientDetails } from '@/lib/tracking/request';
 import { paymentFromIntent } from '@/lib/payments/rules';
 import { recordPayment } from '@/lib/payments/server';
 import { resumeReturnFor } from '@/lib/billing/resume-server';
+import { FUNNEL_TOPUP_FLOOR_PENCE, hasLiveFunnel } from '@/lib/credit/topup-floor';
 
 export const dynamic = 'force-dynamic';
 // Batch 21 (G14): the Stripe client gives up at 20 s; the route stops before the platform does.
@@ -31,7 +32,7 @@ export async function POST(request: Request) {
   if (member.teamMember) return Response.json({ error: 'Billing is managed by your team’s account owner.' }, { status: 403 });
   if (!stripeConfigured()) return Response.json({ error: 'Payments are not configured yet. Email hello@stayful.co.uk to top up.' }, { status: 503 });
 
-  let body: { amountPence?: unknown; nonce?: unknown; via?: unknown; resume?: unknown };
+  let body: { amountPence?: unknown; nonce?: unknown; via?: unknown; resume?: unknown; autoTopup?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -46,12 +47,24 @@ export async function POST(request: Request) {
   if (body.via === 'low_credit') logActivity(member.id, 'low_credit_topup', { dedupeKey: `low_credit_topup:${new Date().toISOString().slice(0, 10)}`, extras: { amount_pence: amount } });
 
   const resumeBack = typeof body.resume === 'string' ? await resumeReturnFor(member.id, body.resume) : null;
+  // Batch 23: Stayful Intelligence's auto top-up link, with no saved card — this
+  // checkout saves the card and the webhook switches auto top-up on (only at the
+  // link's own amount and trigger, and only if it is still off).
+  const autoTopup = body.autoTopup === true && amount === settings.intelligence.revealAutoTopupAmountPence;
+  // The same rule as /api/billing/auto-topup: with a funnel live, the trigger can't be below £20.
+  if (autoTopup && settings.intelligence.revealAutoTopupThresholdPence < FUNNEL_TOPUP_FLOOR_PENCE && (await hasLiveFunnel(member.id))) {
+    return Response.json({ error: 'With a funnel live, the automatic top-up trigger has to be at least £20. Set it up in Billing.' }, { status: 400 });
+  }
+  const autoMeta: Record<string, string> = autoTopup ? { auto_topup_on: '1', auto_topup_threshold_pence: String(Math.round(settings.intelligence.revealAutoTopupThresholdPence)) } : {};
   const profile = await loadBillingProfile(member.id);
   if (!profile) return Response.json({ error: 'Your account is not set up yet.' }, { status: 403 });
 
   try {
     const stripe = getStripe();
     const customer = await ensureStripeCustomer(profile, member.email);
+
+    // Batch 23: with a card already saved, the auto top-up link switches it on without charging (/api/billing/auto-topup).
+    if (autoTopup && profile.stripe_default_payment_method_id) return Response.json({ error: 'You already have a saved card: turn auto top-up on instead.', savedCard: true }, { status: 409 });
 
     // One click: a saved card, charged off-session.
     if (profile.stripe_default_payment_method_id) {
@@ -107,11 +120,11 @@ export async function POST(request: Request) {
       customer,
       client_reference_id: member.id,
       line_items: [{ price: priceId, quantity: 1 }],
-      payment_intent_data: { setup_future_usage: 'off_session', metadata: { user_id: member.id, kind: 'topup', amount_pence: String(amount) } },
-      metadata: { user_id: member.id, kind: 'topup', amount_pence: String(amount) },
+      payment_intent_data: { setup_future_usage: 'off_session', metadata: { user_id: member.id, kind: 'topup', amount_pence: String(amount), ...autoMeta } },
+      metadata: { user_id: member.id, kind: 'topup', amount_pence: String(amount), ...autoMeta },
       // Batch 22: a resume intent sends the member back to what they were buying (their own intent, an internal path).
-      success_url: resumeBack ? returnUrl(resumeBack, { topup: '1', resume: String(body.resume) }) : returnUrl('/account/billing', { topup: '1' }),
-      cancel_url: returnUrl(resumeBack ?? '/account/billing'),
+      success_url: resumeBack ? returnUrl(resumeBack, { topup: '1', resume: String(body.resume) }) : autoTopup ? returnUrl('/account/billing/auto-topup', { done: '1' }) : returnUrl('/account/billing', { topup: '1' }),
+      cancel_url: returnUrl(resumeBack ?? (autoTopup ? '/account/billing/auto-topup' : '/account/billing')),
       ...(process.env.STRIPE_TAX === 'true' ? { automatic_tax: { enabled: true }, customer_update: { address: 'auto' } } : {}),
     });
     return Response.json({ url: session.url, via: 'checkout' });

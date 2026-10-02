@@ -6,9 +6,12 @@ import { JarvisEye } from "@/components/JarvisEye";
 import type { JARVISState } from "@/types/jarvis";
 import type { AnalysisResult } from "@/lib/types";
 import { creditFetch, notifyCreditChanged } from "@/lib/credit/client";
+import type { NarratorDeal } from "@/lib/analysis/narrator-deal";
 
 interface AnalyserNarratorProps {
   result: AnalysisResult;
+  /** The deal this report was opened from, when the page has it (Batch 23, Part 0). */
+  deal?: NarratorDeal | null;
 }
 
 // A stable identity for "which analysis is this" so the narrator resets its
@@ -17,7 +20,7 @@ function resultKey(r: AnalysisResult): string {
   return `${r.property.address}|${r.property.postcode}|${r.createdAt}`;
 }
 
-export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
+export function AnalyserNarrator({ result, deal = null }: AnalyserNarratorProps) {
   const [open, setOpen] = useState(false);
   const [eyeState, setEyeState] = useState<JARVISState>("idle");
   const [summary, setSummary] = useState<string | null>(null);
@@ -141,7 +144,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       const res = await creditFetch("/api/summarise", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ result }),
+        body: JSON.stringify({ result, deal }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         summary?: string;
@@ -163,7 +166,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       setEyeState("idle");
       setBusy(false);
     }
-  }, [result, speak]);
+  }, [result, deal, speak]);
 
   const handleTrigger = useCallback(() => {
     const nextOpen = !open;
@@ -205,7 +208,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       {open && (
         <div
           role="dialog"
-          aria-label="Stayful AI analyst"
+          aria-label="Stayful Intelligence"
           className="fixed bottom-[104px] right-4 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-card shadow-2xl sm:right-6"
         >
           {/* Header */}
@@ -216,7 +219,7 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
               </div>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-foreground">Stayful AI analyst</p>
+              <p className="text-sm font-semibold text-foreground">Stayful Intelligence</p>
               <p className="truncate text-xs text-muted-foreground">
                 {eyeState === "thinking"
                   ? "Reading your analysis…"
@@ -293,9 +296,9 @@ export function AnalyserNarrator({ result }: AnalyserNarratorProps) {
       <button
         type="button"
         onClick={handleTrigger}
-        aria-label={open ? "Hide AI analyst" : "Ask the AI analyst to summarise this report"}
+        aria-label={open ? "Hide Stayful Intelligence" : "Ask Stayful Intelligence to talk you through this report"}
         aria-expanded={open}
-        title="AI analyst — summarise & help me decide"
+        title="Stayful Intelligence: talk me through this report"
         className="fixed bottom-6 right-4 z-50 grid h-[60px] w-[60px] place-items-center rounded-full transition-transform hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 sm:right-6"
         style={{ background: "transparent", border: "none", cursor: "pointer" }}
       >

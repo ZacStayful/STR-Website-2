@@ -43,6 +43,8 @@ import { answersFor, type Answer, type AnswerFacts } from './answers';
 import { matchPctOf, revealDeals, revealTone, type RevealTone } from './reveal';
 import { whatIfViewFor, type WhatIfView } from './what-if-server';
 import { deepQuoteFor, searchStatusFor, type DeepQuoteView } from '../sourcing-demand/member-search';
+import { callPencePerMinute } from '../voice/charge-server';
+import { callsEnabled } from '../voice/config';
 
 type Cards = TodayView['cards'];
 
@@ -186,7 +188,8 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     firstDeepPence: deep.offer === 'first_deep' ? Math.round(deep.fullPence + deep.pmiPence) : null,
     freeMember: visibility.tier === 'free',
     freeDelayHours: settings.freeDealDelayHours,
-    call: { perMinPence: settings.intelligence.siCallPencePerMin, textPence: settings.intelligence.siTextPence, emailPence: settings.intelligence.siEmailPence },
+    // Batch 23: the minute price members pay (the si:call_minute unit row), and whether calls are live.
+    call: { perMinPence: await callPencePerMinute(), textPence: settings.intelligence.siTextPence, emailPence: settings.intelligence.siEmailPence, live: callsEnabled() },
     topupPresetsPence: settings.topupPresetsPence,
     autoTopupOn: Boolean(credit?.autoTopup?.amountPence),
     noMatch: null,

@@ -5,6 +5,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { ALWAYS_SENT_NOTE, CALL_NOTIFICATION_TYPES, EMAIL_NOTIFICATION_TYPES, notificationState } from '@/lib/notifications/registry';
 import { callPriceLine } from '@/lib/intelligence/choices';
+import { callPencePerMinute } from '@/lib/voice/charge-server';
+import { teamOf } from '@/lib/team';
 import { readNotifications } from '@/lib/notifications/server';
 import { isSmsConfigured, isSmsDryRun } from '@/lib/sms/config';
 import { ukMobile } from '@/lib/sms/phone';
@@ -44,7 +46,11 @@ export default async function NotificationsPage({ searchParams }: { searchParams
 
   // Batch 10: what daily deals cost THIS member, next to their switch (shared with the welcome choices, Batch 22).
   const [dailyPrice, settings] = await Promise.all([dailyPriceLineFor(user.id, isAdminEmail(user.email)), getBillingSettings()]);
-  const callLine = callPriceLine(settings.intelligence);
+  // Batch 23: the minute price is the si:call_minute unit row's (what a call actually charges).
+  const [perMin, team] = await Promise.all([callPencePerMinute(), teamOf(user.id)]);
+  const callLine = callPriceLine({ ...settings.intelligence, siCallPencePerMin: perMin });
+  // Batch 23 (bug 4): calls only ever go to the account owner, so a team member has no switch.
+  const teamMember = team.role === 'member';
 
   // Texts (Batch 8): the member's number and its state, read server-side.
   const admin = hasServiceRole() ? createAdminClient() : null;
@@ -104,7 +110,8 @@ export default async function NotificationsPage({ searchParams }: { searchParams
         {/* Batch 22: calls from Stayful Intelligence (off until ticked; a verified mobile is needed). */}
         <section className="mt-6 rounded-2xl border border-[#e4e7dc] bg-white p-5" aria-labelledby="calls-heading">
           <h2 id="calls-heading" className="text-sm font-semibold uppercase tracking-widest text-[#5d8156]">Calls</h2>
-          {CALL_NOTIFICATION_TYPES.map((t) => {
+          {teamMember && <p className="mt-3 text-sm text-[#7a8274]">Calls from Stayful Intelligence go to your team&rsquo;s account owner.</p>}
+          {!teamMember && CALL_NOTIFICATION_TYPES.map((t) => {
             const on = state[t.key];
             const verified = Boolean(contact?.verified_at && !contact.stopped_at);
             return (

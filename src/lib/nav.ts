@@ -127,6 +127,8 @@ export const ACCOUNT_MORE = {
   picks: { label: 'Daily picks', href: '/picks' },
   // Batch 18: what the member has sent us, and where it has got to.
   feedback: { label: 'Your feedback', href: '/account/feedback' },
+  // Batch 23: calls from and to Stayful Intelligence (owners: calls go to the account owner).
+  calls: { label: 'Your calls', href: '/account/calls' },
 } as const;
 
 export type AccountMoreKey = keyof typeof ACCOUNT_MORE;
@@ -135,12 +137,14 @@ export type AccountMoreKey = keyof typeof ACCOUNT_MORE;
  * Which of them a person sees: Team only for someone who owns their account
  * (a member's team is the owner's to manage), Leads only while their team owns
  * a funnel (the nav's own rule), and the rest for everyone, "Your feedback"
- * (Batch 18) included.
+ * (Batch 18) included. "Your calls" (Batch 23) only for an owner: calls go
+ * to the account owner.
  */
 export function accountMoreLinks(p: { teamMember: boolean; teamOwnsFunnel: boolean }): AccountMoreKey[] {
   const keys: AccountMoreKey[] = [];
   if (!p.teamMember) keys.push('team');
   if (p.teamOwnsFunnel) keys.push('leads');
   keys.push('extension', 'markets', 'picks', 'feedback');
+  if (!p.teamMember) keys.push('calls');
   return keys;
 }

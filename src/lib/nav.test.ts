@@ -80,8 +80,8 @@ test('joining a team lands on its Leads only when it has a funnel', () => {
 });
 
 test('Account › More: Team for account owners only, Leads only for a team with a funnel', () => {
-  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: false }), ['team', 'extension', 'markets', 'picks', 'feedback']);
-  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: true }), ['team', 'leads', 'extension', 'markets', 'picks', 'feedback']);
+  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: false }), ['team', 'extension', 'markets', 'picks', 'feedback', 'calls']);
+  assert.deepEqual(accountMoreLinks({ teamMember: false, teamOwnsFunnel: true }), ['team', 'leads', 'extension', 'markets', 'picks', 'feedback', 'calls']);
   assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: true }), ['leads', 'extension', 'markets', 'picks', 'feedback']);
   assert.deepEqual(accountMoreLinks({ teamMember: true, teamOwnsFunnel: false }), ['extension', 'markets', 'picks', 'feedback']);
   assert.equal(ACCOUNT_MORE.feedback.href, '/account/feedback', 'Batch 18: everyone, team members included, can see what they have sent');

@@ -22,6 +22,8 @@ const nextConfig: NextConfig = {
     "/api/v1/reports/[id]/pdf": PDF_ASSETS,
     "/api/analyse": PDF_ASSETS,
     "/api/internal/crm-deliveries": PDF_ASSETS,
+    // Batch 23: Stayful Intelligence's contact card embeds its photo.
+    "/si/card": ["public/images/si-contact.png"],
   },
   images: {
     formats: ["image/avif", "image/webp"],

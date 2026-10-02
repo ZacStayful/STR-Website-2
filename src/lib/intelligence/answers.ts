@@ -35,7 +35,8 @@ export interface AnswerFacts {
   firstDeepPence: number | null;
   freeMember: boolean;
   freeDelayHours: number;
-  call: { perMinPence: number; textPence: number; emailPence: number };
+  /** Batch 23: live = calls are switched on (SI_CALLS_ENABLED); the per-minute price is the si:call_minute unit row's. */
+  call: { perMinPence: number; textPence: number; emailPence: number; live?: boolean };
   topupPresetsPence: readonly number[];
   autoTopupOn: boolean;
   /** Part F's line, when there is a low or no match. */
@@ -112,7 +113,7 @@ function one(key: ChipKey, f: AnswerFacts): Answer | null {
       return {
         key,
         question: 'How do calls from you work?',
-        answer: `I only call if you've said yes: about ${formatPence(f.call.perMinPence)} a minute from your credit, missed calls free, texts ${formatPence(f.call.textPence)}, emails ${formatPence(f.call.emailPence)}. I'm not making calls yet.`,
+        answer: `I only call if you've said yes: about ${formatPence(f.call.perMinPence)} a minute from your credit, missed calls free, texts ${formatPence(f.call.textPence)}, emails ${formatPence(f.call.emailPence)}.${f.call.live ? '' : " I'm not making calls yet."}`,
         action: { label: 'Notification settings', href: '/account/notifications' },
       };
     case 'topup':

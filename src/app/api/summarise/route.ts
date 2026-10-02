@@ -9,6 +9,9 @@ import { getUnitCostTable } from "@/lib/credit/unit-costs";
 import { InsufficientCreditError } from "@/lib/credit/ledger";
 import { insufficientCreditResponse } from "@/lib/credit/http";
 import { meter, approxTokens } from "@/lib/credit/meter";
+import { buildSystemPrompt, PERSONA_VERSION } from "@/lib/persona/stayful-intelligence";
+import { cleanForSpeech } from "@/lib/persona/clean";
+import { parseNarratorDeal, type NarratorDeal } from "@/lib/analysis/narrator-deal";
 
 const NARRATOR_MODEL = "claude-opus-4-8";
 const NARRATOR_MAX_TOKENS = 600;
@@ -17,26 +20,28 @@ const NARRATOR_MAX_TOKENS = 600;
 // it more than the 10s Hobby default so it never gets cut off mid-stream.
 export const maxDuration = 30;
 
-const NARRATOR_SYSTEM = `You are Stayful's analyst — the voice of the Stayful property analyser. You speak directly to a UK landlord who has just run a short-let income analysis on their property, and your job is to summarise the result and help them decide whether short-letting it makes sense.
+// Batch 23, Part 0: the persona (src/lib/persona) gives who is speaking and how;
+// this route adds only the task. The compact rendering keeps the prompt — and so
+// the input tokens charged on every summary — about the size it was.
+const SUMMARY_TASK = `Summarise this short-let analysis in 90–130 words. Open with the headline — does short-letting look strong, marginal or weak — and the key number. Give the one or two reasons that drive it. End with a practical next step about the process (check the comparables, book a viewing, ask the agent about permissions or service charge), never an instruction to buy or rent. Reply with the paragraph only.`;
 
-Rules:
-- Write ONE spoken-aloud paragraph, 90–130 words. No headings, no bullet points, no markdown, no emoji — it will be read by a text-to-speech voice.
-- Open with the headline: is short-letting clearly worth it, marginal, or not worth it for this property, and the key number (the net annual or monthly difference vs long-let).
-- Then give the one or two reasons that drive the verdict (demand, seasonality, occupancy needed to break even, setup/involvement, data confidence).
-- End with a clear, honest recommendation framed as a next step.
-- Never guarantee income. Say "comparable properties typically achieve" or "the analysis estimates". Use £ and round figures naturally for speech (e.g. "about £8,400 more a year", not "£8,432.17").
-- Be warm, direct and concise — a trusted advisor, not a salesperson. Respond with only the paragraph itself, nothing else.`;
+const NARRATOR_SYSTEM = buildSystemPrompt("in_app_spoken", SUMMARY_TASK, { compact: true });
 
 // Collapse the full AnalysisResult into a compact, model-friendly fact sheet.
 // Keeping this deterministic (no prose) lets the model do the narration while we
 // stay in control of which numbers it sees.
-function buildFacts(r: AnalysisResult): string {
+function buildFacts(r: AnalysisResult, deal: NarratorDeal | null = null): string {
   const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
   const p = r.property;
   const f = r.financials;
   const lines: string[] = [];
 
   lines.push(`PROPERTY: ${p.bedrooms}-bed property in ${p.address}, ${p.postcode}, sleeping ${p.guests}.`);
+  if (deal) {
+    const per = deal.period === "pcm" ? " a month" : deal.period === "pw" ? " a week" : "";
+    const price = deal.amount !== undefined ? (deal.type === "purchase" ? `, asking ${gbp(deal.amount)}${per}` : `, rent ${gbp(deal.amount)}${per}`) : "";
+    lines.push(`DEAL: ${deal.type === "purchase" ? "a purchase" : "a rent-to-rent"}${price}.`);
+  }
 
   lines.push(`SHORT-LET: gross ${gbp(f.shortLetGrossAnnual)}/yr, net ${gbp(f.shortLetNetAnnual)}/yr.`);
   lines.push(`LONG-LET: gross ${gbp(f.longLetGrossAnnual)}/yr, net ${gbp(f.longLetNetAnnual)}/yr.`);
@@ -93,9 +98,11 @@ export async function POST(request: Request) {
   }
 
   let result: AnalysisResult;
+  let deal: NarratorDeal | null = null;
   try {
-    const body = (await request.json()) as { result?: AnalysisResult };
+    const body = (await request.json()) as { result?: AnalysisResult; deal?: unknown };
     result = body.result as AnalysisResult;
+    deal = parseNarratorDeal(body.deal);
     if (!result?.property || !result?.financials || !result?.verdict) {
       throw new Error("missing fields");
     }
@@ -106,7 +113,7 @@ export async function POST(request: Request) {
   // Batch 21 (G16): the SDK's default is a 10-minute timeout with retries, on a 30 s route;
   // a slow call must fail inside the route so the credit reservation is released, not held to its TTL.
   const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 0 });
-  const facts = buildFacts(result);
+  const facts = buildFacts(result, deal);
 
   // Credit: reserve the ceiling (prompt tokens + max_tokens of output), then
   // charge the actual token usage the API reports.
@@ -144,17 +151,20 @@ export async function POST(request: Request) {
       return msg;
     });
 
-    const summary = message.content
-      .filter((block): block is Anthropic.TextBlock => block.type === "text")
-      .map((block) => block.text)
-      .join("")
-      .trim();
+    // Strip any markdown or emoji the model adds anyway: the text is read aloud.
+    const summary = cleanForSpeech(
+      message.content
+        .filter((block): block is Anthropic.TextBlock => block.type === "text")
+        .map((block) => block.text)
+        .join(""),
+    );
 
     if (!summary) {
       return Response.json({ error: "The narrator returned an empty summary." }, { status: 502 });
     }
 
-    return Response.json({ summary });
+    console.log(`[api/summarise] persona ${PERSONA_VERSION}, input tokens ${message.usage.input_tokens}`);
+    return Response.json({ summary }, { headers: { "x-si-persona": PERSONA_VERSION } });
   } catch (err) {
     console.error("[api/summarise] generation failed:", err);
     return Response.json(

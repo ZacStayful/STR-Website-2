@@ -21,7 +21,13 @@ import type { NotificationKey } from '../notifications/registry.ts';
 
 export type Slot = 'daily' | 'weekly';
 
-export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit';
+/**
+ * Batch 23: 'si_call' is a Stayful Intelligence call (or its missed-call
+ * email). Calls override the cap: they claim the day's slot when it is free
+ * and go anyway when it is not, so the day's later capped emails move to the
+ * next day (src/lib/voice/cap-server.ts).
+ */
+export type SendKind = 'todays_5' | 'deal_changes' | 'picks_paused' | 'your_week' | 'notice' | 'low_credit' | 'si_call';
 
 export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   todays_5: 'daily',
@@ -29,6 +35,7 @@ export const SLOT_FOR: Readonly<Record<SendKind, Slot>> = {
   picks_paused: 'daily',
   notice: 'daily',
   low_credit: 'daily',
+  si_call: 'daily',
   your_week: 'weekly',
 };
 
@@ -48,6 +55,8 @@ export const SWITCHES_BEHIND: Readonly<Record<SendKind, readonly NotificationKey
   your_week: ['weekly_missed', 'weekly_alerts'],
   notice: ['daily_picks'],
   low_credit: ['credit_alerts'],
+  // Missed-call emails carry no unsubscribe token; calls are switched off in Notifications.
+  si_call: ['si_calls'],
 };
 
 /** The day a send counts against: the UTC date, as the picks' "sent today" guard counts it. */

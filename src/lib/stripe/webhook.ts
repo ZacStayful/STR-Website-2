@@ -77,6 +77,13 @@ export interface WebhookDeps {
    */
   logActivity?(input: WebhookActivity): Promise<unknown>;
   /**
+   * Batch 23: a top-up bought from Stayful Intelligence's auto top-up link
+   * with no saved card switches auto top-up on in the same flow — only if it
+   * is still off (never overwrites a member's own setting). True when it
+   * switched it on. Optional; implementations must swallow their own errors.
+   */
+  enableAutoTopup?(userId: string, amountPence: number, thresholdPence: number): Promise<boolean>;
+  /**
    * Meta's Subscribe and Purchase (Batch 19, src/lib/meta/conversions.ts):
    * the facts go in, and it decides whether they count. Recorded once per
    * key, so a redelivery, or a top-up's two events, is one conversion.
@@ -122,7 +129,7 @@ export interface WebhookActivity {
   kind: ActivityKind;
   /** The same action from another delivery, or already logged by the app, is ignored. */
   dedupeKey?: string;
-  source?: 'system';
+  source?: 'system' | 'sms_link';
   extras?: Record<string, string | number | boolean | null>;
 }
 
@@ -258,6 +265,20 @@ async function logPlanActivity(deps: WebhookDeps, input: SubscriptionEventInput)
 }
 
 /** A top-up, for the activity log: the same key as the app's own, so it is only ever counted once. Never throws. */
+/** Batch 23: the auto top-up link's top-up (metadata auto_topup_on = '1') switches auto top-up on, once. */
+async function enableAutoTopupFromLink(deps: WebhookDeps, userId: string, paymentIntentId: string, metadata: Record<string, string> | null | undefined, amountPence: number): Promise<void> {
+  if (!deps.enableAutoTopup || metadata?.auto_topup_on !== '1' || !(amountPence > 0)) return;
+  const threshold = Number(metadata.auto_topup_threshold_pence);
+  if (!Number.isInteger(threshold) || threshold < 100 || threshold > 10_000) return;
+  try {
+    if (await deps.enableAutoTopup(userId, amountPence, threshold)) {
+      await deps.logActivity?.({ userId, kind: 'auto_topup_settings', dedupeKey: `auto_topup_on:pi:${paymentIntentId}`, source: 'sms_link', extras: { on: true, via: 'si_link' } });
+    }
+  } catch {
+    // Never fails a delivery: the member can switch it on in Billing.
+  }
+}
+
 async function logTopupActivity(deps: WebhookDeps, userId: string, paymentIntentId: string, amountPence: number, auto: boolean): Promise<void> {
   if (!deps.logActivity) return;
   try {
@@ -434,6 +455,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
           if (session.payment_status && session.payment_status !== 'paid') return { handled: true, note: `top-up checkout ${session.payment_status}: credit follows the payment` };
           if (amount > 0) await deps.grantTopup(user.id, amount, `pi:${piId}`, user.email ?? email);
           if (amount > 0) await logTopupActivity(deps, user.id, piId, amount, false);
+          if (amount > 0) await enableAutoTopupFromLink(deps, user.id, piId, pi?.metadata ?? session.metadata ?? null, amount);
           // Meta's Purchase: payment_intent.succeeded carries the same key, so one is recorded.
           if (amount > 0) await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: piId, paymentIntentId: piId, topup: { kind: 'topup', auto: pi?.metadata?.auto ?? session.metadata?.auto ?? null, amountPence: amount, currency: pi?.currency ?? session.currency ?? null } });
           // Batch 20: what was charged, for Total paid (the same row as payment_intent.succeeded's).
@@ -473,6 +495,7 @@ export async function handleStripeEvent(event: Stripe.Event, deps: WebhookDeps):
       const amount = Number(pi.metadata.amount_pence ?? pi.amount_received ?? pi.amount) || pi.amount_received || pi.amount;
       const granted = await deps.grantTopup(user.id, amount, `pi:${pi.id}`, user.email);
       await logTopupActivity(deps, user.id, pi.id, amount, pi.metadata?.auto === '1');
+      await enableAutoTopupFromLink(deps, user.id, pi.id, pi.metadata, amount);
       // Meta's Purchase (never an automatic top-up; Checkout's event carries the same key).
       await recordMetaConversion(deps, { name: 'Purchase', userId: user.id, eventId: pi.id, paymentIntentId: pi.id, topup: { kind: pi.metadata?.kind, auto: pi.metadata?.auto, amountPence: amount, currency: pi.currency } });
       // Batch 20: what was charged, for Total paid.

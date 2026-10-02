@@ -3285,7 +3285,20 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
       {/* Floating AI narrator — summarises the report aloud and helps decide.
           Member-only: it spends the member's credit on /api/speak and
           /api/summarise, neither of which a funnel prospect can reach. */}
-      {!funnel && <AnalyserNarrator result={r} />}
+      {!funnel && (
+        <AnalyserNarrator
+          result={r}
+          deal={
+            backHref && listing && listing.snapshot.canonicalUrl === urlListingRef.current && listing.snapshot.kind !== "str"
+              ? {
+                  type: listing.snapshot.kind === "sale" ? "purchase" : "r2r",
+                  amount: listing.snapshot.price?.amount,
+                  period: listing.snapshot.price?.period === "pcm" || listing.snapshot.price?.period === "pw" || listing.snapshot.price?.period === "total" ? listing.snapshot.price.period : undefined,
+                }
+              : null
+          }
+        />
+      )}
       </>
     );
   }

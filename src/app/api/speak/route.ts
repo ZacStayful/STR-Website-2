@@ -5,14 +5,12 @@ import { runMetered } from "@/lib/credit/context";
 import { InsufficientCreditError } from "@/lib/credit/ledger";
 import { insufficientCreditResponse } from "@/lib/credit/http";
 import { meter } from "@/lib/credit/meter";
+import { VOICE, ttsVoiceSettings, voiceId as personaVoiceId } from "@/lib/persona/stayful-intelligence";
 
 // Streams audio back from ElevenLabs. Give it headroom over the 10s Hobby
 // default so longer summaries finish synthesising.
 export const maxDuration = 30;
 
-// ElevenLabs' well-known default voice ("Rachel") — used unless ELEVENLABS_VOICE_ID
-// is set to a specific cloned/branded voice.
-const DEFAULT_VOICE_ID = "21m00Tcm4TlvDq8ikWAM";
 
 export async function POST(request: Request) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -22,7 +20,8 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || DEFAULT_VOICE_ID;
+  // Batch 23, Part 0: the one Stayful Intelligence voice, shared with the phone agent.
+  const voiceId = personaVoiceId();
 
   // Match the narrator route: never synthesise for an unauthenticated request.
   const supabase = await createSupabaseServerClient();
@@ -68,10 +67,10 @@ export async function POST(request: Request) {
             signal: AbortSignal.timeout(15_000),
             body: JSON.stringify({
               text,
-              // Turbo v2.5: low-latency (~250ms TTFB), good quality — best fit for
-              // a snappy narrator. stability/similarity_boost are floats here.
-              model_id: "eleven_turbo_v2_5",
-              voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.0 },
+              // Model and voice settings: the persona's (src/lib/persona), so the
+              // analyser and calls sound the same.
+              model_id: VOICE.modelId,
+              voice_settings: ttsVoiceSettings(),
             }),
           }),
       ),

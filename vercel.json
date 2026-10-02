@@ -140,6 +140,10 @@
 		{
 			"path": "/api/internal/feedback-retention",
 			"schedule": "45 2 * * *"
+		},
+		{
+			"path": "/api/internal/si-calls",
+			"schedule": "*/5 * * * *"
 		}
 	]
 }
