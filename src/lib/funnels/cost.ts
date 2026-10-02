@@ -1,6 +1,7 @@
 import { estimateAction, reportAction } from '../credit/estimate.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
 import type { SpendRates } from '../credit/pricing.ts';
+import { monthCost, priceForLead, withRate, type FunnelTierSettings } from './tiers.ts';
 
 /**
  * What a funnel will cost before a customer sets it live.
@@ -97,4 +98,48 @@ export function recommendTopup(monthlyPence: number, presets: number[]): number 
   if (sorted.length === 0) return 0;
   if (monthlyPence <= 0) return sorted[0];
   return sorted.find((p) => p >= monthlyPence) ?? sorted[sorted.length - 1];
+}
+
+/**
+ * Batch 22f: the same quote on volume tiers (src/lib/funnels/tiers.ts): each
+ * lead in the month at its own tier, shown at both rates — the base price
+ * (plan and starter-pack credit) and what top-up credit pays (×1.3). The
+ * suggested top-up covers the month at the top-up rate, since that is how a
+ * pay-per-use owner pays.
+ */
+export interface FunnelTierCost {
+  firstLeadPence: number;
+  firstLeadTopupPence: number;
+  monthlyPence: number;
+  monthlyTopupPence: number;
+  /** Average base pence a lead over the month. */
+  averagePence: number;
+  recommendedTopupPence: number;
+  /** How many of the month's leads, in order, the recommended top-up pays for. */
+  leadsPerTopup: number;
+}
+
+export function funnelTierCost(input: { leadsPerMonth: number; enhanced: boolean; settings: Pick<FunnelTierSettings, 'tiers' | 'enhancedExtraPence'>; topupRate: number; topupPresetsPence: number[] }): FunnelTierCost {
+  const leads = leadCount(input.leadsPerMonth);
+  const monthlyPence = monthCost(leads, input.enhanced, input.settings);
+  let monthlyTopupPence = 0;
+  for (let i = 1; i <= leads; i++) monthlyTopupPence += withRate(priceForLead(i, input.enhanced, input.settings), input.topupRate);
+  const recommendedTopupPence = recommendTopup(monthlyTopupPence, input.topupPresetsPence);
+  let leadsPerTopup = 0;
+  let spent = 0;
+  for (let i = 1; i <= 100_000; i++) {
+    spent += withRate(priceForLead(i, input.enhanced, input.settings), input.topupRate);
+    if (spent > recommendedTopupPence) break;
+    leadsPerTopup = i;
+  }
+  const first = priceForLead(1, input.enhanced, input.settings);
+  return {
+    firstLeadPence: first,
+    firstLeadTopupPence: withRate(first, input.topupRate),
+    monthlyPence,
+    monthlyTopupPence,
+    averagePence: leads > 0 ? Math.round(monthlyPence / leads) : first,
+    recommendedTopupPence,
+    leadsPerTopup,
+  };
 }

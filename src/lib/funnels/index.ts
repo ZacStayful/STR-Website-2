@@ -154,6 +154,8 @@ export interface FunnelPatch {
   active?: boolean;
   dailyCap?: number;
   dailySpendCapPence?: number;
+  /** Batch 22f: "Email me each new lead" (funnels.notify_new_lead). */
+  notifyNewLead?: boolean;
 }
 
 export async function updateFunnel(userId: string, id: string, patch: FunnelPatch): Promise<boolean> {
@@ -169,6 +171,7 @@ export async function updateFunnel(userId: string, id: string, patch: FunnelPatc
   // funnel with no ceiling is how a bug becomes an unbounded bill.
   if (patch.dailyCap !== undefined) row.daily_cap = clamp(patch.dailyCap, 1, 10_000);
   if (patch.dailySpendCapPence !== undefined) row.daily_spend_cap_pence = clamp(patch.dailySpendCapPence, 100, 1_000_000);
+  if (patch.notifyNewLead !== undefined) row.notify_new_lead = patch.notifyNewLead;
 
   const { error } = await createAdminClient().from('funnels').update(row).eq('id', id).eq('user_id', userId);
   if (error) console.error('[funnels] update failed:', error.message);
@@ -296,4 +299,32 @@ export async function ownedFunnelByToken(token: string): Promise<Funnel | null> 
   if (!data) return null;
   const funnel = toFunnel(data as Record<string, unknown>);
   return funnel.active ? funnel : null;
+}
+
+/**
+ * Batch 22f: stamps a funnel's first go-live (funnels.first_live_at), once.
+ * True only for the call that set it. Tolerant of a schema behind (false).
+ */
+export async function markFirstLive(userId: string, id: string): Promise<boolean> {
+  if (!hasServiceRole() || !/^[0-9a-f-]{36}$/i.test(id)) return false;
+  const { data, error } = await createAdminClient()
+    .from('funnels')
+    .update({ first_live_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .is('first_live_at', null)
+    .select('id');
+  if (error) {
+    console.error('[funnels] first live stamp failed:', error.message);
+    return false;
+  }
+  return (data?.length ?? 0) > 0;
+}
+
+/** Batch 22f: the funnel's "Email me each new lead" setting (on when unreadable: the column default). */
+export async function notifyNewLeadOf(userId: string, id: string): Promise<boolean> {
+  if (!hasServiceRole() || !/^[0-9a-f-]{36}$/i.test(id)) return true;
+  const { data, error } = await createAdminClient().from('funnels').select('notify_new_lead').eq('id', id).eq('user_id', userId).maybeSingle();
+  if (error || !data) return true;
+  return (data as { notify_new_lead?: boolean }).notify_new_lead !== false;
 }

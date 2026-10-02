@@ -4,9 +4,8 @@ import { reserveAnalysis, runAnalysis } from '@/lib/analysis/run';
 import { analysisComplete } from '@/lib/analysis/reuse';
 import { actionSpend, refundAction } from '@/lib/credit/action';
 import { InsufficientCreditError, getBalance } from '@/lib/credit/ledger';
-import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
-import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { getFunnel } from '@/lib/funnels';
+import { analysisBilling, finishFunnelLead, quoteFunnelLead } from '@/lib/funnels/charge-server';
 import { raiseFunnelAlert } from '@/lib/funnels/alerts';
 import { reserveSpend, settleSpend } from '@/lib/funnels/caps';
 import { completeLead, leaseQueuedLead } from '@/lib/leads/store';
@@ -36,6 +35,11 @@ import { queuedAnalysisInput } from '@/lib/leads/queue-input';
  *     rebuilt from its address, postcode and bedrooms alone.
  *   - C3: a run that fails, or comes back without short-let figures, is
  *     refunded and the day's spend settled to what stayed charged.
+ *
+ * Batch 22f: priced like the live form (src/lib/funnels/charge-server.ts):
+ * an owner on tiers is held at their next lead's price and charged once the
+ * report is complete, never twice for the same lead (the live form may have
+ * charged it already); the owner gets the new-lead email.
  */
 
 export const maxDuration = 60;
@@ -116,13 +120,12 @@ export async function GET(request: Request) {
       continue;
     }
 
-    const settings = await getBillingSettings();
-    const markupOverride = settings.funnelMarkup;
-    const estimate = estimateAction(await getUnitCostTable(), reportAction(funnel.reportDepth === 'enhanced'), { markupOverride });
+    const quote = await quoteFunnelLead(funnel);
+    const billing = analysisBilling(quote);
 
     // Still short: leave it queued and try again next run.
     const balance = await getBalance(funnel.userId).catch(() => null);
-    if (!balance || balance.spendableBasePence < estimate.maxBasePence) {
+    if (!balance || balance.spendableBasePence < quote.holdBasePence) {
       // Says it once a day rather than once every thirty minutes. A lead can
       // sit here for a fortnight, and the owner may well not have been on the
       // submission that first queued it — a report they are still waiting for
@@ -141,7 +144,7 @@ export async function GET(request: Request) {
       outcomes.push({ leadId: lead.id, outcome: 'claimed_elsewhere' });
       continue;
     }
-    if (!(await reserveSpend(funnel.id, estimate.maxBasePence, funnel.dailySpendCapPence))) {
+    if (!(await reserveSpend(funnel.id, quote.holdBasePence, funnel.dailySpendCapPence))) {
       outcomes.push({ leadId: lead.id, outcome: 'daily_spend_cap' });
       continue;
     }
@@ -151,13 +154,13 @@ export async function GET(request: Request) {
     try {
       prepared = await reserveAnalysis(input, {
         billedUserId: funnel.userId,
-        markupOverride,
+        ...billing,
         requireCredit: true,
         funnelId: funnel.id,
       });
       const { result, spend } = await runAnalysis(prepared, input, {
         billedUserId: funnel.userId,
-        markupOverride,
+        ...billing,
         requireCredit: true,
       });
       actual = spend.basePence;
@@ -179,6 +182,15 @@ export async function GET(request: Request) {
         rules: funnel.leadRules,
         unqualifiedPolicy: funnel.unqualifiedPolicy,
       });
+      const charged = await finishFunnelLead({
+        funnel,
+        leadId: lead.id,
+        quote,
+        actionId: prepared.ctx.actionId,
+        secondOpinionDelivered: Boolean(result.secondOpinion),
+        saved: Boolean(attached),
+      });
+      if (quote.mode === 'tiers') actual = charged;
       outcomes.push({ leadId: lead.id, outcome: attached ? 'ran' : 'ran_unsaved' });
     } catch (err) {
       // Stays queued either way — a failure here must not lose the lead. What
@@ -191,7 +203,7 @@ export async function GET(request: Request) {
       if (reason === 'failed') console.error('[funnel-queue] run failed:', err);
       outcomes.push({ leadId: lead.id, outcome: reason });
     } finally {
-      await settleSpend(funnel.id, estimate.maxBasePence, actual).catch(() => {});
+      await settleSpend(funnel.id, quote.holdBasePence, actual).catch(() => {});
     }
   }
 

@@ -6645,3 +6645,169 @@ begin
 end $$;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 22f: management companies
+-- =========================
+-- A management company's own ad lands on /for-management-companies; an
+-- account whose first touch is that page (or who chooses the branded lead
+-- form from the quiz or Account) is stamped here, and every rule reads the
+-- stamp, never the URL or a cookie again. Their funnel leads are priced by
+-- volume tier per UK calendar month (src/lib/funnels/tiers.ts), and each
+-- finished lead is emailed to the owner.
+
+-- ── profiles: the stamp, and the funnel-price notice ──
+-- Written only by the service role (never granted to `authenticated`), and
+-- not in ACCESS_COLUMNS: it changes where a member lands and which gates they
+-- meet, never what they may use.
+alter table public.profiles add column if not exists signup_path text;
+alter table public.profiles drop constraint if exists profiles_signup_path_check;
+alter table public.profiles add constraint profiles_signup_path_check
+  check (signup_path is null or signup_path in ('management'));
+alter table public.profiles add column if not exists signup_path_at timestamptz;
+-- How the stamp was set: first_touch | start | quiz | account.
+alter table public.profiles add column if not exists signup_path_via text;
+create index if not exists profiles_signup_path_idx on public.profiles (signup_path_at) where signup_path is not null;
+-- The funnel-price email (NOT the members' pricing_notice_sent_at, which is for
+-- the investor prices): stamped per owner after a successful send. A legacy
+-- owner moves to tier pricing funnel_notice_days after this.
+alter table public.profiles add column if not exists funnel_price_notice_sent_at timestamptz;
+
+-- ── funnels: "Email me each new lead" (default on) ──
+alter table public.funnels add column if not exists notify_new_lead boolean not null default true;
+-- First time this funnel went live (for "median minutes sign-up to live").
+alter table public.funnels add column if not exists first_live_at timestamptz;
+
+-- ── leads: the owner's new-lead email, once per lead across retries ──
+-- Claimed (set) before the send and cleared again if the send fails.
+alter table public.leads add column if not exists owner_notified_at timestamptz;
+
+-- ── billing_settings: the tiers ──
+-- funnel_tiers_from is when tier pricing started: an owner whose first funnel
+-- predates it stays on funnel_markup until funnel_notice_days after their
+-- funnel-price email. Seeded once, at the moment this first runs.
+insert into public.billing_settings (key, value) values
+  ('funnel_tiers', '[{"from":1,"pence":500},{"from":21,"pence":400},{"from":61,"pence":325},{"from":151,"pence":250}]'),
+  ('funnel_enhanced_extra_pence', '200'),
+  ('funnel_notice_days', '30'),
+  ('funnel_tiers_from', to_jsonb(to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')))
+on conflict (key) do nothing;
+
+-- ── funnel_lead_months: charged funnel leads per owner per UK calendar month ──
+create table if not exists public.funnel_lead_months (
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  month date not null,
+  leads integer not null default 0 check (leads >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (owner_id, month)
+);
+alter table public.funnel_lead_months enable row level security;  -- no policies: service role only
+revoke all on public.funnel_lead_months from anon, authenticated;
+
+-- ── funnel_lead_charges: one row per charged lead (the guard and the record) ──
+-- lead_id is deliberately not a foreign key: leads are purged after six months
+-- of inactivity, and what was charged stays countable.
+create table if not exists public.funnel_lead_charges (
+  lead_id uuid primary key,
+  owner_id uuid not null references public.profiles(id) on delete cascade,
+  funnel_id uuid,
+  month date not null,
+  n integer,
+  base_pence numeric,
+  enhanced boolean not null default false,
+  tx_id bigint,
+  created_at timestamptz not null default now()
+);
+create index if not exists funnel_lead_charges_owner_idx on public.funnel_lead_charges (owner_id, month);
+create index if not exists funnel_lead_charges_month_idx on public.funnel_lead_charges (month);
+alter table public.funnel_lead_charges enable row level security;  -- no policies: service role only
+revoke all on public.funnel_lead_charges from anon, authenticated;
+
+-- funnel_lead_charge(p): number a finished lead in its owner's UK month and
+-- charge its tier price, in one statement.
+--   p: {owner, lead, funnel, enhanced, reservation, tiers, enhanced_extra, meta}
+--   tiers / enhanced_extra come from the app's validated settings (tiers.ts);
+--   missing, the seeded defaults apply.
+-- Once per lead: the guard row goes in first, so a retry, the drain and the
+-- live route can never charge the same lead twice (they get the first
+-- charge back with already = true). Two different leads finishing together
+-- are serialised by the month row's lock, so they never share a number. The
+-- debit is credit_debit's, unchanged: spend rates apply as for every charge.
+-- (Proven with 25 parallel calls: n 1..25, one debit each, no deadlock.)
+create or replace function public.funnel_lead_charge(p jsonb)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  v_owner uuid := nullif(p->>'owner', '')::uuid;
+  v_lead uuid := nullif(p->>'lead', '')::uuid;
+  v_funnel uuid := nullif(p->>'funnel', '')::uuid;
+  v_enh boolean := coalesce((p->>'enhanced')::boolean, false);
+  v_res uuid := nullif(p->>'reservation', '')::uuid;
+  v_tiers jsonb := case when jsonb_typeof(p->'tiers') = 'array' and jsonb_array_length(p->'tiers') > 0 then p->'tiers'
+                        else '[{"from":1,"pence":500},{"from":21,"pence":400},{"from":61,"pence":325},{"from":151,"pence":250}]'::jsonb end;
+  v_extra numeric := coalesce(nullif(p->>'enhanced_extra', '')::numeric, 200);
+  v_meta jsonb := case when jsonb_typeof(p->'meta') = 'object' then p->'meta' else '{}'::jsonb end;
+  v_month date := date_trunc('month', now() at time zone 'Europe/London')::date;
+  v_n integer;
+  v_price numeric;
+  v_tx bigint;
+  v_row public.funnel_lead_charges;
+begin
+  if v_owner is null or v_lead is null then raise exception 'funnel_lead_charge_bad_input'; end if;
+  -- The owner's row first, as credit_debit locks it: every charge for an owner
+  -- queues here, before the guard and month rows take their foreign-key share
+  -- locks on it (which would otherwise deadlock against credit_debit's lock).
+  perform 1 from public.profiles where id = v_owner for update;
+
+  insert into public.funnel_lead_charges (lead_id, owner_id, funnel_id, month, enhanced)
+  values (v_lead, v_owner, v_funnel, v_month, v_enh)
+  on conflict (lead_id) do nothing;
+  if not found then
+    select * into v_row from public.funnel_lead_charges where lead_id = v_lead;
+    return jsonb_build_object('already', true, 'n', v_row.n, 'base_pence', v_row.base_pence, 'tx', v_row.tx_id, 'month', v_row.month);
+  end if;
+
+  insert into public.funnel_lead_months (owner_id, month, leads) values (v_owner, v_month, 1)
+  on conflict (owner_id, month) do update set leads = public.funnel_lead_months.leads + 1, updated_at = now()
+  returning leads into v_n;
+
+  select (t->>'pence')::numeric into v_price
+    from jsonb_array_elements(v_tiers) t
+   where (t->>'from')::integer <= v_n
+   order by (t->>'from')::integer desc
+   limit 1;
+  if v_price is null or v_price <= 0 then raise exception 'funnel_lead_charge_no_tier'; end if;
+  v_price := v_price + case when v_enh then greatest(v_extra, 0) else 0 end;
+
+  v_tx := public.credit_debit(v_owner, v_price, v_res, true,
+    v_meta || jsonb_build_object('funnel_id', v_funnel, 'lead_id', v_lead, 'lead_number', v_n, 'lead_month', v_month,
+                                 'quantity', 1, 'unit_cost_pence', 0, 'markup', 1));
+
+  update public.funnel_lead_charges set n = v_n, base_pence = v_price, tx_id = v_tx where lead_id = v_lead;
+  return jsonb_build_object('already', false, 'n', v_n, 'base_pence', v_price, 'tx', v_tx, 'month', v_month);
+end;
+$$;
+revoke all on function public.funnel_lead_charge(jsonb) from public, anon, authenticated;
+grant execute on function public.funnel_lead_charge(jsonb) to service_role;
+
+-- ── mc_page_views: the marketing page's anonymous view count, per UK day ──
+-- No user, no cookie, no IP: a count. `tagged` counts views that arrived
+-- from an ad or a tagged link (utm_* or fbclid).
+create table if not exists public.mc_page_views (
+  day date primary key,
+  views integer not null default 0,
+  tagged integer not null default 0
+);
+alter table public.mc_page_views enable row level security;  -- no policies: service role only
+revoke all on public.mc_page_views from anon, authenticated;
+
+create or replace function public.mc_page_view_hit(p_tagged boolean)
+returns void language sql security definer set search_path = public as $$
+  insert into public.mc_page_views (day, views, tagged)
+  values ((now() at time zone 'Europe/London')::date, 1, case when p_tagged then 1 else 0 end)
+  on conflict (day) do update set views = public.mc_page_views.views + 1,
+                                  tagged = public.mc_page_views.tagged + case when p_tagged then 1 else 0 end;
+$$;
+revoke all on function public.mc_page_view_hit(boolean) from public, anon, authenticated;
+grant execute on function public.mc_page_view_hit(boolean) to service_role;
+
+notify pgrst, 'reload schema';

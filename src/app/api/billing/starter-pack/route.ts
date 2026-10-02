@@ -8,6 +8,7 @@ import { stripeConfigured, getStripe } from '@/lib/stripe/client';
 import { ensureStripeCustomer, loadBillingProfile } from '@/lib/stripe/customer';
 import { createCheckoutSession, returnUrl } from '@/lib/stripe/checkout';
 import { WELCOME_PATH } from '@/lib/auth/landing';
+import { SETUP_PATH } from '@/lib/management/stamp';
 import { safeInternalPath } from '@/lib/safe-path';
 import { logActivity } from '@/lib/activity/log';
 import { logConversion } from '@/lib/meta/conversions';
@@ -171,8 +172,9 @@ export async function POST(request: Request) {
       metadata,
       custom_text: { submit: { message: state.copy.checkoutText } },
       // Batch 21 (F32): a pack bought from the quiz returns there to finish the
-      // remaining questions; every other surface keeps the Today confirmation.
-      success_url: returnUrl(back === WELCOME_PATH || back.startsWith(`${WELCOME_PATH}?`) ? back : '/today', { pack: '1' }),
+      // remaining questions; Batch 22f: one bought from the lead form setup
+      // returns to its next step. Every other surface keeps the Today confirmation.
+      success_url: returnUrl(back === WELCOME_PATH || back.startsWith(`${WELCOME_PATH}?`) || back === SETUP_PATH ? back : '/today', { pack: '1' }),
       cancel_url: returnUrl(back),
     });
     // Batch 21 (B47): the offer hides in this browser until the webhook has

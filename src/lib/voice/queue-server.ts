@@ -60,6 +60,7 @@ async function eligibilityFor(type: OutboundType, m: MemberFacts, now: Date, exc
     otherInFlight: day.otherInFlight,
     introToday: day.introToday,
     affordableSeconds: affordableSeconds(m.balancePence, perMin, settings.voice.maxCallSeconds, reserve),
+    managementOnly: m.managementOnly,
   });
 }
 

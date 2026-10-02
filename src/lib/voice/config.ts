@@ -31,6 +31,8 @@ export const BLOCKED_REASONS = {
   not_owner: "Team member (calls go to the account owner)",
   auto_topup_on: "Auto top-up already on",
   stale: "Waited too long in the queue",
+  // Batch 22f: a management company that has not switched deal-finding on.
+  management_no_deals: "Management company without deal-finding",
 } as const;
 export type BlockedReason = keyof typeof BLOCKED_REASONS;
 

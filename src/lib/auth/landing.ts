@@ -37,14 +37,24 @@ function isAuthPath(path: string): boolean {
 }
 
 /**
+ * Batch 22f: where a management company lands with nowhere else to go, until
+ * it switches deal-finding on (src/lib/management/stamp.ts). Everyone else
+ * keeps HOME_PATH.
+ */
+export const MANAGEMENT_HOME_PATH = '/leads';
+
+/**
  * The path to redirect to after a successful sign-in or sign-up. `next` is
  * the raw, untrusted "return to" value (?next= / ?redirect=), or nothing.
+ * `management`: the account is a management company without deal-finding
+ * (the caller reads the stamp; this stays pure).
  */
-export function postAuthPath(next: string | null | undefined): string {
+export function postAuthPath(next: string | null | undefined, opts: { management?: boolean } = {}): string {
+  const home = opts.management ? MANAGEMENT_HOME_PATH : HOME_PATH;
   const wanted = safeInternalPath(next, '');
-  if (!wanted) return HOME_PATH;
+  if (!wanted) return home;
   if (bypassesWelcome(wanted)) return wanted;
-  if (isAuthPath(wanted)) return HOME_PATH;
+  if (isAuthPath(wanted)) return home;
   return wanted;
 }
 

@@ -11,6 +11,11 @@
  *   auto top-up off, not in the member's first si_low_credit_min_member_days
  *   days, and not on the UK day of their intro call.
  *
+ * Batch 22f: a management company (profiles.signup_path) that has not
+ * switched deal-finding on gets neither the intro (it is about searching
+ * deals for them) nor the low-credit call (about their daily picks). A skip,
+ * not a block: the intro is still owed if they switch deal-finding on.
+ *
  * Callbacks never pass through here: they are answered at any time and do
  * not count towards the day.
  *
@@ -38,6 +43,8 @@ export interface EligibilityInput {
   introToday: boolean;
   /** Whole seconds of calling the member's balance pays for. */
   affordableSeconds: number;
+  /** Batch 22f: a management company without deal-finding (src/lib/management/stamp.ts). */
+  managementOnly?: boolean;
 }
 
 export type Eligibility =
@@ -48,7 +55,7 @@ export type Eligibility =
   | { ok: false; defer?: undefined; reason: BlockedReason; skip: boolean };
 
 /** Reasons that are the member's own settings, not a safety rule. */
-const SKIPS: ReadonlySet<BlockedReason> = new Set(['calls_off', 'not_owner', 'auto_topup_on']);
+const SKIPS: ReadonlySet<BlockedReason> = new Set(['calls_off', 'not_owner', 'auto_topup_on', 'management_no_deals']);
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -56,6 +63,7 @@ export function checkEligibility(i: EligibilityInput): Eligibility {
   const no = (reason: BlockedReason): Eligibility => ({ ok: false, reason, skip: SKIPS.has(reason) });
   if (!i.isOwner) return no('not_owner');
   if (!i.callsOn) return no('calls_off');
+  if (i.managementOnly) return no('management_no_deals');
   if (i.type === 'low_credit' && i.autoTopupOn) return no('auto_topup_on');
   if (!i.numberOk) return no('no_number');
   if (i.type === 'low_credit') {

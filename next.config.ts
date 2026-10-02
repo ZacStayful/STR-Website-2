@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { FRAME_HEADERS } from "./src/lib/security/frame-headers";
 
 /**
  * The PDF report reads its typefaces and wordmark from disk at render time.
@@ -39,6 +40,8 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [{ key: "Referrer-Policy", value: "strict-origin" }],
       },
+      // Batch 22f: only the lead form (/f/*) may be embedded on other sites.
+      ...FRAME_HEADERS,
     ];
   },
   async redirects() {

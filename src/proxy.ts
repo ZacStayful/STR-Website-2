@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSupabaseSession } from '@/lib/supabase/proxy'
 import { postAuthPath } from '@/lib/auth/landing'
+import { isManagementOnly } from '@/lib/management/stamp-server'
 
 // /profile and /profiles are here so a signed-out click on an email link
 // keeps its whole address (?via=email, ?q=, ?new=1) through the login bounce;
@@ -44,7 +45,9 @@ export async function proxy(request: NextRequest) {
     // (/login?redirect=…, /signup?next=…) and apply the landing rule to it,
     // so an invitee who is already logged in still reaches the join page.
     const wanted = request.nextUrl.searchParams.get('redirect') ?? request.nextUrl.searchParams.get('next')
-    return NextResponse.redirect(new URL(postAuthPath(wanted), request.url))
+    // Batch 22f: a management company without deal-finding lands on Leads.
+    const management = await isManagementOnly(user.id).catch(() => false)
+    return NextResponse.redirect(new URL(postAuthPath(wanted, { management }), request.url))
   }
 
   // /signup?ref=CODE → remembered for 30 days so the referral is credited

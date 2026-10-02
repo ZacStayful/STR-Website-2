@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { round4 } from './pricing';
-import { usageDescription, actionLabel, funnelIdFromMeta, memberIdFromMeta, withMemberName } from './usage-label.ts';
+import { usageDescription, actionLabel, funnelIdFromMeta, leadNumberFromMeta, memberIdFromMeta, withMemberName } from './usage-label.ts';
 
 /** One row on the usage page: a debit group (an action), a grant, an expiry or a refund. */
 export interface UsageItem {
@@ -22,6 +22,8 @@ export interface UsageItem {
    * work, so the UI can mark it rather than parsing the description.
    */
   funnelId: string | null;
+  /** Batch 22f: a tier-priced funnel lead's number in its month ("Funnel lead 21 — …"). */
+  leadNumber?: number | null;
   /** The team member who spent it, when the owner's credit paid for a member. */
   memberId: string | null;
   /** Grant kind for grant/expire rows. */
@@ -75,7 +77,7 @@ export async function usageHistory(userId: string, opts: { limit?: number; befor
         // debit of one action shares a context, so they all carry the same
         // value — but a provider call that failed and was logged at zero
         // never reaches the debit path, so later rows can be absent.
-        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: r.action === 'team_seat' && r.description ? r.description : actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), memberId: memberIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
+        item = { id: `a:${r.action_id}`, at: r.at, kind: 'debit', action: r.action, actionId: r.action_id, description: r.action === 'team_seat' && r.description ? r.description : actionLabel(r.action), amountPence: 0, basePence: 0, lines: [], funnelId: funnelIdFromMeta(r.metadata), leadNumber: leadNumberFromMeta(r.metadata), memberId: memberIdFromMeta(r.metadata), grantKind: null, expiresAt: null };
         byAction.set(r.action_id, item);
         items.push(item);
       }
@@ -150,6 +152,7 @@ async function describeFunnelRows(userId: string, items: UsageItem[]): Promise<v
       action: item.action,
       isFunnel: true,
       funnelName: names.get(item.funnelId) ?? null,
+      leadNumber: item.leadNumber ?? null,
     });
   }
 }

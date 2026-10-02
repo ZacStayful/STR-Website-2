@@ -12,6 +12,8 @@ import { FunnelSettings } from "./FunnelSettings";
 import { CostEstimator } from "./CostEstimator";
 import { funnelCost } from "@/lib/funnels/cost";
 import { getUnitCostTable, getBillingSettings } from "@/lib/credit/unit-costs";
+import { getFunnelTierSettings, ownerPricing } from "@/lib/funnels/tiers-server";
+import { bothRates, priceForLead } from "@/lib/funnels/tiers";
 
 export const metadata: Metadata = {
   title: "Funnel settings — Stayful Intelligence",
@@ -39,6 +41,10 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
     // says it is paused, and the link section says what that means.
     funnel.active ? funnelWalls(funnel) : Promise.resolve([]),
   ]);
+  // Batch 22f: an owner on volume tiers sees the tier prices; a legacy owner the metered quote, as before.
+  const tierSettings = await getFunnelTierSettings();
+  const pricing = await ownerPricing(user.id, tierSettings);
+  const tierPricing = pricing.mode === "tiers" ? { tiers: tierSettings.tiers, enhancedExtraPence: tierSettings.enhancedExtraPence, topupRate: settings.spendRates.topup, monthCount: pricing.monthCount } : null;
   const priceFor = (enhanced: boolean) =>
     funnelCost({
       leadsPerMonth: 0,
@@ -87,12 +93,21 @@ export default async function FunnelSettingsPage({ params }: { params: Promise<{
           rotatedAt={funnel.rotatedAt}
           saturationGuide={SATURATION_GUIDE}
           perLeadPence={{ standard: priceFor(false).perLeadPence, enhanced: priceFor(true).perLeadPence }}
+          depthLabels={
+            tierPricing
+              ? {
+                  standard: `Standard — from ${bothRates(priceForLead(1, false, tierSettings), settings.spendRates.topup)}`,
+                  enhanced: `Enhanced, with a second opinion — from ${bothRates(priceForLead(1, true, tierSettings), settings.spendRates.topup)}`,
+                }
+              : undefined
+          }
         />
 
         <CostEstimator
           perLead={{ standard: priceFor(false), enhanced: priceFor(true) }}
           reportDepth={funnel.reportDepth}
           presets={settings.topupPresetsPence}
+          tierPricing={tierPricing}
         />
       </div>
     </main>

@@ -4,9 +4,8 @@ import { analysisComplete } from '@/lib/analysis/reuse';
 import { actionSpend, refundAction } from '@/lib/credit/action';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { getBalance } from '@/lib/credit/ledger';
-import { getUnitCostTable, getBillingSettings } from '@/lib/credit/unit-costs';
-import { estimateAction, reportAction } from '@/lib/credit/estimate';
 import { ownedFunnelByToken } from '@/lib/funnels';
+import { analysisBilling, finishFunnelLead, quoteFunnelLead } from '@/lib/funnels/charge-server';
 import { countAttempt, reserveSpend, settleSpend, capMessage } from '@/lib/funnels/caps';
 import { raiseFunnelAlert } from '@/lib/funnels/alerts';
 import { captureLead, completeLead, leaseQueuedLead } from '@/lib/leads/store';
@@ -34,6 +33,12 @@ import { verifyTurnstile } from '@/lib/turnstile/verify';
  *      reconciled to the actual afterwards
  *
  * Short of credit at 5 or 6, the lead stays `queued` and nothing is spent.
+ *
+ * Batch 22f: an owner on tier pricing is held, checked and charged at the
+ * price of their next lead this month (src/lib/funnels/charge-server.ts),
+ * charged once the report is complete and never for a failed one; the owner
+ * is emailed the lead. An owner from before tiers is metered as before
+ * until their notice runs out.
  *
  * Batch 21 (C3): a run that fails is refunded and its lead stays queued for
  * the drain; a report with no short-let figures is refunded and not saved;
@@ -172,13 +177,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     }
   }
 
-  const settings = await getBillingSettings();
-  const markupOverride = settings.funnelMarkup;
-  const estimate = estimateAction(await getUnitCostTable(), reportAction(wantEnhanced), { markupOverride });
+  const quote = await quoteFunnelLead(funnel);
+  const billing = analysisBilling(quote);
 
   // ── 5. Solvency, explicitly. Deliberately NOT isEnforcing(). ──
   const balance = await getBalance(funnel.userId).catch(() => null);
-  if (!balance || balance.spendableBasePence < estimate.maxBasePence) {
+  if (!balance || balance.spendableBasePence < quote.holdBasePence) {
     // The enquiry is already captured, so nothing is lost — but the prospect
     // has just been promised a report that will not arrive until the owner
     // tops up, and until now nothing told them that was happening.
@@ -187,7 +191,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   }
 
   // ── 6. Claim today's spend headroom at the worst case. ──
-  const claimed = await reserveSpend(funnel.id, estimate.maxBasePence, funnel.dailySpendCapPence);
+  const claimed = await reserveSpend(funnel.id, quote.holdBasePence, funnel.dailySpendCapPence);
   if (!claimed) {
     await raiseFunnelAlert('spend_cap', funnel);
     return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });
@@ -197,12 +201,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   try {
     prepared = await reserveAnalysis(runInput, {
       billedUserId: funnel.userId,
-      markupOverride,
+      ...billing,
       requireCredit: true,
       funnelId: funnel.id,
     });
   } catch (err) {
-    await settleSpend(funnel.id, estimate.maxBasePence, 0);
+    await settleSpend(funnel.id, quote.holdBasePence, 0);
     if (err instanceof InsufficientCreditError) {
       return sseOnce({ stage: 'queued', progress: 100, message: QUEUED_MESSAGE });
     }
@@ -218,7 +222,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       try {
         const { result, spend } = await runAnalysis(prepared, runInput, {
           billedUserId: funnel.userId,
-          markupOverride,
+          ...billing,
           requireCredit: true,
           onProgress: (e) => send({ stage: e.stage, progress: e.progress, message: e.message }),
         });
@@ -249,6 +253,16 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
         if (!attached) {
           console.error(`[funnel] lead ${leadId} ran and was charged but its report could not be saved`);
         }
+        // Batch 22f: the tier charge (once per lead) and the owner's new-lead email.
+        const charged = await finishFunnelLead({
+          funnel,
+          leadId,
+          quote,
+          actionId: prepared.ctx.actionId,
+          secondOpinionDelivered: Boolean(result.secondOpinion),
+          saved: Boolean(attached),
+        });
+        if (quote.mode === 'tiers') actualBasePence = charged;
 
         // The prospect is never shown the qualification verdict or anything
         // about the customer's credit — that is the customer's business.
@@ -268,7 +282,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       } finally {
         // Hand back whatever the worst case over-claimed, so one run cannot
         // lock out the rest of the customer's day.
-        await settleSpend(funnel.id, estimate.maxBasePence, actualBasePence).catch(() => {});
+        await settleSpend(funnel.id, quote.holdBasePence, actualBasePence).catch(() => {});
         controller.close();
       }
     },

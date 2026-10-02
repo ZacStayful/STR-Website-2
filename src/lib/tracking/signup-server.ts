@@ -15,6 +15,10 @@ import 'server-only';
  * not lead-form accounts or team seats). So someone who accepted on the
  * landing page and then signed up counts as consenting.
  *
+ * Batch 22f: an account whose first touch is the management-company page
+ * (cookie, hidden field or Google's return, whichever chooseTouch picks) is
+ * stamped as a management company right after its attribution is saved.
+ *
  * The cookies are read while the request is here; the database work runs
  * after the response (after()), so it never slows sign-up or sign-in and a
  * failure never blocks it.
@@ -30,6 +34,8 @@ import { attributionCookie, saveAttribution } from './attribution-server';
 import { attachDevice, deviceConsent, recordChoice, setDeviceConsent } from './consent-server';
 import { clientDetails } from './request';
 import { chooseTouch, parseTouch } from './touch';
+import { isManagementTouch } from '../management/stamp';
+import { stampManagement } from '../management/stamp-server';
 
 async function requestDetails(): Promise<ClientDetails | null> {
   try {
@@ -59,6 +65,8 @@ export async function onEmailSignup(input: { userId: string; teamInvite: boolean
       if (input.consentTicked) await recordChoice({ visitorId, userId: input.userId, choice: 'accept', source: 'signup', at });
       else await attachDevice(input.userId, device);
       await saveAttribution({ userId: input.userId, method: 'email', teamInvite: input.teamInvite, touch, via });
+      // Batch 22f: a first touch on the management-company page stamps the account (never a team seat).
+      if (!input.teamInvite && isManagementTouch(touch)) await stampManagement(input.userId, 'first_touch');
       if (input.signedIn) await recordConversion({ name: 'CompleteRegistration', userId: input.userId, details });
     });
   } catch (err) {
@@ -90,6 +98,10 @@ export async function onSignIn(input: {
     const chosen = newGoogle ? chooseTouch(await attributionCookie(), parseTouch(input.carried), 'redirect') : null;
     const userId = input.user.id;
     const email = input.user.email ?? null;
+    // Batch 22f: a new Google account whose first touch was the management
+    // page is stamped NOW, not after the response: the callback's redirect
+    // reads the stamp to choose where they land. Never a team invite.
+    if (chosen && isManagementTouch(chosen.touch) && !input.next.startsWith('/team/join')) await stampManagement(userId, 'first_touch');
     after(async () => {
       const member = await attachDevice(userId, device);
       // This device's yes has just become theirs: anything held in the last hour goes now.

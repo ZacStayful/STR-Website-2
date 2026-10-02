@@ -10,6 +10,7 @@ import { getContact } from '../sms/store';
 import { isUkMobile } from '../sms/phone';
 import { teamOf } from '../team';
 import { getBalance } from '../credit/ledger';
+import { isManagementOnly } from '../management/stamp-server';
 
 export interface MemberFacts {
   userId: string;
@@ -24,6 +25,8 @@ export interface MemberFacts {
   email: string | null;
   /** Displayed balance (face pence). */
   balancePence: number;
+  /** Batch 22f: a management company without deal-finding (no intro or low-credit call). */
+  managementOnly: boolean;
 }
 
 /** First name from full_name: the first word, unless it is a single letter (the rule the daily notices use). */
@@ -45,7 +48,7 @@ export async function memberFacts(userId: string): Promise<MemberFacts | null> {
   }
   const row = p as { si_calls?: boolean; auto_topup_amount_pence: number | null; created_at: string; full_name: string | null; email: string | null };
   const phone = contact?.phone_e164 ?? null;
-  const balance = await getBalance(userId).catch(() => null);
+  const [balance, managementOnly] = await Promise.all([getBalance(userId).catch(() => null), isManagementOnly(userId).catch(() => false)]);
   return {
     userId,
     isOwner: team.role === 'owner',
@@ -57,6 +60,7 @@ export async function memberFacts(userId: string): Promise<MemberFacts | null> {
     firstName: firstNameOf(row.full_name),
     email: row.email,
     balancePence: balance ? balance.totalPence : 0,
+    managementOnly,
   };
 }
 

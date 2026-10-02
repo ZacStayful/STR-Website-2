@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { ownerIdOrNull } from '@/lib/leads/scope';
-import { createFunnel, getFunnel, updateFunnel, rotateFunnelToken } from '@/lib/funnels';
+import { createFunnel, getFunnel, updateFunnel, rotateFunnelToken, markFirstLive } from '@/lib/funnels';
+import { logConversion } from '@/lib/meta/conversions';
 import { parseBrand, parseHexColour, parseEmail, parseLogoUrl, parseHttpsUrl, logoRejectionReason, activationBlockers, newFunnelBrand } from '@/lib/funnels/brand';
 import { parseLeadRules } from '@/lib/leads/rules';
 import { uploadLogo, deleteLogoIfOurs } from '@/lib/funnels/storage';
@@ -43,6 +44,8 @@ export interface FunnelState {
   saved?: boolean;
   /** The freshly minted token, shown once after a rotate. */
   token?: string;
+  /** Batch 22f: the funnel just created (the guided setup carries on with it). */
+  id?: string;
 }
 
 /**
@@ -59,11 +62,18 @@ export async function createFunnelAction(_prev: FunnelState, formData: FormData)
   if (!who) return { error: 'Please sign in again.' };
   const name = String(formData.get('name') ?? '').trim();
 
+  // Batch 22f: the guided setup (/leads/setup) creates the paused funnel
+  // from its first step, with the brand colour, and asks for the privacy
+  // policy on the next; going live still needs it.
+  const setup = formData.get('setup') === '1';
   const brand = newFunnelBrand({
     companyName: formData.get('companyName'),
     privacyUrl: formData.get('privacyUrl'),
-  });
+  }, { privacyOptional: setup });
   if (!brand.ok) return { error: brand.error };
+  const primaryRaw = String(formData.get('primary') ?? '').trim();
+  if (primaryRaw && !parseHexColour(primaryRaw)) return { error: 'The brand colour needs to be a six-digit hex value, like #1a73e8.' };
+  if (primaryRaw) brand.brand.primary = parseHexColour(primaryRaw);
 
   const funnel = await createFunnel(who.id, name, brand.brand);
   if (!funnel) return { error: 'We could not create that funnel just now. Please try again.' };
@@ -71,7 +81,8 @@ export async function createFunnelAction(_prev: FunnelState, formData: FormData)
   logActivity(who.id, 'funnel_edited', { extras: { action: 'create', funnel: funnel.id } });
   revalidatePath('/leads/funnels');
   revalidatePath('/leads');
-  return { saved: true };
+  revalidatePath('/leads/setup', 'layout');
+  return { saved: true, id: funnel.id };
 }
 
 export async function saveBrandAction(_prev: FunnelState, formData: FormData): Promise<FunnelState> {
@@ -257,7 +268,27 @@ export async function toggleFunnelAction(_prev: FunnelState, formData: FormData)
   const ok = await updateFunnel(who.id, id, { active: !funnel.active });
   if (!ok) return { error: 'We could not change that just now. Please try again.' };
   logActivity(who.id, 'funnel_edited', { extras: { action: funnel.active ? 'pause' : 'go_live', funnel: id } });
+  // Batch 22f: an owner's first lead form going live (the activity and the Meta event, once per account).
+  if (!funnel.active && (await markFirstLive(who.id, id))) {
+    logActivity(who.id, 'funnel_live', { dedupeKey: 'funnel_live', extras: { funnel: id } });
+    await logConversion({ name: 'funnel_live', userId: who.id });
+  }
   revalidatePath(`/leads/funnels/${id}`);
   revalidatePath('/leads/funnels');
+  revalidatePath('/leads/setup', 'layout');
+  return { saved: true };
+}
+
+/** Batch 22f: "Email me each new lead", per funnel. */
+export async function saveNotifyAction(_prev: FunnelState, formData: FormData): Promise<FunnelState> {
+  const who = await member();
+  if (!who) return { error: 'Please sign in again.' };
+  const id = String(formData.get('id') ?? '');
+  if (!UUID.test(id)) return { error: 'That funnel could not be found.' };
+  const ok = await updateFunnel(who.id, id, { notifyNewLead: formData.get('notifyNewLead') === 'on' });
+  if (!ok) return { error: 'We could not save that just now. Please try again.' };
+  logActivity(who.id, 'funnel_edited', { extras: { action: 'notify', funnel: id } });
+  revalidatePath(`/leads/funnels/${id}`);
+  revalidatePath('/leads/setup', 'layout');
   return { saved: true };
 }

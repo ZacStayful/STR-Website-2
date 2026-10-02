@@ -67,6 +67,15 @@ export interface AnalysisRunOptions {
    * permission for a stranger's request to spend a customer's money.
    */
   requireCredit?: boolean;
+  /**
+   * Batch 22f: a funnel lead on tier pricing. Each provider call's cost is
+   * logged and nothing is debited per call; the caller charges the lead's
+   * tier price once, after the report is complete
+   * (src/lib/funnels/charge-server.ts). Read by `reserveAnalysis` only.
+   */
+  fixedPrice?: boolean;
+  /** With fixedPrice: hold this (the tier price) instead of the metered worst case. */
+  reserveBasePence?: number;
   onProgress?: (event: { stage: string; progress: number; message: string }) => void;
 }
 
@@ -178,16 +187,18 @@ export async function reserveAnalysis(input: AnalysisInput, opts: AnalysisRunOpt
     priceLabs: priceLabsEnabled(),
     markupOverride: opts.markupOverride,
   });
+  const maxBasePence = opts.fixedPrice && opts.reserveBasePence !== undefined ? opts.reserveBasePence : estimate.maxBasePence;
   const action = await startAction({
     userId: opts.billedUserId,
     admin: Boolean(opts.admin),
     action: reportKind,
-    maxBasePence: estimate.maxBasePence,
+    maxBasePence,
     markupOverride: opts.markupOverride,
     requireCredit: opts.requireCredit,
     funnelId: opts.funnelId,
+    ...(opts.fixedPrice ? { fixedPrice: true } : {}),
   });
-  return { ctx: action.ctx, finish: action.finish, reportKind, maxBasePence: estimate.maxBasePence };
+  return { ctx: action.ctx, finish: action.finish, reportKind, maxBasePence };
 }
 
 export async function runAnalysis(

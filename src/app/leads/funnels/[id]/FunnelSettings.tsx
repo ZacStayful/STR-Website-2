@@ -29,6 +29,8 @@ interface Props {
    * here so the option labels can never drift from the real price.
    */
   perLeadPence: { standard: number; enhanced: number };
+  /** Batch 22f: the options' wording on volume tiers ("from £5.00 a lead (£6.50 from top-up credit)"). */
+  depthLabels?: { standard: string; enhanced: string };
 }
 
 const pounds = (pence: number) => `£${(pence / 100).toFixed(2)}`;
@@ -48,7 +50,7 @@ function Banner({ state }: { state: FunnelState }) {
   return null;
 }
 
-export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide, perLeadPence }: Props) {
+export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide, perLeadPence, depthLabels }: Props) {
   const [brandState, brandAction, brandPending] = useActionState(saveBrandAction, INITIAL);
   const [rulesState, rulesAction, rulesPending] = useActionState(saveRulesAction, INITIAL);
   const [rotateState, rotateAction, rotatePending] = useActionState(rotateTokenAction, INITIAL);
@@ -294,8 +296,8 @@ export function FunnelSettings({ funnel, publicUrl, rotatedAt, saturationGuide, 
           <div>
             <label className={labelCls} htmlFor="reportDepth">Report depth</label>
             <select id="reportDepth" name="reportDepth" defaultValue={funnel.reportDepth} className={`${field} mt-1`}>
-              <option value="standard">Standard — about {pounds(perLeadPence.standard)} a lead</option>
-              <option value="enhanced">Enhanced, with a second opinion — about {pounds(perLeadPence.enhanced)} a lead</option>
+              <option value="standard">{depthLabels?.standard ?? `Standard — about ${pounds(perLeadPence.standard)} a lead`}</option>
+              <option value="enhanced">{depthLabels?.enhanced ?? `Enhanced, with a second opinion — about ${pounds(perLeadPence.enhanced)} a lead`}</option>
             </select>
             <p className={hint}>Charged to your credit when a lead completes the form.</p>
           </div>

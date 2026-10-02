@@ -10,6 +10,7 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { startAction } from '@/lib/credit/action';
+import { ownerPricing } from '@/lib/funnels/tiers-server';
 import { runMetered } from '@/lib/credit/context';
 import { meter } from '@/lib/credit/meter';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
@@ -116,6 +117,9 @@ export async function GET(request: Request) {
   // What the funnel branch has claimed of the day's spend ceiling, so the
   // `finally` below can hand back whatever the lookup did not actually cost.
   let spendGuard: { funnelId: string; reservedPence: number } | null = null;
+  // Batch 22f: on tier pricing the lookup is part of the lead's price. Its
+  // raw cost is still logged against the owner; nothing is charged.
+  let fixedPrice = false;
   const funnelToken = searchParams.get('f');
   if (funnelToken) {
     const funnel = await ownedFunnelByToken(funnelToken);
@@ -135,22 +139,28 @@ export async function GET(request: Request) {
     // refused lookup costs the prospect a little typing and not their enquiry.
     if (!(await countAutocomplete(funnel.id, ip))) return Response.json({ suggestions: [] });
 
-    markupOverride = (await getBillingSettings()).funnelMarkup;
-    // Claimed against the SAME daily ceiling an analysis is claimed against,
-    // so a customer's £50 means £50 across everything their funnel spends,
-    // and settled to the real figure afterwards — a session that dedupes to
-    // £0 must not leave a hold on the day. A non-positive cap reads as "no
-    // limit" in SQL, which is the wrong direction for a money guard, so fall
-    // back to the column default rather than letting a zero switch it off.
-    const capPence = funnel.dailySpendCapPence > 0 ? funnel.dailySpendCapPence : 5000;
-    const estimate = estimateAction(await getUnitCostTable(), 'autocomplete', { markupOverride });
-    if (!(await reserveSpend(funnel.id, estimate.maxBasePence, capPence))) {
-      return Response.json({ suggestions: [] });
-    }
-    spendGuard = { funnelId: funnel.id, reservedPence: estimate.maxBasePence };
+    if ((await ownerPricing(funnel.userId)).mode === 'tiers') {
+      fixedPrice = true;
+      userId = funnel.userId;
+      funnelId = funnel.id;
+    } else {
+      markupOverride = (await getBillingSettings()).funnelMarkup;
+      // Claimed against the SAME daily ceiling an analysis is claimed against,
+      // so a customer's £50 means £50 across everything their funnel spends,
+      // and settled to the real figure afterwards — a session that dedupes to
+      // £0 must not leave a hold on the day. A non-positive cap reads as "no
+      // limit" in SQL, which is the wrong direction for a money guard, so fall
+      // back to the column default rather than letting a zero switch it off.
+      const capPence = funnel.dailySpendCapPence > 0 ? funnel.dailySpendCapPence : 5000;
+      const estimate = estimateAction(await getUnitCostTable(), 'autocomplete', { markupOverride });
+      if (!(await reserveSpend(funnel.id, estimate.maxBasePence, capPence))) {
+        return Response.json({ suggestions: [] });
+      }
+      spendGuard = { funnelId: funnel.id, reservedPence: estimate.maxBasePence };
 
-    userId = funnel.userId;
-    funnelId = funnel.id;
+      userId = funnel.userId;
+      funnelId = funnel.id;
+    }
   } else {
     try {
       const supabase = await createSupabaseServerClient();
@@ -180,7 +190,7 @@ export async function GET(request: Request) {
 
   let action;
   try {
-    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId, markupOverride, requireCredit: Boolean(funnelToken), funnelId });
+    action = await startAction({ userId, admin, action: 'autocomplete', oncePerAction: true, actionId: sessionId, markupOverride, requireCredit: Boolean(funnelToken) && !fixedPrice, funnelId, ...(fixedPrice ? { fixedPrice: true } : {}) });
   } catch (err) {
     // Nothing ran, so nothing was spent.
     await releaseSpendGuard(0);

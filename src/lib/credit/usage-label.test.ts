@@ -90,3 +90,12 @@ test('a team member’s spend is named on the owner’s usage history', () => {
 test('a team seat has a label', () => {
   assert.equal(actionLabel('team_seat'), 'Team seat');
 });
+
+test('Batch 22f: a tier-priced funnel lead carries its number in the month', async () => {
+  const { leadNumberFromMeta } = await import('./usage-label.ts');
+  assert.equal(usageDescription({ action: 'funnel_lead', isFunnel: true, funnelName: 'Website form', leadNumber: 21 }), 'Funnel lead 21 — Website form');
+  assert.equal(usageDescription({ action: 'report', isFunnel: true, funnelName: 'Website form' }), 'Funnel lead — Website form');
+  assert.equal(leadNumberFromMeta({ lead_number: 21 }), 21);
+  assert.equal(leadNumberFromMeta({ lead_number: 'x' }), null);
+  assert.equal(leadNumberFromMeta(null), null);
+});

@@ -2,7 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
+import { redirect } from "next/navigation";
 import { listFunnels } from "@/lib/funnels";
+import { isManagementAccount } from "@/lib/management/stamp-server";
+import { SETUP_PATH } from "@/lib/management/stamp";
 import { funnelWalls } from "@/lib/funnels/alerts";
 import { listLeads, countLeads, type LeadRecord } from "@/lib/api/leads-query";
 import { leadScopeOrPaused } from "@/lib/leads/scope";
@@ -95,6 +98,8 @@ export default async function LeadsPage({ searchParams }: { searchParams: Promis
     listFunnels(scope.ownerId),
     inactiveArchives(scope.ownerId),
   ]);
+  // Batch 22f: a management company that lands here before its form exists carries on with the setup.
+  if (isOwner && funnels.length === 0 && (await isManagementAccount(user.id))) redirect(SETUP_PATH);
   const countFor = (tab: LeadTab) => counts[LEAD_TABS.findIndex((t) => t.key === tab)] ?? 0;
   const now = new Date();
   const rows = page.leads.map((r) => toRow(r, now));

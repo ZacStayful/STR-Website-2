@@ -79,3 +79,15 @@ test('Batch 21 (E7): the extension and the API keep a member from being quiet, t
   assert.equal(isEngagement('extension_check'), true);
   assert.equal(isEngagement('api_report'), true);
 });
+
+test('Batch 22f: a charged funnel lead keeps its owner out of Re-engage, but is not weekly active', async () => {
+  const { isQualifying, isCounted } = await import('../activity/kinds.ts');
+  assert.equal(isEngagement('funnel_lead_charged'), true);
+  assert.equal(isQualifying('funnel_lead_charged'), false);
+  assert.equal(isCounted('funnel_lead_charged'), false);
+  // The rest of the management-company kinds are record only, and do not keep anyone from being quiet.
+  for (const k of ['mc_signup', 'funnel_setup_step', 'funnel_live', 'funnel_demo_emailed', 'funnel_snippet_copied']) {
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isEngagement(k), false, k);
+  }
+});
