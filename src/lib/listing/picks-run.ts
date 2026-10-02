@@ -72,6 +72,7 @@ import { projectClearedUrls } from "../project/read-server";
 import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
 import { revealedFor } from "../intelligence/reveal-server";
+import { recordScanDays } from "../home/scan-record";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
 // Every member with picks on (profiles.sourcing_alerts, default on) who has
@@ -679,6 +680,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     const { error: seenErr } = await admin.from("sourced_listings").update({ last_seen_at: nowIso }).in("canonical_url", urls);
     if (seenErr) console.error("[sourcing] last_seen update failed:", seenErr.message);
   }
+
+  // Batch 22e: "properties scanned" (recounted, so a second run cannot double a day). Dry runs returned above.
+  await recordScanDays(admin);
 
   // First-seen dates decide what counts as new; recent sends decide what each member already had.
   const firstSeen = new Map<string, number>();

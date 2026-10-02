@@ -28,6 +28,7 @@ import { runMetered, newActionId } from '../credit/context';
 import { COST_PENCE } from '../broker/config';
 import { pmiAccount, pmiConfigured } from '../broker/providers/pmi';
 import { absorbListings, emptyAbsorbCounters, type AbsorbCounters } from '../marketplace/absorb';
+import { recordScanDays } from '../home/scan-record';
 import { loadScreenContext, revalidateDeals, type Admin } from '../marketplace/server';
 import type { AreaCardLike } from '../marketplace/record';
 import { getMarketSnapshot } from '../market/cached';
@@ -265,6 +266,8 @@ export async function runLowEntrySearch(opts: LowEntryOptions): Promise<LowEntry
   if (summary.stoppedBy === null && summary.searched >= max && plan.pending.length > max) summary.stoppedBy = 'max';
 
   summary.ms = elapsed();
+  // Batch 22e: "properties scanned" (recounted, so a second run cannot double a day).
+  await recordScanDays(admin, startedAt);
   await recordRun(admin, startedAt, summary);
   revalidateDeals();
   return done({ status: 200, body: summary });

@@ -70,3 +70,5 @@ jobs:
           diff /tmp/data1.sql /tmp/data2.sql
       - name: Ledger and schema checks
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/credit-smoke.sql
+      - name: Properties scanned checks (Batch 22e)
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/scan-days-smoke.sql

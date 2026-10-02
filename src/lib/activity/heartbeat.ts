@@ -19,8 +19,8 @@ export const IDLE_MS = 5 * 60_000;
 export const MOVE_THROTTLE_MS = 10_000;
 
 export type PingKind = 'load' | 'page' | 'beat' | 'resume' | 'hide';
-/** Batch 21 (E6): the Explorer (its search and area pages) and My deals are views too; never which area. */
-export type View = { type: 'today' } | { type: 'deal'; id: string } | { type: 'report'; id: string } | { type: 'explorer' } | { type: 'my_deals' };
+/** Batch 21 (E6): the Explorer (its search and area pages) and My deals are views too; never which area. Batch 22e: Home. */
+export type View = { type: 'home' } | { type: 'today' } | { type: 'deal'; id: string } | { type: 'report'; id: string } | { type: 'explorer' } | { type: 'my_deals' };
 export type Via = 'email' | 'sms';
 
 export interface Ping {
@@ -36,6 +36,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function viewFor(pathname: string | null | undefined): View | null {
   if (!pathname) return null;
   const path = pathname.replace(/\/+$/, '') || '/';
+  if (path === '/home') return { type: 'home' };
   if (path === '/today') return { type: 'today' };
   // Batch 21 (E6): a member researching areas, or reviewing their pipeline, is looking.
   if (path === '/markets' || /^\/markets\/[A-Za-z0-9-]+$/.test(path)) return { type: 'explorer' };
@@ -119,6 +120,11 @@ export function pingBody(kind: PingKind, opts: { pages?: number; via?: Via | nul
   return body;
 }
 
+/** Batch 22e: Home counts once a UK day (the same pattern as the Explorer and My deals): one dedupe key per UK date. */
+export function homeViewKey(ukDate: string): string {
+  return `home_view:${ukDate}`;
+}
+
 /** A ping from the network, checked; null when it is not one. */
 export function parsePing(raw: unknown): Ping | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -130,7 +136,7 @@ export function parsePing(raw: unknown): Ping | null {
   if (r.via === 'email' || r.via === 'sms') ping.via = r.via;
   const v = r.view as Record<string, unknown> | undefined;
   if (v && typeof v === 'object') {
-    if (v.type === 'today' || v.type === 'explorer' || v.type === 'my_deals') ping.view = { type: v.type };
+    if (v.type === 'home' || v.type === 'today' || v.type === 'explorer' || v.type === 'my_deals') ping.view = { type: v.type };
     else if ((v.type === 'deal' || v.type === 'report') && typeof v.id === 'string' && UUID.test(v.id)) ping.view = { type: v.type, id: v.id.toLowerCase() };
   }
   return ping;

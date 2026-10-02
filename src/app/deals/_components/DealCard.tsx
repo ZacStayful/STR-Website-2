@@ -12,6 +12,7 @@ import type { CardView } from "@/lib/marketplace/card-view";
 import { ANALYSIS_LEAD_LINE } from "@/lib/tailoring/about-prompts";
 import { openDealAction } from "../actions";
 import { DealCardFrame } from "./DealCardFrame";
+import { emailedLabel } from "@/lib/home/emailed";
 
 // Re-exported for the pages that format a deal without rendering this card.
 export { headlineFigure, priceLine };
@@ -49,6 +50,10 @@ export interface DealCardProps {
    * as it did before.
    */
   view?: CardView;
+  /** Batch 22e: "Emailed 2 Oct" when this deal went to the member in a sent email (src/lib/home/emailed.ts). */
+  emailedOn?: string | null;
+  /** Batch 22e: a near miss on Browse, what it misses ("Misses: Budget, Location"). */
+  misses?: string[] | null;
 }
 
 /**
@@ -57,7 +62,7 @@ export interface DealCardProps {
  * Never the address, the postcode or the listing link. Reused by the /deals
  * grid and, later, the Today screen and My deals.
  */
-export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction = null, earlyAccess = null, actions = true, share, view }: DealCardProps) {
+export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction = null, earlyAccess = null, actions = true, share, view, emailedOn = null, misses = null }: DealCardProps) {
   const area = card.postcode_area ? areaMetaForCode(card.postcode_area) : null;
   const badges = badgesFor(card, now);
   const figure = headlineFigure(card);
@@ -87,9 +92,11 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
             <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
           ))}
           {view?.explanation?.elsewhere && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">Best elsewhere</span>}
+          {emailedOn && <span className="rounded-full bg-white/90 px-2 py-0.5 text-[11px] font-semibold text-foreground">{emailedLabel(emailedOn)}</span>}
         </div>
       </div>
       <div className="p-3">
+        {misses && misses.length > 0 && <p className="mb-2 rounded-md bg-warning/10 px-2 py-1 text-xs text-foreground">Misses: {misses.join(", ")}</p>}
         {view?.numbers && view.numbers.length > 0 ? (
           <>
             {/* Batch 14: three numbers for this member's role and goal (src/lib/tailoring/numbers.ts). */}

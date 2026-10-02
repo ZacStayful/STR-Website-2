@@ -5,7 +5,7 @@
  * on /auth/callback, token links on /auth/confirm, and the proxy's "already
  * signed in" bounce off /login and /signup — ends by asking this one
  * function, so the rule lives in one place: the member goes where they were
- * going, or to Today.
+ * going, or to Home (Batch 22e; it was Today before).
  *
  * The profile quiz (Batch 12) is no longer a stop on the way in: its first
  * three questions gate every members-only page instead (AppShell →
@@ -21,8 +21,8 @@
  */
 import { safeInternalPath } from '../safe-path.ts';
 
-/** Where a signed-in member lands with nowhere else to go. */
-export const HOME_PATH = '/today';
+/** Where a signed-in member lands with nowhere else to go: Home (Batch 22e). */
+export const HOME_PATH = '/home';
 /** The profile quiz. */
 export const WELCOME_PATH = '/welcome';
 

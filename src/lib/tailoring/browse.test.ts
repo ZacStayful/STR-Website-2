@@ -75,3 +75,50 @@ test('an untailored member is not sorted by the tailored rules', () => {
   const twoBed = row({ id: 'two-bed', bedrooms: 2, deal_margin: '600' });
   assert.deepEqual(bestForYouOrder([twoBed, oneBed], input(p, DEFAULT_GOALS)), ['one-bed', 'two-bed']);
 });
+
+// ── Batch 22e: Browse is the deals picked for you ──
+
+test('Batch 22e: by default nothing outside the profile is listed: areas, budget (u200 included), deal types, must-haves', async () => {
+  const { profileFits, nearestMisses, missLabel } = await import('./browse.ts');
+  const buyer = plainProfile({ ...DEFAULT_GOALS, path: 'buy', sourcingKind: 'sale', where: 'areas', budget: 'u200', dealTypes: ['buy_str'] }, ['DE'], WIDTHS, { answered: { where: real, budget: real } });
+  const rows = [
+    sale({ id: 'in', postcode_area: 'DE', price_amount: 180_000 }),
+    sale({ id: 'dear', postcode_area: 'DE', price_amount: 260_000 }),
+    sale({ id: 'away', postcode_area: 'M', price_amount: 150_000 }),
+    row({ id: 'rental', postcode_area: 'DE' }),
+  ];
+  const fits = profileFits(rows, buyer, ['buy_str'], NOW);
+  assert.ok(fits);
+  const listed = rows.map((r) => r.id).filter((id) => fits!.get(id)!.misses.length === 0);
+  assert.deepEqual(listed, ['in'], 'only the deal inside the profile');
+  assert.deepEqual(fits!.get('dear')!.misses, ['budget'], "legacy 'u200' is a £200,000 ceiling");
+  assert.deepEqual(fits!.get('away')!.misses, ['location']);
+  assert.ok(fits!.get('rental')!.misses.includes('deal_type'));
+  assert.deepEqual(nearestMisses(['away', 'in', 'rental', 'dear'], fits!), ['away', 'rental', 'dear'], 'one miss each: the given order; never a match');
+  const twoMisses = profileFits([sale({ id: 'both', postcode_area: 'M', price_amount: 260_000 }), sale({ id: 'one', postcode_area: 'M', price_amount: 150_000 })], buyer, ['buy_str'], NOW)!;
+  assert.deepEqual(nearestMisses(['both', 'one'], twoMisses), ['one', 'both'], 'fewest misses first');
+  assert.equal(missLabel('budget'), 'Budget');
+  assert.equal(missLabel('deal_type'), 'Deal type');
+});
+
+test('Batch 22e: an area or budget made a nice-to-have still narrows Browse; other nice-to-haves do not', async () => {
+  const { profileFits } = await import('./browse.ts');
+  const p = plainProfile({ ...DEFAULT_GOALS, path: 'buy', sourcingKind: 'sale', where: 'areas', budget: '100-200', bedrooms: 3, dealTypes: ['buy_str'] }, ['DE'], WIDTHS, { answered: { where: real, budget: real, bedrooms: real }, modes: { location: 'nice', budget: 'nice' } });
+  const fits = profileFits([sale({ id: 'away', postcode_area: 'M', price_amount: 150_000, bedrooms: 2 }), sale({ id: 'twobed', postcode_area: 'DE', price_amount: 150_000, bedrooms: 2 })], p, ['buy_str'], NOW)!;
+  assert.deepEqual(fits.get('away')!.misses, ['location']);
+  assert.deepEqual(fits.get('twobed')!.misses, [], 'bedrooms is a nice-to-have: shown');
+});
+
+test('Batch 22e: a profile with no answers narrows nothing', async () => {
+  const { profileFits } = await import('./browse.ts');
+  assert.equal(profileFits([row()], null, [], NOW), null);
+  assert.equal(profileFits([row()], plainProfile(null, [], WIDTHS), [], NOW), null);
+});
+
+test('Batch 22e: the other sorts inside the list', async () => {
+  const { sortRows } = await import('./browse.ts');
+  const rows = [sale({ id: 'a', annual_profit: 5_000, price_amount: 90_000, first_seen_at: '2026-09-01T00:00:00Z' }), sale({ id: 'b', annual_profit: 9_000, price_amount: 120_000, first_seen_at: '2026-09-20T00:00:00Z' })];
+  assert.deepEqual(sortRows(rows, 'profit'), ['b', 'a']);
+  assert.deepEqual(sortRows(rows, 'price'), ['a', 'b']);
+  assert.deepEqual(sortRows(rows, 'newest'), ['b', 'a']);
+});

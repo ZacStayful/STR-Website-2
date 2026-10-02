@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { ensureWelcomeGrant } from "@/lib/credit/welcome";
-import { quizPathFor, welcomeReturnPath, HOME_PATH } from "@/lib/auth/landing";
-import { GOALS_EDITOR_HREF } from "@/lib/nav";
+import { quizPathFor, welcomeReturnPath } from "@/lib/auth/landing";
+import { GOALS_EDITOR_HREF, NAV_TARGETS } from "@/lib/nav";
 import { rankedAreasForQuiz } from "@/lib/onboarding/server";
 import { isQuestionId, questionsFor } from "@/lib/profile/questions";
 import { isRevealMember } from "@/lib/intelligence/reveal-server";
@@ -109,7 +109,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
           revealHref={revealHref}
           profileHref={GOALS_EDITOR_HREF}
           privacyHref="/privacy"
-          todayHref={HOME_PATH}
+          todayHref={NAV_TARGETS.today.href}
         />
       </div>
       {/* Batch 18: the quiz is the first screen a new member sees, so they can tell us if it goes wrong. */}

@@ -1,7 +1,11 @@
 /**
- * The members' navigation: one config object. Today, the three tools
- * (Browse, Markets, Analyser — back in the strip in Batch 22) and My deals,
- * then Account.
+ * Header items are decided by Zac. No batch removes, merges or renames one without his approval.
+ *
+ * The members' navigation: one config object. Batch 22e set the order Zac
+ * wants: the Stayful Intelligence eye ("Talk to Stayful Intelligence",
+ * drawn by AppSwitcher, not a NAV_TARGETS item), then Home, Today, My deals,
+ * Browse, Market Explorer, Analyser and Account (Leads before Account for a
+ * team that owns a funnel).
  *
  * Every members-only surface still announces itself with the section name it
  * always used (`Section`, the AppShell `active` prop), and `NAV_FOR_SECTION`
@@ -16,11 +20,13 @@
  * Pure, so the mapping is tested rather than trusted.
  */
 export const NAV_TARGETS = {
+  // Batch 22e: where a member lands after logging in (HOME_PATH, src/lib/auth/landing.ts).
+  home: { label: 'Home', href: '/home' },
   today: { label: 'Today', href: '/today' },
   // Batch 22: the three tools back in the strip. Batch 21h took the marketing
   // menu off /markets, which was the last visible way to the Market Explorer.
   browse: { label: 'Browse', href: '/deals' },
-  markets: { label: 'Markets', href: '/markets' },
+  markets: { label: 'Market Explorer', href: '/markets' },
   analyser: { label: 'Analyser', href: '/estimate' },
   myDeals: { label: 'My deals', href: '/my-deals' },
   account: { label: 'Account', href: '/account' },
@@ -28,18 +34,22 @@ export const NAV_TARGETS = {
 
 export type NavKey = keyof typeof NAV_TARGETS;
 
-/** Left to right. */
-export const NAV_ORDER: readonly NavKey[] = ['today', 'browse', 'markets', 'analyser', 'myDeals', 'account'];
+/** Left to right, after the eye (Batch 22e). */
+export const NAV_ORDER: readonly NavKey[] = ['home', 'today', 'myDeals', 'browse', 'markets', 'analyser', 'account'];
+
+/** The eye's item: first in the header, opening the Stayful Intelligence view. Never called anything else to a member. */
+export const EYE_NAV = { label: 'Talk to Stayful Intelligence', shortLabel: 'Talk', href: '/intelligence' } as const;
 
 /** Leads stays a nav item only for members whose team owns a funnel. */
 export const LEADS_NAV = { label: 'Leads', href: '/leads' } as const;
 
 /** The section a members-only layout announces (AppShell's `active`). Unchanged from the seven-item nav. */
-export type Section = 'today' | 'estimate' | 'markets' | 'deals' | 'picks' | 'reports' | 'leads' | 'account' | 'profile';
+export type Section = 'home' | 'today' | 'estimate' | 'markets' | 'deals' | 'picks' | 'reports' | 'leads' | 'account' | 'profile';
 
 export type ActiveNav = NavKey | 'leads';
 
 export const NAV_FOR_SECTION: Record<Section, ActiveNav> = {
+  home: 'home',
   today: 'today',
   estimate: 'analyser',
   markets: 'markets',
@@ -108,10 +118,31 @@ export function samePageAnchor(href: string, pathname: string): string | null {
   return path === '' || path === pathname ? id : null;
 }
 
-/** Where a member lands after joining a team: its Leads, when the team has a funnel to work, else Today. */
+/** Where a member lands after joining a team: its Leads, when the team has a funnel to work, else Home (Batch 22e). */
 export function joinLandingPath(teamOwnsFunnel: boolean): string {
-  return teamOwnsFunnel ? LEADS_NAV.href : NAV_TARGETS.today.href;
+  return teamOwnsFunnel ? LEADS_NAV.href : NAV_TARGETS.home.href;
 }
+
+// ── Destinations (Batch 22e, for Batch 26's "take me there") ──
+
+/** The My deals stages a link can open (their section ids on /my-deals are `stage-<stage>`). */
+export type MyDealsStage = 'watching' | 'contacted' | 'viewing' | 'offer' | 'secured';
+
+/**
+ * Every place Stayful Intelligence can send a member, built one way. Only
+ * internal paths; a deal or area id is encoded, never trusted as a path.
+ */
+export const NAV_DESTINATIONS = {
+  home: (): string => NAV_TARGETS.home.href,
+  today: (): string => NAV_TARGETS.today.href,
+  marketArea: (code: string): string => `${NAV_TARGETS.markets.href}/${encodeURIComponent(code.trim().toLowerCase())}`,
+  deal: (id: string): string => `${NAV_TARGETS.browse.href}/${encodeURIComponent(id)}`,
+  myDealsStage: (stage: MyDealsStage, profileId?: string | null): string =>
+    `${NAV_TARGETS.myDeals.href}${profileId ? `?profile=${encodeURIComponent(profileId)}` : ''}#stage-${stage}`,
+  analyser: (): string => NAV_TARGETS.analyser.href,
+} as const;
+
+export type DestinationKey = keyof typeof NAV_DESTINATIONS;
 
 // ── Account's "More" (Batch 11) ──
 

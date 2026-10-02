@@ -10,6 +10,7 @@ import 'server-only';
  *   deal_view    a deal page on screen: once per deal per UK day
  *   report_view  a saved report on screen: once per report per UK day
  *   explorer_view / my_deals_view   the Explorer or My deals on screen: once a UK day (Batch 21, E6)
+ *   home_view    Home on screen: once a UK day (Batch 22e)
  *   email_click / sms_click   the page was reached from our email or text:
  *                once per visit, and never counting towards weekly active
  *
@@ -18,7 +19,7 @@ import 'server-only';
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { todayKey } from '../today/day';
-import { parsePing } from './heartbeat';
+import { homeViewKey, parsePing } from './heartbeat';
 import { recordActivity } from './log';
 import { ukDay } from './week';
 
@@ -52,7 +53,9 @@ export async function handlePresence(userId: string, raw: unknown, now: Date = n
     logged.push(recordActivity(userId, ping.via === 'email' ? 'email_click' : 'sms_click', { dedupeKey: `${ping.via}_click:${visitId}`, at: now, source: ping.via === 'email' ? 'email_link' : 'sms_link' }));
   }
   const view = ping.view;
-  if (view?.type === 'today') {
+  if (view?.type === 'home') {
+    logged.push(recordActivity(userId, 'home_view', { dedupeKey: homeViewKey(day), at: now }));
+  } else if (view?.type === 'today') {
     logged.push(recordActivity(userId, 'today_view', { dedupeKey: `today_view:${day}:${todayKey(now)}`, at: now }));
   } else if (view?.type === 'deal') {
     logged.push(recordActivity(userId, 'deal_view', { dealId: view.id, dedupeKey: `deal_view:${view.id}:${day}`, at: now }));

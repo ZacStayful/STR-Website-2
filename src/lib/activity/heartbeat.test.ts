@@ -76,3 +76,19 @@ test('the server reads only a well-formed ping', () => {
   assert.equal(parsePing([1]), null);
   assert.equal(parsePing('beat'), null);
 });
+
+test('Batch 22e: Home is a view, counted once per UK day', async () => {
+  const { homeViewKey } = await import('./heartbeat.ts');
+  const { ukDay } = await import('./week.ts');
+  assert.deepEqual(viewFor('/home'), { type: 'home' });
+  assert.deepEqual(viewFor('/home/'), { type: 'home' });
+  assert.equal(viewFor('/home/x'), null);
+  assert.deepEqual(parsePing({ kind: 'page', view: { type: 'home' } }), { kind: 'page', view: { type: 'home' } });
+  // Two visits on one UK day share a key (the unique index keeps one row); after UK midnight it is a new key.
+  const morning = new Date('2026-10-02T06:30:00Z');
+  const evening = new Date('2026-10-02T22:59:00Z'); // 23:59 BST
+  const nextDay = new Date('2026-10-02T23:01:00Z'); // 00:01 BST on the 3rd
+  assert.equal(homeViewKey(ukDay(morning)), homeViewKey(ukDay(evening)));
+  assert.notEqual(homeViewKey(ukDay(evening)), homeViewKey(ukDay(nextDay)));
+  assert.equal(homeViewKey(ukDay(nextDay)), 'home_view:2026-10-03');
+});
