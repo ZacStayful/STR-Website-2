@@ -190,6 +190,17 @@ export const ACTIVITY_KINDS = {
   api_pdf: recordOnly('Downloaded a PDF through the API'),
   // Batch 22: opening the Stayful Intelligence view from the header, asking it a question, a what-if preview, the deep-search line shown.
   si_view: recordOnly('Looked at Stayful Intelligence'),
+  // Batch 22f: management companies (src/lib/management, src/app/leads/setup).
+  // All record only; lead_action stays the weekly-active kind for leads. A
+  // charged funnel lead keeps its owner out of Re-engage (ENGAGED_EXTRA_KINDS)
+  // without counting as active. The marketing page's views are an anonymous
+  // count (mc_page_views), not activity: a visitor has no account.
+  mc_signup: recordOnly('Signed up as a management company'),
+  funnel_setup_step: recordOnly('Finished a step of the lead form setup'),
+  funnel_live: recordOnly('Put a lead form live for the first time'),
+  funnel_demo_emailed: recordOnly('Emailed themselves the demo landlord report'),
+  funnel_snippet_copied: recordOnly('Copied their lead form link, button or embed'),
+  funnel_lead_charged: recordOnly('Was charged for a funnel lead'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;

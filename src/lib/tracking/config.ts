@@ -101,6 +101,15 @@ export const PAGEVIEW_PATHS: readonly string[] = [
   '/account/usage',
   '/estimate',
   '/welcome',
+  // Batch 22f: the management-company page (its ad's landing, so the first
+  // touch is captured there) and the lead form setup, where mc_signup,
+  // mc_pack_paid and funnel_live fire. Every step is its own path: no query.
+  '/for-management-companies',
+  '/leads/setup',
+  '/leads/setup/company',
+  '/leads/setup/details',
+  '/leads/setup/delivery',
+  '/leads/setup/live',
 ];
 
 /**
@@ -176,4 +185,8 @@ export const EVENT_SOURCE_PATHS = {
   FirstReport: '/estimate',
   Subscribe: '/account/billing',
   Purchase: '/account/billing',
+  // Batch 22f: management companies.
+  mc_signup: '/for-management-companies',
+  mc_pack_paid: '/leads/setup',
+  funnel_live: '/leads/setup/live',
 } as const;

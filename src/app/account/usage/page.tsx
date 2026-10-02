@@ -14,6 +14,9 @@ import { TopupButtons } from "@/components/credit/TopupButtons";
 import { profilesFor } from "@/lib/profiles/server";
 import { labelsShown } from "@/lib/profiles/rules";
 import { usageByProfile } from "@/lib/profiles/usage";
+import { listFunnels } from "@/lib/funnels";
+import { getFunnelTierSettings, ownerPricing } from "@/lib/funnels/tiers-server";
+import { usageLine } from "@/lib/funnels/tiers";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +66,14 @@ export default async function UsagePage() {
   const member = credit.member;
   const allowance = credit.cycle?.allowancePence ?? 0;
   const usedPct = onPlan && allowance > 0 ? Math.min(100, Math.round(((credit.cycle?.usedPence ?? 0) / allowance) * 100)) : null;
+  // Batch 22f: where the owner's month of funnel leads stands on the volume tiers (the team's, for a member).
+  const funnels = await listFunnels(payerId);
+  let funnelLine: string | null = null;
+  if (funnels.length > 0) {
+    const tierSettings = await getFunnelTierSettings();
+    const pricing = await ownerPricing(payerId, tierSettings);
+    if (pricing.mode === "tiers") funnelLine = usageLine(pricing.monthCount, funnels.every((f) => f.reportDepth === "enhanced"), tierSettings);
+  }
 
   return (
     <main className="min-h-screen bg-background">
@@ -117,6 +128,11 @@ export default async function UsagePage() {
               </ul>
               {truncated && <p className="mt-2 text-xs text-muted-foreground">Showing the first 20,000 charges of the period.</p>}
             </>
+          )}
+          {funnelLine && (
+            <p className="mt-4 rounded-md bg-muted/60 px-3 py-2 text-xs text-foreground">
+              Funnel leads · {funnelLine}. <Link href="/leads" className="underline">Leads</Link>
+            </p>
           )}
           {daily && <p className="mt-4 rounded-md bg-muted/60 px-3 py-2 text-xs text-foreground">{daily}. Switch them off any time in <Link href="/account/notifications" className="underline">Notifications</Link>.</p>}
         </section>

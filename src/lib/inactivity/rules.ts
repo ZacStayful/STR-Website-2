@@ -42,8 +42,13 @@ export const EMAIL_ENGAGEMENT_KINDS: readonly ActivityKind[] = ['email_click', '
  * Batch 21 (E7): using the product away from the site. A listing checked in
  * the browser extension or a report run through the API is the member at
  * work; record-only for weekly active, but never quiet.
+ *
+ * Batch 22f: a charged funnel lead too. A management company that gets its
+ * leads by email and never logs in is still using the product every time a
+ * landlord fills in their form, so it is not marked quiet (Re-engage, the
+ * paused email, the win-back); it is not weekly active either.
  */
-export const ENGAGED_EXTRA_KINDS: readonly ActivityKind[] = ['extension_check', 'api_report'];
+export const ENGAGED_EXTRA_KINDS: readonly ActivityKind[] = ['extension_check', 'api_report', 'funnel_lead_charged'];
 
 /** Everything that keeps a member from being quiet: the weekly-active kinds, engaging by email or text, and the extension or API. */
 export const ENGAGED_KINDS: readonly ActivityKind[] = [...QUALIFYING_KINDS, ...EMAIL_ENGAGEMENT_KINDS, ...ENGAGED_EXTRA_KINDS];

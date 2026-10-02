@@ -829,6 +829,55 @@ changes. `LOW_ENTRY_SEARCH_ENABLED` is not touched. Once, after deploying:
    listings" adds them. No provider call.
 4. **Watch:** the "Budget brackets" panel on `/admin/deals`.
 
+### 21. Management companies (Batch 22f)
+
+A management company's own ad points at `/for-management-companies`. An
+account whose first touch is that page (cookie, the sign-up form's hidden
+field, or Google's return), or who presses Start there, or chooses "Set up
+your branded lead form instead" in the quiz, or "Get leads with your own
+branded form" in Account, is stamped `profiles.signup_path = 'management'`.
+All the ways in go through `/for-management-companies/start`. Until a
+stamped account answers the three profile questions (from the Profile pill):
+
+- no quiz or reveal in front of app pages;
+- sign-in lands on Leads;
+- daily picks are written off;
+- no intro or low-credit call.
+
+The setup is `/leads/setup`: the starter pack, then company, details and
+where leads go, then go live and copy the link, button or embed. Only
+`/f/*` may be framed by other sites (`src/lib/security/frame-headers.ts`).
+
+Funnel leads are priced by volume tier per owner per UK month
+(`src/lib/funnels/tiers.ts`; `billing_settings.funnel_tiers`,
+`funnel_enhanced_extra_pence`): £5.00 for leads 1–20, £4.00 for 21–60,
+£3.25 for 61–150 and £2.50 from 151, plus £2.00 for an enhanced report. The
+tier price is a base price, so top-up credit pays it at 1.3×. A lead is
+charged once, after its report is complete, by `funnel_lead_charge`, which
+numbers and charges it in one statement. The funnel's address lookup is
+included. Members' analyses, the API and `funnel_markup` are unchanged.
+Owners whose first funnel predates `funnel_tiers_from` stay on the metered
+price until `funnel_notice_days` (30) after their funnel-price email. Each
+finished lead is emailed to the owner (per form; on by default).
+
+Once, after deploying:
+
+1. **Run the Batch 22f section of `supabase/schema.sql`** (idempotent).
+   It seeds `funnel_tiers_from` with the moment it first runs: tier pricing
+   starts then for new owners.
+2. **Send the funnel owners' notice:** on `/admin/management`, press "Dry run
+   the notice" (who, and the email), then Send. It is its own email and
+   stamp (`funnel_price_notice_sent_at`), not the members' pricing notice.
+3. **Meta:** in Events Manager, the custom events `mc_signup`,
+   `mc_pack_paid` and `funnel_live` appear once they have fired (pixel only,
+   with cookie consent). Build the ads' custom conversions on `funnel_live`.
+4. **Check framing:** paste the embed from the setup's last step into a blank
+   HTML page and submit it (Turnstile, the report and Download PDF inside the
+   frame, on desktop and an iPhone).
+5. **Watch:** `/admin/management`: page views → sign-ups → paid → live →
+   first lead, median minutes to live, leads a month, revenue by tier. "Set a
+   test month" sets an owner's month, so you can test the tiers.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,

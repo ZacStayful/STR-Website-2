@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { runSignInHooks } from '@/lib/auth/sign-in-hooks'
 import { postAuthPath } from '@/lib/auth/landing'
+import { isManagementOnly } from '@/lib/management/stamp-server'
 import { isAuthServiceFault } from '@/lib/auth/error-message'
 import { onSignIn } from '@/lib/tracking/signup-server'
 
@@ -36,5 +37,7 @@ export async function GET(request: NextRequest) {
   await runSignInHooks(supabase)
   // Batch 19: cookie choice, and a new Google account's attribution (carried on the return address).
   if (data.user) await onSignIn({ user: data.user, carried: searchParams.get('attr'), next })
-  return NextResponse.redirect(`${origin}${postAuthPath(next)}`)
+  // Batch 22f: a management company without deal-finding lands on Leads.
+  const management = data.user ? await isManagementOnly(data.user.id) : false
+  return NextResponse.redirect(`${origin}${postAuthPath(next, { management })}`)
 }

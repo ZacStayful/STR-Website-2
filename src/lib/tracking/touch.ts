@@ -62,6 +62,10 @@ function isIdLike(segment: string): boolean {
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment)) return true;
   if (/^\d{4,}$/.test(segment)) return true;
   if (segment.length >= 16 && /\d/.test(segment) && !/^[a-z]+(?:-[a-z]+)*$/.test(segment)) return true;
+  // Batch 22f: a long page name made of lower-case words and hyphens
+  // (/for-management-companies, /short-term-vs-long-term-letting) is a page,
+  // not a token: a token always carries a digit, a capital or an underscore.
+  if (/^[a-z]+(?:-[a-z]+)+$/.test(segment)) return false;
   return segment.length >= 24;
 }
 

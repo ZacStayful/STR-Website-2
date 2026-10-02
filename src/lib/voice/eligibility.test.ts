@@ -69,3 +69,10 @@ test('outside weekday hours the call waits for the next opening', () => {
 test('the limit at 0 stops every outbound call', () => {
   assert.deepEqual(checkEligibility(base({ settings: { ...DEFAULT_VOICE, maxOutboundPerUkDay: 0 } })), { ok: false, reason: 'daily_limit', skip: false });
 });
+
+test('Batch 22f: a management company without deal-finding gets no intro and no low-credit call (a skip: the intro is still owed)', () => {
+  assert.deepEqual(checkEligibility(base({ managementOnly: true })), { ok: false, reason: 'management_no_deals', skip: true });
+  assert.deepEqual(checkEligibility(base({ type: 'intro', managementOnly: true })), { ok: false, reason: 'management_no_deals', skip: true });
+  // Deal-finding switched on: the usual rules.
+  assert.deepEqual(checkEligibility(base({ type: 'intro', managementOnly: false })), { ok: true });
+});

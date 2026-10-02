@@ -108,3 +108,18 @@ test('leads-per-top-up is consistent with the price it quoted', () => {
   assert.equal(c.leadsPerTopup, Math.floor(c.recommendedTopupPence / c.perLeadPence));
   assert.ok(c.leadsPerTopup > 0);
 });
+
+test('Batch 22f: on tiers, a month is each lead at its own tier, at both rates', async () => {
+  const { funnelTierCost } = await import('./cost.ts');
+  const { DEFAULT_FUNNEL_TIER_SETTINGS } = await import('../funnels/tiers.ts');
+  const c = funnelTierCost({ leadsPerMonth: 30, enhanced: false, settings: DEFAULT_FUNNEL_TIER_SETTINGS, topupRate: 1.3, topupPresetsPence: PRESETS });
+  assert.equal(c.firstLeadPence, 500);
+  assert.equal(c.firstLeadTopupPence, 650);
+  assert.equal(c.monthlyPence, 20 * 500 + 10 * 400);
+  assert.equal(c.monthlyTopupPence, 20 * 650 + 10 * 520);
+  assert.equal(c.recommendedTopupPence, 5000, 'the biggest preset when none covers the month');
+  // £50 of top-up credit: 7 leads at £6.50 = £45.50; the 8th would be £52.
+  assert.equal(c.leadsPerTopup, 7);
+  const e = funnelTierCost({ leadsPerMonth: 1, enhanced: true, settings: DEFAULT_FUNNEL_TIER_SETTINGS, topupRate: 1.3, topupPresetsPence: PRESETS });
+  assert.equal(e.firstLeadPence, 700);
+});

@@ -226,12 +226,18 @@ export type NewFunnelBrandResult =
  * `activationBlockers(result.brand)` is empty, which is the invariant worth
  * holding: creation can no longer produce a funnel that is unable to go live.
  */
-export function newFunnelBrand(input: { companyName: unknown; privacyUrl: unknown }): NewFunnelBrandResult {
+export function newFunnelBrand(input: { companyName: unknown; privacyUrl: unknown }, opts: { privacyOptional?: boolean } = {}): NewFunnelBrandResult {
   const companyName = text(input.companyName, 80);
   if (!companyName) {
     return { ok: false, error: 'Add your company name. It is what your prospects see on the form and the report.' };
   }
   const privacyUrl = parseHttpsUrl(input.privacyUrl);
+  // Batch 22f: the guided setup asks for the privacy policy on its second
+  // step, so it creates the (paused) funnel from the company alone. Going
+  // live is still refused without it (activationBlockers), which is the gate
+  // that matters; a link typed but not https is still refused here.
+  const typed = typeof input.privacyUrl === 'string' && input.privacyUrl.trim() !== '';
+  if (opts.privacyOptional && !typed) return { ok: true, brand: { ...EMPTY_BRAND, companyName } };
   if (!privacyUrl) {
     return {
       ok: false,

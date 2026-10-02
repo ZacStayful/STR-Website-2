@@ -44,6 +44,8 @@ export interface QuizStart {
   profileHref: string;
   privacyHref: string;
   todayHref: string;
+  /** Batch 22f: offer the branded lead form setup once "Management company" is chosen (not already a management company, not a team seat). */
+  leadFormOffer?: boolean;
 }
 
 type Screen = { kind: "start" } | { kind: "question"; id: QuestionId } | { kind: "samples"; then: QuestionId } | { kind: "pack"; view: { progress: ProgressView; answers: Answers }; listBefore: string } | { kind: "done" };
@@ -284,6 +286,17 @@ export function Quiz(start: QuizStart) {
         </p>
       )}
       {warning && <p className="mt-3 text-sm text-muted-foreground">{warning}</p>}
+      {start.leadFormOffer && answers.about.roles.includes("manager") ? (
+        <div className="mt-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+          <p className="text-sm font-semibold text-foreground">Here for your landlord enquiries?</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Give every landlord a short-let income report in your name, from your own link. You can come back to these questions any time.
+          </p>
+          <Link href="/for-management-companies/start?via=quiz" className="mt-3 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
+            Set up your branded lead form instead
+          </Link>
+        </div>
+      ) : null}
       {!q.mandatory && (
         <button type="button" disabled={busy} onClick={() => answer(q.id, null, true)} className="mt-3 min-h-12 w-full rounded-lg border border-border px-4 text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-50">
           Not sure

@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { runSignInHooks } from '@/lib/auth/sign-in-hooks'
 import { postAuthPath } from '@/lib/auth/landing'
+import { isManagementOnly } from '@/lib/management/stamp-server'
 import { onSignIn } from '@/lib/tracking/signup-server'
 
 // Signs a member in from a token-hash link:
@@ -34,12 +35,14 @@ export async function GET(request: NextRequest) {
     const {
       data: { user },
     } = await supabase.auth.getUser()
-    if (user) return NextResponse.redirect(`${origin}${postAuthPath(next)}`)
+    if (user) return NextResponse.redirect(`${origin}${postAuthPath(next, { management: await isManagementOnly(user.id) })}`)
     return NextResponse.redirect(loginUrl('link_expired'))
   }
 
   await runSignInHooks(supabase)
   // Batch 19: this device's cookie choice becomes the member's.
   if (data.user) await onSignIn({ user: data.user, carried: null, next })
-  return NextResponse.redirect(`${origin}${postAuthPath(next)}`)
+  // Batch 22f: a management company without deal-finding lands on Leads.
+  const management = data.user ? await isManagementOnly(data.user.id) : false
+  return NextResponse.redirect(`${origin}${postAuthPath(next, { management })}`)
 }

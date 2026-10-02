@@ -55,3 +55,12 @@ test('the gate sends a member to the quiz with the page they wanted as the way b
   assert.equal(quizPathFor('/login'), WELCOME_PATH);
   assert.equal(quizPathFor('/team/join?token=abc'), WELCOME_PATH, 'a join page is never a way back into the quiz');
 });
+
+test('Batch 22f: a management company without deal-finding lands on Leads; everyone else on Home', () => {
+  assert.equal(postAuthPath(null, { management: true }), '/leads');
+  assert.equal(postAuthPath('/login', { management: true }), '/leads');
+  assert.equal(postAuthPath('/leads/setup', { management: true }), '/leads/setup');
+  assert.equal(postAuthPath(null), HOME_PATH);
+  assert.equal(postAuthPath(null, { management: false }), HOME_PATH);
+  assert.equal(HOME_PATH, '/home');
+});

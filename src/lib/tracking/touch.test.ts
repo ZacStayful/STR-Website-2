@@ -54,6 +54,11 @@ test('landing paths lose their query, ids and tokens', () => {
   assert.equal(cleanLandingPath('/team/join/abc'), '/team/join/:id');
   assert.equal(cleanLandingPath('/estimate/12345'), '/estimate/:id');
   assert.equal(cleanLandingPath('/x/jo%40example.com'), '/x/:id');
+  // Batch 22f: long page names are pages, not tokens.
+  assert.equal(cleanLandingPath('/for-management-companies'), '/for-management-companies');
+  assert.equal(cleanLandingPath('/short-term-vs-long-term-letting'), '/short-term-vs-long-term-letting');
+  assert.equal(cleanLandingPath('/x/abcdefghijklmnopqrstuvwxyzab'), '/x/:id');
+  assert.equal(cleanLandingPath('/x/Abcdefgh-ijklmnop-qrstuvwxyz'), '/x/:id');
   assert.equal(cleanLandingPath('//evil.com'), null);
   assert.equal(cleanLandingPath('relative'), null);
 });

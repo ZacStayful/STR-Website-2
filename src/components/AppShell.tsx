@@ -12,7 +12,9 @@ import { AppSwitcher } from "@/components/AppSwitcher";
 import { CreditProvider, type CreditSnapshot } from "@/components/credit/CreditProvider";
 import { CreditBanner } from "@/components/credit/CreditBanner";
 import { VisitHeartbeat } from "@/components/activity/VisitHeartbeat";
-import { requireProfileStart } from "@/lib/profile/server";
+import { profileSummaryFor, requireProfileStart } from "@/lib/profile/server";
+import { isManagement, managementOnly } from "@/lib/management/stamp";
+import { signupPathOf } from "@/lib/management/stamp-server";
 import { eyeLevelFor } from "@/lib/home/eye-server";
 import { revealPending } from "@/lib/intelligence/reveal-server";
 import { profilesFor } from "@/lib/profiles/server";
@@ -69,10 +71,14 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
   // with this page as the way back; team members are never gated. The same
   // read feeds the Profile pill. It throws a redirect, so it sits outside
   // the try below.
-  const profile = await requireProfileStart(user.id, redirectTo);
+  // Batch 22f: a management company (profiles.signup_path) is not sent to the
+  // quiz or the reveal until it switches deal-finding on itself, from the
+  // Profile pill (src/lib/management/stamp.ts).
+  const signupPath = await signupPathOf(user.id);
+  const profile = isManagement(signupPath) ? await profileSummaryFor(user.id) : await requireProfileStart(user.id, redirectTo);
   // Batch 22: a new member's signup reveal, once, before anything else (a
   // closed tab brings it back until it has been seen). Fails open.
-  if (profile && !profile.teamMember && profile.progress.mandatoryDone && (await revealPending(user.id, user.created_at))) {
+  if (profile && !profile.teamMember && profile.progress.mandatoryDone && !managementOnly({ signupPath, mandatoryDone: profile.progress.mandatoryDone }) && (await revealPending(user.id, user.created_at))) {
     redirect(`/welcome/reveal?next=${encodeURIComponent(redirectTo)}`);
   }
   // Batch 18: what's new, for this member. Started now so it runs alongside

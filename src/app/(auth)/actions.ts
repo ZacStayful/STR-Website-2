@@ -8,6 +8,7 @@ import { ensureEnquiry } from '@/lib/apis/monday'
 import { queueFunnelSync } from '@/lib/crm/monday-funnel/queue-server'
 import { safeInternalPath } from '@/lib/safe-path'
 import { postAuthPath } from '@/lib/auth/landing'
+import { isManagementOnly } from '@/lib/management/stamp-server'
 import { authErrorMessage } from '@/lib/auth/error-message'
 import { siteUrl } from '@/lib/url'
 import { onEmailSignup, onSignIn } from '@/lib/tracking/signup-server'
@@ -49,7 +50,8 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
   // sign-in after confirming the email on another device).
   if (data.user) await onSignIn({ user: data.user, carried: null, next: redirectTo })
 
-  redirect(postAuthPath(redirectTo))
+  // Batch 22f: a management company without deal-finding lands on Leads.
+  redirect(postAuthPath(redirectTo, { management: data.user ? await isManagementOnly(data.user.id) : false }))
 }
 
 export async function signupAction(_prev: AuthState, formData: FormData): Promise<AuthState> {

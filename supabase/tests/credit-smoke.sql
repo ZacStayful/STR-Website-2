@@ -265,6 +265,67 @@ begin
   end;
   raise notice 'call safety indexes ok';
 
+  -- ── Batch 22f: funnel leads numbered and charged in one statement ──
+  declare
+    f uuid := gen_random_uuid();
+    l1 uuid := gen_random_uuid();
+    l2 uuid := gen_random_uuid();
+    l3 uuid := gen_random_uuid();
+    l4 uuid := gen_random_uuid();
+    mk date := date_trunc('month', now() at time zone 'Europe/London')::date;
+    before_tx integer;
+  begin
+    insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
+    values (f, 'credit-smoke-' || f::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now());
+    insert into profiles (id, email) values (f, 'credit-smoke-' || f::text || '@example.test') on conflict (id) do nothing;
+    perform credit_grant(f, 'topup', 1000, null, 'pi:smoke_funnel_' || f::text, 'Smoke top-up');
+
+    j := funnel_lead_charge(jsonb_build_object('owner', f, 'lead', l1, 'enhanced', false, 'meta', jsonb_build_object('action', 'funnel_lead', 'description', 'Funnel lead')));
+    if (j->>'n')::int <> 1 or (j->>'base_pence')::numeric <> 500 or (j->>'already')::boolean then raise exception 'the first lead is n 1 at 500: %', j; end if;
+    -- The tier price is a base price: top-up credit pays it at the top-up rate.
+    select * into r from credit_available(f);
+    if abs(r.topup_pence - (1000 - 500 * rate)) > 0.01 then raise exception 'top-up should pay 500 base at the top-up rate, left %', r.topup_pence; end if;
+
+    -- The same lead again (a retry, the drain): the first charge back, no second debit.
+    select count(*) into before_tx from credit_transactions where user_id = f and kind = 'debit';
+    j := funnel_lead_charge(jsonb_build_object('owner', f, 'lead', l1, 'enhanced', false));
+    if not (j->>'already')::boolean or (j->>'n')::int <> 1 then raise exception 'a lead is charged once: %', j; end if;
+    if (select count(*) from credit_transactions where user_id = f and kind = 'debit') <> before_tx then raise exception 'a repeat must not debit again'; end if;
+
+    j := funnel_lead_charge(jsonb_build_object('owner', f, 'lead', l2, 'enhanced', false));
+    if (j->>'n')::int <> 2 then raise exception 'the next lead is n 2: %', j; end if;
+
+    -- A month at 20: lead 21 is the first at the 21+ tier; enhanced adds its extra.
+    update funnel_lead_months set leads = 20 where owner_id = f and month = mk;
+    j := funnel_lead_charge(jsonb_build_object('owner', f, 'lead', l3, 'enhanced', false));
+    if (j->>'n')::int <> 21 or (j->>'base_pence')::numeric <> 400 then raise exception 'lead 21 is 400: %', j; end if;
+    j := funnel_lead_charge(jsonb_build_object('owner', f, 'lead', l4, 'enhanced', true, 'enhanced_extra', 200));
+    if (j->>'n')::int <> 22 or (j->>'base_pence')::numeric <> 600 then raise exception 'an enhanced lead 22 is 600: %', j; end if;
+    if (select leads from funnel_lead_months where owner_id = f and month = mk) <> 22 then raise exception 'the month should count 22'; end if;
+    if (select count(*) from funnel_lead_charges where owner_id = f) <> 4 then raise exception 'one charge row per lead'; end if;
+    if (select (metadata->>'lead_number')::int from credit_transactions where id = (j->>'tx')::bigint) <> 22 then raise exception 'the debit should carry its lead number'; end if;
+
+    if has_function_privilege('authenticated', 'public.funnel_lead_charge(jsonb)', 'execute')
+       or has_function_privilege('anon', 'public.mc_page_view_hit(boolean)', 'execute') then
+      raise exception 'Batch 22f functions should be service-role only';
+    end if;
+    if has_column_privilege('authenticated', 'public.profiles', 'signup_path', 'update') then
+      raise exception 'the management stamp must not be member-writable';
+    end if;
+    perform mc_page_view_hit(true);
+    perform mc_page_view_hit(false);
+    if (select views from mc_page_views where day = (now() at time zone 'Europe/London')::date) < 2 then raise exception 'page views should count'; end if;
+    -- The owner's new-lead email is claimed once per lead: a second finish claims nothing.
+    insert into leads (id, user_id, email, status) values (l1, f, 'landlord@example.test', 'new');
+    update leads set owner_notified_at = now() where id = l1 and owner_notified_at is null;
+    get diagnostics before_tx = row_count;
+    if before_tx <> 1 then raise exception 'the first finish should claim the new-lead email'; end if;
+    update leads set owner_notified_at = now() where id = l1 and owner_notified_at is null;
+    get diagnostics before_tx = row_count;
+    if before_tx <> 0 then raise exception 'a lead''s new-lead email is claimed once'; end if;
+    raise notice 'funnel lead tiers ok';
+  end;
+
   -- ── Batch 21 (A10): the SQL fallback when the setting is missing ──
   delete from billing_settings where key = 'spend_rates';
   if credit_spend_rate('topup') <> 1.3 or credit_spend_rate('plan') <> 1 then raise exception 'credit_spend_rate fallback should be 1.3 / 1 (A10)'; end if;

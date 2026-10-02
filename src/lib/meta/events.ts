@@ -14,17 +14,23 @@
  *   Purchase              a card top-up the member chose (Checkout or
  *                         one-click), not an automatic top-up. Once per payment.
  *
+ * Batch 22f, management companies (custom events, so their ads optimise for
+ * a lead form going live rather than an investor sign-up). Once per account:
+ *   mc_signup             an account is stamped as a management company
+ *   mc_pack_paid          a management company's starter pack is paid
+ *   funnel_live           an owner's first lead form goes live
+ *
  * The first three only count for accounts created after tracking began
  * (billing_settings.meta_tracking_since), so existing members never fire them.
  * Values are in GBP, excluding VAT. Pure: no network, no database, no server-only.
  */
 import { EVENT_SOURCE_PATHS } from '../tracking/config.ts';
 
-export const META_EVENTS = ['CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase'] as const;
+export const META_EVENTS = ['CompleteRegistration', 'ProfileComplete', 'FirstReport', 'Subscribe', 'Purchase', 'mc_signup', 'mc_pack_paid', 'funnel_live'] as const;
 export type MetaEventName = (typeof META_EVENTS)[number];
 
 /** Meta's own names are sent with fbq('track'); ours with fbq('trackCustom'). */
-const CUSTOM: ReadonlySet<MetaEventName> = new Set<MetaEventName>(['ProfileComplete', 'FirstReport']);
+const CUSTOM: ReadonlySet<MetaEventName> = new Set<MetaEventName>(['ProfileComplete', 'FirstReport', 'mc_signup', 'mc_pack_paid', 'funnel_live']);
 
 export function isMetaEvent(v: unknown): v is MetaEventName {
   return typeof v === 'string' && (META_EVENTS as readonly string[]).includes(v);

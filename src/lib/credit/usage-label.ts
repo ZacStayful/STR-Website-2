@@ -71,13 +71,16 @@ export function usageDescription(input: {
   action: string | null;
   isFunnel: boolean;
   funnelName?: string | null;
+  /** Batch 22f: a tier-priced lead's number in its month. */
+  leadNumber?: number | null;
 }): string {
   if (!input.isFunnel) return actionLabel(input.action);
 
   const name = tidyFunnelName(input.funnelName);
   // An address lookup billed to a funnel owner is still a lookup, not a
   // lead — the prospect typed into the box and may never have submitted.
-  const kind = input.action === 'autocomplete' ? 'Funnel address lookup' : 'Funnel lead';
+  const n = input.leadNumber && Number.isInteger(input.leadNumber) && input.leadNumber > 0 ? input.leadNumber : null;
+  const kind = input.action === 'autocomplete' ? 'Funnel address lookup' : n ? `Funnel lead ${n}` : 'Funnel lead';
   return name ? `${kind} — ${name}` : kind;
 }
 
@@ -91,6 +94,12 @@ export function memberIdFromMeta(meta: Record<string, unknown> | null | undefine
 /** "Property report — by Sam". The name is typed by a person; React escapes it. */
 export function withMemberName(description: string, memberName: string | null): string {
   return memberName ? `${description} — by ${memberName}` : description;
+}
+
+/** Batch 22f: the lead's number in its month, on a tier-priced funnel lead's debit. */
+export function leadNumberFromMeta(meta: Record<string, unknown> | null | undefined): number | null {
+  const n = Number(meta?.lead_number);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export function funnelIdFromMeta(meta: Record<string, unknown> | null | undefined): string | null {

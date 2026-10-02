@@ -191,3 +191,14 @@ test('creation sets only the two required fields, leaving the rest to Branding',
   assert.equal(result.brand.background, null);
   assert.equal(result.brand.replyToEmail, null);
 });
+
+test('Batch 22f: the guided setup creates a paused funnel from the company alone; going live still needs the policy', () => {
+  const r = newFunnelBrand({ companyName: 'Acme Lettings', privacyUrl: '' }, { privacyOptional: true });
+  assert.equal(r.ok, true);
+  if (r.ok) assert.deepEqual(activationBlockers(r.brand), ['a link to your privacy policy']);
+  // A link typed but not https is still refused, setup or not.
+  assert.equal(newFunnelBrand({ companyName: 'Acme', privacyUrl: 'http://acme.test/privacy' }, { privacyOptional: true }).ok, false);
+  // Everywhere else it stays required.
+  assert.equal(newFunnelBrand({ companyName: 'Acme', privacyUrl: '' }).ok, false);
+  assert.equal(newFunnelBrand({ companyName: '', privacyUrl: '' }, { privacyOptional: true }).ok, false);
+});

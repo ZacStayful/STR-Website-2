@@ -20,6 +20,7 @@ import { deviceConsent, memberConsentFor } from "@/lib/tracking/consent-server";
 import { starterPackStateFor } from "@/lib/starter-pack/server";
 import { hasRestartFor } from "@/lib/profiles/server";
 import { Quiz } from "./Quiz";
+import { isManagementAccount } from "@/lib/management/stamp-server";
 
 export const dynamic = "force-dynamic";
 
@@ -110,6 +111,7 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
           profileHref={GOALS_EDITOR_HREF}
           privacyHref="/privacy"
           todayHref={NAV_TARGETS.today.href}
+          leadFormOffer={!summary.teamMember && !(await isManagementAccount(user.id))}
         />
       </div>
       {/* Batch 18: the quiz is the first screen a new member sees, so they can tell us if it goes wrong. */}
