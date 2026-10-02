@@ -3,9 +3,9 @@
  * from the moment it is screened, whichever search found it:
  *
  *   r2r        a rental: rent-to-rent, judged on the £6,000 bar
- *   low_entry  a sale the house deal model gets into for at most the
- *              low-entry cash (auction lots at their auction price, with
- *              the bridging cash)
+ *   low_entry  a cheap sale: an asking price of at most £150,000
+ *              (low_entry.cheapMaxPrice; Batch 22c), auction lots at their
+ *              auction price. Before Batch 22c: a cash in of at most £50,000
  *   top60      every other sale: the classic purchase in the sweep's areas
  *
  * The daily checks (Part B) take their slots by stream, and every card says
@@ -52,19 +52,44 @@ export function isStream(v: unknown): v is Stream {
   return typeof v === 'string' && (STREAMS as readonly string[]).includes(v);
 }
 
-/** The stream a deal record belongs to, from its kind and its house-finance deal. */
-export function streamFor(kind: SourcingKind, deal: Deal | null, s: Pick<LowEntrySettings, 'maxCashIn'>): Stream {
+/**
+ * Whether a purchase price is cheap (Batch 22c): above zero and at most
+ * `cheapMaxPrice`. The price is the deal's own asking price, which for an
+ * auction lot is the auction price (the guide plus the usual uplift).
+ */
+export function isCheapPrice(price: number | null | undefined, s: Pick<LowEntrySettings, 'cheapMaxPrice'>): boolean {
+  return typeof price === 'number' && Number.isFinite(price) && price > 0 && price <= s.cheapMaxPrice;
+}
+
+/** The stream a deal record belongs to, from its kind and its house-finance deal: a cheap purchase is low entry. */
+export function streamFor(kind: SourcingKind, deal: Deal | null, s: Pick<LowEntrySettings, 'cheapMaxPrice'>): Stream {
   if (kind === 'rent') return 'r2r';
-  if (deal && deal.kind === 'purchase' && Number.isFinite(deal.cashRequired) && deal.cashRequired > 0 && deal.cashRequired <= s.maxCashIn) return 'low_entry';
+  if (deal && deal.kind === 'purchase' && isCheapPrice(deal.askingPrice, s)) return 'low_entry';
   return 'top60';
 }
 
+/** A stored deal's stream worked out afresh from the deal it carries, ignoring the column: what the re-stream backfill compares against. */
+export function derivedStreamOfRow(row: { kind: SourcingKind; deal?: unknown }, s: Pick<LowEntrySettings, 'cheapMaxPrice'>): Stream {
+  const d = row.deal && typeof row.deal === 'object' ? (row.deal as { kind?: unknown; askingPrice?: unknown }) : null;
+  const price = d?.kind === 'purchase' && d.askingPrice !== null && d.askingPrice !== '' ? Number(d.askingPrice) : Number.NaN;
+  return streamFor(row.kind, Number.isFinite(price) ? ({ kind: 'purchase', askingPrice: price } as Deal) : null, s);
+}
+
 /** A stored deal row's stream: the column when it has one, else worked out as the record would. */
-export function streamOfRow(row: { kind: SourcingKind; stream?: unknown; deal?: unknown }, s: Pick<LowEntrySettings, 'maxCashIn'>): Stream {
+export function streamOfRow(row: { kind: SourcingKind; stream?: unknown; deal?: unknown }, s: Pick<LowEntrySettings, 'cheapMaxPrice'>): Stream {
   if (isStream(row.stream)) return row.stream;
-  const d = row.deal && typeof row.deal === 'object' ? (row.deal as { kind?: unknown; cashRequired?: unknown }) : null;
-  const cash = d?.kind === 'purchase' ? Number(d.cashRequired) : Number.NaN;
-  return streamFor(row.kind, Number.isFinite(cash) ? ({ kind: 'purchase', cashRequired: cash } as Deal) : null, s);
+  return derivedStreamOfRow(row, s);
+}
+
+/**
+ * Batch 22c, Part E: the one plain note a very cheap purchase carries on its
+ * card and deal sheet. Some lenders will not lend under about £75,000
+ * (low_entry.lenderMinPrice). Null at or above it, without a price, or for a
+ * member who buys with cash. The figures are never changed by it.
+ */
+export function lenderNote(price: number | null | undefined, s: Pick<LowEntrySettings, 'lenderMinPrice'>, cashBuyer = false): string | null {
+  if (cashBuyer || typeof price !== 'number' || !Number.isFinite(price) || price <= 0 || price >= s.lenderMinPrice) return null;
+  return `Some lenders won't lend under about ${shortMoney(s.lenderMinPrice)}. Check with a broker, or plan it as a cash buy.`;
 }
 
 /** "£38k", "£9.5k", "£1.2m": money to the nearest thousand (or hundred under £10,000). */

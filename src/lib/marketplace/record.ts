@@ -96,14 +96,15 @@ export function screenSourced(l: SourcedListing, card: AreaCardLike | null, rent
 /** Batch 16's rules a record is built under: the auction terms and the low-entry bar (ScreenContext.rules). The decided defaults without them. */
 export interface DealRules {
   auctionTerms?: AuctionTerms;
-  lowEntry?: Pick<LowEntrySettings, 'maxCashIn'>;
+  /** Batch 22c: the low-entry bar is the cheap price (asking price at most cheapMaxPrice). */
+  lowEntry?: Pick<LowEntrySettings, 'cheapMaxPrice'>;
   /**
    * Part B: whether a new or revived deal waits on the shortlist for its own
    * comparables check (DEAL_CHECKS_ENABLED), how long a check stays good for
    * a re-screen, and how long a shortlisted deal waits before it is dropped
    * (billing_settings.deal_checks).
    */
-  checks?: { enabled: boolean; validDays: number; shortlistExpiryDays: number };
+  checks?: { enabled: boolean; validDays: number; shortlistExpiryDays: number; lowEntryShortlistExpiryDays?: number };
   /**
    * Batch 17: the Project entry hold (src/lib/project/hold.ts), on while
    * project_checks.enabled and DEAL_CHECKS_ENABLED both are, with the Project
@@ -154,7 +155,7 @@ export function buildDealRecord(l: SourcedListing, opts: BuildOptions): DealReco
     now: opts.now,
   });
   const price = normalisedPrice(l);
-  // The house-finance deal, an auction lot at its auction price (Part E); the stream follows its cash in (Part F).
+  // The house-finance deal, an auction lot at its auction price (Part E); the stream follows its price (Part F; Batch 22c).
   const deal = dealForSourced(l, figures, null, { auctionTerms: opts.rules?.auctionTerms });
   return {
     screening,

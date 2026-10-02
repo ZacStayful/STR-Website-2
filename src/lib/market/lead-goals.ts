@@ -53,7 +53,8 @@ export function areaCodeFrom(v: unknown): string | null {
 export function budgetFrom(v: unknown): Exclude<Budget, 'any'> | null {
   const s = str(v).toLowerCase();
   if (!s) return null;
-  if (s === 'u200' || s === '200-350' || s === '350-500' || s === '500+') return s;
+  // Batch 22c: a band code as posted; the legacy 'u200' is kept as it was given.
+  if (s === 'u100' || s === '100-200' || s === 'u200' || s === '200-350' || s === '350-500' || s === '500+') return s;
   const nums = s.replace(/,/g, '').match(/\d+(?:\.\d+)?\s*k?/g) ?? [];
   const pounds = nums.map((n) => {
     const k = /k$/.test(n.replace(/\s/g, ''));
@@ -63,13 +64,15 @@ export function budgetFrom(v: unknown): Exclude<Budget, 'any'> | null {
   if (pounds.length === 0) return null;
   const top = Math.max(...pounds);
   if (/under|below|less|up to|max/.test(s) || pounds.length === 1) {
-    if (top <= 200_000) return 'u200';
+    if (top <= 100_000) return 'u100';
+    if (top <= 200_000) return '100-200';
     if (top <= 350_000) return '200-350';
     if (top <= 500_000) return '350-500';
     return '500+';
   }
   const low = Math.min(...pounds);
-  if (top <= 200_000) return 'u200';
+  if (top <= 100_000) return 'u100';
+  if (top <= 200_000) return '100-200';
   if (low >= 500_000) return '500+';
   if (low >= 350_000) return '350-500';
   if (low >= 200_000) return '200-350';

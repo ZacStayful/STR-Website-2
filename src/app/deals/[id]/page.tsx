@@ -19,7 +19,7 @@ import { purchaseDeal, rentToRentDeal, auctionDeal, DEFAULT_FINANCE, MORTGAGE_NO
 import { countryForPostcode } from "@/lib/listing/stamp-duty";
 import { areaRevenueFor } from "@/lib/listing/sourcing";
 import { parseStoredDeal } from "@/lib/marketplace/record";
-import { cashLine } from "@/lib/deal-quality/streams";
+import { cashLine, isCheapPrice, lenderNote } from "@/lib/deal-quality/streams";
 import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
 import { isHeldForProject, projectEstimateFor } from "@/lib/project/read-server";
 import { projectCardsFor } from "@/lib/marketplace/queries";
@@ -217,7 +217,10 @@ export default async function DealPage({ params, searchParams }: { params: Promi
       ? model?.kind === "rent-to-rent" ? model.setupCost : storedDeal?.kind === "rent-to-rent" ? storedDeal.setupCost : null
       : model?.kind === "purchase" ? model.cashRequired : storedDeal?.kind === "purchase" ? storedDeal.cashRequired : null;
   const cashText = cashLine(deal.kind, cashIn);
-  const lowEntry = deal.kind === "sale" && storedDeal?.kind === "purchase" && storedDeal.cashRequired > 0 && storedDeal.cashRequired <= settings.lowEntry.maxCashIn;
+  // Batch 22c: low entry is a cheap price (the deal's own price, an auction lot's at its auction price), and a very cheap purchase carries the lender note.
+  const dealPrice = deal.kind !== "sale" ? null : storedDeal?.kind === "purchase" && storedDeal.askingPrice > 0 ? storedDeal.askingPrice : !auction && (deal.price_period === null || deal.price_period === "total") && deal.price_amount !== null ? Number(deal.price_amount) : null;
+  const lowEntry = isCheapPrice(dealPrice, settings.lowEntry);
+  const lenderText = lenderNote(dealPrice, settings.lowEntry, cashBuyerOf(goals));
   // Batch 14: the most they can pay to hit their own monthly profit, on the
   // same income and at the same finance as the range above (the member's
   // active profile; the house figures and £500 without answers).
@@ -360,6 +363,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                       {(pn ? pn.cash : cashText) && <span className={"text-sm font-medium text-muted-foreground" + (price ? " ml-2" : "")}>{pn ? pn.cash : cashText}</span>}
                     </p>
                   )}
+                  {lenderText && <p className="mt-0.5 text-xs text-muted-foreground">{lenderText}</p>}
                 </div>
                 {/* Batch 17: a Project deal's works and value added; "value added", never "uplift", which is the short-let gain over a long let. */}
                 {pn && <p className="mt-1 text-sm font-medium text-foreground">{projectSummary(pn)}</p>}

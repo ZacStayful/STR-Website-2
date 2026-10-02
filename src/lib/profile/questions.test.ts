@@ -266,3 +266,21 @@ test('the option lists in the questions match the stored vocabularies', () => {
   assert.deepEqual(single('risk'), [...ABOUT_OPTIONS.risk]);
   assert.deepEqual(single('where'), [...GOAL_OPTIONS.where]);
 });
+
+test('Batch 22c: the budget questions offer five brackets; a stored Under £200k is still accepted and read, never offered', () => {
+  for (const id of ['budget', 'brrr_budget'] as const) {
+    const options = optionsOf(QUESTIONS.find((x) => x.id === id)!, fresh());
+    assert.deepEqual(options.map((o) => o.value), ['u100', '100-200', '200-350', '350-500', '500+'], id);
+    assert.deepEqual(options.map((o) => o.label), ['Under £100k', '£100k–£200k', '£200k–£350k', '£350k–£500k', '£500k+'], id);
+  }
+  let a = answer(answer(fresh(), 'roles', ['investor']), 'deal_types', ['buy_str']);
+  a = answer(a, 'budget', 'u100');
+  assert.equal(a.goals.budget, 'u100');
+  assert.equal(answerLabel('budget', a), 'Under £100k');
+  a = answer(a, 'budget', '100-200');
+  assert.equal(answerLabel('budget', a), '£100k–£200k');
+  // A member who chose Under £200k before keeps it, labelled as it always was.
+  a = answer(a, 'budget', 'u200');
+  assert.equal(a.goals.budget, 'u200');
+  assert.equal(answerLabel('budget', a), 'Under £200k');
+});

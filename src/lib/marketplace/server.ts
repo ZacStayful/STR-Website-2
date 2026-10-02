@@ -70,12 +70,12 @@ export async function loadDealRules(): Promise<DealRules> {
     return {
       auctionTerms: q.auction,
       lowEntry: q.lowEntry,
-      checks: { enabled, validDays: q.checks.validDays, shortlistExpiryDays: q.checks.shortlistExpiryDays },
+      checks: { enabled, validDays: q.checks.validDays, shortlistExpiryDays: q.checks.shortlistExpiryDays, lowEntryShortlistExpiryDays: q.checks.lowEntryShortlistExpiryDays },
       project: { hold: projectChecksOn(project), settings: project },
     };
   } catch (err) {
     console.warn('[marketplace] deal rules unreadable, using the defaults:', (err as Error)?.message ?? err);
-    return { checks: { enabled, validDays: DEFAULT_DEAL_CHECKS.validDays, shortlistExpiryDays: DEFAULT_DEAL_CHECKS.shortlistExpiryDays } };
+    return { checks: { enabled, validDays: DEFAULT_DEAL_CHECKS.validDays, shortlistExpiryDays: DEFAULT_DEAL_CHECKS.shortlistExpiryDays, lowEntryShortlistExpiryDays: DEFAULT_DEAL_CHECKS.lowEntryShortlistExpiryDays } };
   }
 }
 

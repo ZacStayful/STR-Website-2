@@ -7,8 +7,9 @@
  * A qualifying listing no longer goes live on the area's average. It waits
  * as `pending_check` (the shortlist, invisible to members) until its turn:
  * each UK day the job takes `perDay` deals from the shortlist by stream
- * (billing_settings.deal_checks split; spare slots pass top areas → low
- * entry → rent-to-rent), searches Airbtics for similar homes at the
+ * (billing_settings.deal_checks split; Batch 22c: spare slots pass low
+ * entry → top areas → rent-to-rent, and within a stream the best return
+ * on the cash put in goes first), searches Airbtics for similar homes at the
  * listing's own location (search.ts), reads the figures through the
  * analyser's pipeline, and re-screens the deal on them. A deal with too few
  * similar homes within the widest radius is never shown (insufficient
@@ -31,7 +32,7 @@ import type { Confidence } from '../listing/screen.ts';
 import type { DataQuality, ShortLetData } from '../types.ts';
 import { DEAL_COMPS_SOURCE } from '../market/quality.ts';
 import { typeBucket, type SubjectKind } from './comps.ts';
-import { DAY_STREAMS, perStream, STREAMS, type Stream } from './streams.ts';
+import { perStream, STREAMS, type Stream } from './streams.ts';
 import type { DealChecksSettings } from './config.ts';
 
 export const DEAL_CHECKS_KIND = 'deal_checks';
@@ -130,16 +131,28 @@ export function ukDayStart(now: Date): Date {
   return new Date(utcMidnight - (hour % 24) * 60 * 60 * 1000);
 }
 
-/** When a shortlisted deal is dropped if it has not been checked by then. */
-export function shortlistExpiryAt(shortlistedAt: Date, s: Pick<DealChecksSettings, 'shortlistExpiryDays'>): string {
-  return new Date(shortlistedAt.getTime() + s.shortlistExpiryDays * DAY_MS).toISOString();
+/**
+ * When a shortlisted deal is dropped if it has not been checked by then.
+ * Batch 22c: a low-entry deal waits `lowEntryShortlistExpiryDays` (14)
+ * instead, so a cheap candidate is not dropped before its turn comes.
+ */
+export function shortlistExpiryAt(shortlistedAt: Date, s: Pick<DealChecksSettings, 'shortlistExpiryDays'> & Partial<Pick<DealChecksSettings, 'lowEntryShortlistExpiryDays'>>, stream?: Stream): string {
+  const days = stream === 'low_entry' && s.lowEntryShortlistExpiryDays !== undefined ? s.lowEntryShortlistExpiryDays : s.shortlistExpiryDays;
+  return new Date(shortlistedAt.getTime() + days * DAY_MS).toISOString();
 }
+
+/**
+ * The order the day's streams take their slots in (Batch 22c: cheap deals
+ * first). It decides who gets their share first when the day has fewer
+ * checks left than the shares add up to, and where a stream's spare goes.
+ */
+export const SLOT_ORDER: readonly Stream[] = ['low_entry', 'top60', 'r2r'];
 
 /**
  * Today's check slots by stream: each stream's share of the day, no more
  * than it has waiting, and what a stream cannot use passes to the others in
- * the split's order (top areas, low entry, rent-to-rent). Never more than
- * `left`, the checks the day still allows.
+ * SLOT_ORDER (low entry, top areas, rent-to-rent). Never more than `left`,
+ * the checks the day still allows.
  *
  * Batch 17: the Project stream is counted on its own (DAY_STREAMS): at most
  * `projectLeft` (its share of the day less what today's runs checked), never
@@ -148,11 +161,11 @@ export function shortlistExpiryAt(shortlistedAt: Date, s: Pick<DealChecksSetting
 export function allocateSlots(split: DealChecksSettings['split'], waiting: Record<Stream, number>, left: number, projectLeft = 0): Record<Stream, number> {
   const out = perStream(() => 0);
   let spare = Math.max(0, Math.floor(left));
-  for (const s of DAY_STREAMS) {
+  for (const s of SLOT_ORDER) {
     out[s] = Math.max(0, Math.min(split[s], waiting[s] ?? 0, spare));
     spare -= out[s];
   }
-  for (const s of DAY_STREAMS) {
+  for (const s of SLOT_ORDER) {
     const more = Math.max(0, Math.min((waiting[s] ?? 0) - out[s], spare));
     out[s] += more;
     spare -= more;
@@ -161,14 +174,40 @@ export function allocateSlots(split: DealChecksSettings['split'], waiting: Recor
   return out;
 }
 
-/** The shortlist's order within a stream: the most profitable first, then the longest waiting. */
-export function shortlistOrder<T extends { annual_profit: number | string | null; first_seen_at: string }>(rows: readonly T[]): T[] {
-  return [...rows].sort((a, b) => {
-    const pa = num(a.annual_profit) ?? Number.NEGATIVE_INFINITY;
-    const pb = num(b.annual_profit) ?? Number.NEGATIVE_INFINITY;
-    if (pa !== pb) return pb - pa;
-    return a.first_seen_at.localeCompare(b.first_seen_at);
-  });
+/**
+ * A shortlisted deal's estimated return on the cash put in (Batch 22c): its
+ * estimated annual profit over what it takes to get into, a purchase's cash
+ * in (the bridging cash for an auction lot) or a rental's setup cost, both
+ * at the house figures the row carries. Null without either figure.
+ */
+export function shortlistReturn(row: { annual_profit: number | string | null; deal?: unknown }): number | null {
+  const profit = num(row.annual_profit);
+  const d = row.deal && typeof row.deal === 'object' ? (row.deal as { kind?: unknown; cashRequired?: unknown; setupCost?: unknown }) : null;
+  const cash = d?.kind === 'purchase' ? num(d.cashRequired) : d?.kind === 'rent-to-rent' ? num(d.setupCost) : null;
+  if (profit === null || cash === null || cash <= 0) return null;
+  return profit / cash;
+}
+
+/**
+ * The shortlist's order within a stream (Batch 22c): the best estimated
+ * return on the cash put in first, so a £120,000 deal making 13% on £60,000
+ * is checked before a £450,000 one making 7% on £160,000; then the most
+ * profitable; then the longest waiting. A row without a cash figure goes
+ * after every row with one. Before Batch 22c: profit alone.
+ */
+export function shortlistOrder<T extends { annual_profit: number | string | null; first_seen_at: string; deal?: unknown }>(rows: readonly T[]): T[] {
+  const keyed = rows.map((r) => ({ r, roc: shortlistReturn(r), profit: num(r.annual_profit) ?? Number.NEGATIVE_INFINITY }));
+  return keyed
+    .sort((a, b) => {
+      if (a.roc !== b.roc) {
+        if (a.roc === null) return 1;
+        if (b.roc === null) return -1;
+        return b.roc - a.roc;
+      }
+      if (a.profit !== b.profit) return b.profit - a.profit;
+      return a.r.first_seen_at.localeCompare(b.r.first_seen_at);
+    })
+    .map((x) => x.r);
 }
 
 /** What one run of a checking job did, as recorded in marketplace_runs. */

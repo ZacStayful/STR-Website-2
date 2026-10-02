@@ -15,6 +15,8 @@ import { runLowEntrySearch } from '@/lib/deal-quality/low-entry-run';
 import { runDealChecks } from '@/lib/deal-quality/checks-run';
 import { retireUncheckedLive, runDealRecheck } from '@/lib/deal-quality/recheck-comps-run';
 import { runMortgageBackfill } from '@/lib/listing/mortgage-backfill-run';
+import { runRestreamBackfill } from '@/lib/deal-quality/restream-run';
+import { runCheapRescreen } from '@/lib/deal-quality/cheap-rescreen-run';
 import { DEAL_CHECKS_KEY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type DealChecksSettings, type LowEntrySettings } from '@/lib/deal-quality/config';
 import { parseProjectAllowance, parseProjectChecks, PROJECT_CHECKS_KEY, type ProjectChecksSettings } from '@/lib/project/config';
 import { runProjectChecks } from '@/lib/project/check-run';
@@ -95,7 +97,7 @@ export async function updateLowEntryAction(formData: FormData): Promise<void> {
     const raw = String(formData.get(name) ?? '').replace(/[£,\s]/g, '');
     return /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
   };
-  const next: LowEntrySettings = { maxCashIn: whole('maxCashIn'), searchMaxPrice: whole('searchMaxPrice'), minBedrooms: whole('minBedrooms'), weeklyCapPence: whole('weeklyCapPence'), areasPerPass: whole('areasPerPass') };
+  const next: LowEntrySettings = { maxCashIn: whole('maxCashIn'), cheapMaxPrice: whole('cheapMaxPrice'), lenderMinPrice: whole('lenderMinPrice'), searchMaxPrice: whole('searchMaxPrice'), minBedrooms: whole('minBedrooms'), weeklyCapPence: whole('weeklyCapPence'), areasPerPass: whole('areasPerPass') };
   const parsed = parseLowEntry(next);
   if ((Object.keys(next) as (keyof LowEntrySettings)[]).some((k) => parsed[k] !== next[k])) redirect('/admin/deals?msg=bad_low_entry');
   await updateBillingSetting(LOW_ENTRY_KEY, parsed);
@@ -143,6 +145,32 @@ export async function runMortgageBackfillAction(formData: FormData): Promise<voi
   await finish(dry ? 'mortgage-backfill-dry' : 'mortgage-backfill', result.body as Record<string, unknown>);
 }
 
+// ── Batch 22c: the re-stream backfill ──
+
+/** "Dry run" is the report (counts per stream before and after, and a sample of the moves) and writes nothing; "Run" rewrites the stream column. No spend. */
+export async function runRestreamAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runRestreamBackfill({ dry, triggeredBy: user.email ?? 'admin' });
+  const body = result.body as Record<string, unknown>;
+  // The box at the top keeps a few moves and the counts as lines; the cookie has no room for more.
+  const sample = Array.isArray(body.sample) ? { sample: (body.sample as string[]).slice(0, 8).join(' | ') } : {};
+  const { before: _b, after: _a, ...rest } = body;
+  void _b;
+  void _a;
+  await finish(dry ? 'restream-dry' : 'restream', { ...rest, ...sample });
+}
+
+/** The cheap re-screen: "Dry run" reports how stored cheap listings screen today and what a run would add, writing nothing; "Run" folds the new low-entry deals in. No spend. */
+export async function runCheapRescreenAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runCheapRescreen({ dry, triggeredBy: user.email ?? 'admin' });
+  const body = result.body as Record<string, unknown>;
+  const sample = Array.isArray(body.sample) ? { sample: (body.sample as string[]).slice(0, 8).join(' | ') } : {};
+  await finish(dry ? 'cheap-rescreen-dry' : 'cheap-rescreen', { ...body, ...sample });
+}
+
 /**
  * billing_settings.deal_checks from the form: whole numbers within the
  * bounds in src/lib/deal-quality/config.ts. A value the bounds refuse is
@@ -161,6 +189,7 @@ export async function updateDealChecksAction(formData: FormData): Promise<void> 
     maxCallsPerCheck: whole('maxCallsPerCheck'),
     validDays: whole('validDays'),
     shortlistExpiryDays: whole('shortlistExpiryDays'),
+    lowEntryShortlistExpiryDays: whole('lowEntryShortlistExpiryDays'),
     recheckCeilingPence: whole('recheckCeilingPence'),
   };
   const parsed = parseDealChecks(next);
@@ -168,7 +197,7 @@ export async function updateDealChecksAction(formData: FormData): Promise<void> 
   const allowance = { projectPhotoChecks: whole('projectPhotoChecks'), projectCapPence: whole('projectCapPence') };
   const parsedAllowance = parseProjectAllowance(allowance);
   const same =
-    (['perDay', 'dailyCapPence', 'maxCallsPerCheck', 'validDays', 'shortlistExpiryDays', 'recheckCeilingPence'] as const).every((k) => parsed[k] === next[k]) &&
+    (['perDay', 'dailyCapPence', 'maxCallsPerCheck', 'validDays', 'shortlistExpiryDays', 'lowEntryShortlistExpiryDays', 'recheckCeilingPence'] as const).every((k) => parsed[k] === next[k]) &&
     parsed.split.top60 === next.split.top60 && parsed.split.low_entry === next.split.low_entry && parsed.split.r2r === next.split.r2r && parsed.split.project === next.split.project &&
     parsedAllowance.photoChecks === allowance.projectPhotoChecks && parsedAllowance.capPence === allowance.projectCapPence;
   if (!same) redirect('/admin/deals?msg=bad_deal_checks');

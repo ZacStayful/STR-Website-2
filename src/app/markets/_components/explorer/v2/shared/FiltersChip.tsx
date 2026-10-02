@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { SlidersHorizontal, Star, X } from "lucide-react";
-import { BUDGET_LABELS, isBudget, isBeds, isConf, type Region } from "@/lib/market/filters";
+import { BUDGET_LABELS, budgetFilterOptions, isBudget, isBeds, isConf, type Region } from "@/lib/market/filters";
 import { SORT_LABELS, isSortKey } from "@/lib/market/rank";
 import { DEFAULT_FILTERS, type Filters, type MarketGoals, type SortKey } from "../../types";
 
@@ -84,7 +84,7 @@ export function FiltersChip({
           <div className="mx-filters-pop-grid">
             <label><span className="mx-eyebrow">Budget</span>
               <select className="mx-select mx-select--block" value={filters.budget} onChange={(e) => isBudget(e.target.value) && set({ budget: e.target.value })}>
-                {(Object.keys(BUDGET_LABELS) as (keyof typeof BUDGET_LABELS)[]).map((k) => <option key={k} value={k}>{BUDGET_LABELS[k]}</option>)}
+                {budgetFilterOptions(filters.budget).map((k) => <option key={k} value={k}>{BUDGET_LABELS[k]}</option>)}
               </select>
             </label>
             <label><span className="mx-eyebrow">Bedrooms</span>

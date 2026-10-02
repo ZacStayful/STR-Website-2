@@ -81,3 +81,13 @@ test('"Use this" saves through the quiz; a budget band is the member’s to chan
   assert.equal(add.questionId, 'deal_types');
   assert.ok((add.value as string[]).includes('buy_str'));
 });
+
+test('Batch 22c: the budget steps up through the five brackets; the legacy Under £200k steps to £200k–£350k, never down', () => {
+  const next = (budget: MarketGoals['budget']) => whatIfChanges(profile({ budget }), { nearbyAreas: [] }).find((v) => v.key === 'budget');
+  assert.equal(next('u100')?.goals.budget, '100-200');
+  assert.equal(next('u100')?.phrase, 'raise your budget to £100k–£200k');
+  assert.equal(next('100-200')?.goals.budget, '200-350');
+  assert.equal(next('u200')?.goals.budget, '200-350');
+  assert.equal(next('350-500')?.goals.budget, '500+');
+  assert.equal(next('500+'), undefined, 'nothing above the top bracket');
+});

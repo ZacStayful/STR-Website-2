@@ -22,7 +22,7 @@
  * Pure: no network, no database, no server-only.
  */
 import type { MarketGoals } from '../market/goals.ts';
-import { BUDGET_LABELS, type Budget } from '../market/filters.ts';
+import { BUDGET_CHOICES, BUDGET_LABELS, type Budget } from '../market/filters.ts';
 import { AVAILABLE_DEAL_TYPES, DEAL_TYPE_LABELS, dealTypeOf, typesShown, withAddedType, type DealType } from '../profile/deal-types.ts';
 import { activeCriteria, modeOf, wantsFor } from '../tailoring/criteria.ts';
 import type { CriterionKey, TailoringProfile } from '../tailoring/profile.ts';
@@ -50,7 +50,7 @@ export interface WhatIf {
   profile: TailoringProfile;
 }
 
-const BANDS: Exclude<Budget, 'any'>[] = ['u200', '200-350', '350-500', '500+'];
+const BANDS: readonly Exclude<Budget, 'any'>[] = BUDGET_CHOICES;
 const gbp = (n: number) => `£${Math.round(n).toLocaleString('en-GB')}`;
 
 export function isWhatIfKey(v: unknown): v is WhatIfKey {
@@ -59,7 +59,13 @@ export function isWhatIfKey(v: unknown): v is WhatIfKey {
   return v.startsWith('add_') && (AVAILABLE_DEAL_TYPES as readonly string[]).includes(v.slice(4));
 }
 
-const nextBand = (b: Exclude<Budget, 'any'> | null) => (b ? BANDS[BANDS.indexOf(b) + 1] ?? null : null);
+/** The next band up. Batch 22c: the legacy 'u200' (under £200k) steps to £200k–£350k, never down to a new bracket. */
+const nextBand = (b: Exclude<Budget, 'any'> | null): Exclude<Budget, 'any'> | null => {
+  if (!b) return null;
+  if (b === 'u200') return '200-350';
+  const i = BANDS.indexOf(b);
+  return i < 0 ? null : (BANDS[i + 1] ?? null);
+};
 
 /** Every one-change variant this member could be offered, before counting (at most WHAT_IF_MAX_VARIANTS). */
 export function whatIfChanges(p: TailoringProfile, extra: { nearbyAreas: readonly string[] }): WhatIf[] {

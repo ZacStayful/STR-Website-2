@@ -168,3 +168,11 @@ test('area lists are validated and every option list is non-empty', () => {
   assert.deepEqual(areaCodeList('NG'), []);
   for (const [key, values] of Object.entries(GOAL_OPTIONS)) assert.ok(values.length >= 2, key);
 });
+
+test('Batch 22c: the goal summary names every budget, the legacy Under £200k included', () => {
+  assert.ok(describeGoals({ ...DEFAULT_GOALS, budget: 'u100' }).includes('Under £100k'));
+  assert.ok(describeGoals({ ...DEFAULT_GOALS, budget: '100-200' }).includes('£100k–£200k'));
+  assert.ok(describeGoals({ ...DEFAULT_GOALS, budget: 'u200' }).includes('Under £200k'));
+  assert.equal(parseMarketGoals({ ...DEFAULT_GOALS, budget: 'u100' })?.budget, 'u100');
+  assert.equal(parseMarketGoals({ ...DEFAULT_GOALS, budget: 'u200' })?.budget, 'u200', 'a stored legacy answer is kept');
+});

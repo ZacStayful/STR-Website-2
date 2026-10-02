@@ -74,7 +74,8 @@ export interface LowEntrySummary extends AbsorbCounters {
   weekCapPence: number;
   searchMaxPrice: number;
   minBedrooms: number;
-  maxCashIn: number;
+  /** Batch 22c: what the low-entry stream now means, an asking price at most this. */
+  cheapMaxPrice: number;
   /** Searches this pass made (asked the broker, cached or not). */
   searched: number;
   answered: number;
@@ -199,7 +200,7 @@ export async function runLowEntrySearch(opts: LowEntryOptions): Promise<LowEntry
     weekCapPence: settings.weeklyCapPence,
     searchMaxPrice: settings.searchMaxPrice,
     minBedrooms: settings.minBedrooms,
-    maxCashIn: settings.maxCashIn,
+    cheapMaxPrice: settings.cheapMaxPrice,
     searched: 0,
     answered: 0,
     cached: 0,

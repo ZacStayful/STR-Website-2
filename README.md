@@ -363,9 +363,9 @@ ways in get their own streams. In this order:
    and `?retire=1&dry=1` are the same.
 8. **The low-entry search:** "Dry-run low-entry search" then a few "Run a
    low-entry pass" presses on `/admin/deals` to see the nationwide count
-   under the £135,000 cap (about 18p a pass), then
-   `LOW_ENTRY_SEARCH_ENABLED=true` for the cron. The cash-in bar (£50,000)
-   and the price cap are settings on the same page.
+   under the £150,000 cap (Batch 22c; about 18p a pass), then
+   `LOW_ENTRY_SEARCH_ENABLED=true` for the cron. The cheap price (£150,000)
+   and the search cap are settings on the same page.
 9. **Market-warm** has its own switch now (`MARKET_WARM_ENABLED=false`
    stops the 04:45 cron) and `?dry=1`.
 
@@ -795,6 +795,33 @@ Prices: a call minute is the `si:call_minute` unit row on Billing admin (raw
 13p ESTIMATE × 5); texts and the missed-call email are `si_text_pence` and
 `si_email_pence` on `/admin/calls`. Handoffs and forwarded texts go to the
 address on `/admin/feedback`.
+
+### 20. Cheap deals first (Batch 22c)
+
+"Low entry" means a cheap price now: a sale with an asking price of at
+most £150,000 (`billing_settings.low_entry.cheapMaxPrice`), an auction lot
+at its auction price. The old £50,000 cash-in bar is stored but unused.
+Every card still shows the cash in. The daily checks give low entry 12 of
+the 20 slots (top areas 3, rent-to-rent 5; spare slots go to low entry
+first) and check the best return on cash first; a cheap candidate waits
+14 days for its check. Today, the reveal and the picks email lift a
+purchase's fit by its return on cash (1.5 points a percentage point over
+6%, at most 15; `src/lib/listing/rank.ts`): order only, never eligibility.
+The signup budget offers Under £100k and £100k–£200k instead of Under
+£200k; a stored Under £200k still reads and works. A purchase under
+£75,000 carries a lender note. No price, credit charge or profit figure
+changes. `LOW_ENTRY_SEARCH_ENABLED` is not touched. Once, after deploying:
+
+1. **Run the Batch 22c section of `supabase/schema.sql`** (idempotent;
+   moves the settings once, marked by `batch22c_cheap_applied_at`).
+2. **Re-stream:** "Dry-run the re-stream" on `/admin/deals` (or
+   `/api/internal/restream-backfill?dry=1`): the counts per stream before
+   and after, writes nothing. Then "Re-stream deals". No spend.
+3. **Cheap re-screen (optional):** "Dry-run the cheap re-screen" (or
+   `/api/internal/cheap-rescreen?dry=1`) shows how many stored listings at
+   up to £150,000 would qualify on today's figures; "Re-screen cheap
+   listings" adds them. No provider call.
+4. **Watch:** the "Budget brackets" panel on `/admin/deals`.
 
 ### Environment variables
 

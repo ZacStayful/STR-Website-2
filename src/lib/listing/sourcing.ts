@@ -109,9 +109,13 @@ export interface SourcingQuery {
   minBedrooms: number | null;
 }
 
-/** Purchase budget band → price bounds. Rent queries take their ceiling from goals.maxRentPcm instead. */
+/** Purchase budget band → price bounds. Rent queries take their ceiling from goals.maxRentPcm instead. Batch 22c: 'u100' and '100-200'; the legacy 'u200' keeps its "under £200k". */
 export function budgetBounds(budget: MarketGoals['budget']): { min: number | null; max: number | null } {
   switch (budget) {
+    case 'u100':
+      return { min: null, max: 100_000 };
+    case '100-200':
+      return { min: 100_000, max: 200_000 };
     case 'u200':
       return { min: null, max: 200_000 };
     case '200-350':

@@ -14,9 +14,18 @@ test('area from a code, a postcode, a slug or a name', () => {
 
 test('budget from a band, a number or words', () => {
   assert.equal(budgetFrom('200-350'), '200-350');
-  assert.equal(budgetFrom(180000), 'u200');
+  // Batch 22c: "Under £200k" is two brackets now; a lead is never given the legacy one unless it posts that code.
+  assert.equal(budgetFrom(180000), '100-200');
   assert.equal(budgetFrom('£250,000'), '200-350');
-  assert.equal(budgetFrom('under 200k'), 'u200');
+  assert.equal(budgetFrom('under 200k'), '100-200');
+  assert.equal(budgetFrom('under 100k'), 'u100');
+  assert.equal(budgetFrom(85_000), 'u100');
+  assert.equal(budgetFrom('100,000'), 'u100', 'the edge is in the lower bracket, as £200,000 is');
+  assert.equal(budgetFrom('80k - 120k'), '100-200');
+  assert.equal(budgetFrom('50k-90k'), 'u100');
+  assert.equal(budgetFrom('u100'), 'u100');
+  assert.equal(budgetFrom('100-200'), '100-200');
+  assert.equal(budgetFrom('u200'), 'u200', 'a legacy code as posted');
   assert.equal(budgetFrom('up to 400k'), '350-500');
   assert.equal(budgetFrom('350k - 500k'), '350-500');
   assert.equal(budgetFrom('600000'), '500+');

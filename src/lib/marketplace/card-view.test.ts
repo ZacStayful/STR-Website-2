@@ -62,18 +62,34 @@ test('Batch 16: the cash in / to start line, at the member’s own deposit for a
   // A 10% deposit: £12,000 + SDLT £6,000 + setup £13,000.
   const own = cardView({ ...common, card: sale, finance: { depositPct: 10 } });
   assert.equal(own.cash, '£31k cash in');
-  assert.equal(own.lowEntry, true, 'the stream is judged at the house figure');
+  assert.equal(own.lowEntry, true, 'Batch 22c: the stream is judged on the price');
   // A cash buyer puts the whole price in.
   assert.equal(cardView({ ...common, card: sale, finance: { depositPct: 10 }, cashBuyer: true }).cash, '£139k cash in');
-  // An auction lot: the bridging cash whoever looks.
-  const lot = cardView({ ...common, card: { ...sale, price_amount: 130_000, deal_cash: '85000', deal_auction: 'modern' }, finance: { depositPct: 10 } });
+  // An auction lot: the bridging cash whoever looks; cheap on its auction price (guide £130,000 → £149,500).
+  const lot = cardView({ ...common, card: { ...sale, price_amount: 130_000, deal_cash: '85000', deal_price: '149500', deal_auction: 'modern' }, finance: { depositPct: 10 } });
   assert.equal(lot.cash, '£85k cash in');
-  assert.equal(lot.lowEntry, false);
-  // A row read without the Batch 16 columns has no line and no stream badge.
+  assert.equal(lot.lowEntry, true);
+  assert.equal(cardView({ ...common, card: { ...sale, price_amount: 135_000, deal_cash: '85000', deal_price: '155250', deal_auction: 'traditional' } }).lowEntry, false, 'a guide within £150,000 at an auction price over it');
+  assert.equal(cardView({ ...common, card: { ...sale, price_amount: 130_000, deal_cash: '85000', deal_auction: 'modern' } }).lowEntry, false, 'a lot read without its auction price: its guide is not its price');
+  // A row read without the Batch 16 columns has no cash line; its listed price still decides the badge.
   const bare = cardView({ ...common, card: { ...CARD, kind: 'sale' as const, price_amount: 120_000, price_period: 'total', uplift_pct: 45 } });
   assert.equal(bare.cash, null);
-  assert.equal(bare.lowEntry, false);
-  assert.equal(cardView({ ...common, card: sale, lowEntryMaxCashIn: 40_000 }).lowEntry, false, 'the bar is the setting');
+  assert.equal(bare.lowEntry, true);
+  assert.equal(cardView({ ...common, card: { ...sale, price_amount: 150_001 } }).lowEntry, false);
+  assert.equal(cardView({ ...common, card: sale, lowEntry: { cheapMaxPrice: 100_000 } }).lowEntry, false, 'the bar is the setting');
+  assert.equal(house.lenderNote, null, '£120,000 is over the lender minimum');
+});
+
+test('Batch 22c, Part E: a purchase under £75,000 carries the lender note, not a rental, not a cash buyer; the figures are unchanged', () => {
+  const common = { state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly) };
+  const cheap = { ...CARD, kind: 'sale' as const, price_amount: 74_999, price_period: 'total', uplift_pct: 45, outcode: 'CW1', deal_cash: '34000', deal_auction: null };
+  const v = cardView({ ...common, card: cheap });
+  assert.equal(v.lenderNote, "Some lenders won't lend under about £75k. Check with a broker, or plan it as a cash buy.");
+  assert.equal(v.cash, '£34k cash in');
+  assert.equal(cardView({ ...common, card: { ...cheap, price_amount: 75_000 } }).lenderNote, null);
+  assert.equal(cardView({ ...common, card: cheap, cashBuyer: true }).lenderNote, null);
+  assert.equal(cardView({ ...common, card: { ...CARD, price_amount: 500 } }).lenderNote, null, 'a rental never');
+  assert.equal(cardView({ ...common, card: cheap, lowEntry: { lenderMinPrice: 60_000 } }).lenderNote, null, 'the threshold is the setting');
 });
 
 test('Batch 16, Part C: the caption names the deal’s own comparables once checked, and the pay ceiling rests on them', () => {
