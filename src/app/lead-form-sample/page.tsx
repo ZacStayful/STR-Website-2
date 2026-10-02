@@ -14,7 +14,8 @@ export const metadata: Metadata = {
  * preview mode, with demo data, for a made-up company. Nothing can be
  * submitted or charged from it (preview), and it carries no funnel token.
  */
-const SAMPLE_BRAND: FunnelBrand = { ...EMPTY_BRAND, companyName: "Your Company Lettings", primary: "#1F5F8B" };
+// No colour of its own: the report shows in Stayful green, exactly as the analyser does.
+const SAMPLE_BRAND: FunnelBrand = { ...EMPTY_BRAND, companyName: "Your Company Lettings" };
 
 export default function LeadFormSample() {
   const funnel: FunnelMode = { token: "sample", brand: SAMPLE_BRAND, reportDepth: "standard", preview: true };

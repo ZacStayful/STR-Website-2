@@ -82,7 +82,7 @@ export default async function ForManagementCompanies() {
               <p style={{ fontSize: 13, opacity: 0.75 }}>
                 {demo.property.bedrooms}-bed flat, Manchester {demo.property.postcode.split(" ")[0]}
               </p>
-              <p style={{ fontSize: 32, fontWeight: 700, color: "#1F5F8B", marginTop: 4 }}>
+              <p style={{ fontSize: 32, fontWeight: 700, color: "#5d8156", marginTop: 4 }}>
                 £{demo.shortLet.annualRevenue.toLocaleString("en-GB")} a year
               </p>
               <p style={{ fontSize: 13, opacity: 0.75 }}>
