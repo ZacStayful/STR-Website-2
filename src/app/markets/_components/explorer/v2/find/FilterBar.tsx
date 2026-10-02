@@ -1,7 +1,7 @@
 "use client";
 
 import { Target } from "lucide-react";
-import { BUDGET_LABELS, isBeds, isBudget, isConf, isRegion } from "@/lib/market/filters";
+import { BUDGET_LABELS, budgetFilterOptions, isBeds, isBudget, isConf, isRegion } from "@/lib/market/filters";
 import { describeGoals } from "@/lib/market/goals";
 import type { Filters, MarketGoals, SortKey } from "../../types";
 import { ChipMenu } from "../shared/ChipMenu";
@@ -62,7 +62,7 @@ export function FilterBar({
           {(close) => <Options items={BEDS} value={filters.beds} onPick={(v) => isBeds(v) && set({ beds: v })} close={close} />}
         </ChipMenu>
         <ChipMenu label={filters.budget === "any" ? "Budget" : BUDGET_LABELS[filters.budget]} active={filters.budget !== "any"} ariaLabel="Budget">
-          {(close) => <Options items={(Object.keys(BUDGET_LABELS) as (keyof typeof BUDGET_LABELS)[]).map((k) => [k, BUDGET_LABELS[k]] as const)} value={filters.budget} onPick={(v) => isBudget(v) && set({ budget: v })} close={close} />}
+          {(close) => <Options items={budgetFilterOptions(filters.budget).map((k) => [k, BUDGET_LABELS[k]] as const)} value={filters.budget} onPick={(v) => isBudget(v) && set({ budget: v })} close={close} />}
         </ChipMenu>
         <ChipMenu label={filters.conf === "any" ? "Confidence" : CONF.find((c) => c[0] === filters.conf)?.[1] ?? "Confidence"} active={filters.conf !== "any"} ariaLabel="Data confidence">
           {(close) => <Options items={CONF} value={filters.conf} onPick={(v) => isConf(v) && set({ conf: v })} close={close} />}

@@ -81,7 +81,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{kindWordFor(card)}</span>
           {earlyAccess && <span className="rounded-full bg-warning px-2 py-0.5 text-[11px] font-semibold text-warning-foreground">Early access</span>}
           {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
-          {/* Batch 16, Part F: the low-entry stream (the house finance gets in for at most the low-entry cash). */}
+          {/* Batch 16, Part F; Batch 22c: the low-entry stream, a cheap purchase (asking price within the cheap price). */}
           {view?.lowEntry && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
           {badges.tags.map((t) => (
             <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
@@ -112,6 +112,8 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
             <p className="mt-0.5 text-xs font-medium text-foreground">
               {[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}
             </p>
+            {/* Batch 22c, Part E: a very cheap purchase's lender note; the figures above are unchanged. */}
+            {view.lenderNote && <p className="mt-0.5 text-[11px] text-muted-foreground">{view.lenderNote}</p>}
           </>
         ) : (
           <>
@@ -128,6 +130,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
             {view.projectLine && <p className="text-xs text-muted-foreground">{view.projectLine}</p>}
             {/* Batch 14: the most they can pay to hit their own monthly profit, beside the asking figure; Batch 16: the cash in / to start. */}
             {(view.pay || view.cash) && <p className="mt-0.5 text-xs font-medium text-foreground">{[price ? `${priceWord} ${price}` : null, view.cash, view.pay ? payLine(view.pay) : null].filter(Boolean).join(" · ")}</p>}
+            {view.lenderNote && <p className="mt-0.5 text-[11px] text-muted-foreground">{view.lenderNote}</p>}
           </>
         ) : (
           <p className="text-xs text-muted-foreground">{figure.small}</p>

@@ -135,7 +135,7 @@ test('snapshotFromDeal returns the live snapshot when there is one, else a minim
 
 // ── Batch 16 ──
 
-test('every record carries its stream: a cheap sale is low entry at the house cash in, a rental is rent-to-rent, the bar is a rule', () => {
+test('every record carries its stream: a cheap sale (asking price within £150,000) is low entry, a rental is rent-to-rent, the bar is a rule', () => {
   const cheap = listing({ price: { amount: 120_000, period: 'total' }, bedrooms: 2 });
   const rec = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   // 25% deposit £30,000 + SDLT £6,000 + setup £13,000 = £49,000.
@@ -143,13 +143,18 @@ test('every record carries its stream: a cheap sale is low entry at the house ca
   assert.equal(rec.deal.cashRequired, 49_000);
   assert.equal(rec.deal.taxCountry, 'england');
   assert.equal(rec.stream, 'low_entry');
-  const strict = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { lowEntry: { maxCashIn: 40_000 } } });
+  const strict = buildDealRecord(cheap, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { lowEntry: { cheapMaxPrice: 100_000 } } });
   assert.equal(strict.stream, 'top60');
-  assert.equal(buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'top60', '£250,000 needs £84,000');
+  assert.equal(buildDealRecord(listing(), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'top60', '£250,000 is not cheap');
+  // Batch 22c: the price decides, not the cash in. £150,000 needs £58,000 cash in (over the old £50,000 bar) and is low entry.
+  const atBar = buildDealRecord(listing({ price: { amount: 150_000, period: 'total' }, bedrooms: 2 }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.ok(atBar.deal && atBar.deal.kind === 'purchase' && atBar.deal.cashRequired > 50_000);
+  assert.equal(atBar.stream, 'low_entry');
+  assert.equal(buildDealRecord(listing({ price: { amount: 150_001, period: 'total' }, bedrooms: 2 }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'top60');
   assert.equal(buildDealRecord(listing({ kind: 'rent', price: { amount: 1_200, period: 'pcm' } }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW }).stream, 'r2r');
 });
 
-test('an auction lot is priced as one (guide plus uplift, on a bridge) and its stream follows the bridging cash', () => {
+test('an auction lot is priced as one (guide plus uplift, on a bridge) and its stream follows its auction price', () => {
   const lot = listing({ price: { amount: 130_000, period: 'total' }, bedrooms: 4, auction: true });
   const rec = buildDealRecord(lot, { card: { ...card, byBedrooms: [{ bedrooms: 4, grossRevenue: 60_000, adr: 220 }] }, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   assert.ok(rec.deal && rec.deal.kind === 'purchase' && rec.deal.auction, 'modelled as an auction');
@@ -158,7 +163,11 @@ test('an auction lot is priced as one (guide plus uplift, on a bridge) and its s
   assert.equal(rec.deal.auction.method, 'traditional', 'no modern-method wording');
   // Bridging deposit £44,850 + SDLT £7,965 + premium £1,500 + fees £4,093 + setup £20,000.
   assert.equal(rec.deal.cashRequired, 78_408);
-  assert.equal(rec.stream, 'top60');
+  // Batch 22c: £149,500 at auction is within £150,000, so low entry whatever the bridging cash.
+  assert.equal(rec.stream, 'low_entry');
+  const dearer = buildDealRecord(listing({ ...lot, price: { amount: 131_000, period: 'total' } }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
+  assert.equal(dearer.deal?.kind === 'purchase' ? dearer.deal.askingPrice : null, 150_650, 'a guide of £131,000 is £150,650 at auction');
+  assert.equal(dearer.stream, 'top60', 'the guide is within £150,000 but the auction price is not');
   const online = buildDealRecord(listing({ ...lot, features: ['Scheduled for online auction', 'Legal pack available'] }), { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW });
   assert.equal(online.deal?.kind === 'purchase' ? online.deal.auction?.method : null, 'modern');
   const noUplift = buildDealRecord(lot, { card, rentTable: rents, r2rBar: R2R_QUALIFIED_PROFIT, firstSeenAt: null, now: NOW, rules: { auctionTerms: { upliftPct: 0, traditionalPremium: 1_500, modernPremiumPct: 4.5, vatPct: 20, modernPremiumMin: 6_000, bridgingLtvPct: 70, bridgingMonthlyPct: 0.85, arrangementPct: 2, legalAndValuation: 2_000, termMonths: 12 } } });

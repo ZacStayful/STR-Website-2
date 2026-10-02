@@ -18,8 +18,8 @@ import { analysisQuote } from '../analysis/deal-analysis-rules.ts';
 import type { DealPricing, PriceLabel } from '../credit/deal-pricing.ts';
 import { purchaseDeal, type FinanceDefaults } from '../listing/deal.ts';
 import { countryForPostcode } from '../listing/stamp-duty.ts';
-import { cashLine } from '../deal-quality/streams.ts';
-import { DEFAULT_LOW_ENTRY } from '../deal-quality/config.ts';
+import { cashLine, isCheapPrice, lenderNote } from '../deal-quality/streams.ts';
+import { DEFAULT_LOW_ENTRY, type LowEntrySettings } from '../deal-quality/config.ts';
 import type { DealCard } from './grid.ts';
 import { projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
 
@@ -56,6 +56,20 @@ function cashInFor(card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period'
   return own.cashRequired;
 }
 
+/**
+ * A sale's price as the deal model priced it (Batch 22c): the stored deal's
+ * asking price, which for an auction lot is the auction price; else the
+ * listing's total price. An auction lot read without the stored figure has
+ * none (its listed guide is not its price). Null for a rental.
+ */
+function salePrice(card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period'> & Partial<Pick<DealCard, 'deal_price' | 'deal_auction'>>): number | null {
+  if (card.kind !== 'sale') return null;
+  const own = num(card.deal_price);
+  if (own !== null && own > 0) return own;
+  if (card.deal_auction) return null;
+  return card.price_period === null || card.price_period === 'total' ? num(card.price_amount) : null;
+}
+
 export interface CardView {
   range: ProfitRange | null;
   /** Batch 16, Part C: what the range rests on — "based on 12 similar Airbnbs nearby" once checked, else "area estimate". */
@@ -86,8 +100,10 @@ export interface CardView {
    * ("£12k to start"). Null when the row has no figure.
    */
   cash: string | null;
-  /** Batch 16, Part F: in the low-entry stream (the house figure within the low-entry bar). */
+  /** Batch 16, Part F; Batch 22c: in the low-entry stream, a cheap purchase (its price within low_entry.cheapMaxPrice). */
   lowEntry: boolean;
+  /** Batch 22c, Part E: "Some lenders won't lend under about £75k…" for a purchase under the lender minimum; null otherwise. */
+  lenderNote: string | null;
   /**
    * Batch 17: a Project deal's "Works ~£14k–£26k · £22k value added" (the
    * range is then its profit after works, the cash its cash needed as a
@@ -108,7 +124,7 @@ export interface CardView {
 }
 
 export function cardView(input: {
-  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_auction' | 'deal_setup' | 'check_comps' | 'project'>>;
+  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_price' | 'deal_auction' | 'deal_setup' | 'check_comps' | 'project'>>;
   state: CardState;
   admin: boolean;
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
@@ -118,15 +134,15 @@ export function cardView(input: {
   finance?: Partial<FinanceDefaults> | null;
   /** They buy with cash: nothing is borrowed, so no price is too high for the profit. */
   cashBuyer?: boolean;
-  /** billing_settings.low_entry maxCashIn (getBillingSettings().lowEntry); the decided default without it. */
-  lowEntryMaxCashIn?: number;
+  /** billing_settings.low_entry cheapMaxPrice and lenderMinPrice (getBillingSettings().lowEntry); the decided defaults without them. */
+  lowEntry?: Partial<Pick<LowEntrySettings, 'cheapMaxPrice' | 'lenderMinPrice'>>;
   label: (basePence: number) => PriceLabel;
 }): CardView {
   const { card, state } = input;
   // Batch 14: a cash buyer's range has no mortgage in it either, as "Most you can pay" has none (memberFinance).
   const finance = input.cashBuyer ? { ...(input.finance ?? {}), depositPct: 100 } : input.finance ?? null;
   const cash = cashInFor(card, finance);
-  const houseCash = num(card.deal_cash);
+  const price = salePrice(card);
   const range = profitRange({
     kind: card.kind,
     priceAmount: card.price_amount,
@@ -151,7 +167,8 @@ export function cardView(input: {
     pay: pn ? null : pay,
     uplift: card.kind === 'sale' && !pn ? upliftTag(card.uplift_pct) : null,
     cash: pn ? pn.cash : cashLine(card.kind, cash),
-    lowEntry: !pn && card.kind === 'sale' && houseCash !== null && houseCash > 0 && houseCash <= (input.lowEntryMaxCashIn ?? DEFAULT_LOW_ENTRY.maxCashIn),
+    lowEntry: !pn && card.kind === 'sale' && isCheapPrice(price, { cheapMaxPrice: input.lowEntry?.cheapMaxPrice ?? DEFAULT_LOW_ENTRY.cheapMaxPrice }),
+    lenderNote: card.kind === 'sale' ? lenderNote(price, { lenderMinPrice: input.lowEntry?.lenderMinPrice ?? DEFAULT_LOW_ENTRY.lenderMinPrice }, input.cashBuyer) : null,
     projectLine: pn ? projectSummary(pn) : null,
     opened: state.opened,
     analysed,

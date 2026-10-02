@@ -6297,3 +6297,55 @@ alter table public.si_tool_calls enable row level security;  -- no policies: ser
 revoke all on public.si_tool_calls from anon, authenticated;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 22c: cheap deals first
+-- =========================
+-- "Low entry" now means a cheap price: a sale with an asking price of at most
+-- low_entry.cheapMaxPrice (£150,000), an auction lot at its auction price
+-- (src/lib/deal-quality/streams.ts). It used to mean a cash in of at most
+-- low_entry.maxCashIn (£50,000), which stays stored but is no longer used.
+-- Purchases under low_entry.lenderMinPrice (£75,000) carry a lender note on
+-- their card and deal sheet; no figure changes.
+--
+-- The settings move ONCE, marked by the batch22c_cheap_applied_at row, so
+-- re-running this file never undoes a later change made on /admin/deals.
+-- Each value only moves if it is still at the decided value it replaces:
+--   low_entry    adds cheapMaxPrice 150000 and lenderMinPrice 75000 where
+--                missing; searchMaxPrice 135000 → 150000 (the nationwide
+--                search's ceiling; LOW_ENTRY_SEARCH_ENABLED is untouched)
+--   deal_checks  split top60 6 / low_entry 8 / r2r 6 → 3 / 12 / 5 (the Project
+--                share is kept), and lowEntryShortlistExpiryDays 14 where
+--                missing (a cheap candidate waits 14 days for its check, not 7)
+-- The code reads the same defaults when a field is missing, so the site
+-- behaves the same before this section is run.
+--
+-- No new column, no change to ACCESS_COLUMNS, no new cron. The stream column
+-- of existing deals is re-worked by the re-stream backfill
+-- (/api/internal/restream-backfill?dry=1 first, or the /admin/deals buttons),
+-- not here. marketplace_runs.kind also takes 'restream_backfill' and
+-- 'cheap_rescreen' (no constraint on the column).
+do $$
+begin
+  if not exists (select 1 from public.billing_settings where key = 'batch22c_cheap_applied_at') then
+    update public.billing_settings
+       set value = jsonb_build_object('cheapMaxPrice', 150000, 'lenderMinPrice', 75000)
+                   || value
+                   || case when (value->>'searchMaxPrice') = '135000' then '{"searchMaxPrice": 150000}'::jsonb else '{}'::jsonb end,
+           updated_at = now()
+     where key = 'low_entry';
+    update public.billing_settings
+       set value = jsonb_build_object('lowEntryShortlistExpiryDays', 14)
+                   || value
+                   || case
+                        when value->'split'->>'top60' = '6' and value->'split'->>'low_entry' = '8' and value->'split'->>'r2r' = '6'
+                        then jsonb_build_object('split', (value->'split') || '{"top60": 3, "low_entry": 12, "r2r": 5}'::jsonb)
+                        else '{}'::jsonb
+                      end,
+           updated_at = now()
+     where key = 'deal_checks';
+    insert into public.billing_settings (key, value) values ('batch22c_cheap_applied_at', to_jsonb(now()));
+  end if;
+end $$;
+
+notify pgrst, 'reload schema';

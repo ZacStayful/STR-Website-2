@@ -39,7 +39,7 @@ import {
   type SourcerGoals,
   type ManagerGoals,
 } from '../market/goals.ts';
-import { BUDGET_LABELS, isBudget } from '../market/filters.ts';
+import { BUDGET_CHOICES, BUDGET_LABELS, isBudget } from '../market/filters.ts';
 import { DEFAULT_FINANCE } from '../listing/deal.ts';
 import { areaMetaForCode } from '../market/areas.ts';
 import { ABOUT_OPTIONS, DEFAULT_ABOUT, RISK_TO_APPETITE, ROLE_OPTIONS, TIME_TO_MANAGEMENT, aboutOption, pathFor, roleList, type AboutYou, type Role } from './about.ts';
@@ -195,7 +195,8 @@ const DEAL_TYPE_HELP: Record<DealType, string> = {
   btl: 'Buy a property and let it to long-term tenants',
 };
 
-const BUDGET_OPTIONS: readonly Option[] = (['u200', '200-350', '350-500', '500+'] as const).map((b) => opt(b, BUDGET_LABELS[b]));
+// Batch 22c: five brackets, "Under £200k" split in two. A stored 'u200' is still accepted and labelled "Under £200k", never offered.
+const BUDGET_OPTIONS: readonly Option[] = BUDGET_CHOICES.map((b) => opt(b, BUDGET_LABELS[b]));
 
 export const QUESTIONS: readonly Question[] = [
   // ── Section A: about you ──

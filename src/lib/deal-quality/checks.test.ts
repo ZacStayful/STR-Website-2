@@ -11,6 +11,8 @@ import {
   reportRowFor,
   shortlistExpiryAt,
   shortlistOrder,
+  shortlistReturn,
+  SLOT_ORDER,
   storedCheckFrom,
   subjectKindFor,
   ukDayStart,
@@ -19,6 +21,7 @@ import {
   type StoredCheck,
 } from './checks.ts';
 import type { ShortLetData, DataQuality } from '../types.ts';
+import { DEFAULT_DEAL_CHECKS } from './config.ts';
 
 const NOW = new Date('2026-09-29T07:00:00Z');
 
@@ -77,16 +80,28 @@ test('the UK day starts at London midnight: UTC in winter, an hour earlier in su
   assert.equal(ukDayStart(new Date('2026-09-28T22:30:00Z')).toISOString(), '2026-09-27T23:00:00.000Z', 'still the 28th in London');
   assert.equal(ukDayStart(new Date('2026-12-10T10:00:00Z')).toISOString(), '2026-12-10T00:00:00.000Z');
   assert.equal(shortlistExpiryAt(NOW, { shortlistExpiryDays: 7 }), '2026-10-06T07:00:00.000Z');
+  // Batch 22c: a low-entry deal waits 14 days; every other stream the 7.
+  const both = { shortlistExpiryDays: 7, lowEntryShortlistExpiryDays: 14 };
+  assert.equal(shortlistExpiryAt(NOW, both, 'low_entry'), '2026-10-13T07:00:00.000Z');
+  assert.equal(shortlistExpiryAt(NOW, both, 'top60'), '2026-10-06T07:00:00.000Z');
+  assert.equal(shortlistExpiryAt(NOW, both, 'project'), '2026-10-06T07:00:00.000Z');
+  assert.equal(shortlistExpiryAt(NOW, { shortlistExpiryDays: 7 }, 'low_entry'), '2026-10-06T07:00:00.000Z', 'without the setting, the one wait');
+  assert.equal(DEFAULT_DEAL_CHECKS.lowEntryShortlistExpiryDays, 14);
 });
 
-test('slots: each stream its share, no more than it has waiting, spare passed top areas → low entry → rent-to-rent', () => {
-  const split = { top60: 6, low_entry: 8, r2r: 6, project: 0 };
-  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 20), { top60: 6, low_entry: 8, r2r: 6, project: 0 });
-  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 2, r2r: 10, project: 0 }, 20), { top60: 12, low_entry: 2, r2r: 6, project: 0 }, 'low entry has two: the spare six go to top areas first');
-  assert.deepEqual(allocateSlots(split, { top60: 7, low_entry: 2, r2r: 10, project: 0 }, 20), { top60: 7, low_entry: 2, r2r: 10, project: 0 }, 'then on to rent-to-rent');
-  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 5), { top60: 5, low_entry: 0, r2r: 0, project: 0 }, 'the day allows five more');
+test('slots: each stream its share, no more than it has waiting, spare passed low entry → top areas → rent-to-rent (Batch 22c)', () => {
+  assert.deepEqual([...SLOT_ORDER], ['low_entry', 'top60', 'r2r']);
+  const split = { top60: 3, low_entry: 12, r2r: 5, project: 0 };
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 20), { top60: 3, low_entry: 12, r2r: 5, project: 0 });
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 2, r2r: 10, project: 0 }, 20), { top60: 13, low_entry: 2, r2r: 5, project: 0 }, 'low entry has two: its spare ten go to top areas, the next in line');
+  assert.deepEqual(allocateSlots(split, { top60: 1, low_entry: 30, r2r: 10, project: 0 }, 20), { top60: 1, low_entry: 14, r2r: 5, project: 0 }, 'top areas have one: their spare two go to low entry first');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 30, r2r: 0, project: 0 }, 20), { top60: 3, low_entry: 17, r2r: 0, project: 0 }, 'rent-to-rent has none: its five go to low entry first');
+  assert.deepEqual(allocateSlots(split, { top60: 4, low_entry: 2, r2r: 10, project: 0 }, 20), { top60: 4, low_entry: 2, r2r: 10, project: 0 }, 'then on to rent-to-rent');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 5), { top60: 0, low_entry: 5, r2r: 0, project: 0 }, 'the day allows five more: low entry first');
+  assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 0 }, 14), { top60: 2, low_entry: 12, r2r: 0, project: 0 });
   assert.deepEqual(allocateSlots(split, { top60: 0, low_entry: 0, r2r: 0, project: 0 }, 20), { top60: 0, low_entry: 0, r2r: 0, project: 0 });
   assert.deepEqual(allocateSlots(split, { top60: 3, low_entry: 3, r2r: 3, project: 0 }, 0), { top60: 0, low_entry: 0, r2r: 0, project: 0 }, 'nothing left today');
+  assert.deepEqual(DEFAULT_DEAL_CHECKS.split, { top60: 3, low_entry: 12, r2r: 5, project: 5 }, 'the decided split');
 });
 
 test('Batch 17: Project candidates have their own count of comparables checks, on top of the day’s, never taking another stream’s slot', () => {
@@ -99,14 +114,26 @@ test('Batch 17: Project candidates have their own count of comparables checks, o
   assert.deepEqual(allocateSlots(split, { top60: 30, low_entry: 20, r2r: 10, project: 9 }, 20), { top60: 6, low_entry: 8, r2r: 6, project: 0 }, 'without a Project count, none');
 });
 
-test('the shortlist order: most profitable first, then longest waiting', () => {
+test('Batch 22c: the shortlist order is the best return on the cash put in, then the most profitable, then the longest waiting', () => {
+  const p = (cash: number) => ({ kind: 'purchase', cashRequired: cash });
   const rows = [
-    { id: 'a', annual_profit: 8_000, first_seen_at: '2026-09-20T00:00:00Z' },
-    { id: 'b', annual_profit: '12000', first_seen_at: '2026-09-25T00:00:00Z' },
-    { id: 'c', annual_profit: null, first_seen_at: '2026-09-01T00:00:00Z' },
-    { id: 'd', annual_profit: 8_000, first_seen_at: '2026-09-10T00:00:00Z' },
+    // £450k, £164k cash in, £11.3k a year: 6.9%.
+    { id: 'dear', annual_profit: 11_343, deal: p(164_000), first_seen_at: '2026-09-20T00:00:00Z' },
+    // £115k, £61.9k cash in, £7.6k a year: 12.2%.
+    { id: 'cheap', annual_profit: '7555', deal: p(61_860), first_seen_at: '2026-09-25T00:00:00Z' },
+    { id: 'nocash', annual_profit: 30_000, deal: null, first_seen_at: '2026-09-01T00:00:00Z' },
+    { id: 'none', annual_profit: null, deal: p(50_000), first_seen_at: '2026-09-01T00:00:00Z' },
+    // A rental: £6,500 a year on £13,000 to start, 50%.
+    { id: 'r2r', annual_profit: 6_500, deal: { kind: 'rent-to-rent', setupCost: 13_000 }, first_seen_at: '2026-09-22T00:00:00Z' },
+    // Same return as 'dear', less profit.
+    { id: 'dear2', annual_profit: 5_671, deal: p(82_000), first_seen_at: '2026-09-02T00:00:00Z' },
+    // Same return and profit as 'dear', waiting longer.
+    { id: 'dear3', annual_profit: 11_343, deal: p(164_000), first_seen_at: '2026-09-10T00:00:00Z' },
   ];
-  assert.deepEqual(shortlistOrder(rows).map((r) => r.id), ['b', 'd', 'a', 'c']);
+  assert.deepEqual(shortlistOrder(rows).map((r) => r.id), ['r2r', 'cheap', 'dear3', 'dear', 'dear2', 'nocash', 'none']);
+  assert.equal(shortlistReturn({ annual_profit: 7_555, deal: p(61_860) })?.toFixed(3), '0.122');
+  assert.equal(shortlistReturn({ annual_profit: 7_555, deal: p(0) }), null);
+  assert.equal(shortlistReturn({ annual_profit: 7_555, deal: 'junk' }), null);
 });
 
 test('the day’s spend is summed over every checking run started today, whatever the job', () => {

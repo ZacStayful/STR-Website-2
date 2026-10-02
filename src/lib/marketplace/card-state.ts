@@ -80,7 +80,7 @@ export async function cardViewsFor(input: { supabase: ServerClient; userId: stri
   return new Map(
     input.cards.map((c) => [
       c.id,
-      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntryMaxCashIn: settings.lowEntry.maxCashIn, label: quoter.label }),
+      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label }),
     ]),
   );
 }

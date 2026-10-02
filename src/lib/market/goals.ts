@@ -15,7 +15,7 @@
  * Batch 13 turns this one object into a saved profile; Batch 14 ranks on it.
  */
 
-import { isBudget, type Budget } from './filters.ts';
+import { BUDGET_LABELS, isBudget, type Budget } from './filters.ts';
 import { AREA_META } from './areas.ts';
 import { DEFAULT_FINANCE } from '../listing/deal.ts';
 
@@ -506,7 +506,7 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
 export function describeGoals(g: MarketGoals): string[] {
   const out: string[] = [];
   if (g.home) out.push(g.maxDistanceMiles ? `≤${g.maxDistanceMiles} mi of ${g.home.postcode.split(' ')[0]}` : `Near ${g.home.postcode.split(' ')[0]}`);
-  if (g.budget) out.push({ u200: 'Under £200k', '200-350': '£200k–£350k', '350-500': '£350k–£500k', '500+': '£500k+' }[g.budget]);
+  if (g.budget) out.push(BUDGET_LABELS[g.budget]);
   if (g.bedrooms) out.push(g.bedrooms === 4 ? '4+ bed' : `${g.bedrooms}-bed`);
   if (g.sourcingKind !== 'sale' && g.maxRentPcm) out.push(`≤ £${g.maxRentPcm.toLocaleString('en-GB')} pcm`);
   if (g.motivation.mode !== 'off') {

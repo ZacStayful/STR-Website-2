@@ -11,10 +11,10 @@ test('every postcode area with a centroid is searched, keyed apart from the swee
   assert.ok(areas.includes('BT'), 'Belfast is placed by hand');
   assert.deepEqual(areas, [...areas].sort());
   const q = lowEntryQuery('cw', DEFAULT_LOW_ENTRY);
-  assert.equal(q.key, 'sale|CW||135000|1');
+  assert.equal(q.key, 'sale|CW||150000|1', 'Batch 22c: the ceiling is £150,000 (was £135,000)');
   assert.equal(q.area, 'CW');
   assert.equal(q.areaName, 'Crewe');
-  assert.equal(q.maxPrice, 135_000);
+  assert.equal(q.maxPrice, 150_000);
   assert.equal(q.minBedrooms, 1);
   assert.equal(lowEntryQuery('CW', { ...DEFAULT_LOW_ENTRY, minBedrooms: 0 }).minBedrooms, null, 'no floor is no filter');
 });

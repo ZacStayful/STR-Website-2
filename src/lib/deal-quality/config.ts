@@ -59,6 +59,8 @@ export interface DealChecksSettings {
   validDays: number;
   /** A shortlisted listing not checked within this many days is dropped. */
   shortlistExpiryDays: number;
+  /** Batch 22c: …a low-entry one (asking price within `low_entry.cheapMaxPrice`) waits this long instead. */
+  lowEntryShortlistExpiryDays: number;
   /** Hard ceiling for the one-off re-check of today's live deals, raw pence. */
   recheckCeilingPence: number;
 }
@@ -80,26 +82,37 @@ export const DEFAULT_DEAL_CONFIDENCE: DealConfidenceSettings = {
 export const DEFAULT_DEAL_CHECKS: DealChecksSettings = {
   perDay: 20,
   dailyCapPence: 100,
-  split: { top60: 6, low_entry: 8, r2r: 6, project: 5 },
+  // Batch 22c: cheap deals first. Was top60 6 / low entry 8 / rent-to-rent 6.
+  split: { top60: 3, low_entry: 12, r2r: 5, project: 5 },
   maxCallsPerCheck: 3,
   validDays: 180,
   shortlistExpiryDays: 7,
+  lowEntryShortlistExpiryDays: 14,
   recheckCeilingPence: 1200,
 };
 
 /**
- * The low-entry stream (Part F): a sale the house deal model (25% deposit,
- * the nation's additional-property tax, £6,000 + £3,500 a bedroom of
- * setup) gets into for at most `maxCashIn`, and the nationwide search that
- * feeds it. £135,000 is the widest asking price any size clears £50,000 in
- * England (a 1-bed: 25% deposit £33,750 + SDLT £6,950 + setup £9,500); a
- * 4-bed clears it up to £100,000, a Scottish 1-bed up to £122,000 (the 8%
- * ADS). The search cap is only the provider-side sieve: the deal model makes
- * the exact test on every listing, auction lots at their auction price.
+ * The low-entry stream (Batch 16, Part F; Batch 22c): a sale whose asking
+ * price is at most `cheapMaxPrice` (£150,000), an auction lot at its auction
+ * price (the guide plus the usual uplift), and the nationwide search that
+ * feeds it, which asks the provider for sales up to `searchMaxPrice`.
+ *
+ * Until Batch 22c the stream meant "the house deal model gets in for at most
+ * `maxCashIn` (£50,000)", which capped a 2-bed at about £125,000. That
+ * figure is still read and stored, so the admin page can show it, but no
+ * rule uses it: a deal is cheap on its price alone. Every card still shows
+ * the cash in ("£38k cash in").
+ *
+ * `lenderMinPrice`: a purchase under it carries a note that some lenders will
+ * not lend that low. Its figures are unchanged.
  */
 export interface LowEntrySettings {
-  /** A sale is low entry when the house deal model needs at most this much cash in, £. */
+  /** Before Batch 22c: a sale was low entry when the house deal model needed at most this much cash in, £. Stored, unused. */
   maxCashIn: number;
+  /** A sale is low entry (cheap) when its asking price is at most this, £; an auction lot at its auction price. */
+  cheapMaxPrice: number;
+  /** A purchase priced under this, £, carries the lender note on its card and deal sheet. */
+  lenderMinPrice: number;
   /** The nationwide search asks for sale listings up to this asking price, £. */
   searchMaxPrice: number;
   /** …with at least this many bedrooms (a studio has no comparables search). */
@@ -112,7 +125,9 @@ export interface LowEntrySettings {
 
 export const DEFAULT_LOW_ENTRY: LowEntrySettings = {
   maxCashIn: 50_000,
-  searchMaxPrice: 135_000,
+  cheapMaxPrice: 150_000,
+  lenderMinPrice: 75_000,
+  searchMaxPrice: 150_000,
   minBedrooms: 1,
   weeklyCapPence: 400,
   areasPerPass: 8,
@@ -197,6 +212,7 @@ export function parseDealChecks(raw: unknown): DealChecksSettings {
     maxCallsPerCheck: { min: 1, max: 10, whole: true },
     validDays: { min: 1, max: 730, whole: true },
     shortlistExpiryDays: { min: 1, max: 60, whole: true },
+    lowEntryShortlistExpiryDays: { min: 1, max: 60, whole: true },
     recheckCeilingPence: { min: 0, max: 100_000, whole: true },
   });
   const split = pick(DEFAULT_DEAL_CHECKS.split, asObject(o.split), {
@@ -211,6 +227,8 @@ export function parseDealChecks(raw: unknown): DealChecksSettings {
 export function parseLowEntry(raw: unknown): LowEntrySettings {
   return pick(DEFAULT_LOW_ENTRY, asObject(raw), {
     maxCashIn: { min: 0, max: 1_000_000, whole: true },
+    cheapMaxPrice: { min: 10_000, max: 2_000_000, whole: true },
+    lenderMinPrice: { min: 0, max: 2_000_000, whole: true },
     searchMaxPrice: { min: 10_000, max: 2_000_000, whole: true },
     minBedrooms: { min: 0, max: 6, whole: true },
     weeklyCapPence: { min: 0, max: 100_000, whole: true },

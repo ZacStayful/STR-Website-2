@@ -11,12 +11,14 @@ import { describeBand, formatOpenPrice, ladderBandIndex } from "@/lib/marketplac
 import { sweepEnabled } from "@/lib/marketplace/sweep-run";
 import { recheckEnabled } from "@/lib/marketplace/recheck-run";
 import { SOURCE_HOURLY_CAPS } from "@/lib/marketplace/cadence";
-import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, runProjectBackfillAction, updateProjectChecksAction } from "./actions";
+import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, runProjectBackfillAction, updateProjectChecksAction, runRestreamAction, runCheapRescreenAction } from "./actions";
 import { R2R_MEDIUM_PROFIT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { latestLowEntryRuns, lowEntrySearchEnabled } from "@/lib/deal-quality/low-entry-run";
 import { weekSpentPence } from "@/lib/deal-quality/low-entry-plan";
 import { DAY_STREAMS, STREAMS, STREAM_LABELS, streamOfRow, type Stream } from "@/lib/deal-quality/streams";
 import { checksView } from "@/lib/deal-quality/checks-run";
+import { loadBudgetPanel } from "@/lib/deal-quality/budget-panel-server";
+import type { WeekFigures } from "@/lib/deal-quality/budget-panel";
 import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
 import { readProjectSettings } from "@/lib/project/settings-server";
 import { projectChecksView } from "@/lib/project/check-run";
@@ -53,9 +55,9 @@ const MESSAGES: Record<string, string> = {
   r2r_saved: "Rent-to-rent bar saved. New screenings use it within a minute.",
   bad_r2r_bar: "The rent-to-rent bar must be whole pounds from £4,000 (the medium bar) to £20,000 (the cash bar).",
   low_entry_saved: "Low-entry settings saved. New records and the next search pass use them within a minute.",
-  bad_low_entry: "Those settings did not parse: whole numbers, cash in £0–£1,000,000, price cap £10,000–£2,000,000, weekly cap 0–100,000p, bedrooms 0–6, areas a pass 1–30.",
+  bad_low_entry: "Those settings did not parse: whole numbers, cheap price and search cap £10,000–£2,000,000, lender note £0–£2,000,000, cash in £0–£1,000,000, weekly cap 0–100,000p, bedrooms 0–6, areas a pass 1–30.",
   deal_checks_saved: "Deal-check settings saved. The next pass and the next re-screen use them within a minute.",
-  bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days, re-check ceiling 0–100,000p, Project photo checks 0–100 a day, Project spend 0–100,000p a day.",
+  bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days (low entry 1–60), re-check ceiling 0–100,000p, Project photo checks 0–100 a day, Project spend 0–100,000p a day.",
   project_checks_saved: "Project-check settings saved. The next pass uses them within a minute.",
   bad_project_checks: "Those settings did not parse: whole numbers, sold-price lookups 0–200 a day, give up after 1–30 days, 1–20 photos, reuse 0–365 days, effort low, medium or high.",
   bad_url: "That is not a listing URL.",
@@ -104,12 +106,16 @@ function sweepDoneToday(summary: Record<string, unknown>): number {
 
 const pounds = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 
+/** "3 of 7 (43%)", or "—" with nobody counted. */
+const activeShare = (w: WeekFigures) => (w.base === 0 ? "—" : `${w.active} of ${w.base} (${Math.round((w.active / w.base) * 100)}%)`);
+const perMember = (n: number | null) => (n === null ? "—" : String(n));
+
 /**
  * Live deals by stream, all and gone live this week (Batch 16, Part F). The
  * stream column is read where the database has it; before schema.sql is run
  * each row is worked out from the deal it carries, as the record would.
  */
-async function streamCounts(admin: ReturnType<typeof createAdminClient>, maxCashIn: number, weekAgo: string): Promise<{ counts: Record<Stream, { live: number; week: number }>; derived: boolean } | null> {
+async function streamCounts(admin: ReturnType<typeof createAdminClient>, cheapMaxPrice: number, weekAgo: string): Promise<{ counts: Record<Stream, { live: number; week: number }>; derived: boolean } | null> {
   const read = (cols: string) => admin.from("marketplace_deals").select(cols).eq("status", "live").limit(20000);
   // Batch 17: a live Project deal is counted by its project column (the hourly recheck rewrites stream from its deal), so it is read where the database has it.
   let { data, error } = await read("kind, stream, project, deal, live_since");
@@ -122,7 +128,7 @@ async function streamCounts(admin: ReturnType<typeof createAdminClient>, maxCash
   if (error) return null;
   const counts = Object.fromEntries(STREAMS.map((s) => [s, { live: 0, week: 0 }])) as Record<Stream, { live: number; week: number }>;
   for (const r of (data ?? []) as unknown as { kind: "sale" | "rent"; stream?: unknown; project?: unknown; deal: unknown; live_since: string | null }[]) {
-    const s: Stream = r.project ? "project" : streamOfRow(r, { maxCashIn });
+    const s: Stream = r.project ? "project" : streamOfRow(r, { cheapMaxPrice });
     counts[s].live += 1;
     if (r.live_since && r.live_since >= weekAgo) counts[s].week += 1;
   }
@@ -160,7 +166,9 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
     admin.from("marketplace_deals").select("postcode_area, kind").eq("status", "live").limit(20000),
     latestLowEntryRuns(admin, 30),
   ]);
-  const streams = await streamCounts(admin, settings.lowEntry.maxCashIn, weekAgo);
+  const streams = await streamCounts(admin, settings.lowEntry.cheapMaxPrice, weekAgo);
+  // Batch 22c, Part F: members, matching deals and weekly active by budget bracket.
+  const budgets = await loadBudgetPanel(settings.lowEntry.cheapMaxPrice);
   const dealQuality = await readDealQualitySettings(admin);
   const checks = await checksView(admin, dealQuality);
   const checkSettings = dealQuality.checks;
@@ -352,6 +360,7 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
           <label className="text-sm">Project photo checks a day<input name="projectPhotoChecks" type="text" inputMode="numeric" defaultValue={projectAllowance.photoChecks} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Project spend a day, pence<input name="projectCapPence" type="text" inputMode="numeric" defaultValue={projectAllowance.capPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Shortlist waits, days<input name="shortlistExpiryDays" type="text" inputMode="numeric" defaultValue={checkSettings.shortlistExpiryDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Low entry waits, days<input name="lowEntryShortlistExpiryDays" type="text" inputMode="numeric" defaultValue={checkSettings.lowEntryShortlistExpiryDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Re-check ceiling, pence<input name="recheckCeilingPence" type="text" inputMode="numeric" defaultValue={checkSettings.recheckCeilingPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <div className="flex items-end sm:col-span-3"><button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Save deal-check settings</button></div>
         </form>
@@ -448,7 +457,7 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
       <section className="mt-8 rounded-xl border border-border bg-card p-5">
         <h2 className="text-base font-semibold text-foreground">Streams</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Every deal is in one stream from the moment it is screened: a rental is rent-to-rent; a sale the house finance (25% deposit, its nation’s tax, £6,000 + £3,500 a bedroom of setup) gets into for at most {pounds(settings.lowEntry.maxCashIn)} is low entry, an auction lot at its auction price; every other sale is a top-area deal; a sale that passed its Project check is a Project deal. “This week” counts deals that went live in the last 7 days.
+          Every deal is in one stream from the moment it is screened: a rental is rent-to-rent; a sale with an asking price of at most {pounds(settings.lowEntry.cheapMaxPrice)} is low entry (cheap), an auction lot at its auction price (Batch 22c; before it, low entry meant at most {pounds(settings.lowEntry.maxCashIn)} cash in, a figure still stored but no longer used); every other sale is a top-area deal; a sale that passed its Project check is a Project deal. “This week” counts deals that went live in the last 7 days.
           {streams?.derived ? " The stream column is not in the database yet (run schema.sql): each row is worked out from the deal it carries." : ""}
         </p>
         <table className="mt-3 w-full max-w-md text-sm">
@@ -460,13 +469,63 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
           </tbody>
         </table>
         <form action={updateLowEntryAction} className="mt-4 grid gap-3 sm:grid-cols-3">
-          <label className="text-sm">Low-entry cash in, £<input name="maxCashIn" type="text" inputMode="numeric" defaultValue={settings.lowEntry.maxCashIn} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Cheap: asking price at most, £<input name="cheapMaxPrice" type="text" inputMode="numeric" defaultValue={settings.lowEntry.cheapMaxPrice} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Lender note under, £<input name="lenderMinPrice" type="text" inputMode="numeric" defaultValue={settings.lowEntry.lenderMinPrice} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Search price cap, £<input name="searchMaxPrice" type="text" inputMode="numeric" defaultValue={settings.lowEntry.searchMaxPrice} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Weekly search cap, pence<input name="weeklyCapPence" type="text" inputMode="numeric" defaultValue={settings.lowEntry.weeklyCapPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Bedrooms, at least<input name="minBedrooms" type="text" inputMode="numeric" defaultValue={settings.lowEntry.minBedrooms} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Areas a pass<input name="areasPerPass" type="text" inputMode="numeric" defaultValue={settings.lowEntry.areasPerPass} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm text-muted-foreground">Low-entry cash in, £ (stored, not used since Batch 22c)<input name="maxCashIn" type="text" inputMode="numeric" defaultValue={settings.lowEntry.maxCashIn} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <div className="flex items-end"><button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Save low-entry settings</button></div>
         </form>
+        {/* Batch 22c: the stream column worked out again under the cheap-price rule. */}
+        <form action={runRestreamAction} className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry-run the re-stream</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Re-stream deals</button>
+          <span className="text-xs text-muted-foreground">Works out every live and waiting deal’s stream again from its price; a Project deal keeps its own. The dry run shows the counts before and after and changes nothing. No spend.</span>
+        </form>
+        <form action={runCheapRescreenAction} className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry-run the cheap re-screen</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Re-screen cheap listings</button>
+          <span className="text-xs text-muted-foreground">Screens again, on today’s figures, the sale listings the searches already stored at up to {pounds(settings.lowEntry.cheapMaxPrice)} and seen in the last 3 days that never became a deal; any that now qualify join the pool like any new find. No provider call, no spend.</span>
+        </form>
+      </section>
+
+      {/* Batch 22c, Part F: is the cheap-deals work reaching low-budget members? */}
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Budget brackets</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Members by the budget they gave (the short-let budget, else the project budget), the live sale deals inside it, Today’s deals shown and kept per member, and how many were weekly active. Weeks are UK weeks, Monday to Sunday, with the same members, “active” and Today counts as the weekly-active figures; this week is still in progress.
+        </p>
+        {budgets ? (
+          <>
+            <p className="mt-2 text-sm text-foreground">
+              Live deals at up to {pounds(settings.lowEntry.cheapMaxPrice)}: <span className="font-semibold">{budgets.cheap.liveNow}</span> now · {budgets.cheap.wentLiveThisWeek} went live in the last 7 days, {budgets.cheap.wentLiveLastWeek} in the 7 before.
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[640px] text-xs">
+                <thead className="text-left text-muted-foreground">
+                  <tr><th className="py-1">Budget</th><th>Members</th><th>Live deals in it</th><th>Shown / member (last · this wk)</th><th>Kept / member (last · this wk)</th><th>Weekly active, last week</th><th>This week</th></tr>
+                </thead>
+                <tbody>
+                  {budgets.rows.map((r) => (
+                    <tr key={r.bracket} className="border-t border-border">
+                      <td className="py-1.5">{r.label}</td>
+                      <td>{r.members}</td>
+                      <td>{r.liveDeals}</td>
+                      <td>{perMember(r.lastWeek.shownPerMember)} · {perMember(r.thisWeek.shownPerMember)}</td>
+                      <td>{perMember(r.lastWeek.keptPerMember)} · {perMember(r.thisWeek.keptPerMember)}</td>
+                      <td>{activeShare(r.lastWeek)}</td>
+                      <td>{activeShare(r.thisWeek)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">The weekly-active figures could not be read (schema not run, or no service role).</p>
+        )}
       </section>
 
       <section className="mt-8 rounded-xl border border-border bg-card p-5">

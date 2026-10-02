@@ -14,7 +14,7 @@
 import type { MotivationMode } from '../market/goals.ts';
 import { applyCandidateFeedback, cleanReasons, type AppliedRules, type PickFeedback } from './picks.ts';
 import { rankPicksByBand, type RankCandidate, type SourcedListing } from './sourcing.ts';
-import { isSendable, screeningScore, type Band, type Screening } from './screen.ts';
+import { bandRank, isSendable, screeningScore, type Band, type Screening } from './screen.ts';
 import { findOutcode } from './html.ts';
 
 /** The short-let check as far as the search card can answer it; anything worse never reaches ranking. */
@@ -27,6 +27,54 @@ export interface RankOptions {
   /** How far down the ranking to keep. The picks run reaches 40 deep when better candidates are capped or unsuitable. */
   depth: number;
   mode: MotivationMode;
+  /** Batch 22c: the return-on-cash lift (on unless false). Off, the ranking is exactly the one before it. */
+  returnOnCash?: boolean;
+}
+
+/**
+ * Batch 22c, Part C: return on cash as a ranking factor for purchases. A
+ * purchase's estimated annual profit (the screening's surplus over a long
+ * let) over its cash in (deposit, tax and setup; an auction lot's bridging
+ * cash) lifts its fit by ROC_LIFT_PER_POINT for every percentage point over
+ * ROC_FLOOR_PCT, at most ROC_LIFT_MAX. So a £120,000 deal making 12% on its
+ * cash (+9) is offered ahead of a £450,000 one making 7% (+1) when both are
+ * in the member's budget and otherwise fit alike; two deals with the same
+ * return are lifted alike, whatever their price. Rent-to-rent is unchanged.
+ * The lift changes the order only: never the screening, the income bar, the
+ * profit figures or the budget.
+ */
+export const ROC_FLOOR_PCT = 6;
+export const ROC_LIFT_PER_POINT = 1.5;
+export const ROC_LIFT_MAX = 15;
+
+/** A purchase's estimated return on cash, %: the screening's surplus over the deal's cash in. Null for a rental or without either figure. */
+export function returnOnCashPct(c: { deal: RankCandidate['deal']; screening?: Screening | null }): number | null {
+  if (c.deal?.kind !== 'purchase' || c.screening?.kind !== 'purchase') return null;
+  const profit = c.screening.surplus;
+  const cash = c.deal.cashRequired;
+  if (typeof profit !== 'number' || !Number.isFinite(profit) || !Number.isFinite(cash) || cash <= 0) return null;
+  return (profit / cash) * 100;
+}
+
+/** The fit points a candidate's return on cash adds: 0 to ROC_LIFT_MAX. */
+export function returnOnCashLift(c: { deal: RankCandidate['deal']; screening?: Screening | null }): number {
+  const pct = returnOnCashPct(c);
+  if (pct === null) return 0;
+  return Math.max(0, Math.min(ROC_LIFT_MAX, Math.round(ROC_LIFT_PER_POINT * (pct - ROC_FLOOR_PCT))));
+}
+
+/**
+ * The lift applied to a band-ordered ranking: each candidate's fit raised
+ * (never past 100, as the motivation lift), then re-ordered by fit within
+ * its band. Stable, so equal fits keep the ranking's own order (its yield
+ * tie-break). Bands never mix: a qualified deal stays ahead of a medium one.
+ */
+function withReturnOnCash<C extends RankCandidate & { screening?: Screening | null; fit: number }>(list: C[]): C[] {
+  const band = (c: C) => bandRank(c.screening?.band ?? 'qualified');
+  return list
+    .map((c, i) => ({ c: { ...c, fit: Math.min(100, c.fit + returnOnCashLift(c)) }, i }))
+    .sort((a, b) => band(a.c) - band(b.c) || b.c.fit - a.c.fit || a.i - b.i)
+    .map((x) => x.c);
 }
 
 export interface MemberRanking<C> {
@@ -46,8 +94,9 @@ export interface MemberRanking<C> {
 }
 
 /**
- * Feedback rules, then the income gate, then fit, then the short-let split.
- * Each step is the picks run's own, in the picks run's order.
+ * Feedback rules, then the income gate, then fit (Batch 22c: with the
+ * return-on-cash lift), then the short-let split. Each step is the picks
+ * run's own, in the picks run's order.
  */
 export function rankForMember<C extends RankCandidate & { precheck: Precheck; screening?: Screening | null }>(
   candidates: C[],
@@ -72,7 +121,9 @@ export function rankForMember<C extends RankCandidate & { precheck: Precheck; sc
   // pounds), whereas blendFit already normalises both onto one scale. Ranked
   // band by band so the depth cut can never drop a qualified listing in favour
   // of a medium one that happened to fit better.
-  const list = rankPicksByBand(kept, opts.depth, opts.mode);
+  // Batch 22c: with the return-on-cash lift, the whole pool is ranked first and cut
+  // to depth only after the lift, so a high-return deal just below the cut is never lost.
+  const list = opts.returnOnCash === false ? rankPicksByBand(kept, opts.depth, opts.mode) : withReturnOnCash(rankPicksByBand(kept, Math.max(opts.depth, kept.length), opts.mode)).slice(0, Math.max(0, opts.depth));
   // "Could not be run as a short let": a member who said so is only offered
   // listings that already clear the check on the search card, never ones that
   // need the page to rescue them. Band sorting happens INSIDE each of these

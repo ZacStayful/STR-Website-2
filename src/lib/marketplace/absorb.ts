@@ -214,7 +214,7 @@ export async function absorbListings(
         last_seen_at: stamp,
         last_confirmed_at: stamp,
         last_confirmed_via: 'feed',
-        next_check_due_at: shortlist && checks ? shortlistExpiryAt(now, checks) : fetchable ? stamp : nextCheckDueAt(l.kind, rec.annualProfit, now),
+        next_check_due_at: shortlist && checks ? shortlistExpiryAt(now, checks, hold.kind === 'hold' ? 'project' : rec.stream) : fetchable ? stamp : nextCheckDueAt(l.kind, rec.annualProfit, now),
         created_at: stamp,
         updated_at: stamp,
       });
@@ -268,7 +268,7 @@ async function reconcileDeal(admin: Admin, deal: DealRow, l: SourcedListing, bui
       // The price may have moved while it was off the market: record it, as any reprice is.
       const { columns: priceCols } = priceChangeColumns(deal, rec, stamp);
       const needsWork = needsWorkOf(l);
-      const revive = { ...recordColumns(l, rec), ...priceCols, ...(needsWork ? { needs_work: needsWork } : {}), ...(held ? { stream: 'project' } : {}), status: shortlist ? 'pending_check' : fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: shortlist && checks ? shortlistExpiryAt(now, checks) : stamp, check_failures: 0, updated_at: stamp };
+      const revive = { ...recordColumns(l, rec), ...priceCols, ...(needsWork ? { needs_work: needsWork } : {}), ...(held ? { stream: 'project' } : {}), status: shortlist ? 'pending_check' : fetchable ? 'pending_verify' : 'live', retired_reason: null, retired_at: null, last_seen_at: stamp, last_confirmed_at: stamp, last_confirmed_via: 'feed', next_check_due_at: shortlist && checks ? shortlistExpiryAt(now, checks, held ? 'project' : rec.stream) : stamp, check_failures: 0, updated_at: stamp };
       // A database without the Batch 6 columns (revived_at, revived_from) or Batch 16's (stream) still revives the deal: writeWithoutMissing drops what it lacks.
       const { error } = await writeWithoutMissing(returning ? { ...revive, revived_at: stamp, revived_from: reason } : revive, (columns) => admin.from('marketplace_deals').update(columns).eq('canonical_url', deal.canonical_url), tag);
       if (error) console.error(`[${tag}] reactivate failed:`, error.message);
@@ -303,4 +303,10 @@ async function reconcileDeal(admin: Admin, deal: DealRow, l: SourcedListing, bui
   const { error } = await admin.from('marketplace_deals').update(update).eq('canonical_url', deal.canonical_url);
   if (error) console.error(`[${tag}] confirm update failed:`, error.message);
   else counters.confirmed += 1;
+  // Batch 22c: a reprice can cross the cheap price, so the stream follows it. Never a Project deal's: only its hold sets
+  // or clears that. Its own write, tolerant of a database without the column, so the confirm above is never put at risk.
+  if (repriced && !error) {
+    const { error: streamError } = await writeWithoutMissing({ stream: rec.stream }, (columns) => admin.from('marketplace_deals').update(columns).eq('canonical_url', deal.canonical_url).or('stream.is.null,stream.neq.project'), tag);
+    if (streamError) console.error(`[${tag}] re-stream on reprice failed:`, streamError.message);
+  }
 }

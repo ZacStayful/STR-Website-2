@@ -46,3 +46,12 @@ test('the free best case: a dear house cannot reach 10% of its value, and is nev
   assert.deepEqual(projectHoldFor(input({ facts: null }), DEFAULT_PROJECT_SETTINGS), { kind: 'hold' }, 'bedrooms unknown: the page decides');
   assert.deepEqual(projectHoldFor(input({ price: null }), DEFAULT_PROJECT_SETTINGS), { kind: 'hold' });
 });
+
+test('Batch 22c: a cheap candidate (up to £150,000) from any search, the nationwide low-entry one included, is eligible for the hold', () => {
+  // The hold takes no source and no price ceiling: whichever job absorbed the listing (sweep, demand, nationwide search),
+  // the same rules apply. Only auction lots, unreadable pages and the wording exclusions keep a listing out.
+  for (const price of [60_000, 100_000, 120_000, 149_999, 150_000]) {
+    assert.deepEqual(projectHoldFor(input({ price }), DEFAULT_PROJECT_SETTINGS), { kind: 'hold' }, `£${price}`);
+  }
+  assert.ok(!('source' in input()), 'no source in the hold’s input');
+});

@@ -19,6 +19,7 @@ import {
   listingAge,
   medianAgeDays,
   budgetBounds,
+  withinTypeBudget,
   type AreaRef,
   type SourcedListing,
 } from './sourcing.ts';
@@ -327,4 +328,22 @@ test('the area a query key searched, for the cohort lookup (Batch 17, bug 1)', (
   assert.equal(queryKeyArea('odd'), null);
   assert.equal(queryKeyArea(null), null);
   assert.equal(queryKeyArea('sale|LS6|||'), null, 'an outcode is not an area');
+});
+
+test('Batch 22c: budgetBounds for every budget, the legacy Under £200k included', () => {
+  assert.deepEqual(budgetBounds('u100'), { min: null, max: 100_000 });
+  assert.deepEqual(budgetBounds('100-200'), { min: 100_000, max: 200_000 });
+  assert.deepEqual(budgetBounds('u200'), { min: null, max: 200_000 }, 'legacy: under £200k, as it always was');
+  assert.deepEqual(budgetBounds('200-350'), { min: 200_000, max: 350_000 });
+  assert.deepEqual(budgetBounds('350-500'), { min: 350_000, max: 500_000 });
+  assert.deepEqual(budgetBounds('500+'), { min: 500_000, max: null });
+  assert.deepEqual(budgetBounds(null), { min: null, max: null });
+  const g = (budget: MarketGoals['budget']) => ({ ...goals, budget, dealTypes: ['buy_str'] }) as MarketGoals;
+  assert.equal(withinTypeBudget(99_000, 'buy_str', g('u100')), true);
+  assert.equal(withinTypeBudget(120_000, 'buy_str', g('u100')), false);
+  assert.equal(withinTypeBudget(120_000, 'buy_str', g('100-200')), true);
+  assert.equal(withinTypeBudget(60_000, 'buy_str', g('100-200')), false);
+  assert.equal(withinTypeBudget(60_000, 'buy_str', g('u200')), true);
+  assert.equal(withinTypeBudget(200_000, 'buy_str', g('u200')), true);
+  assert.equal(withinTypeBudget(200_001, 'buy_str', g('u200')), false);
 });

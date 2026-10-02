@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rankForMember, toPickFeedback, type Precheck, type StoredFeedbackRow } from './rank.ts';
+import { rankForMember, returnOnCashLift, returnOnCashPct, ROC_LIFT_MAX, toPickFeedback, type Precheck, type StoredFeedbackRow } from './rank.ts';
 import { applyCandidateFeedback, cleanReasons, feedbackRules, PICK_REASONS, type PickFeedback, type PickReason } from './picks.ts';
 import { dealForSourced, rankPicksByBand, type RankCandidate, type SourcedListing } from './sourcing.ts';
 import { isSendable, screeningScore, type Band, type Screening } from './screen.ts';
@@ -139,7 +139,7 @@ function feedbackFor(r: ReturnType<typeof rng>, pool: Cand[]): PickFeedback[] {
 
 // ─── The picks run is unchanged ─────────────────────────────────────────
 
-test('rankForMember gives the picks run exactly what its inline ranking gave, pick included', () => {
+test('with the return-on-cash lift off, rankForMember gives the picks run exactly what its inline ranking gave, pick included', () => {
   const seen = { withPick: 0, empty: 0, gated: 0, strict: 0, cut: 0, rulesBit: 0, unknownKept: 0 };
   for (let seed = 1; seed <= 600; seed += 1) {
     const r = rng(seed);
@@ -150,7 +150,7 @@ test('rankForMember gives the picks run exactly what its inline ranking gave, pi
     const mode = r.pick<MotivationMode>(['off', 'prefer', 'only']);
 
     const before = legacyRank(pool, feedback, rules, depth, mode);
-    const after = rankForMember(pool, feedback, rules, { depth, mode });
+    const after = rankForMember(pool, feedback, rules, { depth, mode, returnOnCash: false });
 
     const where = `seed ${seed} (depth ${depth}, mode ${mode})`;
     assert.deepStrictEqual(after.ranked, before.ranked, `ranking differs: ${where}`);
@@ -248,4 +248,60 @@ test('"return too low" is measured on the screening the answer was about', () =>
   const high = plain('high', { screening: screening('sale', 'qualified', 60) });
   const { ranked } = rankForMember([low, high], said, feedbackRules(said), { depth: 40, mode: 'off' });
   assert.deepEqual(ranked.map((p) => p.listing.id), ['high']);
+});
+
+// ─── Batch 22c: return on cash as a ranking factor ─────────────────────
+
+/** A purchase as the ranking sees it: the cash in, the screening's surplus, a yield that tops out the deal points (as nearly every live deal does). */
+const roc = (id: string, price: number, cash: number, profit: number, areaFit = 60, band: Band = 'qualified'): Cand => ({
+  listing: listing({ id, canonicalUrl: `https://x/${id}`, price: { amount: price, period: 'total' } }),
+  deal: { kind: 'purchase', askingPrice: price, cashRequired: cash, grossYieldPct: 40, targetYieldPct: 10 } as unknown as Cand['deal'],
+  areaFit,
+  areaName: 'Somewhere',
+  precheck: 'ok',
+  screening: { kind: 'purchase', band, upliftPct: 50, surplus: profit } as unknown as Screening,
+});
+
+const order = (pool: Cand[], depth = 40) => rankForMember(pool, [], feedbackRules([]), { depth, mode: 'off' }).ranked.map((c) => `${c.listing.id}:${c.fit}`);
+
+test('the lift: 1.5 fit points a percentage point of return on cash over 6%, at most 15; nothing for a rental', () => {
+  assert.equal(ROC_LIFT_MAX, 15);
+  assert.equal(returnOnCashLift(roc('a', 115_000, 61_860, 7_555)), 9, '12.2% → +9');
+  assert.equal(returnOnCashLift(roc('b', 450_000, 164_000, 11_343)), 1, '6.9% → +1');
+  assert.equal(returnOnCashLift(roc('c', 150_000, 62_000, 9_866)), 15, '15.9% → +15 (the most)');
+  assert.equal(returnOnCashLift(roc('d', 500_000, 280_000, 8_000)), 0, '2.9% → 0, never below');
+  assert.equal(returnOnCashPct(roc('a', 115_000, 61_860, 7_555))?.toFixed(1), '12.2');
+  assert.equal(returnOnCashLift({ deal: null, screening: null }), 0);
+  const rental = plain('r', {}, { kind: 'rent', price: { amount: 900, period: 'pcm' } });
+  assert.equal(returnOnCashLift(rental), 0);
+});
+
+test('worked example 1: LA £115k at 12.2% beats E £450k at 6.9% on the same area fit (85 vs 77)', () => {
+  assert.deepEqual(order([roc('E-450k', 450_000, 164_000, 11_343), roc('LA-115k', 115_000, 61_860, 7_555)]), ['LA-115k:85', 'E-450k:77']);
+  // The dearer one needs about 15 more points of area fit to come first: at 74 the two tie on 85, at 76 it leads 87 to 85.
+  assert.deepEqual(order([roc('E-450k', 450_000, 164_000, 11_343, 74), roc('LA-115k', 115_000, 61_860, 7_555)]).sort(), ['E-450k:85', 'LA-115k:85']);
+  assert.equal(order([roc('E-450k', 450_000, 164_000, 11_343, 76), roc('LA-115k', 115_000, 61_860, 7_555)])[0], 'E-450k:87');
+});
+
+test('worked example 2: CA £150k at 15.9% beats E £425k at 7.3%, even when the dearer one sits in a much better area (91 vs 90)', () => {
+  assert.deepEqual(order([roc('E-425k', 425_000, 155_250, 11_343), roc('CA-150k', 150_000, 62_000, 9_866)]), ['CA-150k:91', 'E-425k:78']);
+  // Area fit 80 instead of 60: 48 + 40 = 88, +2 = 90.
+  assert.deepEqual(order([roc('E-425k', 425_000, 155_250, 11_343, 80), roc('CA-150k', 150_000, 62_000, 9_866)]), ['CA-150k:91', 'E-425k:90']);
+});
+
+test('worked example 3: equal returns lift alike, so it favours return, not cheapness (ST £425k at 30.6% vs SA £119.5k at 24.9%)', () => {
+  const ranked = rankForMember([roc('SA-119k', 119_500, 52_350, 13_039), roc('ST-425k', 425_000, 162_250, 49_612, 62)], [], feedbackRules([]), { depth: 40, mode: 'off' }).ranked;
+  assert.deepEqual(ranked.map((c) => `${c.listing.id}:${c.fit}`), ['ST-425k:92', 'SA-119k:91'], 'both +15: a slightly better area wins');
+});
+
+test('the lift changes order, never eligibility: bands stay apart, the income bar still gates, and the depth cut comes after the lift', () => {
+  // A medium deal with a huge return never passes a qualified one.
+  assert.deepEqual(order([roc('medium', 100_000, 40_000, 20_000, 60, 'medium'), roc('qualified', 450_000, 164_000, 11_343, 60)]), ['qualified:77', 'medium:91']);
+  // An unqualified deal is still gated out.
+  assert.deepEqual(order([roc('unq', 100_000, 40_000, 20_000, 60, 'unqualified'), roc('q', 450_000, 164_000, 11_343)]), ['q:77']);
+  // Depth 1: the high-return deal that ranked second before the lift is the one kept.
+  assert.deepEqual(order([roc('E-450k', 450_000, 164_000, 11_343, 70), roc('LA-115k', 115_000, 61_860, 7_555)], 1), ['LA-115k:85']);
+  assert.deepEqual(rankForMember([roc('E-450k', 450_000, 164_000, 11_343, 70), roc('LA-115k', 115_000, 61_860, 7_555)], [], feedbackRules([]), { depth: 1, mode: 'off', returnOnCash: false }).ranked.map((c) => c.listing.id), ['E-450k'], 'before Batch 22c the dearer one was kept');
+  // Fit never passes 100.
+  assert.equal(order([roc('top', 100_000, 40_000, 20_000, 100)])[0], 'top:100');
 });
