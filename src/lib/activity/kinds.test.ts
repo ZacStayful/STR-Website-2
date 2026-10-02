@@ -114,3 +114,9 @@ test("Batch 22's kinds: seeing the reveal and running a deep search count; looki
   assert.equal(isQualifying('si_view'), false);
   assert.equal(isCounted('si_view'), false);
 });
+
+test("Batch 22d: Start again is an in-app action that counts towards weekly active", () => {
+  assert.equal(isActivityKind('profile_reset'), true);
+  assert.equal(isQualifying('profile_reset'), true);
+  assert.equal(isCounted('profile_reset'), true);
+});

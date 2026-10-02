@@ -3,7 +3,8 @@ import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
-import { loadProfileMetrics } from "@/lib/profiles/admin-server";
+import { loadProfileMetrics, loadResetMetrics } from "@/lib/profiles/admin-server";
+import { weekLabel } from "@/lib/activity/week";
 import { pct } from "@/lib/activity/metrics";
 import { runDealTypesBackfill, type BackfillLine } from "@/lib/profile/deal-types-backfill-run";
 import { runDealTypesBackfillAction } from "./actions";
@@ -36,7 +37,7 @@ export default async function AdminProfilesPage({ searchParams }: { searchParams
   const one = (k: string) => (Array.isArray(params[k]) ? params[k][0] : params[k]) ?? null;
   // Batch 17: the deal-types backfill's dry run is a read, made here when asked for.
   const dealTypesDry = one("dealTypes") === "dry" ? await runDealTypesBackfill({ dry: true, triggeredBy: user.email ?? "admin" }) : null;
-  const { status, message, metrics } = await loadProfileMetrics();
+  const [{ status, message, metrics }, resets] = await Promise.all([loadProfileMetrics(), loadResetMetrics()]);
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl space-y-6 px-4 py-8">
@@ -100,6 +101,36 @@ export default async function AdminProfilesPage({ searchParams }: { searchParams
             </section>
           </>
         )}
+
+        {/* Batch 22d: Start again. */}
+        <section className="rounded-xl border border-border bg-card p-5">
+          <h2 className="text-base font-semibold text-foreground">Start again</h2>
+          {!resets ? (
+            <p className="mt-1 text-sm text-muted-foreground">The Batch 22d section of supabase/schema.sql hasn’t been run yet, so there’s nothing to count.</p>
+          ) : (
+            <>
+              <p className="mt-1 text-xs text-muted-foreground">Week of {weekLabel(resets.week)} (Monday to Sunday, UK time). All accounts. A member counts as keeping a deal if they Kept one within 7 days after a reset.</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-3">
+                <div>
+                  <div className="text-3xl font-semibold text-foreground">{resets.metrics.resets}</div>
+                  <div className="mt-1 text-sm text-muted-foreground">resets this week</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-semibold text-foreground">{resets.metrics.members}</div>
+                  <div className="mt-1 text-sm text-muted-foreground">members</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-semibold text-foreground">
+                    {resets.metrics.keptWithin7} <span className="text-base font-normal text-muted-foreground">of {resets.metrics.members}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-muted-foreground">
+                    Kept a deal within 7 days{resets.metrics.settled < resets.metrics.members ? ` (${resets.metrics.members - resets.metrics.settled} still inside their 7 days)` : ""}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
 
         <DealTypesBackfill dry={dealTypesDry} done={one("dealTypes")} written={one("written")} left={one("left")} already={one("already")} outOfTime={one("outOfTime") === "1"} />
       </div>

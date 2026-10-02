@@ -37,7 +37,8 @@ import { payerFor } from '../team';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { isMissingProjectColumn, rankingPool } from '../marketplace/queries';
 import { DEFAULT_FILTERS } from '../marketplace/grid';
-import { profilesFor } from '../profiles/server';
+import { latestRestartsFor, profilesFor } from '../profiles/server';
+import { afterRestart } from '../profiles/reset';
 import { rechooseToday, type TodaySelection } from '../today/selection';
 import { mustMatchCount, tailoredRows } from './today';
 import { dealTypeOf, typesShown } from '../profile/deal-types';
@@ -171,10 +172,12 @@ export async function tailoringForSeats(admin: Admin, seats: readonly SeatInput[
 
   const about = new Map<string, AboutYou>();
   const marks = new Map<string, AnsweredMap>();
-  const [settings, modes, raw] = await Promise.all([
+  const [settings, modes, raw, restarts] = await Promise.all([
     getBillingSettings(),
     modesFor(admin, profileIds),
     signalsFor(admin, userIds, since),
+    // Batch 22d: after Start again a profile learns only from what came later.
+    latestRestartsFor(admin, profileIds, since),
     (async () => {
       for (const some of chunks(userIds)) {
         const [aboutRes, quizRes] = await Promise.all([admin.from('profiles').select('id, about_you').in('id', some), admin.from('profile_quiz').select('user_id, answered').in('user_id', some)]);
@@ -192,7 +195,11 @@ export async function tailoringForSeats(admin: Admin, seats: readonly SeatInput[
     const profile = seat.profile;
     // A seat's signals: those tagged with its profile, and untagged ones for the
     // active profile (the one the member was using), or all of them with no profile.
-    const own = raw.filter((s) => s.userId === seat.userId && (!profile || s.profileId === profile.id || (s.profileId === null && profile.isActive)));
+    const own = afterRestart(
+      raw.filter((s) => s.userId === seat.userId && (!profile || s.profileId === profile.id || (s.profileId === null && profile.isActive))),
+      (s) => s.at,
+      profile ? restarts.get(profile.id) : undefined,
+    );
     const seen = new Set<string>();
     const signals: Signal[] = [];
     for (const s of own.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))) {

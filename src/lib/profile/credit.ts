@@ -49,9 +49,15 @@ export function profileCreditDecision(p: { eligibility: Eligibility; progress: P
   return { kind: 'pay' };
 }
 
-/** The line on the celebration screen and the profile page. `pence` is the setting; `paid` whether the grant exists. */
-export function creditLine(p: { paid: boolean; decision: CreditDecision | null; pence: number }): string {
+/**
+ * The line on the celebration screen and the profile page. `pence` is the
+ * setting; `paid` whether the grant exists. Batch 22d: `already` when it was
+ * paid before this completion (after Start again, or on a blank profile): it
+ * says so, and never offers it again.
+ */
+export function creditLine(p: { paid: boolean; decision: CreditDecision | null; pence: number; already?: boolean }): string {
   const amount = `£${(p.pence / 100).toFixed(p.pence % 100 === 0 ? 0 : 2)}`;
+  if (p.paid && p.already) return `You’ve already had your ${amount} for completing your profile, so there’s none for answering again.`;
   if (p.paid) return `${amount} of credit is on your account for completing your profile.`;
   const d = p.decision;
   if (!d) return `Complete your profile for ${amount} of credit.`;

@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { safeInternalPath } from '@/lib/safe-path';
 import { GOALS_EDITOR_HREF } from '@/lib/nav';
+import { quizPathFor } from '@/lib/auth/landing';
 import { createProfile, deleteProfile, renameProfile, setProfilePaused, switchProfile } from '@/lib/profiles/server';
 import { typesFromForm } from '@/lib/profiles/rules';
 
@@ -61,8 +62,9 @@ export async function editProfileAction(formData: FormData): Promise<void> {
 }
 
 /**
- * A new profile, copied from one the member has. It becomes the active one
- * and opens on the profile page, where anything different is changed.
+ * A new profile, copied from one the member has (or, Batch 22d, blank). It
+ * becomes the active one and opens on the profile page, where anything
+ * different is changed; a blank one opens on the quiz.
  */
 export async function createProfileAction(formData: FormData): Promise<void> {
   const userId = await member();
@@ -72,12 +74,14 @@ export async function createProfileAction(formData: FormData): Promise<void> {
     copyFrom: field(formData, 'copy_from') || null,
     types: typesFromForm(formData.getAll('types')),
     forClient: field(formData, 'for_client') === '1',
+    // Batch 22d: "Start blank" copies nothing; the quiz asks everything from the start.
+    blank: field(formData, 'start') === 'blank',
   });
   if (!out.ok) back('error', out.error);
   const switched = await switchProfile(userId, out.id);
   refresh();
   if (!switched.ok) back('created');
-  redirect(`${GOALS_EDITOR_HREF}?new=1`);
+  redirect(field(formData, 'start') === 'blank' ? quizPathFor(GOALS_EDITOR_HREF) : `${GOALS_EDITOR_HREF}?new=1`);
 }
 
 export async function renameProfileAction(formData: FormData): Promise<void> {

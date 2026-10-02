@@ -120,6 +120,8 @@ export const ACTIVITY_KINDS = {
   saved_profile_paused: inApp('Paused a saved profile'),
   saved_profile_resumed: inApp('Resumed a saved profile'),
   saved_profile_deleted: inApp('Deleted a saved profile'),
+  // Batch 22d: "Start again" on the profile (extras: answers, deals_kept, deals_cleared).
+  profile_reset: inApp('Started their profile again'),
 
   // Batch 14: tailoring (src/lib/tailoring). Criterion keys and steps only, never an answer.
   tailoring_mode: inApp('Switched a must-have or nice-to-have'),

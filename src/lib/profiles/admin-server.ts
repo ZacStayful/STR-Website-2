@@ -8,8 +8,9 @@ import 'server-only';
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { loadWeeklyActive } from '../activity/admin-server';
-import { ukWeekRange, weekLabel } from '../activity/week';
+import { ukWeekRange, ukWeekStart, weekLabel } from '../activity/week';
 import { profileMetrics, type ProfileFact, type ProfileMetrics } from './admin-metrics';
+import { resetMetrics, type ResetMetrics, type RestartFact } from './reset';
 
 const PAGE = 1000;
 
@@ -28,4 +29,57 @@ export async function loadProfileMetrics(now: Date = new Date()): Promise<{ stat
   const active = await loadWeeklyActive({ weeks: 8, now });
   if (active.status !== 'ok') return { status: 'activity_missing', message: active.message, metrics: null };
   return { status: 'ok', message: null, metrics: profileMetrics(active.report.members, facts, { now, weekEnd: (w) => ukWeekRange(w).end.getTime(), weekLabel }) };
+}
+
+/**
+ * Batch 22d: the resets panel. This UK week's Start again resets, the members
+ * behind them, and how many of those Kept a deal (activity_events 'keep')
+ * within 7 days after. Counts only. Null when profile_restarts cannot be read
+ * (the Batch 22d section not run yet).
+ */
+export async function loadResetMetrics(now: Date = new Date()): Promise<{ week: string; metrics: ResetMetrics } | null> {
+  if (!hasServiceRole()) return null;
+  const admin = createAdminClient();
+  const week = ukWeekStart(now);
+  const range = ukWeekRange(week);
+  const restarts: RestartFact[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin
+      .from('profile_restarts')
+      .select('user_id, kind, created_at')
+      .eq('kind', 'reset')
+      .gte('created_at', range.start.toISOString())
+      .lt('created_at', range.end.toISOString())
+      .order('created_at', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.warn('[profiles] resets unreadable (schema behind?):', error.message);
+      return null;
+    }
+    for (const r of (data ?? []) as { user_id: string; kind: 'reset' | 'blank'; created_at: string }[]) restarts.push({ userId: r.user_id, kind: r.kind, createdAt: r.created_at });
+    if ((data?.length ?? 0) < PAGE) break;
+  }
+  const users = [...new Set(restarts.map((r) => r.userId))];
+  const keeps: { userId: string; at: string }[] = [];
+  const until = new Date(range.end.getTime() + 7 * 86_400_000).toISOString();
+  for (let i = 0; i < users.length; i += 150) {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await admin
+        .from('activity_events')
+        .select('user_id, occurred_at')
+        .in('user_id', users.slice(i, i + 150))
+        .eq('kind', 'keep')
+        .gte('occurred_at', range.start.toISOString())
+        .lt('occurred_at', until)
+        .order('occurred_at', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) {
+        console.warn('[profiles] keeps after resets unreadable:', error.message);
+        break;
+      }
+      for (const r of (data ?? []) as { user_id: string; occurred_at: string }[]) keeps.push({ userId: r.user_id, at: r.occurred_at });
+      if ((data?.length ?? 0) < PAGE) break;
+    }
+  }
+  return { week, metrics: resetMetrics(restarts, keeps, range, now) };
 }

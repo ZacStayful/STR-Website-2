@@ -37,6 +37,15 @@ async function tagMap(admin: Admin, table: string, keyColumn: string, userColumn
 
 /** entry key → profile id, for the viewer's own entries. Empty when the tags cannot be read. */
 export async function profileTagsFor(userId: string, payerId: string, entries: readonly TaggableEntry[]): Promise<Map<string, string>> {
+  return (await profileTagsOrNull(userId, payerId, entries)) ?? new Map();
+}
+
+/**
+ * The same, but null when the tags cannot be read: Batch 22d's Start again,
+ * which must never take "unreadable" for "untagged" (an untagged entry counts
+ * as the active profile's there, so it could clear another profile's deal).
+ */
+export async function profileTagsOrNull(userId: string, payerId: string, entries: readonly TaggableEntry[]): Promise<Map<string, string> | null> {
   const out = new Map<string, string>();
   const own = entries.filter((e) => e.mine);
   if (own.length === 0) return out;
@@ -50,7 +59,7 @@ export async function profileTagsFor(userId: string, payerId: string, entries: r
     // An open is the payer's; only someone paying for themselves has theirs tagged.
     payerId === userId ? tagMap(admin, 'deal_opens', 'deal_id', 'user_id', userId, dealIds) : Promise.resolve(new Map<string, string>()),
   ]);
-  if (!rows || !reactions || !picks || !opens) return out;
+  if (!rows || !reactions || !picks || !opens) return null;
   for (const e of own) {
     const id = entryProfile({
       pipeline: e.checkedListingId ? rows.get(e.checkedListingId) : null,

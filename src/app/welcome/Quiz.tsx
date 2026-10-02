@@ -187,7 +187,7 @@ export function Quiz(start: QuizStart) {
         <QuizPhoto image="start" priority />
         <h1 className="mt-5 text-2xl font-semibold text-foreground">Let’s build your profile</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          One question per screen, {minutesLeftLabel(progress.minutesLeft).replace(" left", "")}. Every answer makes the deals we show you more yours{credit.pence > 0 ? `, and there is £${(credit.pence / 100).toFixed(0)} of credit when you finish` : ""}.
+          One question per screen, {minutesLeftLabel(progress.minutesLeft).replace(" left", "")}. Every answer makes the deals we show you more yours{credit.pence > 0 && !credit.paid && credit.state !== "never" && credit.state !== "off" ? `, and there is £${(credit.pence / 100).toFixed(0)} of credit when you finish` : ""}.
         </p>
         <div className="mt-5">
           <PrimaryButton onClick={() => setScreen(progress.next ? { kind: "question", id: progress.next } : { kind: "done" })}>Start</PrimaryButton>

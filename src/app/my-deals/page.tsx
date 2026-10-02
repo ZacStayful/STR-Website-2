@@ -202,6 +202,14 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
             )}
           </div>
         )}
+        {/* Batch 22d: deals cleared with "Start again", restorable for 30 days. */}
+        {!reportsTab && load.cleared > 0 && (
+          <p className="text-center text-sm text-muted-foreground">
+            <Link href="/my-deals/cleared" className="font-medium text-foreground underline-offset-4 hover:underline">
+              Cleared deals · {load.cleared}
+            </Link>
+          </p>
+        )}
         <FocusScroll targetId={reportsTab ? null : (focusItem?.key ?? (showPassed ? "stage-passed" : null))} />
       </div>
     </main>

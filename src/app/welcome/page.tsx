@@ -18,6 +18,7 @@ import { isTeamBound } from "@/lib/team";
 import { quizCheckboxShown } from "@/lib/tracking/consent";
 import { deviceConsent, memberConsentFor } from "@/lib/tracking/consent-server";
 import { starterPackStateFor } from "@/lib/starter-pack/server";
+import { hasRestartFor } from "@/lib/profiles/server";
 import { Quiz } from "./Quiz";
 
 export const dynamic = "force-dynamic";
@@ -81,7 +82,8 @@ export default async function WelcomePage({ searchParams }: { searchParams: Prom
       : false;
 
   // Batch 22: a new member goes from the last answer (or "Finish later") straight to their signup reveal.
-  const revealHref = !editing && !summary.teamMember && (await isRevealMember(user.id, user.created_at)) ? `/welcome/reveal?next=${encodeURIComponent(returnTo)}` : null;
+  // Batch 22d: never after Start again or Start blank (no signup reveal, no house spend on a restart).
+  const revealHref = !editing && !summary.teamMember && (await isRevealMember(user.id, user.created_at)) && !(await hasRestartFor(user.id)) ? `/welcome/reveal?next=${encodeURIComponent(returnTo)}` : null;
 
   // Batch 20: the starter pack, offered as the welcome questions are finished (only looked up when it could show).
   const packState = !editing && !summary.teamMember && !summary.progress.mandatoryDone ? await starterPackStateFor(user.id) : null;

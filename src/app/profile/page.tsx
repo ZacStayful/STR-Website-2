@@ -90,6 +90,15 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             </p>
           )}
           <p className="mt-1 text-sm text-muted-foreground">{progress.types.length > 0 ? `Deals you want: ${describeTypes(progress.types)}. ` : ""}Every answer here shapes the deals we show you. Tap one to change it{progress.complete ? "" : ", or carry on where you left off"}.</p>
+          {/* Batch 22d: plans changed? Clear this profile's answers (and, if they choose, its tracked deals) and answer again. */}
+          {savedProfiles.readable && savedProfiles.active && (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Plans changed?{" "}
+              <Link href="/profile/start-again" className="font-medium text-foreground underline-offset-4 hover:underline">
+                Start again
+              </Link>
+            </p>
+          )}
           {first(params.mode) === "1" && (
             <p role="status" className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm text-foreground">
               Saved. Today’s deals for this profile now follow it.

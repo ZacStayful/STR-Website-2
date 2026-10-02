@@ -13,6 +13,7 @@ import { parseAboutYou } from '../profile/about';
 import { typeFromPickReasons, withAddedType, type DealType } from '../profile/deal-types';
 import { setNotification } from '../notifications/server';
 import type { ResponseRow } from './picks-patterns';
+import { restartedSince } from '../profiles/server';
 
 /**
  * Service-role reads and writes for daily picks. `sourcing_sent` and
@@ -273,6 +274,8 @@ export async function addTypeFromPickFeedback(where: { token: string } | { id: s
   const admin = createAdminClient();
   const own = await pickProfileRow(admin, pick.id, pick.userId);
   if (own === 'gone') return null;
+  // Batch 22d: a pick from before the profile's Start again changes nothing (its answers were cleared on purpose).
+  if (await restartedSince(admin, { userId: pick.userId, profileId: own?.id ?? null }, pick.sentAt)) return null;
   const { data: member } = await admin.from('profiles').select('market_goals, about_you').eq('id', pick.userId).maybeSingle();
   const row = member as { market_goals?: unknown; about_you?: unknown } | null;
   const inactive = own !== null && !own.isActive;
