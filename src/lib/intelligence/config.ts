@@ -43,6 +43,9 @@ export const REVEAL_ALTERNATIVES = 2;
 export const CALL_CONSENT_VERSION = 'si-calls-2026-10';
 export const ANSWERS_VERSION = 'si-answers-2026-10';
 
-/** The question chips, in the order they are offered (only those that apply are shown, at most MAX_CHIPS). */
+/**
+ * The question chips, in the order they are offered (only those that apply are shown, at most MAX_CHIPS).
+ * Each key is the slug of a knowledge entry (Batch 24): the chip shows that entry's approved answer.
+ */
 export const CHIP_ORDER = ['credits', 'open_cost', 'pack', 'save', 'how_picked', 'analysis', 'free_delay', 'calls', 'topup', 'no_match'] as const;
 export const MAX_CHIPS = 8;
