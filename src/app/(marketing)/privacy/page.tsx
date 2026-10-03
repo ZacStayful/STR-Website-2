@@ -4,6 +4,7 @@ import { siteUrl } from "@/lib/url";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { TRACKING } from "@/lib/tracking/config";
 import { DEFAULT_VOICE } from "@/lib/voice/settings";
+import { DEFAULT_KNOWLEDGE_SETTINGS } from "@/lib/knowledge/settings";
 
 export const metadata: Metadata = {
   title: "Privacy policy — Stayful Intelligence",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
   alternates: { canonical: siteUrl("/privacy") },
 };
 
-const LAST_UPDATED = "1 October 2026";
+const LAST_UPDATED = "3 October 2026";
 
 /** How long a cookie choice is remembered, in months, as the config sets it. */
 const CONSENT_MONTHS = Math.round(TRACKING.consentDays / 30.4);
@@ -30,6 +31,10 @@ const CONSENT_MONTHS = Math.round(TRACKING.consentDays / 30.4);
  * Calls and texts from Stayful Intelligence were added with Batch 23; the
  * transcript retention is the default of si_transcript_retention_days
  * (src/lib/voice/settings.ts).
+ * What Stayful Intelligence remembers, how members' questions improve its
+ * answers, and how long they are kept were added with Batch 24 (the wording
+ * Zac approved, Q5); the months are the default of
+ * si_question_retention_months (src/lib/knowledge/settings.ts).
  */
 export default function PrivacyPage() {
   return (
@@ -52,6 +57,7 @@ export default function PrivacyPage() {
           <li><strong>Payments:</strong> your plan, credit balance and transaction history. Card details are handled by Stripe; we never see or store your full card number.</li>
           <li><strong>Feedback</strong> you give on deals, including reasons.</li>
           <li><strong>Calls and texts with Stayful Intelligence:</strong> if you switch on calls, we keep a record of each call (when, how long, what it cost) and a written transcript of what was said, produced by our AI voice provider. Calls are not recorded as audio. If you text the Stayful Intelligence number, we keep your message and our reply. Transcripts and messages are deleted after {DEFAULT_VOICE.transcriptRetentionDays} days; after that we keep only the questions asked and whether they were answered, to improve the answers. If someone rings from a number we don&apos;t recognise, we keep a scrambled (hashed) version of the number, not the number itself.</li>
+          <li><strong>What Stayful Intelligence remembers:</strong> if you ask it to remember something about you, such as the kind of property you want, it saves that only after you say yes. You can see and delete it any time in <Link href="/account#remembers">Account → What Stayful Intelligence remembers about you</Link>; deleting it removes it for good. It never asks to remember health, money beyond your profile, or anything about other people.</li>
           <li><strong>Bug reports and ideas:</strong> when you send feedback we keep your message, any screenshots (deleted after 90 days), the page you were on, your browser, device and screen size, and the app version.</li>
           <li><strong>Technical data:</strong> IP address, browser and device type, used for security and to keep you signed in.</li>
         </ul>
@@ -62,6 +68,7 @@ export default function PrivacyPage() {
           <li>To improve which deals we show you and to improve the service overall, including measuring how often members use it. (Legal basis: legitimate interests.)</li>
           <li>To take payment, keep financial records and prevent fraud and abuse of free credit. (Legal basis: contract, legal obligation and legitimate interests.)</li>
           <li>To call you, if you&apos;ve switched on calls from Stayful Intelligence (an AI assistant, which always says so): an introduction call, and calls when your credit is low. Calls are placed on weekdays between 9am and 7pm UK time, and you can switch them off at any time from Account → Notifications. (Legal basis: consent.)</li>
+          <li>We use the questions you ask Stayful Intelligence, without your name, to find gaps and write better answers. Answers come only from information Stayful has checked; nothing you say changes them. (Legal basis: legitimate interests.)</li>
           <li>To send occasional updates about Stayful Intelligence. You can turn these off at any time from Account → Notifications or the unsubscribe link. (Legal basis: legitimate interests / consent where required.)</li>
         </ul>
 
@@ -83,6 +90,7 @@ export default function PrivacyPage() {
           <li>Resend (email) and Twilio (text messages)</li>
           <li>Monday.com (our customer records)</li>
           <li>Anthropic and ElevenLabs (AI written and spoken summaries, only when you use those features; property details only)</li>
+          <li>Anthropic (the questions Stayful Intelligence couldn&apos;t answer, without your name or contact details, so we can group them and draft better answers for us to check)</li>
           <li>ElevenLabs (Stayful Intelligence&apos;s AI voice on phone calls, with Twilio carrying the calls: your number, your first name and what is said on the call, only if you switch calls on or ring the number)</li>
           <li>Google Maps (address and map lookups)</li>
           <li>Meta Platforms Ireland Ltd (measuring our Facebook ads — only if you choose Accept on our cookie banner)</li>
@@ -95,7 +103,9 @@ export default function PrivacyPage() {
         <ul>
           <li>Account and profile details: while your account is open, and deleted within 30 days of closing it.</li>
           <li>Usage and activity records: up to 24 months.</li>
-          <li>Call transcripts and texts to the Stayful Intelligence number: {DEFAULT_VOICE.transcriptRetentionDays} days (the questions asked, and whether they were answered, are kept with your usage records).</li>
+          <li>Call transcripts and texts to the Stayful Intelligence number: {DEFAULT_VOICE.transcriptRetentionDays} days.</li>
+          <li>Questions asked of Stayful Intelligence and whether they were answered: {DEFAULT_KNOWLEDGE_SETTINGS.questionRetentionMonths} months.</li>
+          <li>What Stayful Intelligence remembers about you: until you delete it or close your account.</li>
           <li>Payment and billing records: 6 years, as required for tax.</li>
         </ul>
 

@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { updateBillingSetting, invalidateCreditCaches } from '@/lib/credit/unit-costs';
 import { VOICE_KEYS, parseVoice, type VoiceSettings } from '@/lib/voice/settings';
-import { syncAgent } from '@/lib/voice/agent/sync-server';
+import { syncAgentKnowledge } from '@/lib/knowledge/agent-server';
 
 /**
  * /admin/calls' actions (Batch 23): the calls settings, and the agent sync.
@@ -50,7 +50,8 @@ export async function syncAgentAction(_prev: ActionState, formData: FormData): P
   try {
     await requireAdmin();
     const apply = formData.get('intent') === 'apply';
-    const r = await syncAgent({ apply });
+    // Batch 24: the knowledge is the knowledge base's approved call answers; the button also creates or updates the tools.
+    const r = await syncAgentKnowledge({ dry: !apply, toolsToo: true, reason: 'admin: /admin/calls' });
     return { ok: r.ok, message: r.promptChars ? `${r.message} Prompt ${r.promptChars.toLocaleString('en-GB')} characters.` : r.message, changes: r.changes };
   } catch (err) {
     return { ok: false, message: (err as Error).message };

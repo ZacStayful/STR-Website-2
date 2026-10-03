@@ -39,7 +39,8 @@ import type { PriceLabel } from '../credit/deal-pricing';
 import { offerFloors, offerMemberFor, offerPricingFor, offerSettings } from '../analysis/offers-server';
 import { accuracySettings, accuracyView, profileSummaryFor } from '../profile/server';
 import type { Level } from '../profile/levels';
-import { answersFor, type Answer, type AnswerFacts } from './answers';
+import { chipsFor, memberValuesFrom, type Answer, type AnswerFacts } from './answers';
+import { renderLive } from '../knowledge/store-server';
 import { matchPctOf, revealDeals, revealTone, type RevealTone } from './reveal';
 import { whatIfViewFor, type WhatIfView } from './what-if-server';
 import { deepQuoteFor, searchStatusFor, type DeepQuoteView } from '../sourcing-demand/member-search';
@@ -201,6 +202,8 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     tone === 'match' ? Promise.resolve(null) : deepQuoteFor(user.id, now),
   ]);
   if (whatIfs) facts.noMatch = whatIfs.items[0]?.line ?? whatIfs.none;
+  // Batch 24: the chips' words come only from approved knowledge entries, rendered for this member now.
+  const chipAnswers = chipsFor(await renderLive('view', memberValuesFrom(facts)), facts);
 
   return {
     profile,
@@ -221,7 +224,7 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
     level,
     levelName: acc?.name ?? 'Basic',
     nextLevel: lvl,
-    answers: answersFor(facts),
+    answers: chipAnswers,
     credit,
     settings,
     visibilityTier: visibility.tier,

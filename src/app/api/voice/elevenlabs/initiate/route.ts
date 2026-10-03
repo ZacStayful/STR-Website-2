@@ -2,7 +2,9 @@ import { secretsEqual } from '@/lib/crypto/secrets';
 import { hasServiceRole } from '@/lib/supabase/admin';
 import { initiateSecret } from '@/lib/voice/config';
 import { answerInitiation, type InitiationRequest } from '@/lib/voice/inbound-server';
-import { PERSONA_VERSION } from '@/lib/persona/stayful-intelligence';
+import { callVariables } from '@/lib/voice/agent/variables';
+import { DEFAULT_VOICE } from '@/lib/voice/settings';
+import { DEFAULT_INTELLIGENCE } from '@/lib/intelligence/settings';
 
 /**
  * Batch 23, Part D: ElevenLabs' conversation-initiation webhook — someone is
@@ -32,6 +34,7 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error('[voice] initiation failed:', err);
     // Answer anyway, as an unknown caller: never a member's data on a guess.
-    return Response.json({ type: 'conversation_initiation_client_data', dynamic_variables: { first_name: 'there', caller_status: 'unknown', call_type: 'callback', context: 'unknown', card_sent: false, minutes_available: 5, topup_amount: '25 pounds', topup_threshold: '5 pounds', persona_version: PERSONA_VERSION } });
+    // Every variable the agent uses must be sent (Batch 24's knowledge figures too, as "shown in the app").
+    return Response.json({ type: 'conversation_initiation_client_data', dynamic_variables: callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: Math.floor(DEFAULT_VOICE.maxCallSeconds / 60), topupAmountPence: DEFAULT_INTELLIGENCE.revealAutoTopupAmountPence, topupThresholdPence: DEFAULT_INTELLIGENCE.revealAutoTopupThresholdPence }) });
   }
 }

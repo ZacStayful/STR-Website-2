@@ -51,6 +51,15 @@ const TOOLS: Record<ToolName, { description: string; params: Record<string, Para
     },
     required: ['question', 'outcome'],
   },
+  remember_fact: {
+    description: "Remember one thing about the member for next time, only after you asked \"Want me to remember that?\" and they said yes. Property preferences and plans only: never health, money beyond their profile, or anything about other people.",
+    params: {
+      fact: { type: 'string', description: 'The fact in a few words, about the member, without names or numbers they did not give, e.g. "Prefers 2-bed flats near stations".' },
+      asked: { type: 'string', description: 'The question you asked them, e.g. "Want me to remember you prefer 2-beds?"' },
+      member_said_yes: { type: 'boolean', description: 'True only if they clearly said yes to remembering it.' },
+    },
+    required: ['fact', 'asked', 'member_said_yes'],
+  },
 };
 
 export function toolConfig(name: ToolName, baseUrl: string): Record<string, unknown> {

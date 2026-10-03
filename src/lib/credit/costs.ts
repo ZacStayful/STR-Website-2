@@ -98,6 +98,11 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   // Batch 23b: the morning briefing's writer (src/lib/briefing/writer.ts). Also seeded by schema.sql.
   { provider: 'anthropic', unit: 'haiku45_input_token', label: 'Anthropic input token (Haiku 4.5)', unitCostPence: (1 * USD) / 1_000_000, notes: '$1 per MTok' },
   { provider: 'anthropic', unit: 'haiku45_output_token', label: 'Anthropic output token (Haiku 4.5)', unitCostPence: (5 * USD) / 1_000_000, notes: '$5 per MTok' },
+  // Batch 24: the knowledge base's nightly gap job (src/lib/knowledge/gap) caches its prompt. Also seeded by schema.sql.
+  { provider: 'anthropic', unit: 'haiku45_cache_read_token', label: 'Anthropic cache read token (Haiku 4.5)', unitCostPence: (0.1 * USD) / 1_000_000, notes: '$0.10 per MTok' },
+  { provider: 'anthropic', unit: 'haiku45_cache_write_token', label: 'Anthropic cache write token (Haiku 4.5)', unitCostPence: (1.25 * USD) / 1_000_000, notes: '$1.25 per MTok (125% of input)' },
+  { provider: 'anthropic', unit: 'sonnet55_cache_read_token', label: 'Anthropic cache read token (Sonnet 5.5)', unitCostPence: (0.2 * USD) / 1_000_000, notes: '$0.20 per MTok' },
+  { provider: 'anthropic', unit: 'sonnet55_cache_write_token', label: 'Anthropic cache write token (Sonnet 5.5)', unitCostPence: (2.5 * USD) / 1_000_000, notes: '$2.50 per MTok (125% of input)' },
   // ── ElevenLabs turbo: Creator plan ≈ $22 per 100k characters ──
   { provider: 'elevenlabs', unit: 'character', label: 'ElevenLabs speech (per character)', unitCostPence: (22 * USD) / 100_000, notes: 'Creator plan; turbo models bill 0.5 credit/char on some tiers — reconcile' },
   // ── Batch 23: Stayful Intelligence call minutes (charged to the member per answered second) ──

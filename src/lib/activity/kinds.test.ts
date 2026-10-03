@@ -120,3 +120,11 @@ test("Batch 22d: Start again is an in-app action that counts towards weekly acti
   assert.equal(isQualifying('profile_reset'), true);
   assert.equal(isCounted('profile_reset'), true);
 });
+
+test("Batch 24's member-facts kinds are registered and record only", () => {
+  for (const k of ['si_fact_confirmed', 'si_facts_viewed', 'si_fact_deleted']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isCounted(k), false, k);
+  }
+});

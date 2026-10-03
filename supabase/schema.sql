@@ -6896,3 +6896,430 @@ insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, n
 on conflict (provider, unit) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 24: Stayful Intelligence knowledge
+-- =========================
+-- One knowledge base for every channel Stayful Intelligence answers on: the
+-- question chips (Batch 22), calls (Batch 23) and the typed chat (Batch 26).
+-- Nothing goes live without Zac's approval on /admin/intelligence/knowledge;
+-- every figure in an answer is a {placeholder} resolved from settings when
+-- the answer is shown (src/lib/knowledge). A nightly job groups the
+-- questions Stayful Intelligence could not answer and drafts one answer per
+-- group for Zac to approve (house spend, capped).
+--
+--   si_knowledge                 one row per answer, by a stable slug. The live
+--                                columns (question … show_when) are what members
+--                                can get; `draft` holds a pending proposal and is
+--                                never shown to a member. Every update bumps
+--                                `version` (trigger), so a write can be made
+--                                conditional on what was read.
+--   si_knowledge_live            the only way to read answers for members: live,
+--                                approved, not stale, not retired. No draft column.
+--   si_knowledge_history         every created / edited / approved / rejected /
+--                                staled / seeded / retired event, with before/after.
+--   si_knowledge_gaps            the nightly job's groups of unanswered questions:
+--                                a label, counts by channel and outcome, and the
+--                                entry drafted for it (or the entry it matched).
+--   si_knowledge_gap_questions   which question went into which group (each
+--                                question is grouped once; deleted with it).
+--   si_gap_runs                  one row per nightly run and per Monday email
+--                                (the claim: never twice), plus one per dry run;
+--                                each carries what it spent on models.
+--   si_member_facts              what a member asked Stayful Intelligence to
+--                                remember, only after they said yes. The member
+--                                sees and deletes them in Account.
+--
+-- Every table is service role only (RLS on, no policies, nothing granted to
+-- anon or authenticated). Nothing here is in ACCESS_COLUMNS
+-- (src/lib/access.ts), and must not become so. Everything is additive and
+-- idempotent; until this runs, the Stayful Intelligence chips and the agent's
+-- knowledge are empty and the nightly job does nothing (it fails closed).
+
+create table if not exists public.si_knowledge (
+  id uuid primary key default gen_random_uuid(),
+  slug text not null unique,
+  question text,
+  variants text[] not null default '{}',
+  answer text,
+  category text,
+  channels text[] not null default '{}',
+  show_when text,
+  draft jsonb,
+  draft_state text not null default 'none',
+  draft_hash text,
+  draft_source text,
+  draft_note text,
+  draft_at timestamptz,
+  version integer not null default 1,
+  approved_at timestamptz,
+  approved_by text,
+  stale_reason text,
+  stale_at timestamptz,
+  retired_at timestamptz,
+  source text not null,
+  seed_hash text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  alter table public.si_knowledge drop constraint if exists si_knowledge_draft_state_check;
+  alter table public.si_knowledge add constraint si_knowledge_draft_state_check check (draft_state in ('none', 'pending', 'rejected'));
+  alter table public.si_knowledge drop constraint if exists si_knowledge_source_check;
+  alter table public.si_knowledge add constraint si_knowledge_source_check check (source in ('seed', 'gap', 'manual'));
+  alter table public.si_knowledge drop constraint if exists si_knowledge_draft_source_check;
+  alter table public.si_knowledge add constraint si_knowledge_draft_source_check check (draft_source is null or draft_source in ('seed', 'gap', 'manual'));
+  alter table public.si_knowledge drop constraint if exists si_knowledge_slug_check;
+  alter table public.si_knowledge add constraint si_knowledge_slug_check check (slug ~ '^[a-z][a-z0-9_]{1,47}$');
+end $$;
+create index if not exists si_knowledge_updated_idx on public.si_knowledge (updated_at desc);
+alter table public.si_knowledge enable row level security;  -- no policies: service role only
+revoke all on public.si_knowledge from anon, authenticated;
+
+-- Every update bumps the version and the time, so conditional writes are exact.
+create or replace function public.si_knowledge_bump()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  new.version := old.version + 1;
+  new.updated_at := now();
+  return new;
+end $$;
+revoke all on function public.si_knowledge_bump() from public, anon, authenticated;
+drop trigger if exists si_knowledge_bump on public.si_knowledge;
+create trigger si_knowledge_bump before update on public.si_knowledge for each row execute function public.si_knowledge_bump();
+
+create or replace view public.si_knowledge_live with (security_invoker = true) as
+  select id, slug, version, question, variants, answer, category, channels, show_when, approved_at
+  from public.si_knowledge
+  where answer is not null and question is not null and category is not null
+    and stale_reason is null and retired_at is null;
+revoke all on public.si_knowledge_live from anon, authenticated;
+
+create table if not exists public.si_knowledge_history (
+  id bigint generated always as identity primary key,
+  entry_id uuid not null references public.si_knowledge(id) on delete cascade,
+  at timestamptz not null default now(),
+  actor text not null,
+  action text not null,
+  version integer,
+  before jsonb,
+  after jsonb,
+  note text
+);
+create index if not exists si_knowledge_history_entry_idx on public.si_knowledge_history (entry_id, at desc);
+alter table public.si_knowledge_history enable row level security;  -- no policies: service role only
+revoke all on public.si_knowledge_history from anon, authenticated;
+
+-- Approve: the pending draft becomes the live answer, or (mode 'live') a stale
+-- entry's live answer is approved again as it stands. Refused unless the row
+-- is still the version (and the draft the hash) the admin was shown, so a seed
+-- run or the nightly job can never swap the text under the click.
+create or replace function public.si_knowledge_approve(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_id uuid := (p->>'id')::uuid;
+  v_version integer := (p->>'version')::integer;
+  v_hash text := p->>'hash';
+  v_by text := coalesce(nullif(p->>'by', ''), 'admin');
+  v_mode text := coalesce(p->>'mode', 'draft');
+  r public.si_knowledge%rowtype;
+  v_before jsonb;
+  v_after jsonb;
+  v_new integer;
+begin
+  select * into r from public.si_knowledge where id = v_id for update;
+  if not found then return jsonb_build_object('refused', 'missing'); end if;
+  if r.version is distinct from v_version then return jsonb_build_object('refused', 'changed'); end if;
+  if r.retired_at is not null then return jsonb_build_object('refused', 'retired'); end if;
+  v_before := jsonb_build_object('question', r.question, 'variants', to_jsonb(r.variants), 'answer', r.answer, 'category', r.category,
+    'channels', to_jsonb(r.channels), 'show_when', r.show_when, 'stale_reason', r.stale_reason);
+  if v_mode = 'live' then
+    if r.answer is null or r.stale_reason is null then return jsonb_build_object('refused', 'not_stale'); end if;
+    update public.si_knowledge set stale_reason = null, stale_at = null, approved_at = now(), approved_by = v_by
+      where id = v_id returning version into v_new;
+    v_after := v_before - 'stale_reason';
+  else
+    if r.draft_state <> 'pending' or r.draft is null then return jsonb_build_object('refused', 'no_draft'); end if;
+    if r.draft_hash is distinct from v_hash then return jsonb_build_object('refused', 'changed'); end if;
+    update public.si_knowledge set
+      question = r.draft->>'question',
+      variants = coalesce(array(select jsonb_array_elements_text(coalesce(r.draft->'variants', '[]'::jsonb))), '{}'),
+      answer = r.draft->>'answer',
+      category = r.draft->>'category',
+      channels = coalesce(array(select jsonb_array_elements_text(coalesce(r.draft->'channels', '[]'::jsonb))), '{}'),
+      show_when = nullif(r.draft->>'show_when', ''),
+      draft = null, draft_state = 'none', draft_hash = null, draft_source = null, draft_note = null, draft_at = null,
+      stale_reason = null, stale_at = null, approved_at = now(), approved_by = v_by
+      where id = v_id returning version into v_new;
+    v_after := r.draft;
+  end if;
+  insert into public.si_knowledge_history (entry_id, actor, action, version, before, after)
+    values (v_id, v_by, 'approved', v_new, v_before, v_after);
+  return jsonb_build_object('id', v_id, 'version', v_new);
+end $$;
+revoke all on function public.si_knowledge_approve(jsonb) from public, anon, authenticated;
+grant execute on function public.si_knowledge_approve(jsonb) to service_role;
+
+create table if not exists public.si_knowledge_gaps (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  status text not null default 'open',
+  entry_id uuid references public.si_knowledge(id) on delete set null,
+  match_kind text,
+  asked integer not null default 0,
+  asked_since_decision integer not null default 0,
+  channels jsonb not null default '{}'::jsonb,
+  outcomes jsonb not null default '{}'::jsonb,
+  draft_attempts integer not null default 0,
+  last_error text,
+  uncovered boolean not null default false,
+  first_asked_at timestamptz,
+  last_asked_at timestamptz,
+  decided_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+do $$
+begin
+  alter table public.si_knowledge_gaps drop constraint if exists si_knowledge_gaps_status_check;
+  alter table public.si_knowledge_gaps add constraint si_knowledge_gaps_status_check check (status in ('open', 'drafted', 'covered', 'rejected', 'dismissed', 'failed'));
+  alter table public.si_knowledge_gaps drop constraint if exists si_knowledge_gaps_match_check;
+  alter table public.si_knowledge_gaps add constraint si_knowledge_gaps_match_check check (match_kind is null or match_kind in ('draft', 'approved', 'rejected'));
+  alter table public.si_knowledge_gaps drop constraint if exists si_knowledge_gaps_label_check;
+  alter table public.si_knowledge_gaps add constraint si_knowledge_gaps_label_check check (char_length(label) between 1 and 300);
+end $$;
+create index if not exists si_knowledge_gaps_status_idx on public.si_knowledge_gaps (status, asked desc);
+create index if not exists si_knowledge_gaps_first_idx on public.si_knowledge_gaps (first_asked_at desc);
+alter table public.si_knowledge_gaps enable row level security;  -- no policies: service role only
+revoke all on public.si_knowledge_gaps from anon, authenticated;
+
+create table if not exists public.si_knowledge_gap_questions (
+  question_id uuid primary key references public.si_conversation_questions(id) on delete cascade,
+  gap_id uuid references public.si_knowledge_gaps(id) on delete cascade,
+  grouped_at timestamptz not null default now()
+);
+create index if not exists si_knowledge_gap_questions_gap_idx on public.si_knowledge_gap_questions (gap_id);
+alter table public.si_knowledge_gap_questions enable row level security;  -- no policies: service role only
+revoke all on public.si_knowledge_gap_questions from anon, authenticated;
+
+create table if not exists public.si_gap_runs (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null,
+  run_key text not null,
+  status text not null default 'running',
+  claimed_at timestamptz not null default now(),
+  finished_at timestamptz,
+  cost_pence numeric(14,4) not null default 0,
+  report jsonb
+);
+do $$
+begin
+  alter table public.si_gap_runs drop constraint if exists si_gap_runs_kind_check;
+  alter table public.si_gap_runs add constraint si_gap_runs_kind_check check (kind in ('nightly', 'weekly', 'dry'));
+  alter table public.si_gap_runs drop constraint if exists si_gap_runs_status_check;
+  alter table public.si_gap_runs add constraint si_gap_runs_status_check check (status in ('running', 'done', 'failed'));
+end $$;
+create unique index if not exists si_gap_runs_once_uidx on public.si_gap_runs (kind, run_key) where kind in ('nightly', 'weekly');
+create index if not exists si_gap_runs_claimed_idx on public.si_gap_runs (claimed_at desc);
+alter table public.si_gap_runs enable row level security;  -- no policies: service role only
+revoke all on public.si_gap_runs from anon, authenticated;
+
+-- The once-only claim for a nightly run (run_key = the UK day) or a Monday
+-- email (run_key = the week's Monday). A run already done, or one still
+-- running inside stale_ms, is not claimed again; a failed or abandoned one is.
+create or replace function public.si_gap_claim(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_kind text := p->>'kind';
+  v_key text := p->>'run_key';
+  v_stale interval := make_interval(secs => greatest(60, coalesce((p->>'stale_ms')::numeric, 1800000) / 1000));
+  v_id uuid;
+  v_cost numeric := 0;
+begin
+  if v_kind not in ('nightly', 'weekly') or coalesce(v_key, '') = '' then return jsonb_build_object('refused', 'bad_args'); end if;
+  insert into public.si_gap_runs (kind, run_key) values (v_kind, v_key)
+    on conflict (kind, run_key) where kind in ('nightly', 'weekly') do nothing
+    returning id into v_id;
+  if v_id is null then
+    -- A retry keeps what the failed attempt spent (cost_pence), so the month's cap still counts it.
+    update public.si_gap_runs set status = 'running', claimed_at = now(), finished_at = null
+      where kind = v_kind and run_key = v_key
+        and (status = 'failed' or (status = 'running' and claimed_at < now() - v_stale))
+      returning id, cost_pence into v_id, v_cost;
+  end if;
+  return jsonb_build_object('id', v_id, 'cost_pence', coalesce(v_cost, 0));
+end $$;
+revoke all on function public.si_gap_claim(jsonb) from public, anon, authenticated;
+grant execute on function public.si_gap_claim(jsonb) to service_role;
+
+create table if not exists public.si_member_facts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  fact text not null,
+  asked text,
+  channel text not null,
+  confirmed_via text not null,
+  conversation_id uuid references public.si_conversations(id) on delete set null,
+  confirmed_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+do $$
+begin
+  alter table public.si_member_facts drop constraint if exists si_member_facts_fact_check;
+  alter table public.si_member_facts add constraint si_member_facts_fact_check check (char_length(fact) between 1 and 160);
+  alter table public.si_member_facts drop constraint if exists si_member_facts_asked_check;
+  alter table public.si_member_facts add constraint si_member_facts_asked_check check (asked is null or char_length(asked) <= 300);
+  alter table public.si_member_facts drop constraint if exists si_member_facts_channel_check;
+  alter table public.si_member_facts add constraint si_member_facts_channel_check check (channel in ('call', 'chat', 'view'));
+  alter table public.si_member_facts drop constraint if exists si_member_facts_confirmed_check;
+  alter table public.si_member_facts add constraint si_member_facts_confirmed_check check (confirmed_via in ('call_yes', 'chat_yes', 'app'));
+end $$;
+create unique index if not exists si_member_facts_once_uidx on public.si_member_facts (user_id, lower(fact));
+create index if not exists si_member_facts_user_idx on public.si_member_facts (user_id, created_at desc);
+alter table public.si_member_facts enable row level security;  -- no policies: service role only
+revoke all on public.si_member_facts from anon, authenticated;
+
+-- Remember a confirmed fact: one member at a time (advisory lock), refused at
+-- the cap or as a repeat, so two confirmations at once can never pass the cap.
+create or replace function public.si_fact_remember(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_user uuid := (p->>'user_id')::uuid;
+  v_fact text := btrim(coalesce(p->>'fact', ''));
+  v_max integer := greatest(0, coalesce((p->>'max')::integer, 30));
+  v_n integer;
+  v_id uuid;
+begin
+  if v_user is null or v_fact = '' then return jsonb_build_object('refused', 'bad_args'); end if;
+  perform pg_advisory_xact_lock(hashtext('public.si_member_facts:' || v_user::text));
+  if exists (select 1 from public.si_member_facts f where f.user_id = v_user and lower(f.fact) = lower(v_fact)) then
+    return jsonb_build_object('refused', 'duplicate');
+  end if;
+  select count(*) into v_n from public.si_member_facts f where f.user_id = v_user;
+  if v_n >= v_max then return jsonb_build_object('refused', 'cap'); end if;
+  insert into public.si_member_facts (user_id, fact, asked, channel, confirmed_via, conversation_id, confirmed_at)
+    values (v_user, v_fact, nullif(btrim(coalesce(p->>'asked', '')), ''), p->>'channel', p->>'confirmed_via',
+      nullif(p->>'conversation_id', '')::uuid, coalesce((p->>'confirmed_at')::timestamptz, now()))
+    returning id into v_id;
+  return jsonb_build_object('id', v_id);
+end $$;
+revoke all on function public.si_fact_remember(jsonb) from public, anon, authenticated;
+grant execute on function public.si_fact_remember(jsonb) to service_role;
+
+-- Retention for the learning log: members' questions (and their outcomes) are
+-- kept si_question_retention_months, then deleted oldest first, with any gap
+-- whose questions have all gone. Refuses a cutoff less than a year old,
+-- whatever is asked. apply false (the default) only counts.
+create or replace function public.si_question_retention(p jsonb)
+returns jsonb language plpgsql set search_path = '' as $$
+declare
+  v_before timestamptz := (p->>'before')::timestamptz;
+  v_apply boolean := coalesce((p->>'apply')::boolean, false);
+  v_limit integer := least(200000, greatest(1, coalesce((p->>'limit')::integer, 20000)));
+  v_questions integer;
+  v_gaps integer;
+  v_more boolean;
+begin
+  if v_before is null or v_before > now() - interval '12 months' then
+    raise exception 'si_question_retention: the cutoff must be at least 12 months ago';
+  end if;
+  if not v_apply then
+    select count(*) into v_questions from public.si_conversation_questions q where q.at < v_before;
+    select count(*) into v_gaps from public.si_knowledge_gaps g
+      where g.last_asked_at < v_before;
+    return jsonb_build_object('dry', true, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'more', v_questions > v_limit);
+  end if;
+  with gone as (
+    delete from public.si_conversation_questions q
+    where q.id in (select x.id from public.si_conversation_questions x where x.at < v_before order by x.at limit v_limit)
+    returning 1
+  ) select count(*) into v_questions from gone;
+  with gone as (
+    delete from public.si_knowledge_gaps g
+    where g.last_asked_at < v_before
+      and not exists (select 1 from public.si_knowledge_gap_questions gq where gq.gap_id = g.id)
+    returning 1
+  ) select count(*) into v_gaps from gone;
+  select exists (select 1 from public.si_conversation_questions q where q.at < v_before) into v_more;
+  return jsonb_build_object('dry', false, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'more', v_more);
+end $$;
+revoke all on function public.si_question_retention(jsonb) from public, anon, authenticated;
+grant execute on function public.si_question_retention(jsonb) to service_role;
+
+-- The nightly job's next questions: those with an outcome in p.outcomes that
+-- no run has grouped yet, oldest first, at most p.limit, with the
+-- conversation's channel. Grouped ones are excluded here, before the limit,
+-- so the job always moves on to new questions. For a "member unhappy" row
+-- from the post-call analysis, `prior` is the question asked just before it
+-- in the same conversation (the one to learn from).
+create or replace function public.si_gap_new_questions(p jsonb)
+returns jsonb language sql stable set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'question', x.question, 'outcome', x.outcome, 'source', x.source, 'at', x.at, 'conversation_id', x.conversation_id, 'channel', x.channel, 'prior', x.prior) order by x.at), '[]'::jsonb)
+  from (
+    select q.id, q.question, q.outcome, q.source, q.at, q.conversation_id, c.channel,
+      case when q.outcome = 'member_unhappy' and q.source = 'analysis' then (
+        select q2.question from public.si_conversation_questions q2
+        where q2.conversation_id = q.conversation_id and q2.outcome <> 'member_unhappy' and q2.at <= q.at
+        order by q2.at desc limit 1
+      ) end as prior
+    from public.si_conversation_questions q
+    join public.si_conversations c on c.id = q.conversation_id
+    where q.outcome in (select jsonb_array_elements_text(coalesce(p->'outcomes', '[]'::jsonb)))
+      and not exists (select 1 from public.si_knowledge_gap_questions gq where gq.question_id = q.id)
+    order by q.at
+    limit least(2000, greatest(1, coalesce((p->>'limit')::integer, 200)))
+  ) x
+$$;
+revoke all on function public.si_gap_new_questions(jsonb) from public, anon, authenticated;
+grant execute on function public.si_gap_new_questions(jsonb) to service_role;
+
+-- Coverage (/admin/intelligence/coverage and the Monday email): the questions
+-- asked from p.since (to p.until), counted by UK week (its Monday), channel,
+-- outcome and the knowledge entry used. One jsonb array, so no row limit
+-- cuts it short; no member id or question text leaves the table.
+create or replace function public.si_question_counts(p jsonb)
+returns jsonb language sql stable set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('week', x.week, 'channel', x.channel, 'outcome', x.outcome, 'ref', x.ref, 'n', x.n)), '[]'::jsonb)
+  from (
+    select to_char(date_trunc('week', q.at at time zone 'Europe/London'), 'YYYY-MM-DD') as week,
+           c.channel, q.outcome, left(q.knowledge_ref, 80) as ref, count(*)::integer as n
+    from public.si_conversation_questions q
+    join public.si_conversations c on c.id = q.conversation_id
+    where q.at >= (p->>'since')::timestamptz
+      and (p->>'until' is null or q.at < (p->>'until')::timestamptz)
+    group by 1, 2, 3, 4
+  ) x
+$$;
+revoke all on function public.si_question_counts(jsonb) from public, anon, authenticated;
+grant execute on function public.si_question_counts(jsonb) to service_role;
+
+-- Settings (defaults and bounds in src/lib/knowledge/settings.ts; a missing or
+-- bad row takes the default). Edited on /admin/intelligence/knowledge and /gaps.
+--   si_kb_answer_min_confidence   a typed question matched at or above this is answered
+--   si_kb_low_confidence_min      between this and the above: low confidence; below: not answered
+--   si_gap_max_groups_per_night   the most answers the nightly job drafts in one night
+--   si_gap_max_questions          the most new questions it reads in one night
+--   si_gap_monthly_cap_pence      its model spend per UK month, raw pence (house spend)
+--   si_facts_max                  the most facts kept per member
+--   si_question_retention_months  members' questions are deleted after this (never under 12)
+insert into public.billing_settings (key, value) values
+  ('si_kb_answer_min_confidence', '0.55'::jsonb),
+  ('si_kb_low_confidence_min', '0.3'::jsonb),
+  ('si_gap_max_groups_per_night', '20'::jsonb),
+  ('si_gap_max_questions', '200'::jsonb),
+  ('si_gap_monthly_cap_pence', '1500'::jsonb),
+  ('si_facts_max', '30'::jsonb),
+  ('si_question_retention_months', '24'::jsonb)
+on conflict (key) do nothing;
+
+-- The nightly job's prompt-cache units (the input and output rows came with
+-- Batches 17 and 23b). Also in src/lib/credit/costs.ts.
+insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values
+  ('anthropic', 'haiku45_cache_read_token', 'Anthropic cache read token (Haiku 4.5)', 0.0000079, 5, '$0.10 per million tokens at 79p a dollar'),
+  ('anthropic', 'haiku45_cache_write_token', 'Anthropic cache write token (Haiku 4.5)', 0.00009875, 5, '$1.25 per million tokens at 79p a dollar'),
+  ('anthropic', 'sonnet55_cache_read_token', 'Anthropic cache read token (Sonnet 5.5)', 0.0000158, 5, '$0.20 per million tokens at 79p a dollar'),
+  ('anthropic', 'sonnet55_cache_write_token', 'Anthropic cache write token (Sonnet 5.5)', 0.0001975, 5, '$2.50 per million tokens at 79p a dollar')
+on conflict (provider, unit) do nothing;
+
+notify pgrst, 'reload schema';

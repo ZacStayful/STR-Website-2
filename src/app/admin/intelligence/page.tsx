@@ -6,6 +6,7 @@ import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
 import { intelligenceStats, type RevealFacts, type SearchFacts } from "@/lib/intelligence/admin";
 import { memberSearchEnabled } from "@/lib/sourcing-demand/member-search";
+import { SiAdminNav } from "./SiAdmin";
 
 export const metadata: Metadata = { title: "Stayful Intelligence — admin", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
@@ -60,6 +61,7 @@ export default async function IntelligenceAdminPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">
+      <SiAdminNav current="overview" />
       <div className="mb-6 flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Stayful Intelligence</h1>
