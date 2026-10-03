@@ -1,10 +1,19 @@
 import { authoriseInternal, internalSecretsConfigured } from '@/lib/internal-auth';
 import { hasServiceRole } from '@/lib/supabase/admin';
 import { runKnowledgeSeed } from '@/lib/knowledge/seed-server';
+import { gapJobEnabled, runGapJob } from '@/lib/knowledge/gap/run';
 
 /**
  * Batch 24: the Stayful Intelligence knowledge base's internal entry point.
  *
+ *   (no step)    the nightly job (vercel.json, 02:50 UTC): stale check and
+ *                agent re-sync, then group the questions it couldn't answer
+ *                and draft answers for Zac (src/lib/knowledge/gap/run.ts).
+ *                House spend, inside si_gap_monthly_cap_pence; once a UK day.
+ *                Off until SI_GAP_JOB_ENABLED=true; `?dry=1` always works:
+ *                it makes the model calls (counted against the cap) and
+ *                shows the groups, drafts and cost, writing nothing else.
+ *                `&estimate=1` makes no model call.
  *   ?step=seed   the one-off that puts src/lib/knowledge/seed.ts in as drafts
  *                for Zac to approve (never approves, never touches a live
  *                answer). `&dry=1` reports what it would do and writes nothing.
@@ -15,7 +24,8 @@ import { runKnowledgeSeed } from '@/lib/knowledge/seed-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// The nightly job drafts for up to GAP_TIME_BUDGET_MS (240 s), then stops.
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   if (!internalSecretsConfigured()) return new Response('Not found', { status: 404 });
@@ -28,5 +38,11 @@ export async function GET(request: Request) {
     const result = await runKnowledgeSeed({ dry, actor: 'internal' });
     return Response.json(result, { status: result.ok ? 200 : 500 });
   }
-  return Response.json({ error: 'unknown step', steps: ['seed'] }, { status: 400 });
+  if (step === '' || step === 'nightly') {
+    const estimate = params.get('estimate') === '1';
+    if (!gapJobEnabled() && !dry && !estimate) return Response.json({ enabled: false, reason: 'Set SI_GAP_JOB_ENABLED=true to run the nightly job; ?dry=1 works either way.' });
+    const result = await runGapJob({ dry: dry || estimate, estimate, triggeredBy: request.headers.get('authorization') ? 'cron' : 'internal' });
+    return Response.json(result.body, { status: result.status });
+  }
+  return Response.json({ error: 'unknown step', steps: ['nightly', 'seed'] }, { status: 400 });
 }

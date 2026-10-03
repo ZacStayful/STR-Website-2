@@ -18,7 +18,13 @@ export interface Flash {
 export async function flashAndGo(to: string, f: Flash): Promise<never> {
   const jar = await cookies();
   const body = { kind: f.kind, message: f.message.slice(0, 600), detail: (f.detail ?? []).slice(0, 12).map((d) => d.slice(0, 200)) };
-  jar.set(FLASH_COOKIE, Buffer.from(JSON.stringify(body)).toString('base64url').slice(0, 3800), { maxAge: 300, path: '/admin', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+  // Drop detail lines from the end until it fits (a cut-off value would not parse, and the message would be lost).
+  let value = Buffer.from(JSON.stringify(body)).toString('base64url');
+  while (value.length > 3800 && body.detail.length > 0) {
+    body.detail.pop();
+    value = Buffer.from(JSON.stringify(body)).toString('base64url');
+  }
+  jar.set(FLASH_COOKIE, value, { maxAge: 300, path: '/admin', httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
   redirect(to);
 }
 

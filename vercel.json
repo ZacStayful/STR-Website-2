@@ -150,6 +150,10 @@
 			"schedule": "45 2 * * *"
 		},
 		{
+			"path": "/api/internal/si-knowledge",
+			"schedule": "50 2 * * *"
+		},
+		{
 			"path": "/api/internal/si-calls",
 			"schedule": "*/5 * * * *"
 		}

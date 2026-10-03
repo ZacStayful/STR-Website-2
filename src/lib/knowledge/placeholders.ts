@@ -21,6 +21,8 @@
  */
 import { formatPence } from '../credit/deal-pricing.ts';
 import { BALANCE_BANDS_PENCE, PRODUCT_FACTS, TEAM_EMAIL } from './config.ts';
+import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
+import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 
 /** One billing_plans row, as read. */
 export interface PlanRow {
@@ -262,6 +264,12 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     return n === null ? null : countWords(n);
   }),
   // Calls
+  sms_hours_start: g_('When alert texts may start, e.g. 8am', 'code WINDOW_START_HOUR (src/lib/sms/uk-time.ts)', () => hourWords(WINDOW_START_HOUR)),
+  sms_hours_end: g_('When alert texts stop, e.g. 8pm', 'code WINDOW_END_HOUR (src/lib/sms/uk-time.ts)', () => hourWords(WINDOW_END_HOUR)),
+  transcript_days: g_('Days call transcripts are kept', 'billing_settings.si_transcript_retention_days', (g) => {
+    const d = whole(g, 'si_transcript_retention_days', 1);
+    return d === null ? null : String(d);
+  }),
   call_minute_cost: g_('What an answered call costs a minute', 'unit_costs si:call_minute × markup', (g) => money(callMinutePence(g))),
   text_cost: g_('A text from Stayful Intelligence', 'billing_settings.si_text_pence', (g) => money(pence(g, 'si_text_pence'))),
   email_cost: g_('An email from Stayful Intelligence after a missed call', 'billing_settings.si_email_pence', (g) => money(pence(g, 'si_email_pence'))),
@@ -277,6 +285,9 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const d = outboundDays(g);
     return d ? dayWords(d) : null;
   }),
+  // Teams (src/lib/team/rules.ts: a code constant, so a change is a reviewed code change)
+  team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),
+  team_seat_days: g_('Days a seat lasts before it renews', 'code SEAT_PERIOD_DAYS (src/lib/team/rules.ts)', () => String(SEAT_PERIOD_DAYS)),
   // Fixed product facts (src/lib/knowledge/config.ts)
   report_sections: g_("A Full analysis report's sections", 'config PRODUCT_FACTS.reportSections', () => String(PRODUCT_FACTS.reportSections)),
   forecast_months: g_("The forecast's months", 'config PRODUCT_FACTS.forecastMonths', () => String(PRODUCT_FACTS.forecastMonths)),

@@ -6,10 +6,12 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isAdminEmail } from '@/lib/admin';
 import { updateBillingSetting } from '@/lib/credit/unit-costs';
 import { contentFromForm, slugFrom } from '@/lib/knowledge/forms';
-import { KNOWLEDGE_SETTING_KEYS, validateKnowledgeForm } from '@/lib/knowledge/settings';
+import { KNOWLEDGE_SETTING_KEYS, validateGapForm, validateKnowledgeForm } from '@/lib/knowledge/settings';
 import { SLUG_PATTERN } from '@/lib/knowledge/config';
 import { runKnowledgeSeed } from '@/lib/knowledge/seed-server';
-import { approveEntry, createEntry, rejectDraft, retireEntry, saveDraft } from '@/lib/knowledge/store-server';
+import { approveEntry, createEntry, proposeVariants, rejectDraft, retireEntry, saveDraft } from '@/lib/knowledge/store-server';
+import { gapJobEnabled, runGapJob, type GapRunReport } from '@/lib/knowledge/gap/run';
+import { createAdminClient } from '@/lib/supabase/admin';
 import type { EntryContent } from '@/lib/knowledge/render';
 import { afterKnowledgeChange } from '@/lib/knowledge/agent-server';
 import { flashAndGo } from './flash';
@@ -134,4 +136,81 @@ export async function saveKnowledgeSettingsAction(formData: FormData): Promise<v
   }
   revalidatePath(KNOWLEDGE);
   return flashAndGo(KNOWLEDGE, { kind: 'ok', message: 'Settings saved.' });
+}
+
+// ── Gaps (/admin/intelligence/gaps) ─────────────────────────────────────────
+
+const GAPS = '/admin/intelligence/gaps';
+
+/** Approve a drafted gap answer straight from Gaps: live on its channels now, and the gap is covered. */
+export async function approveGapAction(formData: FormData): Promise<void> {
+  const { email } = await requireAdmin();
+  const id = str(formData, 'id');
+  const r = await approveEntry({ id, version: int(formData, 'version'), hash: str(formData, 'hash') || null, actor: email });
+  if (r.ok) {
+    await createAdminClient().from('si_knowledge_gaps').update({ status: 'covered', match_kind: 'approved', decided_at: new Date().toISOString(), asked_since_decision: 0, updated_at: new Date().toISOString() }).eq('entry_id', id);
+    afterKnowledgeChange(`approved ${id} from Gaps`);
+  }
+  revalidatePath(GAPS);
+  return flashAndGo(GAPS, r.ok ? { kind: 'ok', message: 'Approved: live on its channels now.' } : { kind: 'error', message: r.error });
+}
+
+export async function rejectGapAction(formData: FormData): Promise<void> {
+  const { email } = await requireAdmin();
+  const r = await rejectDraft({ id: str(formData, 'id'), version: int(formData, 'version'), actor: email, note: str(formData, 'note').slice(0, 300) || null });
+  revalidatePath(GAPS);
+  return flashAndGo(GAPS, r.ok ? { kind: 'ok', message: 'Rejected. The same answer will not be suggested again.' } : { kind: 'error', message: r.error });
+}
+
+/** A gap that an approved answer already covers: its phrasings become a pending draft of that entry's variants. */
+export async function addVariantsAction(formData: FormData): Promise<void> {
+  const { email } = await requireAdmin();
+  const entryId = str(formData, 'entryId');
+  const phrasings = formData.getAll('phrasing').filter((v): v is string => typeof v === 'string');
+  const r = await proposeVariants({ id: entryId, phrasings, actor: email });
+  revalidatePath(GAPS);
+  if (!r.ok) return flashAndGo(GAPS, { kind: 'error', message: r.error });
+  return flashAndGo(entryPage(entryId), { kind: 'ok', message: 'The phrasings are a pending draft on this entry: approve it to use them.' });
+}
+
+export async function dismissGapAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const id = str(formData, 'gapId');
+  const { error } = await createAdminClient().from('si_knowledge_gaps').update({ status: 'dismissed', decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id);
+  revalidatePath(GAPS);
+  return flashAndGo(GAPS, error ? { kind: 'error', message: `Not dismissed: ${error.message}` } : { kind: 'ok', message: 'Dismissed.' });
+}
+
+export async function runGapJobAction(formData: FormData): Promise<void> {
+  const { email } = await requireAdmin();
+  const mode = str(formData, 'mode');
+  // Off means off: a real run from here needs the same switch as the cron. Dry runs and estimates always work.
+  if (mode === 'run' && !gapJobEnabled()) return flashAndGo(GAPS, { kind: 'error', message: 'The nightly job is off (SI_GAP_JOB_ENABLED). Use Dry run, then turn it on in Vercel.' });
+  const r = await runGapJob({ dry: mode !== 'run', estimate: mode === 'estimate', triggeredBy: email });
+  revalidatePath(GAPS);
+  const b = r.body as Record<string, unknown> & Partial<GapRunReport>;
+  if (b.skipped) return flashAndGo(GAPS, { kind: 'ok', message: `Not run: ${String(b.skipped)}.` });
+  if (r.status !== 200) return flashAndGo(GAPS, { kind: 'error', message: `The run failed: ${String(b.error ?? 'unknown error')}` });
+  // Most important first: the flash drops lines from the end when it is too long to keep.
+  const detail = [
+    `Cost: ${(b.costPence ?? 0).toFixed(2)}p (worst case ${(b.worstCasePence ?? 0).toFixed(2)}p)${b.stopped ? `; stopped: ${b.stopped}` : ''}`,
+    `Questions read: ${b.questions?.read ?? 0}`,
+    ...(b.grouping ? [`Groups: ${b.grouping.groups.length}${b.grouping.error ? ` (${b.grouping.error})` : ''}`] : []),
+    ...(b.drafts ?? []).map((d) => `${d.gap} → ${d.error ? `error: ${d.error}` : d.covered ? d.answer : `not covered: ${d.missing}`}`),
+  ];
+  const label = mode === 'run' ? 'Run' : mode === 'estimate' ? 'Estimate (no model calls)' : 'Dry run (nothing written but its cost)';
+  return flashAndGo(GAPS, { kind: 'ok', message: `${label} done.`, detail });
+}
+
+export async function saveGapSettingsAction(formData: FormData): Promise<void> {
+  await requireAdmin();
+  const r = validateGapForm((k) => (typeof formData.get(k) === 'string' ? (formData.get(k) as string) : null));
+  if (!r.ok) return flashAndGo(GAPS, { kind: 'error', message: r.error });
+  try {
+    for (const [field, value] of Object.entries(r.settings)) await updateBillingSetting(KNOWLEDGE_SETTING_KEYS[field as keyof typeof KNOWLEDGE_SETTING_KEYS], value);
+  } catch (err) {
+    return flashAndGo(GAPS, { kind: 'error', message: `Not saved: ${(err as Error)?.message ?? 'the settings could not be written'}` });
+  }
+  revalidatePath(GAPS);
+  return flashAndGo(GAPS, { kind: 'ok', message: 'Settings saved.' });
 }

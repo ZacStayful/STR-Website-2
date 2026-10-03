@@ -58,3 +58,17 @@ test('the seed plan inserts, proposes, skips and leaves alone', async () => {
   const again = planSeed([{ slug: d.slug, seedHash: 'old', draftState: 'pending', draftSource: 'seed' }], [d], contentHash);
   assert.deepEqual(again.propose.map((e) => e.slug), [d.slug]);
 });
+
+test('the service facts use only known placeholders, all resolving from the schema seeds, and type no prices', async () => {
+  const { SERVICE_FACTS } = await import('./service-facts.ts');
+  const { parseTemplate } = await import('./template.ts');
+  const { PLACEHOLDERS } = await import('./placeholders.ts');
+  const p = parseTemplate(SERVICE_FACTS);
+  assert.ok(p.ok, p.ok ? '' : p.error);
+  const g = schemaSnapshot();
+  for (const n of p.placeholders) {
+    assert.ok(PLACEHOLDERS[n], `unknown {${n}}`);
+    assert.notEqual(PLACEHOLDERS[n].resolve(g, null), null, `{${n}} doesn't resolve`);
+  }
+  assert.doesNotMatch(SERVICE_FACTS, /£\s?\d|\d+p\b/);
+});
