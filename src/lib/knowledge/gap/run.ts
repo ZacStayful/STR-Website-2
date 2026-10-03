@@ -12,7 +12,10 @@ import 'server-only';
  *      approved or rejected answer, or is new
  *   5. draft one answer per open gap without one (Sonnet 5.5), most asked
  *      first, at most si_gap_max_groups_per_night, inside the time budget
- *   6. (Mondays) the weekly email; question retention — see run steps below
+ *   6. the Monday email about last week (claimed once a week, so a missed
+ *      Monday is sent the next night); a dry run previews it on Mondays
+ *   7. question retention: questions older than si_question_retention_months
+ *      are deleted (a dry run counts them)
  *
  * Every model call is house spend (never a member's credit), checked against
  * si_gap_monthly_cap_pence before it is made (its worst case) and recorded on
@@ -27,7 +30,7 @@ import { unitKey } from '../../credit/costs';
 import { newActionId, type MeterContext } from '../../credit/context';
 import { londonMonthStart } from '../../sms/uk-time';
 import { londonDayStart } from '../../leads/search';
-import { ukDay } from '../../voice/hours';
+import { ukDay, ukWeekday } from '../../voice/hours';
 import { voiceConfig } from '../../voice/config';
 import { GAP_ACTION, GAP_DRAFT_MAX_TOKENS, GAP_DRAFT_MODEL, GAP_GROUP_MAX_TOKENS, GAP_GROUP_MODEL, GAP_OUTCOMES, GAP_SAMPLES_MAX, GAP_TIME_BUDGET_MS, RUN_STALE_CLAIM_MS } from '../config';
 import { checkContent, type EntryContent } from '../render';
@@ -35,6 +38,7 @@ import { entryStatus, type KnowledgeRow } from '../rows';
 import { SERVICE_FACTS } from '../service-facts';
 import { agentKnowledgeState, syncAgentKnowledge } from '../agent-server';
 import { allEntries, checkStale, createEntry, liveEntries, readGlobalSnapshot, readKnowledgeSettings, type Admin } from '../store-server';
+import { runWeeklyGapEmail, type WeeklyResult } from '../weekly-server';
 import { callModel, modelsConfigured } from './models-server';
 import { catalogueForDrafting, draftCandidates, estimateTokens, fitsCap, knowledgeForDrafting, MAX_DRAFT_ATTEMPTS, MODEL_UNITS, uniqueSlug, worstCasePence, type GapRow } from './plan';
 import { draftMessages, DRAFT_SCHEMA, groupingMessage, GROUPING_SCHEMA, GROUPING_SYSTEM, parseDraft, parseGrouping, redactQuestion, type ParsedGroup } from './prompts';
@@ -196,9 +200,23 @@ export interface GapRunReport {
   grouping: { groups: { label: string; questions: number; continues: string | null; matches: string | null }[]; ungrouped: number; error: string | null } | null;
   drafts: { gap: string; slug: string | null; covered: boolean; answer: string | null; missing: string | null; checks: string[]; error: string | null }[];
   stopped: 'cap' | 'time' | 'max' | 'no_api_key' | null;
+  weekly: WeeklyResult | null;
+  retention: RetentionResult | null;
   costPence: number;
   worstCasePence: number;
   ms: number;
+}
+
+export type RetentionResult = { before: string; questions: number; gaps: number; more: boolean; dry: boolean } | { error: string };
+
+/** Members' questions older than the retention setting (never under 12 months: the database refuses). */
+async function questionRetention(admin: Admin, now: Date, months: number, dry: boolean): Promise<RetentionResult> {
+  const before = new Date(now);
+  before.setUTCMonth(before.getUTCMonth() - months);
+  const { data, error } = await admin.rpc('si_question_retention', { p: { before: before.toISOString(), apply: !dry } });
+  if (error) return { error: error.message };
+  const r = data as { questions?: number; gaps?: number; more?: boolean };
+  return { before: before.toISOString(), questions: Number(r.questions) || 0, gaps: Number(r.gaps) || 0, more: Boolean(r.more), dry };
 }
 
 /** One run of the nightly job. Returns the route's status and body. */
@@ -212,19 +230,23 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
 
   // 1. The once-a-night claim (a dry run takes none, and writes only its own cost row).
   let runId: string | null = null;
+  // What a failed earlier attempt today already spent: the run row keeps it, so the cap still counts it.
+  let baseCost = 0;
   if (!o.dry) {
     const { data, error } = await admin.rpc('si_gap_claim', { p: { kind: 'nightly', run_key: day, stale_ms: RUN_STALE_CLAIM_MS } });
     if (error) return { status: 500, body: { error: error.message, hint: 'Run the Batch 24 section of supabase/schema.sql.' } };
-    runId = (data as { id: string | null }).id;
+    const claim = data as { id: string | null; cost_pence?: number | string };
+    runId = claim.id;
     if (!runId) return { status: 200, body: { skipped: 'already ran today', day } };
+    baseCost = Number(claim.cost_pence) || 0;
   }
-  const report: GapRunReport = { dry: o.dry, estimate: o.estimate, day, stale: null, agent: null, monthSpentPence: null, capPence: 0, questions: { read: 0, sample: [] }, grouping: null, drafts: [], stopped: null, costPence: 0, worstCasePence: 0, ms: 0 };
+  const report: GapRunReport = { dry: o.dry, estimate: o.estimate, day, stale: null, agent: null, monthSpentPence: null, capPence: 0, questions: { read: 0, sample: [] }, grouping: null, drafts: [], stopped: null, weekly: null, retention: null, costPence: 0, worstCasePence: 0, ms: 0 };
   let dryRowId: string | null = null;
   const recordCost = async (pence: number) => {
     report.costPence += pence;
     if (pence <= 0) return;
     if (runId) {
-      await admin.from('si_gap_runs').update({ cost_pence: report.costPence }).eq('id', runId);
+      await admin.from('si_gap_runs').update({ cost_pence: baseCost + report.costPence }).eq('id', runId);
     } else {
       if (!dryRowId) {
         const { data } = await admin.from('si_gap_runs').insert({ kind: 'dry', run_key: day, status: 'done', finished_at: new Date().toISOString(), cost_pence: report.costPence, report: { triggeredBy: o.triggeredBy } }).select('id').single();
@@ -360,14 +382,19 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
       }
     }
 
+    // 6. The Monday email (once a week by its own claim; a dry run previews it on Mondays only).
+    if (!o.dry || ukWeekday(now) === 1) report.weekly = await runWeeklyGapEmail({ dry: o.dry, now, triggeredBy: o.triggeredBy }, admin);
+    // 7. Retention.
+    report.retention = await questionRetention(admin, now, settings.questionRetentionMonths, o.dry);
+
     report.ms = Date.now() - started;
-    if (runId) await admin.from('si_gap_runs').update({ status: 'done', finished_at: new Date().toISOString(), cost_pence: report.costPence, report: summary(report, o.triggeredBy) }).eq('id', runId);
+    if (runId) await admin.from('si_gap_runs').update({ status: 'done', finished_at: new Date().toISOString(), cost_pence: baseCost + report.costPence, report: summary(report, o.triggeredBy) }).eq('id', runId);
     console.log('[knowledge] gap job', JSON.stringify(summary(report, o.triggeredBy)));
     return { status: 200, body: report };
   } catch (err) {
     const message = (err as Error)?.message ?? String(err);
     console.error('[knowledge] gap job failed:', message);
-    if (runId) await admin.from('si_gap_runs').update({ status: 'failed', finished_at: new Date().toISOString(), cost_pence: report.costPence, report: { ...summary(report, o.triggeredBy), error: message } }).eq('id', runId);
+    if (runId) await admin.from('si_gap_runs').update({ status: 'failed', finished_at: new Date().toISOString(), cost_pence: baseCost + report.costPence, report: { ...summary(report, o.triggeredBy), error: message } }).eq('id', runId);
     return { status: 500, body: { ...report, error: message } };
   }
 }
@@ -383,6 +410,8 @@ function summary(r: GapRunReport, triggeredBy: string): Record<string, unknown> 
     newlyStale: r.stale?.newlyStale.length ?? 0,
     agent: r.agent,
     stopped: r.stopped,
+    weekly: r.weekly ? `${r.weekly.status}${r.weekly.reason ? `: ${r.weekly.reason}` : ''}` : null,
+    retention: r.retention ? ('error' in r.retention ? `error: ${r.retention.error}` : { questions: r.retention.questions, gaps: r.retention.gaps, more: r.retention.more }) : null,
     costPence: Math.round(r.costPence * 10_000) / 10_000,
     ms: r.ms,
   };

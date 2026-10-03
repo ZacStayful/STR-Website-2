@@ -2,6 +2,7 @@ import { authoriseInternal, internalSecretsConfigured } from '@/lib/internal-aut
 import { hasServiceRole } from '@/lib/supabase/admin';
 import { runKnowledgeSeed } from '@/lib/knowledge/seed-server';
 import { gapJobEnabled, runGapJob } from '@/lib/knowledge/gap/run';
+import { runWeeklyGapEmail } from '@/lib/knowledge/weekly-server';
 
 /**
  * Batch 24: the Stayful Intelligence knowledge base's internal entry point.
@@ -13,7 +14,11 @@ import { gapJobEnabled, runGapJob } from '@/lib/knowledge/gap/run';
  *                Off until SI_GAP_JOB_ENABLED=true; `?dry=1` always works:
  *                it makes the model calls (counted against the cap) and
  *                shows the groups, drafts and cost, writing nothing else.
- *                `&estimate=1` makes no model call.
+ *                `&estimate=1` makes no model call. Then the Monday email
+ *                (once a week) and question retention (a dry run counts).
+ *   ?step=weekly the Monday email about last week, now (once a week: a week
+ *                already sent is skipped). `&dry=1` returns the email it
+ *                would send, sends nothing and claims nothing.
  *   ?step=seed   the one-off that puts src/lib/knowledge/seed.ts in as drafts
  *                for Zac to approve (never approves, never touches a live
  *                answer). `&dry=1` reports what it would do and writes nothing.
@@ -38,11 +43,15 @@ export async function GET(request: Request) {
     const result = await runKnowledgeSeed({ dry, actor: 'internal' });
     return Response.json(result, { status: result.ok ? 200 : 500 });
   }
+  if (step === 'weekly') {
+    const result = await runWeeklyGapEmail({ dry, triggeredBy: 'internal' });
+    return Response.json(result, { status: result.status === 'failed' ? 500 : 200 });
+  }
   if (step === '' || step === 'nightly') {
     const estimate = params.get('estimate') === '1';
     if (!gapJobEnabled() && !dry && !estimate) return Response.json({ enabled: false, reason: 'Set SI_GAP_JOB_ENABLED=true to run the nightly job; ?dry=1 works either way.' });
     const result = await runGapJob({ dry: dry || estimate, estimate, triggeredBy: request.headers.get('authorization') ? 'cron' : 'internal' });
     return Response.json(result.body, { status: result.status });
   }
-  return Response.json({ error: 'unknown step', steps: ['nightly', 'seed'] }, { status: 400 });
+  return Response.json({ error: 'unknown step', steps: ['nightly', 'weekly', 'seed'] }, { status: 400 });
 }

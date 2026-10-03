@@ -7135,18 +7135,20 @@ declare
   v_key text := p->>'run_key';
   v_stale interval := make_interval(secs => greatest(60, coalesce((p->>'stale_ms')::numeric, 1800000) / 1000));
   v_id uuid;
+  v_cost numeric := 0;
 begin
   if v_kind not in ('nightly', 'weekly') or coalesce(v_key, '') = '' then return jsonb_build_object('refused', 'bad_args'); end if;
   insert into public.si_gap_runs (kind, run_key) values (v_kind, v_key)
     on conflict (kind, run_key) where kind in ('nightly', 'weekly') do nothing
     returning id into v_id;
   if v_id is null then
+    -- A retry keeps what the failed attempt spent (cost_pence), so the month's cap still counts it.
     update public.si_gap_runs set status = 'running', claimed_at = now(), finished_at = null
       where kind = v_kind and run_key = v_key
         and (status = 'failed' or (status = 'running' and claimed_at < now() - v_stale))
-      returning id into v_id;
+      returning id, cost_pence into v_id, v_cost;
   end if;
-  return jsonb_build_object('id', v_id);
+  return jsonb_build_object('id', v_id, 'cost_pence', coalesce(v_cost, 0));
 end $$;
 revoke all on function public.si_gap_claim(jsonb) from public, anon, authenticated;
 grant execute on function public.si_gap_claim(jsonb) to service_role;
@@ -7244,6 +7246,26 @@ begin
 end $$;
 revoke all on function public.si_question_retention(jsonb) from public, anon, authenticated;
 grant execute on function public.si_question_retention(jsonb) to service_role;
+
+-- Coverage (/admin/intelligence/coverage and the Monday email): the questions
+-- asked from p.since (to p.until), counted by UK week (its Monday), channel,
+-- outcome and the knowledge entry used. One jsonb array, so no row limit
+-- cuts it short; no member id or question text leaves the table.
+create or replace function public.si_question_counts(p jsonb)
+returns jsonb language sql stable set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('week', x.week, 'channel', x.channel, 'outcome', x.outcome, 'ref', x.ref, 'n', x.n)), '[]'::jsonb)
+  from (
+    select to_char(date_trunc('week', q.at at time zone 'Europe/London'), 'YYYY-MM-DD') as week,
+           c.channel, q.outcome, left(q.knowledge_ref, 80) as ref, count(*)::integer as n
+    from public.si_conversation_questions q
+    join public.si_conversations c on c.id = q.conversation_id
+    where q.at >= (p->>'since')::timestamptz
+      and (p->>'until' is null or q.at < (p->>'until')::timestamptz)
+    group by 1, 2, 3, 4
+  ) x
+$$;
+revoke all on function public.si_question_counts(jsonb) from public, anon, authenticated;
+grant execute on function public.si_question_counts(jsonb) to service_role;
 
 -- Settings (defaults and bounds in src/lib/knowledge/settings.ts; a missing or
 -- bad row takes the default). Edited on /admin/intelligence/knowledge and /gaps.
