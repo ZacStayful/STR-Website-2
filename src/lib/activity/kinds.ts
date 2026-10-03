@@ -206,6 +206,11 @@ export const ACTIVITY_KINDS = {
   briefing_seen: recordOnly('Saw their morning briefing'),
   briefing_played: recordOnly('Played their morning briefing aloud'),
   briefing_feedback: recordOnly('Said whether their morning briefing was useful'),
+  // Batch 24: what Stayful Intelligence remembers about a member (src/lib/knowledge/facts-*).
+  // All record only: weekly active is unchanged.
+  si_fact_confirmed: recordOnly('Said yes to Stayful Intelligence remembering something'),
+  si_facts_viewed: recordOnly('Looked at what Stayful Intelligence remembers'),
+  si_fact_deleted: recordOnly('Deleted something Stayful Intelligence remembered'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;

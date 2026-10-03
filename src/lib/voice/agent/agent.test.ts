@@ -90,3 +90,10 @@ test('call variables carry every name, never a balance; openers are filled', () 
   assert.equal(fill(openerFor('member'), v), 'Hi Sam, how can I help?');
   assert.match(fill(openerFor('unknown'), callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: 10, topupAmountPence: 2500, topupThresholdPence: 500 })), /Stayful Intelligence/);
 });
+
+test('remember_fact needs the fact, the question asked and an explicit yes', () => {
+  const t = toolConfig('remember_fact', 'https://x') as { api_schema: { request_body_schema: { properties: Record<string, { type: string }>; required: string[] } } };
+  assert.deepEqual([...t.api_schema.request_body_schema.required].filter((k) => k !== 'conversation_id').sort(), ['asked', 'fact', 'member_said_yes']);
+  assert.equal(t.api_schema.request_body_schema.properties.member_said_yes.type, 'boolean');
+  assert.match(agentPrompt(knowledge), /Want me to remember that\?/);
+});

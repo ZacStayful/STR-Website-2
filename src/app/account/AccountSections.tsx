@@ -5,6 +5,8 @@ import { SEAT_PRICE_PENCE } from "@/lib/team/rules";
 import { ACCOUNT_MORE, GOALS_EDITOR_HREF, type AccountMoreKey } from "@/lib/nav";
 import { signOutAction } from "../(auth)/actions";
 import { describeTypes } from "@/lib/profile/deal-types";
+import type { RememberedFact } from "@/lib/knowledge/facts-server";
+import { deleteAllFactsAction, deleteFactAction } from "./facts-actions";
 
 /**
  * The parts of Account after the plan and billing (Batch 11): notifications,
@@ -150,5 +152,50 @@ export function SignOutForm() {
         Sign out
       </button>
     </form>
+  );
+}
+
+const FACT_CHANNEL: Record<string, string> = { call: "on a call", chat: "in the chat", view: "in the app" };
+
+/**
+ * Batch 24: what Stayful Intelligence remembers about the member, each thing
+ * only after they said yes, and the way to delete it for good. Only ever the
+ * signed-in member's own (a team owner never sees a member's).
+ */
+export function RemembersSection({ facts }: { facts: RememberedFact[] }) {
+  return (
+    <section className={CARD} id="remembers">
+      <h2 className="text-base font-semibold">What Stayful Intelligence remembers about you</h2>
+      {facts.length === 0 ? (
+        <p className="mt-1 text-sm text-[#7a8274]">
+          Nothing yet. When you tell Stayful Intelligence something about what you&apos;re looking for, it asks before it remembers it, and it shows here. It never keeps health, money beyond your profile, or anything about other people.
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-[#7a8274]">Each one was saved only after you said yes. Deleting it removes it for good.</p>
+          <ul className="mt-3 divide-y divide-[#eef0e8]">
+            {facts.map((f) => (
+              <li key={f.id} className="flex items-start justify-between gap-3 py-2 text-sm">
+                <span>
+                  {f.fact}
+                  <span className="block text-xs text-[#7a8274]">
+                    {new Date(f.confirmedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "Europe/London" })} · {FACT_CHANNEL[f.channel] ?? f.channel}
+                  </span>
+                </span>
+                <form action={deleteFactAction}>
+                  <input type="hidden" name="id" value={f.id} />
+                  <button type="submit" className="text-sm text-[#b3261e] underline">Delete</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+          {facts.length > 1 && (
+            <form action={deleteAllFactsAction} className="mt-2">
+              <button type="submit" className="text-sm text-[#b3261e] underline">Delete all</button>
+            </form>
+          )}
+        </>
+      )}
+    </section>
   );
 }

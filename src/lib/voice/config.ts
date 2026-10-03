@@ -53,6 +53,8 @@ export const TOOL_LIMITS = {
   send_template_text: 2, // also capped by si_texts_per_call_max
   handoff_to_team: 1,
   log_question: 40,
+  // Batch 24: a fact the member said yes to remembering (src/lib/knowledge/facts-server.ts).
+  remember_fact: 3,
 } as const;
 export type ToolName = keyof typeof TOOL_LIMITS;
 export const TOOL_NAMES = Object.keys(TOOL_LIMITS) as ToolName[];

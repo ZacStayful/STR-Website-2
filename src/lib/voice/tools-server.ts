@@ -18,6 +18,9 @@ import 'server-only';
  *                                (feedback_admin_email) once a call.
  *   log_question(question, outcome, knowledge_ref?)  the conversation log's
  *                                outcome per question (Batch 24 reads it).
+ *   remember_fact(fact, asked, member_said_yes)  Batch 24: a fact the member
+ *                                said yes to remembering, kept for their own
+ *                                account (Account shows and deletes it).
  *
  * Answers are short instructions for the agent, never data to read out.
  */
@@ -29,6 +32,7 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { feedbackSettings } from '../feedback/settings-server';
 import { handoffEmail } from '../email/si-calls';
 import { recordQuestion } from '../conversations/log-server';
+import { rememberFact } from '../knowledge/facts-server';
 import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, callsDryRun, type CallTextTemplate, type QuestionOutcome, type ToolName } from './config';
 import { callText } from './templates';
 import { memberFacts } from './member-server';
@@ -94,6 +98,8 @@ async function dispatch(tool: ToolName, call: CallRow, req: ToolRequest, textsPe
       return handoff(call, req);
     case 'log_question':
       return logQuestion(call, req);
+    case 'remember_fact':
+      return rememberFactTool(call, req);
   }
 }
 
@@ -167,6 +173,29 @@ async function handoff(call: CallRow, req: ToolRequest): Promise<ToolAnswer> {
   await updateCall(admin, call.id, { handoff: true });
   if (call.conversation_id) await recordQuestion(call.conversation_id, { question, outcome: 'handed_off' });
   return { ok: true, say: m ? "Say: I'll pass that to the team, they'll email you." : "Say: I've passed that to the team.", detail: { emailed: sent } };
+}
+
+/** Batch 24: a fact the member said yes to remembering, for their own account only. */
+async function rememberFactTool(call: CallRow, req: ToolRequest): Promise<ToolAnswer> {
+  if (!call.user_id) return { ok: false, say: "Don't remember anything for an unknown caller. Carry on.", detail: { reason: 'unknown_caller' } };
+  const r = await rememberFact({
+    userId: call.user_id,
+    fact: str(req.fact, 300) ?? '',
+    asked: str(req.asked, 300),
+    confirmed: req.member_said_yes === true || req.member_said_yes === 'true',
+    channel: 'call',
+    confirmedVia: 'call_yes',
+    conversationId: call.conversation_id,
+  });
+  if (r.ok) return { ok: true, say: 'Remembered. They can see or delete it in Account, under what Stayful Intelligence remembers.', detail: { remembered: true } };
+  const say: Record<string, string> = {
+    not_confirmed: "Only remember it if they clearly said yes. Carry on.",
+    sensitive: "Don't remember that: it's personal. Carry on without it.",
+    personal_details: "Don't remember contact or card details. Carry on.",
+    duplicate: 'Already remembered. Carry on.',
+    cap: "I can't remember any more: they can delete some in Account first. Carry on.",
+  };
+  return { ok: false, say: say[r.reason] ?? "Couldn't remember that just now. Carry on.", detail: { reason: r.reason } };
 }
 
 async function logQuestion(call: CallRow, req: ToolRequest): Promise<ToolAnswer> {

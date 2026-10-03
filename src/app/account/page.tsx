@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { teamName, teamOf } from '@/lib/team';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import {
   ACCESS_COLUMNS,
   accountStatus,
@@ -28,7 +28,9 @@ import { parseMarketGoals } from '@/lib/market/goals';
 import { accountMoreLinks } from '@/lib/nav';
 import { ManagePlan } from './ManagePlan';
 import type { PlanView } from './plan-view';
-import { AccountHeader, GoalsSection, MoreSection, NotificationsSection, SignOutForm, TeamMemberSection } from './AccountSections';
+import { AccountHeader, GoalsSection, MoreSection, NotificationsSection, RemembersSection, SignOutForm, TeamMemberSection } from './AccountSections';
+import { rememberedFactsFor } from '@/lib/knowledge/facts-server';
+import { logActivity } from '@/lib/activity/log';
 import { START_PATH } from '@/lib/management/stamp';
 
 export const dynamic = 'force-dynamic';
@@ -65,6 +67,9 @@ export default async function AccountPage({
   if (!user) redirect('/login?redirect=/account');
   const team = await teamOf(user.id);
   const storeUrl = chromeStoreUrl();
+  // Batch 24: what Stayful Intelligence remembers about this member (their own only).
+  const facts = hasServiceRole() ? await rememberedFactsFor(user.id) : [];
+  if (facts.length > 0) logActivity(user.id, 'si_facts_viewed', { dedupeKey: `si_facts_viewed:${new Date().toISOString().slice(0, 10)}`, extras: { count: facts.length } });
 
   // A team member's plan and billing are the owner's to manage: their Account
   // is the rest of it (and, unlike /account/team, has Sign out). Nothing
@@ -83,6 +88,7 @@ export default async function AccountPage({
           <TeamMemberSection teamName={name} suspended={team.suspended} />
           <NotificationsSection />
           <GoalsSection goals={parseMarketGoals(member.market_goals ?? null)} />
+          <RemembersSection facts={facts} />
           <MoreSection keys={accountMoreLinks({ teamMember: true, teamOwnsFunnel })} storeUrl={storeUrl} />
           <SignOutForm />
         </div>
@@ -227,6 +233,7 @@ export default async function AccountPage({
 
         <NotificationsSection />
         <GoalsSection goals={goals} />
+        <RemembersSection facts={facts} />
         <MoreSection keys={accountMoreLinks({ teamMember: false, teamOwnsFunnel })} storeUrl={storeUrl} />
         {/* Batch 22f: the way in for a management company the ad missed (owners only; nav.ts is Batch 22e's). */}
         <p className="mt-1.5 text-sm text-[#7a8274]">
