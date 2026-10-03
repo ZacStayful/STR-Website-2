@@ -788,7 +788,8 @@ shows every call, including the ones a safety rule blocked and why.
    (another random string). On Preview, `SI_CALLS_DRY_RUN=true`. Redeploy.
 7. **Sync the agent:** `/admin/calls` → The agent → **Dry run**, read what
    would change, then **Sync to ElevenLabs** (the prompt from the persona,
-   the scripts, the knowledge, the four tools, the voice and the limits).
+   the scripts, the approved call answers from the knowledge base (Batch
+   24, §22), the five tools, the voice and the limits).
 8. **Check the cron:** Vercel → Settings → Cron Jobs lists
    `/api/internal/si-calls` (every 5 minutes; that makes 36 cron entries —
    check your plan's limit). `?dry=1` lists what it would place, block,
@@ -878,6 +879,58 @@ Once, after deploying:
    first lead, median minutes to live, leads a month, revenue by tier. "Set a
    test month" sets an owner's month, so you can test the tiers.
 
+### 22. The Stayful Intelligence knowledge base (Batch 24)
+
+One table of answers Zac has approved (`si_knowledge`) is the only source for
+Stayful Intelligence's chips, the phone agent and (Batch 26) the chat. Every
+figure in an answer is a `{placeholder}` read from the settings when it is
+shown, so a price change needs no edit. A nightly job groups the questions
+it couldn't answer and drafts answers for approval; nothing a model writes
+reaches a member until it is approved. Members can ask it to remember
+preferences (only after they say yes) and see and delete them in Account.
+Everything is in `src/lib/knowledge` (the contract for later batches is its
+`README.md`); admin is `/admin/intelligence` (Gaps, Knowledge, Coverage) and
+`/admin/conversations`.
+
+Cut over on the preview (it shares the live database), so members never see
+empty chips or an agent with no knowledge:
+
+1. **Run `supabase/schema.sql`** (the "Batch 24: Stayful Intelligence
+   knowledge" section). Idempotent and additive, service role only:
+   `si_knowledge` (+ `si_knowledge_live`, `si_knowledge_history`),
+   `si_knowledge_gaps`, `si_knowledge_gap_questions`, `si_gap_runs`,
+   `si_member_facts`, their functions, seven `si_kb_*` / `si_gap_*` /
+   `si_facts_max` / `si_question_retention_months` settings and four
+   prompt-cache unit rows. Nothing on `profiles`, nothing in
+   `ACCESS_COLUMNS`.
+2. **On the preview, seed:** `/admin/intelligence/knowledge` → **Dry run**,
+   read the list, then **Seed** (or
+   `/api/internal/si-knowledge?step=seed&dry=1`, then without `dry`). Every
+   entry arrives as a draft.
+3. **Approve the entries** one by one on their pages (each shows the answer
+   as members would see it now, every condition both ways). Until the call
+   answers the agent needs are approved (`REQUIRED_CALL_SLUGS` in
+   `src/lib/knowledge/agent.ts`), the agent keeps its old prompt, and the
+   Knowledge page says which are missing.
+4. **Merge.**
+5. **`/admin/calls` → The agent → Dry run, then Sync to ElevenLabs** (the new
+   prompt with the knowledge and the `remember_fact` tool). After this,
+   approving or retiring a call answer re-syncs the prompt by itself, and the
+   nightly job catches up if one was missed.
+6. **The nightly job, dry:** `/admin/intelligence/gaps` → **Estimate** (no
+   model calls), then **Dry run** (the real groups and drafts, written
+   nowhere; its cost counts against the cap). Or
+   `/api/internal/si-knowledge?dry=1&estimate=1`, then `?dry=1`.
+7. **Switch it on:** `SI_GAP_JOB_ENABLED=true` on Production. It is house
+   spend (never a member's credit), inside `si_gap_monthly_cap_pence` (default
+   £15), at most `si_gap_max_groups_per_night` (default 20) drafts a night.
+8. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/si-knowledge` (02:50 UTC daily; 39 cron entries). On
+   Mondays it also emails last week's gaps and coverage to the address on
+   `/admin/feedback` (`?step=weekly&dry=1` previews it), and every night it
+   deletes members' questions older than `si_question_retention_months`
+   (default 24).
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -914,6 +967,8 @@ which are required, and what breaks without them.
 | `src/app/admin/signups` | Sign-ups by source (Batch 19): per utm source, campaign and ad, the share who finish the profile, run a first report within 7 days, pay, and are weekly active in weeks 2–4; and whether Meta measurement is set up, with the last 20 conversions |
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
+| `src/lib/knowledge` | The Stayful Intelligence knowledge base (Batch 24): templates and placeholders (`template.ts`, `placeholders.ts`, `render.ts`, `figures.ts`), matching (`match.ts`), the seed drafts (`seed.ts`), the service facts the nightly job drafts from (`service-facts.ts`), the agent's knowledge (`agent.ts`), member facts (`facts-rules.ts`), coverage and the Monday email (`coverage.ts`, `weekly.ts`), all pure and tested; the reads and writes are the `*-server.ts` files and `gap/` is the nightly job. Every number is in `config.ts` or a `billing_settings` row (`settings.ts`). `README.md` is the contract for Batches 25 and 26 |
+| `src/app/admin/intelligence` | Stayful Intelligence admin: Overview (Batch 22's reveal), Gaps (what it couldn't answer, with the drafted answers, spend against the cap and the job's runs), Knowledge (every entry, approve / reject / retire, try a question, the seed, the placeholder catalogue) and Coverage (the weekly share answered from approved knowledge). Conversations is `src/app/admin/conversations` |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
 | `src/lib/access.ts` | Billing state of an account: subscriber, paused, lapsed, pay-as-you-go |
 | `src/lib/credit/` | The credit ledger: unit costs, metering, reservations, estimates, plans, perks |
