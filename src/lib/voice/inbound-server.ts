@@ -29,6 +29,7 @@ import { initiateSecret, toolSecret } from './config';
 import { memberByNumber, memberFacts } from './member-server';
 import { callByConversation, contactCardSent, insertCall, lastOutbound } from './store-server';
 import { callVariables, fill, openerFor, type CallContext } from './agent/variables';
+import { knowledgeCallValues } from '../knowledge/agent-server';
 
 const MISSED_WITHIN_MS = 7 * 24 * 60 * 60_000;
 
@@ -55,7 +56,8 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
     conversation_config_override: { agent: { first_message: fill(openerFor(context), vars) } },
   });
 
-  const base = { topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence };
+  // Batch 24: the knowledge base's figures, as they are now (every call sends all of them).
+  const base = { topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence, knowledge: await knowledgeCallValues(admin) };
 
   // An outbound call we placed already carries its own variables; if asked anyway, answer with the same ones.
   if (req.conversation_id) {

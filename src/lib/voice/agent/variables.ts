@@ -4,9 +4,16 @@
  * ElevenLabs requires every variable the agent uses on every call, so all of
  * them are always sent. None is a balance, an address or a deal figure.
  *
+ * Batch 24: plus every knowledge variable (k_<placeholder>, the public
+ * figures the knowledge base's call answers use). The list is fixed in code
+ * (src/lib/knowledge/agent.ts); a value not passed in is sent as "shown in
+ * the app", so a figure that can't be read never stops a call.
+ *
  * Pure.
  */
 import { PERSONA_VERSION } from '../../persona/stayful-intelligence.ts';
+import { CALL_FIGURE_FALLBACK } from '../../knowledge/config.ts';
+import { KNOWLEDGE_VARIABLES } from '../../knowledge/agent.ts';
 import type { CallType } from '../config.ts';
 import {
   CALLBACK_MEMBER_OPENER,
@@ -20,7 +27,9 @@ import {
 /** What the agent is told about why this call is happening. */
 export type CallContext = 'intro' | 'low_credit' | 'missed_intro' | 'missed_low_credit' | 'member' | 'unknown';
 
-export const VARIABLE_NAMES = ['first_name', 'caller_status', 'call_type', 'context', 'card_sent', 'minutes_available', 'topup_amount', 'topup_threshold', 'persona_version'] as const;
+export const BASE_VARIABLE_NAMES = ['first_name', 'caller_status', 'call_type', 'context', 'card_sent', 'minutes_available', 'topup_amount', 'topup_threshold', 'persona_version'] as const;
+/** Every variable every call sends: the call's own, then the knowledge base's figures. */
+export const VARIABLE_NAMES: readonly string[] = [...BASE_VARIABLE_NAMES, ...KNOWLEDGE_VARIABLES];
 
 export interface VariablesInput {
   callType: CallType;
@@ -32,6 +41,8 @@ export interface VariablesInput {
   minutesAvailable: number;
   topupAmountPence: number;
   topupThresholdPence: number;
+  /** The knowledge variables' values now (src/lib/knowledge/agent-server.ts knowledgeCallValues); any left out are sent as the fallback. */
+  knowledge?: Readonly<Record<string, string>>;
 }
 
 const pounds = (pence: number) => (pence % 100 === 0 ? `${pence / 100} pounds` : `£${(pence / 100).toFixed(2)}`);
@@ -47,6 +58,7 @@ export function callVariables(i: VariablesInput): Record<string, string | number
     topup_amount: pounds(i.topupAmountPence),
     topup_threshold: pounds(i.topupThresholdPence),
     persona_version: PERSONA_VERSION,
+    ...Object.fromEntries(KNOWLEDGE_VARIABLES.map((k) => [k, i.knowledge?.[k] ?? CALL_FIGURE_FALLBACK])),
   };
 }
 

@@ -10,6 +10,8 @@ import { renderEntry } from "@/lib/knowledge/render";
 import { entryStatus, liveContent, pendingContent, STATUS_LABEL, type EntryStatus, type KnowledgeRow } from "@/lib/knowledge/rows";
 import { DEFAULT_KNOWLEDGE_SETTINGS } from "@/lib/knowledge/settings";
 import { allEntries, catalogue, checkStale, liveEntries, readGlobalSnapshot, readKnowledgeSettings } from "@/lib/knowledge/store-server";
+import { afterKnowledgeChange, agentKnowledgeState } from "@/lib/knowledge/agent-server";
+import { voiceConfig } from "@/lib/voice/config";
 import { oneOf } from "../../picks/responses/windows";
 import { readFlash } from "../flash";
 import { saveKnowledgeSettingsAction, seedAction } from "../actions";
@@ -63,6 +65,9 @@ export default async function KnowledgeAdminPage({ searchParams }: { searchParam
   const ready = hasServiceRole();
   const admin = ready ? createAdminClient() : null;
   const stale = admin ? await checkStale({ dry: false, actor: `admin page (${user.email ?? "admin"})` }, admin) : null;
+  // A call answer just went stale: the agent is re-synced without it, in the background.
+  if (stale?.callChanged && stale.newlyStale.length) afterKnowledgeChange("stale on the Knowledge page");
+  const agent = admin && voiceConfig() ? await agentKnowledgeState(admin) : null;
   const [rows, g, settings, live, flash] = await Promise.all([admin ? allEntries(admin) : null, admin ? readGlobalSnapshot(admin) : null, admin ? readKnowledgeSettings(admin) : DEFAULT_KNOWLEDGE_SETTINGS, admin ? liveEntries(undefined, admin) : null, readFlash()]);
 
   const list = (rows ?? []).filter((r) => {
@@ -105,6 +110,16 @@ export default async function KnowledgeAdminPage({ searchParams }: { searchParam
         </div>
       )}
       {rows && !g && <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">The settings couldn&apos;t be read just now, so answers are shown to nobody until they can be. Nothing has been marked stale.</p>}
+
+      {agent && (
+        <p className={`mb-4 rounded-md border p-3 text-sm ${agent.inStep ? "border-border bg-card text-muted-foreground" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+          {agent.inStep
+            ? `The phone agent is in step: ${agent.knowledge?.slugs.length ?? 0} call answers.`
+            : agent.knowledge && agent.knowledge.missingRequired.length
+              ? `The phone agent keeps its old knowledge until these call answers are approved: ${agent.knowledge.missingRequired.join(", ")}.`
+              : `The phone agent is behind the knowledge base${agent.lastError ? ` (last sync: ${agent.lastError})` : ""}. It re-syncs after each approval and nightly; /admin/calls → Sync does it now.`}
+        </p>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2 text-sm">
         {STATUSES.map((s) => (

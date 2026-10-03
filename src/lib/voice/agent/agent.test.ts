@@ -1,17 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CORE, CHANNELS } from '../../persona/stayful-intelligence.ts';
-import { FAQS, TRUST_FAQS } from '../../faqs-data.ts';
 import { agentPrompt } from './prompt.ts';
-import { renderKnowledge } from './knowledge.ts';
-import { serviceGuide } from './service-guide.ts';
+import { agentKnowledge, KNOWLEDGE_VARIABLES, promptVariables } from '../../knowledge/agent.ts';
+import { SEED } from '../../knowledge/seed.ts';
+import { schemaSnapshot } from '../../knowledge/test-fixtures.ts';
 import { toolConfig } from './tools.ts';
 import { agentConfig } from './agent-config.ts';
 import { TOOL_NAMES } from '../config.ts';
 import { callVariables, fill, openerFor, VARIABLE_NAMES } from './variables.ts';
 
-const guide = serviceGuide({ callPencePerMin: 65, textPence: 22, emailPence: 20, topupAmountPence: 2500, topupThresholdPence: 500 });
-const knowledge = renderKnowledge(FAQS, TRUST_FAQS, guide);
+// Batch 24: the knowledge is the knowledge base's call answers (here the seed, as if all approved).
+const live = SEED.map((e, i) => ({ ...e, id: `id-${i}`, version: 1 }));
+const knowledge = agentKnowledge(live, schemaSnapshot()).text;
 
 test('the phone agent\'s instructions are built from the persona module (CORE + phone)', () => {
   const p = agentPrompt(knowledge);
@@ -25,10 +26,34 @@ test('the phone agent\'s instructions are built from the persona module (CORE + 
   assert.match(p, /I'll only call when there's something worth your time/);
 });
 
-test('the knowledge carries an id per entry and the live prices', () => {
-  assert.match(knowledge, /\[guide\.calls\].*65p a minute.*Texts cost 22p and emails 20p/);
-  assert.match(knowledge, /\[faq\.1\]/);
-  assert.match(knowledge, /\[trust\.1\]/);
+test('the knowledge carries a slug per entry and its figures as call variables, never typed', () => {
+  assert.match(knowledge, /\[calls_how\] .*\{\{k_call_minute_cost\}\} a minute/);
+  assert.match(knowledge, /\[what_it_costs\]/);
+  assert.match(knowledge, /\[forecast_accuracy\]/);
+  // No figure is written into the prompt: every one is a variable filled per call.
+  assert.doesNotMatch(knowledge, /£\s?\d|\d+p\b/);
+  // Only call answers: a chip that uses a member's own value is not in it.
+  assert.doesNotMatch(knowledge, /\[credits\]/);
+  const k = agentKnowledge(live, schemaSnapshot());
+  assert.deepEqual(k.missingRequired, []);
+  assert.ok(!k.slugs.includes('nightly_rate'), 'chat-only entries stay out');
+});
+
+test("every variable the agent's prompt uses is one every call sends", () => {
+  const sent = new Set(VARIABLE_NAMES);
+  for (const v of promptVariables(agentPrompt(knowledge))) assert.ok(sent.has(v) || v.startsWith('system__') || v.startsWith('secret__'), v);
+  for (const k of KNOWLEDGE_VARIABLES) assert.ok(sent.has(k), k);
+});
+
+test('a required answer missing from the live set blocks a sync', () => {
+  const k = agentKnowledge(live.filter((e) => e.slug !== 'calls_how'), schemaSnapshot());
+  assert.deepEqual(k.missingRequired, ['calls_how']);
+});
+
+test("an answer whose figure doesn't resolve now is left out of the agent's knowledge", () => {
+  const k = agentKnowledge(live, schemaSnapshot({ drop: ['si_text_pence'] }));
+  assert.ok(!k.slugs.includes('calls_how'));
+  assert.ok(k.skipped.some((s) => s.slug === 'calls_how'));
 });
 
 test('every tool takes its ids from injected variables and its secret from a secret variable', () => {
@@ -56,6 +81,9 @@ test('the agent uses the one voice, ends voicemail without a message, and keeps 
 test('call variables carry every name, never a balance; openers are filled', () => {
   const v = callVariables({ callType: 'intro', context: 'intro', firstName: 'Sam', member: true, cardSent: false, minutesAvailable: 6.7, topupAmountPence: 2500, topupThresholdPence: 500 });
   assert.deepEqual(Object.keys(v).sort(), [...VARIABLE_NAMES].sort());
+  // A knowledge figure not passed in goes out as the neutral fallback, never missing (a missing variable stops the call).
+  assert.equal(v.k_full_analysis_cost, 'shown in the app');
+  assert.equal(callVariables({ callType: 'intro', context: 'intro', firstName: 'Sam', member: true, cardSent: false, minutesAvailable: 6, topupAmountPence: 2500, topupThresholdPence: 500, knowledge: { k_full_analysis_cost: '£4' } }).k_full_analysis_cost, '£4');
   assert.equal(v.minutes_available, 6);
   assert.equal(v.topup_amount, '25 pounds');
   assert.ok(!Object.keys(v).some((k) => /balance|address|price/.test(k)));

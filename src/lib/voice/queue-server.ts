@@ -27,6 +27,7 @@ import { memberFacts, type MemberFacts } from './member-server';
 import { contactCardSent, dayFacts, insertCall, updateCall, type CallRow } from './store-server';
 import { placeOutboundCall } from './elevenlabs-server';
 import { callVariables, fill, openerFor, type CallContext } from './agent/variables';
+import { knowledgeCallValues } from '../knowledge/agent-server';
 import { claimCallSlot } from './cap-server';
 import { startConversation } from '../conversations/log-server';
 
@@ -165,6 +166,8 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
     minutesAvailable: Math.max(1, Math.floor((seconds - settings.voice.wrapUpSeconds) / 60)),
     topupAmountPence: settings.intelligence.revealAutoTopupAmountPence,
     topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence,
+    // Batch 24: the knowledge base's figures, as they are now (every call sends all of them).
+    knowledge: await knowledgeCallValues(admin),
   });
   const would = { call: call.id, type, to: 'number on file', vars: { ...vars } };
   if (!o.apply || callsDryRun() || !config || !m.phone) {

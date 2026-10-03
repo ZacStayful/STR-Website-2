@@ -3,7 +3,7 @@
  *
  * Written from the three places Stayful Intelligence answered from before
  * Batch 24: the question chips (src/lib/intelligence/answers.ts, Batch 22),
- * the phone agent's service guide (src/lib/voice/agent/service-guide.ts,
+ * the phone agent's service guide (src/lib/voice/agent/service-guide.ts, now deleted,
  * Batch 23) and the site's FAQs (src/lib/faqs-data.ts). Duplicates are
  * merged, every answer is cut to one or two sentences with the figure first,
  * and every figure is a {placeholder}.

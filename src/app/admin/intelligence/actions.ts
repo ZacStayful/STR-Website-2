@@ -11,6 +11,7 @@ import { SLUG_PATTERN } from '@/lib/knowledge/config';
 import { runKnowledgeSeed } from '@/lib/knowledge/seed-server';
 import { approveEntry, createEntry, rejectDraft, retireEntry, saveDraft } from '@/lib/knowledge/store-server';
 import type { EntryContent } from '@/lib/knowledge/render';
+import { afterKnowledgeChange } from '@/lib/knowledge/agent-server';
 import { flashAndGo } from './flash';
 
 /**
@@ -99,6 +100,8 @@ export async function approveAction(formData: FormData): Promise<void> {
   const id = str(formData, 'id');
   const hash = str(formData, 'hash') || null;
   const r = await approveEntry({ id, version: int(formData, 'version'), hash, actor: email });
+  // Live on calls too: the agent's knowledge is re-synced in the background (prompt only).
+  if (r.ok) afterKnowledgeChange(`approved ${id}`);
   revalidatePath(KNOWLEDGE);
   return flashAndGo(entryPage(id), r.ok ? { kind: 'ok', message: 'Approved: live on its channels now.' } : { kind: 'error', message: r.error });
 }
@@ -115,6 +118,7 @@ export async function retireAction(formData: FormData): Promise<void> {
   const { email } = await requireAdmin();
   const id = str(formData, 'id');
   const r = await retireEntry({ id, version: int(formData, 'version'), actor: email, note: str(formData, 'note').slice(0, 300) || null });
+  if (r.ok && (r.channels ?? []).includes('call')) afterKnowledgeChange(`retired ${id}`);
   revalidatePath(KNOWLEDGE);
   return flashAndGo(entryPage(id), r.ok ? { kind: 'ok', message: 'Retired: off every channel now.' } : { kind: 'error', message: r.error });
 }
