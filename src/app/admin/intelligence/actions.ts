@@ -147,10 +147,8 @@ export async function approveGapAction(formData: FormData): Promise<void> {
   const { email } = await requireAdmin();
   const id = str(formData, 'id');
   const r = await approveEntry({ id, version: int(formData, 'version'), hash: str(formData, 'hash') || null, actor: email });
-  if (r.ok) {
-    await createAdminClient().from('si_knowledge_gaps').update({ status: 'covered', match_kind: 'approved', decided_at: new Date().toISOString(), asked_since_decision: 0, updated_at: new Date().toISOString() }).eq('entry_id', id);
-    afterKnowledgeChange(`approved ${id} from Gaps`);
-  }
+  // approveEntry marks the gaps this entry answers as covered.
+  if (r.ok) afterKnowledgeChange(`approved ${id} from Gaps`);
   revalidatePath(GAPS);
   return flashAndGo(GAPS, r.ok ? { kind: 'ok', message: 'Approved: live on its channels now.' } : { kind: 'error', message: r.error });
 }

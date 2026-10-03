@@ -23,8 +23,8 @@ export const MODEL_UNITS: Readonly<Record<string, ModelUnits>> = {
   [GAP_DRAFT_MODEL]: { input: 'sonnet55_input_token', output: 'sonnet55_output_token', cacheRead: 'sonnet55_cache_read_token', cacheWrite: 'sonnet55_cache_write_token' },
 };
 
-/** A rough token count for a budget check: about 3.5 characters a token, rounded up. */
-export const estimateTokens = (text: string): number => Math.ceil(text.length / 3.5);
+/** A cautious token count for a budget check: 3 characters a token (English runs nearer 4), rounded up. */
+export const estimateTokens = (text: string): number => Math.ceil(text.length / 3);
 
 /** Raw pence per unit (house spend: the provider's price, no markup). */
 export type UnitPence = (unit: string) => number;

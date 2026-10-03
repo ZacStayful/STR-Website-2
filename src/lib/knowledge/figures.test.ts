@@ -15,3 +15,9 @@ test('plain words, product names and number words pass (words warn)', () => {
   assert.equal(w.warnings.length, 2);
   assert.deepEqual(figureCheck('Anyone can ask someone.').warnings, []);
 });
+
+test('plural number words warn too ("thousands of deals" is a claim to check)', () => {
+  const r = figureCheck('It searches thousands of deals and hundreds of areas.');
+  assert.equal(r.blocking.length, 0);
+  assert.equal(r.warnings.length, 2);
+});

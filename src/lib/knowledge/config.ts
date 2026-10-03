@@ -76,14 +76,24 @@ export const LIVE_CACHE_MS = 30_000;
 export const GAP_OUTCOMES = ['low_confidence', 'could_not_answer', 'member_unhappy'] as const;
 export const GAP_GROUP_MODEL = 'claude-haiku-4-5';
 export const GAP_DRAFT_MODEL = 'claude-sonnet-5-5';
-/** Room for the grouping JSON: about 25 tokens a question, plus the new groups. */
+/** Questions sent to the grouping model in one call (a long batch could run out of reply room and be re-sent every night). */
+export const GAP_GROUP_BATCH = 40;
+/** Room for one batch's grouping JSON: at most a new group per question, about 60 tokens each, with plenty to spare. */
 export const GAP_GROUP_MAX_TOKENS = 6000;
 /** Room for one drafted answer as JSON. */
 export const GAP_DRAFT_MAX_TOKENS = 700;
-/** A model call that takes longer than this is abandoned (the next night tries again). */
+/** A model call that takes longer than this is abandoned (the next night tries again). One retry, so a call can take twice this. */
 export const GAP_MODEL_TIMEOUT_MS = 60_000;
-/** Drafting stops after this long in one pass; the rest waits for the next night. */
-export const GAP_TIME_BUDGET_MS = 240_000;
+/**
+ * No new model call starts after this long in one run; the rest waits for the
+ * next night. The route's maxDuration is 300 s: this plus one call at its
+ * worst (two timeouts) plus the run's last writes stays under it.
+ */
+export const GAP_TIME_BUDGET_MS = 150_000;
+/** Added to every worst-case token estimate: the structured-output schema and message framing the API counts as input. */
+export const GAP_REQUEST_OVERHEAD_TOKENS = 500;
+/** When the nightly job runs (vercel.json, /api/internal/si-knowledge), as shown on the Gaps page. */
+export const GAP_SCHEDULE_TEXT = '02:50 UTC daily';
 /** Up to this many phrasings are kept on a gap, as written. */
 export const GAP_SAMPLES_MAX = 10;
 /** A claimed run older than this with no finish is taken over. */

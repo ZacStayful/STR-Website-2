@@ -7247,6 +7247,33 @@ end $$;
 revoke all on function public.si_question_retention(jsonb) from public, anon, authenticated;
 grant execute on function public.si_question_retention(jsonb) to service_role;
 
+-- The nightly job's next questions: those with an outcome in p.outcomes that
+-- no run has grouped yet, oldest first, at most p.limit, with the
+-- conversation's channel. Grouped ones are excluded here, before the limit,
+-- so the job always moves on to new questions. For a "member unhappy" row
+-- from the post-call analysis, `prior` is the question asked just before it
+-- in the same conversation (the one to learn from).
+create or replace function public.si_gap_new_questions(p jsonb)
+returns jsonb language sql stable set search_path = '' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'question', x.question, 'outcome', x.outcome, 'source', x.source, 'at', x.at, 'conversation_id', x.conversation_id, 'channel', x.channel, 'prior', x.prior) order by x.at), '[]'::jsonb)
+  from (
+    select q.id, q.question, q.outcome, q.source, q.at, q.conversation_id, c.channel,
+      case when q.outcome = 'member_unhappy' and q.source = 'analysis' then (
+        select q2.question from public.si_conversation_questions q2
+        where q2.conversation_id = q.conversation_id and q2.outcome <> 'member_unhappy' and q2.at <= q.at
+        order by q2.at desc limit 1
+      ) end as prior
+    from public.si_conversation_questions q
+    join public.si_conversations c on c.id = q.conversation_id
+    where q.outcome in (select jsonb_array_elements_text(coalesce(p->'outcomes', '[]'::jsonb)))
+      and not exists (select 1 from public.si_knowledge_gap_questions gq where gq.question_id = q.id)
+    order by q.at
+    limit least(2000, greatest(1, coalesce((p->>'limit')::integer, 200)))
+  ) x
+$$;
+revoke all on function public.si_gap_new_questions(jsonb) from public, anon, authenticated;
+grant execute on function public.si_gap_new_questions(jsonb) to service_role;
+
 -- Coverage (/admin/intelligence/coverage and the Monday email): the questions
 -- asked from p.since (to p.until), counted by UK week (its Monday), channel,
 -- outcome and the knowledge entry used. One jsonb array, so no row limit

@@ -73,27 +73,38 @@ export async function agentKnowledgeState(admin: Admin = createAdminClient()): P
  * Push the knowledge to the agent. `toolsToo` (the /admin/calls button) also
  * creates or updates the agent's tools; a sync after an approval sends the
  * prompt only, so two at once can never create a tool twice. With `dry`,
- * reports what would change. Refused while a required answer is missing.
+ * reports what would change.
+ *
+ * The first sync from the knowledge base (the cut-over) is refused while a
+ * required call answer is missing, so the agent never goes out knowing
+ * nothing. After that it always syncs: an answer retired or gone stale
+ * leaves the agent at once (the agent says it doesn't know), and the
+ * message names the required answers that are missing.
  */
 export async function syncAgentKnowledge(o: { dry: boolean; toolsToo: boolean; reason: string }): Promise<SyncResult> {
   if (!voiceConfig()) return { ok: false, dry: o.dry, message: 'Calls are not configured (ELEVENLABS_*), so there is no agent to sync.', changes: [] };
   const admin = createAdminClient();
+  const state = await agentKnowledgeState(admin);
+  const cutOver = state.syncedHash !== null;
   let last: SyncResult | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     const k = await agentKnowledgeNow(admin);
     if (!k) return { ok: false, dry: o.dry, message: "The knowledge base or the settings couldn't be read; the agent was left as it is.", changes: [] };
-    if (k.missingRequired.length) {
+    const missing = k.missingRequired.length ? `These call answers aren't live, so the agent won't give them: ${k.missingRequired.join(', ')}.` : '';
+    if (missing && !cutOver) {
       const message = `Not synced: approve these call answers first (the agent keeps what it has until then): ${k.missingRequired.join(', ')}.`;
       if (!o.dry) await updateBillingSetting(SYNC_ERROR_KEY, message).catch(() => undefined);
       return { ok: false, dry: o.dry, message, changes: [] };
     }
     last = await syncAgent({ apply: !o.dry, knowledge: k.text, toolsToo: o.toolsToo });
+    if (missing) last = { ...last, message: `${last.message} ${missing}` };
     if (o.dry || !last.ok) {
       if (!o.dry) await updateBillingSetting(SYNC_ERROR_KEY, last.message).catch(() => undefined);
       return last;
     }
     await updateBillingSetting(SYNCED_HASH_KEY, k.hash);
-    await updateBillingSetting(SYNC_ERROR_KEY, '').catch(() => undefined);
+    // A missing required answer stays on the Knowledge page's banner until it is approved again.
+    await updateBillingSetting(SYNC_ERROR_KEY, missing).catch(() => undefined);
     // Something approved while this one was writing? Then once more, with the newer text.
     const again = await agentKnowledgeNow(admin);
     if (!again || again.hash === k.hash) break;

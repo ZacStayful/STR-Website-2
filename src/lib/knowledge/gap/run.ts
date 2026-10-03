@@ -5,17 +5,19 @@ import 'server-only';
  *
  *   1. claim the UK day in si_gap_runs (never twice; a dry run claims nothing)
  *   2. mark stale entries; re-sync the phone agent if it is behind
- *   3. read the questions Stayful Intelligence couldn't answer (low
+ *   3. the Monday email about last week (claimed once a week, so a missed
+ *      Monday is sent the next night; a dry run previews it on Mondays), and
+ *      question retention: questions older than si_question_retention_months
+ *      are deleted (a dry run counts them)
+ *   4. read the questions Stayful Intelligence couldn't answer (low
  *      confidence, could not answer, member unhappy) that no run has grouped
  *      yet, oldest first, at most si_gap_max_questions
- *   4. group them (Haiku 4.5): each group continues an open gap, matches an
- *      approved or rejected answer, or is new
- *   5. draft one answer per open gap without one (Sonnet 5.5), most asked
- *      first, at most si_gap_max_groups_per_night, inside the time budget
- *   6. the Monday email about last week (claimed once a week, so a missed
- *      Monday is sent the next night); a dry run previews it on Mondays
- *   7. question retention: questions older than si_question_retention_months
- *      are deleted (a dry run counts them)
+ *   5. group them (Haiku 4.5), GAP_GROUP_BATCH at a time: each group
+ *      continues an open gap, matches an approved or rejected answer, or is new
+ *   6. draft one answer per open gap without one (Sonnet 5.5), most asked
+ *      first, at most si_gap_max_groups_per_night
+ * No model call starts after GAP_TIME_BUDGET_MS; what is left waits for the
+ * next night.
  *
  * Every model call is house spend (never a member's credit), checked against
  * si_gap_monthly_cap_pence before it is made (its worst case) and recorded on
@@ -32,7 +34,7 @@ import { londonMonthStart } from '../../sms/uk-time';
 import { londonDayStart } from '../../leads/search';
 import { ukDay, ukWeekday } from '../../voice/hours';
 import { voiceConfig } from '../../voice/config';
-import { GAP_ACTION, GAP_DRAFT_MAX_TOKENS, GAP_DRAFT_MODEL, GAP_GROUP_MAX_TOKENS, GAP_GROUP_MODEL, GAP_OUTCOMES, GAP_SAMPLES_MAX, GAP_TIME_BUDGET_MS, RUN_STALE_CLAIM_MS } from '../config';
+import { GAP_ACTION, GAP_DRAFT_MAX_TOKENS, GAP_DRAFT_MODEL, GAP_GROUP_BATCH, GAP_GROUP_MAX_TOKENS, GAP_GROUP_MODEL, GAP_OUTCOMES, GAP_REQUEST_OVERHEAD_TOKENS, GAP_SAMPLES_MAX, GAP_TIME_BUDGET_MS, RUN_STALE_CLAIM_MS } from '../config';
 import { checkContent, type EntryContent } from '../render';
 import { entryStatus, type KnowledgeRow } from '../rows';
 import { SERVICE_FACTS } from '../service-facts';
@@ -90,38 +92,31 @@ export async function monthSpendPence(admin: Admin, now: Date): Promise<number |
 }
 
 /**
- * The questions no run has looked at yet, oldest first. A "member unhappy"
- * row added after a call carries the caller's last line; the question asked
- * just before it in the same conversation is the one to learn from.
+ * The questions no run has looked at yet, oldest first (si_gap_new_questions:
+ * grouped ones are excluded in the database, before the limit). A "member
+ * unhappy" row from the post-call analysis carries the caller's last line;
+ * the question asked just before it in the same conversation is the one to
+ * learn from.
  */
 async function newQuestions(admin: Admin, limit: number): Promise<QuestionRow[] | null> {
-  const { data, error } = await admin
-    .from('si_conversation_questions')
-    .select('id, question, outcome, source, at, conversation_id, knowledge_ref, si_conversations(channel)')
-    .in('outcome', [...GAP_OUTCOMES])
-    .order('at', { ascending: true })
-    .limit(Math.max(limit * 4, 200));
-  if (error) return null;
-  const rows = (data ?? []) as unknown as { id: string; question: string; outcome: string; source: string; at: string; conversation_id: string; si_conversations: { channel: string } | { channel: string }[] | null }[];
-  if (rows.length === 0) return [];
-  const { data: done, error: e2 } = await admin.from('si_knowledge_gap_questions').select('question_id').in('question_id', rows.map((r) => r.id));
-  if (e2) return null;
-  const grouped = new Set(((done ?? []) as { question_id: string }[]).map((r) => r.question_id));
-  const fresh = rows.filter((r) => !grouped.has(r.id)).slice(0, limit);
-  // "Unhappy" rows from the post-call analysis: use the question logged just before, in the same conversation.
-  const unhappy = fresh.filter((r) => r.outcome === 'member_unhappy' && r.source === 'analysis');
-  const before = new Map<string, string>();
-  if (unhappy.length) {
-    const { data: ctx } = await admin.from('si_conversation_questions').select('conversation_id, question, outcome, at').in('conversation_id', [...new Set(unhappy.map((r) => r.conversation_id))]).neq('outcome', 'member_unhappy').order('at', { ascending: true });
-    for (const u of unhappy) {
-      const prior = ((ctx ?? []) as { conversation_id: string; question: string; at: string }[]).filter((c) => c.conversation_id === u.conversation_id && c.at <= u.at).pop();
-      if (prior) before.set(u.id, prior.question);
-    }
+  const { data, error } = await admin.rpc('si_gap_new_questions', { p: { outcomes: [...GAP_OUTCOMES], limit } });
+  if (error) {
+    console.error('[knowledge] new questions read failed:', error.message);
+    return null;
   }
-  return fresh.map((r) => {
-    const conv = Array.isArray(r.si_conversations) ? r.si_conversations[0] : r.si_conversations;
-    return { id: r.id, question: before.get(r.id) ?? r.question, outcome: r.outcome, source: r.source, at: r.at, conversation_id: r.conversation_id, channel: conv?.channel ?? 'call' };
-  });
+  const rows = (Array.isArray(data) ? data : []) as { id?: unknown; question?: unknown; outcome?: unknown; source?: unknown; at?: unknown; conversation_id?: unknown; channel?: unknown; prior?: unknown }[];
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
+  const out: QuestionRow[] = [];
+  for (const r of rows) {
+    const id = str(r.id);
+    const question = str(r.prior) ?? str(r.question);
+    const outcome = str(r.outcome);
+    const at = str(r.at);
+    const conversationId = str(r.conversation_id);
+    if (!id || !question || !outcome || !at || !conversationId) continue;
+    out.push({ id, question, outcome, source: str(r.source) ?? 'tool', at, conversation_id: conversationId, channel: str(r.channel) ?? 'call' });
+  }
+  return out;
 }
 
 const bump = (m: Record<string, number>, k: string, n = 1) => ({ ...m, [k]: (m[k] ?? 0) + n });
@@ -266,9 +261,15 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
       else report.agent = (await syncAgentKnowledge({ dry: false, toolsToo: false, reason: 'nightly' })).message;
     }
 
-    // 3. The questions no run has grouped yet.
     const settings = await readKnowledgeSettings(admin);
     report.capPence = settings.gapMonthlyCapPence;
+
+    // 3. The Monday email (once a week by its own claim, so a missed Monday goes the next night; a dry run previews it on Mondays only),
+    //    and retention. Both before the model calls, so a run cut short by the time limit still does them.
+    if (!o.dry || ukWeekday(now) === 1) report.weekly = await runWeeklyGapEmail({ dry: o.dry, now, triggeredBy: o.triggeredBy }, admin);
+    report.retention = await questionRetention(admin, now, settings.questionRetentionMonths, o.dry);
+
+    // 4. The questions no run has grouped yet.
     report.monthSpentPence = await monthSpendPence(admin, now);
     const questions = await newQuestions(admin, settings.gapMaxQuestions);
     if (!questions) throw new Error("the conversation log can't be read");
@@ -276,8 +277,14 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
 
     const table = await getUnitCostTable();
     const price = (unit: string) => table.get(unitKey('anthropic', unit))?.unitCostPence ?? 0;
-    // This month's spend before the run, plus what the run has spent so far; unreadable = no room (fail closed).
-    const spent = () => (report.monthSpentPence ?? Number.POSITIVE_INFINITY) + report.costPence;
+    // This month's spend, read again before every call (another run's spend counts too), and never less than
+    // what this run knows it has added; unreadable = no room (fail closed).
+    const startSpent = report.monthSpentPence;
+    const spent = async (): Promise<number> => {
+      const fresh = await monthSpendPence(admin, now);
+      if (fresh === null || startSpent === null) return Number.POSITIVE_INFINITY;
+      return Math.max(fresh, startSpent + report.costPence);
+    };
     const elapsed = () => Date.now() - started;
 
     const [rows, live, g] = await Promise.all([allEntries(admin), liveEntries(undefined, admin), readGlobalSnapshot(admin)]);
@@ -287,32 +294,56 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
     if (gapErr) throw new Error(gapErr.message);
     const gaps = new Map(((gapData ?? []) as unknown as FullGapRow[]).map((x) => [x.id, x]));
 
-    // 4. Group (Haiku).
+    // 5. Group (Haiku), a batch at a time. A batch that fails is left ungrouped and read again the next night.
     const qById = new Map(questions.map((q) => [q.id, q]));
     const newGroups: ParsedGroup[] = [];
     if (questions.length > 0) {
-      const openGaps = [...gaps.values()].filter((x) => x.status === 'open' || x.status === 'drafted').map((x) => ({ id: x.id, label: x.label }));
       const known = rows.filter((r) => ['approved', 'rejected'].includes(entryStatus(r))).map((r) => ({ slug: r.slug, question: r.question ?? (r.draft as { question?: string } | null)?.question ?? r.slug, status: entryStatus(r) as 'approved' | 'rejected' }));
-      const msg = groupingMessage({ questions: questions.map((q) => ({ id: q.id, text: q.question, channel: q.channel })), gaps: openGaps, entries: known });
-      const worst = worstCasePence(MODEL_UNITS[GAP_GROUP_MODEL], estimateTokens(GROUPING_SYSTEM + msg.text), GAP_GROUP_MAX_TOKENS, price);
-      report.worstCasePence += worst;
-      if (o.estimate) report.grouping = { groups: [], ungrouped: questions.length, error: 'estimate only: no model call' };
-      else if (!modelsConfigured()) report.stopped = 'no_api_key';
-      else if (!fitsCap(spent(), worst, settings.gapMonthlyCapPence)) report.stopped = 'cap';
-      else {
+      const slugs = new Set(known.map((k) => k.slug));
+      const grouping: NonNullable<GapRunReport['grouping']> = { groups: [], ungrouped: 0, error: null };
+      report.grouping = grouping;
+      for (let i = 0; i < questions.length; i += GAP_GROUP_BATCH) {
+        const batch = questions.slice(i, i + GAP_GROUP_BATCH);
+        // Open gaps as they stand now: a gap a batch above created is offered to the next.
+        const openGaps = [...gaps.values()].filter((x) => x.status === 'open' || x.status === 'drafted').map((x) => ({ id: x.id, label: x.label }));
+        const msg = groupingMessage({ questions: batch.map((q) => ({ id: q.id, text: q.question, channel: q.channel })), gaps: openGaps, entries: known });
+        const worst = worstCasePence(MODEL_UNITS[GAP_GROUP_MODEL], estimateTokens(GROUPING_SYSTEM + msg.text + JSON.stringify(GROUPING_SCHEMA)) + GAP_REQUEST_OVERHEAD_TOKENS, GAP_GROUP_MAX_TOKENS, price);
+        report.worstCasePence += worst;
+        if (o.estimate) {
+          grouping.ungrouped += batch.length;
+          grouping.error = 'estimate only: no model call';
+          continue;
+        }
+        if (!modelsConfigured()) {
+          report.stopped = 'no_api_key';
+          break;
+        }
+        if (elapsed() > GAP_TIME_BUDGET_MS) {
+          report.stopped = 'time';
+          break;
+        }
+        if (!fitsCap(await spent(), worst, settings.gapMonthlyCapPence)) {
+          report.stopped = 'cap';
+          break;
+        }
         const reply = await callModel({ model: GAP_GROUP_MODEL, system: GROUPING_SYSTEM, cacheSystem: false, user: msg.text, schema: GROUPING_SCHEMA as unknown as Record<string, unknown>, maxTokens: GAP_GROUP_MAX_TOKENS, ctx, label: 'grouping', price });
         await recordCost(reply.costPence);
-        const parsed = reply.text ? parseGrouping(reply.text, msg, new Set(known.map((k) => k.slug))) : null;
-        report.grouping = { groups: (parsed?.groups ?? []).map((x) => ({ label: x.label, questions: x.questionIds.length, continues: x.gapId, matches: x.entrySlug })), ungrouped: parsed?.ungrouped.length ?? questions.length, error: parsed ? null : (reply.error ?? 'the reply was not the JSON asked for') };
-        if (parsed && !o.dry) {
+        const parsed = reply.text && !reply.error ? parseGrouping(reply.text, msg, slugs) : null;
+        if (!parsed) {
+          grouping.ungrouped += batch.length;
+          grouping.error ??= reply.error ?? 'the reply was not the JSON asked for';
+          continue;
+        }
+        grouping.groups.push(...parsed.groups.map((x) => ({ label: x.label, questions: x.questionIds.length, continues: x.gapId, matches: x.entrySlug })));
+        grouping.ungrouped += parsed.ungrouped.length;
+        if (!o.dry) {
           for (const grp of parsed.groups) await applyGroup(admin, grp, qById, entriesBySlug, gaps);
           if (parsed.ungrouped.length) await admin.from('si_knowledge_gap_questions').upsert(parsed.ungrouped.map((id) => ({ question_id: id, gap_id: null })), { onConflict: 'question_id', ignoreDuplicates: true });
-        }
-        if (parsed && o.dry) newGroups.push(...parsed.groups.filter((x) => !x.gapId && !x.entrySlug));
+        } else newGroups.push(...parsed.groups.filter((x) => !x.gapId && !x.entrySlug));
       }
     }
 
-    // 5. Draft (Sonnet): open gaps without an answer, most asked first.
+    // 6. Draft (Sonnet): open gaps without an answer, most asked first.
     const candidates: (GapRow & { samples?: string[] })[] = draftCandidates([...gaps.values()], settings.gapMaxGroupsPerNight);
     if (o.dry) for (const ng of newGroups) candidates.push({ id: `new:${ng.label}`, label: ng.label, status: 'open', entry_id: null, asked: ng.questionIds.length, draft_attempts: 0, last_asked_at: null, samples: ng.questionIds.map((id) => qById.get(id)?.question ?? '').filter(Boolean) });
     candidates.sort((a, b) => b.asked - a.asked);
@@ -333,7 +364,7 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
         }
         const samples = gap.samples ?? (await samplesFor(admin, gap.id));
         const m = draftMessages({ facts, knowledge, catalogue, label: gap.label, samples });
-        const worst = worstCasePence(MODEL_UNITS[GAP_DRAFT_MODEL], estimateTokens(m.system + m.user), GAP_DRAFT_MAX_TOKENS, price);
+        const worst = worstCasePence(MODEL_UNITS[GAP_DRAFT_MODEL], estimateTokens(m.system + m.user + JSON.stringify(DRAFT_SCHEMA)) + GAP_REQUEST_OVERHEAD_TOKENS, GAP_DRAFT_MAX_TOKENS, price);
         report.worstCasePence += worst;
         if (o.estimate) {
           report.drafts.push({ gap: gap.label, slug: null, covered: false, answer: null, missing: null, checks: [], error: 'estimate only: no model call' });
@@ -343,7 +374,7 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
           report.stopped = 'no_api_key';
           break;
         }
-        if (!fitsCap(spent(), worst, settings.gapMonthlyCapPence)) {
+        if (!fitsCap(await spent(), worst, settings.gapMonthlyCapPence)) {
           report.stopped = 'cap';
           break;
         }
@@ -381,11 +412,6 @@ export async function runGapJob(o: GapRunOptions): Promise<{ status: number; bod
         await admin.from('si_knowledge_gaps').update({ entry_id: created.id, match_kind: 'draft', status: 'drafted', uncovered: !draft.covered, last_error: null, updated_at: new Date().toISOString() }).eq('id', gap.id);
       }
     }
-
-    // 6. The Monday email (once a week by its own claim; a dry run previews it on Mondays only).
-    if (!o.dry || ukWeekday(now) === 1) report.weekly = await runWeeklyGapEmail({ dry: o.dry, now, triggeredBy: o.triggeredBy }, admin);
-    // 7. Retention.
-    report.retention = await questionRetention(admin, now, settings.questionRetentionMonths, o.dry);
 
     report.ms = Date.now() - started;
     if (runId) await admin.from('si_gap_runs').update({ status: 'done', finished_at: new Date().toISOString(), cost_pence: baseCost + report.costPence, report: summary(report, o.triggeredBy) }).eq('id', runId);

@@ -8,7 +8,7 @@ import { CATEGORY_LABEL, CHANNEL_LABEL, KB_CATEGORIES, KB_CHANNELS, type KbCateg
 import { matchKnowledge } from "@/lib/knowledge/match";
 import { renderEntry } from "@/lib/knowledge/render";
 import { entryStatus, liveContent, pendingContent, STATUS_LABEL, type EntryStatus, type KnowledgeRow } from "@/lib/knowledge/rows";
-import { DEFAULT_KNOWLEDGE_SETTINGS } from "@/lib/knowledge/settings";
+import { DEFAULT_KNOWLEDGE_SETTINGS, KNOWLEDGE_SETTING_BOUNDS as B } from "@/lib/knowledge/settings";
 import { allEntries, catalogue, checkStale, liveEntries, readGlobalSnapshot, readKnowledgeSettings } from "@/lib/knowledge/store-server";
 import { afterKnowledgeChange, agentKnowledgeState } from "@/lib/knowledge/agent-server";
 import { voiceConfig } from "@/lib/voice/config";
@@ -112,11 +112,11 @@ export default async function KnowledgeAdminPage({ searchParams }: { searchParam
       {rows && !g && <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">The settings couldn&apos;t be read just now, so answers are shown to nobody until they can be. Nothing has been marked stale.</p>}
 
       {agent && (
-        <p className={`mb-4 rounded-md border p-3 text-sm ${agent.inStep ? "border-border bg-card text-muted-foreground" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
-          {agent.inStep
-            ? `The phone agent is in step: ${agent.knowledge?.slugs.length ?? 0} call answers.`
-            : agent.knowledge && agent.knowledge.missingRequired.length
-              ? `The phone agent keeps its old knowledge until these call answers are approved: ${agent.knowledge.missingRequired.join(", ")}.`
+        <p className={`mb-4 rounded-md border p-3 text-sm ${agent.inStep && !agent.knowledge?.missingRequired.length ? "border-border bg-card text-muted-foreground" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+          {!agent.syncedHash && agent.knowledge && agent.knowledge.missingRequired.length
+            ? `The phone agent keeps its old knowledge until these call answers are approved: ${agent.knowledge.missingRequired.join(", ")}.`
+            : agent.inStep
+              ? `The phone agent is in step: ${agent.knowledge?.slugs.length ?? 0} call answers.${agent.knowledge?.missingRequired.length ? ` These aren't live, so it won't give them: ${agent.knowledge.missingRequired.join(", ")}.` : ""}`
               : `The phone agent is behind the knowledge base${agent.lastError ? ` (last sync: ${agent.lastError})` : ""}. It re-syncs after each approval and nightly; /admin/calls → Sync does it now.`}
         </p>
       )}
@@ -222,10 +222,10 @@ export default async function KnowledgeAdminPage({ searchParams }: { searchParam
       <section className={`mt-8 ${CARD}`}>
         <h2 className="text-lg font-semibold text-foreground">Settings</h2>
         <form action={saveKnowledgeSettingsAction} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
-          <label className="text-sm">Answered from (0–1)<input name="answerMinConfidence" type="number" min={0.05} max={1} step={0.01} defaultValue={settings.answerMinConfidence} className={`mt-1 block w-full ${INPUT}`} /></label>
-          <label className="text-sm">Low confidence from (0–1)<input name="lowConfidenceMin" type="number" min={0} max={0.95} step={0.01} defaultValue={settings.lowConfidenceMin} className={`mt-1 block w-full ${INPUT}`} /></label>
-          <label className="text-sm">Facts kept per member<input name="factsMax" type="number" min={0} max={200} step={1} defaultValue={settings.factsMax} className={`mt-1 block w-full ${INPUT}`} /></label>
-          <label className="text-sm">Keep questions (months)<input name="questionRetentionMonths" type="number" min={12} max={120} step={1} defaultValue={settings.questionRetentionMonths} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Answered from (0–1)<input name="answerMinConfidence" type="number" min={B.answerMinConfidence.min} max={B.answerMinConfidence.max} step={0.01} defaultValue={settings.answerMinConfidence} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Low confidence from (0–1)<input name="lowConfidenceMin" type="number" min={B.lowConfidenceMin.min} max={B.lowConfidenceMin.max} step={0.01} defaultValue={settings.lowConfidenceMin} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Facts kept per member<input name="factsMax" type="number" min={B.factsMax.min} max={B.factsMax.max} step={1} defaultValue={settings.factsMax} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Keep questions (months)<input name="questionRetentionMonths" type="number" min={B.questionRetentionMonths.min} max={B.questionRetentionMonths.max} step={1} defaultValue={settings.questionRetentionMonths} className={`mt-1 block w-full ${INPUT}`} /></label>
           <div className="sm:col-span-4">
             <button type="submit" className={BUTTON_QUIET}>Save settings</button>
             <span className="ml-3 text-xs text-muted-foreground">Decided defaults: answered from {DEFAULT_KNOWLEDGE_SETTINGS.answerMinConfidence}, low confidence from {DEFAULT_KNOWLEDGE_SETTINGS.lowConfidenceMin}, {DEFAULT_KNOWLEDGE_SETTINGS.factsMax} facts, {DEFAULT_KNOWLEDGE_SETTINGS.questionRetentionMonths} months.</span>

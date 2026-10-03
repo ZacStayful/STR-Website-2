@@ -4,10 +4,10 @@ import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
 import { isAdminEmail } from "@/lib/admin";
-import { CHANNEL_LABEL, GAP_SAMPLES_MAX, type KbChannel } from "@/lib/knowledge/config";
+import { CHANNEL_LABEL, GAP_SAMPLES_MAX, GAP_SCHEDULE_TEXT, type KbChannel } from "@/lib/knowledge/config";
 import { checkContent, contentHash } from "@/lib/knowledge/render";
 import { entryStatus, liveContent, pendingContent, type KnowledgeRow } from "@/lib/knowledge/rows";
-import { DEFAULT_KNOWLEDGE_SETTINGS } from "@/lib/knowledge/settings";
+import { DEFAULT_KNOWLEDGE_SETTINGS, KNOWLEDGE_SETTING_BOUNDS as B } from "@/lib/knowledge/settings";
 import { allEntries, readGlobalSnapshot, readKnowledgeSettings } from "@/lib/knowledge/store-server";
 import { redactQuestion } from "@/lib/knowledge/gap/prompts";
 import { gapJobEnabled, monthSpendPence } from "@/lib/knowledge/gap/run";
@@ -185,7 +185,7 @@ export default async function GapsAdminPage({ searchParams }: { searchParams: Pr
           <div>
             <h2 className="text-lg font-semibold text-foreground">The nightly job</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              02:50 UTC daily. {enabled ? "On." : "Off (SI_GAP_JOB_ENABLED is not \"true\"): Dry run and Estimate still work."} {keyed ? "" : "No ANTHROPIC_API_KEY: only Estimate can run."}
+              {GAP_SCHEDULE_TEXT}. {enabled ? "On." : "Off (SI_GAP_JOB_ENABLED is not \"true\"): Dry run and Estimate still work."} {keyed ? "" : "No ANTHROPIC_API_KEY: only Estimate can run."}
             </p>
             <p className="mt-2 text-sm">
               Model spend this month: <strong>{spent === null ? "can't be read" : pence(spent)}</strong> of {pence(cap)}
@@ -234,9 +234,9 @@ export default async function GapsAdminPage({ searchParams }: { searchParams: Pr
         )}
 
         <form action={saveGapSettingsAction} className="mt-5 grid grid-cols-1 gap-3 border-t border-border pt-4 sm:grid-cols-4">
-          <label className="text-sm">Drafts a night<input name="gapMaxGroupsPerNight" type="number" min={0} max={200} step={1} defaultValue={settings.gapMaxGroupsPerNight} className={`mt-1 block w-full ${INPUT}`} /></label>
-          <label className="text-sm">Questions read a night<input name="gapMaxQuestions" type="number" min={0} max={2000} step={1} defaultValue={settings.gapMaxQuestions} className={`mt-1 block w-full ${INPUT}`} /></label>
-          <label className="text-sm">Monthly cap (£)<input name="gapMonthlyCapPounds" type="number" min={0} step={0.01} defaultValue={(settings.gapMonthlyCapPence / 100).toFixed(2)} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Drafts a night<input name="gapMaxGroupsPerNight" type="number" min={B.gapMaxGroupsPerNight.min} max={B.gapMaxGroupsPerNight.max} step={1} defaultValue={settings.gapMaxGroupsPerNight} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Questions read a night<input name="gapMaxQuestions" type="number" min={B.gapMaxQuestions.min} max={B.gapMaxQuestions.max} step={1} defaultValue={settings.gapMaxQuestions} className={`mt-1 block w-full ${INPUT}`} /></label>
+          <label className="text-sm">Monthly cap (£)<input name="gapMonthlyCapPounds" type="number" min={B.gapMonthlyCapPence.min / 100} max={B.gapMonthlyCapPence.max / 100} step={0.01} defaultValue={(settings.gapMonthlyCapPence / 100).toFixed(2)} className={`mt-1 block w-full ${INPUT}`} /></label>
           <div className="flex items-end">
             <button type="submit" className={BUTTON_QUIET}>Save limits</button>
           </div>

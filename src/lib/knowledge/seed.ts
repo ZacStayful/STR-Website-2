@@ -135,7 +135,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'What does Stayful Intelligence do?',
     variants: ['What is Stayful Intelligence?', 'What is this service?', 'Who are you?'],
-    answer: 'It searches thousands of UK short-let deals every day, to buy and rent-to-rent, and picks the ones that fit what you told us you want, with figures from comparables and the properties Stayful runs.',
+    answer: 'It searches UK short-let deals every day, to buy and rent-to-rent, and picks the ones that fit what you told us you want, with figures from comparables and the properties Stayful runs.',
   },
   {
     slug: 'how_picks_work',

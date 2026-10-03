@@ -3,6 +3,8 @@ import { hasServiceRole } from '@/lib/supabase/admin';
 import { initiateSecret } from '@/lib/voice/config';
 import { answerInitiation, type InitiationRequest } from '@/lib/voice/inbound-server';
 import { callVariables } from '@/lib/voice/agent/variables';
+import { DEFAULT_VOICE } from '@/lib/voice/settings';
+import { DEFAULT_INTELLIGENCE } from '@/lib/intelligence/settings';
 
 /**
  * Batch 23, Part D: ElevenLabs' conversation-initiation webhook — someone is
@@ -33,6 +35,6 @@ export async function POST(request: Request) {
     console.error('[voice] initiation failed:', err);
     // Answer anyway, as an unknown caller: never a member's data on a guess.
     // Every variable the agent uses must be sent (Batch 24's knowledge figures too, as "shown in the app").
-    return Response.json({ type: 'conversation_initiation_client_data', dynamic_variables: callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: 5, topupAmountPence: 2500, topupThresholdPence: 500 }) });
+    return Response.json({ type: 'conversation_initiation_client_data', dynamic_variables: callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: Math.floor(DEFAULT_VOICE.maxCallSeconds / 60), topupAmountPence: DEFAULT_INTELLIGENCE.revealAutoTopupAmountPence, topupThresholdPence: DEFAULT_INTELLIGENCE.revealAutoTopupThresholdPence }) });
   }
 }

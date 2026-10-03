@@ -22,7 +22,7 @@ const BLOCKING: ReadonlyArray<readonly [RegExp, string]> = [
   [/\d+(?:[.,:/]\d+)*\s*(?:x|p|k|pm|am|hrs?|mins?)?\b/gi, 'a number'],
 ];
 
-const NUMBER_WORDS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|half|quarter|twice|double|triple|dozen)\b/gi;
+const NUMBER_WORDS = /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|half|quarter|twice|double|triple|dozens?)\b/gi;
 
 export interface FigureCheck {
   /** What must be a placeholder before the entry can be approved. */

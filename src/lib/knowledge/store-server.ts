@@ -13,7 +13,7 @@ import 'server-only';
  * row. Approval is the si_knowledge_approve function, which also checks the
  * draft's hash, so the text approved is exactly the text Zac read.
  */
-import { createAdminClient } from '../supabase/admin';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { callsEnabled } from '../voice/config';
 import { type KbChannel, type KbSource } from './config';
 import { CONDITIONS, PLACEHOLDERS, type GlobalSnapshot, type MemberValues, type PlanRow, type UnitRow } from './placeholders';
@@ -93,7 +93,10 @@ export interface ShownAnswer {
  * left out; nothing is written (staleness is flagged by the nightly job and
  * the admin page, never from a member's request).
  */
-export async function renderLive(channel: KbChannel, member: MemberValues | null, admin: Admin = createAdminClient()): Promise<ShownAnswer[]> {
+export async function renderLive(channel: KbChannel, member: MemberValues | null, admin?: Admin): Promise<ShownAnswer[]> {
+  // A member's page must never fail on this: no service role (a preview) or a read error shows no answers.
+  if (!admin && !hasServiceRole()) return [];
+  admin ??= createAdminClient();
   const [entries, g] = await Promise.all([liveEntries(channel, admin), readGlobalSnapshot(admin)]);
   if (!entries || !g) return [];
   const out: ShownAnswer[] = [];
@@ -105,7 +108,9 @@ export async function renderLive(channel: KbChannel, member: MemberValues | null
 }
 
 /** One approved answer by its slug, rendered now, or null (not live, not on this channel, or not resolvable). */
-export async function answerBySlug(slug: string, o: { channel: KbChannel; member: MemberValues | null }, admin: Admin = createAdminClient()): Promise<ShownAnswer | null> {
+export async function answerBySlug(slug: string, o: { channel: KbChannel; member: MemberValues | null }, admin?: Admin): Promise<ShownAnswer | null> {
+  if (!admin && !hasServiceRole()) return null;
+  admin ??= createAdminClient();
   const [{ data, error }, g] = await Promise.all([admin.from('si_knowledge_live').select(LIVE_COLUMNS).eq('slug', slug).contains('channels', [o.channel]).maybeSingle(), readGlobalSnapshot(admin)]);
   if (error || !data || !g) return null;
   const e = liveFromRow(data as Record<string, unknown>);
@@ -213,6 +218,10 @@ export async function approveEntry(o: ApproveInput, admin: Admin = createAdminCl
   if (error) return { ok: false, error: error.message };
   const res = data as { id?: string; version?: number; refused?: string };
   if (res.refused) return { ok: false, error: res.refused === 'changed' ? 'This entry changed since you opened it. Reload and try again.' : `Not approved (${res.refused}).` };
+  // Any gap this entry answers is covered now, wherever it was approved from (Gaps or the entry's page).
+  const at = new Date().toISOString();
+  const { error: gapError } = await admin.from('si_knowledge_gaps').update({ status: 'covered', match_kind: 'approved', decided_at: at, asked_since_decision: 0, updated_at: at }).eq('entry_id', o.id).neq('status', 'dismissed');
+  if (gapError && !isSchemaMissing(gapError)) console.error('[knowledge] gap close failed:', gapError.message);
   return { ok: true, id: o.id, version: res.version, channels: content.channels };
 }
 
