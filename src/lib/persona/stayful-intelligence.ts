@@ -19,11 +19,12 @@
  *   buildSystemPrompt()    the only system-prompt builder
  *   VOICE / voiceId()      the one ElevenLabs voice and its settings
  *   SMS_SIGN_OFF           how a text is signed off
+ *   BANNED_PHRASES         words and phrases no written output may use (Batch 23b)
  *
  * Changing any wording here changes what members hear: bump PERSONA_VERSION.
  */
 
-export const PERSONA_VERSION = 'si-voice-v1';
+export const PERSONA_VERSION = 'si-voice-v2';
 export const PERSONA_NAME = 'Stayful Intelligence';
 
 export interface PersonaRule {
@@ -135,6 +136,22 @@ export const CHANNELS: Readonly<Record<PersonaChannel, readonly PersonaRule[]>> 
       full: 'First person, short paragraphs.',
       compact: 'First person, short paragraphs.',
     },
+    // Batch 23b: the morning briefing at the top of the daily email.
+    {
+      id: 'email_voice',
+      full: 'Dry, confident and British: understatement over enthusiasm. No exclamation marks and no emoji.',
+      compact: 'Dry, confident, British. No exclamation marks or emoji.',
+    },
+    {
+      id: 'email_figures',
+      full: 'Use only the figures you are given, each in one of the forms listed for it. Do no arithmetic, and add no number, date or time of your own, in digits or in words.',
+      compact: 'Only the figures given, in their listed forms; no arithmetic, no other numbers in digits or words.',
+    },
+    {
+      id: 'email_never',
+      full: 'Never predict prices or what will happen, never compare with anything you were not given, never name an address, street or postcode, and never promise anything.',
+      compact: 'No predictions, no comparisons you were not given, no addresses or postcodes, no promises.',
+    },
   ],
   chat: [
     {
@@ -161,6 +178,28 @@ export function buildSystemPrompt(channel: PersonaChannel, task?: string, opts: 
   const head = opts.compact ? rules : `Who you are and how you speak:\n${rules}`;
   return task && task.trim() ? `${head}\n\n${task.trim()}` : head;
 }
+
+/**
+ * Batch 23b: words and phrases no written output may contain: hype (the
+ * CORE tone rule's examples and their kind), guarantees, predictions and
+ * advice to buy. Lower case; matched as whole words or phrases. The briefing
+ * validator (src/lib/briefing/validator.ts) rejects any text using one.
+ */
+export const BANNED_PHRASES: readonly string[] = [
+  // Hype.
+  'incredible', 'amazing', 'unbelievable', 'insane', 'epic', 'stunning', 'fantastic', 'awesome', 'mind-blowing',
+  'goldmine', 'gold mine', 'jackpot', 'cash cow', 'no-brainer', 'no brainer', 'steal', 'bargain', 'hot deal', 'gem',
+  "don't miss", 'do not miss', 'dont miss', 'unmissable', 'once in a lifetime', 'act now', 'act fast', 'hurry', 'snap up', 'snap it up', 'grab it',
+  'must-see', 'must see', 'massive', 'huge',
+  // Guarantees.
+  'guarantee', 'guaranteed', 'risk-free', 'risk free', 'sure thing', "can't lose", 'cannot lose', 'certain to', 'definitely',
+  // Predictions.
+  'will rise', 'will go up', 'will increase', 'will fall', 'will drop', 'will sell', 'will be gone', 'will make', 'will earn',
+  'is going to', 'are going to', 'expect', 'expected to', 'forecast', 'predict', 'likely to', 'bound to', 'set to rise', 'set to fall',
+  // Advice.
+  'you should', 'i recommend', "i'd recommend", 'i would recommend', 'my advice', 'buy it', 'buy now', 'buy this', 'invest in', 'worth buying',
+  'make an offer', 'put in an offer',
+];
 
 /** How a text is signed off (the sms channel rule). */
 export const SMS_SIGN_OFF = '– Stayful Intelligence';

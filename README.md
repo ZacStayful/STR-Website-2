@@ -940,6 +940,7 @@ emails never go through the cap.
 | UTC | Job | Sends |
 |---|---|---|
 | 06:03 | `listing-recheck` | Nothing: records price and status changes on pipeline rows |
+| 06:40, 06:55 | `briefings` | Nothing: writes each member's morning briefing (Batch 23b, below) |
 | 06:55 | `deal-alerts` | Nothing: turns changes on tracked deals into `deal_alerts` |
 | 07:00, 07:20, 07:40, 07:50 | `sourcing` | Today's 5: the charged pick, the rest of the member's Today, and changes |
 | Mon 08:00 | `alerts` | Your week: deals missed, your deals, your areas |
@@ -956,6 +957,30 @@ own pick and Today and its own day's charge; no deal is told twice. When the
 credit runs out part-way the later profiles are left out and named. Once a
 member has two profiles, change lines, the out-of-credit letter and Your week
 name the profile each thing is for.
+
+Morning briefing (Batch 23b, `src/lib/briefing`): Today's 5 opens with a
+greeting and two or three sentences from Stayful Intelligence about one data
+angle. Code builds a fact sheet from data we hold (counts, the member's own
+kept deals and pipeline; never a listing's title, description, agent text or
+an address); the AI (Haiku 4.5) writes the words; a validator checks every
+number, date and number word against the sheet and rejects hype, predictions,
+advice, comparisons and addresses. A rejected, late or switched-off briefing
+is the code's template opener, uncharged. A passed one is charged at raw cost
+× 5 ("Daily briefing" on usage, about 1.4p, never more than 3p), after the
+day's own charge and only if the balance covers it. £0: no briefing; the email
+is exactly as before. One row per member per UK day (`member_briefings`)
+makes retries safe. Nudges under the changes link deals that have sat in a
+stage (Kept 7 days, Contacted 5, Viewing 3, Offer 7) to My deals. Members who
+did not come in from the email see it once on Today, with Play (the speak
+price on the button). `/admin/briefings` has the figures per day.
+
+- **Deploy:** run `supabase/schema.sql` (the Batch 23b section), set
+  `ANTHROPIC_API_KEY` (already used by the analyser), then check
+  `/api/internal/briefings?dry=1` (add `&model=claude-sonnet-5-5` for the
+  model trial). Nothing is written or charged by a dry run.
+- **Switches:** `/admin/billing` → "AI briefings on" (off: template openers for
+  everyone with credit, nothing charged; missing reads as off).
+  `BRIEFINGS_PASS_ENABLED=false` stops the pass altogether (no briefings).
 
 Feedback emails (Batch 18) are outside the cap too, like receipts: the email
 to the admin address for each report, and the email a member gets when

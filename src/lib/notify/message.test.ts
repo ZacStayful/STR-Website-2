@@ -283,3 +283,56 @@ test('Batch 14: "Act fast · new today" on a deal first seen in the last day, fo
   assert.deepEqual(titles(true), ['Act fast · new today · +42% · £8,400/yr over a long let', '+42% · £8,400/yr over a long let']);
   assert.deepEqual(titles(false), ['+42% · £8,400/yr over a long let', '+42% · £8,400/yr over a long let']);
 });
+
+// ── Batch 23b: the morning briefing ──
+
+const lowCredit: Section = { key: 'notice', title: null, blocks: [{ type: 'text', text: 'Your credit is low.' }] };
+const briefing = {
+  greeting: 'Hi Sam,',
+  opener: 'Yesterday I screened 412 new listings in your areas. 9 cleared the bar.',
+  subject: '412 listings screened, 9 cleared the bar',
+  nudges: [{ text: 'The flat in York has sat in Viewing for 4 days.', nextStep: 'Check it works as a short let', url: `${SITE}/my-deals?focus=d-1` }],
+  feedback: { useful: `${SITE}/briefing/feedback?b=x&a=useful`, notForMe: `${SITE}/briefing/feedback?b=x&a=not_for_me` },
+};
+
+test('with a briefing: opener → top pick → other deals → changes → nudges → credit line', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [change()], freeCutoffIso: null, unsubscribe: null, lowCredit, unfunded: ['Client'], profiles: [{ heading: null, pick, teasers: [card()] }], briefing })!;
+  const keys = built.message.sections.map((s) => s.key);
+  assert.deepEqual(keys, ['briefing', 'pick', 'teasers', 'changes', 'nudges', 'notice', 'notice']);
+  // The credit line is last: the unfunded notice, then the low-credit decision.
+  assert.equal(built.message.sections.at(-1), lowCredit);
+  assert.equal(built.message.subject, briefing.subject);
+  const mail = renderEmail(built.message);
+  assert.ok(mail.text.startsWith('Hi Sam,\nYesterday I screened 412 new listings'), mail.text.slice(0, 80));
+  assert.match(mail.text, /Useful: https:\/\/intelligence\.stayful\.co\.uk\/briefing\/feedback\?b=x&a=useful&via=email/);
+  assert.match(mail.text, /WAITING ON A NEXT STEP\n\n• The flat in York has sat in Viewing for 4 days\.\n {2}Check it works as a short let: /);
+  assert.match(mail.html, /Not for me<\/a>/);
+});
+
+test('a template briefing keeps the email’s own subject', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, briefing: { ...briefing, subject: null, nudges: [], feedback: null } })!;
+  assert.match(built.message.subject, /^I found 1 deal for you this morning/);
+  assert.deepEqual(built.message.sections.map((s) => s.key), ['briefing', 'pick']);
+});
+
+test('no briefing: the email is byte for byte what it was (the £0 and switched-off-pass case)', () => {
+  const input = { siteUrl: SITE, now: NOW, pick, teasers: [card()], changes: [change()], freeCutoffIso: null, unsubscribe: null, lowCredit, unfunded: ['Client'], profiles: [{ heading: null, pick, teasers: [card()] }] };
+  const without = renderEmail(buildDaily(input)!.message);
+  assert.deepEqual(renderEmail(buildDaily({ ...input, briefing: null })!.message), without);
+  // The old order: the low-credit decision first, the unfunded notice before the changes.
+  assert.deepEqual(buildDaily(input)!.message.sections.map((s) => s.key), ['notice', 'pick', 'teasers', 'notice', 'changes']);
+});
+
+test('the changes-only email never carries a briefing', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [change()], freeCutoffIso: null, unsubscribe: null, briefing })!;
+  assert.equal(built.message.kind, 'deal_changes');
+  assert.ok(!built.message.sections.some((s) => s.key === 'briefing' || s.key === 'nudges'));
+  assert.notEqual(built.message.subject, briefing.subject);
+});
+
+test('a briefing never adds an address: the opener is shown as stored, and the never-paid backstop still drops early-access teasers', () => {
+  const fresh = card({ id: 'new', live_since: '2026-09-28T06:00:00Z' });
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [card(), fresh], changes: [], freeCutoffIso: '2026-09-26T07:05:00Z', unsubscribe: null, briefing })!;
+  assert.deepEqual(built.droppedTeasers, ['new']);
+  assert.deepEqual(built.teaserIds, ['d1']);
+});

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatGbp } from "@/lib/credit/client";
 import type { BillingSettings } from "@/lib/credit/unit-costs";
-import { createPromoCodeAction, grantAdjustmentAction, reseedUnitCostsAction, toggleCodeAction, updateDealPricingAction, updateRatesAction, updateUnitCostAction, type ActionState } from "./actions";
+import { createPromoCodeAction, grantAdjustmentAction, reseedUnitCostsAction, toggleCodeAction, updateBriefingsAction, updateDealPricingAction, updateRatesAction, updateUnitCostAction, type ActionState } from "./actions";
 
 interface Row {
   provider: string;
@@ -123,6 +123,22 @@ function DealPricingForm({ settings, guards }: { settings: BillingSettings; guar
   );
 }
 
+/** Batch 23b: AI morning briefings on or off (billing_settings.briefings_enabled). */
+function BriefingsSwitch({ enabled }: { enabled: boolean }) {
+  const [state, action, pending] = useActionState(updateBriefingsAction, idle);
+  return (
+    <form action={action} className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4 text-sm">
+      <label className="flex items-center gap-2">
+        <input type="checkbox" name="briefings_enabled" defaultChecked={enabled} />
+        AI briefings on
+      </label>
+      <span className="text-xs text-muted-foreground">Off: every member with credit gets the template opener, and nothing is charged.</span>
+      <Button type="submit" size="sm" disabled={pending}>Save</Button>
+      <Msg s={state} />
+    </form>
+  );
+}
+
 export function BillingAdminClient({ rows, settings, guards, codes, adjNonce }: { rows: Row[]; settings: BillingSettings; guards: PricingGuards; codes: Code[]; /** Batch 21 (B37): keys the adjustment grant; the page renders a new one after each save. */ adjNonce: string }) {
   const [rates, ratesAction, ratesPending] = useActionState(updateRatesAction, idle);
   const [adj, adjAction, adjPending] = useActionState(grantAdjustmentAction, idle);
@@ -157,6 +173,8 @@ export function BillingAdminClient({ rows, settings, guards, codes, adjNonce }: 
       <p className="mt-2 text-xs text-muted-foreground">Base markup is the default for new unit rows; each row&apos;s own multiplier below is what is charged. Spend rates apply to grants created after the change.</p>
 
       <DealPricingForm settings={settings} guards={guards} />
+
+      <BriefingsSwitch enabled={settings.briefingsEnabled} />
 
       <div className="mt-8 mb-2 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Unit costs</h2>

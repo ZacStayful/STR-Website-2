@@ -58,10 +58,12 @@ export type Block =
   | { type: 'image'; url: string }
   | { type: 'facts'; rows: { label: string; value: string }[] }
   | { type: 'buttons'; links: Link[] }
-  | { type: 'items'; items: Item[] };
+  | { type: 'items'; items: Item[] }
+  /** Batch 23b: small inline links ("Useful · Not for me"), not buttons. */
+  | { type: 'links'; links: Link[] };
 
 /** 'profile': a saved profile's heading, over its pick and teasers (Batch 13). */
-export type SectionKey = 'pick' | 'teasers' | 'changes' | 'missed' | 'recap' | 'areas' | 'notice' | 'profile';
+export type SectionKey = 'pick' | 'teasers' | 'changes' | 'missed' | 'recap' | 'areas' | 'notice' | 'profile' | 'briefing' | 'nudges';
 
 export interface Section {
   key: SectionKey;
@@ -343,6 +345,42 @@ export interface DailyInput {
    * lowCreditSection), at the top of the email when it is due today.
    */
   lowCredit?: Section | null;
+  /**
+   * Batch 23b: the morning briefing (src/lib/briefing): the greeting and
+   * opener first, the nudges after the changes, and the credit line last.
+   * Only in Today's 5 (never the changes-only email); absent, the email is
+   * exactly as it was.
+   */
+  briefing?: BriefingInput | null;
+}
+
+/** Batch 23b: what the email shows of the member's briefing. Every line is the stored, validated text or the code's template. */
+export interface BriefingInput {
+  /** "Hi Sam," */
+  greeting: string;
+  opener: string;
+  /** The writer's validated subject line; null keeps the email's own. */
+  subject: string | null;
+  /** At most two: a line, the next step and a link to the deal in My deals. */
+  nudges: { text: string; nextStep: string; url: string }[];
+  /** "Useful" / "Not for me" (signed links to /briefing/feedback); null: none. */
+  feedback: { useful: string; notForMe: string } | null;
+}
+
+/** The briefing's opening section: greeting, opener, and the two answer links. */
+export function briefingSection(b: BriefingInput): Section {
+  const blocks: Block[] = [
+    { type: 'text', text: b.greeting },
+    { type: 'text', text: b.opener },
+  ];
+  if (b.feedback) blocks.push({ type: 'links', links: [{ label: 'Useful', url: b.feedback.useful }, { label: 'Not for me', url: b.feedback.notForMe }] });
+  return { key: 'briefing', title: null, blocks };
+}
+
+/** The briefing's nudges: deals that have sat in their stage, each with its next step. */
+export function nudgesSection(nudges: BriefingInput['nudges']): Section | null {
+  if (nudges.length === 0) return null;
+  return { key: 'nudges', title: 'Waiting on a next step', blocks: [{ type: 'items', items: nudges.map((n) => ({ title: n.text, lines: [], link: { label: n.nextStep, url: n.url } })) }] };
 }
 
 /** One saved profile's part of the daily email. */
@@ -420,8 +458,11 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   if (dealCount === 0 && !changes) return null;
 
   const sections: Section[] = [];
+  // Batch 23b: with a briefing (Today's 5 only), it leads and the credit line goes last.
+  const briefing = dealCount > 0 && input.briefing ? input.briefing : null;
+  if (briefing) sections.push(briefingSection(briefing));
   // Batch 20: the low-credit decision leads, when it is due (it never makes an email on its own here).
-  if (input.lowCredit) sections.push(input.lowCredit);
+  if (input.lowCredit && !briefing) sections.push(input.lowCredit);
   const anyPick = picks.length > 0;
   for (const { part, kept } of shown) {
     if (!part.pick && kept.length === 0) continue;
@@ -438,8 +479,9 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     }
   }
   const unfunded = (input.unfunded ?? []).filter((n) => n.trim());
+  const credit: Section[] = [];
   if (unfunded.length > 0 && dealCount > 0) {
-    sections.push({
+    credit.push({
       key: 'notice',
       title: null,
       blocks: [
@@ -448,8 +490,19 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
       ],
     });
   }
-  if (changes) sections.push(changes);
-  if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+  if (briefing) {
+    // Opener → top pick → other Today deals → changes → nudges → credit line (Zac).
+    if (changes) sections.push(changes);
+    const nudges = nudgesSection(briefing.nudges);
+    if (nudges) sections.push(nudges);
+    if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    sections.push(...credit);
+    if (input.lowCredit) sections.push(input.lowCredit);
+  } else {
+    sections.push(...credit);
+    if (changes) sections.push(changes);
+    if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+  }
 
   const phrase = changesPhrase(used);
   const kind: MessageKind = dealCount > 0 ? 'todays_5' : 'deal_changes';
@@ -459,6 +512,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     // Batch 22: Stayful Intelligence speaks in the first person.
     const head = `I found ${plural(dealCount, 'deal')} for you this morning`;
     subject = phrase ? `${head} · ${phrase}` : anyPick ? `${head} · top pick: ${picks[0].part.pick!.headline}` : head;
+    // Batch 23b: the writer's subject, when it passed the validator.
+    if (briefing?.subject && briefing.subject.trim()) subject = briefing.subject.trim();
   }
   return {
     message: {

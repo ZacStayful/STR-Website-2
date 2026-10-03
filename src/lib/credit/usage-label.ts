@@ -29,6 +29,7 @@ export const ACTION_LABELS: Record<string, string> = {
   full_analysis: 'Full analysis',
   pmi_addon: 'Second opinion from PMI',
   todays_5: 'Daily deals',
+  briefing: 'Daily briefing',
 };
 
 export function actionLabel(action: string | null): string {

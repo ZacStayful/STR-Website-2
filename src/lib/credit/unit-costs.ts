@@ -69,6 +69,12 @@ export interface BillingSettings {
   intelligence: IntelligenceSettings;
   /** Batch 23: calls from Stayful Intelligence — hours, limits, the low-credit trigger, retention (src/lib/voice/settings.ts). */
   voice: VoiceSettings;
+  /**
+   * Batch 23b: the kill switch for AI-written morning briefings
+   * (billing_settings.briefings_enabled). Off: template openers for
+   * everyone, nothing charged. Missing or unreadable reads as off.
+   */
+  briefingsEnabled: boolean;
 }
 
 export const DEFAULT_AREA_RENT_DAILY_ATTEMPTS = 40;
@@ -96,6 +102,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   lifecycle: DEFAULT_LIFECYCLE,
   intelligence: DEFAULT_INTELLIGENCE,
   voice: DEFAULT_VOICE,
+  briefingsEnabled: false,
 };
 
 /** Whole attempts from 0 to 1,000; anything else is the default. */
@@ -126,6 +133,11 @@ export async function getUnitCostTable(): Promise<UnitCostTable> {
     console.error('[credit] unit_costs read failed, using seed:', err);
     return seedTable();
   }
+}
+
+/** An on/off setting: true or 'true' is on; anything else, missing included, is off. */
+export function parseSwitch(raw: unknown): boolean {
+  return raw === true || raw === 'true';
 }
 
 export async function getBillingSettings(): Promise<BillingSettings> {
@@ -177,6 +189,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       lifecycle: parseLifecycle((key) => kv.get(key)),
       intelligence: parseIntelligence((key) => kv.get(key)),
       voice: parseVoice((key) => kv.get(key)),
+      briefingsEnabled: parseSwitch(kv.get('briefings_enabled')),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;

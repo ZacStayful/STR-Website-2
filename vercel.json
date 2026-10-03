@@ -26,6 +26,14 @@
 			"schedule": "45 4 * * *"
 		},
 		{
+			"path": "/api/internal/briefings",
+			"schedule": "40 6 * * *"
+		},
+		{
+			"path": "/api/internal/briefings",
+			"schedule": "55 6 * * *"
+		},
+		{
 			"path": "/api/internal/sourcing",
 			"schedule": "0 7 * * *"
 		},

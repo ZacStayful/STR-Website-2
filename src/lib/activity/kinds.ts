@@ -201,6 +201,11 @@ export const ACTIVITY_KINDS = {
   funnel_demo_emailed: recordOnly('Emailed themselves the demo landlord report'),
   funnel_snippet_copied: recordOnly('Copied their lead form link, button or embed'),
   funnel_lead_charged: recordOnly('Was charged for a funnel lead'),
+  // Batch 23b: the morning briefing (src/lib/briefing). Record only: Today's
+  // own views already count, and weekly active is unchanged.
+  briefing_seen: recordOnly('Saw their morning briefing'),
+  briefing_played: recordOnly('Played their morning briefing aloud'),
+  briefing_feedback: recordOnly('Said whether their morning briefing was useful'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;

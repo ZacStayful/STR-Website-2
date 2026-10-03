@@ -95,6 +95,9 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'anthropic', unit: 'opus55_output_token', label: 'Anthropic output token (Opus 5.5)', unitCostPence: (20 * USD) / 1_000_000, notes: '$20 per MTok, thinking included' },
   { provider: 'anthropic', unit: 'sonnet55_input_token', label: 'Anthropic input token (Sonnet 5.5)', unitCostPence: (2 * USD) / 1_000_000, notes: '$2 per MTok' },
   { provider: 'anthropic', unit: 'sonnet55_output_token', label: 'Anthropic output token (Sonnet 5.5)', unitCostPence: (10 * USD) / 1_000_000, notes: '$10 per MTok, thinking included' },
+  // Batch 23b: the morning briefing's writer (src/lib/briefing/writer.ts). Also seeded by schema.sql.
+  { provider: 'anthropic', unit: 'haiku45_input_token', label: 'Anthropic input token (Haiku 4.5)', unitCostPence: (1 * USD) / 1_000_000, notes: '$1 per MTok' },
+  { provider: 'anthropic', unit: 'haiku45_output_token', label: 'Anthropic output token (Haiku 4.5)', unitCostPence: (5 * USD) / 1_000_000, notes: '$5 per MTok' },
   // ── ElevenLabs turbo: Creator plan ≈ $22 per 100k characters ──
   { provider: 'elevenlabs', unit: 'character', label: 'ElevenLabs speech (per character)', unitCostPence: (22 * USD) / 100_000, notes: 'Creator plan; turbo models bill 0.5 credit/char on some tiers — reconcile' },
   // ── Batch 23: Stayful Intelligence call minutes (charged to the member per answered second) ──

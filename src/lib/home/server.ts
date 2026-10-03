@@ -109,6 +109,12 @@ async function scanScopeFor(ctx: Context): Promise<{ areas: string[] | null; kin
   return { areas: areas ? [...areas].sort() : null, kinds: [...kinds] };
 }
 
+/** Batch 23b: the member's scan scope, so the briefing counts "screened" exactly as Home does. */
+export async function memberScanScope(member: HomeMember, now: Date = new Date()): Promise<{ areas: string[] | null; kinds: ScanKind[] }> {
+  if (!hasServiceRole()) throw new Error('no service role');
+  return scanScopeFor(await contextFor(member, now));
+}
+
 /** Batch 23b's nightly snapshot reads this too: the one "scanned" figure. */
 export async function memberScanned(member: HomeMember, now: Date = new Date()): Promise<ScannedFigure> {
   if (!hasServiceRole()) throw new Error('no service role');
