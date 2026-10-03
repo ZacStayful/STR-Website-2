@@ -380,3 +380,49 @@ export function refToSlug(ref: string | null | undefined): string | null {
   if (!r) return null;
   return LEGACY_REFS[r] ?? r;
 }
+
+/** What the seed knows about an existing row. */
+export interface SeedRowState {
+  slug: string;
+  seedHash: string | null;
+  draftState: 'none' | 'pending' | 'rejected';
+  draftSource: string | null;
+}
+
+export interface SeedPlan {
+  /** New slugs: inserted as pending drafts. */
+  insert: SeedEntry[];
+  /** Seed text changed since it was last seeded: proposed as a draft; the live answer is untouched. */
+  propose: SeedEntry[];
+  /** Seed text changed but Zac has a draft of his own pending: left alone. */
+  skipped: { slug: string; reason: string }[];
+  unchanged: string[];
+}
+
+/**
+ * What a seed run would do. Never approves, never touches a live answer, and
+ * never replaces a draft Zac is working on (a pending draft not from the
+ * seed). A slug whose seed text is unchanged since it was seeded is left
+ * alone, so Zac's own edits are not proposed back at him.
+ */
+export function planSeed(rows: readonly SeedRowState[], seed: readonly SeedEntry[], hash: (e: SeedEntry) => string): SeedPlan {
+  const bySlug = new Map(rows.map((r) => [r.slug, r]));
+  const plan: SeedPlan = { insert: [], propose: [], skipped: [], unchanged: [] };
+  for (const e of seed) {
+    const r = bySlug.get(e.slug);
+    if (!r) {
+      plan.insert.push(e);
+      continue;
+    }
+    if (r.seedHash === hash(e)) {
+      plan.unchanged.push(e.slug);
+      continue;
+    }
+    if (r.draftState === 'pending' && r.draftSource !== 'seed') {
+      plan.skipped.push({ slug: e.slug, reason: 'a draft of your own is pending' });
+      continue;
+    }
+    plan.propose.push(e);
+  }
+  return plan;
+}

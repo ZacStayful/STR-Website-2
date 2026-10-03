@@ -40,3 +40,21 @@ test('the old knowledge ids all point at seed slugs', () => {
   assert.equal(refToSlug(' [credits] '), 'credits');
   assert.equal(refToSlug(''), null);
 });
+
+test('the seed plan inserts, proposes, skips and leaves alone', async () => {
+  const { planSeed } = await import('./seed.ts');
+  const { contentHash } = await import('./render.ts');
+  const [a, b, c, d] = SEED;
+  const rows = [
+    { slug: b.slug, seedHash: contentHash(b), draftState: 'none' as const, draftSource: null },
+    { slug: c.slug, seedHash: 'old', draftState: 'none' as const, draftSource: null },
+    { slug: d.slug, seedHash: 'old', draftState: 'pending' as const, draftSource: 'manual' },
+  ];
+  const p = planSeed(rows, [a, b, c, d], contentHash);
+  assert.deepEqual(p.insert.map((e) => e.slug), [a.slug]);
+  assert.deepEqual(p.unchanged, [b.slug]);
+  assert.deepEqual(p.propose.map((e) => e.slug), [c.slug]);
+  assert.deepEqual(p.skipped.map((s) => s.slug), [d.slug]);
+  const again = planSeed([{ slug: d.slug, seedHash: 'old', draftState: 'pending', draftSource: 'seed' }], [d], contentHash);
+  assert.deepEqual(again.propose.map((e) => e.slug), [d.slug]);
+});
