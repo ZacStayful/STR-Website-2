@@ -127,7 +127,7 @@ export const STOPWORDS: ReadonlySet<string> = new Set([
   'can', 'could', 'would', 'should', 'will', 'shall', 'may', 'might', 'must', 'just', 'so', 'then', 'than', 'too', 'very', 'really', 'please', 'thanks', 'thank',
   'hi', 'hello', 'hey', 'ok', 'okay', 'um', 'uh', 'erm', 'er', 'like', 'yeah', 'yes', 'no', 'well', 'right', 'oh', 'actually', 'basically', 'quick', 'question',
   'what', 'whats', 'how', 'hows', 'when', 'where', 'which', 'who', 'why', 'tell', 'know', 'want', 'wanted', 'wondering', 'get', 'got', 'any', 'some', 'one',
-  'have', 'has', 'had', 'having', 'stayful', 'intelligence',
+  'have', 'has', 'had', 'having',
 ]);
 
 /** Spellings that mean the same word, folded before matching (after lower-casing and stemming). */
@@ -137,6 +137,7 @@ export const SYNONYMS: Readonly<Record<string, string>> = {
   sms: 'text', message: 'text', messages: 'text', texts: 'text',
   phone: 'call', ring: 'call', rang: 'call', calls: 'call', calling: 'call',
   stop: 'cancel', unsubscribe: 'cancel', quit: 'cancel', end: 'cancel',
+  unlock: 'open', opening: 'open', opened: 'open',
   analyse: 'analysis', analyze: 'analysis', report: 'analysis', reports: 'analysis',
   property: 'deal', properties: 'deal', listing: 'deal', listings: 'deal', deals: 'deal',
   alert: 'notify', alerts: 'notify', notification: 'notify', notifications: 'notify',
@@ -157,6 +158,7 @@ export const COMPOUNDS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bair\s*b\s*n\s*b\b/g, 'airbnb'],
   [/\bsign[\s-]+up\b/g, 'signup'],
   [/\blog[\s-]+in\b/g, 'login'],
+  [/\bfloor[\s-]+plans?\b/g, 'floorplan'],
 ];
 
 /** The best score must beat the second-best entry's by this much to count as answered. */
