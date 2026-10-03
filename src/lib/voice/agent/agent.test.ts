@@ -58,9 +58,10 @@ test("an answer whose figure doesn't resolve now is left out of the agent's know
 
 test('every tool takes its ids from injected variables and its secret from a secret variable', () => {
   for (const n of TOOL_NAMES) {
-    const t = toolConfig(n, 'https://stayful.co.uk') as { api_schema: { url: string; request_headers: Record<string, { dynamic_variable: string }>; request_body_schema: { properties: Record<string, { dynamic_variable?: string }> } } };
+    const t = toolConfig(n, 'https://stayful.co.uk') as { api_schema: { url: string; request_headers: Record<string, { variable_name: string }>; request_body_schema: { properties: Record<string, { dynamic_variable?: string }> } } };
     assert.equal(t.api_schema.url, `https://stayful.co.uk/api/voice/tools/${n}`);
-    assert.equal(t.api_schema.request_headers['x-si-tool-token'].dynamic_variable, 'secret__tool_token');
+    // ElevenLabs' header locator for a dynamic variable is { variable_name } (a { type, dynamic_variable } object is refused with a 422).
+    assert.deepEqual(t.api_schema.request_headers['x-si-tool-token'], { variable_name: 'secret__tool_token' });
     assert.equal(t.api_schema.request_body_schema.properties.conversation_id.dynamic_variable, 'system__conversation_id');
   }
   // The text tool takes a template name only — never a number or free text.
@@ -96,4 +97,23 @@ test('remember_fact needs the fact, the question asked and an explicit yes', () 
   assert.deepEqual([...t.api_schema.request_body_schema.required].filter((k) => k !== 'conversation_id').sort(), ['asked', 'fact', 'member_said_yes']);
   assert.equal(t.api_schema.request_body_schema.properties.member_said_yes.type, 'boolean');
   assert.match(agentPrompt(knowledge), /Want me to remember that\?/);
+});
+
+test('every tool property has exactly one value source, as ElevenLabs requires', () => {
+  const sources = ['description', 'dynamic_variable', 'constant_value', 'is_system_provided'] as const;
+  for (const n of TOOL_NAMES) {
+    const t = toolConfig(n, 'https://x') as { api_schema: { request_body_schema: { properties: Record<string, Record<string, unknown>> } } };
+    for (const [k, p] of Object.entries(t.api_schema.request_body_schema.properties)) {
+      const set = sources.filter((f) => p[f] !== undefined && p[f] !== '');
+      assert.equal(set.length, 1, `${n}.${k} has ${set.join(', ') || 'no value source'}`);
+    }
+  }
+});
+
+test('the built-in tools say they are system tools', () => {
+  const c = agentConfig({ knowledge: '', voiceId: 'v', toolIds: [], maxCallSeconds: 600, retentionDays: 90 }) as { conversation_config: { agent: { prompt: { built_in_tools: Record<string, { type?: string; params: { system_tool_type: string } }> } } } };
+  for (const [name, t] of Object.entries(c.conversation_config.agent.prompt.built_in_tools)) {
+    assert.equal(t.type, 'system', name);
+    assert.equal(t.params.system_tool_type, name);
+  }
 });

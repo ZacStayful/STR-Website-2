@@ -29,8 +29,8 @@ export function agentConfig(i: AgentConfigInput): Record<string, unknown> {
           prompt: agentPrompt(i.knowledge),
           tool_ids: i.toolIds,
           built_in_tools: {
-            end_call: { name: 'end_call', description: 'End the call when it is finished.', params: { system_tool_type: 'end_call' } },
-            voicemail_detection: { name: 'voicemail_detection', description: 'If a voicemail or answering machine answers, end the call at once without leaving a message.', params: { system_tool_type: 'voicemail_detection', voicemail_message: '' } },
+            end_call: { type: 'system', name: 'end_call', description: 'End the call when it is finished.', params: { system_tool_type: 'end_call' } },
+            voicemail_detection: { type: 'system', name: 'voicemail_detection', description: 'If a voicemail or answering machine answers, end the call at once without leaving a message.', params: { system_tool_type: 'voicemail_detection', voicemail_message: '' } },
           },
         },
       },

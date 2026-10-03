@@ -5,6 +5,10 @@
  * dynamic variable (never sent to the model). The routes are
  * /api/voice/tools/[tool].
  *
+ * The shapes follow ElevenLabs' tools API: a header value from a dynamic
+ * variable is `{ variable_name }`, and each body property carries exactly one
+ * value source (`description` for the model to fill, or `dynamic_variable`).
+ *
  * Pure.
  */
 import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, type ToolName } from '../config.ts';
@@ -66,7 +70,8 @@ export function toolConfig(name: ToolName, baseUrl: string): Record<string, unkn
   const t = TOOLS[name];
   const properties: Record<string, unknown> = {};
   for (const [k, p] of Object.entries({ ...INJECTED, ...t.params })) {
-    properties[k] = { type: p.type, description: p.description, ...(p.enum ? { enum: [...p.enum] } : {}), ...(p.dynamic_variable ? { dynamic_variable: p.dynamic_variable } : {}) };
+    // Exactly one value source per property: an injected id never also carries a description.
+    properties[k] = p.dynamic_variable ? { type: p.type, dynamic_variable: p.dynamic_variable } : { type: p.type, description: p.description, ...(p.enum ? { enum: [...p.enum] } : {}) };
   }
   return {
     type: 'webhook',
@@ -76,7 +81,7 @@ export function toolConfig(name: ToolName, baseUrl: string): Record<string, unkn
     api_schema: {
       url: `${baseUrl.replace(/\/$/, '')}/api/voice/tools/${name}`,
       method: 'POST',
-      request_headers: { 'x-si-tool-token': { type: 'string', dynamic_variable: 'secret__tool_token' } },
+      request_headers: { 'x-si-tool-token': { variable_name: 'secret__tool_token' } },
       request_body_schema: { type: 'object', properties, required: [...Object.keys(INJECTED).filter((k) => k !== 'caller_id' && k !== 'called_number' && k !== 'call_sid'), ...t.required] },
     },
   };
