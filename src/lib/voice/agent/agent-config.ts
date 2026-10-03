@@ -34,7 +34,7 @@ export function agentConfig(i: AgentConfigInput): Record<string, unknown> {
           },
         },
       },
-      tts: { voice_id: i.voiceId, model_id: VOICE.modelId, stability: VOICE.stability, similarity_boost: VOICE.similarityBoost },
+      tts: { voice_id: i.voiceId, model_id: VOICE.agentModelId, stability: VOICE.stability, similarity_boost: VOICE.similarityBoost },
       conversation: { max_duration_seconds: i.maxCallSeconds },
     },
     platform_settings: {
