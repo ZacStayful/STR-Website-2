@@ -38,6 +38,19 @@ export async function updateUnitCostAction(_prev: ActionState, formData: FormDat
   }
 }
 
+/** Batch 23b: the kill switch for AI morning briefings. Off: template openers for everyone, nothing charged. */
+export async function updateBriefingsAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    await requireAdmin();
+    const on = formData.get('briefings_enabled') === 'on';
+    await updateBillingSetting('briefings_enabled', on);
+    revalidatePath('/admin/billing');
+    return { ok: true, message: on ? 'AI briefings on.' : 'AI briefings off: template openers, nothing charged.' };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
 export async function updateRatesAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   try {
     await requireAdmin();

@@ -6810,4 +6810,87 @@ $$;
 revoke all on function public.mc_page_view_hit(boolean) from public, anon, authenticated;
 grant execute on function public.mc_page_view_hit(boolean) to service_role;
 
+
+-- =========================
+-- Batch 23b: the morning briefing
+-- =========================
+-- Stayful Intelligence opens each member's daily email with a short briefing
+-- (src/lib/briefing). Code builds a fact sheet; the AI writes the words; a
+-- validator checks every number against the sheet before anything is used.
+--
+--   briefing_day_counts  one row per UK day: the pool's honest counts at the
+--                        time the briefing pass took them (new listings
+--                        screened yesterday, live deals, deals that went live
+--                        yesterday). Named for what they are: the pool is
+--                        never "screened overnight".
+--   member_briefings     one row per member per UK day: the briefing itself
+--                        (greeting, opener, subject, nudges), the facts it
+--                        used, the angle, persona version, model, the charge
+--                        (action_id groups its ledger rows), and what the
+--                        member did with it (seen in app, dismissed, played,
+--                        "Useful" / "Not for me"). The unique (user, day) row
+--                        is the claim: a retry never writes or charges twice.
+--
+-- The kill switch is billing_settings.briefings_enabled (true/false). The two
+-- Haiku unit rows are seeded here too, so the first briefing never prices at
+-- 0 before credit-sweep's reseed runs. Everything is additive, idempotent and
+-- service role only; nothing here is in ACCESS_COLUMNS (src/lib/access.ts).
+
+create table if not exists public.briefing_day_counts (
+  uk_day date primary key,
+  taken_at timestamptz not null default now(),
+  screened_yesterday integer not null default 0,
+  live_pool integer not null default 0,
+  went_live_yesterday integer not null default 0
+);
+alter table public.briefing_day_counts enable row level security;  -- no policies: service role only
+revoke all on public.briefing_day_counts from anon, authenticated;
+
+create table if not exists public.member_briefings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  uk_day date not null,
+  status text not null default 'generating',
+  angle text,
+  greeting text,
+  opener text,
+  subject text,
+  nudges jsonb not null default '[]'::jsonb,
+  facts jsonb,
+  facts_used text[],
+  persona_version text,
+  model text,
+  ai_attempted boolean not null default false,
+  reject_reason text,
+  action_id uuid,
+  charge_pence numeric(14,4) not null default 0,
+  created_at timestamptz not null default now(),
+  generated_at timestamptz,
+  seen_email_at timestamptz,
+  shown_in_app_at timestamptz,
+  dismissed_at timestamptz,
+  played_count integer not null default 0,
+  feedback text,
+  feedback_at timestamptz,
+  unique (user_id, uk_day)
+);
+do $$
+begin
+  alter table public.member_briefings drop constraint if exists member_briefings_status_check;
+  alter table public.member_briefings add constraint member_briefings_status_check check (status in ('generating', 'ready', 'template', 'skipped'));
+  alter table public.member_briefings drop constraint if exists member_briefings_feedback_check;
+  alter table public.member_briefings add constraint member_briefings_feedback_check check (feedback is null or feedback in ('useful', 'not_for_me'));
+end $$;
+create index if not exists member_briefings_day_idx on public.member_briefings (uk_day, status);
+alter table public.member_briefings enable row level security;  -- no policies: service role only
+revoke all on public.member_briefings from anon, authenticated;
+
+insert into public.billing_settings (key, value) values ('briefings_enabled', 'true')
+on conflict (key) do nothing;
+
+insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values
+  ('anthropic', 'haiku45_input_token', 'Anthropic input token (Haiku 4.5)', 0.000079, 5, '$1 per million tokens at 79p a dollar'),
+  ('anthropic', 'haiku45_output_token', 'Anthropic output token (Haiku 4.5)', 0.000395, 5, '$5 per million tokens at 79p a dollar')
+on conflict (provider, unit) do nothing;
+
 notify pgrst, 'reload schema';
