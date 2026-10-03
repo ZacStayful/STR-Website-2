@@ -6862,6 +6862,8 @@ create table if not exists public.member_briefings (
   model text,
   ai_attempted boolean not null default false,
   reject_reason text,
+  input_tokens integer not null default 0,
+  output_tokens integer not null default 0,
   action_id uuid,
   charge_pence numeric(14,4) not null default 0,
   created_at timestamptz not null default now(),

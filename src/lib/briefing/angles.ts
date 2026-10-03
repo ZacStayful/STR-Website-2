@@ -25,7 +25,7 @@ export interface AngleInfo {
 
 export const ANGLES: Record<AngleId, AngleInfo> = {
   monday: { id: 'monday', brief: 13, about: 'Last week in one line: how many new listings I screened in their areas, and how many deals they kept.', facts: ['week_screened', 'week_kept'] },
-  price_drop: { id: 'price_drop', brief: 3, about: 'A deal they kept dropped its price yesterday.', facts: ['drop_old_price', 'drop_new_price', 'drop_amount', 'drop_pct', 'drops_more'] },
+  price_drop: { id: 'price_drop', brief: 3, about: 'A deal they kept dropped its price in the last day.', facts: ['drop_old_price', 'drop_new_price', 'drop_amount', 'drop_pct', 'drops_more'] },
   pipeline: { id: 'pipeline', brief: 9, about: 'Their pipeline: how many deals are in it, and the one that has sat longest in its stage.', facts: ['pipeline_count', 'overdue_days'] },
   thin_night: { id: 'thin_night', brief: 8, about: 'An honest thin night: fewer deals cleared the bar in their areas yesterday than usual.', facts: ['qualified_yesterday', 'qualified_usual', 'screened_yesterday'] },
   memory: { id: 'memory', brief: 7, about: 'A pattern in what they pass on: one property type, again and again this month.', facts: ['passes_count', 'passes_days'] },

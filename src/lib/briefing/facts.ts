@@ -132,7 +132,7 @@ export interface SheetInputs {
   qualifiedPrior: (number | null)[];
   /** Live deals that fit the member's active profile now (Today's "N match"). */
   fitLive: number | null;
-  /** Price drops recorded yesterday on deals they kept (newest first). */
+  /** Price drops recorded in the last day on deals they kept (newest first). */
   keptDrops: KeptDrop[];
   /** Their passes in the last 30 days, by property type, most first. */
   passesByType: { type: PropertyType; count: number }[];
@@ -207,7 +207,7 @@ export function buildFactSheet(inputs: SheetInputs): FactSheet {
     add('drop_amount', 'How much it came down', drop.oldPrice - drop.newPrice, moneyForms(drop.oldPrice - drop.newPrice));
     const pct = ((drop.oldPrice - drop.newPrice) / drop.oldPrice) * 100;
     if (pct >= 1) add('drop_pct', 'The drop as a share of the old price', Math.round(pct), percentForms(pct));
-    if (inputs.keptDrops.length > 1) add('drops_more', 'Other kept deals that also dropped yesterday', inputs.keptDrops.length - 1, countForms(inputs.keptDrops.length - 1));
+    if (inputs.keptDrops.length > 1) add('drops_more', 'Other kept deals that also dropped in the last day', inputs.keptDrops.length - 1, countForms(inputs.keptDrops.length - 1));
     places.add(placePhrase(drop.town, drop.type));
     if (drop.town) places.add(drop.town);
     if (drop.type) places.add(drop.type);
