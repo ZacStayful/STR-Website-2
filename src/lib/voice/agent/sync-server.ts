@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { createAdminClient } from '../../supabase/admin';
 import { getBillingSettings, updateBillingSetting } from '../../credit/unit-costs';
 import { siteUrl } from '../../url';
-import { voiceId } from '../../persona/stayful-intelligence';
+import { VOICE, voiceId } from '../../persona/stayful-intelligence';
 import { promptVariables } from '../../knowledge/agent';
 import { TOOL_NAMES, voiceConfig, type ToolName } from '../config';
 import { elevenLabsJson } from '../elevenlabs-server';
@@ -62,11 +62,12 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   // What the agent has now.
   const current = await elevenLabsJson(config.apiKey, 'GET', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`);
   if (!current.ok) return { ok: false, dry: !o.apply, message: `Couldn't read the agent (HTTP ${current.status}).`, changes: [] };
-  const cur = (current.json ?? {}) as { conversation_config?: { agent?: { prompt?: { prompt?: string; tool_ids?: string[] } }; tts?: { voice_id?: string }; conversation?: { max_duration_seconds?: number } } };
+  const cur = (current.json ?? {}) as { conversation_config?: { agent?: { prompt?: { prompt?: string; tool_ids?: string[] } }; tts?: { voice_id?: string; model_id?: string }; conversation?: { max_duration_seconds?: number } } };
   const changes: string[] = [];
   const curPrompt = cur.conversation_config?.agent?.prompt?.prompt ?? '';
   if (curPrompt !== wantedPrompt) changes.push(`prompt ${hash(curPrompt)} → ${hash(wantedPrompt)} (${wantedPrompt.length} characters)`);
   if (cur.conversation_config?.tts?.voice_id !== voiceId()) changes.push(`voice ${cur.conversation_config?.tts?.voice_id ?? 'none'} → ${voiceId()}`);
+  if (cur.conversation_config?.tts?.model_id !== VOICE.agentModelId) changes.push(`speech model ${cur.conversation_config?.tts?.model_id ?? 'none'} → ${VOICE.agentModelId}`);
   if (cur.conversation_config?.conversation?.max_duration_seconds !== settings.voice.maxCallSeconds) changes.push(`max call ${cur.conversation_config?.conversation?.max_duration_seconds ?? '?'}s → ${settings.voice.maxCallSeconds}s`);
   if (o.toolsToo) for (const n of TOOL_NAMES) changes.push(ids[n] ? `tool ${n}: update ${ids[n]}` : `tool ${n}: create`);
   else for (const n of TOOL_NAMES) if (!ids[n]) changes.push(`tool ${n}: not created yet (press Sync on /admin/calls)`);

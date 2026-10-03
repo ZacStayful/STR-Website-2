@@ -117,3 +117,9 @@ test('the built-in tools say they are system tools', () => {
     assert.equal(t.params.system_tool_type, name);
   }
 });
+
+test("the agent's speech model is one ElevenLabs allows for an English agent (turbo or flash v2)", () => {
+  const c = agentConfig({ knowledge: '', voiceId: 'v', toolIds: [], maxCallSeconds: 600, retentionDays: 90 }) as { conversation_config: { agent: { language: string }; tts: { model_id: string } } };
+  assert.equal(c.conversation_config.agent.language, 'en');
+  assert.ok(['eleven_turbo_v2', 'eleven_flash_v2'].includes(c.conversation_config.tts.model_id), c.conversation_config.tts.model_id);
+});

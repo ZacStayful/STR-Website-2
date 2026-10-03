@@ -211,8 +211,10 @@ export const SMS_SIGN_OFF = '– Stayful Intelligence';
 export const FALLBACK_VOICE_ID = 'pFZP5JQG7iQjIQuC4Bku'; // "Lily", British female (Zac's pick, Batch 23 P2)
 
 export const VOICE = {
-  /** ElevenLabs model: low latency, good quality. */
+  /** ElevenLabs model: low latency, good quality. The narrator (/api/speak) uses it. */
   modelId: 'eleven_turbo_v2_5',
+  /** The phone agent's model: ElevenLabs only allows turbo or flash v2 (not v2.5) for an English agent. */
+  agentModelId: 'eleven_turbo_v2',
   stability: 0.45,
   similarityBoost: 0.75,
   style: 0,
