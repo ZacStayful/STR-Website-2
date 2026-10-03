@@ -22,6 +22,7 @@ import { todayKey } from '../today/day';
 import { homeViewKey, parsePing } from './heartbeat';
 import { recordActivity } from './log';
 import { ukDay } from './week';
+import { markBriefingSeenByEmail } from '../briefing/marks-server';
 
 const warnedAt = new Map<string, number>();
 function warn(message: string): void {
@@ -51,6 +52,8 @@ export async function handlePresence(userId: string, raw: unknown, now: Date = n
   if (ping.via && visitId) {
     // Batch 21 (E12): the row says where it came from, not 'web'.
     logged.push(recordActivity(userId, ping.via === 'email' ? 'email_click' : 'sms_click', { dedupeKey: `${ping.via}_click:${visitId}`, at: now, source: ping.via === 'email' ? 'email_link' : 'sms_link' }));
+    // Batch 23b: in from the email on a day with a briefing: it was seen there (record only).
+    if (ping.via === 'email') logged.push(markBriefingSeenByEmail(userId, now));
   }
   const view = ping.view;
   if (view?.type === 'home') {

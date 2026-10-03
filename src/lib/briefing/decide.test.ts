@@ -101,3 +101,15 @@ test('template on rejection, with no charge; a passed briefing is charged (never
   assert.deepEqual(afterWriting({ replied: true, valid: true, admin: false }), { use: 'ai', charge: true });
   assert.deepEqual(afterWriting({ replied: true, valid: true, admin: true }), { use: 'ai', charge: false });
 });
+
+test('admin page: generated, rejected, template only, seen, played, feedback and charge per day', async () => {
+  const { summariseDays } = await import('./admin.ts');
+  const row = (over: Record<string, unknown>) => ({ uk_day: '2026-10-06', status: 'ready', ai_attempted: true, shown_in_app_at: null, seen_email_at: null, played_count: 0, feedback: null, charge_pence: 0, input_tokens: 0, output_tokens: 0, ...over });
+  const [d] = summariseDays([
+    row({ charge_pence: '1.4', shown_in_app_at: 'x', played_count: 2, feedback: 'useful' }),
+    row({ status: 'template', ai_attempted: true, feedback: 'not_for_me' }),
+    row({ status: 'template', ai_attempted: false, seen_email_at: 'x' }),
+    row({ status: 'skipped', ai_attempted: false }),
+  ]);
+  assert.deepEqual(d, { day: '2026-10-06', generated: 1, rejected: 1, templateOnly: 1, skipped: 1, seenInApp: 1, seenByEmail: 1, played: 1, useful: 1, notForMe: 1, chargedPence: 1.4 });
+});

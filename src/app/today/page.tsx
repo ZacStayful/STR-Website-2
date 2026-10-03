@@ -28,6 +28,7 @@ import { Checklist, ChecklistProvider } from "./_components/Checklist";
 import { PasteLinkBox } from "./_components/PasteLinkBox";
 import { TodayCards } from "./_components/TodayCards";
 import { ProfileProgressCard } from "./_components/ProfileProgressCard";
+import { TodayBriefing } from "./_components/TodayBriefing";
 import { profilePriceLineFor, profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import { pauseProfileAction } from "@/app/profiles/actions";
@@ -59,8 +60,10 @@ export const metadata: Metadata = {
  * for the day. The list is chosen once a day and stored, so it does not move
  * under them between visits or devices.
  */
-export default async function TodayPage({ searchParams }: { searchParams: Promise<{ check?: string | string[]; pack?: string | string[]; offer?: string | string[] }> }) {
+export default async function TodayPage({ searchParams }: { searchParams: Promise<{ check?: string | string[]; pack?: string | string[]; offer?: string | string[]; via?: string | string[] }> }) {
   const params = await searchParams;
+  // Batch 23b: in from the email this visit (the click itself is recorded after the page renders).
+  const viaEmail = (Array.isArray(params.via) ? params.via[0] : params.via) === "email";
   const searchParam = Array.isArray(params.check) ? params.check[0] : params.check;
   const packParam = Array.isArray(params.pack) ? params.pack[0] : params.pack;
   // Batch 20: the pack letter's button (?offer=pack) shows the card even inside a "Not now".
@@ -171,6 +174,8 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     <main className="min-h-screen bg-background">
       <ChecklistProvider initial={checklist}>
       <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:py-8">
+        {/* Batch 23b: today's briefing, for a member who did not come in from the email. */}
+        <TodayBriefing userId={user.id} fullName={profile?.full_name ?? null} now={now} viaEmail={viaEmail} />
         {packNote && (
           <p role="status" className={`rounded-lg border p-3 text-sm ${packNote.tone === "ok" ? "border-primary/30 bg-primary/5 text-foreground" : "border-warning/40 bg-warning/10 text-foreground"}`}>
             {packNote.text}
