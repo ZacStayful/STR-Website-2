@@ -256,3 +256,12 @@ test('places: a town that is really an instruction is refused', () => {
   assert.equal(propertyTypeOf('Apartment'), 'flat');
   assert.equal(propertyTypeOf('Land'), null);
 });
+
+test('a member with no area limit is told "across the UK"; a shouted name is title-cased', () => {
+  const sheet = buildFactSheet(inputs({ everywhere: true }));
+  assert.match(templateOpener(sheet, 'funnel'), /new listings across the UK\. 9 deals cleared the bar and went live, and 31 live deals fit/);
+  assert.match(templateOpener(buildFactSheet(inputs()), 'time_saved'), /in your areas yesterday/);
+  assert.equal(usableFirstName('SARAH JONES'), 'Sarah');
+  assert.equal(usableFirstName('HHE'), 'HHE');
+  assert.equal(usableFirstName('dixon'), 'Dixon');
+});

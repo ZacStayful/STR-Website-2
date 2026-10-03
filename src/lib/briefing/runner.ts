@@ -54,8 +54,8 @@ import { dayCounts, loadRunContext, loadSheet, type RunContext } from './sheet-s
 
 const PAGE = 1000;
 const CONCURRENCY = 6;
-/** Inside the route's 60 s, with room to finish the members already started. */
-const TIME_BUDGET_MS = 42_000;
+/** Inside the route's 60 s, with room to finish the members already started (the writer times out at 15 s). */
+const TIME_BUDGET_MS = 35_000;
 
 export interface RunOptions {
   dry: boolean;

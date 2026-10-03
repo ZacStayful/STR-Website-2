@@ -190,6 +190,7 @@ export async function loadSheet(ctx: RunContext, m: MemberLite): Promise<LoadedS
   const overdue = overdueDeals(stageEntriesFrom(items, cards, moves, m.userId), ctx.now);
   const inputs: SheetInputs = {
     ukDay: ctx.ukDay,
+    everywhere: scope.areas === null,
     screenedYesterday: screened(ctx.yesterday),
     qualifiedYesterday: qualified(ctx.yesterday),
     qualifiedPrior: prior,

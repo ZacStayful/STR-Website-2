@@ -19,7 +19,9 @@ export function usableFirstName(fullName: string | null | undefined): string | n
   const first = (fullName ?? '').trim().split(/\s+/)[0] ?? '';
   if (first.length < 2 || first.length > 30) return null;
   if (!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’-]*$/.test(first)) return null;
-  return first[0].toUpperCase() + first.slice(1);
+  // "SARAH" reads as shouting: an all-capitals name of four letters or more is title-cased.
+  const name = first.length >= 4 && first === first.toUpperCase() ? first.toLowerCase() : first;
+  return name[0].toUpperCase() + name.slice(1);
 }
 
 function hash(s: string): number {

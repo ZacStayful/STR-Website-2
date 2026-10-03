@@ -9,7 +9,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import { factOf, placePhrase, typePlural, type FactId, type FactSheet } from './facts.ts';
+import { factOf, placePhrase, typePlural, whereWords, type FactId, type FactSheet } from './facts.ts';
 
 export type AngleId = 'time_saved' | 'funnel' | 'price_drop' | 'memory' | 'thin_night' | 'pipeline' | 'monday';
 
@@ -91,12 +91,13 @@ const capital = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
  */
 export function templateOpener(sheet: FactSheet, angle: AngleId): string {
   const p = (id: FactId) => plain(sheet, id);
+  const where = whereWords(sheet.inputs);
   switch (angle) {
     case 'monday': {
       const kept = factOf(sheet, 'week_kept')?.value ?? 0;
       return kept > 0
-        ? `Last week I screened ${p('week_screened')} new listings in your areas. You kept ${p('week_kept')} of the deals I found.`
-        : `Last week I screened ${p('week_screened')} new listings in your areas. This week's deals are below.`;
+        ? `Last week I screened ${p('week_screened')} new listings ${where}. You kept ${p('week_kept')} of the deals I found.`
+        : `Last week I screened ${p('week_screened')} new listings ${where}. This week's deals are below.`;
     }
     case 'price_drop': {
       const d = sheet.inputs.keptDrops[0];
@@ -109,14 +110,14 @@ export function templateOpener(sheet: FactSheet, angle: AngleId): string {
       return `You have ${p('pipeline_count')} ${n === 1 ? 'deal' : 'deals'} in your pipeline. ${capital(placePhrase(late.town, late.type).replace(/^an? /, 'The '))} has been in ${late.stageLabel} for ${p('overdue_days')}.`;
     }
     case 'thin_night':
-      return `A quiet night: ${p('qualified_yesterday')} new deals cleared the bar in your areas yesterday, fewer than usual. I still screened ${p('screened_yesterday')} new listings to find them.`;
+      return `A quiet night: ${p('qualified_yesterday')} new deals cleared the bar ${where} yesterday, fewer than usual. I still screened ${p('screened_yesterday')} new listings to find them.`;
     case 'memory': {
       const t = sheet.inputs.passesByType[0];
       return `You've passed on ${p('passes_count')} ${typePlural(t.type)} in ${p('passes_days')}. Today's deals are below.`;
     }
     case 'funnel':
-      return `Yesterday I screened ${p('screened_yesterday')} new listings in your areas and ${p('qualified_yesterday')} cleared the bar. ${capital(p('fit_live'))} live deals fit what you're after.`;
+      return `Yesterday I screened ${p('screened_yesterday')} new listings ${where}. ${capital(p('qualified_yesterday'))} deals cleared the bar and went live, and ${p('fit_live')} live deals fit what you're after.`;
     case 'time_saved':
-      return `I read ${p('screened_yesterday')} new listings in your areas yesterday. That's ${p('time_saved')} of scrolling you didn't have to do.`;
+      return `I read ${p('screened_yesterday')} new listings ${where} yesterday. That's ${p('time_saved')} of scrolling you didn't have to do.`;
   }
 }

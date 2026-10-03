@@ -124,6 +124,8 @@ export interface OverdueDeal {
 export interface SheetInputs {
   /** The UK day the briefing is for, YYYY-MM-DD. */
   ukDay: string;
+  /** The member's scope is every area (no area limit): say "across the UK", not "in your areas". */
+  everywhere?: boolean;
   /** New listings first screened yesterday (UK day) in the member's areas and kinds: listing_scan_days, the one "scanned". */
   screenedYesterday: number | null;
   /** Deals in the member's areas and kinds that went live (qualified) yesterday. */
@@ -177,20 +179,26 @@ export function usualOf(values: readonly (number | null)[]): number | null {
 
 const positive = (v: number | null | undefined): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
 
+/** "in your areas" / "across the UK", for labels and templates. */
+export function whereWords(inputs: Pick<SheetInputs, 'everywhere'>): string {
+  return inputs.everywhere ? 'across the UK' : 'in your areas';
+}
+
 export function buildFactSheet(inputs: SheetInputs): FactSheet {
+  const where = whereWords(inputs);
   const facts: Fact[] = [];
   const add = (id: FactId, label: string, value: number, forms: string[]) => facts.push({ id, label, value, forms });
   const comparisons: string[] = [];
   const places = new Set<string>();
 
   if (positive(inputs.screenedYesterday)) {
-    add('screened_yesterday', 'New listings I screened yesterday in your areas', inputs.screenedYesterday, countForms(inputs.screenedYesterday));
+    add('screened_yesterday', `New listings I screened yesterday ${where}`, inputs.screenedYesterday, countForms(inputs.screenedYesterday));
     const minutes = (inputs.screenedYesterday * TIME_SAVED.secondsPerPropertyScanned) / 60;
     const d = durationForms(minutes);
     if (d.length > 0) add('time_saved', `Time that would take to read yourself, at ${TIME_SAVED.secondsPerPropertyScanned} seconds a listing`, Math.round(minutes), d);
   }
   if (typeof inputs.qualifiedYesterday === 'number' && inputs.qualifiedYesterday >= 0) {
-    add('qualified_yesterday', 'Of those areas, deals that cleared the bar and went live yesterday', inputs.qualifiedYesterday, countForms(inputs.qualifiedYesterday));
+    add('qualified_yesterday', `Deals ${where} that cleared the bar and went live yesterday (not necessarily from yesterday's new listings: say them separately)`, inputs.qualifiedYesterday, countForms(inputs.qualifiedYesterday));
     const usual = usualOf(inputs.qualifiedPrior);
     if (usual !== null && usual > 0) {
       add('qualified_usual', 'The usual number a day over the week before (median)', usual, countForms(usual));
@@ -230,7 +238,7 @@ export function buildFactSheet(inputs: SheetInputs): FactSheet {
 
   const weekday = weekdayOf(inputs.ukDay);
   if (weekday === 'Monday' && inputs.week && inputs.week.screened > 0) {
-    add('week_screened', 'New listings I screened last week (Monday to Sunday) in your areas', inputs.week.screened, countForms(inputs.week.screened));
+    add('week_screened', `New listings I screened last week (Monday to Sunday) ${where}`, inputs.week.screened, countForms(inputs.week.screened));
     add('week_kept', 'Deals you kept last week', inputs.week.kept, countForms(inputs.week.kept));
   }
 

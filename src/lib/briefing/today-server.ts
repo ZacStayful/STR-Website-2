@@ -24,7 +24,7 @@ export interface BriefingCardData {
   /** What Play reads aloud: the greeting and the opener. */
   spoken: string;
   nudges: { text: string; nextStep: string; href: string }[];
-  /** Open on the page (not dismissed). */
+  /** Open on the page: the first visit of the day, not dismissed. */
   open: boolean;
   /** The first time it is shown: stamp it. */
   firstShow: boolean;
@@ -55,7 +55,8 @@ export function cardFrom(b: StoredBriefing, fullName: string | null, userId: str
     opener: b.opener,
     spoken,
     nudges: b.nudges.map((n) => ({ text: n.text, nextStep: n.nextStep, href: n.path })),
-    open: !b.dismissedAt,
+    // The card shows once: open on the first visit of the day, then the "Today's briefing" link.
+    open: !b.dismissedAt && !b.shownInAppAt,
     firstShow: !b.shownInAppAt,
     playLabel: price !== null ? `Play · ${formatPence(price)}` : null,
     feedback: b.feedback,
