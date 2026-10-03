@@ -49,7 +49,7 @@ import { greetingLine } from './greeting';
 import { BRIEFING_CEILING_PENCE, afterWriting, ceilingPence, dayChargeEstimate, decide, type Plan } from './decide';
 import { BRIEFING_MAX_TOKENS, BRIEFING_MODEL, unitsFor, writeBriefing, writerConfigured, type WriterResult } from './writer';
 import { shouldCharge } from './once';
-import { claimBriefing, finishBriefing, recentAnglesFor, releaseClaim, settledToday } from './store';
+import { claimBriefing, finishBriefing, recentAnglesFor, releaseClaim, saveProvisional, settledToday } from './store';
 import { dayCounts, loadRunContext, loadSheet, type RunContext } from './sheet-server';
 
 const PAGE = 1000;
@@ -202,6 +202,7 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
       if (!adminUser) held.set(payer.payerId, (held.get(payer.payerId) ?? 0) + dayCharge + (plan.kind === 'ai' ? ceiling : 0));
 
       const template = templateOpener(sheet, angle);
+      if (!opts.dry) await saveProvisional(admin, claim.id, { angle, greeting, opener: template, nudges: links });
       if (plan.kind === 'template') {
         if (!opts.dry) await finishBriefing(admin, claim.id, finishedOf({ status: 'template', angle, greeting, opener: template, subject: null, nudges: links, sheet, plan, writer: null, verdict: null, charge: 0, rejectReason: plan.reason }), now);
         return { user: m.id, outcome: 'template', reason: plan.reason, angle, greeting, opener: template, subject: null, nudges: links.map((l) => l.text), factsUsed: factsUsed(sheet, angle), ceilingPence: round(ceiling) };

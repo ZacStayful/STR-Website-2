@@ -54,14 +54,19 @@ function nudgesOf(raw: unknown): NudgeLink[] {
     .filter((n) => n.key && n.text && n.path.startsWith('/my-deals'));
 }
 
+/**
+ * A row as the email and Today use it. A row still 'generating' that already
+ * carries the template opener (saved as soon as the facts were in) is used as
+ * a template: not ready in time means the template, uncharged.
+ */
 export function storedOf(r: Record<string, unknown>): StoredBriefing | null {
-  if (r.status !== 'ready' && r.status !== 'template') return null;
-  if (typeof r.opener !== 'string' || !r.opener.trim() || typeof r.greeting !== 'string') return null;
+  if (r.status !== 'ready' && r.status !== 'template' && r.status !== 'generating') return null;
+  if (typeof r.opener !== 'string' || !r.opener.trim() || typeof r.greeting !== 'string' || !r.angle) return null;
   return {
     id: String(r.id),
     userId: String(r.user_id),
     ukDay: String(r.uk_day),
-    status: r.status,
+    status: r.status === 'ready' ? 'ready' : 'template',
     angle: r.angle as AngleId,
     greeting: r.greeting,
     opener: r.opener,
@@ -80,7 +85,7 @@ export async function briefingsFor(userIds: readonly string[], ukDay: string, ad
   if (!hasServiceRole() || userIds.length === 0) return out;
   const unique = [...new Set(userIds)];
   for (let i = 0; i < unique.length; i += ID_CHUNK) {
-    const { data, error } = await admin.from('member_briefings').select(COLUMNS).eq('uk_day', ukDay).in('status', ['ready', 'template']).in('user_id', unique.slice(i, i + ID_CHUNK));
+    const { data, error } = await admin.from('member_briefings').select(COLUMNS).eq('uk_day', ukDay).in('status', ['ready', 'template', 'generating']).in('user_id', unique.slice(i, i + ID_CHUNK));
     if (error) {
       console.warn('[briefing] read failed; emails go without:', error.message);
       return new Map();
@@ -200,6 +205,16 @@ export async function finishBriefing(admin: Admin, id: string, f: Finished, now:
     })
     .eq('id', id);
   if (error) throw new Error(`finish: ${error.message}`);
+}
+
+/**
+ * The template, saved on the claimed row as soon as the facts are in: if the
+ * writer is not done when the email is built, this is what it shows. The
+ * row stays 'generating' (the claim) until finishBriefing.
+ */
+export async function saveProvisional(admin: Admin, id: string, p: { angle: AngleId; greeting: string; opener: string; nudges: NudgeLink[] }): Promise<void> {
+  const { error } = await admin.from('member_briefings').update({ angle: p.angle, greeting: p.greeting, opener: p.opener, subject: null, nudges: p.nudges }).eq('id', id).eq('status', 'generating');
+  if (error) console.warn('[briefing] provisional template not saved:', error.message);
 }
 
 /** Release a claim that will not be finished (a failure before anything was written or charged): the next run tries again. */

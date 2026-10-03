@@ -42,6 +42,8 @@ function textOfBlock(b: Block): string[] {
       return b.rows.map((r) => `  ${r.label}: ${r.value}`);
     case 'buttons':
       return b.links.map((l) => `${l.label}: ${l.url}`);
+    case 'links':
+      return b.links.map((l) => `${l.label}: ${l.url}`);
     case 'items':
       return b.items.flatMap((i, n) => (n === 0 ? textOfItem(i) : ['', ...textOfItem(i)]));
   }
@@ -54,7 +56,7 @@ function textOfSection(s: Section): string[] {
     const out = textOfBlock(b);
     if (out.length === 0) return;
     // Items and buttons read better with a gap before them; lines of prose run on.
-    if (n > 0 && (b.type === 'items' || b.type === 'buttons' || s.blocks[n - 1].type === 'items')) lines.push('');
+    if (n > 0 && (b.type === 'items' || b.type === 'buttons' || b.type === 'links' || s.blocks[n - 1].type === 'items')) lines.push('');
     lines.push(...out);
   });
   return lines;
@@ -94,6 +96,8 @@ function htmlOfBlock(b: Block): string {
       return `<table role="presentation" style="margin:0 0 12px;border-collapse:collapse;font-size:13px;color:#5b6657">${b.rows.map((r) => `<tr><td style="padding:1px 12px 1px 0">${esc(r.label)}</td><td style="padding:1px 0;font-weight:600;color:#2e3d2b">${esc(r.value)}</td></tr>`).join('')}</table>`;
     case 'buttons':
       return `<p style="margin:0 0 14px">${b.links.map(button).join('')}</p>`;
+    case 'links':
+      return `<p style="margin:0 0 14px;font-size:13px;color:#7a8274">${b.links.map((l) => `<a href="${esc(l.url)}" style="color:#2e3d2b">${esc(l.label)}</a>`).join(' · ')}</p>`;
     case 'items':
       return `<ul style="padding-left:18px;margin:0 0 10px">${b.items.map(htmlOfItem).join('')}</ul>`;
   }
@@ -127,7 +131,7 @@ function markLinks(m: Message): Message {
   const mark = (url: string) => withVia(url, 'email', m.manageUrl);
   const link = (l: Link): Link => ({ ...l, url: mark(l.url) });
   const block = (b: Block): Block =>
-    b.type === 'buttons' ? { ...b, links: b.links.map(link) } : b.type === 'items' ? { ...b, items: b.items.map((i) => ({ ...i, link: i.link ? link(i.link) : null, ...(i.links ? { links: i.links.map(link) } : {}) })) } : b;
+    b.type === 'buttons' || b.type === 'links' ? { ...b, links: b.links.map(link) } : b.type === 'items' ? { ...b, items: b.items.map((i) => ({ ...i, link: i.link ? link(i.link) : null, ...(i.links ? { links: i.links.map(link) } : {}) })) } : b;
   return { ...m, manageUrl: mark(m.manageUrl), sections: m.sections.map((s) => ({ ...s, blocks: s.blocks.map(block) })) };
 }
 

@@ -42,6 +42,7 @@ import { sendParts } from '../tailoring/email-answers';
 import { memberFinance } from '../marketplace/most-you-can-pay';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
+import { emailBriefingsFor } from '../briefing/email';
 import { buildDaily } from './message';
 import { renderEmail } from './render-email';
 import { abandonSend, claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './sends';
@@ -284,6 +285,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   // for themselves: at the top of their email, or alone when there is nothing else.
   // Batch 21 (D22): a dry run reads no card from Stripe for them.
   const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now, { preview: opts.dry });
+  // Batch 23b: the morning briefings the 06:40 pass stored, in one read (none: the emails go as they were).
+  const briefings = await emailBriefingsFor(base, open.filter(wantsTeasers).map((p) => p.id), now);
 
   await mapLimit(open, SEND_CONCURRENCY, async (p) => {
     if (elapsed() > TIME_BUDGET_MS) {
@@ -339,6 +342,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       // and "Act fast · new today" for a member whose next deal is this month (Part E; About you is the member's, so any seat's).
       answerToken: token,
       actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
+      briefing: wantsTeasers(p) ? briefings.get(p.id) ?? null : null,
     });
     // Named for what the email IS, after the early-access backstop has had its
     // say: a Today's 5 whose teasers were all dropped is a changes email, and

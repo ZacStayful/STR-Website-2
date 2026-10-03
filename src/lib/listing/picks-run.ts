@@ -71,6 +71,7 @@ import { projectChecksOn, readProjectSettings } from "../project/settings-server
 import { projectClearedUrls } from "../project/read-server";
 import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
+import { emailBriefingsFor } from "../briefing/email";
 import { revealedFor } from "../intelligence/reveal-server";
 import { recordScanDays } from "../home/scan-record";
 
@@ -1315,6 +1316,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // (active first): its pick when it has one, then the rest of its Today. A
   // member none of whose profiles has a pick is left for the 08:10 digest.
   const base = siteUrl();
+  // Batch 23b: the morning briefings the 06:40 pass stored, in one read (none: the emails go as they were).
+  const briefings = await emailBriefingsFor(base, [...new Set(picks.map((x) => x.member.id))]);
   const notReady = new Map<string, TodayPlan | null>();
   let readyTimer: ReturnType<typeof setTimeout> | undefined;
   const plans = await Promise.race([plansReady, new Promise<Map<string, TodayPlan | null>>((r) => (readyTimer = setTimeout(() => r(notReady), Math.max(0, DAILY_READY_BY_MS - elapsed()))))]);
@@ -1575,6 +1578,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       answerToken,
       // Part E: About you is the member's own, so any seat's answer is theirs.
       actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
+      briefing: briefings.get(userId) ?? null,
     });
     const mail = built ? renderEmail(built.message) : null;
     const failRows = async () => {
