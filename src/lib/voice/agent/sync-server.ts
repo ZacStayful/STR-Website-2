@@ -80,9 +80,12 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
       const r = ids[n] ? await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/tools/${encodeURIComponent(ids[n]!)}`, body) : await elevenLabsJson(config.apiKey, 'POST', '/v1/convai/tools', body);
       if (!r.ok) return { ok: false, dry: false, message: `Tool ${n} failed (HTTP ${r.status}): ${JSON.stringify(r.json).slice(0, 300)}`, changes };
       const id = (r.json as { id?: string } | null)?.id ?? ids[n];
-      if (id) next[n] = id;
+      if (id && id !== next[n]) {
+        next[n] = id;
+        // Saved at once: a sync that fails on a later tool must not create this one again on retry.
+        await updateBillingSetting(TOOL_IDS_KEY, next);
+      }
     }
-    await updateBillingSetting(TOOL_IDS_KEY, next);
   }
   const final = agentConfig({ knowledge, voiceId: voiceId(), toolIds: TOOL_NAMES.map((n) => next[n]).filter((x): x is string => Boolean(x)), maxCallSeconds: settings.voice.maxCallSeconds, retentionDays: settings.voice.transcriptRetentionDays });
   const r = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`, final);
