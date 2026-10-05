@@ -6,7 +6,7 @@ import { agentKnowledge, KNOWLEDGE_VARIABLES, promptVariables } from '../../know
 import { SEED } from '../../knowledge/seed.ts';
 import { schemaSnapshot } from '../../knowledge/test-fixtures.ts';
 import { toolConfig } from './tools.ts';
-import { agentConfig, INITIATE_SECRET_HEADER, pickPostCallWebhook, POST_CALL_EVENTS } from './agent-config.ts';
+import { agentConfig, INITIATE_SECRET_HEADER, parseCreatedWebhook, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings } from './agent-config.ts';
 import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
 import { callVariables, fill, openerFor, VARIABLE_NAMES } from './variables.ts';
@@ -170,4 +170,25 @@ test('the post-call webhook is found by its URL', () => {
   assert.deepEqual(pickPostCallWebhook(list([{ webhook_id: 'auto', webhook_url: url, is_auto_disabled: true }]), url), { id: 'auto', autoDisabled: true });
   assert.equal(pickPostCallWebhook(list([]), url), null);
   assert.equal(pickPostCallWebhook(null, url), null);
+});
+
+test("the app's own post-call webhook: found by id, its secret read from the create reply only", () => {
+  const list = { webhooks: [{ webhook_id: 'mine', webhook_url: 'https://x/api/voice/elevenlabs/webhook', is_auto_disabled: true }, { webhook_id: 'off', webhook_url: 'https://x', is_disabled: true }] };
+  assert.deepEqual(webhookById(list, 'mine'), { id: 'mine', autoDisabled: true });
+  assert.equal(webhookById(list, 'off'), null, 'switched off by hand');
+  assert.equal(webhookById(list, 'gone'), null, 'deleted in ElevenLabs: the Sync makes a new one');
+  assert.deepEqual(parseCreatedWebhook({ webhook_id: 'w1', webhook_secret: 'wsec_abc' }), { id: 'w1', secret: 'wsec_abc' });
+  assert.equal(parseCreatedWebhook({ webhook_id: 'w1', webhook_secret: null }), null, 'no secret, nothing to keep');
+  assert.equal(parseCreatedWebhook(null), null);
+});
+
+test('workspace settings that point at this site are flagged, others are left alone', () => {
+  const site = 'https://intelligence.stayful.co.uk';
+  const list = { webhooks: [{ webhook_id: 'ours', webhook_url: `${site}/api/voice/elevenlabs/webhook` }, { webhook_id: 'n8n', webhook_url: 'https://stayful.app.n8n.cloud/webhook/elevenlabs-noshow-postcall' }] };
+  const both = workspaceWarnings({ webhooks: { post_call_webhook_id: 'ours' }, conversation_initiation_client_data_webhook: { url: `${site}/api/voice/elevenlabs/webhook`, request_headers: {} } }, list, `${site}/`);
+  assert.equal(both.length, 2);
+  assert.match(both[0], /post-call webhook \(used by every agent\)/);
+  assert.match(both[1], /conversation-initiation webhook \(used by every agent\)/);
+  assert.deepEqual(workspaceWarnings({ webhooks: { post_call_webhook_id: 'n8n' }, conversation_initiation_client_data_webhook: null }, list, site), []);
+  assert.deepEqual(workspaceWarnings(null, null, site), []);
 });

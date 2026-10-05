@@ -102,9 +102,47 @@ const sameUrl = (a: string, b: string) => a.trim().replace(/\/+$/, '').toLowerCa
  * flagged, so the Dry run can say so. Null when there is none.
  */
 export function pickPostCallWebhook(list: unknown, url: string): { id: string; autoDisabled: boolean } | null {
-  const hooks = (list && typeof list === 'object' && Array.isArray((list as { webhooks?: unknown }).webhooks) ? (list as { webhooks: unknown[] }).webhooks : []) as Record<string, unknown>[];
-  const matches = hooks
-    .filter((h) => h && typeof h.webhook_id === 'string' && h.webhook_id && typeof h.webhook_url === 'string' && sameUrl(h.webhook_url, url) && h.is_disabled !== true)
+  const matches = listedWebhooks(list)
+    .filter((h) => typeof h.webhook_url === 'string' && sameUrl(h.webhook_url, url) && h.is_disabled !== true)
     .map((h) => ({ id: h.webhook_id as string, autoDisabled: h.is_auto_disabled === true }));
   return matches.find((m) => !m.autoDisabled) ?? matches[0] ?? null;
+}
+
+function listedWebhooks(list: unknown): Record<string, unknown>[] {
+  const hooks = list && typeof list === 'object' && Array.isArray((list as { webhooks?: unknown }).webhooks) ? (list as { webhooks: unknown[] }).webhooks : [];
+  return hooks.filter((h): h is Record<string, unknown> => Boolean(h) && typeof h === 'object' && typeof (h as Record<string, unknown>).webhook_id === 'string' && Boolean((h as Record<string, unknown>).webhook_id));
+}
+
+/** The webhook with this id, if it is still there and not switched off by hand. */
+export function webhookById(list: unknown, id: string): { id: string; autoDisabled: boolean } | null {
+  const h = listedWebhooks(list).find((w) => w.webhook_id === id && w.is_disabled !== true);
+  return h ? { id, autoDisabled: h.is_auto_disabled === true } : null;
+}
+
+/** The name of the post-call webhook the Sync creates (ElevenLabs → Settings → Webhooks). */
+export const POST_CALL_WEBHOOK_NAME = 'Stayful Intelligence calls (made by the app)';
+
+/** POST /v1/workspace/webhooks with HMAC auth answers { webhook_id, webhook_secret }: the only time the secret is given. */
+export function parseCreatedWebhook(json: unknown): { id: string; secret: string } | null {
+  const j = (json && typeof json === 'object' ? json : {}) as Record<string, unknown>;
+  return typeof j.webhook_id === 'string' && j.webhook_id && typeof j.webhook_secret === 'string' && j.webhook_secret ? { id: j.webhook_id, secret: j.webhook_secret } : null;
+}
+
+/**
+ * Workspace settings (GET /v1/convai/settings) that point at this site.
+ * They apply to every agent in the ElevenLabs workspace, so other agents'
+ * calls would come here and be refused; this agent has its own (set by the
+ * Sync). Read only: the Sync never changes the workspace settings.
+ */
+export function workspaceWarnings(settings: unknown, list: unknown, siteBase: string): string[] {
+  const s = (settings && typeof settings === 'object' ? settings : {}) as { webhooks?: { post_call_webhook_id?: unknown } | null; conversation_initiation_client_data_webhook?: { url?: unknown } | null };
+  const base = siteBase.trim().replace(/\/+$/, '').toLowerCase();
+  const ours = (u: unknown) => typeof u === 'string' && u.trim().toLowerCase().startsWith(`${base}/`);
+  const out: string[] = [];
+  const postId = s.webhooks?.post_call_webhook_id;
+  const hook = typeof postId === 'string' ? listedWebhooks(list).find((h) => h.webhook_id === postId) : undefined;
+  if (hook && ours(hook.webhook_url)) out.push(`warning: the workspace's post-call webhook (used by every agent) is ${String(hook.webhook_url)}, so your other agents' call results come here and are refused. In ElevenLabs → Agents → Settings, set it back to what it was (your other agents' webhook, or none). This agent gets its own from the Sync.`);
+  const initUrl = s.conversation_initiation_client_data_webhook?.url;
+  if (ours(initUrl)) out.push(`warning: the workspace's conversation-initiation webhook (used by every agent) is ${String(initUrl)}. Clear it in ElevenLabs → Agents → Settings: this agent gets its own from the Sync.`);
+  return out;
 }

@@ -776,30 +776,34 @@ shows every call, including the ones a safety rule blocked and why.
    voice (British, female, warm, mid-pace) and paste its id into
    `ELEVENLABS_VOICE_ID` on Production and Preview: the analyser and the
    calls use the one voice.
-5. **ElevenLabs → Agents → Settings → Webhooks → Create webhook:** URL
-   `<site>/api/voice/elevenlabs/webhook` (the app's own address,
-   `NEXT_PUBLIC_SITE_URL`, i.e. `https://intelligence.stayful.co.uk`, not
-   the Squarespace `stayful.co.uk`), auth **HMAC**; copy the secret it shows
-   once. **Don't** choose it as the workspace's post-call webhook and don't
-   set the workspace's conversation-initiation webhook: other agents in the
-   workspace use those. The Sync (step 7) attaches this webhook to the
-   Stayful Intelligence agent only (transcript, call-initiation-failure and
-   answering-machine events; no audio), sets the agent's own "who is
-   ringing" webhook (`<site>/api/voice/elevenlabs/initiate`, header
-   `x-si-secret` = `ELEVENLABS_INITIATE_SECRET`), switches on its fetch for
-   inbound Twilio calls, and sets transcript retention.
+5. **ElevenLabs: nothing to set by hand.** Don't add webhooks in
+   ElevenLabs → Agents → Settings: those apply to every agent in the
+   workspace, and your other agents use them. The Sync (step 7) does it on
+   the Stayful Intelligence agent only: it creates the post-call webhook
+   through the API (`<site>/api/voice/elevenlabs/webhook`, HMAC; `<site>`
+   is `NEXT_PUBLIC_SITE_URL`, `https://intelligence.stayful.co.uk`, not the
+   Squarespace `stayful.co.uk`) and keeps its secret encrypted with
+   `CRM_ENCRYPTION_KEY` (ElevenLabs only ever gives the secret to whoever
+   creates the webhook); it attaches it to the agent (transcript,
+   call-initiation-failure and answering-machine events; no audio), sets
+   the agent's own "who is ringing" webhook
+   (`<site>/api/voice/elevenlabs/initiate`, header `x-si-secret` =
+   `ELEVENLABS_INITIATE_SECRET`), switches on its fetch for inbound Twilio
+   calls, and sets transcript retention.
 6. **Vercel (Production):** `ELEVENLABS_AGENT_ID`,
-   `ELEVENLABS_PHONE_NUMBER_ID`, `ELEVENLABS_WEBHOOK_SECRET` (the HMAC
-   secret), `ELEVENLABS_INITIATE_SECRET` and `ELEVENLABS_TOOL_SECRET` (two
-   long random strings, typed nowhere else). On Preview,
+   `ELEVENLABS_PHONE_NUMBER_ID`, `ELEVENLABS_INITIATE_SECRET` and
+   `ELEVENLABS_TOOL_SECRET` (two long random strings, typed nowhere else),
+   and `CRM_ENCRYPTION_KEY`. `ELEVENLABS_WEBHOOK_SECRET` only if you made a
+   post-call webhook by hand (its HMAC secret). On Preview,
    `SI_CALLS_DRY_RUN=true`. Redeploy.
 7. **Sync the agent:** `/admin/calls` → The agent → **Dry run**, read what
    would change, then **Sync to ElevenLabs** (the prompt from the persona,
    the scripts, the approved call answers from the knowledge base (Batch
    24, §22), the five tools, the voice, the limits and the two webhooks).
-   The Dry run says if the post-call webhook isn't found or a secret is
-   missing. Then ring the number from your own phone: callbacks work while
-   calls are off.
+   The Dry run says what it will create, if a secret is missing, and if
+   ElevenLabs' workspace settings point at this site (set them back: other
+   agents use them). Then ring the number from your own phone: callbacks
+   work while calls are off.
 8. **Check the cron:** Vercel → Settings → Cron Jobs lists
    `/api/internal/si-calls` (every 5 minutes; that makes 36 cron entries —
    check your plan's limit). `?dry=1` lists what it would place, block,

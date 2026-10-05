@@ -17,9 +17,12 @@ import 'server-only';
  * Calls go-live: the sync also sets the agent's two webhooks on this agent
  * only: "who is ringing" (/api/voice/elevenlabs/initiate, with
  * ELEVENLABS_INITIATE_SECRET as its x-si-secret header) and the post-call
- * webhook, found by its URL among the workspace's webhooks (created by hand
- * in ElevenLabs, because only ElevenLabs can make its HMAC secret). The
- * workspace settings, which other agents use, are never touched.
+ * webhook. The Sync button creates the post-call webhook itself through the
+ * API (the only way to be given its HMAC secret) and keeps the secret
+ * encrypted (src/lib/voice/post-call-webhook-server.ts); one made by hand
+ * is used only with ELEVENLABS_WEBHOOK_SECRET. The workspace settings,
+ * which other agents use, are never changed: the Dry run only warns when
+ * they point at this site.
  */
 import { createHash } from 'node:crypto';
 import { createAdminClient } from '../../supabase/admin';
@@ -28,9 +31,11 @@ import { siteUrl } from '../../url';
 import { VOICE, voiceId } from '../../persona/stayful-intelligence';
 import { promptVariables } from '../../knowledge/agent';
 import { TOOL_NAMES, initiateSecret, toolSecret, voiceConfig, webhookSecret, type ToolName } from '../config';
+import { secretsConfigured } from '../../crypto/secrets';
+import { savePostCallWebhook, storedPostCallWebhook } from '../post-call-webhook-server';
 import { elevenLabsJson } from '../elevenlabs-server';
 import { toolConfig } from './tools';
-import { agentConfig, pickPostCallWebhook, type AgentPlatformNow } from './agent-config';
+import { agentConfig, parseCreatedWebhook, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
 import { VARIABLE_NAMES } from './variables';
 
 const TOOL_IDS_KEY = 'si_agent_tool_ids';
@@ -60,7 +65,7 @@ type CurrentAgent = {
 };
 
 /** The agent's webhooks: what to set, what it has now, and the Dry run's lines about them. */
-async function webhookPlan(apiKey: string, cur: CurrentAgent): Promise<{ initiationWebhook: { url: string; secret: string } | null; postCallWebhookId: string | null; current: AgentPlatformNow; changes: string[] }> {
+async function webhookPlan(apiKey: string, cur: CurrentAgent): Promise<{ initiationWebhook: { url: string; secret: string } | null; postCallWebhookId: string | null; createPostCall: boolean; current: AgentPlatformNow; changes: string[] }> {
   const changes: string[] = [];
   const ws = cur.platform_settings?.workspace_overrides;
   const current: AgentPlatformNow = {
@@ -79,21 +84,31 @@ async function webhookPlan(apiKey: string, cur: CurrentAgent): Promise<{ initiat
   const postCallUrl = siteUrl(POST_CALL_PATH);
   const curPostCall = typeof current.webhooks?.post_call_webhook_id === 'string' ? current.webhooks.post_call_webhook_id : null;
   let postCallWebhookId: string | null = null;
-  const list = await elevenLabsJson(apiKey, 'GET', '/v1/workspace/webhooks');
+  let createPostCall = false;
+  const [stored, list, workspace] = await Promise.all([
+    storedPostCallWebhook().catch(() => null),
+    elevenLabsJson(apiKey, 'GET', '/v1/workspace/webhooks'),
+    elevenLabsJson(apiKey, 'GET', '/v1/convai/settings'),
+  ]);
   if (!list.ok) {
-    changes.push(`post-call webhook: couldn't list ElevenLabs webhooks (HTTP ${list.status}), so the agent keeps ${curPostCall ?? 'none'}. Choose the webhook for ${postCallUrl} on the agent by hand if it's missing.`);
+    changes.push(`post-call webhook: couldn't list ElevenLabs webhooks (HTTP ${list.status}), so the agent keeps ${curPostCall ?? 'none'}.`);
   } else {
-    const found = pickPostCallWebhook(list.json, postCallUrl);
-    if (!found) changes.push(`post-call webhook: not found. Create it in ElevenLabs → Settings → Webhooks for ${postCallUrl} (HMAC), and put its secret in ELEVENLABS_WEBHOOK_SECRET.`);
-    else {
+    // The Sync's own webhook first (the app holds its secret); one made by hand only when ELEVENLABS_WEBHOOK_SECRET holds its secret.
+    const found = (stored?.secret ? webhookById(list.json, stored.id) : null) ?? (webhookSecret() ? pickPostCallWebhook(list.json, postCallUrl) : null);
+    if (found) {
       postCallWebhookId = found.id;
       if (found.id !== curPostCall) changes.push(`post-call webhook: ${curPostCall ?? 'none'} → ${found.id}`);
       if (found.autoDisabled) changes.push('warning: ElevenLabs switched the post-call webhook off after failures. Switch it back on in Settings → Webhooks.');
+    } else if (!secretsConfigured()) {
+      changes.push("post-call webhook: can't be created here: CRM_ENCRYPTION_KEY isn't set, so its secret couldn't be kept.");
+    } else {
+      createPostCall = true;
+      changes.push(`post-call webhook: ${curPostCall ?? 'none'} → a new one for ${postCallUrl}, created by the Sync button (its secret is kept encrypted; nothing to copy)`);
     }
+    if (workspace.ok) changes.push(...workspaceWarnings(workspace.json, list.json, siteUrl()));
   }
-  if (!webhookSecret()) changes.push('warning: ELEVENLABS_WEBHOOK_SECRET is not set, so call results will be refused.');
   if (!toolSecret()) changes.push('warning: ELEVENLABS_TOOL_SECRET is not set, so the agent\'s tools will be refused.');
-  return { initiationWebhook, postCallWebhookId, current, changes };
+  return { initiationWebhook, postCallWebhookId, createPostCall, current, changes };
 }
 
 export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo: boolean }): Promise<SyncResult> {
@@ -142,7 +157,20 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
       }
     }
   }
-  const final = agentConfig({ knowledge, voiceId: voiceId(), toolIds: TOOL_NAMES.map((n) => next[n]).filter((x): x is string => Boolean(x)), maxCallSeconds: settings.voice.maxCallSeconds, retentionDays: settings.voice.transcriptRetentionDays, initiationWebhook: hooks.initiationWebhook, postCallWebhookId: hooks.postCallWebhookId, current: hooks.current });
+  // The post-call webhook, made here when there is none the app has the secret for (only from the /admin/calls button, like the tools).
+  let postCallWebhookId = hooks.postCallWebhookId;
+  if (hooks.createPostCall && o.toolsToo) {
+    const made = await elevenLabsJson(config.apiKey, 'POST', '/v1/workspace/webhooks', { settings: { auth_type: 'hmac', name: POST_CALL_WEBHOOK_NAME, webhook_url: siteUrl(POST_CALL_PATH) } });
+    const hook = made.ok ? parseCreatedWebhook(made.json) : null;
+    if (!hook) return { ok: false, dry: false, message: `Creating the post-call webhook failed (HTTP ${made.status}): ${JSON.stringify(made.json).slice(0, 300)}`, changes };
+    try {
+      await savePostCallWebhook(hook.id, hook.secret);
+    } catch (err) {
+      return { ok: false, dry: false, message: `The post-call webhook ${hook.id} was created but its secret couldn't be saved (${String((err as Error)?.message ?? err)}). Delete it in ElevenLabs → Settings → Webhooks and sync again.`, changes };
+    }
+    postCallWebhookId = hook.id;
+  }
+  const final = agentConfig({ knowledge, voiceId: voiceId(), toolIds: TOOL_NAMES.map((n) => next[n]).filter((x): x is string => Boolean(x)), maxCallSeconds: settings.voice.maxCallSeconds, retentionDays: settings.voice.transcriptRetentionDays, initiationWebhook: hooks.initiationWebhook, postCallWebhookId, current: hooks.current });
   const r = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`, final);
   if (!r.ok) return { ok: false, dry: false, message: `Agent update failed (HTTP ${r.status}): ${JSON.stringify(r.json).slice(0, 300)}`, changes };
   return { ok: true, dry: false, message: 'Agent synced.', changes, promptChars: wantedPrompt.length };
