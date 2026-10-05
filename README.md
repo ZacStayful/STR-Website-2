@@ -802,7 +802,11 @@ shows every call, including the ones a safety rule blocked and why.
    24, §22), the five tools, the voice, the limits, the two webhooks, and
    the number's incoming calls: they go only to the agent the number is
    assigned to, and callers hear busy when there is none).
-   The Dry run says what it will create, which agent has the number now,
+   Every variable also gets an unknown-caller default, so a call whose
+   details never arrive still starts instead of the caller hearing busy.
+   The Dry run has a phone check (where Twilio sends the number's calls,
+   Twilio's and ElevenLabs' last calls, where the agent asks who is
+   ringing), and says what it will create, which agent has the number now,
    if Twilio isn't sending the number's calls to ElevenLabs, if a secret
    is missing, and if
    ElevenLabs' workspace settings point at this site (set them back: other

@@ -64,21 +64,28 @@ export function statusFromTwilio(c: TwilioCall): 'answered' | 'missed' | 'voicem
   return null; // still queued, ringing or in progress
 }
 
-/**
- * Where Twilio sends a number's incoming calls (its Voice URL), read only.
- * Undefined when it can't be read; null when the number has none.
- */
-export async function numberVoiceUrl(phoneNumber: string): Promise<string | null | undefined> {
+/** A read-only Twilio GET for the Dry run's phone check: the JSON, or why it couldn't be read. */
+async function twilioGet(path: string): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
   const config = twilioConfig();
-  if (!config || !/^\+\d{8,15}$/.test(phoneNumber)) return undefined;
+  if (!config) return { ok: false, reason: 'Twilio is not configured here' };
   try {
-    const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(config.accountSid)}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phoneNumber)}`;
-    const res = await fetch(url, { headers: { authorization: basicAuth(config.accountSid, config.authToken) }, signal: AbortSignal.timeout(TIMEOUT_MS) });
-    if (!res.ok) return undefined;
-    const j = (await res.json()) as { incoming_phone_numbers?: { voice_url?: string | null }[] };
-    const n = j.incoming_phone_numbers?.[0];
-    return n ? (n.voice_url || null) : undefined;
-  } catch {
-    return undefined;
+    const res = await fetch(`${TWILIO_API_BASE}/Accounts/${encodeURIComponent(config.accountSid)}${path}`, { headers: { authorization: basicAuth(config.accountSid, config.authToken) }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+    return { ok: true, json: await res.json() };
+  } catch (err) {
+    return { ok: false, reason: String((err as Error)?.message ?? err).slice(0, 80) };
   }
+}
+
+/** Where Twilio sends a number's incoming calls (its Voice URL; null when none), or why it couldn't be read. */
+export async function numberVoiceUrl(phoneNumber: string): Promise<{ ok: true; voiceUrl: string | null } | { ok: false; reason: string }> {
+  const r = await twilioGet(`/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phoneNumber)}`);
+  if (!r.ok) return r;
+  const n = (r.json as { incoming_phone_numbers?: { voice_url?: string | null }[] }).incoming_phone_numbers?.[0];
+  return n ? { ok: true, voiceUrl: n.voice_url || null } : { ok: false, reason: 'not in this Twilio account' };
+}
+
+/** Twilio's last calls to a number (Calls.json, newest first), or why they couldn't be read. */
+export async function recentCallsTo(phoneNumber: string, limit = 3): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
+  return twilioGet(`/Calls.json?To=${encodeURIComponent(phoneNumber)}&PageSize=${limit}`);
 }

@@ -26,6 +26,8 @@ export interface AgentConfigInput {
   postCallWebhookId?: string | null;
   /** What the agent has now: sent back where there is nothing to set, so a sync never wipes an override. */
   current?: AgentPlatformNow;
+  /** Defaults for every variable (variables.ts unknownCallerDefaults), so a call never fails on a missing one. */
+  variableDefaults?: Record<string, string | number | boolean>;
 }
 
 /** The parts of the agent's platform_settings a sync must keep when it has nothing newer. */
@@ -66,6 +68,7 @@ export function agentConfig(i: AgentConfigInput): Record<string, unknown> {
       agent: {
         first_message: CALLBACK_UNKNOWN_OPENER,
         language: 'en',
+        ...(i.variableDefaults ? { dynamic_variables: { dynamic_variable_placeholders: Object.fromEntries(Object.entries(i.variableDefaults).filter(([k]) => !k.startsWith('secret__'))) } } : {}),
         prompt: {
           prompt: agentPrompt(i.knowledge),
           tool_ids: i.toolIds,

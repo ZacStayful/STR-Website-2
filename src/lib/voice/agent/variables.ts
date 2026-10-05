@@ -84,3 +84,15 @@ export function openerFor(context: CallContext): string {
 export function fill(template: string, vars: Record<string, string | number | boolean>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, k: string) => (k in vars ? String(vars[k]) : ''));
 }
+
+/**
+ * The agent's defaults for every variable (ElevenLabs'
+ * dynamic_variable_placeholders): the unknown-caller values, the same ones
+ * the initiate route answers with when it fails. A call whose variables
+ * never arrive (the "who is ringing" webhook not reached) then still starts,
+ * as for an unknown caller, instead of being refused (the caller hears
+ * busy). Every call's own values replace them. Never a member's value.
+ */
+export function unknownCallerDefaults(i: { maxCallSeconds: number; topupAmountPence: number; topupThresholdPence: number }): Record<string, string | number | boolean> {
+  return callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: Math.floor(i.maxCallSeconds / 60), topupAmountPence: i.topupAmountPence, topupThresholdPence: i.topupThresholdPence });
+}
