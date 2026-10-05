@@ -35,7 +35,8 @@ import { secretsConfigured } from '../../crypto/secrets';
 import { savePostCallWebhook, storedPostCallWebhook } from '../post-call-webhook-server';
 import { elevenLabsJson } from '../elevenlabs-server';
 import { toolConfig } from './tools';
-import { agentConfig, parseCreatedWebhook, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
+import { agentConfig, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
+import { numberVoiceUrl } from '../twilio-voice';
 import { VARIABLE_NAMES } from './variables';
 
 const TOOL_IDS_KEY = 'si_agent_tool_ids';
@@ -111,6 +112,21 @@ async function webhookPlan(apiKey: string, cur: CurrentAgent): Promise<{ initiat
   return { initiationWebhook, postCallWebhookId, createPostCall, current, changes };
 }
 
+/** The number's incoming calls: which agent answers them now, and whether Twilio hands them to ElevenLabs at all. */
+async function phonePlan(apiKey: string, agentId: string, phoneNumberId: string): Promise<{ assign: boolean; changes: string[] }> {
+  const changes: string[] = [];
+  const r = await elevenLabsJson(apiKey, 'GET', `/v1/convai/phone-numbers/${encodeURIComponent(phoneNumberId)}`);
+  if (!r.ok) return { assign: false, changes: [`phone number: couldn't read it from ElevenLabs (HTTP ${r.status}), so incoming calls are left as they are.`] };
+  const p = phoneAssignment(r.json, agentId);
+  const label = p.phone ?? phoneNumberId;
+  if (!p.ours) changes.push(`phone number ${label}: incoming calls go to ${p.assignedName ? `"${p.assignedName}"` : p.assignedId ?? 'no agent (callers hear busy)'} → Stayful Intelligence`);
+  if (p.phone) {
+    const voiceUrl = await numberVoiceUrl(p.phone);
+    if (voiceUrl !== undefined && !isElevenLabsVoiceUrl(voiceUrl)) changes.push(`warning: Twilio sends calls to ${label} to ${voiceUrl ?? 'nowhere'}, not ElevenLabs, so they never reach the agent. Re-import the number in ElevenLabs → Phone numbers, which sets it.`);
+  }
+  return { assign: !p.ours, changes };
+}
+
 export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo: boolean }): Promise<SyncResult> {
   const config = voiceConfig();
   if (!config) return { ok: false, dry: !o.apply, message: 'Set ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID and ELEVENLABS_PHONE_NUMBER_ID first.', changes: [] };
@@ -130,7 +146,7 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   const current = await elevenLabsJson(config.apiKey, 'GET', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`);
   if (!current.ok) return { ok: false, dry: !o.apply, message: `Couldn't read the agent (HTTP ${current.status}).`, changes: [] };
   const cur = (current.json ?? {}) as CurrentAgent;
-  const hooks = await webhookPlan(config.apiKey, cur);
+  const [hooks, phone] = await Promise.all([webhookPlan(config.apiKey, cur), phonePlan(config.apiKey, config.agentId, config.phoneNumberId)]);
   const changes: string[] = [];
   const curPrompt = cur.conversation_config?.agent?.prompt?.prompt ?? '';
   if (curPrompt !== wantedPrompt) changes.push(`prompt ${hash(curPrompt)} → ${hash(wantedPrompt)} (${wantedPrompt.length} characters)`);
@@ -139,7 +155,7 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   if (cur.conversation_config?.conversation?.max_duration_seconds !== settings.voice.maxCallSeconds) changes.push(`max call ${cur.conversation_config?.conversation?.max_duration_seconds ?? '?'}s → ${settings.voice.maxCallSeconds}s`);
   if (o.toolsToo) for (const n of TOOL_NAMES) changes.push(ids[n] ? `tool ${n}: update ${ids[n]}` : `tool ${n}: create`);
   else for (const n of TOOL_NAMES) if (!ids[n]) changes.push(`tool ${n}: not created yet (press Sync on /admin/calls)`);
-  changes.push(...hooks.changes);
+  changes.push(...hooks.changes, ...phone.changes);
   if (!o.apply) return { ok: true, dry: true, message: 'Dry run: nothing sent.', changes, promptChars: wantedPrompt.length };
 
   // Tools first, so the agent can list their ids (only from the /admin/calls button: two syncs at once must never create a tool twice).
@@ -173,5 +189,10 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   const final = agentConfig({ knowledge, voiceId: voiceId(), toolIds: TOOL_NAMES.map((n) => next[n]).filter((x): x is string => Boolean(x)), maxCallSeconds: settings.voice.maxCallSeconds, retentionDays: settings.voice.transcriptRetentionDays, initiationWebhook: hooks.initiationWebhook, postCallWebhookId, current: hooks.current });
   const r = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`, final);
   if (!r.ok) return { ok: false, dry: false, message: `Agent update failed (HTTP ${r.status}): ${JSON.stringify(r.json).slice(0, 300)}`, changes };
+  // Incoming calls to the number go to this agent (only from the /admin/calls button; the Dry run showed which agent had them).
+  if (phone.assign && o.toolsToo) {
+    const a = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/phone-numbers/${encodeURIComponent(config.phoneNumberId)}`, { agent_id: config.agentId });
+    if (!a.ok) return { ok: false, dry: false, message: `Agent synced, but giving it the number's incoming calls failed (HTTP ${a.status}): ${JSON.stringify(a.json).slice(0, 300)}`, changes };
+  }
   return { ok: true, dry: false, message: 'Agent synced.', changes, promptChars: wantedPrompt.length };
 }
