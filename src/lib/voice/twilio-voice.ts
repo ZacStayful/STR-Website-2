@@ -1,8 +1,9 @@
 import 'server-only';
 
 /**
- * Batch 23: the two Twilio voice calls the code makes itself — hang up a call
- * that reached voicemail, and read a call's final state when no webhook came.
+ * Batch 23: the Twilio voice calls the code makes itself — hang up a call
+ * that reached voicemail, read a call's final state when no webhook came, and
+ * (for the Sync's Dry run) read where the number's incoming calls are sent.
  * ElevenLabs places and answers the calls; these reuse Batch 8's Twilio
  * credentials (src/lib/sms/config.ts).
  */
@@ -61,4 +62,23 @@ export function statusFromTwilio(c: TwilioCall): 'answered' | 'missed' | 'voicem
   if (c.status === 'busy' || c.status === 'no-answer' || c.status === 'canceled') return 'missed';
   if (c.status === 'failed') return 'failed';
   return null; // still queued, ringing or in progress
+}
+
+/**
+ * Where Twilio sends a number's incoming calls (its Voice URL), read only.
+ * Undefined when it can't be read; null when the number has none.
+ */
+export async function numberVoiceUrl(phoneNumber: string): Promise<string | null | undefined> {
+  const config = twilioConfig();
+  if (!config || !/^\+\d{8,15}$/.test(phoneNumber)) return undefined;
+  try {
+    const url = `${TWILIO_API_BASE}/Accounts/${encodeURIComponent(config.accountSid)}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phoneNumber)}`;
+    const res = await fetch(url, { headers: { authorization: basicAuth(config.accountSid, config.authToken) }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) return undefined;
+    const j = (await res.json()) as { incoming_phone_numbers?: { voice_url?: string | null }[] };
+    const n = j.incoming_phone_numbers?.[0];
+    return n ? (n.voice_url || null) : undefined;
+  } catch {
+    return undefined;
+  }
 }

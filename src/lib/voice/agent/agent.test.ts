@@ -6,7 +6,7 @@ import { agentKnowledge, KNOWLEDGE_VARIABLES, promptVariables } from '../../know
 import { SEED } from '../../knowledge/seed.ts';
 import { schemaSnapshot } from '../../knowledge/test-fixtures.ts';
 import { toolConfig } from './tools.ts';
-import { agentConfig, INITIATE_SECRET_HEADER, parseCreatedWebhook, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings } from './agent-config.ts';
+import { agentConfig, INITIATE_SECRET_HEADER, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings } from './agent-config.ts';
 import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
 import { callVariables, fill, openerFor, VARIABLE_NAMES } from './variables.ts';
@@ -191,4 +191,17 @@ test('workspace settings that point at this site are flagged, others are left al
   assert.match(both[1], /conversation-initiation webhook \(used by every agent\)/);
   assert.deepEqual(workspaceWarnings({ webhooks: { post_call_webhook_id: 'n8n' }, conversation_initiation_client_data_webhook: null }, list, site), []);
   assert.deepEqual(workspaceWarnings(null, null, site), []);
+});
+
+test("the number's incoming calls: which agent answers them, and whether Twilio sends them to ElevenLabs", () => {
+  assert.deepEqual(phoneAssignment({ phone_number: '+447700900123', assigned_agent: null }, 'agent_si'), { phone: '+447700900123', assignedId: null, assignedName: null, ours: false });
+  assert.deepEqual(phoneAssignment({ phone_number: '+447700900123', assigned_agent: { agent_id: 'agent_other', agent_name: 'No-Show' } }, 'agent_si'), { phone: '+447700900123', assignedId: 'agent_other', assignedName: 'No-Show', ours: false });
+  assert.equal(phoneAssignment({ assigned_agent: { agent_id: 'agent_si' } }, 'agent_si').ours, true);
+  assert.equal(phoneAssignment(null, 'agent_si').ours, false);
+  assert.equal(isElevenLabsVoiceUrl('https://api.elevenlabs.io/twilio/inbound_call'), true);
+  assert.equal(isElevenLabsVoiceUrl('https://api.us.elevenlabs.io/twilio/inbound_call'), true);
+  assert.equal(isElevenLabsVoiceUrl('https://demo.twilio.com/welcome/voice/'), false);
+  assert.equal(isElevenLabsVoiceUrl('https://elevenlabs.io.evil.example/x'), false);
+  assert.equal(isElevenLabsVoiceUrl(null), false);
+  assert.equal(isElevenLabsVoiceUrl('not a url'), false);
 });

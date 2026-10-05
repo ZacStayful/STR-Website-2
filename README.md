@@ -799,8 +799,12 @@ shows every call, including the ones a safety rule blocked and why.
 7. **Sync the agent:** `/admin/calls` → The agent → **Dry run**, read what
    would change, then **Sync to ElevenLabs** (the prompt from the persona,
    the scripts, the approved call answers from the knowledge base (Batch
-   24, §22), the five tools, the voice, the limits and the two webhooks).
-   The Dry run says what it will create, if a secret is missing, and if
+   24, §22), the five tools, the voice, the limits, the two webhooks, and
+   the number's incoming calls: they go only to the agent the number is
+   assigned to, and callers hear busy when there is none).
+   The Dry run says what it will create, which agent has the number now,
+   if Twilio isn't sending the number's calls to ElevenLabs, if a secret
+   is missing, and if
    ElevenLabs' workspace settings point at this site (set them back: other
    agents use them). Then ring the number from your own phone: callbacks
    work while calls are off.

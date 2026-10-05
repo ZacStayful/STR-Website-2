@@ -146,3 +146,31 @@ export function workspaceWarnings(settings: unknown, list: unknown, siteBase: st
   if (ours(initUrl)) out.push(`warning: the workspace's conversation-initiation webhook (used by every agent) is ${String(initUrl)}. Clear it in ElevenLabs → Agents → Settings: this agent gets its own from the Sync.`);
   return out;
 }
+
+/**
+ * The ElevenLabs number (GET /v1/convai/phone-numbers/{id}): its number and
+ * the agent that answers its incoming calls. Outbound calls name the agent
+ * each time; incoming calls go only to the assigned agent, and are refused
+ * (the caller hears busy) when there is none.
+ */
+export function phoneAssignment(json: unknown, agentId: string): { phone: string | null; assignedId: string | null; assignedName: string | null; ours: boolean } {
+  const j = (json && typeof json === 'object' ? json : {}) as { phone_number?: unknown; assigned_agent?: { agent_id?: unknown; agent_name?: unknown } | null };
+  const assignedId = typeof j.assigned_agent?.agent_id === 'string' && j.assigned_agent.agent_id ? j.assigned_agent.agent_id : null;
+  return {
+    phone: typeof j.phone_number === 'string' && j.phone_number ? j.phone_number : null,
+    assignedId,
+    assignedName: typeof j.assigned_agent?.agent_name === 'string' && j.assigned_agent.agent_name ? j.assigned_agent.agent_name : null,
+    ours: assignedId === agentId,
+  };
+}
+
+/** Twilio hands a number's calls to ElevenLabs when its Voice URL is ElevenLabs' (set when the number is imported there). */
+export function isElevenLabsVoiceUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'elevenlabs.io' || host.endsWith('.elevenlabs.io');
+  } catch {
+    return false;
+  }
+}
