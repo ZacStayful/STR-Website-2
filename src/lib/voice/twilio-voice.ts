@@ -89,3 +89,8 @@ export async function numberVoiceUrl(phoneNumber: string): Promise<{ ok: true; v
 export async function recentCallsTo(phoneNumber: string, limit = 3): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
   return twilioGet(`/Calls.json?To=${encodeURIComponent(phoneNumber)}&PageSize=${limit}`);
 }
+
+/** Twilio's last errors and warnings on the account (Notifications.json, newest first), or why they couldn't be read. */
+export async function recentTwilioAlerts(limit = 3): Promise<{ ok: true; json: unknown } | { ok: false; reason: string }> {
+  return twilioGet(`/Notifications.json?PageSize=${limit}`);
+}
