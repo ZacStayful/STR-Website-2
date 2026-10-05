@@ -10,7 +10,7 @@ import { agentConfig, INITIATE_SECRET_HEADER, isElevenLabsVoiceUrl, parseCreated
 import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
 import { callVariables, fill, openerFor, unknownCallerDefaults, VARIABLE_NAMES } from './variables.ts';
-import { conversationLines, listOrNone, normaliseE164, twilioCallLines } from './phone-check.ts';
+import { conversationLines, listOrNone, normaliseE164, phoneCheckDue, twilioAlertLines, twilioCallLines } from './phone-check.ts';
 
 // Batch 24: the knowledge is the knowledge base's call answers (here the seed, as if all approved).
 const live = SEED.map((e, i) => ({ ...e, id: `id-${i}`, version: 1 }));
@@ -233,4 +233,16 @@ test('the phone check reads Twilio and ElevenLabs without showing a caller\'s nu
   assert.match(el[0], /failed 0s \(Missing required dynamic variables\)$/);
   assert.equal(listOrNone([]), 'none');
   assert.equal(listOrNone(twilioCallLines(null)), 'none');
+});
+
+test('a phone check runs when one was asked for after the last, and Twilio alerts read short', () => {
+  assert.equal(phoneCheckDue('2026-10-05T14:30:00Z', '2026-10-05T14:00:00Z'), true);
+  assert.equal(phoneCheckDue('2026-10-05T14:30:00Z', undefined), true, 'none run yet');
+  assert.equal(phoneCheckDue('2026-10-05T14:00:00Z', '2026-10-05T14:30:00Z'), false, 'already run since');
+  assert.equal(phoneCheckDue(undefined, '2026-10-05T14:30:00Z'), false, 'nothing asked');
+  assert.equal(phoneCheckDue('not a date', undefined), false);
+  const a = twilioAlertLines({ notifications: [{ message_date: 'Mon, 05 Oct 2026 14:20:00 +0000', log: '0', error_code: '11200', request_url: 'https://api.elevenlabs.io/twilio/inbound_call?x=1' }, { log: 1, error_code: 13227 }] });
+  assert.equal(a[0], '05 Oct, 15:20 error 11200 calling api.elevenlabs.io');
+  assert.match(a[1], /warning 13227$/);
+  assert.deepEqual(twilioAlertLines(null), []);
 });

@@ -2,6 +2,7 @@ import { authoriseInternal, internalSecretsConfigured } from '@/lib/internal-aut
 import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { emailKey } from '@/lib/supabase/email-key';
 import { runCalls } from '@/lib/voice/run';
+import { runRequestedPhoneCheck } from '@/lib/voice/agent/phone-check-server';
 
 /**
  * Batch 23: the Stayful Intelligence calls cron, every 5 minutes
@@ -12,6 +13,10 @@ import { runCalls } from '@/lib/voice/run';
  * Same auth as the other internal routes. `?dry=1` reports what would be
  * done and changes nothing: no call, no text, no email, no charge, no row.
  * `?only=<email>` limits the pass to one member.
+ *
+ * It also runs the read-only phone check when one was asked for
+ * (billing_settings.si_phone_check_request newer than the last check), so
+ * the check can be read without anyone pressing Dry run.
  *
  *   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/si-calls?dry=1"
  */
@@ -34,7 +39,8 @@ export async function GET(request: Request) {
     onlyUserId = String((data as { id: string }).id);
   }
   const result = await runCalls({ apply: !dry, onlyUserId });
+  const phoneCheck = await runRequestedPhoneCheck();
   if (result.schemaMissing) console.warn('[si-calls] the Batch 23 section of supabase/schema.sql has not been run; nothing to do');
   if (result.errors.length > 0) console.error('[si-calls]', result.errors.join('; '));
-  return Response.json(result);
+  return Response.json({ ...result, phoneCheck });
 }

@@ -35,9 +35,8 @@ import { secretsConfigured } from '../../crypto/secrets';
 import { savePostCallWebhook, storedPostCallWebhook } from '../post-call-webhook-server';
 import { elevenLabsJson } from '../elevenlabs-server';
 import { toolConfig } from './tools';
-import { agentConfig, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
-import { numberVoiceUrl, recentCallsTo } from '../twilio-voice';
-import { conversationLines, listOrNone, normaliseE164, twilioCallLines } from './phone-check';
+import { agentConfig, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
+import { runPhoneCheck } from './phone-check-server';
 import { unknownCallerDefaults } from './variables';
 import { VARIABLE_NAMES } from './variables';
 
@@ -114,36 +113,13 @@ async function webhookPlan(apiKey: string, cur: CurrentAgent): Promise<{ initiat
   return { initiationWebhook, postCallWebhookId, createPostCall, current, changes };
 }
 
-/**
- * The number's incoming calls: which agent answers them now, and (Dry run
- * only) a phone check: where Twilio sends them, Twilio's and ElevenLabs'
- * last calls, and where the agent asks who is ringing. Read only.
- */
-async function phonePlan(apiKey: string, agentId: string, phoneNumberId: string, o: { diagnose: boolean; agentLookup: string }): Promise<{ assign: boolean; changes: string[] }> {
-  const changes: string[] = [];
+/** The number's incoming calls: which agent answers them now. */
+async function phonePlan(apiKey: string, agentId: string, phoneNumberId: string): Promise<{ assign: boolean; changes: string[] }> {
   const r = await elevenLabsJson(apiKey, 'GET', `/v1/convai/phone-numbers/${encodeURIComponent(phoneNumberId)}`);
   if (!r.ok) return { assign: false, changes: [`phone number: couldn't read it from ElevenLabs (HTTP ${r.status}), so incoming calls are left as they are.`] };
   const p = phoneAssignment(r.json, agentId);
-  const phone = normaliseE164(p.phone);
   const label = p.phone ?? phoneNumberId;
-  if (!p.ours) changes.push(`phone number ${label}: incoming calls go to ${p.assignedName ? `"${p.assignedName}"` : p.assignedId ?? 'no agent (callers hear busy)'} → Stayful Intelligence`);
-  if (!o.diagnose) return { assign: !p.ours, changes };
-
-  const [voice, twilioCalls, conversations, workspace] = await Promise.all([
-    phone ? numberVoiceUrl(phone) : Promise.resolve({ ok: false as const, reason: `ElevenLabs gives the number as "${label}"` }),
-    phone ? recentCallsTo(phone) : Promise.resolve({ ok: false as const, reason: 'no number' }),
-    elevenLabsJson(apiKey, 'GET', `/v1/convai/conversations?agent_id=${encodeURIComponent(agentId)}&page_size=3`),
-    elevenLabsJson(apiKey, 'GET', '/v1/convai/settings'),
-  ]);
-  changes.push(`phone check: ${label} is answered by ${p.ours ? 'this agent' : p.assignedName ? `"${p.assignedName}"` : 'no agent'}`);
-  if (!voice.ok) changes.push(`phone check: couldn't read the number from Twilio (${voice.reason})`);
-  else if (isElevenLabsVoiceUrl(voice.voiceUrl)) changes.push(`phone check: Twilio sends its calls to ElevenLabs (${voice.voiceUrl})`);
-  else changes.push(`warning: Twilio sends calls to ${label} to ${voice.voiceUrl ?? 'nowhere'}, not ElevenLabs, so they never reach the agent. Re-import the number in ElevenLabs → Phone numbers, which sets it.`);
-  changes.push(`phone check: Twilio's last calls to it: ${twilioCalls.ok ? listOrNone(twilioCallLines(twilioCalls.json)) : `couldn't read (${twilioCalls.reason})`}`);
-  changes.push(`phone check: ElevenLabs' last conversations for this agent: ${conversations.ok ? listOrNone(conversationLines(conversations.json)) : `couldn't read (HTTP ${conversations.status})`}`);
-  const wsUrl = workspace.ok ? (workspace.json as { conversation_initiation_client_data_webhook?: { url?: unknown } | null } | null)?.conversation_initiation_client_data_webhook?.url : undefined;
-  changes.push(`phone check: "who is ringing" webhook: this agent ${o.agentLookup}; workspace ${workspace.ok ? (typeof wsUrl === 'string' && wsUrl ? wsUrl : 'none') : `couldn't read (HTTP ${workspace.status})`}`);
-  return { assign: !p.ours, changes };
+  return { assign: !p.ours, changes: p.ours ? [] : [`phone number ${label}: incoming calls go to ${p.assignedName ? `"${p.assignedName}"` : p.assignedId ?? 'no agent (callers hear busy)'} → Stayful Intelligence`] };
 }
 
 export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo: boolean }): Promise<SyncResult> {
@@ -165,8 +141,7 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   const current = await elevenLabsJson(config.apiKey, 'GET', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`);
   if (!current.ok) return { ok: false, dry: !o.apply, message: `Couldn't read the agent (HTTP ${current.status}).`, changes: [] };
   const cur = (current.json ?? {}) as CurrentAgent;
-  const curLookup = cur.platform_settings?.overrides?.enable_conversation_initiation_client_data_from_webhook === true ? `on → ${cur.platform_settings?.workspace_overrides?.conversation_initiation_client_data_webhook?.url ?? 'the workspace one'}` : 'off';
-  const [hooks, phone] = await Promise.all([webhookPlan(config.apiKey, cur), phonePlan(config.apiKey, config.agentId, config.phoneNumberId, { diagnose: !o.apply, agentLookup: curLookup })]);
+  const [hooks, phone] = await Promise.all([webhookPlan(config.apiKey, cur), phonePlan(config.apiKey, config.agentId, config.phoneNumberId)]);
   // Every variable has a default, so a call whose variables never arrive still starts (as for an unknown caller).
   // Only the ones the agent uses (its prompt and opener), so ElevenLabs never refuses a default it has no use for.
   const used = new Set(promptVariables(JSON.stringify(wanted.conversation_config)));
@@ -183,7 +158,8 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   else for (const n of TOOL_NAMES) if (!ids[n]) changes.push(`tool ${n}: not created yet (press Sync on /admin/calls)`);
   if (missingDefaults.length) changes.push(`variable defaults: ${missingDefaults.length} missing → set (a call whose details never arrive still starts, as for an unknown caller, instead of "busy")`);
   changes.push(...hooks.changes, ...phone.changes);
-  if (!o.apply) return { ok: true, dry: true, message: 'Dry run: nothing sent.', changes, promptChars: wantedPrompt.length };
+  // The phone check (read only; saved for later in billing_settings.si_phone_check).
+  if (!o.apply) return { ok: true, dry: true, message: 'Dry run: nothing sent.', changes: [...changes, ...(await runPhoneCheck())], promptChars: wantedPrompt.length };
 
   // Tools first, so the agent can list their ids (only from the /admin/calls button: two syncs at once must never create a tool twice).
   const next: Partial<Record<ToolName, string>> = { ...ids };
@@ -221,5 +197,6 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
     const a = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/phone-numbers/${encodeURIComponent(config.phoneNumberId)}`, { agent_id: config.agentId });
     if (!a.ok) return { ok: false, dry: false, message: `Agent synced, but giving it the number's incoming calls failed (HTTP ${a.status}): ${JSON.stringify(a.json).slice(0, 300)}`, changes };
   }
+  if (o.toolsToo) await runPhoneCheck();
   return { ok: true, dry: false, message: 'Agent synced.', changes, promptChars: wantedPrompt.length };
 }

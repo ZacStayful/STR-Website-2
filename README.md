@@ -806,7 +806,9 @@ shows every call, including the ones a safety rule blocked and why.
    details never arrive still starts instead of the caller hearing busy.
    The Dry run has a phone check (where Twilio sends the number's calls,
    Twilio's and ElevenLabs' last calls, where the agent asks who is
-   ringing), and says what it will create, which agent has the number now,
+   ringing; saved in `billing_settings.si_phone_check`, and run by the
+   5-minute calls cron whenever `si_phone_check_request` is set to a newer
+   time), and says what it will create, which agent has the number now,
    if Twilio isn't sending the number's calls to ElevenLabs, if a secret
    is missing, and if
    ElevenLabs' workspace settings point at this site (set them back: other

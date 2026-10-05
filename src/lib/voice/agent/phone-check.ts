@@ -38,3 +38,26 @@ export function conversationLines(json: unknown, limit = 3): string[] {
 }
 
 export const listOrNone = (lines: string[]) => (lines.length ? lines.join('; ') : 'none');
+
+/** Twilio's Notifications.json (newest first): the errors and warnings it logged, e.g. a Voice URL it couldn't reach. */
+export function twilioAlertLines(json: unknown, limit = 3): string[] {
+  const list = json && typeof json === 'object' && Array.isArray((json as { notifications?: unknown }).notifications) ? ((json as { notifications: Record<string, unknown>[] }).notifications) : [];
+  return list.slice(0, limit).map((n) => {
+    const at = typeof n.message_date === 'string' ? new Date(n.message_date) : null;
+    let host = '';
+    try {
+      host = typeof n.request_url === 'string' && n.request_url ? ` calling ${new URL(n.request_url).host}` : '';
+    } catch {
+      host = '';
+    }
+    return `${when(at)} ${String(n.log) === '0' ? 'error' : 'warning'} ${String(n.error_code ?? '?')}${host}`;
+  });
+}
+
+/** A check is owed when one was asked for after the last one ran (or none has run). */
+export function phoneCheckDue(requestedAt: unknown, lastAt: unknown): boolean {
+  const req = typeof requestedAt === 'string' ? Date.parse(requestedAt) : NaN;
+  if (!Number.isFinite(req)) return false;
+  const last = typeof lastAt === 'string' ? Date.parse(lastAt) : NaN;
+  return !Number.isFinite(last) || req > last;
+}
