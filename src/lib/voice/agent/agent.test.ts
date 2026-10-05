@@ -6,7 +6,8 @@ import { agentKnowledge, KNOWLEDGE_VARIABLES, promptVariables } from '../../know
 import { SEED } from '../../knowledge/seed.ts';
 import { schemaSnapshot } from '../../knowledge/test-fixtures.ts';
 import { toolConfig } from './tools.ts';
-import { agentConfig } from './agent-config.ts';
+import { agentConfig, INITIATE_SECRET_HEADER, pickPostCallWebhook, POST_CALL_EVENTS } from './agent-config.ts';
+import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
 import { callVariables, fill, openerFor, VARIABLE_NAMES } from './variables.ts';
 
@@ -122,4 +123,51 @@ test("the agent's speech model is one ElevenLabs allows for an English agent (tu
   const c = agentConfig({ knowledge: '', voiceId: 'v', toolIds: [], maxCallSeconds: 600, retentionDays: 90 }) as { conversation_config: { agent: { language: string }; tts: { model_id: string } } };
   assert.equal(c.conversation_config.agent.language, 'en');
   assert.ok(['eleven_turbo_v2', 'eleven_flash_v2'].includes(c.conversation_config.tts.model_id), c.conversation_config.tts.model_id);
+});
+
+test('inbound calls ask our webhook who is ringing, set on this agent only', () => {
+  const base = { knowledge: '', voiceId: 'v', toolIds: [], maxCallSeconds: 600, retentionDays: 90 };
+  type P = { platform_settings: { overrides: Record<string, unknown>; workspace_overrides?: { conversation_initiation_client_data_webhook?: { url: string; request_headers: Record<string, unknown> }; webhooks?: Record<string, unknown> } } };
+  const on = agentConfig({ ...base, initiationWebhook: { url: 'https://x/api/voice/elevenlabs/initiate', secret: 's3cret' }, postCallWebhookId: 'wh1' }) as P;
+  assert.equal(on.platform_settings.overrides.enable_conversation_initiation_client_data_from_webhook, true);
+  const hook = on.platform_settings.workspace_overrides!.conversation_initiation_client_data_webhook!;
+  assert.equal(hook.url, 'https://x/api/voice/elevenlabs/initiate');
+  // A plain string header: the initiate route compares x-si-secret with ELEVENLABS_INITIATE_SECRET.
+  assert.equal(INITIATE_SECRET_HEADER, 'x-si-secret');
+  assert.deepEqual(hook.request_headers, { 'x-si-secret': 's3cret' });
+  assert.deepEqual(on.platform_settings.workspace_overrides!.webhooks, { post_call_webhook_id: 'wh1', events: ['transcript', 'call_initiation_failure', 'answering_machine_detection'] });
+  // The opener override the initiate route sends stays allowed.
+  assert.deepEqual(on.platform_settings.overrides.conversation_config_override, { agent: { first_message: true } });
+
+  // Nothing to set and nothing there: the fetch stays off and no webhook is sent.
+  const off = agentConfig(base) as P;
+  assert.equal(off.platform_settings.overrides.enable_conversation_initiation_client_data_from_webhook, false);
+  assert.equal(off.platform_settings.workspace_overrides, undefined);
+
+  // Nothing to set but the agent has them: sent back as they are, never wiped.
+  const keep = agentConfig({ ...base, current: { fetchInitiation: true, initiationWebhook: { url: 'https://old', request_headers: {} }, webhooks: { post_call_webhook_id: 'old', events: ['transcript'] } } }) as P;
+  assert.equal(keep.platform_settings.overrides.enable_conversation_initiation_client_data_from_webhook, true);
+  assert.deepEqual(keep.platform_settings.workspace_overrides, { conversation_initiation_client_data_webhook: { url: 'https://old', request_headers: {} }, webhooks: { post_call_webhook_id: 'old', events: ['transcript'] } });
+});
+
+test('the post-call events are ElevenLabs event types the webhook route handles', () => {
+  const allowed = ['transcript', 'audio', 'call_initiation_failure', 'answering_machine_detection', 'unredacted_transcript', 'unredacted_audio'];
+  for (const [setting, type] of Object.entries(POST_CALL_EVENTS)) {
+    assert.ok(allowed.includes(setting), setting);
+    assert.ok(!/audio/.test(setting), 'no audio');
+    const e = parseWebhook({ type, data: { conversation_id: 'c1', answered_by: 'human' } });
+    assert.ok(e && e.type === type, `${type} is not handled`);
+  }
+});
+
+test('the post-call webhook is found by its URL', () => {
+  const url = 'https://intelligence.stayful.co.uk/api/voice/elevenlabs/webhook';
+  const list = (hooks: Record<string, unknown>[]) => ({ webhooks: hooks });
+  assert.deepEqual(pickPostCallWebhook(list([{ webhook_id: 'n8n', webhook_url: 'https://stayful.app.n8n.cloud/webhook/elevenlabs-noshow-postcall' }, { webhook_id: 'ours', webhook_url: `${url}/` }]), url), { id: 'ours', autoDisabled: false });
+  // Switched off by hand: skipped. Switched off by ElevenLabs: used only when there is nothing better, and flagged.
+  assert.equal(pickPostCallWebhook(list([{ webhook_id: 'off', webhook_url: url, is_disabled: true }]), url), null);
+  assert.deepEqual(pickPostCallWebhook(list([{ webhook_id: 'auto', webhook_url: url, is_auto_disabled: true }, { webhook_id: 'ok', webhook_url: url }]), url), { id: 'ok', autoDisabled: false });
+  assert.deepEqual(pickPostCallWebhook(list([{ webhook_id: 'auto', webhook_url: url, is_auto_disabled: true }]), url), { id: 'auto', autoDisabled: true });
+  assert.equal(pickPostCallWebhook(list([]), url), null);
+  assert.equal(pickPostCallWebhook(null, url), null);
 });
