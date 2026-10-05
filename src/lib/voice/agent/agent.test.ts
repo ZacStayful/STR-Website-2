@@ -9,7 +9,8 @@ import { toolConfig } from './tools.ts';
 import { agentConfig, INITIATE_SECRET_HEADER, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings } from './agent-config.ts';
 import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
-import { callVariables, fill, openerFor, VARIABLE_NAMES } from './variables.ts';
+import { callVariables, fill, openerFor, unknownCallerDefaults, VARIABLE_NAMES } from './variables.ts';
+import { conversationLines, listOrNone, normaliseE164, twilioCallLines } from './phone-check.ts';
 
 // Batch 24: the knowledge is the knowledge base's call answers (here the seed, as if all approved).
 const live = SEED.map((e, i) => ({ ...e, id: `id-${i}`, version: 1 }));
@@ -204,4 +205,32 @@ test("the number's incoming calls: which agent answers them, and whether Twilio 
   assert.equal(isElevenLabsVoiceUrl('https://elevenlabs.io.evil.example/x'), false);
   assert.equal(isElevenLabsVoiceUrl(null), false);
   assert.equal(isElevenLabsVoiceUrl('not a url'), false);
+});
+
+test('every variable has an unknown-caller default, so a call never fails on a missing one', () => {
+  const d = unknownCallerDefaults({ maxCallSeconds: 600, topupAmountPence: 2500, topupThresholdPence: 500 });
+  assert.deepEqual(Object.keys(d).sort(), [...VARIABLE_NAMES].sort());
+  assert.equal(d.caller_status, 'unknown');
+  assert.equal(d.context, 'unknown');
+  assert.equal(d.first_name, 'there');
+  assert.ok(!Object.keys(d).some((k) => k.startsWith('secret__') || /balance|address|price/.test(k)));
+  const a = agentConfig({ knowledge: '', voiceId: 'v', toolIds: [], maxCallSeconds: 600, retentionDays: 90, variableDefaults: { ...d, secret__tool_token: 'never' } }) as { conversation_config: { agent: { dynamic_variables: { dynamic_variable_placeholders: Record<string, unknown> } } } };
+  const sent = a.conversation_config.agent.dynamic_variables.dynamic_variable_placeholders;
+  assert.equal(sent.secret__tool_token, undefined, 'a secret is never a default');
+  assert.equal(sent.first_name, 'there');
+});
+
+test('the phone check reads Twilio and ElevenLabs without showing a caller\'s number', () => {
+  assert.equal(normaliseE164('+44 7700 900123'), '+447700900123');
+  assert.equal(normaliseE164('+44-7700-900123'), '+447700900123');
+  assert.equal(normaliseE164('07700 900123'), null);
+  assert.equal(normaliseE164(null), null);
+  const tw = twilioCallLines({ calls: [{ start_time: 'Mon, 05 Oct 2026 11:15:02 +0000', status: 'busy', duration: '0', from: '+447700900987' }, { status: 'completed', duration: '42', from: null }] });
+  assert.equal(tw[0], '05 Oct, 12:15 busy 0s from …987');
+  assert.match(tw[1], /completed 42s from withheld$/);
+  assert.ok(!tw.join(' ').includes('7700900987'));
+  const el = conversationLines({ conversations: [{ start_time_unix_secs: 1791199200, status: 'failed', call_duration_secs: 0, termination_reason: 'Missing required dynamic variables' }] });
+  assert.match(el[0], /failed 0s \(Missing required dynamic variables\)$/);
+  assert.equal(listOrNone([]), 'none');
+  assert.equal(listOrNone(twilioCallLines(null)), 'none');
 });
