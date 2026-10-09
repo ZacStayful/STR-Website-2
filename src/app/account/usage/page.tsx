@@ -38,7 +38,7 @@ const WHAT: Record<UsageCategory, string> = {
   full: "Full analyses of deals, and full reports on addresses you entered",
   quick: "Deals you opened for the address, photos and listing",
   pmi: "Second opinions from Property Market Intel",
-  other: "Everything else: listing checks, narration, team seats, funnel leads",
+  other: "Everything else: listing checks, narration, Stayful Intelligence questions, team seats, funnel leads",
 };
 
 /**

@@ -154,7 +154,10 @@ export function BillingClient(props: Props) {
         <div className="space-y-4">
           <TopupCard presets={summary.topupPresetsPence} hasSavedCard={summary.hasSavedCard} topupRate={summary.rates.topup} />
           {props.card && <p className="-mt-2 text-xs text-muted-foreground">Saved card: {props.card.brand} ending {props.card.last4} (exp {String(props.card.expMonth).padStart(2, "0")}/{String(props.card.expYear).slice(-2)}). <button type="button" className="underline" onClick={() => void openPortal()}>Update card</button></p>}
-          <AutoTopup presets={summary.topupPresetsPence} hasSavedCard={summary.hasSavedCard} current={summary.autoTopup} />
+          {/* #auto-topup: the target of Stayful Intelligence's "Turn on auto top-up" (the chip and the chat). */}
+          <div id="auto-topup" className="scroll-mt-20">
+            <AutoTopup presets={summary.topupPresetsPence} hasSavedCard={summary.hasSavedCard} current={summary.autoTopup} />
+          </div>
         </div>
         <div className="space-y-4">
           <RedeemCode />

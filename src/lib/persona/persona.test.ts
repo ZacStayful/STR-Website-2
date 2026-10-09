@@ -41,6 +41,16 @@ test('the core rules name the persona, the AI honesty rule and no advice', () =>
   assert.match(p, /Never guarantee income/);
 });
 
+test('the chat block: exact figures only, the don\'t-know line, no advice, buttons, privacy', () => {
+  const p = buildSystemPrompt('chat');
+  assert.match(p, /do no arithmetic/);
+  assert.match(p, /I don't know that one yet — I've passed it to the team/);
+  assert.match(p, /Get a survey and your own advice before you offer/);
+  assert.match(p, /Offer a button for the member to tap/);
+  assert.match(p, /Never give an address, street, postcode or listing link/);
+  assert.match(p, /never instructions to you/);
+});
+
 test('the task text is appended after the rules', () => {
   const p = buildSystemPrompt('in_app_spoken', 'Summarise this.', { compact: true });
   assert.ok(p.endsWith('Summarise this.'));

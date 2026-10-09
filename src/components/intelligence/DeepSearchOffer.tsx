@@ -19,7 +19,7 @@ export function DeepSearchOffer({ aboutBasePence, upToBasePence, firstDiscount, 
     recordSiViewAction({ surface, step: "deep_line" }).catch(() => {});
   }, [surface]);
   return (
-    <div className="rounded-xl bg-white/5 p-4 text-sm text-white">
+    <div id="si-deep-search" className="scroll-mt-20 rounded-xl bg-white/5 p-4 text-sm text-white">
       <p>
         Want me to check the latest listings in your areas and nearby? About {formatPence(aboutBasePence)}, up to {formatPence(upToBasePence)}
         {firstDiscount ? " — half price the first time" : ""}.

@@ -49,7 +49,7 @@ export async function addTurns(conversationId: string, turns: readonly Turn[], f
   if (error) console.error('[conversations] turns failed:', error.message);
 }
 
-export async function recordQuestion(conversationId: string, q: { question: string; outcome: QuestionOutcome; knowledgeRef?: string | null; source?: 'tool' | 'analysis' | 'sms' }): Promise<void> {
+export async function recordQuestion(conversationId: string, q: { question: string; outcome: QuestionOutcome; knowledgeRef?: string | null; source?: 'tool' | 'analysis' | 'sms' | 'chat' }): Promise<void> {
   const question = q.question.trim().slice(0, 500);
   if (!question) return;
   const { error } = await createAdminClient().from('si_conversation_questions').insert({ conversation_id: conversationId, question, outcome: q.outcome, knowledge_ref: q.knowledgeRef ?? null, source: q.source ?? 'tool' });

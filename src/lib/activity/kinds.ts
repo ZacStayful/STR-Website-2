@@ -219,6 +219,13 @@ export const ACTIVITY_KINDS = {
   si_deal_call: recordOnly('Was rung by Stayful Intelligence about a standout deal'),
   si_deal_call_missed: recordOnly('Missed a call from Stayful Intelligence about a standout deal'),
   si_nudge_sent: recordOnly('Was sent the auto top-up nudge'),
+  // Batch 26: the typed chat (src/lib/chat). A question asked in the full
+  // Stayful Intelligence view counts towards weekly active (Zac, 29 Sep); a
+  // quick answer from the header eye is record only. Extras carry the outcome
+  // only, never anything typed. A button tapped from an answer counts as its
+  // own kind on the page it opens.
+  si_chat_full: inApp('Asked Stayful Intelligence a question'),
+  si_chat_quick: recordOnly('Asked Stayful Intelligence a quick question'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;

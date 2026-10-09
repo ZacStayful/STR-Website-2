@@ -50,7 +50,7 @@ function CostRow({ r }: { r: Row }) {
           <input type="hidden" name="provider" value={r.provider} />
           <input type="hidden" name="unit" value={r.unit} />
           <label className="text-xs text-muted-foreground">cost p</label>
-          <Input name="unit_cost_pence" defaultValue={r.unitCostPence} type="number" step="0.0001" min={0} className="h-7 w-28 text-xs" />
+          <Input name="unit_cost_pence" defaultValue={r.unitCostPence} type="number" step="any" min={0} className="h-7 w-28 text-xs" />
           <label className="text-xs text-muted-foreground">×</label>
           <Input name="markup" defaultValue={r.markup} type="number" step="0.1" min={0.1} className="h-7 w-16 text-xs" />
           <span className="text-xs text-muted-foreground">= {formatGbp(r.unitCostPence * r.markup)}</span>
