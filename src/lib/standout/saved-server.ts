@@ -24,6 +24,8 @@ type Admin = ReturnType<typeof createAdminClient>;
 export const SI_SAVED_BY = 'stayful_intelligence';
 
 const CHUNK = 150;
+/** PostgREST returns at most 1,000 rows a read: every read here is paged. */
+const PAGE = 1000;
 const chunks = <T,>(xs: readonly T[]): T[][] => {
   const out: T[][] = [];
   for (let i = 0; i < xs.length; i += CHUNK) out.push(xs.slice(i, i + CHUNK));
@@ -32,7 +34,11 @@ const chunks = <T,>(xs: readonly T[]): T[][] => {
 
 export const siKey = (userId: string, dealId: string) => `${userId}:${dealId}`;
 
-/** The SI saves (Keeps the member hasn't made their own) among these members' reactions, as user:deal keys. */
+/**
+ * The SI saves (Keeps the member hasn't made their own) among these members'
+ * reactions, as user:deal keys. Every page is read: a save missed here would
+ * count as the member's own Keep.
+ */
 export async function siSavedPairs(admin: Admin, userIds: readonly string[] | null, dealIds?: readonly string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (!hasServiceRole()) return out;
@@ -41,12 +47,15 @@ export async function siSavedPairs(admin: Admin, userIds: readonly string[] | nu
   for (const u of users) {
     if (u !== null && u.length === 0) continue;
     for (const d of deals) {
-      let q = admin.from('deal_reactions').select('user_id, deal_id').not('saved_by', 'is', null).limit(5000);
-      if (u) q = q.in('user_id', u);
-      if (d) q = q.in('deal_id', d);
-      const { data, error } = await q;
-      if (error) return out;
-      for (const r of (data ?? []) as { user_id: string; deal_id: string }[]) out.add(siKey(r.user_id, r.deal_id));
+      for (let from = 0; ; from += PAGE) {
+        let q = admin.from('deal_reactions').select('user_id, deal_id').not('saved_by', 'is', null);
+        if (u) q = q.in('user_id', u);
+        if (d) q = q.in('deal_id', d);
+        const { data, error } = await q.order('user_id', { ascending: true }).order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
+        if (error) return out;
+        for (const r of (data ?? []) as { user_id: string; deal_id: string }[]) out.add(siKey(r.user_id, r.deal_id));
+        if ((data?.length ?? 0) < PAGE) break;
+      }
     }
   }
   return out;

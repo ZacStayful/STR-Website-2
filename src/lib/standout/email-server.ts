@@ -5,7 +5,7 @@ import 'server-only';
  * Intelligence saved for a member and did not ring them about (the third and
  * later in a month, members without calls on, a call that could not be
  * placed). One line each, in the next daily email, then marked emailed so a
- * deal is told once. Gone, opened or turned-down deals are left out. Every
+ * deal is told once. Gone, opened, moved or turned-down deals are left out. Every
  * read is tolerant: before the schema is run nothing is added.
  */
 import { createAdminClient } from '../supabase/admin';
@@ -34,6 +34,7 @@ export async function savedForYouFor(admin: Admin, userIds: readonly string[], s
       .is('emailed_at', null)
       .is('not_for_me_at', null)
       .is('opened_at', null)
+      .is('stage_moved_at', null)
       .not('deal_id', 'is', null)
       .order('saved_at', { ascending: true })
       .limit(1000);

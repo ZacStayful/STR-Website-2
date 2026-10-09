@@ -172,6 +172,19 @@ async function chosenTypesNow(admin: Admin, userId: string, now: Date): Promise<
   return { types };
 }
 
+/**
+ * Whether the member's primary profile still shows this deal type and is
+ * still judged (not paused, not for a client, its answers in): 'ok', the
+ * reason it isn't, or null when it can't be read. For anything that tells a
+ * member about a save some time after it was made.
+ */
+export async function stillShownFor(admin: Admin, userId: string, dealType: string | null, now: Date): Promise<'ok' | BlockedReason | null> {
+  const chosen = await chosenTypesNow(admin, userId, now);
+  if (!chosen) return null;
+  if ('blocked' in chosen) return chosen.blocked;
+  return dealType && chosen.types.includes(dealType as DealType) ? 'ok' : 'type_not_chosen';
+}
+
 export type StillWanted =
   | { ok: true; facts: DealCallFacts; recheck: 'fresh' | 'rechecked' | 'would_recheck' }
   | { ok: false; reason: BlockedReason }
@@ -193,10 +206,9 @@ export async function dealCallStillWanted(admin: Admin, call: CallRow, m: Member
   // The member got there first: opened it, moved it, said "Not for me", or made the Keep their own.
   if (d.not_for_me_at || d.opened_at || d.stage_moved_at || !siSave) return { ok: false, reason: 'deal_acted' };
 
-  const chosen = await chosenTypesNow(admin, m.userId, now);
-  if (!chosen) return wait('profile unreadable');
-  if ('blocked' in chosen) return { ok: false, reason: chosen.blocked };
-  if (!d.deal_type || !chosen.types.includes(d.deal_type as DealType)) return { ok: false, reason: 'type_not_chosen' };
+  const shown = await stillShownFor(admin, m.userId, d.deal_type, now);
+  if (shown === null) return wait('profile unreadable');
+  if (shown !== 'ok') return { ok: false, reason: shown };
 
   const s = settings.standout;
   const placed = await dealCallsThisMonth(admin, m.userId, now, call.id);

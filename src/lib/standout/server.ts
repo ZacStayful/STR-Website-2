@@ -34,8 +34,26 @@ const chunks = <T,>(xs: readonly T[], n = CHUNK): T[][] => {
 
 const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
 
-/** Live deals that went live inside (from, to]. */
-export async function liveDealsInWindow(admin: Admin, fromIso: string, toIso: string): Promise<StandoutDealRow[]> {
+/**
+ * Every row a read returns, a page at a time: PostgREST stops at 1,000 rows,
+ * so an unpaged read can come back short without an error. The read must
+ * order on a unique key (or one whose ties carry the same values), so pages
+ * never skip a row.
+ */
+async function allRows<T>(read: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>, maxPages = 50): Promise<{ rows: T[]; error: string | null }> {
+  const rows: T[] = [];
+  for (let page = 0; page < maxPages; page += 1) {
+    const { data, error } = await read(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) return { rows, error: error.message };
+    const got = (data ?? []) as T[];
+    rows.push(...got);
+    if (got.length < PAGE) break;
+  }
+  return { rows, error: null };
+}
+
+/** Live deals that went live inside (from, to]; null when a read failed (the pass is then incomplete). */
+export async function liveDealsInWindow(admin: Admin, fromIso: string, toIso: string): Promise<StandoutDealRow[] | null> {
   if (Date.parse(toIso) <= Date.parse(fromIso)) return [];
   const out: StandoutDealRow[] = [];
   for (let from = 0; from < 20 * PAGE; from += PAGE) {
@@ -50,7 +68,7 @@ export async function liveDealsInWindow(admin: Admin, fromIso: string, toIso: st
       .range(from, from + PAGE - 1);
     if (error) {
       console.error('[standout] deals unreadable:', error.message);
-      return out;
+      return null;
     }
     out.push(...((data ?? []) as unknown as StandoutDealRow[]));
     if ((data?.length ?? 0) < PAGE) break;
@@ -91,8 +109,8 @@ export async function loadMembers(admin: Admin, onlyUserId: string | null = null
     if (onlyUserId) q = q.eq('id', onlyUserId);
     const { data, error } = await q;
     if (error) {
-      console.error('[standout] members unreadable:', error.message);
-      return [];
+      // Thrown, not empty: a pass that couldn't read its members must not move the watermark on.
+      throw new Error(`members unreadable: ${error.message}`);
     }
     rows.push(...((data ?? []) as unknown as typeof rows));
     if ((data?.length ?? 0) < PAGE) break;
@@ -158,15 +176,18 @@ export { decisionKey };
 /** Decisions waiting on a live check, or saved-but-not-written (a retry): their deals are judged again. */
 export async function retryDecisions(admin: Admin, now: Date): Promise<{ userId: string; dealId: string }[]> {
   const since = daysAgo(now, 3);
-  const { data, error } = await admin
-    .from('standout_decisions')
-    .select('user_id, deal_id, outcome, saved_at')
-    .not('deal_id', 'is', null)
-    .gte('created_at', since)
-    .or('outcome.eq.waiting,and(outcome.eq.standout,saved_at.is.null)')
-    .limit(2000);
+  const { rows, error } = await allRows<{ user_id: string; deal_id: string }>((from, to) =>
+    admin
+      .from('standout_decisions')
+      .select('id, user_id, deal_id, outcome, saved_at')
+      .not('deal_id', 'is', null)
+      .gte('created_at', since)
+      .or('outcome.eq.waiting,and(outcome.eq.standout,saved_at.is.null)')
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
   if (error) return [];
-  return ((data ?? []) as { user_id: string; deal_id: string }[]).map((r) => ({ userId: r.user_id, dealId: r.deal_id }));
+  return rows.map((r) => ({ userId: r.user_id, dealId: r.deal_id }));
 }
 
 /**
@@ -180,26 +201,29 @@ export async function seenDealsFor(admin: Admin, userIds: readonly string[], dea
   const wanted = new Set(dealIds);
   for (const users of chunks(userIds)) {
     for (const deals of chunks(dealIds)) {
+      // Paged: rows with the same (member, deal) are interchangeable, so ties never lose one.
+      const pairs = (table: string) =>
+        allRows<{ user_id: string; deal_id: string | null }>((from, to) => admin.from(table).select('user_id, deal_id').in('user_id', users).in('deal_id', deals).order('user_id', { ascending: true }).order('deal_id', { ascending: true }).range(from, to));
       const reads = await Promise.all([
-        admin.from('deal_reactions').select('user_id, deal_id').in('user_id', users).in('deal_id', deals),
-        admin.from('deal_opens').select('user_id, deal_id').in('user_id', users).in('deal_id', deals),
-        admin.from('sourcing_sent').select('user_id, deal_id').in('user_id', users).in('deal_id', deals),
-        admin.from('hidden_tracked_deals').select('user_id, item_key').in('user_id', users).in('item_key', deals.map((d) => `d-${d}`)),
+        pairs('deal_reactions'),
+        pairs('deal_opens'),
+        pairs('sourcing_sent'),
+        allRows<{ user_id: string; item_key: string }>((from, to) => admin.from('hidden_tracked_deals').select('user_id, item_key').in('user_id', users).in('item_key', deals.map((d) => `d-${d}`)).order('user_id', { ascending: true }).order('item_key', { ascending: true }).range(from, to)),
       ]);
       for (const r of reads) if (r.error) return null;
-      for (const r of [reads[0], reads[1], reads[2]]) for (const row of (r.data ?? []) as { user_id: string; deal_id: string | null }[]) if (row.deal_id) add(row.user_id, row.deal_id);
-      for (const row of (reads[3].data ?? []) as { user_id: string; item_key: string }[]) add(row.user_id, row.item_key.replace(/^d-/, ''));
+      for (const r of [reads[0], reads[1], reads[2]]) for (const row of r.rows as { user_id: string; deal_id: string | null }[]) if (row.deal_id) add(row.user_id, row.deal_id);
+      for (const row of reads[3].rows as { user_id: string; item_key: string }[]) add(row.user_id, row.item_key.replace(/^d-/, ''));
     }
     const since = daysAgo(now, 90).slice(0, 10);
     const [lists, oldLists, reveals] = await Promise.all([
-      admin.from('profile_today_lists').select('user_id, deal_ids, shown_ids').in('user_id', users).gte('day', since),
-      admin.from('today_selections').select('user_id, deal_ids').in('user_id', users).gte('day', since),
+      allRows<{ user_id: string; deal_ids: unknown; shown_ids: unknown }>((from, to) => admin.from('profile_today_lists').select('profile_id, day, user_id, deal_ids, shown_ids').in('user_id', users).gte('day', since).order('profile_id', { ascending: true }).order('day', { ascending: true }).range(from, to)),
+      allRows<{ user_id: string; deal_ids: unknown }>((from, to) => admin.from('today_selections').select('user_id, day, deal_ids').in('user_id', users).gte('day', since).order('user_id', { ascending: true }).order('day', { ascending: true }).range(from, to)),
       admin.from('signup_reveals').select('user_id, deal_ids, shown_ids, offer_deal_ids').in('user_id', users),
     ]);
     if (lists.error || oldLists.error || reveals.error) return null;
     const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
-    for (const r of (lists.data ?? []) as { user_id: string; deal_ids: unknown; shown_ids: unknown }[]) for (const d of [...ids(r.deal_ids), ...ids(r.shown_ids)]) if (wanted.has(d)) add(r.user_id, d);
-    for (const r of (oldLists.data ?? []) as { user_id: string; deal_ids: unknown }[]) for (const d of ids(r.deal_ids)) if (wanted.has(d)) add(r.user_id, d);
+    for (const r of lists.rows) for (const d of [...ids(r.deal_ids), ...ids(r.shown_ids)]) if (wanted.has(d)) add(r.user_id, d);
+    for (const r of oldLists.rows) for (const d of ids(r.deal_ids)) if (wanted.has(d)) add(r.user_id, d);
     for (const r of (reveals.data ?? []) as { user_id: string; deal_ids: unknown; shown_ids: unknown; offer_deal_ids: unknown }[]) for (const d of [...ids(r.deal_ids), ...ids(r.shown_ids), ...ids(r.offer_deal_ids)]) if (wanted.has(d)) add(r.user_id, d);
   }
   return out;
@@ -221,14 +245,16 @@ export async function shownDealIdsFor(admin: Admin, userId: string, days: number
   return [...out].slice(0, 400);
 }
 
-/** A member's standout saves in the last `days`: their match and profit (to beat), and how many today. */
+/** A member's standout saves in the last `days`: their match and profit (to beat), and how many today. Throws when unreadable (a pass never saves past the day's limit on a guess). */
 export async function savesFor(admin: Admin, userIds: readonly string[], days: number, ukDay: string, now: Date): Promise<Map<string, { saved: { matchPct: number | null; profitLow: number | null }[]; today: number }>> {
   const out = new Map<string, { saved: { matchPct: number | null; profitLow: number | null }[]; today: number }>();
   const since = daysAgo(now, Math.max(days, 1));
   for (const users of chunks(userIds)) {
-    const { data, error } = await admin.from('standout_decisions').select('user_id, uk_day, match_pct, profit_low_pcm').in('user_id', users).not('saved_at', 'is', null).gte('saved_at', since);
-    if (error) continue;
-    for (const r of (data ?? []) as { user_id: string; uk_day: string; match_pct: number | null; profit_low_pcm: number | null }[]) {
+    const { rows, error } = await allRows<{ user_id: string; uk_day: string; match_pct: number | null; profit_low_pcm: number | null }>((from, to) =>
+      admin.from('standout_decisions').select('id, user_id, uk_day, match_pct, profit_low_pcm').in('user_id', users).not('saved_at', 'is', null).gte('saved_at', since).order('id', { ascending: true }).range(from, to),
+    );
+    if (error) throw new Error(`saves unreadable: ${error}`);
+    for (const r of rows) {
       const m = out.get(r.user_id) ?? { saved: [], today: 0 };
       m.saved.push({ matchPct: r.match_pct, profitLow: r.profit_low_pcm });
       if (r.uk_day === ukDay) m.today += 1;

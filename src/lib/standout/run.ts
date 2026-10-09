@@ -172,6 +172,10 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
   const freeWindow = { from: freeFrom, to: freeTo };
 
   // ── 1. The deals ──
+  // The watermarks move on only after a pass that read and judged everything:
+  // otherwise the deals it missed would never be judged (a re-judged deal is
+  // harmless — decisions and saves are unique).
+  let complete = true;
   const byId = new Map<string, StandoutDealRow>();
   const retry = o.force ? [] : await retryDecisions(admin, now);
   if (o.force) {
@@ -182,7 +186,11 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
       liveDealsInWindow(admin, freeFrom, freeTo),
       dealRowsByIds(admin, retry.map((r) => r.dealId), { liveOnly: true }),
     ]);
-    for (const r of [...paid, ...free, ...retried]) byId.set(r.id, r);
+    if (paid === null || free === null) {
+      complete = false;
+      out.errors.push('new deals unreadable: this window is judged again next pass');
+    }
+    for (const r of [...(paid ?? []), ...(free ?? []), ...retried]) byId.set(r.id, r);
   }
   out.deals = byId.size;
 
@@ -190,9 +198,11 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
     try {
       await judgeAndSave({ admin, apply, now, ukDay, o, out, byId, retry, paidWindow, freeWindow, settings: s, delayMs, startedMs: started });
     } catch (err) {
+      complete = false;
       console.error('[standout] pass failed:', err);
       out.errors.push(err instanceof Error ? err.message : String(err));
     }
+    if (out.schemaMissing) complete = false;
   }
 
   // ── 5. Tell members, and the slower-spender nudges ──
@@ -216,7 +226,7 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
   // Once a UK day (the 03:35 pass): not-standout decisions past the keep window go.
   if (apply && !o.force && londonParts(now).hour === 3) out.purged = await purgeOldDecisions(admin, s.keepDays, now);
 
-  if (apply && !o.force && !o.onlyUserId) {
+  if (apply && !o.force && !o.onlyUserId && complete) {
     await recordRun(admin, {
       kind: o.kind ?? 'cron',
       startedAt: now,

@@ -34,7 +34,7 @@ import { claimCallSlot } from '../voice/cap-server';
 import { belowFloorText, dealEmail } from '../voice/templates';
 import { dealCallsEnabled } from './flags';
 import { belowFloorChannels, callFloorPence, planMember, syncFromCall, type NotifyCandidate, type NotifyStep, type QueuedDealCall } from './notify';
-import { dealCallsThisMonth, dealFactsFor } from './calls-server';
+import { dealCallsThisMonth, dealFactsFor, stillShownFor } from './calls-server';
 import { sendMemberText, textsOnFor } from './texts-server';
 
 export { dealCallsEnabled } from './flags';
@@ -55,6 +55,7 @@ interface PendingRow {
   id: string;
   user_id: string;
   deal_id: string;
+  deal_type: string | null;
   match_pct: number | null;
   profit_low_pcm: number | null;
   saved_at: string;
@@ -84,7 +85,7 @@ export async function processNotifications(o: { apply: boolean; now: Date; onlyU
 async function planPass(admin: Admin, o: { apply: boolean; now: Date; onlyUserId: string | null }, out: NotifyResult): Promise<void> {
   let q = admin
     .from('standout_decisions')
-    .select('id, user_id, deal_id, match_pct, profit_low_pcm, saved_at, call_status')
+    .select('id, user_id, deal_id, deal_type, match_pct, profit_low_pcm, saved_at, call_status')
     .eq('outcome', 'standout')
     .not('saved_at', 'is', null)
     .is('notify', null)
@@ -208,9 +209,11 @@ async function retarget(admin: Admin, step: Extract<NotifyStep, { action: 'retar
 
 const ENQUEUE_STATUS: Record<string, string> = { calls_off: 'calls_off', not_owner: 'not_owner', management_no_deals: 'management_only', no_number: 'no_number', disabled: 'deal_calls_off', unknown_member: 'calls_off' };
 
-async function startCall(admin: Admin, row: PendingRow, now: Date): Promise<string> {
+async function startCall(admin: Admin, row: PendingRow, passStart: Date): Promise<string> {
   // Claim the decision first, so two passes never queue two calls for it.
-  if (!(await claimNotify(admin, row.id, { notify: 'call', call_status: 'pending' }, now))) return 'call:raced';
+  if (!(await claimNotify(admin, row.id, { notify: 'call', call_status: 'pending' }, passStart))) return 'call:raced';
+  // The clock as the call is queued and dialled, not the pass's start: a slow (or admin-run) pass must not dial after hours.
+  const now = new Date();
   const set = (patch: Record<string, unknown>) => admin.from('standout_decisions').update({ ...patch, updated_at: now.toISOString() }).eq('id', row.id).eq('notify', 'call');
   const r = await enqueueCall({ userId: row.user_id, type: 'deal', triggerRef: row.deal_id, context: 'deal', now }).catch((err) => {
     console.error('[standout] deal call not queued:', err);
@@ -222,7 +225,7 @@ async function startCall(admin: Admin, row: PendingRow, now: Date): Promise<stri
     const status = later && inOutboundHours(now, (await getBillingSettings()).voice) && ukDay(new Date(r.call.not_before!)) !== ukDay(now) ? 'waiting_called_today' : 'queued';
     await set({ call_id: r.call.id, call_status: status });
     if (!later) {
-      const placed = await placeCall(r.call, { apply: true, now }).catch((err) => {
+      const placed = await placeCall(r.call, { apply: true, now: new Date() }).catch((err) => {
         console.error('[standout] deal call failed to place:', err);
         return null;
       });
@@ -253,6 +256,13 @@ async function startCall(admin: Admin, row: PendingRow, now: Date): Promise<stri
 
 /** Credit below the call floor: no call; a text (texts on, and credit for it) and an email with the link and "top up to get calls". */
 async function belowFloor(admin: Admin, row: PendingRow, m: MemberFacts, now: Date): Promise<string> {
+  // It may have waited for the text window: still a deal type their main profile shows?
+  const shown = await stillShownFor(admin, m.userId, row.deal_type, now);
+  if (shown === null) return 'wait:profile_unreadable';
+  if (shown !== 'ok') {
+    await claimNotify(admin, row.id, { notify: 'none', call_status: shown }, now);
+    return shown;
+  }
   if (!(await claimNotify(admin, row.id, { notify: 'email', call_status: 'below_floor' }, now))) return 'below_floor:raced';
   const settings = await getBillingSettings();
   const [facts, textsOn] = await Promise.all([dealFactsFor(admin, m.userId, row.deal_id), textsOnFor(admin, m.userId)]);

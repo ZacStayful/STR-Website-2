@@ -214,12 +214,14 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
   }
   const secret = toolSecret();
   // Claim the call: queued → ringing with today's UK day. The one-a-day index refuses a second.
-  const claimed = await admin
+  let claim = admin
     .from('si_calls_log')
     .update({ status: 'ringing', uk_day: ukDay(now), placed_at: now.toISOString(), context, persona_version: PERSONA_VERSION, updated_at: now.toISOString() })
     .eq('id', call.id)
-    .eq('status', 'queued')
-    .select('id');
+    .eq('status', 'queued');
+  // Batch 25: a waiting deal call can be moved to a better deal meanwhile; it rings only about the deal it was read with (else the next pass takes it).
+  if (type === 'deal' && call.trigger_ref) claim = claim.eq('trigger_ref', call.trigger_ref);
+  const claimed = await claim.select('id');
   if (claimed.error) {
     if (claimed.error.code === '23505') {
       await updateCall(admin, call.id, { status: 'blocked', blocked_reason: 'daily_limit' }, ['queued']);
