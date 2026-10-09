@@ -51,12 +51,15 @@ export interface ChatUi {
   fullHintPence: number;
   quickFloorPence: number;
   fullFloorPence: number;
+  /** Batch 26b: the microphone shows, and spoken questions get spoken answers. */
+  voice: boolean;
 }
 
-/** The full view's stream: start, thinking, text as it comes, cleared or replaced, then the reply. */
+/** The full view's stream: start, thinking (or what it is looking up), text as it comes, cleared or replaced, then the reply. */
 export type FullEvent =
   | { type: 'start'; turnId: string }
   | { type: 'thinking' }
+  | { type: 'status'; text: string }
   | { type: 'delta'; text: string }
   | { type: 'clear' }
   | { type: 'replace'; text: string }

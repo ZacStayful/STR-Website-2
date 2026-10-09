@@ -1,24 +1,29 @@
 "use client";
 
+import type { JARVISState } from "@/types/jarvis";
+
 /**
- * Batch 26: one tiny store the chat publishes to while an answer is being
- * worked out, so the eye (ChatEye) can show "thinking" without the page
- * re-rendering. Nothing waits for it: the eye's animation is CSS.
+ * Batch 26: one tiny store the chat publishes the eye's state to (thinking
+ * while an answer is worked out; listening and speaking with voice), so every
+ * eye on the page (ChatEye) follows it without the page re-rendering. Nothing
+ * waits for it: the eye's animation is CSS, eased by StayfulEye.
  */
-let thinking = false;
+export type ChatEyeState = JARVISState;
+
+let current: ChatEyeState = "idle";
 const listeners = new Set<() => void>();
 
-export function setChatThinking(next: boolean): void {
-  if (thinking === next) return;
-  thinking = next;
+export function setChatEye(next: ChatEyeState): void {
+  if (current === next) return;
+  current = next;
   for (const l of listeners) l();
 }
 
-export function readChatThinking(): boolean {
-  return thinking;
+export function readChatEye(): ChatEyeState {
+  return current;
 }
 
-export function subscribeChatThinking(fn: () => void): () => void {
+export function subscribeChatEye(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }

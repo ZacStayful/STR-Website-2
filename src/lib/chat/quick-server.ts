@@ -27,31 +27,31 @@ import { stateReply, type ChatReply } from './reply';
 import { chatMemberFor, chatOn, insertTurn, logFailedCall, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember } from './turns-server';
 import { logExchange, openConversation, replyForStored } from './log-server';
 import { chatContext } from './context-server';
-import { lookUpKnowledge } from './knowledge-server';
+import { loadKnowledge, lookUpKnowledge } from './knowledge-server';
 import type { QuestionOutcome } from '../voice/config';
 
 /** Haiku 4.5's tool-less request overhead is nil; the JSON-schema instructions add a little: counted generously. */
 const STRUCTURED_OVERHEAD_TOKENS = 300;
 
 export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { clientTurnId: string; question: unknown; signal?: AbortSignal }, now: Date = new Date()): Promise<ChatReply> {
+  const started = Date.now();
   const admin = createAdminClient();
-  const settings = await readChatSettings(admin);
+  // Reads that don't depend on each other go together: every one is a round trip to the database.
+  const [settings, member, table] = await Promise.all([readChatSettings(admin), chatMemberFor(user), getUnitCostTable()]);
   if (!chatOn(settings)) return stateReply('off');
   const question = cleanQuestion(input.question, MAX_QUESTION_CHARS);
   if (!question) return stateReply('unknown');
 
-  const member = await chatMemberFor(user);
   if (member.seatPaused) return stateReply('seat_paused');
-  const pre = await preflight(admin, member, input.clientTurnId, settings, now);
+  const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member)]);
   if (pre.kind === 'existing') return replyForStored(admin, pre.turn, member);
   if (pre.kind !== 'ok') return stateReply(pre.kind);
 
-  const table = await getUnitCostTable();
   if (!unitsPriced(table, MODEL_UNITS.quick) || !process.env.ANTHROPIC_API_KEY) {
     console.error('[chat] quick: no unit prices or no API key');
     return stateReply('failed');
   }
-  const budget = budgetFor({ ceilingPence: settings.quickCeilingPence, floorPence: settings.quickFloorPence, spendableBasePence: await spendableFor(member), admin: member.admin });
+  const budget = budgetFor({ ceilingPence: settings.quickCeilingPence, floorPence: settings.quickFloorPence, spendableBasePence: spendable, admin: member.admin });
   if (budget === null) return { ...stateReply('top_up', { teamMember: member.teamMember }), buttons: topUpButtons(member) };
 
   const inserted = await insertTurn(admin, member, input.clientTurnId, 'quick');
@@ -62,6 +62,11 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
 
   let hold: StartedAction | null = null;
   const rounds: RoundUsage[] = [];
+  // The hold, the member's context and the knowledge base are read at the same time.
+  const contextP = chatContext(user, member.admin, now);
+  const knowledgeP = loadKnowledge(admin);
+  contextP.catch(() => {});
+  knowledgeP.catch(() => {});
   try {
     try {
       hold = await startHold(member, turn, budget, settings);
@@ -72,8 +77,8 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       throw err;
     }
 
-    const ctx = await chatContext(user, member.admin, now);
-    const known = await lookUpKnowledge(question, ctx.values, admin);
+    const [ctx, loaded] = await Promise.all([contextP, knowledgeP]);
+    const known = await lookUpKnowledge(question, ctx.values, admin, loaded);
     const account = accountBlock({
       now,
       freeMember: ctx.values.freeMember,
@@ -100,6 +105,8 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
     }
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: QUICK_TIMEOUT_MS, maxRetries: 0 });
+    const modelStarted = Date.now();
+    let modelEnded = modelStarted;
     let raw: string | null = null;
     let stop: string | null = null;
     try {
@@ -113,6 +120,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
         },
         { signal: input.signal },
       );
+      modelEnded = Date.now();
       rounds.push(usageOf(msg.usage));
       stop = msg.stop_reason ?? null;
       raw = stop === 'refusal' ? null : msg.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
@@ -182,6 +190,8 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
     );
     // Record only: a quick answer never counts towards weekly active (Zac, 29 Sep).
     logActivity(user.id, 'si_chat_quick', { extras: { outcome } });
+    // One line per question (no text): where the seconds went, for the runtime logs.
+    console.log(`[chat] quick ${state} in ${Date.now() - started}ms (set-up ${modelStarted - started}, model ${modelEnded - modelStarted}, saving ${Date.now() - modelEnded})`);
     return {
       state,
       turnId: turn.id,

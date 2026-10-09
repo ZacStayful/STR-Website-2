@@ -29,8 +29,8 @@ test('the seconds between questions can never be 0', () => {
 });
 
 test('the admin form needs every number in bounds and floors under ceilings', () => {
-  const all: Record<string, string> = { enabled: 'on' };
-  for (const [k, v] of Object.entries(DEFAULT_CHAT_SETTINGS)) if (k !== 'enabled') all[k] = String(v);
+  const all: Record<string, string> = { enabled: 'on', voice: 'on' };
+  for (const [k, v] of Object.entries(DEFAULT_CHAT_SETTINGS)) if (k !== 'enabled' && k !== 'voice') all[k] = String(v);
   assert.deepEqual(validateChatForm(form(all)), { ok: true, settings: DEFAULT_CHAT_SETTINGS });
   assert.equal(validateChatForm(form({ ...all, fullCeilingPence: '0' })).ok, false);
   assert.equal(validateChatForm(form({ ...all, fullFloorPence: '30' })).ok, false);
@@ -51,4 +51,14 @@ test('every setting is seeded in supabase/schema.sql with its default', () => {
 test('the schema lets the conversation log take a chat question (R2-87)', () => {
   const sql = readFileSync(new URL('../../../supabase/schema.sql', import.meta.url), 'utf8');
   assert.match(sql, /si_conversation_questions_source_check check \(source in \('tool', 'analysis', 'sms', 'chat'\)\)/);
+});
+
+test('voice is on unless its row says off, and the form switch sets it', () => {
+  assert.equal(parseChatSettings(new Map()).voice, true);
+  assert.equal(parseChatSettings(new Map([['si_chat_voice_enabled', false]])).voice, false);
+  assert.equal(parseChatSettings(new Map([['si_chat_voice_enabled', 'maybe']])).voice, true);
+  const all: Record<string, string> = { enabled: 'on', voice: '' };
+  for (const [k, v] of Object.entries(DEFAULT_CHAT_SETTINGS)) if (k !== 'enabled' && k !== 'voice') all[k] = String(v);
+  const r = validateChatForm((n) => all[n] ?? null);
+  assert.equal(r.ok && r.settings.voice, false);
 });

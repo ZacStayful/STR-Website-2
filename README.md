@@ -1063,6 +1063,40 @@ is in `src/lib/chat`; admin is the **Chat** tab of `/admin/intelligence`.
    (90); `?dry=1` only counts. The transcripts themselves are deleted by
    Batch 23's `/api/internal/si-calls`, for every channel.
 
+### 25. The chat: one screen, faster, and voice (Batch 26b)
+
+- **One screen.** With the chat on, `/intelligence` is one screen on a phone
+  and a desktop: the eye and today's picks (side by side, swiped) at the top,
+  the conversation in the middle, and the free chips and the box pinned at
+  the bottom. Once a question is asked, the eye shrinks into a line that says
+  what it is doing and the picks fold into one row. The quick box (the panel
+  under the header eye, and `/intelligence/ask` on a phone) works the same way.
+- **The eye** eases between idle, thinking, listening and speaking (it no
+  longer jumps), and stays on screen while it answers.
+- **Faster.** The chat's routes and its two pages run in Vercel's Frankfurt
+  region (`fra1`, set per function in `vercel.json`), next to the database;
+  the rest of the site is where it was. Set-up reads run side by side, a
+  full-view answer gets its buttons in the same round as its words, and the
+  page shows what it is looking up ("Looking at today's picks…"). Each
+  question logs one line of timings (`[chat] quick …` / `[chat] full …`).
+- **Voice.** A microphone by the box: the question is turned into text
+  (ElevenLabs speech-to-text, `/api/chat/listen`), sent as an ordinary
+  question, and a spoken question is answered out loud in the Stayful
+  Intelligence voice (`/api/speak`). It then listens for the next question by
+  itself; the microphone is always closed while it speaks, so it never hears
+  itself. Hearing (per second of audio) and speaking (per character) are
+  charged as "AI voice"; a recording it can't make out is free.
+
+1. **Run `supabase/schema.sql`** (the "Batch 26b: the chat's voice" section):
+   the speech-to-text unit cost and the `si_chat_voice_enabled` switch.
+2. **Knowledge:** Seed, then approve the new `chat_voice` draft.
+3. Voice needs `ELEVENLABS_API_KEY` (already set for the narrator and calls).
+   To switch the microphone off without a redeploy, untick "Voice is on" on
+   `/admin/intelligence/chat`.
+4. **Check the deploy:** if Vercel rejects the per-function `regions` in
+   `vercel.json` (some plans allow only one region), move the whole project
+   to `fra1` instead (Settings → Functions → Region), which speeds up every page.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,

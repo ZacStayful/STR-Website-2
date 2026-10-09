@@ -35,7 +35,7 @@ import { affordsLookUp, approxTokens, budgetFor, costOf, promptTokensOf, roundMa
 import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
 import { buildButtons } from './actions';
 import { accountBlock, fullSystemPrompt, historyMessages, questionBlock } from './prompts';
-import { CHAT_TOOLS, parseToolInput } from './tools';
+import { ANSWER_EXTRAS, CHAT_TOOLS, parseToolInput, statusFor } from './tools';
 import { chargeLabel } from './format';
 import { stateReply, type ChatReply, type FullEvent } from './reply';
 import { chatMemberFor, chatOn, insertTurn, logFailedCall, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember, type TurnRow } from './turns-server';
@@ -70,22 +70,21 @@ export type Prepared = { kind: 'reply'; reply: ChatReply } | { kind: 'run'; job:
 
 export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: SupabaseClient, input: { clientTurnId: string; question: unknown; conversationId: unknown }, now: Date = new Date()): Promise<Prepared> {
   const admin = createAdminClient();
-  const settings = await readChatSettings(admin);
+  // Reads that don't depend on each other go together: every one is a round trip to the database.
+  const [settings, member, table] = await Promise.all([readChatSettings(admin), chatMemberFor(user), getUnitCostTable()]);
   if (!chatOn(settings)) return { kind: 'reply', reply: stateReply('off') };
   const question = cleanQuestion(input.question, MAX_QUESTION_CHARS);
   if (!question) return { kind: 'reply', reply: stateReply('unknown') };
-  const member = await chatMemberFor(user);
   if (member.seatPaused) return { kind: 'reply', reply: stateReply('seat_paused') };
-  const pre = await preflight(admin, member, input.clientTurnId, settings, now);
+  const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member)]);
   if (pre.kind === 'existing') return { kind: 'reply', reply: await replyForStored(admin, pre.turn, member) };
   if (pre.kind !== 'ok') return { kind: 'reply', reply: stateReply(pre.kind) };
 
-  const table = await getUnitCostTable();
   if (!unitsPriced(table, MODEL_UNITS.full) || !process.env.ANTHROPIC_API_KEY) {
     console.error('[chat] full: no unit prices or no API key');
     return { kind: 'reply', reply: stateReply('failed') };
   }
-  const budget = budgetFor({ ceilingPence: settings.fullCeilingPence, floorPence: settings.fullFloorPence, spendableBasePence: await spendableFor(member), admin: member.admin });
+  const budget = budgetFor({ ceilingPence: settings.fullCeilingPence, floorPence: settings.fullFloorPence, spendableBasePence: spendable, admin: member.admin });
   if (budget === null) return { kind: 'reply', reply: topUp(member) };
 
   const inserted = await insertTurn(admin, member, input.clientTurnId, 'full');
@@ -120,6 +119,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
   const rounds: RoundUsage[] = [];
   let settled = false;
   const started = Date.now();
+  let firstTextAt = 0;
   const fail = async (state: 'failed' | 'did_not_finish' | 'out_of_room'): Promise<ChatReply> => {
     if (!settled) {
       settled = true;
@@ -133,8 +133,10 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
   try {
     send({ type: 'start', turnId: turn.id });
     send({ type: 'thinking' });
-    const ctx = await chatContext(job.user, member.admin, now);
-    const conv = await openConversation(admin, member, 'full', job.conversationId, { idleMinutes: settings.sessionIdleMinutes, historyTurns: settings.historyTurns, now });
+    const [ctx, conv] = await Promise.all([
+      chatContext(job.user, member.admin, now),
+      openConversation(admin, member, 'full', job.conversationId, { idleMinutes: settings.sessionIdleMinutes, historyTurns: settings.historyTurns, now }),
+    ]);
     if (!conv) return await fail('failed');
     const tools = chatTools(member, ctx, job.supabase, now);
     const state = newAnswerState();
@@ -198,6 +200,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
           else if (event.type === 'message_delta') usage = { ...usage, output: usageOf(event.usage).output || usage.output };
           else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             text += event.delta.text;
+            if (!firstTextAt) firstTextAt = Date.now();
             send({ type: 'delta', text: event.delta.text });
           }
         }
@@ -220,21 +223,36 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       if (stop === 'max_tokens' && final.content.some((b) => b.type === 'tool_use')) return await fail('out_of_room');
 
       if (stop === 'tool_use' && mayLookUp) {
-        if (text) send({ type: 'clear' });
-        send({ type: 'thinking' });
-        messages.push({ role: 'assistant', content: final.content });
-        const results: Anthropic.ToolResultBlockParam[] = [];
-        for (const block of final.content) {
-          if (block.type !== 'tool_use') continue;
-          const input = parseToolInput(block.name, block.input);
-          if (!input) {
-            results.push({ type: 'tool_result', tool_use_id: block.id, is_error: true, content: `Unknown look-up or bad input. The look-ups are: ${CHAT_TOOLS.map((t) => t.name).join(', ')}.` });
-            continue;
+        const calls = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
+        // The answer arrived with only its buttons (or a fact to offer): record them and finish here,
+        // rather than spend a whole round just to make a button.
+        if (text.trim() && calls.length > 0 && calls.every((c) => ANSWER_EXTRAS.has(c.name))) {
+          for (const c of calls) {
+            const input = parseToolInput(c.name, c.input);
+            if (input) await tools.run(input, state);
           }
-          results.push({ type: 'tool_result', tool_use_id: block.id, content: await tools.run(input, state) });
+          answer = text.trim();
+          break;
         }
+        if (text) send({ type: 'clear' });
+        const status = statusFor(calls.map((c) => c.name));
+        send(status ? { type: 'status', text: status } : { type: 'thinking' });
+        messages.push({ role: 'assistant', content: final.content });
+        const results = new Map<string, Anthropic.ToolResultBlockParam>();
+        const run = async (c: Anthropic.ToolUseBlock) => {
+          const input = parseToolInput(c.name, c.input);
+          results.set(
+            c.id,
+            input
+              ? { type: 'tool_result', tool_use_id: c.id, content: await tools.run(input, state) }
+              : { type: 'tool_result', tool_use_id: c.id, is_error: true, content: `Unknown look-up or bad input. The look-ups are: ${CHAT_TOOLS.map((t) => t.name).join(', ')}.` },
+          );
+        };
+        // Look-ups run together; buttons and facts after them (a button may only point at a deal a look-up returned).
+        await Promise.all(calls.filter((c) => !ANSWER_EXTRAS.has(c.name)).map(run));
+        for (const c of calls.filter((c) => ANSWER_EXTRAS.has(c.name))) await run(c);
         // All results in one user message, in the order asked.
-        messages.push({ role: 'user', content: results });
+        messages.push({ role: 'user', content: calls.map((c) => results.get(c.id)!) });
         continue;
       }
       answer = text.trim();
@@ -302,8 +320,6 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       },
       settings,
     );
-    // A full-view question counts towards weekly active (Zac, 29 Sep). Extras: the outcome only.
-    await recordActivity(job.user.id, 'si_chat_full', { extras: { outcome } });
     const reply: ChatReply = {
       state: replyState,
       turnId: turn.id,
@@ -315,12 +331,16 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       capped,
     };
     send({ type: 'done', reply });
+    // A full-view question counts towards weekly active (Zac, 29 Sep). Extras: the outcome only. After the
+    // answer is on the page: nothing waits for it.
+    await recordActivity(job.user.id, 'si_chat_full', { extras: { outcome } });
+    // One line per question (no text): where the seconds went, for the runtime logs.
+    console.log(`[chat] full ${replyState} in ${Date.now() - started}ms (${rounds.length} rounds, first words at ${firstTextAt ? firstTextAt - started : '-'}ms)`);
     return reply;
   } catch (err) {
     console.error('[chat] full failed:', (err as Error)?.message ?? err);
-    const r = await fail(live.gone() ? 'did_not_finish' : 'failed');
-    send({ type: 'done', reply: r });
-    return r;
+    // fail() tells the page (when it's still there).
+    return await fail(live.gone() ? 'did_not_finish' : 'failed');
   } finally {
     await hold.finish().catch(() => {});
   }

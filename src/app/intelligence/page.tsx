@@ -13,7 +13,6 @@ import { requireProfileStart } from "@/lib/profile/server";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
 import { logActivity } from "@/lib/activity/log";
 import { todayKey } from "@/lib/today/day";
-import { FullAsk } from "@/components/intelligence/chat/FullAsk";
 import { chatUi } from "@/lib/chat/turns-server";
 import { MAX_QUESTION_CHARS } from "@/lib/chat/config";
 
@@ -78,7 +77,7 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
           </>
         }
         answers={data.answers}
-        chat={chat ? <FullAsk hintPence={chat.fullHintPence} floorPence={chat.fullFloorPence} initialQuestion={ask} /> : undefined}
+        chat={chat ? { hintPence: chat.fullHintPence, floorPence: chat.fullFloorPence, initialQuestion: ask, voice: chat.voice } : undefined}
       />
     </CreditProvider>
   );

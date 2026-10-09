@@ -433,6 +433,16 @@ export const SEED: readonly SeedEntry[] = [
     answer: 'Quick answers only see your account basics. Questions about your deals, picks or calls need the full view, which can look them up, for about {chat_full_cost}.',
   },
   {
+    slug: 'chat_voice',
+    from: 'batch 26b',
+    category: 'how_it_works',
+    channels: ['chat', 'view'],
+    showWhen: null,
+    question: 'Can I talk to you instead of typing?',
+    variants: ['Can I ask out loud?', 'Do you have voice?', 'Why did you answer out loud?', 'Does talking to you cost more?'],
+    answer: 'Yes. Tap the microphone by the box and ask; when you ask out loud I answer out loud, in my own voice, then listen for your next question (never while I’m speaking). Hearing you and speaking back are charged as AI voice, a little on top of the question, and nothing is charged if I don’t catch what you said.',
+  },
+  {
     slug: 'chat_history',
     from: 'batch 26',
     category: 'account',

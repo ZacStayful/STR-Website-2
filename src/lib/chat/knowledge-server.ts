@@ -30,8 +30,21 @@ export interface KnowledgeLookup {
   topConfidence: number;
 }
 
-export async function lookUpKnowledge(question: string, values: MemberValues | null, admin?: ReturnType<typeof createAdminClient>): Promise<KnowledgeLookup> {
+/** The chat's approved entries, the thresholds and the global figures: read once, ahead of the member's own. */
+export interface LoadedKnowledge {
+  entries: Awaited<ReturnType<typeof liveEntries>>;
+  settings: Awaited<ReturnType<typeof readKnowledgeSettings>>;
+  global: Awaited<ReturnType<typeof readGlobalSnapshot>>;
+}
+
+export async function loadKnowledge(admin?: ReturnType<typeof createAdminClient>): Promise<LoadedKnowledge> {
   const [entries, settings, global] = await Promise.all([liveEntries('chat', admin), readKnowledgeSettings(admin), readGlobalSnapshot(admin)]);
+  return { entries, settings, global };
+}
+
+/** Pass `loaded` when it was read alongside the member's context (quick answers do), so the two reads overlap. */
+export async function lookUpKnowledge(question: string, values: MemberValues | null, admin?: ReturnType<typeof createAdminClient>, loaded?: LoadedKnowledge): Promise<KnowledgeLookup> {
+  const { entries, settings, global } = loaded ?? (await loadKnowledge(admin));
   if (!entries || entries.length === 0) return { outcome: 'could_not_answer', answers: [], topConfidence: 0 };
   const match = matchKnowledge(entries, question, { answerMin: settings.answerMinConfidence, lowMin: settings.lowConfidenceMin, channel: 'chat', limit: 3 });
   const topConfidence = match.matches[0]?.confidence ?? 0;

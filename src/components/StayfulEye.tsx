@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, type CSSProperties } from "react";
+import { useEffect, useId, useRef, type CSSProperties } from "react";
 import type { JARVISState } from "@/types/jarvis";
 
 /**
@@ -19,6 +19,10 @@ import type { JARVISState } from "@/types/jarvis";
  *                                           and its arcs, the frame circle with crosshairs
  *                   3 Stayful Intelligence  + iris fibres, the outer pulse ring, pupil movement
  *                 "Thinking" stays brand green: it shows as speed and brightness.
+ *                 Batch 26: it also listens and speaks (the chat's voice), the
+ *                 same way: faster, brighter, the iris pulsing. A change of
+ *                 state eases the speed over ~0.7s (useEyeEase) instead of
+ *                 restarting the animations, so the eye never jumps.
  *
  * Small sizes stay clean: under 48px every 4th tick (16), no iris fibres or
  * inner iris rings, strokes at least 1px; under 32px also no crosshairs and
@@ -37,7 +41,7 @@ export type EyeVariant = "narrator" | "intelligence";
 interface StayfulEyeProps {
   size?: number;
   variant?: EyeVariant;
-  /** Narrator: any of its four states. Intelligence: idle or thinking. */
+  /** Any of the four states (the intelligence eye eases between them). */
   state?: JARVISState;
   level?: EyeLevel;
   powerUp?: number;
@@ -55,6 +59,55 @@ const NARRATOR = {
 
 const q = (n: number) => Math.round(n * 1000) / 1000;
 
+/**
+ * Batch 26: the intelligence eye's speed per state, as a multiple of its idle
+ * animation (keyframe name → rate). Its CSS durations never change; these
+ * rates are applied with the Web Animations API, which keeps each animation's
+ * place, so a ring speeds up from where it is rather than jumping.
+ */
+const EYE_RATES: Record<JARVISState, Record<string, number>> = {
+  idle: { rotateRing: 1, rotateCCW: 1, scanArc: 1, pupilScan: 1, ringPulse: 1, glowBreathe: 1, irisPulse: 0.03 },
+  thinking: { rotateRing: 6, rotateCCW: 11.6, scanArc: 6.8, pupilScan: 3.7, ringPulse: 3.2, glowBreathe: 3.9, irisPulse: 0.03 },
+  listening: { rotateRing: 4, rotateCCW: 4, scanArc: 4, pupilScan: 1.5, ringPulse: 3.2, glowBreathe: 3, irisPulse: 2.4 },
+  speaking: { rotateRing: 2.2, rotateCCW: 2.2, scanArc: 3, pupilScan: 1.5, ringPulse: 3.2, glowBreathe: 3.2, irisPulse: 1.2 },
+};
+const EASE_MS = 700;
+
+/** Eases every eye animation under `ref` to the state's rates (no-op without the Web Animations API or with reduced motion). */
+function useEyeEase(ref: React.RefObject<HTMLDivElement | null>, state: JARVISState, enabled: boolean, layout: string) {
+  const shown = useRef<JARVISState | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!enabled || !el || typeof el.getAnimations !== "function") return;
+    // Ease only a change of state; a first drawing (or a new level or size) starts at its speed.
+    const ease = shown.current !== null && shown.current !== state;
+    shown.current = state;
+    const targets = EYE_RATES[state] ?? EYE_RATES.idle;
+    const anims = el
+      .getAnimations({ subtree: true })
+      .filter((a): a is CSSAnimation => typeof (a as CSSAnimation).animationName === "string" && (a as CSSAnimation).animationName in targets);
+    if (!ease) {
+      for (const a of anims) a.playbackRate = targets[a.animationName];
+      return;
+    }
+    const from = anims.map((a) => a.playbackRate);
+    const start = performance.now();
+    let frame = 0;
+    const step = (t: number) => {
+      const k = Math.min(1, (t - start) / EASE_MS);
+      const e = k * k * (3 - 2 * k); // smoothstep
+      anims.forEach((a, i) => {
+        // Setting playbackRate keeps the animation's current time: no jump.
+        a.playbackRate = from[i] + (targets[a.animationName] - from[i]) * e;
+      });
+      if (k < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+    // `layout` re-runs this when the drawing changes (a new level or size brings new animations, at rate 1).
+  }, [ref, state, enabled, layout]);
+}
+
 export function StayfulEye({ size = 220, variant = "intelligence", state = "idle", level = 3, powerUp, label, className }: StayfulEyeProps) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const ig = `ig-${uid}`;
@@ -63,6 +116,11 @@ export function StayfulEye({ size = 220, variant = "intelligence", state = "idle
   const narrator = variant === "narrator";
   const lv: EyeLevel = narrator ? 3 : level;
   const thinking = state === "thinking";
+  const wrap = useRef<HTMLDivElement>(null);
+  // The intelligence eye keeps its idle durations and eases its speed between states.
+  const eased = !narrator;
+  useEyeEase(wrap, state, eased, `${lv}:${size}`);
+  const busy = state !== "idle";
   const cx = size / 2;
   const small = !narrator && size < 48;
   const tiny = !narrator && size < 32;
@@ -75,8 +133,8 @@ export function StayfulEye({ size = 220, variant = "intelligence", state = "idle
         c1: "var(--si-eye)",
         c2: "var(--si-eye-bright)",
         glow: "var(--si-eye-glow)",
-        or: thinking ? "8s" : lv === 0 ? "90s" : "48s",
-        scan: thinking ? "2.2s" : "15s",
+        or: lv === 0 ? "90s" : "48s",
+        scan: "15s",
       };
   const glowBg = narrator
     ? `radial-gradient(circle, ${sc.glow}dd 0%, transparent 60%)`
@@ -115,18 +173,20 @@ export function StayfulEye({ size = 220, variant = "intelligence", state = "idle
   const stroke = (c: string): { stroke?: string; style?: CSSProperties } => (narrator ? { stroke: c } : { style: { stroke: c } });
   const stop = (c: string, opacity?: string) => (narrator ? { stopColor: c, ...(opacity ? { stopOpacity: opacity } : {}) } : { style: { stopColor: c, ...(opacity ? { stopOpacity: opacity } : {}) } as CSSProperties });
 
-  const glowSpeed = narrator ? (state === "thinking" ? ".7s" : state === "speaking" ? "1.1s" : "3.5s") : thinking ? ".9s" : "3.5s";
-  const pupilAnim = narrator ? (thinking ? "pupilScan 3.8s ease-in-out infinite" : "none") : lv < 3 ? "none" : thinking ? "pupilScan 3.8s ease-in-out infinite" : "pupilScan 14s ease-in-out infinite";
-  const irisAnim = narrator ? (state === "speaking" ? "irisPulse .85s ease-in-out infinite" : state === "listening" ? "irisPulse .42s ease-in-out infinite" : "none") : "none";
+  // Narrator: durations per state, as before. Intelligence: idle durations always (useEyeEase sets the speed).
+  const glowSpeed = narrator ? (state === "thinking" ? ".7s" : state === "speaking" ? "1.1s" : "3.5s") : "3.5s";
+  const pupilAnim = narrator ? (thinking ? "pupilScan 3.8s ease-in-out infinite" : "none") : lv < 3 ? "none" : "pupilScan 14s ease-in-out infinite";
+  const irisAnim = narrator ? (state === "speaking" ? "irisPulse .85s ease-in-out infinite" : state === "listening" ? "irisPulse .42s ease-in-out infinite" : "none") : "irisPulse 1s ease-in-out infinite";
 
   const wrapStyle: CSSProperties = { position: "relative", width: size, height: size, flexShrink: 0 };
   if (!narrator) {
     if (lv === 0) wrapStyle.opacity = 0.6;
-    if (thinking) wrapStyle.filter = "brightness(1.2)";
+    wrapStyle.filter = busy ? "brightness(1.2)" : "brightness(1)";
+    wrapStyle.transition = `filter ${EASE_MS}ms ease`;
   }
 
   return (
-    <div style={wrapStyle} className={className} {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}>
+    <div ref={wrap} style={wrapStyle} className={className} {...(label ? { role: "img", "aria-label": label } : { "aria-hidden": true })}>
       {lv >= 1 && (
         <div
           style={{
@@ -204,7 +264,7 @@ export function StayfulEye({ size = 220, variant = "intelligence", state = "idle
         {lv >= 2 && (
           <g
             style={{
-              animation: `rotateCCW ${thinking ? "5s" : "58s"} linear infinite`,
+              animation: `rotateCCW ${narrator && thinking ? "5s" : "58s"} linear infinite`,
               transformOrigin: `${cx}px ${cx}px`,
             }}
           >
@@ -281,7 +341,7 @@ export function StayfulEye({ size = 220, variant = "intelligence", state = "idle
             stroke={narrator ? sc.c1 : undefined}
             strokeWidth={w(0.5)}
             opacity=".2"
-            style={{ ...(narrator ? {} : { stroke: sc.c1 }), animation: `ringPulse ${narrator ? (state !== "idle" ? "1.4s" : "4.5s") : thinking ? "1.4s" : "4.5s"} ease-in-out infinite` }}
+            style={{ ...(narrator ? {} : { stroke: sc.c1 }), animation: `ringPulse ${narrator ? (state !== "idle" ? "1.4s" : "4.5s") : "4.5s"} ease-in-out infinite` }}
           />
         )}
       </svg>

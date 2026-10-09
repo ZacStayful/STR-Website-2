@@ -65,7 +65,12 @@ export async function chatSettingsForPage(): Promise<ChatSettings | null> {
 export async function chatUi(): Promise<ChatUi | null> {
   const s = await chatSettingsForPage();
   if (!s || !s.enabled) return null;
-  return { quickHintPence: s.quickHintPence, fullHintPence: s.fullHintPence, quickFloorPence: s.quickFloorPence, fullFloorPence: s.fullFloorPence };
+  return { quickHintPence: s.quickHintPence, fullHintPence: s.fullHintPence, quickFloorPence: s.quickFloorPence, fullFloorPence: s.fullFloorPence, voice: voiceOn(s) };
+}
+
+/** Batch 26b: the microphone and spoken answers: the setting, and ElevenLabs configured. */
+export function voiceOn(settings: ChatSettings): boolean {
+  return settings.voice && Boolean(process.env.ELEVENLABS_API_KEY);
 }
 
 /** The env switch: off until SI_CHAT_ENABLED=true (README, Batch 26 deploy steps). */

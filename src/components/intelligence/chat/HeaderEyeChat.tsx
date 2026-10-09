@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { StayfulEye, type EyeLevel } from "@/components/StayfulEye";
+import { X } from "lucide-react";
+import type { EyeLevel } from "@/components/StayfulEye";
 import { EYE_NAV } from "@/lib/nav";
 import type { ChatUi } from "@/lib/chat/reply";
-import { QuickAsk } from "./QuickAsk";
+import { ChatEye } from "./ChatEye";
+import { QuickChat } from "./QuickChat";
 
 /**
  * Batch 26: the header eye once the chat is on (Zac, 29 Sep). On a phone it
- * opens quick answers full screen (/intelligence/ask, with "Open full view").
- * On a desktop it drops a small panel under the eye with the quick box and
- * "Open full view". Without JavaScript it is still the link to the view.
+ * opens quick answers full screen (/intelligence/ask, with "Full view"). On
+ * a desktop it drops a panel under the eye: the eye that thinks, listens and
+ * speaks, the answers, and the box (type or talk) pinned at its foot. Without
+ * JavaScript it is still the link to the view.
  */
 export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel; style?: CSSProperties; onDark: CSSProperties; chat: ChatUi }) {
   const [open, setOpen] = useState(false);
@@ -22,7 +25,7 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
   useEffect(() => {
     if (!open) return;
     // Reopening a kept panel: back to the box (autoFocus only works the first time).
-    wrap.current?.querySelector<HTMLInputElement>("[role=dialog] input")?.focus();
+    wrap.current?.querySelector<HTMLTextAreaElement>("[role=dialog] textarea")?.focus();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     const onClick = (e: MouseEvent) => wrap.current && !wrap.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener("keydown", onKey);
@@ -35,7 +38,7 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
 
   const eye = (
     <span style={{ lineHeight: 0 }}>
-      <StayfulEye size={24} level={level} />
+      <ChatEye size={24} level={level} />
     </span>
   );
   // No inline display: the classes below decide which link shows (an inline display would beat them).
@@ -71,16 +74,26 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
           role="dialog"
           aria-label="Ask Stayful Intelligence"
           hidden={!open}
-          className={`absolute left-0 top-full z-50 mt-2 w-[380px] rounded-2xl border border-white/10 bg-[#2E3D2B] p-4 text-left text-white shadow-2xl ${open ? "hidden sm:block" : "hidden"}`}
+          className={`absolute left-0 top-full z-50 mt-2 h-[min(560px,75vh)] w-[400px] flex-col rounded-2xl border border-white/10 bg-[#2E3D2B] p-4 text-left text-white shadow-2xl ${open ? "hidden sm:flex" : "hidden"}`}
           style={{ ...onDark, whiteSpace: "normal" }}
         >
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold">Ask Stayful Intelligence</span>
-            <Link href={`${EYE_NAV.href}#si-ask`} className="text-xs font-semibold text-[#B9D5C6] underline underline-offset-4" onClick={() => setOpen(false)}>
-              Open full view
-            </Link>
+          <div className="mb-3 flex shrink-0 items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-sm font-semibold">
+              <ChatEye size={32} level={level} />
+              Ask Stayful Intelligence
+            </span>
+            <span className="flex items-center gap-3">
+              <Link href={`${EYE_NAV.href}#si-ask`} className="text-xs font-semibold text-[#B9D5C6] underline underline-offset-4" onClick={() => setOpen(false)}>
+                Full view
+              </Link>
+              <button type="button" aria-label="Close" onClick={() => setOpen(false)} className="rounded-full p-1 text-[#B9D5C6] hover:bg-white/10">
+                <X className="size-4" aria-hidden />
+              </button>
+            </span>
           </div>
-          <QuickAsk hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} />
+          <div className="min-h-0 flex-1">
+            <QuickChat hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} voice={chat.voice} inputId="si-quick-panel-q" autoFocus />
+          </div>
         </div>
       )}
     </span>

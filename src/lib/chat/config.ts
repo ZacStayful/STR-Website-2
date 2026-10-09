@@ -94,5 +94,19 @@ export const OUT_OF_ROOM_LINE = 'I ran out of room on that one before I could an
 /** Something went wrong before an answer. */
 export const FAILED_LINE = 'Something went wrong, so you weren’t charged. Ask again in a moment.';
 
+/**
+ * Batch 26b: the microphone. One spoken question is at most VOICE_MAX_SECONDS
+ * (the page stops recording there) and VOICE_MAX_BYTES; ElevenLabs Scribe
+ * turns it into text, in British English.
+ */
+export const VOICE_MAX_SECONDS = 30;
+export const VOICE_MAX_BYTES = 3_000_000;
+export const STT_MODEL = 'scribe_v2';
+export const STT_LANGUAGE = 'en';
+export const STT_TIMEOUT_MS = 15_000;
+
+/** Batch 26b: one-tap questions in an empty quick box (each is an ordinary quick question, about 1p). */
+export const QUICK_SUGGESTIONS = ['How much credit have I got?', 'How much is a full analysis?', 'How do my daily picks work?'] as const;
+
 /** The two suggestions shown in an empty full view beside Batch 22's chips (Zac's default). */
 export const FULL_SUGGESTIONS = ["Why can't you find me anything?", 'What should I look at today?'] as const;

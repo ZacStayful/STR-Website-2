@@ -2,10 +2,47 @@
 	"$schema": "https://openapi.vercel.sh/vercel.json",
 	"functions": {
 		"src/app/api/chat/quick/route.ts": {
-			"supportsCancellation": true
+			"supportsCancellation": true,
+			"regions": [
+				"fra1"
+			]
 		},
 		"src/app/api/chat/full/route.ts": {
-			"supportsCancellation": true
+			"supportsCancellation": true,
+			"regions": [
+				"fra1"
+			]
+		},
+		"src/app/api/chat/listen/route.ts": {
+			"supportsCancellation": true,
+			"regions": [
+				"fra1"
+			]
+		},
+		"src/app/api/chat/history/route.ts": {
+			"regions": [
+				"fra1"
+			]
+		},
+		"src/app/api/chat/facts/route.ts": {
+			"regions": [
+				"fra1"
+			]
+		},
+		"src/app/api/chat/turns/[id]/unhappy/route.ts": {
+			"regions": [
+				"fra1"
+			]
+		},
+		"src/app/intelligence/page.tsx": {
+			"regions": [
+				"fra1"
+			]
+		},
+		"src/app/intelligence/ask/page.tsx": {
+			"regions": [
+				"fra1"
+			]
 		}
 	},
 	"crons": [

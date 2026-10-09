@@ -43,7 +43,7 @@ function MoneyRow({ label, m }: { label: string; m: Money }) {
   );
 }
 
-const FIELDS = Object.keys(CHAT_SETTING_BOUNDS) as Exclude<keyof ChatSettings, "enabled">[];
+const FIELDS = Object.keys(CHAT_SETTING_BOUNDS) as Exclude<keyof ChatSettings, "enabled" | "voice">[];
 
 /**
  * Batch 26: the typed chat in Stayful Intelligence's admin (Batch 24's
@@ -224,6 +224,9 @@ export default async function ChatAdminPage() {
             <form action={saveChatSettingsAction} className="mt-3 space-y-4">
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" name="enabled" defaultChecked={load.data.settings.enabled} /> The chat is on (SI_CHAT_ENABLED must also be true)
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="voice" defaultChecked={load.data.settings.voice} /> Voice is on (the microphone, and answers spoken back; each is charged as AI voice)
               </label>
               <div className="grid gap-3 sm:grid-cols-3">
                 {FIELDS.map((f) => (

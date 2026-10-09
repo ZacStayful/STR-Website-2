@@ -11,6 +11,8 @@
 export interface ChatSettings {
   /** Off hides the box (SI_CHAT_ENABLED=true is also needed). */
   enabled: boolean;
+  /** Off hides the microphone and answers aren't spoken (typing still works). */
+  voice: boolean;
   /** A question costs its actual tokens × this. */
   markup: number;
   /** The most one quick answer can cost, base pence; the answer is sized to fit. */
@@ -41,10 +43,11 @@ export interface ChatSettings {
   maxUnchargedPerDay: number;
 }
 
-type NumberField = Exclude<keyof ChatSettings, 'enabled'>;
+type NumberField = Exclude<keyof ChatSettings, 'enabled' | 'voice'>;
 
 export const CHAT_SETTING_KEYS: Record<keyof ChatSettings, string> = {
   enabled: 'si_chat_enabled',
+  voice: 'si_chat_voice_enabled',
   markup: 'si_chat_markup',
   quickCeilingPence: 'si_chat_quick_ceiling_pence',
   fullCeilingPence: 'si_chat_full_ceiling_pence',
@@ -63,6 +66,7 @@ export const CHAT_SETTING_KEYS: Record<keyof ChatSettings, string> = {
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   enabled: true,
+  voice: true,
   markup: 5,
   quickCeilingPence: 3,
   fullCeilingPence: 25,
@@ -138,6 +142,8 @@ export function parseChatSettings(rows: ReadonlyMap<string, unknown>): ChatSetti
   const out: ChatSettings = { ...DEFAULT_CHAT_SETTINGS };
   const enabled = rows.get(CHAT_SETTING_KEYS.enabled);
   if (enabled === false || enabled === 'false') out.enabled = false;
+  const voice = rows.get(CHAT_SETTING_KEYS.voice);
+  if (voice === false || voice === 'false') out.voice = false;
   for (const field of NUMBER_FIELDS) {
     const v = inBounds(rows.get(CHAT_SETTING_KEYS[field]), CHAT_SETTING_BOUNDS[field]);
     if (v !== null) out[field] = v;
@@ -151,7 +157,8 @@ export type ChatFormResult = { ok: true; settings: ChatSettings } | { ok: false;
 
 /** The Chat admin page's form. Every number is required; the switch is a checkbox. */
 export function validateChatForm(get: (name: string) => string | null): ChatFormResult {
-  const out: ChatSettings = { ...DEFAULT_CHAT_SETTINGS, enabled: get('enabled') === 'on' || get('enabled') === 'true' };
+  const on = (name: string) => get(name) === 'on' || get(name) === 'true';
+  const out: ChatSettings = { ...DEFAULT_CHAT_SETTINGS, enabled: on('enabled'), voice: on('voice') };
   for (const field of NUMBER_FIELDS) {
     const b = CHAT_SETTING_BOUNDS[field];
     const v = inBounds(get(field), b);
