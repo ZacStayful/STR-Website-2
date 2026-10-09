@@ -7403,6 +7403,7 @@ create table if not exists public.standout_decisions (
   checked integer,
   reveal_pct integer,
   profit_low_pcm integer,
+  profit_high_pcm integer,
   profit_basis text,
   min_profit_pcm integer,
   live_confirmed_at timestamptz,

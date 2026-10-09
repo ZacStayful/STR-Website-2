@@ -22,6 +22,7 @@ import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibili
 import { logActivity } from '../activity/log';
 import { loadTrackedDeals } from '../listing/tracked-server';
 import { KEPT_STATUS } from '../listing/pipeline';
+import { siSavedDealIds } from '../standout/saved-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -181,8 +182,9 @@ async function evidenceFor(admin: Admin, userId: string, marketGoals: unknown): 
   // listing they pasted and kept. Scope 'own', never the team's.
   const keptOnMyDeals = async (): Promise<number> => {
     try {
-      const load = await loadTrackedDeals(userId, { scope: 'own' });
-      return load.view.filter((v) => v.mine && v.stage === KEPT_STATUS).length;
+      const [load, siSaved] = await Promise.all([loadTrackedDeals(userId, { scope: 'own' }), siSavedDealIds(admin, userId)]);
+      // Batch 25: a deal Stayful Intelligence saved is not one the member kept (it earns nothing until they make it theirs).
+      return load.view.filter((v) => v.mine && v.stage === KEPT_STATUS && !(v.dealId && siSaved.has(v.dealId))).length;
     } catch (err) {
       console.warn('[checklist] kept read failed:', (err as Error).message);
       return 0;

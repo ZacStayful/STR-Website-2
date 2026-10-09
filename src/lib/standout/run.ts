@@ -494,6 +494,7 @@ function decisionRow(m: StandoutMember, profileId: string, dealId: string, outco
     checked: j.checked,
     reveal_pct: revealPct,
     profit_low_pcm: j.profitLow === null ? null : Math.round(j.profitLow),
+    profit_high_pcm: j.profitHigh === null ? null : Math.round(j.profitHigh),
     profit_basis: j.profitBasis,
     min_profit_pcm: j.minProfit === null ? null : Math.round(j.minProfit),
     live_confirmed_at: liveConfirmedAt,

@@ -32,6 +32,7 @@ import { PAID_VISIBILITY, type DealVisibility, dealVisibleTo } from './visibilit
 import type { DealOpenRow, DealRow, VerifiedVia } from './types';
 import type { ListingSnapshot } from '../listing/types';
 import { KEPT_STATUS, type PipelineStatus } from '../listing/pipeline';
+import { isFreeStandoutOpen, noteMemberActed } from '../standout/saved-server';
 
 /** Fetch-backed opens one member may make in an hour: enough to browse, not enough to trip the shared breaker. */
 export const OPENS_WITH_FETCH_PER_HOUR = 20;
@@ -92,7 +93,9 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
 
   // ── Price and balance, before any fetch ──
   const settings = await getBillingSettings();
-  const pence = input.adminUser ? 0 : openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
+  // Batch 25: a deal Stayful Intelligence saved for this account opens free (that deal only; the ladder is untouched).
+  const freeStandout = !input.adminUser && (await isFreeStandoutOpen(input.userId, deal.id));
+  const pence = input.adminUser || freeStandout ? 0 : openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
   if (pence > 0 && isEnforcing()) {
     const bal = await getBalance(input.userId).catch(() => null);
     if (!bal || bal.spendableBasePence < pence) return { ok: false, code: 'insufficient_credit', requiredPence: pence, availablePence: Math.max(0, Math.round(bal?.spendableBasePence ?? 0)) };
@@ -219,6 +222,8 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
     await admin.from('deal_opens').delete().eq('id', row.id).eq('status', 'pending');
     return { ok: false, code: latest?.status === 'retired' ? 'just_gone' : 'failed' };
   }
+  // Batch 25: the label on a deal Stayful Intelligence saved comes off once it is opened.
+  if (freeStandout) await noteMemberActed(input.userId, deal.id, 'opened');
   return { ok: true, alreadyOpen: false, verifiedVia: input.adminUser ? 'admin' : decision.verifiedVia, chargedBasePence: pence };
 }
 

@@ -266,6 +266,7 @@ export interface DecisionRow {
   checked?: number | null;
   reveal_pct?: number | null;
   profit_low_pcm?: number | null;
+  profit_high_pcm?: number | null;
   profit_basis?: string | null;
   min_profit_pcm?: number | null;
   live_confirmed_at?: string | null;

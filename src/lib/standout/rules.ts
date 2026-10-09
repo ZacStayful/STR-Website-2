@@ -39,6 +39,8 @@ export interface StandoutJudgement {
   checked: number;
   /** The profit figure the profit check reads, £ a month (low end). */
   profitLow: number | null;
+  /** The top of the same range, £ a month (for the wording, never judged). */
+  profitHigh: number | null;
   profitBasis: ProfitBasis;
   /** The member's minimum for this deal type, £ a month. */
   minProfit: number | null;
@@ -80,9 +82,10 @@ export function judgeStandout(i: StandoutInput): StandoutJudgement {
   const dealType = typeOfFacts(i.facts);
   const matchPct = matchPctOf(j);
   const profitLow = i.figures.range ? i.figures.range.lowPcm : null;
+  const profitHigh = i.figures.range ? i.figures.range.highPcm : null;
   const minProfit = minProfitFor(i.facts, i.wants);
   const profitBar = minProfit === null ? null : profitBarFor(minProfit, i.settings.profitOverMinPct);
-  const base = { dealType, matchPct, met: j.met, checked: j.checked, profitLow, profitBasis: profitBasisOf(i.facts), minProfit, profitBar };
+  const base = { dealType, matchPct, met: j.met, checked: j.checked, profitLow, profitHigh, profitBasis: profitBasisOf(i.facts), minProfit, profitBar };
   const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...base });
 
   if (!i.chosenTypes.includes(dealType)) return no('type_not_chosen', false);

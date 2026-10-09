@@ -9,6 +9,7 @@ import { dealIdOfItemKey } from '@/lib/activity/event';
 import { payerFor } from '@/lib/team';
 import { quoterFor } from '@/lib/credit/quote-server';
 import { priceText } from '@/lib/credit/deal-pricing';
+import { labelledSaves, noteMemberActed, undoNotForMe } from '@/lib/standout/saved-server';
 
 export type StageActionResult =
   | { ok: true; stage: PipelineStatus }
@@ -37,4 +38,34 @@ export async function setDealStageAction(key: unknown, stage: unknown, from?: un
     return { ok: false, error: 'needs_open', openPence: res.openPence, openLabel: priceText(quoter.label(admin ? 0 : res.openPence)) };
   }
   return { ok: false, error: res.code };
+}
+
+export type NotForMeResult = { ok: true } | { ok: false; error: 'signed_out' | 'missing' | 'failed' };
+
+/**
+ * Batch 25: "Not for me" on a deal Stayful Intelligence saved. One tap, no
+ * confirm: the deal goes to Passed as the member's own Pass (tailoring and
+ * the picks learn from it, and it counts towards weekly active), and the
+ * label comes off. Undo within a few seconds puts the save back.
+ */
+export async function notForMeAction(dealId: unknown): Promise<NotForMeResult> {
+  if (typeof dealId !== 'string' || !/^[0-9a-f-]{36}$/i.test(dealId)) return { ok: false, error: 'failed' };
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'signed_out' };
+  if (!(await labelledSaves(user.id)).has(dealId)) return { ok: false, error: 'missing' };
+  const res = await setStageForMember({ userId: user.id, adminUser: isAdminEmail(user.email), key: `d-${dealId}`, stage: 'passed' });
+  if (!res.ok) return { ok: false, error: res.code === 'missing' ? 'missing' : 'failed' };
+  await noteMemberActed(user.id, dealId, 'not_for_me');
+  logActivity(user.id, 'pass', { dealId, extras: { via: 'si_saved' } });
+  return { ok: true };
+}
+
+/** Undo "Not for me" (the page offers it for five seconds; the server allows a minute). */
+export async function undoNotForMeAction(dealId: unknown): Promise<NotForMeResult> {
+  if (typeof dealId !== 'string' || !/^[0-9a-f-]{36}$/i.test(dealId)) return { ok: false, error: 'failed' };
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'signed_out' };
+  return (await undoNotForMe(user.id, dealId)) ? { ok: true } : { ok: false, error: 'failed' };
 }

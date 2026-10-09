@@ -34,6 +34,7 @@ import { motivationLabel, parseMotivation } from "@/lib/listing/motivation";
 import { dealListingFor, dealSheet } from "@/lib/marketplace/open";
 import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { openPricePence } from "@/lib/marketplace/ladder";
+import { isFreeStandoutOpen } from "@/lib/standout/saved-server";
 import { AUCTION_LABEL, badgesFor, describeType, isAuctionCard, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
 import { moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/marketplace/profit-range";
@@ -135,7 +136,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const area = deal.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
   const areaCard = deal.postcode_area ? cards.find((c) => c.code === deal.postcode_area) ?? null : null;
   const profit = deal.annual_profit === null ? null : Number(deal.annual_profit);
-  const ladderPence = openPricePence(profit, settings.dealOpenLadder);
+  // Batch 25: a deal Stayful Intelligence saved for this account opens free (only this deal: the ladder is untouched).
+  const freeStandoutOpen = !priv && !adminUser ? await isFreeStandoutOpen(payerId, deal.id) : false;
+  const ladderPence = freeStandoutOpen ? 0 : openPricePence(profit, settings.dealOpenLadder);
   const screening = parseScreening(deal.screening);
   // Batch 16: the deal's own comparables check, when it has one (the count is all the page says of it).
   const check = checkOf(deal.screening);

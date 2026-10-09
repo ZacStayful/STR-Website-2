@@ -74,6 +74,8 @@ import { siteUrl } from "../url";
 import { emailBriefingsFor } from "../briefing/email";
 import { revealedFor } from "../intelligence/reveal-server";
 import { recordScanDays } from "../home/scan-record";
+import { siSavedPairs } from "../standout/saved-server";
+import { markSavedEmailed, savedForYouFor } from "../standout/email-server";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
 // Every member with picks on (profiles.sourcing_alerts, default on) who has
@@ -838,6 +840,19 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     }
   }
 
+  // Batch 25: a deal Stayful Intelligence saved for a member is never their
+  // pick: a pick is an automatic open, charged, and opening a saved deal is
+  // free. Its list's own exclusion (any Keep) keeps it off Today.
+  if (urlToDealId.size > 0) {
+    const urlOf = new Map([...urlToDealId].map(([url, id]) => [id, url]));
+    const saved = await siSavedPairs(admin, [...new Set(members.map((m) => m.id))], [...urlToDealId.values()]);
+    for (const key of saved) {
+      const [userId, dealId] = key.split(":");
+      const url = urlOf.get(dealId);
+      if (url) sentByUser.set(userId, new Set([...(sentByUser.get(userId) ?? []), url]));
+    }
+  }
+
   // What "slow" means round here. Computed from the listings each query already
   // returned, so it costs nothing: no provider call, no extra read. Areas with
   // too thin a sample answer null, and the area test is then skipped rather than
@@ -1220,6 +1235,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // anyone due it who pays for themselves (a team's owner decides for it).
   // Never on the admin's test send, which marks nothing.
   const lowNotices = opts.ignoreToday ? new Map<string, never>() : await lowCreditNoticesFor(admin, dailyIds.filter((id) => payerIn(payers, id).payerId === id));
+  // Batch 25: deals Stayful Intelligence saved for them and did not ring them about ("Saved for you").
+  const savedForYou = opts.ignoreToday ? new Map<string, never>() : await savedForYouFor(admin, dailyIds, siteUrl());
 
   // ── One pick per member: the best candidate that passes, under the daily cap ──
   const picks: { member: Member; pick: Ranked; alternates: Ranked[]; candidates: number; nearMiss: boolean }[] = [];
@@ -1579,6 +1596,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       // Part E: About you is the member's own, so any seat's answer is theirs.
       actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
       briefing: briefings.get(userId) ?? null,
+      savedForYou: savedForYou.get(userId) ?? null,
     });
     const mail = built ? renderEmail(built.message) : null;
     const failRows = async () => {
@@ -1631,6 +1649,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     summary.emails += 1;
     // Batch 20: the low-credit decision went with it: once a cycle.
     if (lowNotices.has(userId)) await markLowCreditTold(admin, userId);
+    // Batch 25: the "Saved for you" deals in it are told.
+    if (built.savedIds.length > 0) await markSavedEmailed(admin, userId, built.savedIds);
     summary.sections += parts.length;
     summary.unfunded += unfunded.length;
     const sentAt = new Date().toISOString();

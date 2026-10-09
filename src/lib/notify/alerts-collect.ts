@@ -22,6 +22,7 @@ import { textAlertMemberIds } from '../sms/store';
 import { allProfilesFor } from '../profiles/server';
 import { labelsShown } from '../profiles/rules';
 import { profileTagsFor } from '../profiles/deal-tags';
+import { siKey, siSavedPairs } from '../standout/saved-server';
 
 const PAGE = 1000;
 const ID_CHUNK = 150;
@@ -184,6 +185,11 @@ export async function runCollector(opts: { dry: boolean; onlyUserIds?: string[] 
       if (keepErr) console.warn('[collect] keeps read failed:', keepErr.message);
       keepers.push(...((keeps ?? []) as { user_id: string; deal_id: string }[]));
     }
+    // Batch 25: a deal Stayful Intelligence saved for someone is not their interest in it.
+    const siSaved = keepers.length > 0 ? await siSavedPairs(admin, [...new Set(keepers.map((k) => k.user_id))], [...new Set(keepers.map((k) => k.deal_id))]) : new Set<string>();
+    const ownKeepers = keepers.filter((k) => !siSaved.has(siKey(k.user_id, k.deal_id)));
+    keepers.length = 0;
+    keepers.push(...ownKeepers);
     const keeperPayers = await payersForAll([...new Set(keepers.map((k) => k.user_id))]);
     for (const k of keepers) watcherAccounts.set(k.deal_id, new Set([...(watcherAccounts.get(k.deal_id) ?? []), keeperPayers.get(k.user_id)?.payerId ?? k.user_id]));
     // Admins' own browsing is not market interest.

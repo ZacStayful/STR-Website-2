@@ -168,14 +168,26 @@ export async function loadSheet(ctx: RunContext, m: MemberLite): Promise<LoadedS
       return null;
     }),
     ctx.lastWeek
-      ? ctx.admin
-          .from('deal_reactions')
-          .select('deal_id', { count: 'exact', head: true })
-          .eq('user_id', m.userId)
-          .eq('reaction', 'keep')
-          .gte('created_at', `${ctx.lastWeek.from}T00:00:00Z`)
-          .lt('created_at', `${addDays(ctx.lastWeek.to, 1)}T00:00:00Z`)
-          .then((r) => r.count ?? 0)
+      ? Promise.all([
+          ctx.admin
+            .from('deal_reactions')
+            .select('deal_id', { count: 'exact', head: true })
+            .eq('user_id', m.userId)
+            .eq('reaction', 'keep')
+            .gte('created_at', `${ctx.lastWeek.from}T00:00:00Z`)
+            .lt('created_at', `${addDays(ctx.lastWeek.to, 1)}T00:00:00Z`)
+            .then((r) => r.count ?? 0),
+          // Batch 25: deals Stayful Intelligence saved are not ones the member kept (read on its own: 0 before the schema is run).
+          ctx.admin
+            .from('deal_reactions')
+            .select('deal_id', { count: 'exact', head: true })
+            .eq('user_id', m.userId)
+            .eq('reaction', 'keep')
+            .not('saved_by', 'is', null)
+            .gte('created_at', `${ctx.lastWeek.from}T00:00:00Z`)
+            .lt('created_at', `${addDays(ctx.lastWeek.to, 1)}T00:00:00Z`)
+            .then((r) => (r.error ? 0 : r.count ?? 0)),
+        ]).then(([all, si]) => Math.max(0, all - si))
       : Promise.resolve(0),
   ]);
 

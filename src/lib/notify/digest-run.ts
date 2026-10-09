@@ -65,6 +65,7 @@ import { labelFor, profileLinks, seatsFor, type Seat } from '../profiles/rules';
 import { GOALS_EDITOR_HREF } from '../nav';
 import type { ProfileDeals } from './message';
 import type { MarketGoals } from '../market/goals';
+import { markSavedEmailed, savedForYouFor } from '../standout/email-server';
 
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
@@ -287,6 +288,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   const lowNotices = await lowCreditNoticesFor(admin, open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => p.id), now, { preview: opts.dry });
   // Batch 23b: the morning briefings the 06:40 pass stored, in one read (none: the emails go as they were).
   const briefings = await emailBriefingsFor(base, open.filter(wantsTeasers).map((p) => p.id), now);
+  // Batch 25: deals Stayful Intelligence saved for them and did not ring them about ("Saved for you").
+  const savedForYou = await savedForYouFor(admin, open.filter(wantsTeasers).map((p) => p.id), base);
 
   await mapLimit(open, SEND_CONCURRENCY, async (p) => {
     if (elapsed() > TIME_BUDGET_MS) {
@@ -343,6 +346,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       answerToken: token,
       actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
       briefing: wantsTeasers(p) ? briefings.get(p.id) ?? null : null,
+      savedForYou: wantsTeasers(p) ? savedForYou.get(p.id) ?? null : null,
     });
     // Named for what the email IS, after the early-access backstop has had its
     // say: a Today's 5 whose teasers were all dropped is a changes email, and
@@ -387,6 +391,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         free: freeTeasers.has(p.id) ? 'no_credit' : incomplete.has(p.id) ? 'profile_incomplete' : null,
         payer: payers.get(p.id)?.payerId ?? p.id,
         lowCredit: lowNotices.get(p.id)?.kind ?? null,
+        savedForYou: built.savedIds.length,
       });
       perUser.push({ user: p.id, sent: false, kind: built.message.kind, reason: 'would_send' });
       return;
@@ -419,6 +424,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     summary.emails += 1;
     // Batch 20: the low-credit decision went with it: once a cycle.
     if (lowNotices.has(p.id)) await markLowCreditTold(admin, p.id, now);
+    // Batch 25: the "Saved for you" deals in it are told.
+    if (built.savedIds.length > 0) await markSavedEmailed(admin, p.id, built.savedIds, now);
     if (built.message.kind === 'todays_5') summary.todays5 += 1;
     else summary.changesOnly += 1;
     for (const [i, part] of parts.entries()) {

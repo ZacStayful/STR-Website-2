@@ -23,6 +23,7 @@ import { ReportsList } from "./_components/ReportsList";
 import { profilesFor } from "@/lib/profiles/server";
 import { profileTagsFor } from "@/lib/profiles/deal-tags";
 import { labelsShown, profileLabel } from "@/lib/profiles/rules";
+import { freeStandoutOpens, labelledSaves } from "@/lib/standout/saved-server";
 
 export const metadata: Metadata = {
   title: "My deals — Stayful Intelligence",
@@ -89,7 +90,7 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
   // Batch 10: each marketplace deal's range at this member's finance, its
   // badges, and its prices at what they pay.
   const dealIds = [...new Set(view.map((v) => v.dealId).filter((id): id is string => Boolean(id)))];
-  const [states, quoter, profileRes, visibility] = await Promise.all([cardStatesFor(supabase, user.id, load.payerId, dealIds), quoterFor(load.payerId, adminUser), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), dealVisibilityFor(user.id, adminUser)]);
+  const [states, quoter, profileRes, visibility, siLabelled, siFree] = await Promise.all([cardStatesFor(supabase, user.id, load.payerId, dealIds), quoterFor(load.payerId, adminUser), supabase.from("profiles").select("market_goals").eq("id", user.id).maybeSingle(), dealVisibilityFor(user.id, adminUser), labelledSaves(user.id), freeStandoutOpens(load.payerId, dealIds)]);
   const activeGoals = parseMarketGoals(profileRes.data?.market_goals);
   const activeFinance = activeGoals?.finance ?? null;
   const viewFor = (item: ViewerDeal) => {
@@ -131,6 +132,8 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
       personName={nameOf}
       view={viewFor(item)}
       profileName={profileNameOf(item)}
+      siSaved={item.dealId ? siLabelled.has(item.dealId) : false}
+      freeOpen={item.dealId ? siFree.has(item.dealId) : false}
       reportAction={
         item.reportId ? (
           <Link href={`/reports/${item.reportId}?back=${encodeURIComponent(myDealsFocusPath(item.key))}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">

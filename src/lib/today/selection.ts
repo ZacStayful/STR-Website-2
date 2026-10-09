@@ -43,6 +43,7 @@ import { feedbackForMember } from './feedback';
 import { latestRestartsFor } from '../profiles/server';
 import { learningSince } from '../profiles/reset';
 import { todayKey, todayStart } from './day';
+import { siSavedDealIds } from '../standout/saved-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -422,7 +423,9 @@ async function keepsByType(admin: Admin, member: MemberContext, windowStart: Dat
     console.warn('[today] keeps by type unreadable:', error.message);
     return {};
   }
-  const types = await dealTypesByIds(((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id));
+  // Batch 25: only the member's own Keeps shift the mix, never a deal Stayful Intelligence saved for them.
+  const siSaved = await siSavedDealIds(admin, member.userId);
+  const types = await dealTypesByIds(((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id).filter((id) => !siSaved.has(id)));
   const out: Partial<Record<DealType, number>> = {};
   for (const t of types.values()) out[t] = (out[t] ?? 0) + 1;
   return out;
