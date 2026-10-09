@@ -116,10 +116,17 @@ export async function lowCreditNoticesFor(admin: Admin, userIds: readonly string
     }
     for (const r of (data ?? []) as { u: string; total: number | string; spendable: number | string }[]) balances.set(r.u, { total: Number(r.total) || 0, spendable: Number(r.spendable) || 0 });
   }
-  const due = candidates.filter((p) => {
+  const owed = candidates.filter((p) => {
     const b = balances.get(p.id);
     return Boolean(b) && lowCreditDue({ noPlan: true, balancePence: b!.total, spendableBasePence: b!.spendable, lowCreditPence, lastToldAt: p.last_low_balance_email_at, alertsOn: true, hasEmail: true, admin: false, now });
   });
+  // Batch 25, Part C: a slower spender gets Stayful Intelligence's auto top-up nudge instead
+  // (claimed here when the run is real; a preview only reads), so no £5 notice for them.
+  const due: ProfileRow[] = [];
+  const { claimNudgeIfDue } = await import('../standout/nudge-server');
+  for (const p of owed) {
+    if (!(await claimNudgeIfDue(admin, p.id, now, { apply: !opts.preview, balancePence: balances.get(p.id)!.total }))) due.push(p);
+  }
   // A few at a time (each reads the saved card from Stripe and the pack's
   // state): the day this goes live, everyone at £5 or less is due at once,
   // inside the picks run's time.

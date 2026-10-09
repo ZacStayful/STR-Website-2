@@ -156,6 +156,14 @@
 		{
 			"path": "/api/internal/si-calls",
 			"schedule": "*/5 * * * *"
+		},
+		{
+			"path": "/api/internal/standout",
+			"schedule": "35 * * * *"
+		},
+		{
+			"path": "/api/internal/standout",
+			"schedule": "58 6 * * *"
 		}
 	]
 }

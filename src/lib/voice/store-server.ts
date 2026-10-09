@@ -163,7 +163,7 @@ export async function contactCardSent(admin: Admin, userId: string): Promise<boo
 }
 
 /** The last link-template text a call sent this member (for "resend the last link"). */
-export async function lastTemplateSent(admin: Admin, userId: string): Promise<'contact_card' | 'auto_topup_link' | null> {
+export async function lastTemplateSent(admin: Admin, userId: string): Promise<'contact_card' | 'auto_topup_link' | 'deal_link' | null> {
   const { data, error } = await admin
     .from('si_call_charges')
     .select('charge_key')
@@ -174,6 +174,7 @@ export async function lastTemplateSent(admin: Admin, userId: string): Promise<'c
   if (error) return null;
   for (const r of (data ?? []) as { charge_key: string }[]) {
     if (r.charge_key.endsWith(':auto_topup_link')) return 'auto_topup_link';
+    if (r.charge_key.endsWith(':deal_link')) return 'deal_link';
     if (r.charge_key.endsWith(':contact_card')) return 'contact_card';
   }
   return null;

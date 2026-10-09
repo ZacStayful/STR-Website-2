@@ -2,7 +2,9 @@ import 'server-only';
 
 /**
  * Batch 23: the emails around Stayful Intelligence calls.
- *   missedCallEmail   to the member: "I tried to call you" (wording in src/lib/voice/templates.ts)
+ *   missedCallEmail   to the member: "I tried to call you" (wording in src/lib/voice/templates.ts);
+ *                     Batch 25 also sends a standout's below-floor email through it
+ *   nudgeEmail        Batch 25: the slower-spender nudge (credit alerts footer)
  *   handoffEmail      to the admin handoff address (Batch 18's feedback_admin_email)
  *   textForwardEmail  to the same address: a text sent to the number
  * Sending never throws.
@@ -12,7 +14,11 @@ import { escapeHtml } from './escape';
 import { siteUrl, manageNotificationsUrl } from '../url';
 import type { EmailCopy } from '../voice/templates';
 
-function memberLayout(c: EmailCopy): { html: string; text: string } {
+/** Why the member gets the email, and how to stop it (the footer). */
+const CALLS_FOOTER = { reason: 'Calls from Stayful Intelligence are on in your notifications.', link: 'Switch them off', textLink: 'Switch calls off' };
+const CREDIT_FOOTER = { reason: 'Credit alerts are on in your notifications.', link: 'Switch them off', textLink: 'Switch credit alerts off' };
+
+function memberLayout(c: EmailCopy, footer: typeof CALLS_FOOTER = CALLS_FOOTER): { html: string; text: string } {
   const url = siteUrl(c.cta.path);
   const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;background:#f6f5f0;padding:24px;color:#1f2a1d">
 <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:12px;padding:28px;border:1px solid #e5e3da">
@@ -20,15 +26,22 @@ function memberLayout(c: EmailCopy): { html: string; text: string } {
 ${c.paragraphs.map((p) => `<p style="font-size:15px;line-height:1.5;margin:0 0 12px">${escapeHtml(p)}</p>`).join('')}
 <p style="margin:20px 0 0"><a href="${url}" style="display:inline-block;background:#2E3D2B;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600">${escapeHtml(c.cta.label)}</a></p>
 <p style="font-size:14px;margin:20px 0 0">— Stayful Intelligence</p>
-<p style="font-size:12px;color:#6b7280;margin:24px 0 0">Calls from Stayful Intelligence are on in your notifications. <a href="${manageNotificationsUrl()}" style="color:#6b7280">Switch them off</a> any time.</p>
+<p style="font-size:12px;color:#6b7280;margin:24px 0 0">${escapeHtml(footer.reason)} <a href="${manageNotificationsUrl()}" style="color:#6b7280">${escapeHtml(footer.link)}</a> any time.</p>
 </div></body></html>`;
-  const text = `${c.title}\n\n${c.paragraphs.join('\n\n')}\n\n${c.cta.label}: ${url}\n\n— Stayful Intelligence\n\nSwitch calls off: ${manageNotificationsUrl()}\n`;
+  const text = `${c.title}\n\n${c.paragraphs.join('\n\n')}\n\n${c.cta.label}: ${url}\n\n— Stayful Intelligence\n\n${footer.textLink}: ${manageNotificationsUrl()}\n`;
   return { html, text };
 }
 
 export async function missedCallEmail(to: string, copy: EmailCopy, idempotencyKey: string): Promise<boolean> {
   if (!to || !isEmailConfigured()) return false;
   const res = await sendEmail({ to, subject: copy.subject, ...memberLayout(copy), idempotencyKey });
+  return res.sent;
+}
+
+/** Batch 25, Part C: the slower-spender nudge (sent because credit alerts are on). */
+export async function nudgeEmail(to: string, copy: EmailCopy, idempotencyKey: string): Promise<boolean> {
+  if (!to || !isEmailConfigured()) return false;
+  const res = await sendEmail({ to, subject: copy.subject, ...memberLayout(copy, CREDIT_FOOTER), idempotencyKey });
   return res.sent;
 }
 

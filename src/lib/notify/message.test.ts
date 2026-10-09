@@ -336,3 +336,33 @@ test('a briefing never adds an address: the opener is shown as stored, and the n
   assert.deepEqual(built.droppedTeasers, ['new']);
   assert.deepEqual(built.teaserIds, ['d1']);
 });
+
+// ── Batch 25: "Saved for you" ──
+
+const savedItem = (dealId: string) => ({ dealId, line: '2-bed flat to rent in Harrogate · could make £1,100–£1,300 a month', url: `${SITE}/deals/${dealId}?via=email` });
+
+test('Batch 25: an email with only "Saved for you" still goes, and says what it is', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [], freeCutoffIso: null, unsubscribe: null, savedForYou: [savedItem('s1')] })!;
+  assert.ok(built);
+  assert.equal(built.message.subject, 'I saved a deal for you');
+  assert.deepEqual(built.savedIds, ['s1']);
+  const section = built.message.sections.find((x) => x.key === 'saved_for_you')!;
+  assert.equal(section.title, 'Saved for you');
+  const items = section.blocks.find((b) => b.type === 'items') as { type: 'items'; items: { title: string; link: { url: string } | null }[] };
+  assert.equal(items.items[0].link?.url, `${SITE}/deals/s1?via=email`);
+});
+
+test('Batch 25: "Saved for you" sits above Today\'s 5, and a deal is never told twice', () => {
+  const teasers = [card({ id: 't1' })];
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers, changes: [], freeCutoffIso: null, unsubscribe: null, savedForYou: [savedItem('s1'), savedItem('t1')] })!;
+  const keys = built.message.sections.map((x) => x.key);
+  assert.ok(keys.indexOf('saved_for_you') < keys.indexOf('teasers'));
+  assert.deepEqual(built.savedIds, ['s1']);
+});
+
+test('Batch 25: without "Saved for you" the email is exactly as before', () => {
+  const before = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [card({ id: 't1' })], changes: [], freeCutoffIso: null, unsubscribe: null })!;
+  const after = buildDaily({ siteUrl: SITE, now: NOW, pick, teasers: [card({ id: 't1' })], changes: [], freeCutoffIso: null, unsubscribe: null, savedForYou: [] })!;
+  assert.deepEqual(after.message, before.message);
+  assert.deepEqual(after.savedIds, []);
+});

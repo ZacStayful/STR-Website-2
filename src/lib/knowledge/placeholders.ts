@@ -23,6 +23,7 @@ import { formatPence } from '../credit/deal-pricing.ts';
 import { BALANCE_BANDS_PENCE, PRODUCT_FACTS, TEAM_EMAIL } from './config.ts';
 import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
 import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
+import { callFloorPence } from '../standout/notify.ts';
 
 /** One billing_plans row, as read. */
 export interface PlanRow {
@@ -195,6 +196,16 @@ function outboundDays(g: GlobalSnapshot): number[] | null {
   return ds as number[];
 }
 
+/** Batch 25: the credit a deal call needs, as the queue judges it (the setting, or a minute's calling and the texts kept back if higher). */
+function dealCallFloor(g: GlobalSnapshot): number | null {
+  const setting = pence(g, 'standout_call_min_balance_pence');
+  const perMin = callMinutePence(g);
+  const texts = whole(g, 'si_texts_per_call_max', 0);
+  const text = pence(g, 'si_text_pence');
+  if (setting === null || perMin === null || texts === null || text === null) return null;
+  return callFloorPence(setting, perMin, texts * text);
+}
+
 function balanceBand(p: number): string {
   const [low, high] = BALANCE_BANDS_PENCE;
   if (p < low) return `under ${formatPence(low)}`;
@@ -284,6 +295,25 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   call_days: g_('The days outbound calls happen, e.g. weekdays', 'billing_settings.si_outbound_weekdays', (g) => {
     const d = outboundDays(g);
     return d ? dayWords(d) : null;
+  }),
+  // Batch 25: standout deals, deal calls and the slower-spender nudge
+  standout_calls_per_month: g_('Deal calls a member may get in a calendar month, in words', 'billing_settings.standout_calls_per_month', (g) => {
+    const n = whole(g, 'standout_calls_per_month', 0);
+    return n === null ? null : countWords(n);
+  }),
+  standout_min_match: g_('The match a standout deal needs, e.g. 90%', 'billing_settings.standout_min_match_pct', (g) => {
+    const n = whole(g, 'standout_min_match_pct', 1);
+    return n === null || n > 100 ? null : `${n}%`;
+  }),
+  standout_call_floor: g_('The credit a deal call needs', 'billing_settings.standout_call_min_balance_pence, or a minute’s calling + texts if higher', (g) => money(dealCallFloor(g))),
+  low_credit_mark: g_('The low-credit mark, e.g. £5', 'billing_settings.low_credit_pence', (g) => money(pence(g, 'low_credit_pence'))),
+  nudge_days_min: g_('The auto top-up nudge: fewest days from a top-up to the low-credit mark', 'billing_settings.slower_spender_min_days', (g) => {
+    const d = whole(g, 'slower_spender_min_days', 1);
+    return d === null ? null : String(d);
+  }),
+  nudge_days_max: g_('The auto top-up nudge: most days from a top-up to the low-credit mark', 'billing_settings.slower_spender_max_days', (g) => {
+    const d = whole(g, 'slower_spender_max_days', 1);
+    return d === null ? null : String(d);
   }),
   // Teams (src/lib/team/rules.ts: a code constant, so a change is a reviewed code change)
   team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),

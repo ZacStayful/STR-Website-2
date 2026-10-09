@@ -49,8 +49,14 @@ export const TAILORING = {
   /** Match %: shown once at least this many of the member's criteria apply to a deal. */
   matchMinChecked: 2,
 
-  /** Behaviour prompts: Keeps against an answer before asking, how often one question may be asked, and the quiet spell after "keep my answer". */
-  prompts: { minContradictions: 3, repeatDays: 7, afterKeepDays: 30 },
+  /**
+   * Behaviour prompts ("I've noticed", Batch 25): asked only once the profile
+   * has `minAnswers` Keeps and Passes in the signal window, and the answers a
+   * prompt is about number at least `minGroup` with at least `minAgreePct`%
+   * of them agreeing; how often one question may be asked, and the quiet
+   * spell after "keep my answer".
+   */
+  prompts: { minAnswers: 20, minGroup: 8, minAgreePct: 80, repeatDays: 7, afterKeepDays: 30 },
 
   /**
    * Widen and see: suggestions shown at most, and the size of each step

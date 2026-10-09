@@ -19,6 +19,7 @@ import type { CardView } from "@/lib/marketplace/card-view";
 import { gapLine } from "@/lib/marketplace/most-you-can-pay";
 import { KEPT_STATUS } from "@/lib/listing/pipeline";
 import { StageReminder } from "@/components/pipeline/StageReminder";
+import { SavedForYou } from "./SavedForYou";
 
 const KIND: Record<string, string> = { sale: "To buy", rent: "Rent-to-rent", str: "Short let" };
 
@@ -45,6 +46,8 @@ export function DealRow({
   reportAction,
   view = null,
   profileName = null,
+  siSaved = false,
+  freeOpen = false,
 }: {
   item: ViewerDeal;
   /** The marketplace deal's card facts, for a marketplace deal. */
@@ -67,6 +70,10 @@ export function DealRow({
   view?: CardView | null;
   /** Saved profiles (Batch 13): which of the member's profiles this deal is for, once they have two. */
   profileName?: string | null;
+  /** Batch 25: saved by Stayful Intelligence and not opened or moved yet: the label and "Not for me". */
+  siSaved?: boolean;
+  /** Batch 25: saved for this account by Stayful Intelligence, so opening it is free. */
+  freeOpen?: boolean;
 }) {
   const stageInfo = pipelineStatusInfo(item.stage);
   const back = myDealsFocusPath(item.key);
@@ -102,15 +109,16 @@ export function DealRow({
     sub = [KIND[item.kind] ?? null, l?.bedrooms ? `${l.bedrooms} bed` : null, l ? SOURCE_LABELS[l.source] : null].filter(Boolean).join(" · ");
   }
   const gone = card?.status === "retired";
-  const openPence = card && !item.opened ? (adminUser ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder)) : null;
+  const openPence = card && !item.opened ? (adminUser || freeOpen ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder)) : null;
   // What this member pays for the Quick look and the Full analysis (Batch 10).
   const payGap = card && view?.pay ? gapLine(card.price_amount === null ? null : Number(card.price_amount), view.pay) : null;
-  const openLabel = view?.quickLook ? priceText(view.quickLook) : null;
+  const openLabel = freeOpen && !item.opened ? "Free" : view?.quickLook ? priceText(view.quickLook) : null;
   const canAnalyse = Boolean(card && view && !view.analysed && (item.opened || card.status === "live"));
   const pastKept = item.mine && item.stage !== KEPT_STATUS && item.stage !== "passed";
 
   return (
     <li id={item.key} className={"scroll-mt-24 rounded-xl border bg-card p-3 " + (focused ? "border-primary ring-2 ring-primary/40" : "border-border")}>
+      <RowWrap saved={siSaved && item.mine && item.stage === KEPT_STATUS && !item.opened} dealId={card?.id ?? null}>
       <div className="flex gap-3">
         <Link href={href} className="relative h-20 w-24 shrink-0 overflow-hidden rounded-lg bg-muted" aria-hidden="true" tabIndex={-1}>
           {photo ? (
@@ -172,6 +180,12 @@ export function DealRow({
 
       {/* Batch 7: the next step, for the viewer's own opened deals only. */}
       <NextStepSlot stage={item.stage} dealId={item.dealId} checkedListingId={item.checkedListingId} opened={item.opened} itemKey={item.key} mine={item.mine} facts={factsFromTracked(item, card, address)} />
+      </RowWrap>
     </li>
   );
+}
+
+/** Batch 25: a row Stayful Intelligence saved carries its label and "Not for me"; any other row is as it was. */
+function RowWrap({ saved, dealId, children }: { saved: boolean; dealId: string | null; children: React.ReactNode }) {
+  return saved && dealId ? <SavedForYou dealId={dealId}>{children}</SavedForYou> : <>{children}</>;
 }

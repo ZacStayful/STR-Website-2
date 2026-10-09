@@ -35,7 +35,7 @@ const TOOLS: Record<ToolName, { description: string; params: Record<string, Para
   },
   send_template_text: {
     description: "Text a pre-written message to the member's own number on file (never any other number).",
-    params: { template: { type: 'string', description: 'contact_card, auto_topup_link or resend_last_link', enum: CALL_TEXT_TEMPLATES } },
+    params: { template: { type: 'string', description: 'contact_card, auto_topup_link, deal_link or resend_last_link', enum: CALL_TEXT_TEMPLATES } },
     required: ['template'],
   },
   handoff_to_team: {

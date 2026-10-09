@@ -7,6 +7,9 @@ import 'server-only';
  * The text goes only to the member's own verified number on file, and never
  * after STOP; the email goes to their account email. Each is charged once
  * (22p / 20p); the missed call itself is free.
+ *
+ * Batch 25: a missed deal call's text and email name the deal (never its
+ * address or price) and link to it in the app (/si/deal/<token>).
  */
 import { createAdminClient } from '../supabase/admin';
 import { siteUrl } from '../url';
@@ -18,11 +21,13 @@ import { memberFacts } from './member-server';
 import { claimCharge, releaseCharge, settleEmail, settleText } from './charge-server';
 import { callsDryRun } from './config';
 import { claimCallSlot } from './cap-server';
+import { dealCallFacts } from '../standout/calls-server';
+import { sendMemberText } from '../standout/texts-server';
 import type { CallRow } from './store-server';
 
 export async function sendMissedCallFallback(call: CallRow): Promise<{ text: boolean; email: boolean }> {
   const out = { text: false, email: false };
-  if (call.direction !== 'outbound' || !call.user_id || (call.call_type !== 'intro' && call.call_type !== 'low_credit')) return out;
+  if (call.direction !== 'outbound' || !call.user_id || (call.call_type !== 'intro' && call.call_type !== 'low_credit' && call.call_type !== 'deal')) return out;
   const admin = createAdminClient();
   // Once per call: only the request that stamps fallback_sent_at sends.
   const { data: won, error } = await admin
@@ -37,13 +42,18 @@ export async function sendMissedCallFallback(call: CallRow): Promise<{ text: boo
   if (!m) return out;
   const settings = await getBillingSettings();
   const type = call.call_type;
-  const ctx = { base: siteUrl(), topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence };
+  const deal = type === 'deal' ? (await dealCallFacts(admin, call))?.deal ?? null : null;
+  const ctx = { base: siteUrl(), topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence, deal, callsPerMonth: settings.standout.callsPerMonth };
 
   if (m.numberOk && m.phone) {
     const key = `call:${call.id}:text:${missedCallTemplate(type)}`;
     const guard = await claimCharge(key, call.id, m.userId, 'text');
     if (guard) {
-      const r = await sendSms({ to: m.phone, body: missedCallText(type, ctx), purpose: 'si_missed_call', dryRun: callsDryRun() });
+      // Batch 25: a deal call's text also honours the Texts switch and is recorded in sms_messages.
+      const r =
+        type === 'deal'
+          ? await sendMemberText(admin, { userId: m.userId, body: missedCallText(type, ctx), kind: 'standout', purpose: 'si_missed_call', dryRun: callsDryRun() })
+          : await sendSms({ to: m.phone, body: missedCallText(type, ctx), purpose: 'si_missed_call', dryRun: callsDryRun() });
       if (r.sent || r.reason === 'unknown') {
         await settleText(guard, key, call.id, m.userId);
         await admin.from('si_calls_log').update({ texts_sent: call.texts_sent + 1 }).eq('id', call.id);

@@ -2,7 +2,7 @@ import 'server-only';
 
 import { randomUUID } from 'node:crypto';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
-import { debitFace, InsufficientCreditError } from '../credit/ledger';
+import { debitFace, getBalance, InsufficientCreditError } from '../credit/ledger';
 import { afterDebit } from '../credit/after-debit';
 import { sendEmail } from '../email/send';
 import { seatSuspendedEmail, seatRestoredEmail, type Email } from '../email/team';
@@ -20,7 +20,13 @@ import { personName, profileNames, teamName } from './index';
  * fails, the row is removed again so a later attempt can pay it.
  */
 
-export type SeatCharge = 'charged' | 'already_paid' | 'insufficient' | 'error';
+/**
+ * 'held': the balance covers the seat, but part of it is reserved for an
+ * action still running (an analysis, a deep search), which the ledger will
+ * not let a seat take (Batch 25, R2-13). Not a suspension: the next run
+ * tries again, as for an error.
+ */
+export type SeatCharge = 'charged' | 'already_paid' | 'insufficient' | 'held' | 'error';
 
 export async function chargeSeat(input: { ownerId: string; memberId: string; memberName: string; periodStart: Date }): Promise<SeatCharge> {
   if (!hasServiceRole()) return 'error';
@@ -52,7 +58,11 @@ export async function chargeSeat(input: { ownerId: string; memberId: string; mem
     await admin.from('team_seat_charges').update({ transaction_id: tx }).eq('id', claimId);
   } catch (err) {
     await admin.from('team_seat_charges').delete().eq('id', claimId);
-    if (err instanceof InsufficientCreditError) return 'insufficient';
+    if (err instanceof InsufficientCreditError) {
+      // Short only because a running action holds some of it: wait, don't suspend.
+      const b = await getBalance(input.ownerId).catch(() => null);
+      return b && b.reservedBasePence > 0 && b.totalPence >= SEAT_PRICE_PENCE ? 'held' : 'insufficient';
+    }
     console.error('[team] seat debit failed:', (err as Error).message);
     return 'error';
   }

@@ -63,7 +63,7 @@ export type Block =
   | { type: 'links'; links: Link[] };
 
 /** 'profile': a saved profile's heading, over its pick and teasers (Batch 13). */
-export type SectionKey = 'pick' | 'teasers' | 'changes' | 'missed' | 'recap' | 'areas' | 'notice' | 'profile' | 'briefing' | 'nudges';
+export type SectionKey = 'pick' | 'teasers' | 'changes' | 'missed' | 'recap' | 'areas' | 'notice' | 'profile' | 'briefing' | 'nudges' | 'saved_for_you';
 
 export interface Section {
   key: SectionKey;
@@ -352,6 +352,32 @@ export interface DailyInput {
    * exactly as it was.
    */
   briefing?: BriefingInput | null;
+  /**
+   * Batch 25: deals Stayful Intelligence saved for the member and did not
+   * ring them about ("Saved for you"): one line each, above Today's 5. An
+   * email with only these still goes. Absent: the email is as it was.
+   */
+  savedForYou?: SavedForYouItem[] | null;
+}
+
+/** Batch 25: one "Saved for you" line: what it is, where, and what it could make (src/lib/standout/copy.ts), never an address. */
+export interface SavedForYouItem {
+  dealId: string;
+  line: string;
+  /** The deal in the app (sign-in required): never the listing. */
+  url: string;
+}
+
+/** Batch 25: "Saved for you": the deals Stayful Intelligence saved, one line each. */
+export function savedForYouSection(items: readonly SavedForYouItem[]): Section {
+  return {
+    key: 'saved_for_you',
+    title: 'Saved for you',
+    blocks: [
+      { type: 'text', text: items.length === 1 ? "I found this and saved it to your deals. Opening it is free." : "I found these and saved them to your deals. Opening them is free." },
+      { type: 'items', items: items.map((i) => ({ title: i.line, lines: [], link: { label: 'See the deal', url: i.url } })) },
+    ],
+  };
 }
 
 /** Batch 23b: what the email shows of the member's briefing. Every line is the stored, validated text or the code's template. */
@@ -430,6 +456,8 @@ export interface BuiltMessage {
   refusedIds: string[];
   /** Teasers the early-access backstop removed. Should always be empty. */
   droppedTeasers: string[];
+  /** Batch 25: the "Saved for you" deals in the email: what to mark emailed once it has gone. */
+  savedIds: string[];
 }
 
 /**
@@ -455,7 +483,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   const { section: changes, used } = changesSection(input.changes, base);
   const picks = shown.filter((x) => x.part.pick);
   const dealCount = picks.length + shown.reduce((sum, x) => sum + x.kept.length, 0);
-  if (dealCount === 0 && !changes) return null;
+  const saved = (input.savedForYou ?? []).filter((x) => !told.has(x.dealId));
+  if (dealCount === 0 && !changes && saved.length === 0) return null;
 
   const sections: Section[] = [];
   // Batch 23b: with a briefing (Today's 5 only), it leads and the credit line goes last.
@@ -463,6 +492,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   if (briefing) sections.push(briefingSection(briefing));
   // Batch 20: the low-credit decision leads, when it is due (it never makes an email on its own here).
   if (input.lowCredit && !briefing) sections.push(input.lowCredit);
+  // Batch 25: what Stayful Intelligence saved for them, above Today's 5.
+  if (saved.length > 0) sections.push(savedForYouSection(saved));
   const anyPick = picks.length > 0;
   for (const { part, kept } of shown) {
     if (!part.pick && kept.length === 0) continue;
@@ -505,9 +536,11 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   }
 
   const phrase = changesPhrase(used);
-  const kind: MessageKind = dealCount > 0 ? 'todays_5' : 'deal_changes';
+  const kind: MessageKind = dealCount > 0 || saved.length > 0 ? 'todays_5' : 'deal_changes';
   let subject: string;
   if (kind === 'deal_changes') subject = capitalise(phrase ?? 'Changes on your deals');
+  // Batch 25: only what Stayful Intelligence saved, nothing else new this morning.
+  else if (dealCount === 0) subject = saved.length === 1 ? 'I saved a deal for you' : `I saved ${saved.length} deals for you`;
   else {
     // Batch 22: Stayful Intelligence speaks in the first person.
     const head = `I found ${plural(dealCount, 'deal')} for you this morning`;
@@ -530,6 +563,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     changeIds: used.flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     refusedIds: input.changes.filter((c) => !used.includes(c)).flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     droppedTeasers: dropped,
+    savedIds: saved.map((x) => x.dealId),
   };
 }
 

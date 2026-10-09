@@ -29,6 +29,7 @@ import { dealVisibilityFor } from '../marketplace/tier';
 import { dealVisibleTo } from '../marketplace/visibility';
 import { saveOpenedDealToPipeline } from '../marketplace/open';
 import { stageNeedsOpen, type PipelineStatus } from './pipeline';
+import { isFreeStandoutOpen, noteMemberActed } from '../standout/saved-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -53,6 +54,8 @@ async function writeReaction(admin: Admin, userId: string, dealId: string, stage
   if (target === 'keep') row.reasons = [];
   const { error } = await admin.from('deal_reactions').upsert(row, { onConflict: 'user_id,deal_id' });
   if (error) console.warn('[stage] reaction write failed:', error.message);
+  // Batch 25: moving a deal Stayful Intelligence saved makes it the member's own.
+  else await noteMemberActed(userId, dealId, 'stage');
   return !error;
 }
 
@@ -145,7 +148,9 @@ export async function setStageForMember(input: { userId: string; adminUser: bool
       // Refused here, not just in the dropdown: past Kept needs the address.
       if (deal.status !== 'live') return { ok: false, code: 'gone' };
       const settings = await getBillingSettings();
-      return { ok: false, code: 'needs_open', openPence: openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder) };
+      // Batch 25: a deal saved for the account by Stayful Intelligence opens free.
+      const free = await isFreeStandoutOpen(payer.payerId, deal.id);
+      return { ok: false, code: 'needs_open', openPence: free ? 0 : openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder) };
     }
     if (reacted) {
       return (await writeReaction(admin, userId, deal.id, stage)) ? { ok: true, stage, checkedListingId: null } : { ok: false, code: 'failed' };

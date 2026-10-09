@@ -14,6 +14,12 @@ import 'server-only';
  *
  * No redials: a call that fails or is missed is not retried; the next
  * trigger is a new call.
+ *
+ * Batch 25 (R2-86, R2-168): a call's context is stored on its row when it is
+ * queued and read back when it is placed, so a deal call reads the deal
+ * script; a deal call is one per member per deal (si_calls_log_deal_uidx);
+ * and just before a deal call is dialled it is checked again for the deal
+ * itself (src/lib/standout/calls-server.ts dealCallStillWanted).
  */
 import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
@@ -26,15 +32,26 @@ import { callsDryRun, callsEnabled, toolSecret, voiceConfig, STALE_QUEUED_MS, ty
 import { memberFacts, type MemberFacts } from './member-server';
 import { contactCardSent, dayFacts, insertCall, updateCall, type CallRow } from './store-server';
 import { placeOutboundCall } from './elevenlabs-server';
-import { callVariables, fill, openerFor, type CallContext } from './agent/variables';
+import { callVariables, contextForType, fill, isCallContext, openerFor, type CallContext } from './agent/variables';
 import { knowledgeCallValues } from '../knowledge/agent-server';
 import { claimCallSlot } from './cap-server';
 import { startConversation } from '../conversations/log-server';
+import { dealCallStillWanted } from '../standout/calls-server';
 
 type OutboundType = Exclude<CallType, 'callback'>;
 
 /** Reasons the once-ever intro waits for (no row when queueing; a day's wait when dialling). */
 const INTRO_WAITS: ReadonlySet<BlockedReason> = new Set(['no_number', 'no_credit']);
+
+/**
+ * Batch 25: reasons a deal call is not queued at all (no row), so the deal's
+ * one call (si_calls_log_deal_uidx) is not used up by a call that never
+ * could have rung. The standout pass tells the member another way.
+ */
+const DEAL_NO_ROW: ReadonlySet<BlockedReason> = new Set(['no_number', 'no_credit', 'in_flight']);
+
+/** How long a deal call waits when its last check couldn't tell (a read failed, the listing couldn't be fetched). */
+const DEAL_RETRY_MS = 60 * 60_000;
 
 export type EnqueueResult =
   | { outcome: 'queued'; call: CallRow }
@@ -69,7 +86,7 @@ async function eligibilityFor(type: OutboundType, m: MemberFacts, now: Date, exc
  * Queue an outbound call. Inside hours it is ready at once (the caller may
  * place it straight away); outside, it waits for the next opening.
  */
-export async function enqueueCall(o: { userId: string; type: OutboundType; triggerRef?: string | null; now?: Date }): Promise<EnqueueResult> {
+export async function enqueueCall(o: { userId: string; type: OutboundType; triggerRef?: string | null; context?: CallContext; now?: Date }): Promise<EnqueueResult> {
   const now = o.now ?? new Date();
   if (!callsEnabled()) return { outcome: 'skipped', reason: 'disabled' };
   const m = await memberFacts(o.userId);
@@ -77,10 +94,12 @@ export async function enqueueCall(o: { userId: string; type: OutboundType; trigg
   const e = await eligibilityFor(o.type, m, now, null);
   const admin = createAdminClient();
   const settings = await getBillingSettings();
-  const base = { user_id: o.userId, direction: 'outbound' as const, call_type: o.type, trigger_ref: o.triggerRef ?? null, context: o.type, persona_version: PERSONA_VERSION };
+  const base = { user_id: o.userId, direction: 'outbound' as const, call_type: o.type, trigger_ref: o.triggerRef ?? null, context: o.context ?? contextForType(o.type), persona_version: PERSONA_VERSION };
   if (!e.ok && e.defer === undefined) {
     // The intro is once ever: a missing number or credit now must not use it up.
     if (e.skip || (o.type === 'intro' && INTRO_WAITS.has(e.reason))) return { outcome: 'skipped', reason: e.reason };
+    // Nor is a deal's one call.
+    if (o.type === 'deal' && DEAL_NO_ROW.has(e.reason)) return { outcome: 'skipped', reason: e.reason };
     const r = await insertCall(admin, { ...base, status: 'blocked', blocked_reason: e.reason });
     if (!r.ok) return r.reason === 'duplicate' ? { outcome: 'exists' } : { outcome: 'error' };
     console.log(`[voice] ${o.type} call blocked (${e.reason})`);
@@ -89,7 +108,8 @@ export async function enqueueCall(o: { userId: string; type: OutboundType; trigg
   const notBefore = e.ok ? now : e.defer === 'next_day' ? nextDayOpening(now, settings.voice) : nextOpening(now, settings.voice);
   const r = await insertCall(admin, { ...base, status: 'queued', not_before: notBefore.toISOString() });
   if (!r.ok) {
-    // One in flight already, or this intro / this landing's call exists.
+    // One in flight already, or this intro / this landing's / this deal's call exists.
+    if (r.reason === 'duplicate' && o.type === 'deal' && /in_flight/.test(r.message ?? '')) return { outcome: 'skipped', reason: 'in_flight' };
     if (r.reason === 'duplicate' && o.type !== 'intro' && /in_flight/.test(r.message ?? '')) {
       const b = await insertCall(admin, { ...base, status: 'blocked', blocked_reason: 'in_flight' });
       return b.ok ? { outcome: 'blocked', reason: 'in_flight', call: b.call } : { outcome: 'exists' };
@@ -152,11 +172,28 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
     return { outcome: 'blocked', reason: e.reason };
   }
 
+  // Batch 25: a deal call is checked again for the deal itself, just before it rings.
+  let deal: { headline: string; short: string } | null = null;
+  if (type === 'deal') {
+    const w = await dealCallStillWanted(admin, call, m, now, { apply: o.apply });
+    if (!w.ok && 'wait' in w) {
+      const until = nextOpening(new Date(now.getTime() + DEAL_RETRY_MS), settings.voice).toISOString();
+      if (o.apply) await updateCall(admin, call.id, { not_before: until }, ['queued']);
+      return { outcome: 'deferred', until };
+    }
+    if (!w.ok) {
+      if (o.apply) await dropOrBlock(call, w.reason);
+      return { outcome: 'blocked', reason: w.reason };
+    }
+    deal = w.facts.vars;
+  }
+
   const config = voiceConfig();
   const perMin = await callPencePerMinute();
   const reserve = settings.voice.textsPerCallMax * settings.intelligence.siTextPence;
   const seconds = affordableSeconds(m.balancePence, perMin, settings.voice.maxCallSeconds, reserve);
-  const context: CallContext = type === 'intro' ? 'intro' : 'low_credit';
+  // R2-86: the context the call was queued with (older rows: from its type).
+  const context: CallContext = isCallContext(call.context) ? call.context : contextForType(type);
   const vars = callVariables({
     callType: type,
     context,
@@ -168,6 +205,7 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
     topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence,
     // Batch 24: the knowledge base's figures, as they are now (every call sends all of them).
     knowledge: await knowledgeCallValues(admin),
+    deal,
   });
   const would = { call: call.id, type, to: 'number on file', vars: { ...vars } };
   if (!o.apply || callsDryRun() || !config || !m.phone) {
@@ -176,12 +214,14 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
   }
   const secret = toolSecret();
   // Claim the call: queued → ringing with today's UK day. The one-a-day index refuses a second.
-  const claimed = await admin
+  let claim = admin
     .from('si_calls_log')
     .update({ status: 'ringing', uk_day: ukDay(now), placed_at: now.toISOString(), context, persona_version: PERSONA_VERSION, updated_at: now.toISOString() })
     .eq('id', call.id)
-    .eq('status', 'queued')
-    .select('id');
+    .eq('status', 'queued');
+  // Batch 25: a waiting deal call can be moved to a better deal meanwhile; it rings only about the deal it was read with (else the next pass takes it).
+  if (type === 'deal' && call.trigger_ref) claim = claim.eq('trigger_ref', call.trigger_ref);
+  const claimed = await claim.select('id');
   if (claimed.error) {
     if (claimed.error.code === '23505') {
       await updateCall(admin, call.id, { status: 'blocked', blocked_reason: 'daily_limit' }, ['queued']);

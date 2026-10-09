@@ -171,6 +171,9 @@ export default async function AdminPage() {
           <Link href="/admin/calls" className="text-sm font-medium text-primary hover:underline">
             Calls
           </Link>
+          <Link href="/admin/standout" className="text-sm font-medium text-primary hover:underline">
+            Standout deals
+          </Link>
           <Link href="/admin/conversations" className="text-sm font-medium text-primary hover:underline">
             Conversations
           </Link>

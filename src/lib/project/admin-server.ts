@@ -184,13 +184,17 @@ export async function projectLearningView(admin: Admin, days = 30, now: Date = n
     if (parsed) oursByDeal.set(e.deal_id, { worksHigh: parsed.works.high, valueAdded: parsed.test.valueAdded });
   }
 
-  const [opens, analyses, lockedRows, reactions] = await Promise.all([
+  const [opens, analyses, lockedRows, reactionsAll, siSavedRows] = await Promise.all([
     estimates ? inChunks<{ deal_id: string }>(projectIds, (some) => admin.from('deal_opens').select('deal_id').eq('status', 'open').in('deal_id', some).limit(10000), 'opens') : Promise.resolve(null),
     estimates ? inChunks<{ deal_id: string }>(projectIds, (some) => admin.from('analysis_purchases').select('deal_id').eq('kind', 'full_analysis').eq('status', 'complete').in('deal_id', some).limit(10000), 'analyses') : Promise.resolve(null),
     admin.from('project_member_figures').select('user_id, deal_id, version, figures, created_at').eq('locked', true).order('created_at', { ascending: false }).limit(1000),
-    admin.from('deal_reactions').select('deal_id, reaction').gte('updated_at', since).limit(50000),
+    admin.from('deal_reactions').select('user_id, deal_id, reaction').gte('updated_at', since).limit(50000),
+    // Batch 25: Keeps Stayful Intelligence made are not members' answers (read on its own: none before the schema is run).
+    admin.from('deal_reactions').select('user_id, deal_id').not('saved_by', 'is', null).gte('updated_at', since).limit(50000),
   ]);
 
+  const siSaved = new Set(((siSavedRows.error ? [] : siSavedRows.data) ?? []).map((r) => `${(r as { user_id: string }).user_id}:${(r as { deal_id: string }).deal_id}`));
+  const reactions = { error: reactionsAll.error, data: ((reactionsAll.data ?? []) as { user_id: string; deal_id: string; reaction: string }[]).filter((r) => !siSaved.has(`${r.user_id}:${r.deal_id}`)) };
   const openCount = new Map<string, number>();
   for (const o of opens ?? []) openCount.set(o.deal_id, (openCount.get(o.deal_id) ?? 0) + 1);
 

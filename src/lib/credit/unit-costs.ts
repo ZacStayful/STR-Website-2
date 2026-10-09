@@ -8,6 +8,7 @@ import { DEAL_CHECKS_KEY, DEFAULT_DEAL_CHECKS, DEFAULT_LOW_ENTRY, LOW_ENTRY_KEY,
 import { DEFAULT_LIFECYCLE, parseLifecycle, type LifecycleSettings } from '../lifecycle/settings.ts';
 import { DEFAULT_INTELLIGENCE, parseIntelligence, type IntelligenceSettings } from '../intelligence/settings.ts';
 import { DEFAULT_VOICE, parseVoice, type VoiceSettings } from '../voice/settings.ts';
+import { DEFAULT_STANDOUT, parseStandout, type StandoutSettings } from '../standout/settings.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -69,6 +70,8 @@ export interface BillingSettings {
   intelligence: IntelligenceSettings;
   /** Batch 23: calls from Stayful Intelligence — hours, limits, the low-credit trigger, retention (src/lib/voice/settings.ts). */
   voice: VoiceSettings;
+  /** Batch 25: standout deals, deal calls and the slower-spender nudge (src/lib/standout/settings.ts). */
+  standout: StandoutSettings;
   /**
    * Batch 23b: the kill switch for AI-written morning briefings
    * (billing_settings.briefings_enabled). Off: template openers for
@@ -102,6 +105,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   lifecycle: DEFAULT_LIFECYCLE,
   intelligence: DEFAULT_INTELLIGENCE,
   voice: DEFAULT_VOICE,
+  standout: DEFAULT_STANDOUT,
   briefingsEnabled: false,
 };
 
@@ -189,6 +193,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       lifecycle: parseLifecycle((key) => kv.get(key)),
       intelligence: parseIntelligence((key) => kv.get(key)),
       voice: parseVoice((key) => kv.get(key)),
+      standout: parseStandout((key) => kv.get(key)),
       briefingsEnabled: parseSwitch(kv.get('briefings_enabled')),
     };
     settingsCache = { at: Date.now(), settings };

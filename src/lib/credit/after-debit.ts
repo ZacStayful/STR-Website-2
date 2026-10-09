@@ -59,6 +59,17 @@ async function lowCreditCalled(userId: string): Promise<boolean> {
   }
 }
 
+/** Batch 25, Part C: whether the slower-spender nudge is this member's £5 notice (claimed once per credit landing). Never throws. */
+async function nudgeStandsIn(admin: ReturnType<typeof createAdminClient>, userId: string, balancePence: number, now: Date): Promise<'claimed' | 'standing' | null> {
+  try {
+    const { claimNudgeIfDue } = await import('../standout/nudge-server');
+    return await claimNudgeIfDue(admin, userId, now, { apply: true, balancePence });
+  } catch (err) {
+    console.error('[credit] nudge check failed:', err);
+    return null;
+  }
+}
+
 /** Batch 23: the call is the £5 notice — stamp it told (once a cycle, as the email would have been) and tell Monday. */
 async function toldByCall(admin: ReturnType<typeof createAdminClient>, userId: string, summary: Awaited<ReturnType<typeof getCreditSummary>>, p: Record<string, unknown>, now: Date): Promise<void> {
   const lastToldAt = (p.last_low_balance_email_at as string | null) ?? null;
@@ -132,6 +143,13 @@ export async function afterDebit(userId: string): Promise<void> {
         return;
       }
       if (summary.noPlan) {
+        // Batch 25, Part C: a slower spender (8–21 days from their last credit to £5) gets
+        // Stayful Intelligence's auto top-up nudge instead of the £5 decision, once per credit
+        // (src/lib/standout/nudge-server.ts; sent by the standout cron inside the text window).
+        const nudge = await nudgeStandsIn(admin, userId, summary.totalPence, now);
+        if (nudge === 'claimed') await queueLowCreditSync(userId);
+        if (nudge) return;
+
         // Batch 20, Part B: the £5 decision, once a cycle.
         const settings = await getBillingSettings();
         const lastToldAt = (p.last_low_balance_email_at as string | null) ?? null;

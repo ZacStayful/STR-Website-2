@@ -9,7 +9,7 @@ import { toolConfig } from './tools.ts';
 import { agentConfig, INITIATE_SECRET_HEADER, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings } from './agent-config.ts';
 import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
-import { callVariables, fill, openerFor, unknownCallerDefaults, VARIABLE_NAMES } from './variables.ts';
+import { callVariables, contextForType, fill, isCallContext, openerFor, unknownCallerDefaults, VARIABLE_NAMES } from './variables.ts';
 import { conversationLines, listOrNone, normaliseE164, phoneCheckDue, twilioAlertLines, twilioCallLines } from './phone-check.ts';
 
 // Batch 24: the knowledge is the knowledge base's call answers (here the seed, as if all approved).
@@ -70,7 +70,7 @@ test('every tool takes its ids from injected variables and its secret from a sec
   const s = toolConfig('send_template_text', 'https://x') as { api_schema: { request_body_schema: { properties: Record<string, { enum?: string[] }> } } };
   const props = Object.keys(s.api_schema.request_body_schema.properties).filter((k) => !['conversation_id', 'call_sid', 'caller_id', 'called_number'].includes(k));
   assert.deepEqual(props, ['template']);
-  assert.deepEqual(s.api_schema.request_body_schema.properties.template.enum, ['contact_card', 'auto_topup_link', 'resend_last_link']);
+  assert.deepEqual(s.api_schema.request_body_schema.properties.template.enum, ['contact_card', 'auto_topup_link', 'deal_link', 'resend_last_link']);
 });
 
 test('the agent uses the one voice, ends voicemail without a message, and keeps transcripts 90 days', () => {
@@ -92,6 +92,27 @@ test('call variables carry every name, never a balance; openers are filled', () 
   assert.ok(!Object.keys(v).some((k) => /balance|address|price/.test(k)));
   assert.equal(fill(openerFor('member'), v), 'Hi Sam, how can I help?');
   assert.match(fill(openerFor('unknown'), callVariables({ callType: 'callback', context: 'unknown', firstName: null, member: false, cardSent: false, minutesAvailable: 10, topupAmountPence: 2500, topupThresholdPence: 500 })), /Stayful Intelligence/);
+});
+
+test('Batch 25: a deal call names the deal; every other call sends "none" for it', () => {
+  const plain = callVariables({ callType: 'intro', context: 'intro', firstName: 'Sam', member: true, cardSent: false, minutesAvailable: 6, topupAmountPence: 2500, topupThresholdPence: 500 });
+  assert.equal(plain.deal_headline, 'none');
+  assert.equal(plain.deal_short, 'none');
+  const deal = { headline: 'a 2-bed flat to rent in Harrogate that could make around 1,100 to 1,300 pounds a month', short: 'the 2-bed in Harrogate' };
+  const v = callVariables({ callType: 'deal', context: 'deal', firstName: 'Sam', member: true, cardSent: true, minutesAvailable: 6, topupAmountPence: 2500, topupThresholdPence: 500, deal });
+  assert.deepEqual(Object.keys(v).sort(), [...VARIABLE_NAMES].sort());
+  assert.equal(fill(openerFor('deal'), v), "Hi Sam, it's Stayful Intelligence. A deal's just come up that matches you better than anything I've found so far: a 2-bed flat to rent in Harrogate that could make around 1,100 to 1,300 pounds a month.");
+  assert.match(fill(openerFor('missed_deal'), v), /I called about the 2-bed in Harrogate\. It's saved in your deals\./);
+});
+
+test('R2-86: a call\'s context comes from its row, else from its type (a deal call never reads the low-credit script)', () => {
+  assert.equal(contextForType('deal'), 'deal');
+  assert.equal(contextForType('intro'), 'intro');
+  assert.equal(contextForType('low_credit'), 'low_credit');
+  assert.equal(contextForType('callback'), 'member');
+  assert.ok(isCallContext('missed_deal'));
+  assert.ok(!isCallContext('deal_call'));
+  assert.ok(!isCallContext(null));
 });
 
 test('remember_fact needs the fact, the question asked and an explicit yes', () => {

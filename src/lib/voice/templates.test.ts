@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bodyProblemFor } from './templates-check.ts';
-import { SMS_REPLY_OTHER, SMS_REPLY_WHO, callText, missedCallEmail, missedCallText } from './templates.ts';
+import { SMS_REPLY_OTHER, SMS_REPLY_WHO, belowFloorText, callText, dealEmail, missedCallEmail, missedCallTemplate, missedCallText } from './templates.ts';
 
 // The longest base URL we expect (a Vercel preview is longer than the live site).
 const BASES = ['https://stayful.co.uk', 'https://str-website-2-git-batch-23-stayful.vercel.app'];
@@ -38,4 +38,40 @@ test('the missed-call emails carry the same link as the call', () => {
   assert.equal(missedCallEmail('low_credit', ctx(''), null).cta.path, '/si/topup');
   assert.match(missedCallEmail('low_credit', ctx(''), null).subject, /I tried to call you — you're nearly out of credit/);
   assert.match(missedCallEmail('intro', ctx(''), 'Sam').paragraphs[0], /^Hi Sam,/);
+});
+
+// Batch 25: the deal texts and emails.
+const deal = (short: string) => ({ short, headline: `a 2-bed flat to rent in ${short.replace(/^the 2-bed in /, '')} that could make around £1,100–£1,300 a month`, token: 'ab12cd34ef' });
+const dctx = (base: string, short = 'the 2-bed in Harrogate') => ({ ...ctx(base), deal: deal(short) });
+const LONG_TOWN = 'the 2-bed in Bishop Auckland and Shildon Village Outskirts';
+
+test('Batch 25: every deal text is one GSM-7 segment, links to the app only, and fits even a long town name', () => {
+  for (const base of BASES) {
+    for (const short of ['the 2-bed in Harrogate', LONG_TOWN]) {
+      for (const b of [callText('deal_link', dctx(base, short)), missedCallText('deal', dctx(base, short)), belowFloorText(dctx(base, short))]) {
+        assert.equal(bodyProblemFor(b), null, JSON.stringify(b));
+        assert.ok(b.includes(`${base}/si/deal/ab12cd34ef`), b);
+        // Never a listing, a postcode or an exact figure.
+        assert.doesNotMatch(b, /rightmove|zoopla|onthemarket|£\d/i);
+      }
+    }
+  }
+  assert.match(callText('deal_link', dctx(BASES[0])), /^Here's the 2-bed in Harrogate I just rang about\. It's in your deals: https:\/\/stayful\.co\.uk\/si\/deal\/ab12cd34ef/);
+  assert.match(missedCallText('deal', dctx(BASES[0])), /^I tried to call you about the 2-bed in Harrogate\. It's in your deals:/);
+  assert.match(belowFloorText(dctx(BASES[0])), /^A 2-bed in Harrogate that fits you is in your deals: .* Top up to get calls\./);
+  assert.equal(missedCallTemplate('deal'), 'deal_link');
+  // With no deal facts, the texts point to My deals.
+  assert.match(missedCallText('deal', ctx(BASES[0])), /\/my-deals/);
+});
+
+test('Batch 25: the deal emails link to the deal in the app and say what the brief says', () => {
+  const missed = missedCallEmail('deal', { ...dctx(''), callsPerMonth: 2 }, 'Sam');
+  assert.equal(missed.cta.path, '/si/deal/ab12cd34ef?via=email');
+  assert.equal(missed.subject, 'I tried to call you about a 2-bed in Harrogate');
+  assert.match(missed.paragraphs[0], /^Hi Sam, I tried to ring you just now\. A deal has come up that matches what you're looking for better than anything I've found so far: a 2-bed flat to rent in Harrogate/);
+  assert.match(missed.paragraphs.join(' '), /opening it is free/);
+  assert.match(missed.paragraphs.join(' '), /at most twice a month/);
+  const below = dealEmail('below_floor', deal('the 2-bed in Harrogate'), null, null);
+  assert.match(below.paragraphs.join(' '), /Top up to get a call from me next time/);
+  assert.doesNotMatch(below.paragraphs.join(' '), /tried to ring/);
 });

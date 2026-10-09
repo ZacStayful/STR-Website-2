@@ -15,6 +15,8 @@ import 'server-only';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { type DealVisibility, dealVisibleTo } from './visibility';
 import { cleanPassReasons, dealReactionToFeedback, isDealReaction, type DealFeedbackFacts, type DealReaction, type FeedbackEntry } from './reactions';
+import { noteMemberActed } from '../standout/saved-server';
+import { siKey, siSavedPairs } from '../standout/saved-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -43,6 +45,8 @@ export async function setDealReaction(userId: string, dealId: string, target: De
       console.error('[deal-reactions] clear failed:', error.message);
       return { ok: false, code: 'failed' };
     }
+    // Batch 25: a member's own answer on a deal Stayful Intelligence saved for them makes it theirs.
+    await noteMemberActed(userId, dealId, 'stage');
     return { ok: true, reaction: null };
   }
   if (!isDealReaction(target)) return { ok: false, code: 'failed' };
@@ -74,6 +78,8 @@ export async function setDealReaction(userId: string, dealId: string, target: De
     console.error('[deal-reactions] set failed:', error.message);
     return { ok: false, code: 'failed' };
   }
+  // Batch 25: a member's own answer on a deal Stayful Intelligence saved for them makes it theirs.
+  await noteMemberActed(userId, dealId, 'stage');
   return { ok: true, reaction: target };
 }
 
@@ -149,6 +155,13 @@ export async function dealFeedbackFor(
     }
   }
   if (rows.length === 0) return { entries, passedUrls, byProfile };
+  // Batch 25: a Keep Stayful Intelligence made for the member is not their answer: it never trains the picks.
+  const siSaved = await siSavedPairs(admin, userIds);
+  if (siSaved.size > 0) {
+    const own = rows.filter((r) => !(r.reaction === 'keep' && siSaved.has(siKey(r.user_id, r.deal_id))));
+    rows.length = 0;
+    rows.push(...own);
+  }
 
   const facts = new Map<string, FactsRow>();
   const dealIds = [...new Set(rows.map((r) => r.deal_id))];
