@@ -43,7 +43,7 @@ import { rechooseToday, type TodaySelection } from '../today/selection';
 import { mustMatchCount, tailoredRows } from './today';
 import { dealTypeOf, typesShown } from '../profile/deal-types';
 import { goalsForType } from '../today/type-filters';
-import { isPromptQuestion, type PromptQuestion, type PromptState } from './behaviour';
+import { isPromptQuestion, type PassAnswer, type PromptQuestion, type PromptState } from './behaviour';
 import { siKey, siSavedPairs } from '../standout/saved-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -245,6 +245,47 @@ export async function tailoringForMember(userId: string, profile: SeatInput['pro
   }
 }
 
+/**
+ * Batch 25, Part D: the profile's Passes in the signal window, for the
+ * "I've noticed" prompts only — never one of its signals, so ordering and
+ * the type mix never lean on them. Tagged with this profile, or untagged
+ * while it is the active one (as signals are); after Start again, only
+ * later ones. Empty on any failure (then only Keep prompts can be asked).
+ */
+export async function promptPassesFor(userId: string, profile: Pick<SavedProfile, 'id' | 'isActive'> | null, now: Date = new Date()): Promise<PassAnswer[]> {
+  if (!hasServiceRole()) return [];
+  try {
+    const admin = createAdminClient();
+    const since = signalSince(now);
+    const read = (columns: string) =>
+      allPages<{ deal_id: string; profile_id?: string | null; updated_at: string }>((from, to) =>
+        admin.from('deal_reactions').select(columns).eq('user_id', userId).eq('reaction', 'pass').gte('updated_at', since.toISOString()).order('updated_at', { ascending: false }).order('deal_id', { ascending: true }).range(from, to),
+      );
+    let rows = await read('deal_id, profile_id, updated_at');
+    if (rows.error) rows = await read('deal_id, updated_at');
+    if (rows.error) {
+      warn(`passes unreadable: ${rows.error}`);
+      return [];
+    }
+    const restarts = profile ? await latestRestartsFor(admin, [profile.id], since) : new Map<string, string>();
+    const own = afterRestart(
+      rows.rows.filter((r) => !profile || r.profile_id === profile.id || ((r.profile_id ?? null) === null && profile.isActive)),
+      (r) => r.updated_at,
+      profile ? restarts.get(profile.id) : undefined,
+    );
+    const facts = await signalFacts(admin, [...new Set(own.map((r) => r.deal_id))]);
+    const out: PassAnswer[] = [];
+    for (const r of own) {
+      const f = facts.get(r.deal_id);
+      if (f) out.push({ dealId: r.deal_id, at: r.updated_at, ...f });
+    }
+    return out;
+  } catch (err) {
+    warn(`passes failed: ${(err as Error)?.message ?? err}`);
+    return [];
+  }
+}
+
 /** The active profile's tailoring for answers the quiz holds right now: its live count. */
 export async function tailoringPreview(userId: string, answers: { goals: MarketGoals; about: AboutYou; savedAreas: readonly string[] }, answered?: AnsweredMap): Promise<TailoringProfile | null> {
   const view = await profilesFor(userId);
@@ -371,18 +412,18 @@ export async function answerPrompt(userId: string, profileId: string | null, que
  * that is about to change it). The active profile's answers are the live
  * copies; a member with no profile row yet is read from those directly.
  */
-export async function currentTailoring(userId: string, now: Date = new Date()): Promise<{ tailoring: TailoringProfile; profileId: string | null } | null> {
+export async function currentTailoring(userId: string, now: Date = new Date()): Promise<{ tailoring: TailoringProfile; profileId: string | null; profile: Pick<SavedProfile, 'id' | 'isActive'> | null } | null> {
   if (!hasServiceRole()) return null;
   const view = await profilesFor(userId);
   const active = view.readable ? view.active : null;
   if (active) {
     const t = await tailoringForMember(userId, active, active.goals, active.areas, now);
-    return t ? { tailoring: t, profileId: active.id } : null;
+    return t ? { tailoring: t, profileId: active.id, profile: active } : null;
   }
   const admin = createAdminClient();
   const [goalsRes, areasRes] = await Promise.all([admin.from('profiles').select('market_goals').eq('id', userId).maybeSingle(), admin.from('saved_areas').select('postcode_area').eq('user_id', userId)]);
   const goals = parseMarketGoals((goalsRes.data as { market_goals?: unknown } | null)?.market_goals ?? null);
   const areas = ((areasRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area.toUpperCase());
   const t = await tailoringForMember(userId, null, goals, areas, now);
-  return t ? { tailoring: t, profileId: null } : null;
+  return t ? { tailoring: t, profileId: null, profile: null } : null;
 }

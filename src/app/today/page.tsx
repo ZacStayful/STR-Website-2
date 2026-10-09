@@ -32,7 +32,7 @@ import { TodayBriefing } from "./_components/TodayBriefing";
 import { profilePriceLineFor, profilesFor } from "@/lib/profiles/server";
 import { isRunning, labelsShown } from "@/lib/profiles/rules";
 import { pauseProfileAction } from "@/app/profiles/actions";
-import { markPromptShown, promptStatesFor, tailoringForMember } from "@/lib/tailoring/server";
+import { markPromptShown, promptPassesFor, promptStatesFor, tailoringForMember } from "@/lib/tailoring/server";
 import { sharesWithInvestors, usesTailoring, wantsLandlordLeads } from "@/lib/tailoring/profile";
 import { promptToShow } from "@/lib/tailoring/behaviour";
 import { withTailoring } from "@/lib/tailoring/numbers";
@@ -107,7 +107,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   // the cards agree, and a type the profile did not choose is never counted.
   const filtersReady = tailoringReady.then((t) => typesShown({ goals, about: t?.about ?? null }).map((type) => filtersForType(goals, savedAreas, type)));
 
-  const [today, count, waiting, checklist, priceLine, tailoring, promptStates, ownsLeads] = await Promise.all([
+  const [today, count, waiting, checklist, priceLine, tailoring, promptStates, ownsLeads, promptPasses] = await Promise.all([
     // Batch 22: the list, the pick first and only cards still live (src/lib/today/view-server.ts, shared with the signup reveal).
     // A paused profile has no daily deals: no list, no pick, until it is resumed.
     tailoringReady.then((tailoring) => loadTodayView({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, now, { paused, widen: true })),
@@ -119,10 +119,12 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
     tailoringReady,
     tailoringReady.then((t) => (usesTailoring(t) ? promptStatesFor(user.id, profileId) : null)),
     tailoringReady.then((t) => (wantsLandlordLeads(t) ? ownsAnyFunnel(payer.payerId) : true)),
+    // Batch 25: the profile's Passes, for the "I've noticed" prompts only.
+    tailoringReady.then((t) => (usesTailoring(t) ? promptPassesFor(user.id, active, now) : [])),
   ]);
 
-  // Batch 14: one profile check a visit ("You've kept 4 houses but said flats only"), when the Keeps call for one.
-  const prompt = promptStates ? promptToShow(tailoring, promptStates, now, todayStart(now)) : null;
+  // Batch 14: one profile check a visit ("I've noticed you've kept 9 houses…"), when the Keeps and Passes call for one (Batch 25).
+  const prompt = promptStates ? promptToShow(tailoring, promptStates, now, todayStart(now), promptPasses) : null;
   if (prompt) {
     const state = promptStates?.find((x) => x.question === prompt.question);
     const shownToday = Boolean(state?.lastShownAt && Date.parse(state.lastShownAt) >= todayStart(now).getTime());

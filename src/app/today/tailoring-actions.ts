@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { logActivity } from '@/lib/activity/log';
 import { isPromptQuestion, promptsFor } from '@/lib/tailoring/behaviour';
-import { answerPrompt, currentTailoring, rechooseForMember, saveFilterMode } from '@/lib/tailoring/server';
+import { answerPrompt, currentTailoring, promptPassesFor, rechooseForMember, saveFilterMode } from '@/lib/tailoring/server';
 import { isWidenKey, widenChanges } from '@/lib/tailoring/widen';
 
 /**
@@ -23,15 +23,20 @@ async function signedIn() {
   return { supabase, user };
 }
 
-/** "Include houses": the prompt's change, worked out again from the member's Keeps, then today's list follows it. */
+/**
+ * "Include houses": the prompt's change, worked out again from the member's
+ * Keeps and Passes, then today's list follows it. The only place an "I've
+ * noticed" prompt changes anything: the member's own tap.
+ */
 export async function acceptPromptAction(formData: FormData): Promise<void> {
   const { supabase, user } = await signedIn();
   const question = formData.get('question');
   if (!isPromptQuestion(question)) redirect('/today');
   const now = new Date();
   const current = await currentTailoring(user.id, now);
-  const prompt = current ? promptsFor(current.tailoring).find((p) => p.question === question) ?? null : null;
-  // No longer called for (answered on another device, the Keeps changed): nothing to do.
+  const passes = current ? await promptPassesFor(user.id, current.profile, now) : [];
+  const prompt = current ? promptsFor(current.tailoring, passes).find((p) => p.question === question) ?? null : null;
+  // No longer called for (answered on another device, the answers changed): nothing to do.
   if (!current || !prompt) redirect('/today');
   let goals = current.tailoring.goals;
   if (prompt.change.kind === 'goals') {
@@ -43,7 +48,7 @@ export async function acceptPromptAction(formData: FormData): Promise<void> {
     }
     goals = prompt.change.goals;
   } else {
-    const saved = await saveFilterMode(user.id, prompt.change.criterion, 'nice');
+    const saved = await saveFilterMode(user.id, prompt.change.criterion, prompt.change.to);
     if (!saved.ok) redirect('/today?check=0');
   }
   await answerPrompt(user.id, current.profileId, question, 'accepted', now);
@@ -53,7 +58,7 @@ export async function acceptPromptAction(formData: FormData): Promise<void> {
   redirect('/today?check=1');
 }
 
-/** "Keep flats only": not asked again for 30 days. */
+/** "Keep my answer": not asked again for 30 days. */
 export async function dismissPromptAction(formData: FormData): Promise<void> {
   const { user } = await signedIn();
   const question = formData.get('question');
