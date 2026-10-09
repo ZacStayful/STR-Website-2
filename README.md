@@ -955,6 +955,56 @@ empty chips or an agent with no knowledge:
    deletes members' questions older than `si_question_retention_months`
    (default 24).
 
+### 23. Standout deals, deal calls, the auto top-up nudge and "I've noticed" (Batch 25)
+
+When a new deal fits a member's main profile better than anything found for
+them so far, Stayful Intelligence saves it to their My deals ("Saved for you
+by Stayful Intelligence", free to open, "Not for me" with an undo) and, at
+most `standout_calls_per_month` (2) times a UK month, rings them about it
+(Batch 23's queue, call type `deal`: weekdays 09:00–19:00, consent, the
+account owner, one outbound call a day — a deal call waits for the next
+weekday when today's is used). Below the call floor (the higher of
+`standout_call_min_balance_pence` and a minute's calling with the texts kept
+back) a text and email go instead; members who can't be called hear in the
+next daily email's "Saved for you". A slower spender (8–21 days from their
+last credit to £5) gets one auto top-up text and email instead of that
+credit's £5 notice. Today's profile check is now "I've noticed", on Passes as
+well as Keeps, and changes nothing until the member taps Accept.
+
+Everything is in `src/lib/standout` (rules, copy, notify and nudge are pure
+and tested; settings in `settings.ts`, every number a `billing_settings` row
+edited on `/admin/standout`); the prompts are `src/lib/tailoring/behaviour.ts`.
+
+1. **Run `supabase/schema.sql`** (the "Batch 25: standout-deal calls"
+   section; two earlier check lists were widened in place: `sms_messages.kind`
+   adds `standout`, `nudge`; `si_calls_log.call_type` adds `deal`).
+   Idempotent and additive, service role only: `deal_reactions.saved_by`,
+   `standout_runs`, `standout_decisions`, `credit_nudges`,
+   `si_calls_log_deal_uidx` and twelve `standout_*` / `slower_spender_*`
+   settings. Nothing in `ACCESS_COLUMNS`.
+2. **Dry run:** `/admin/standout` → **Dry run** (or
+   `/api/internal/standout?dry=1`, `&only=<email>` for one member) lists
+   every judgement with its reason and writes nothing. Twice gives the same.
+3. **Saves on:** `STANDOUT_ENABLED=true` on Production. Until then the pass
+   only judges, and the nudge is never claimed (the £5 notice runs as
+   before).
+4. **Knowledge:** `/admin/intelligence/knowledge` → **Dry run**, then
+   **Seed**: six new drafts (`standout_calls`, `why_called`,
+   `why_not_called`, `saved_for_you`, `auto_topup_nudge`,
+   `noticed_prompts`) and changed drafts of `save`, `calls` and
+   `calls_how`. Approve each.
+5. **The agent:** `/admin/calls` → The agent → **Dry run**, then **Sync to
+   ElevenLabs with tools** (the deal script and opener, the
+   `deal_headline` / `deal_short` variables, the `deal_link` template and
+   the new knowledge variables). Check `/api/internal/si-calls?dry=1` shows a
+   queued deal call as `dry_run` with its variables.
+6. **Calls on:** `STANDOUT_CALLS_ENABLED=true` (Batch 23's
+   `SI_CALLS_ENABLED` still gates every call). Test with your own account
+   first: `/admin/standout` → **Force a standout** skips only the thresholds.
+7. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/standout` at `35 * * * *` and `58 6 * * *` (41 cron
+   entries).
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -992,6 +1042,7 @@ which are required, and what breaks without them.
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
 | `src/lib/knowledge` | The Stayful Intelligence knowledge base (Batch 24): templates and placeholders (`template.ts`, `placeholders.ts`, `render.ts`, `figures.ts`), matching (`match.ts`), the seed drafts (`seed.ts`), the service facts the nightly job drafts from (`service-facts.ts`), the agent's knowledge (`agent.ts`), member facts (`facts-rules.ts`), coverage and the Monday email (`coverage.ts`, `weekly.ts`), all pure and tested; the reads and writes are the `*-server.ts` files and `gap/` is the nightly job. Every number is in `config.ts` or a `billing_settings` row (`settings.ts`). `README.md` is the contract for Batches 25 and 26 |
+| `src/lib/standout` | Standout deals (Batch 25): who a deal stands out for (`rules.ts`), how it is described (`copy.ts`), how the member is told (`notify.ts`) and the slower-spender nudge (`nudge.ts`), all pure and tested; the hourly pass (`run.ts`, `server.ts`), the last check before a deal call rings (`calls-server.ts`), the save's meaning elsewhere (`saved-server.ts`), "Saved for you" (`email-server.ts`) and the texts (`texts-server.ts`). Every judgement is a `standout_decisions` row with its reason. `/admin/standout` lists them (member, deal, deal type, match, profit against the minimum and its basis, saved, call, what they did) with a dry run and the settings |
 | `src/app/admin/intelligence` | Stayful Intelligence admin: Overview (Batch 22's reveal), Gaps (what it couldn't answer, with the drafted answers, spend against the cap and the job's runs), Knowledge (every entry, approve / reject / retire, try a question, the seed, the placeholder catalogue) and Coverage (the weekly share answered from approved knowledge). Conversations is `src/app/admin/conversations` |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
 | `src/lib/access.ts` | Billing state of an account: subscriber, paused, lapsed, pay-as-you-go |
@@ -1023,6 +1074,7 @@ emails never go through the cap.
 | 06:55 | `deal-alerts` | Nothing: turns changes on tracked deals into `deal_alerts` |
 | 07:00, 07:20, 07:40, 07:50 | `sourcing` | Today's 5: the charged pick, the rest of the member's Today, and changes |
 | Mon 08:00 | `alerts` | Your week: deals missed, your deals, your areas |
+| 06:58, then :35 hourly | `standout` | Saves standout deals; a deal call, a text and email below the call floor, or nothing (they go in "Saved for you" in the next daily email); the auto top-up nudge's text and email inside 08:00–20:00 (Batch 25) |
 | 08:10 | `daily-digest` | The daily email for anyone who had none: Today's 5 without a pick, or changes only |
 | 08:20 | `picks-paused` | The out-of-credit letter (and the away letter), for anyone the daily email could not go to, with changes |
 | :40, 07:40–19:40 | `deal-alerts` | Nothing: the same collector hourly in the day, so texts can go within the hour |
