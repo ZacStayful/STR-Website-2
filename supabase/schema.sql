@@ -7608,6 +7608,8 @@ end $$;
 --   *_tokens        every model round added up; raw_pence our cost; charged_*_pence what the member paid (base, and as deducted)
 --   capped          the answer was cut short at the question's ceiling
 --   fact_proposal   "Want me to remember that?": the fact shown, saved only on the member's yes
+--   log_seq         the answer's turn in si_conversation_turns (a reconnect gets the stored answer back, uncharged)
+--   buttons         the answer's buttons (kinds and internal links only; src/lib/chat/actions.ts)
 create table if not exists public.chat_turns (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete set null,
@@ -7631,6 +7633,8 @@ create table if not exists public.chat_turns (
   charged_face_pence numeric(14,4) not null default 0,
   capped boolean not null default false,
   fact_proposal jsonb,
+  log_seq integer,
+  buttons jsonb,
   created_at timestamptz not null default now(),
   answered_at timestamptz,
   anonymised_at timestamptz

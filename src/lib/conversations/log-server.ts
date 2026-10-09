@@ -49,11 +49,16 @@ export async function addTurns(conversationId: string, turns: readonly Turn[], f
   if (error) console.error('[conversations] turns failed:', error.message);
 }
 
-export async function recordQuestion(conversationId: string, q: { question: string; outcome: QuestionOutcome; knowledgeRef?: string | null; source?: 'tool' | 'analysis' | 'sms' | 'chat' }): Promise<void> {
+/** Records one question and how it went; returns its id (Batch 26's chat keeps it for "Not helpful"), or null. */
+export async function recordQuestion(conversationId: string, q: { question: string; outcome: QuestionOutcome; knowledgeRef?: string | null; source?: 'tool' | 'analysis' | 'sms' | 'chat' }): Promise<string | null> {
   const question = q.question.trim().slice(0, 500);
-  if (!question) return;
-  const { error } = await createAdminClient().from('si_conversation_questions').insert({ conversation_id: conversationId, question, outcome: q.outcome, knowledge_ref: q.knowledgeRef ?? null, source: q.source ?? 'tool' });
-  if (error) console.error('[conversations] question failed:', error.message);
+  if (!question) return null;
+  const { data, error } = await createAdminClient().from('si_conversation_questions').insert({ conversation_id: conversationId, question, outcome: q.outcome, knowledge_ref: q.knowledgeRef ?? null, source: q.source ?? 'tool' }).select('id').single();
+  if (error) {
+    console.error('[conversations] question failed:', error.message);
+    return null;
+  }
+  return (data?.id as string | undefined) ?? null;
 }
 
 export async function hasOutcome(conversationId: string, outcome: QuestionOutcome): Promise<boolean> {
