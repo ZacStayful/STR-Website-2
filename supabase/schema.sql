@@ -2696,7 +2696,7 @@ create table if not exists public.sms_messages (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete cascade,
   direction text not null,                    -- outbound | inbound
-  kind text not null,                         -- verify | alert | keyword
+  kind text not null,                         -- verify | alert | keyword | standout | nudge (Batch 25)
   phone_e164 text not null,
   body text,
   alert_ids uuid[] not null default '{}'::uuid[],
@@ -2722,7 +2722,7 @@ begin
   alter table public.sms_messages drop constraint if exists sms_messages_direction_check;
   alter table public.sms_messages add constraint sms_messages_direction_check check (direction in ('outbound', 'inbound'));
   alter table public.sms_messages drop constraint if exists sms_messages_kind_check;
-  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword'));
+  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword', 'standout', 'nudge'));
   alter table public.sms_messages drop constraint if exists sms_messages_outcome_check;
   alter table public.sms_messages add constraint sms_messages_outcome_check check (outcome in ('pending', 'accepted', 'refused', 'unknown', 'dry_run', 'received'));
 end $$;
@@ -6195,14 +6195,16 @@ revoke all on public.si_conversation_questions from anon, authenticated;
 
 -- ── si_calls_log: every call, placed, received or blocked ──
 --   call_type      the one list is src/lib/voice/config.ts CALL_TYPES (Batch
---                  25 adds 'deal' by rebuilding the check below)
+--                  25 added 'deal' to the check below, in place: a later
+--                  section cannot widen a check this one re-adds on every run)
 --   status         queued | ringing (placed, in progress) | answered | missed |
 --                  voicemail | failed | blocked (the safety rule said no;
 --                  blocked_reason says why)
 --   uk_day         the UK day an outbound call was placed (null until then)
 --   trigger_ref    what fired it (the low-credit call: the credit landing's grant id)
 --   context        why we called / what the agent was told (intro, low_credit,
---                  missed_intro, missed_low_credit, member, unknown)
+--                  deal, missed_intro, missed_low_credit, missed_deal, member,
+--                  unknown). Batch 25: a deal call's trigger_ref is the deal id.
 --   caller_hash    unknown inbound callers: a hash of the number, never the number
 create table if not exists public.si_calls_log (
   id uuid primary key default gen_random_uuid(),
@@ -6235,7 +6237,7 @@ create table if not exists public.si_calls_log (
 );
 do $$ begin
   alter table public.si_calls_log drop constraint if exists si_calls_log_call_type_check;
-  alter table public.si_calls_log add constraint si_calls_log_call_type_check check (call_type in ('intro', 'low_credit', 'callback'));
+  alter table public.si_calls_log add constraint si_calls_log_call_type_check check (call_type in ('intro', 'low_credit', 'callback', 'deal'));
   alter table public.si_calls_log drop constraint if exists si_calls_log_status_check;
   alter table public.si_calls_log add constraint si_calls_log_status_check check (status in ('queued', 'ringing', 'answered', 'missed', 'voicemail', 'failed', 'blocked'));
 end $$;
@@ -7321,5 +7323,179 @@ insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, n
   ('anthropic', 'sonnet55_cache_read_token', 'Anthropic cache read token (Sonnet 5.5)', 0.0000158, 5, '$0.20 per million tokens at 79p a dollar'),
   ('anthropic', 'sonnet55_cache_write_token', 'Anthropic cache write token (Sonnet 5.5)', 0.0001975, 5, '$2.50 per million tokens at 79p a dollar')
 on conflict (provider, unit) do nothing;
+
+notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 25: standout-deal calls
+-- =========================
+-- A deal that fits a member better than anything else is saved straight into
+-- their My deals ("Saved for you by Stayful Intelligence", free to open) by
+-- an hourly job (/api/internal/standout, src/lib/standout), and at most
+-- standout_calls_per_month times a calendar month Stayful Intelligence rings
+-- them about it (Batch 23's queue, call_type 'deal'). Every judgement is a
+-- row in standout_decisions with its reason, so admin (/admin/standout) and
+-- Batch 26's chat can say why a member was or wasn't called. Also here: the
+-- slower-spender nudge's once-per-credit claim. Additive; nothing is added to
+-- ACCESS_COLUMNS. Two check lists earlier in the file were widened in place
+-- (sms_messages.kind: standout, nudge; si_calls_log.call_type: deal).
+
+-- ── deal_reactions.saved_by: who made a Keep ──
+-- null = the member; 'stayful_intelligence' = an auto-save. Every member
+-- write (Keep, Pass, a stage move, an email answer) sets it back to null, so
+-- a save the member acts on becomes their own. Things that learn from or
+-- reward a member's Keeps (tailoring, picks feedback, the £1 checklist step,
+-- other members' "getting attention" counts, Your week) skip SI saves.
+alter table public.deal_reactions add column if not exists saved_by text;
+do $$ begin
+  alter table public.deal_reactions drop constraint if exists deal_reactions_saved_by_check;
+  alter table public.deal_reactions add constraint deal_reactions_saved_by_check check (saved_by is null or saved_by = 'stayful_intelligence');
+end $$;
+create index if not exists deal_reactions_saved_by_idx on public.deal_reactions (user_id) where saved_by is not null;
+
+-- ── standout_runs: one row per pass of the job, and its watermarks ──
+--   paid_through   deals that went live up to here were judged for paying members
+--   free_through   …and up to here (live_since + the free delay) for free members
+-- The next pass starts a few minutes before each, so a recheck committing late
+-- is never missed; standout_decisions' unique index stops a second judgement.
+create table if not exists public.standout_runs (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null default 'cron',
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  paid_through timestamptz,
+  free_through timestamptz,
+  summary jsonb not null default '{}'::jsonb
+);
+do $$ begin
+  alter table public.standout_runs drop constraint if exists standout_runs_kind_check;
+  alter table public.standout_runs add constraint standout_runs_kind_check check (kind in ('cron', 'admin'));
+end $$;
+create index if not exists standout_runs_finished_idx on public.standout_runs (finished_at desc) where finished_at is not null;
+alter table public.standout_runs enable row level security;  -- no policies: service role only
+revoke all on public.standout_runs from anon, authenticated;
+
+-- ── standout_decisions: every judgement, and what happened next ──
+--   deal_id null      a member-level reason (no minimum-profit answer, no
+--                     primary profile, a client or paused profile, …), at most
+--                     one row per member, day and reason
+--   outcome           standout | not_standout | skipped | waiting (a listing
+--                     to recheck before it can count)
+--   reason            a code from src/lib/standout/reasons.ts
+--   profit_basis      range (the low end of the profit range) | after_works |
+--                     after_refinance (Batch 17's BRRR figures)
+--   notify            call | email ("Saved for you") | none
+--   link_token        the short /si/deal/<token> link in texts (never the listing)
+-- Not-standout rows are deleted after standout_keep_days; standout rows stay.
+create table if not exists public.standout_decisions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  profile_id uuid references public.search_profiles(id) on delete set null,
+  deal_id uuid references public.marketplace_deals(id) on delete cascade,
+  deal_type text,
+  uk_day date not null,
+  tier text not null,
+  outcome text not null,
+  reason text not null,
+  match_pct integer,
+  met integer,
+  checked integer,
+  reveal_pct integer,
+  profit_low_pcm integer,
+  profit_basis text,
+  min_profit_pcm integer,
+  live_confirmed_at timestamptz,
+  saved_at timestamptz,
+  notify text,
+  call_id uuid references public.si_calls_log(id) on delete set null,
+  call_status text,
+  link_token text,
+  texted_at timestamptz,
+  emailed_at timestamptz,
+  not_for_me_at timestamptz,
+  opened_at timestamptz,
+  stage_moved_at timestamptz,
+  forced boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+do $$ begin
+  alter table public.standout_decisions drop constraint if exists standout_decisions_tier_check;
+  alter table public.standout_decisions add constraint standout_decisions_tier_check check (tier in ('paid', 'free'));
+  alter table public.standout_decisions drop constraint if exists standout_decisions_outcome_check;
+  alter table public.standout_decisions add constraint standout_decisions_outcome_check check (outcome in ('standout', 'not_standout', 'skipped', 'waiting'));
+  alter table public.standout_decisions drop constraint if exists standout_decisions_notify_check;
+  alter table public.standout_decisions add constraint standout_decisions_notify_check check (notify is null or notify in ('call', 'email', 'none'));
+  alter table public.standout_decisions drop constraint if exists standout_decisions_basis_check;
+  alter table public.standout_decisions add constraint standout_decisions_basis_check check (profit_basis is null or profit_basis in ('range', 'after_works', 'after_refinance'));
+end $$;
+create unique index if not exists standout_decisions_deal_uidx on public.standout_decisions (user_id, deal_id) where deal_id is not null;
+create unique index if not exists standout_decisions_member_uidx on public.standout_decisions (user_id, uk_day, reason) where deal_id is null;
+create unique index if not exists standout_decisions_token_uidx on public.standout_decisions (link_token) where link_token is not null;
+create index if not exists standout_decisions_created_idx on public.standout_decisions (created_at desc);
+create index if not exists standout_decisions_saved_idx on public.standout_decisions (user_id, saved_at desc) where saved_at is not null;
+create index if not exists standout_decisions_waiting_idx on public.standout_decisions (outcome) where outcome = 'waiting';
+alter table public.standout_decisions enable row level security;  -- no policies: service role only
+revoke all on public.standout_decisions from anon, authenticated;
+
+-- ── credit_nudges: the slower-spender nudge, once per credit landing ──
+-- A member who took slower_spender_min_days–_max_days to get down to
+-- low_credit_pence after their most recent credit (Batch 23's latestLanding)
+-- gets one text + email with the auto top-up link, instead of that cycle's
+-- £5 notice. Claimed when decided; sent in the first slot of the text window.
+--   status   due (claimed, not sent yet) | sent | skipped (nothing could go)
+create table if not exists public.credit_nudges (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  landing_id text not null,
+  days_to_low integer,
+  status text not null default 'due',
+  decided_at timestamptz not null default now(),
+  sent_at timestamptz,
+  text_sent boolean not null default false,
+  email_sent boolean not null default false,
+  skip_reason text,
+  unique (user_id, landing_id)
+);
+do $$ begin
+  alter table public.credit_nudges drop constraint if exists credit_nudges_status_check;
+  alter table public.credit_nudges add constraint credit_nudges_status_check check (status in ('due', 'sent', 'skipped'));
+end $$;
+create index if not exists credit_nudges_due_idx on public.credit_nudges (decided_at) where status = 'due';
+alter table public.credit_nudges enable row level security;  -- no policies: service role only
+revoke all on public.credit_nudges from anon, authenticated;
+
+-- ── Deal calls: one per member per deal (R2-168) ──
+-- Without it a deal call that has ended could be queued again for the same
+-- deal by the next pass. trigger_ref is the deal id.
+create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal';
+
+-- Settings (defaults and bounds in src/lib/standout/settings.ts; a missing or
+-- bad row takes the default). Edited on /admin/standout.
+--   standout_min_match_pct           match (met ÷ checked) at or above this…
+--   standout_min_checked             …over at least this many checked answers
+--   standout_profit_over_min_pct     the low end of the profit at least this % above the member's minimum
+--   standout_live_confirm_hours      the listing confirmed live within this; older is rechecked first
+--   standout_calls_per_month         deal calls a member may get in a UK calendar month
+--   standout_call_min_balance_pence  no deal call below this balance (Batch 23's own minute-plus-texts check also applies)
+--   standout_rechecks_per_run        listings a pass may recheck itself; the rest wait for the hourly recheck
+--   standout_max_per_day             standouts saved for a member in a UK day (the best); 0 = no limit
+--   standout_beat_best_days          a standout must make more than every deal at least as good shown or saved to the member in this many days; 0 = off
+--   standout_keep_days               not-standout decisions are kept this long
+--   slower_spender_min_days / _max_days   the nudge's window: days from the most recent credit to the £5 mark
+insert into public.billing_settings (key, value) values
+  ('standout_min_match_pct', '90'::jsonb),
+  ('standout_min_checked', '5'::jsonb),
+  ('standout_profit_over_min_pct', '25'::jsonb),
+  ('standout_live_confirm_hours', '6'::jsonb),
+  ('standout_calls_per_month', '2'::jsonb),
+  ('standout_call_min_balance_pence', '100'::jsonb),
+  ('standout_rechecks_per_run', '3'::jsonb),
+  ('standout_max_per_day', '1'::jsonb),
+  ('standout_beat_best_days', '30'::jsonb),
+  ('standout_keep_days', '90'::jsonb),
+  ('slower_spender_min_days', '8'::jsonb),
+  ('slower_spender_max_days', '21'::jsonb)
+on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';

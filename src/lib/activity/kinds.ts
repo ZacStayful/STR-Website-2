@@ -211,6 +211,14 @@ export const ACTIVITY_KINDS = {
   si_fact_confirmed: recordOnly('Said yes to Stayful Intelligence remembering something'),
   si_facts_viewed: recordOnly('Looked at what Stayful Intelligence remembers'),
   si_fact_deleted: recordOnly('Deleted something Stayful Intelligence remembered'),
+  // Batch 25: standout deals (src/lib/standout). All record only: something
+  // Stayful Intelligence did for the member, never something they did. Opening
+  // a saved deal (deal_open), moving it (stage_move) and "Not for me" (pass)
+  // are the member's own kinds and count as before.
+  si_auto_saved: recordOnly('Had a standout deal saved to My deals by Stayful Intelligence'),
+  si_deal_call: recordOnly('Was rung by Stayful Intelligence about a standout deal'),
+  si_deal_call_missed: recordOnly('Missed a call from Stayful Intelligence about a standout deal'),
+  si_nudge_sent: recordOnly('Was sent the auto top-up nudge'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;
