@@ -7355,7 +7355,8 @@ create index if not exists deal_reactions_saved_by_idx on public.deal_reactions 
 
 -- ── standout_runs: one row per pass of the job, and its watermarks ──
 --   paid_through   deals that went live up to here were judged for paying members
---   free_through   …and up to here (live_since + the free delay) for free members
+--   free_through   deals that went live up to here were judged for free members
+--                  (it trails paid_through by free_deal_delay_hours)
 -- The next pass starts a few minutes before each, so a recheck committing late
 -- is never missed; standout_decisions' unique index stops a second judgement.
 create table if not exists public.standout_runs (
@@ -7429,7 +7430,8 @@ do $$ begin
   alter table public.standout_decisions drop constraint if exists standout_decisions_basis_check;
   alter table public.standout_decisions add constraint standout_decisions_basis_check check (profit_basis is null or profit_basis in ('range', 'after_works', 'after_refinance'));
 end $$;
-create unique index if not exists standout_decisions_deal_uidx on public.standout_decisions (user_id, deal_id) where deal_id is not null;
+-- Not partial, so an upsert can name it (a null deal_id never collides).
+create unique index if not exists standout_decisions_deal_uidx on public.standout_decisions (user_id, deal_id);
 create unique index if not exists standout_decisions_member_uidx on public.standout_decisions (user_id, uk_day, reason) where deal_id is null;
 create unique index if not exists standout_decisions_token_uidx on public.standout_decisions (link_token) where link_token is not null;
 create index if not exists standout_decisions_created_idx on public.standout_decisions (created_at desc);

@@ -25,6 +25,7 @@ export const ACTION_LABELS: Record<string, string> = {
   'cron:recheck': 'Saved listing re-check',
   deal_open: 'Deal sheet',
   deal_open_verify: 'Deal sheet check',
+  standout_verify: 'Standout deal check',
   team_seat: 'Team seat',
   full_analysis: 'Full analysis',
   pmi_addon: 'Second opinion from PMI',
