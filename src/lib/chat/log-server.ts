@@ -22,6 +22,8 @@ import { rememberFact, type RememberResult } from '../knowledge/facts-server';
 import type { QuestionOutcome } from '../voice/config';
 import { isUuid, type ChatMember, type FactProposal, type TurnRow } from './turns-server';
 import type { ChatSurface } from './config';
+import { stateReply, type ChatReply } from './reply';
+import { chargeLabel } from './format';
 
 export type Admin = ReturnType<typeof createAdminClient>;
 
@@ -81,6 +83,33 @@ export async function storedAnswer(admin: Admin, turn: TurnRow): Promise<string 
   if (!turn.conversation_id || turn.log_seq === null) return null;
   const { data } = await admin.from('si_conversation_turns').select('text').eq('conversation_id', turn.conversation_id).eq('seq', turn.log_seq).maybeSingle();
   return (data?.text as string | undefined) ?? null;
+}
+
+/**
+ * What a retry or reconnect with the same client id gets: the first result,
+ * never a second model call or charge. A question that failed part-way is
+ * "didn't finish — ask again" (a new send, a new id), never a free copy of an
+ * answer that wasn't delivered.
+ */
+export async function replyForStored(admin: Admin, turn: TurnRow, member: ChatMember): Promise<ChatReply> {
+  if (turn.status === 'pending') return stateReply('busy', { turnId: turn.id });
+  if (turn.status === 'failed') return stateReply('did_not_finish', { turnId: turn.id });
+  if (turn.status === 'no_answer') {
+    const fullView = turn.surface === 'quick' && turn.outcome === 'low_confidence' && (turn.buttons ?? []).some((b) => b.kind === 'open_full_view');
+    return { ...stateReply(fullView ? 'full_view' : 'unknown', { turnId: turn.id, teamMember: member.teamMember }), buttons: turn.buttons ?? [], conversationId: turn.conversation_id };
+  }
+  const text = await storedAnswer(admin, turn);
+  if (!text) return stateReply('did_not_finish', { turnId: turn.id });
+  return {
+    state: 'answer',
+    turnId: turn.id,
+    text,
+    buttons: turn.buttons ?? [],
+    charged: turn.charged_face_pence > 0 ? chargeLabel(turn.charged_face_pence) : null,
+    conversationId: turn.conversation_id,
+    factProposal: turn.fact_proposal && !turn.fact_proposal.answered ? turn.fact_proposal.fact : null,
+    capped: turn.capped,
+  };
 }
 
 // ── The member's own history ────────────────────────────────────────────────
