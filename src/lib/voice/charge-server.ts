@@ -23,7 +23,7 @@ import { priceFor } from '../credit/pricing';
 import { isAdminEmail } from '../admin';
 import { payerFor } from '../team';
 import { CALL_ACTION, CALL_MINUTE_UNIT } from './config';
-import { capToBalance, minutesChargePence } from './charge';
+import { callablePence, capToBalance, maxSpendRate, minutesChargePence } from './charge';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -87,7 +87,8 @@ async function settle(admin: Admin, guardId: string, spec: ChargeSpec): Promise<
   let txId: number | null = null;
   for (let attempt = 0; attempt < 2 && txId === null; attempt++) {
     const balance = await getBalance(o.userId).catch(() => null);
-    charged = capToBalance(o.pricePence, balance?.totalPence ?? 0);
+    // R2-13: never the credit an open reservation holds (the ledger refuses it too).
+    charged = capToBalance(o.pricePence, balance ? callablePence(balance, maxSpendRate(balance.rates)) : 0);
     if (charged <= 0) break;
     try {
       txId = await debitFace(o.userId, charged, {

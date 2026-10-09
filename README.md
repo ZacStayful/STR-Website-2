@@ -981,7 +981,10 @@ edited on `/admin/standout`); the prompts are `src/lib/tailoring/behaviour.ts`.
    Idempotent and additive, service role only: `deal_reactions.saved_by`,
    `standout_runs`, `standout_decisions`, `credit_nudges`,
    `si_calls_log_deal_uidx` and twelve `standout_*` / `slower_spender_*`
-   settings. Nothing in `ACCESS_COLUMNS`.
+   settings; and `credit_debit_face` redefined so a call, text, email or
+   seat never takes credit an open reservation holds (R2-13: a running
+   analysis, deep search or funnel lead no longer overdraws because of a
+   call). Nothing in `ACCESS_COLUMNS`.
 2. **Dry run:** `/admin/standout` → **Dry run** (or
    `/api/internal/standout?dry=1`, `&only=<email>` for one member) lists
    every judgement with its reason and writes nothing. Twice gives the same.

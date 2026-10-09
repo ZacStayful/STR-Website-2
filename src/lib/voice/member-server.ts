@@ -11,6 +11,7 @@ import { isUkMobile } from '../sms/phone';
 import { teamOf } from '../team';
 import { getBalance } from '../credit/ledger';
 import { isManagementOnly } from '../management/stamp-server';
+import { callablePence, maxSpendRate } from './charge';
 
 export interface MemberFacts {
   userId: string;
@@ -23,7 +24,7 @@ export interface MemberFacts {
   joinedAt: Date;
   firstName: string | null;
   email: string | null;
-  /** Displayed balance (face pence). */
+  /** The credit a call may take (face pence): the displayed balance less what open reservations hold (R2-13, charge.ts callablePence). */
   balancePence: number;
   /** Batch 22f: a management company without deal-finding (no intro or low-credit call). */
   managementOnly: boolean;
@@ -59,7 +60,7 @@ export async function memberFacts(userId: string): Promise<MemberFacts | null> {
     joinedAt: new Date(row.created_at),
     firstName: firstNameOf(row.full_name),
     email: row.email,
-    balancePence: balance ? balance.totalPence : 0,
+    balancePence: balance ? callablePence(balance, maxSpendRate(balance.rates)) : 0,
     managementOnly,
   };
 }

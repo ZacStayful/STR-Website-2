@@ -24,7 +24,7 @@ import { getBalance } from '../credit/ledger';
 import { payerFor } from '../team';
 import { PERSONA_VERSION } from '../persona/stayful-intelligence';
 import { startConversation } from '../conversations/log-server';
-import { affordableSeconds } from './charge';
+import { affordableSeconds, callablePence, maxSpendRate } from './charge';
 import { callPencePerMinute } from './charge-server';
 import { initiateSecret, toolSecret } from './config';
 import { memberByNumber, memberFacts } from './member-server';
@@ -107,7 +107,8 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
       if (deal) context = 'missed_deal';
     }
   }
-  const seconds = payer.suspended ? 60 : affordableSeconds(balance?.totalPence ?? 0, perMin, settings.voice.maxCallSeconds, settings.voice.textsPerCallMax * settings.intelligence.siTextPence);
+  // R2-13: the credit a call may take, not what open reservations hold.
+  const seconds = payer.suspended ? 60 : affordableSeconds(balance ? callablePence(balance, maxSpendRate(balance.rates)) : 0, perMin, settings.voice.maxCallSeconds, settings.voice.textsPerCallMax * settings.intelligence.siTextPence);
   const vars = callVariables({
     callType: 'callback',
     context,

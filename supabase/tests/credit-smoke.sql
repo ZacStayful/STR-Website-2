@@ -333,4 +333,43 @@ begin
   raise notice 'ALL CREDIT SMOKE CHECKS PASSED';
 end $$;
 
+-- ── Batch 25 (R2-13): a face debit (calls, texts, emails, seats) never takes reserved credit ──
+do $$
+declare
+  q uuid := gen_random_uuid();
+  rate numeric := credit_spend_rate('topup');
+  res uuid;
+  tx bigint;
+  refused boolean := false;
+  r record;
+begin
+  insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
+  values (q, 'credit-smoke-' || q::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now());
+  insert into profiles (id, email) values (q, 'credit-smoke-' || q::text || '@example.test') on conflict (id) do nothing;
+  perform credit_grant(q, 'topup', 1000, null, 'pi:smoke_r213_' || q::text, 'Smoke top-up');
+  -- A running action holds all but about 69p (base) of the £10 top-up.
+  res := credit_reserve(q, 'smoke_analysis', gen_random_uuid(), round(1000 / rate - 69.2307, 4));
+
+  -- £1 face would take ~77p base: more than is free. Refused, nothing taken.
+  begin
+    perform credit_debit_face(q, 100, '{"action":"si_call","description":"Smoke call"}'::jsonb);
+  exception when sqlstate 'P0402' then refused := true;
+  end;
+  if not refused then raise exception 'credit_debit_face took credit an open reservation holds (R2-13)'; end if;
+  select * into r from credit_available(q);
+  if r.topup_pence <> 1000 then raise exception 'a refused face debit should take nothing, topup now %', r.topup_pence; end if;
+
+  -- 80p face (~62p base) fits beside the reservation.
+  tx := credit_debit_face(q, 80, '{"action":"si_call","description":"Smoke call"}'::jsonb);
+  if tx is null then raise exception 'a face debit within the free credit should go'; end if;
+  select * into r from credit_available(q);
+  if r.spendable_base_pence < -0.0001 then raise exception 'the reservation is no longer covered: spendable %', r.spendable_base_pence; end if;
+
+  -- Released, the rest is free to spend again.
+  perform credit_release(res);
+  tx := credit_debit_face(q, 500, '{"action":"si_call","description":"Smoke call"}'::jsonb);
+  if tx is null then raise exception 'a face debit after the release should go'; end if;
+  raise notice 'R2-13 face debits leave reservations alone: ok';
+end $$;
+
 rollback;

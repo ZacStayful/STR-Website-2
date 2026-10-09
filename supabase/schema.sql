@@ -1827,6 +1827,8 @@ revoke all on public.team_seat_charges from anon, authenticated;
 -- seat sold as a flat £10. Each allocation records base = face / rate, so
 -- credit_refund reverses it like any other debit. Never overdrafts. Ignores
 -- open reservations (they are minutes long and settle themselves).
+-- Superseded by the Batch 25 section's definition (R2-13: it also leaves
+-- open reservations alone); kept so each section runs on its own.
 create or replace function public.credit_debit_face(p_user uuid, p_face_pence numeric, p_meta jsonb default '{}'::jsonb)
 returns bigint language plpgsql security definer set search_path = public as $$
 declare
@@ -7472,6 +7474,77 @@ revoke all on public.credit_nudges from anon, authenticated;
 -- Without it a deal call that has ended could be queued again for the same
 -- deal by the next pass. trigger_ref is the deal id.
 create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal';
+
+-- ── A face debit never takes credit an open reservation holds (R2-13) ──
+-- Batch 23's calls (minutes, texts, the missed-call email), this batch's deal
+-- texts and nudges, and team seats all debit through credit_debit_face. It
+-- checked the grants alone, so a call could spend credit a running analysis,
+-- deep search or funnel lead had reserved, and that action then overdrew (or,
+-- for a deep search, went free). Redefined here as it was, plus one check:
+-- the base pence the walk takes may not exceed credit_available's spendable
+-- base (the grants' base value less open reservations). The earlier
+-- definition (Batch 23) is replaced on every run, so this one stands.
+create or replace function public.credit_debit_face(p_user uuid, p_face_pence numeric, p_meta jsonb default '{}'::jsonb)
+returns bigint language plpgsql security definer set search_path = public as $$
+declare
+  v_remaining numeric := round(p_face_pence, 4);
+  v_available numeric;
+  v_spendable_base numeric;
+  v_tx bigint;
+  v_total_base numeric := 0;
+  v_take_grant numeric;
+  v_take_base numeric;
+  g record;
+begin
+  if v_remaining <= 0 then return null; end if;
+  perform 1 from profiles where id = p_user for update;
+
+  select coalesce(sum(remaining_pence), 0) into v_available
+  from credit_grants
+  where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now());
+  if v_available < v_remaining then
+    raise exception 'insufficient_credit' using errcode = 'P0402',
+      detail = json_build_object('required_face', v_remaining, 'available_face', v_available)::text;
+  end if;
+  select coalesce(spendable_base_pence, 0) into v_spendable_base from credit_available(p_user);
+
+  insert into credit_transactions (user_id, kind, amount_pence, base_pence, action_id, action, description, metadata)
+  values (
+    p_user, 'debit', -v_remaining, 0,
+    nullif(p_meta ->> 'action_id', '')::uuid, p_meta ->> 'action', p_meta ->> 'description',
+    p_meta - array['action_id', 'action', 'description']
+  ) returning id into v_tx;
+
+  for g in
+    select id, remaining_pence, spend_rate from credit_grants
+    where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now())
+    order by priority, expires_at nulls last, created_at
+    for update
+  loop
+    exit when v_remaining <= 0;
+    v_take_grant := least(v_remaining, g.remaining_pence);
+    v_take_base := round(v_take_grant / g.spend_rate, 4);
+    update credit_grants set remaining_pence = remaining_pence - v_take_grant where id = g.id;
+    insert into credit_allocations (transaction_id, grant_id, base_pence, grant_pence, spend_rate) values (v_tx, g.id, v_take_base, v_take_grant, g.spend_rate);
+    v_total_base := v_total_base + v_take_base;
+    v_remaining := v_remaining - v_take_grant;
+  end loop;
+
+  if v_remaining > 0.0001 then
+    raise exception 'insufficient_credit' using errcode = 'P0402',
+      detail = json_build_object('required_face', p_face_pence, 'shortfall_face', v_remaining)::text;
+  end if;
+  -- R2-13: what is left must still cover every open reservation (the raise undoes the walk).
+  if v_total_base > v_spendable_base + 0.0001 then
+    raise exception 'insufficient_credit' using errcode = 'P0402',
+      detail = json_build_object('required_face', p_face_pence, 'required_base', v_total_base, 'spendable_base', v_spendable_base)::text;
+  end if;
+
+  update credit_transactions set base_pence = v_total_base where id = v_tx;
+  return v_tx;
+end;
+$$;
+revoke execute on function public.credit_debit_face(uuid, numeric, jsonb) from public, anon, authenticated;
 
 -- Settings (defaults and bounds in src/lib/standout/settings.ts; a missing or
 -- bad row takes the default). Edited on /admin/standout.
