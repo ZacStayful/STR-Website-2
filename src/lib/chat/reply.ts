@@ -43,6 +43,23 @@ export interface ChatReply {
   capped?: boolean;
 }
 
+/** What a page needs to draw the chat (src/lib/chat/turns-server.ts chatUi); null while it is off. */
+export interface ChatUi {
+  quickHintPence: number;
+  fullHintPence: number;
+  quickFloorPence: number;
+  fullFloorPence: number;
+}
+
+/** The full view's stream: start, thinking, text as it comes, cleared or replaced, then the reply. */
+export type FullEvent =
+  | { type: 'start'; turnId: string }
+  | { type: 'thinking' }
+  | { type: 'delta'; text: string }
+  | { type: 'clear' }
+  | { type: 'replace'; text: string }
+  | { type: 'done'; reply: ChatReply };
+
 /** The fixed reply for a state that has no answer of its own. */
 export function stateReply(state: Exclude<ChatState, 'answer'>, o: { turnId?: string | null; teamMember?: boolean } = {}): ChatReply {
   const text: Record<Exclude<ChatState, 'answer'>, string> = {

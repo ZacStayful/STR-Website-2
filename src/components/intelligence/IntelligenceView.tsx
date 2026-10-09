@@ -6,6 +6,7 @@ import type { RevealTone } from "@/lib/intelligence/reveal";
 import { revealIntro } from "@/lib/intelligence/reveal";
 import { AnswerChips } from "./AnswerChips";
 import { ViewBackground } from "./ViewBackground";
+import { ChatEye } from "./chat/ChatEye";
 
 /**
  * Batch 22, Part E: the Stayful Intelligence view, full screen on the header's
@@ -46,6 +47,8 @@ export interface IntelligenceViewProps {
   note?: ReactNode;
   answers: Answer[];
   savedAll?: boolean;
+  /** Batch 26: the typed chat's box, in the reserved slot under the chips (the header view only). */
+  chat?: ReactNode;
 }
 
 export function IntelligenceView(p: IntelligenceViewProps) {
@@ -66,10 +69,10 @@ export function IntelligenceView(p: IntelligenceViewProps) {
       <main className="relative z-10 mx-auto max-w-3xl space-y-6 px-4 pb-16 pt-6">
         <header className="flex flex-col items-center text-center">
           <div className="hidden sm:block">
-            <StayfulEye size={180} level={p.level} label={`Stayful Intelligence, ${p.levelName}`} />
+            <ChatEye size={180} level={p.level} label={`Stayful Intelligence, ${p.levelName}`} />
           </div>
           <div className="sm:hidden">
-            <StayfulEye size={120} level={p.level} label={`Stayful Intelligence, ${p.levelName}`} />
+            <ChatEye size={120} level={p.level} label={`Stayful Intelligence, ${p.levelName}`} />
           </div>
           {p.tone !== "none" && <h1 className="mt-6 text-2xl font-semibold">{closest ? "This is the closest I have today." : revealIntro(p.cardCount)}</h1>}
           {p.tone === "none" && <h1 className="mt-6 text-2xl font-semibold">I couldn’t find a close match for everything you asked for.</h1>}
@@ -119,8 +122,8 @@ export function IntelligenceView(p: IntelligenceViewProps) {
             Anything you’d like to ask me?
           </h2>
           <AnswerChips answers={p.answers} surface={p.surface} />
-          {/* Batch 26's typed chat goes here: the slot is reserved so nothing above moves. */}
-          <div id="si-chat-slot" />
+          {/* Batch 26's typed chat: the slot was reserved so nothing above moves. */}
+          <div id="si-chat-slot">{p.chat}</div>
         </section>
 
         <p className="text-center text-xs text-[#B9D5C6]/80">Stayful Intelligence is software, not a person. I describe deals; the decision is yours.</p>

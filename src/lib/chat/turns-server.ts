@@ -34,6 +34,7 @@ import { CHAT_ACTION, CHARGE_DESCRIPTION, MODEL_FOR, MODEL_UNITS, PENDING_STALE_
 import { chargeLines, costOf, PROVIDER, type RoundUsage } from './budget';
 import { parseChatSettings, CHAT_SETTING_KEYS, type ChatSettings } from './settings';
 import type { ChatButton } from './actions';
+import type { ChatUi } from './reply';
 import type { QuestionOutcome } from '../voice/config';
 
 export type Admin = ReturnType<typeof createAdminClient>;
@@ -43,6 +44,28 @@ export type Admin = ReturnType<typeof createAdminClient>;
 export async function readChatSettings(admin: Admin = createAdminClient()): Promise<ChatSettings> {
   const { data } = await admin.from('billing_settings').select('key, value').in('key', Object.values(CHAT_SETTING_KEYS));
   return parseChatSettings(new Map(((data ?? []) as { key: string; value: unknown }[]).map((r) => [r.key, r.value])));
+}
+
+let uiCache: { at: number; settings: ChatSettings } | null = null;
+
+/** The settings for drawing the box on every page (cached a minute, like getBillingSettings); a question always reads them fresh. */
+export async function chatSettingsForPage(): Promise<ChatSettings | null> {
+  if (!chatEnvOn() || !hasServiceRole()) return null;
+  if (uiCache && Date.now() - uiCache.at < 60_000) return uiCache.settings;
+  try {
+    const settings = await readChatSettings();
+    uiCache = { at: Date.now(), settings };
+    return settings;
+  } catch {
+    return null;
+  }
+}
+
+
+export async function chatUi(): Promise<ChatUi | null> {
+  const s = await chatSettingsForPage();
+  if (!s || !s.enabled) return null;
+  return { quickHintPence: s.quickHintPence, fullHintPence: s.fullHintPence, quickFloorPence: s.quickFloorPence, fullFloorPence: s.fullFloorPence };
 }
 
 /** The env switch: off until SI_CHAT_ENABLED=true (README, Batch 26 deploy steps). */

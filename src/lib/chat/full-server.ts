@@ -37,7 +37,7 @@ import { buildButtons } from './actions';
 import { accountBlock, fullSystemPrompt, historyMessages, questionBlock } from './prompts';
 import { CHAT_TOOLS, parseToolInput } from './tools';
 import { chargeLabel } from './format';
-import { stateReply, type ChatReply } from './reply';
+import { stateReply, type ChatReply, type FullEvent } from './reply';
 import { chatMemberFor, chatOn, insertTurn, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember, type TurnRow } from './turns-server';
 import { logExchange, openConversation, replyForStored } from './log-server';
 import type { ChatSettings } from './settings';
@@ -50,13 +50,7 @@ const FINAL_ROUND_MIN_TOKENS = 350;
 /** Sonnet 5.5's tool-use system prompt (auto), per the pricing page. */
 const TOOL_SYSTEM_TOKENS = 286;
 
-export type FullEvent =
-  | { type: 'start'; turnId: string }
-  | { type: 'thinking' }
-  | { type: 'delta'; text: string }
-  | { type: 'clear' }
-  | { type: 'replace'; text: string }
-  | { type: 'done'; reply: ChatReply };
+export type { FullEvent };
 
 export interface FullJob {
   user: Pick<User, 'id' | 'email'>;

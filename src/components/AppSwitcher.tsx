@@ -4,6 +4,7 @@ import { FeedbackTrigger } from "@/components/feedback/FeedbackTrigger";
 import { ProfilePill, type PillProfiles } from "@/components/ProfilePill";
 import { HeaderEyeLink } from "@/components/intelligence/HeaderEyeLink";
 import type { EyeLevel } from "@/components/StayfulEye";
+import type { ChatUi } from "@/lib/chat/reply";
 import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type ActiveNav } from "@/lib/nav";
 
 // Thin strip shown to signed-in members, in the order Zac decided (Batch
@@ -26,7 +27,7 @@ import { NAV_TARGETS, NAV_ORDER, LEADS_NAV, activeNavFor, type Section, type Act
 // rather than splitting the nav items. At 375px the strip wraps to three
 // rows (eye to Browse, Market Explorer to Account, then the chips): every
 // item stays visible, nothing goes into a menu (Batch 22e, decided).
-export function AppSwitcher({ active, admin, leads, profile = null, saved = null, eyeLevel = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null; eyeLevel?: EyeLevel | null }) {
+export function AppSwitcher({ active, admin, leads, profile = null, saved = null, eyeLevel = null, chat = null }: { active: Section; admin?: boolean; leads?: boolean; profile?: { percent: number; complete: boolean } | null; saved?: PillProfiles | null; eyeLevel?: EyeLevel | null; chat?: ChatUi | null }) {
   const current = activeNavFor(active);
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     color: isActive ? "#fff" : "#B9D5C6",
@@ -60,7 +61,7 @@ export function AppSwitcher({ active, admin, leads, profile = null, saved = null
       }}
     >
       {/* Batch 22: the Stayful Intelligence eye leads the row; Batch 22e gives it its words. */}
-      {eyeLevel !== null && <HeaderEyeLink level={eyeLevel} style={linkStyle(false)} />}
+      {eyeLevel !== null && <HeaderEyeLink level={eyeLevel} style={linkStyle(false)} chat={chat} />}
       {NAV_ORDER.filter((key) => key !== "account").map((key) => item(key, NAV_TARGETS[key].href, NAV_TARGETS[key].label))}
       {leads && item("leads", LEADS_NAV.href, LEADS_NAV.label)}
       {item("account", NAV_TARGETS.account.href, NAV_TARGETS.account.label)}
