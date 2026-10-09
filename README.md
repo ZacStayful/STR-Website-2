@@ -1025,8 +1025,10 @@ conversation log (Batch 23's, channel `chat`):
 
 A question costs its actual tokens × `si_chat_markup` (5), charged once
 through the credit system and only for a delivered answer: "I don't know",
-"ask in the full view", a refusal, an error or a page that goes away
-part-way are logged as house spend and never charged. Each answer is sized
+"ask in the full view", a refusal, an error or a full-view page closed
+part-way are logged as house spend and never charged (a quick answer
+finished after its page closed is charged, about 1p, and is in the
+member's history). Each answer is sized
 so it can never pass its ceiling (`si_chat_quick_ceiling_pence` 3p,
 `si_chat_full_ceiling_pence` 25p) or the member's balance. Every figure in an
 answer must be one a look-up, a setting or an approved answer gave it, and it
