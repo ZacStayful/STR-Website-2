@@ -30,15 +30,15 @@ import { SeatPausedError, type StartedAction } from '../credit/action';
 import { getUnitCostTable } from '../credit/unit-costs';
 import type { UnitCostTable } from '../credit/costs';
 import { recordActivity } from '../activity/log';
-import { CAPPED_LINE, DONT_KNOW_LINE, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, MAX_QUESTION_CHARS, MODEL_UNITS } from './config';
-import { approxTokens, budgetFor, costOf, roundMaxTokens, unitsPriced, usageOf, NO_USAGE, type RoundUsage } from './budget';
-import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion } from './guard';
+import { CAPPED_LINE, DONT_KNOW_LINE, FULL_HARD_DEADLINE_MS, FULL_LOOKUP_DEADLINE_MS, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, LOOKUP_ROUND_MAX_TOKENS, MAX_QUESTION_CHARS, MAX_TOOL_RESULT_CHARS, MIN_ROUND_TIME_MS, MODEL_UNITS } from './config';
+import { affordsLookUp, approxTokens, budgetFor, costOf, promptTokensOf, roundMaxTokens, unitsPriced, usageOf, NO_USAGE, type RoundUsage } from './budget';
+import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
 import { buildButtons } from './actions';
 import { accountBlock, fullSystemPrompt, historyMessages, questionBlock } from './prompts';
 import { CHAT_TOOLS, parseToolInput } from './tools';
 import { chargeLabel } from './format';
 import { stateReply, type ChatReply, type FullEvent } from './reply';
-import { chatMemberFor, chatOn, insertTurn, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember, type TurnRow } from './turns-server';
+import { chatMemberFor, chatOn, insertTurn, logFailedCall, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember, type TurnRow } from './turns-server';
 import { logExchange, openConversation, replyForStored } from './log-server';
 import type { ChatSettings } from './settings';
 import { chatContext } from './context-server';
@@ -119,12 +119,15 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
   const units = MODEL_UNITS.full;
   const rounds: RoundUsage[] = [];
   let settled = false;
-  const fail = async (state: 'failed' | 'did_not_finish'): Promise<ChatReply> => {
+  const started = Date.now();
+  const fail = async (state: 'failed' | 'did_not_finish' | 'out_of_room'): Promise<ChatReply> => {
     if (!settled) {
       settled = true;
       await settle(admin, turn, member, hold, { status: 'failed', outcome: null, rounds }, settings).catch((e) => console.error('[chat] settle failed:', e));
     }
-    return stateReply(state, { turnId: turn.id });
+    const reply = stateReply(state, { turnId: turn.id });
+    if (!live.gone()) send({ type: 'done', reply });
+    return reply;
   };
 
   try {
@@ -155,23 +158,30 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     let stop: string | null = null;
     let capped = false;
     let spent = 0;
+    let cachedTokens = 0;
 
     for (let round = 0; ; round++) {
       if (live.gone()) return await fail('did_not_finish');
+      const elapsed = Date.now() - started;
+      // The route has a minute: no more look-ups after FULL_LOOKUP_DEADLINE_MS, and no round that can't finish in time.
+      const timeLeft = FULL_HARD_DEADLINE_MS - elapsed;
+      if (timeLeft < MIN_ROUND_TIME_MS) return await fail(round === 0 ? 'failed' : 'out_of_room');
       const promptTokens = fixedTokens + approxTokens(JSON.stringify(messages));
-      const room = roundMaxTokens({ table, units, markup: settings.markup, budgetPence: job.budget, spentPence: spent, promptTokens, cap: FULL_ROUND_MAX_TOKENS });
-      if (room === 0) {
-        // Nothing left in the hold for another round: stop with what was said.
-        capped = true;
-        break;
-      }
-      const mayLookUp = round < settings.fullMaxToolRounds && room >= FINAL_ROUND_MIN_TOKENS;
+      const room = roundMaxTokens({ table, units, markup: settings.markup, budgetPence: job.budget, spentPence: spent, promptTokens, cachedTokens, cap: FULL_ROUND_MAX_TOKENS });
+      // Nothing left in the hold for a useful round: not an answer, not a knowledge gap, not charged.
+      if (room === 0) return await fail('out_of_room');
+      const lookUpRoom = Math.min(room, LOOKUP_ROUND_MAX_TOKENS);
+      const mayLookUp =
+        round < settings.fullMaxToolRounds &&
+        elapsed < FULL_LOOKUP_DEADLINE_MS &&
+        room >= FINAL_ROUND_MIN_TOKENS &&
+        affordsLookUp({ table, units, markup: settings.markup, budgetPence: job.budget, spentPence: spent, promptTokens, cachedTokens, room: lookUpRoom, resultTokens: approxTokens('x'.repeat(MAX_TOOL_RESULT_CHARS)) * 2, finalTokens: FINAL_ROUND_MIN_TOKENS });
       let text = '';
       let usage: RoundUsage = NO_USAGE;
       let final: Anthropic.Message;
       const stream = client.messages.stream({
         model: FULL_MODEL,
-        max_tokens: room,
+        max_tokens: mayLookUp ? lookUpRoom : room,
         system,
         tools: CHAT_TOOLS,
         tool_choice: mayLookUp ? { type: 'auto' } : { type: 'none' },
@@ -180,7 +190,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         // Sonnet 5.5 can't switch thinking off; between_tools keeps it to short notes between look-ups (as the gap job does).
         thinking: { type: 'between_tools' } as never,
         cache_control: { type: 'ephemeral' },
-      });
+      }, { timeout: Math.min(FULL_ROUND_TIMEOUT_MS, timeLeft) });
       live.onGone(() => stream.abort());
       try {
         for await (const event of stream) {
@@ -195,14 +205,19 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         usage = usageOf(final.usage);
         rounds.push(usage);
       } catch (err) {
-        // A dropped or aborted stream: what it used so far is still our cost (house spend), and nothing is charged.
-        rounds.push(usage);
+        // A dropped or aborted stream: what it used so far is still our cost (house spend), and nothing is
+        // charged. The output so far is estimated from the text streamed (the final count never came).
+        if (usage === NO_USAGE) await logFailedCall(turn, member);
+        else rounds.push({ ...usage, output: Math.max(usage.output, approxTokens(text)) });
         if (live.gone() || err instanceof Anthropic.APIUserAbortError) return await fail('did_not_finish');
         console.error('[chat] full round failed:', (err as Error)?.message ?? err);
         return await fail('failed');
       }
       spent = costOf(table, units, rounds, settings.markup).basePence;
+      cachedTokens = promptTokensOf(usage);
       stop = final.stop_reason ?? null;
+      // Cut off while it was still asking for a look-up: there is no answer in it, only a preface.
+      if (stop === 'max_tokens' && final.content.some((b) => b.type === 'tool_use')) return await fail('out_of_room');
 
       if (stop === 'tool_use' && mayLookUp) {
         if (text) send({ type: 'clear' });
@@ -224,6 +239,8 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       }
       answer = text.trim();
       if (stop === 'max_tokens') capped = true;
+      // A round that ends asking for a look-up it may not have has no answer: out of room, not a gap.
+      if (stop === 'tool_use') return await fail('out_of_room');
       break;
     }
 
@@ -234,7 +251,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     let replyState: ChatReply['state'];
     let shown: string;
     const refused = stop === 'refusal';
-    const dontKnow = !answer || refused || answer.includes("I don't know that one yet") || answer.includes('I don’t know that one yet');
+    const dontKnow = !answer || refused || saysDontKnow(answer);
     if (dontKnow) {
       replyState = 'unknown';
       outcome = 'could_not_answer';
@@ -281,6 +298,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         capped,
         factProposal: factProposal ? { fact: factProposal, asked: question } : null,
         buttons,
+        capPence: job.budget,
       },
       settings,
     );

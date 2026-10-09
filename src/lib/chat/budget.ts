@@ -96,23 +96,29 @@ export function costOf(table: UnitCostTable, units: ModelUnits, rounds: readonly
 }
 
 /**
- * The most output tokens the next round may ask for, so its worst case still
- * fits the budget: every prompt token priced as a cache write (the dearest
- * input) and every output token at the output price. 0 when even
- * MIN_ROUND_OUTPUT_TOKENS would not fit: the answer stops there.
+ * The most output tokens the next round may ask for, so its expected worst
+ * case still fits the budget: the part of the prompt the last round already
+ * sent (cachedTokens) at the cache-read price, everything new at the dearer
+ * of input and cache write, and every output token at the output price. 0
+ * when even MIN_ROUND_OUTPUT_TOKENS would not fit: the answer stops there.
+ * (If the cache were somehow missed, settle() still caps the charge at the
+ * budget, so a question can never cost more than its hold.)
  */
-export function roundMaxTokens(p: { table: UnitCostTable; units: ModelUnits; markup: number; budgetPence: number; spentPence: number; promptTokens: number; cap: number }): number {
+export function roundMaxTokens(p: { table: UnitCostTable; units: ModelUnits; markup: number; budgetPence: number; spentPence: number; promptTokens: number; cachedTokens?: number; cap: number }): number {
   // Per token, unrounded (priceFor rounds a line to 4dp, which would swamp a single token).
   const each = (u: string) => {
     const pr = priceFor(p.table, PROVIDER, u, 1, p.markup);
     return pr.found ? pr.unitCostPence * pr.markup : 0;
   };
   const inputEach = Math.max(each(p.units.input), each(p.units.cacheWrite));
+  const readEach = each(p.units.cacheRead) || inputEach;
   const outputBase = each(p.units.output);
   // Without an output price the cost can't be bounded: don't run.
   if (!(outputBase > 0)) return 0;
+  const prompt = Math.max(0, p.promptTokens);
+  const cached = Math.min(prompt, Math.max(0, p.cachedTokens ?? 0));
   // ROUNDING_MARGIN covers the meter's 4dp rounding of each line, so the sum stays inside the budget.
-  const left = p.budgetPence - p.spentPence - Math.max(0, p.promptTokens) * inputEach - ROUNDING_MARGIN;
+  const left = p.budgetPence - p.spentPence - cached * readEach - (prompt - cached) * inputEach - ROUNDING_MARGIN;
   if (!(left > 0)) return 0;
   const tokens = Math.floor(left / outputBase);
   if (tokens < MIN_ROUND_OUTPUT_TOKENS) return 0;
@@ -122,4 +128,28 @@ export function roundMaxTokens(p: { table: UnitCostTable; units: ModelUnits; mar
 /** Every unit a surface is metered at has a price: without one a question can't be bounded, so it isn't asked. */
 export function unitsPriced(table: UnitCostTable, units: ModelUnits): boolean {
   return [units.input, units.output, units.cacheRead, units.cacheWrite].every((u) => table.has(`${PROVIDER}:${u}`));
+}
+
+/** Every prompt token a round actually sent (uncached, read and written): what the next round finds in the cache. */
+export function promptTokensOf(u: RoundUsage): number {
+  return u.input + u.cacheRead + u.cacheWrite;
+}
+
+/**
+ * Whether a round may look something up: only if, after its own worst case
+ * and a full tool result, the round after it could still afford a short
+ * final answer. Otherwise it answers now, so a look-up never leaves a member
+ * near their floor with "I don't know".
+ */
+export function affordsLookUp(p: { table: UnitCostTable; units: ModelUnits; markup: number; budgetPence: number; spentPence: number; promptTokens: number; cachedTokens: number; room: number; resultTokens: number; finalTokens: number }): boolean {
+  const each = (u: string) => {
+    const pr = priceFor(p.table, PROVIDER, u, 1, p.markup);
+    return pr.found ? pr.unitCostPence * pr.markup : 0;
+  };
+  const inputEach = Math.max(each(p.units.input), each(p.units.cacheWrite));
+  const readEach = each(p.units.cacheRead) || inputEach;
+  const cached = Math.min(p.promptTokens, p.cachedTokens);
+  const worstThisRound = cached * readEach + (p.promptTokens - cached) * inputEach + p.room * each(p.units.output);
+  const next = roundMaxTokens({ table: p.table, units: p.units, markup: p.markup, budgetPence: p.budgetPence, spentPence: p.spentPence + worstThisRound, promptTokens: p.promptTokens + p.room + p.resultTokens, cachedTokens: p.promptTokens, cap: p.finalTokens });
+  return next >= p.finalTokens;
 }

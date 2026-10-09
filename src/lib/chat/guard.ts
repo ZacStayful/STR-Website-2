@@ -1,6 +1,9 @@
 /**
- * Batch 26: the checks an answer passes before a member sees it and is
- * charged for it.
+ * Batch 26: the checks an answer passes before it is kept and charged for.
+ * A quick answer is checked before the member sees it. A full-view answer
+ * streams in as it is written, so the member can read a line for a moment
+ * before the check runs; if it fails, the shown text is replaced with the
+ * don't-know line, and that question is not charged.
  *
  * The figure guard: Stayful Intelligence never invents a figure. Every number
  * in an answer must be one it was given at that moment (an approved answer
@@ -21,8 +24,9 @@ export interface Figure {
   percent: boolean;
 }
 
-// £ optional; 1,234 or 1234; .5 decimals; then k / m / bn / % / p stuck to it.
-const FIGURE = /(£)?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(k|m|bn|%|p)?(?![a-z0-9])/gi;
+// £ optional; 1,234 or 1234; .5 decimals; then k / m / bn / % / p stuck to it, but only when no
+// other letter follows (so "£999pcm" is 999 and "18months" is 18, never "£9.99" or "18 million").
+const FIGURE = /(£)?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:(k|m|bn|%|p)(?![a-z]))?(?![0-9])/gi;
 
 /** Every figure written in a text, in order. */
 export function figuresIn(text: string): Figure[] {
@@ -42,18 +46,18 @@ export function figuresIn(text: string): Figure[] {
   return out;
 }
 
-function key(v: number): string {
-  return (Math.round(v * 10_000) / 10_000).toString();
-}
+type Kind = 'money' | 'percent' | 'plain';
+const kindOf = (f: Figure): Kind => (f.money ? 'money' : f.percent ? 'percent' : 'plain');
+const key = (kind: Kind, v: number): string => `${kind}:${Math.round(v * 10_000) / 10_000}`;
 
-/** The values a set of source texts allows (each figure's value; pence also as a whole number of pence). */
+// Ids in tool results are not figures anyone was given.
+const UUIDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** The figures a set of source texts allows, each with its kind: "£240" never allows a plain "240" count to become money. */
 export function allowedFigures(sources: readonly string[]): Set<string> {
   const out = new Set<string>();
   for (const s of sources) {
-    for (const f of figuresIn(s)) {
-      out.add(key(f.value));
-      if (f.money && f.raw.toLowerCase().endsWith('p')) out.add(key(f.value * 100));
-    }
+    for (const f of figuresIn(s.replace(UUIDS, ' '))) out.add(key(kindOf(f), f.value));
   }
   return out;
 }
@@ -65,10 +69,19 @@ export function isExempt(f: Figure): boolean {
 
 export type GuardResult = { ok: true } | { ok: false; figures: string[] };
 
-/** Every figure in the answer must be allowed (or exempt). Returns the ones that aren't. */
+/**
+ * Every figure in the answer must be allowed (or exempt), as the same kind:
+ * money only from money, a percentage only from a percentage. A plain number
+ * may repeat any figure's value ("240 listings" from "checked: 240").
+ */
 export function checkFigures(answer: string, allowed: ReadonlySet<string>): GuardResult {
   const bad = figuresIn(answer)
-    .filter((f) => !isExempt(f) && !allowed.has(key(f.value)))
+    .filter((f) => {
+      if (isExempt(f)) return false;
+      const k = kindOf(f);
+      if (k !== 'plain') return !allowed.has(key(k, f.value));
+      return !(['money', 'percent', 'plain'] as const).some((kind) => allowed.has(key(kind, f.value)));
+    })
     .map((f) => f.raw);
   return bad.length === 0 ? { ok: true } : { ok: false, figures: bad };
 }
@@ -109,9 +122,14 @@ export function cleanQuestion(raw: unknown, maxChars: number): string {
 const ADVICE: readonly string[] = [
   'i recommend', "i'd recommend", 'i would recommend', 'my advice', 'my recommendation',
   'you should buy', 'you should rent', 'you should offer', 'you should go for', 'you should invest',
-  'buy it', 'buy this', 'buy now', 'go for it', 'snap it up', 'worth buying', 'a good investment', 'a safe bet',
-  'guaranteed', 'guarantee',
+  'go for it', 'snap it up', 'buy it now', 'worth buying', 'a good investment', 'a safe bet',
+  'guaranteed income', 'guaranteed return', 'guaranteed profit', 'is guaranteed to',
 ];
+
+/** Whether an answer is only the don't-know line (or says it): never charged, whatever form the model put it in. */
+export function saysDontKnow(text: string): boolean {
+  return /i don['’]t know that one yet/i.test(text);
+}
 
 /** The advice phrases an answer uses (none: it may be shown). */
 export function adviceIn(text: string): string[] {

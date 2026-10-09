@@ -47,6 +47,17 @@ export const PENDING_STALE_MS = 2 * 60_000;
 export const QUICK_TIMEOUT_MS = 20_000;
 export const FULL_ROUND_TIMEOUT_MS = 40_000;
 
+/**
+ * The full view's clock (the route has maxDuration 60): no more look-ups
+ * after FULL_LOOKUP_DEADLINE_MS, and no round started that couldn't finish
+ * by FULL_HARD_DEADLINE_MS (each round's own timeout is what is left).
+ */
+export const FULL_LOOKUP_DEADLINE_MS = 35_000;
+export const FULL_HARD_DEADLINE_MS = 52_000;
+export const MIN_ROUND_TIME_MS = 6_000;
+/** A round that may look something up writes at most this (a look-up call, or a short answer). */
+export const LOOKUP_ROUND_MAX_TOKENS = 600;
+
 /** The most a full-view round may write before the budget lowers it (the answer itself is ~fullMaxWords). */
 export const FULL_ROUND_MAX_TOKENS = 1_200;
 /** A round that cannot afford this many output tokens is not started: the answer ends there. */
@@ -78,6 +89,8 @@ export const UNCHARGED_CAP_LINE = 'I’ve had a lot of questions I couldn’t an
 export const TOO_FAST_LINE = 'One moment — ask again in a few seconds.';
 /** A send that failed part-way: nothing was charged. */
 export const DID_NOT_FINISH_LINE = 'That answer didn’t finish, so you weren’t charged. Ask again.';
+/** The question used its whole hold (or its time) on look-ups before it could answer. */
+export const OUT_OF_ROOM_LINE = 'I ran out of room on that one before I could answer, so you weren’t charged. Try a narrower question.';
 /** Something went wrong before an answer. */
 export const FAILED_LINE = 'Something went wrong, so you weren’t charged. Ask again in a moment.';
 

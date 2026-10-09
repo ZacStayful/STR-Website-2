@@ -21,7 +21,7 @@ import { addTurns, closeConversation, recordQuestion, startConversation, type Tu
 import { rememberFact, type RememberResult } from '../knowledge/facts-server';
 import type { QuestionOutcome } from '../voice/config';
 import { isUuid, type ChatMember, type FactProposal, type TurnRow } from './turns-server';
-import type { ChatSurface } from './config';
+import { PENDING_STALE_MS, type ChatSurface } from './config';
 import { stateReply, type ChatReply } from './reply';
 import { chargeLabel } from './format';
 
@@ -146,54 +146,101 @@ export async function memberHistory(admin: Admin, userId: string, o: { days: num
   return ((convs ?? []) as { id: string; started_at: string }[]).map((c) => ({ id: c.id, startedAt: c.started_at, turns: by.get(c.id) ?? [] })).filter((c) => c.turns.length > 0);
 }
 
+/** Supabase filters travel in the URL: a long id list doesn't fit, so ids go 100 at a time (as voice/retention-server.ts does). */
+const ID_CHUNK = 100;
+
+/** What comes off a chat question when the member's name does: everything that leads back to its text. */
+const ANONYMOUS = (now: Date) => ({ user_id: null, payer_id: null, conversation_id: null, question_id: null, knowledge_slug: null, log_seq: null, fact_proposal: null, buttons: null, anonymised_at: now.toISOString() });
+
+async function updateInChunks(admin: Admin, table: string, ids: readonly string[], patch: Record<string, unknown>): Promise<void> {
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const { error } = await admin.from(table).update(patch).in('id', ids.slice(i, i + ID_CHUNK));
+    if (error) throw new Error(`${table}: ${error.message}`);
+  }
+}
+
 /**
  * "Delete my chat history": every chat transcript of this member is
- * deleted, and their name comes off the conversations and the questions'
- * rows. The questions and how they went stay, unnamed, for learning.
+ * deleted, and their name comes off the conversations and off chat_turns,
+ * with every link back to the question's text (chat_turns.id is the
+ * ledger's action id). The questions and how they went stay, unnamed, for
+ * learning. Refused while a question of theirs is still being answered, so
+ * its answer can't land in a conversation already marked deleted.
  */
-export async function deleteMemberHistory(admin: Admin, userId: string, now: Date = new Date()): Promise<{ conversations: number }> {
-  const { data: convs, error } = await admin.from('si_conversations').select('id').eq('channel', 'chat').eq('user_id', userId);
-  if (error) throw new Error(`chat delete: ${error.message}`);
-  const ids = ((convs ?? []) as { id: string }[]).map((c) => c.id);
-  if (ids.length > 0) {
+export async function deleteMemberHistory(admin: Admin, userId: string, now: Date = new Date()): Promise<{ ok: true; conversations: number } | { ok: false; reason: 'busy' }> {
+  const pending = await admin.from('chat_turns').select('id').eq('user_id', userId).eq('status', 'pending').gte('created_at', new Date(now.getTime() - PENDING_STALE_MS).toISOString()).limit(1);
+  if ((pending.data ?? []).length > 0) return { ok: false, reason: 'busy' };
+  let conversations = 0;
+  for (;;) {
+    const { data: convs, error } = await admin.from('si_conversations').select('id').eq('channel', 'chat').eq('user_id', userId).limit(ID_CHUNK);
+    if (error) throw new Error(`chat delete: ${error.message}`);
+    const ids = ((convs ?? []) as { id: string }[]).map((c) => c.id);
+    if (ids.length === 0) break;
     const del = await admin.from('si_conversation_turns').delete().in('conversation_id', ids);
     if (del.error) throw new Error(`chat delete turns: ${del.error.message}`);
     const anon = await admin.from('si_conversations').update({ user_id: null, transcript_purged_at: now.toISOString(), ended_at: now.toISOString() }).in('id', ids);
     if (anon.error) throw new Error(`chat delete conversations: ${anon.error.message}`);
+    conversations += ids.length;
+    if (ids.length < ID_CHUNK) break;
   }
-  const turns = await admin.from('chat_turns').update({ user_id: null, payer_id: null, fact_proposal: null, buttons: null, anonymised_at: now.toISOString() }).eq('user_id', userId).neq('status', 'pending');
-  if (turns.error) throw new Error(`chat delete turns: ${turns.error.message}`);
-  return { conversations: ids.length };
+  // A pending question older than PENDING_STALE_MS is from an instance that died.
+  await admin.from('chat_turns').update({ status: 'failed' }).eq('user_id', userId).eq('status', 'pending');
+  for (;;) {
+    const { data, error } = await admin.from('chat_turns').select('id').eq('user_id', userId).limit(1000);
+    if (error) throw new Error(`chat delete turns: ${error.message}`);
+    const ids = ((data ?? []) as { id: string }[]).map((r) => r.id);
+    if (ids.length === 0) break;
+    await updateInChunks(admin, 'chat_turns', ids, ANONYMOUS(now));
+    if (ids.length < 1000) break;
+  }
+  return { ok: true, conversations };
 }
 
 /**
  * The 90-day rule for chat: past si_transcript_retention_days, the name
- * comes off. (purgeTranscripts, Batch 23, deletes the text for every
- * channel.) A dry run only counts.
+ * comes off, with every link back to the question's text. (purgeTranscripts,
+ * Batch 23, deletes the text for every channel.) A question still marked
+ * pending that old is from an instance that died: it goes too. Works through
+ * the backlog in batches until it is cleared or the time is up. A dry run
+ * only counts.
  */
-export async function anonymiseChat(o: { apply: boolean; days: number; now?: Date; limit?: number }): Promise<{ conversations: number; turns: number }> {
+export async function anonymiseChat(o: { apply: boolean; days: number; now?: Date; budgetMs?: number }): Promise<{ conversations: number; turns: number; done: boolean }> {
   const admin = createAdminClient();
   const now = o.now ?? new Date();
+  const started = Date.now();
+  const budget = o.budgetMs ?? 45_000;
   const days = Math.max(1, Math.floor(o.days));
   const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
-  const limit = o.limit ?? 1000;
-  const convs = await admin.from('si_conversations').select('id').eq('channel', 'chat').not('user_id', 'is', null).lt('started_at', cutoff).limit(limit);
-  if (convs.error) throw new Error(`chat retention: ${convs.error.message}`);
-  const turns = await admin.from('chat_turns').select('id').not('user_id', 'is', null).lt('created_at', cutoff).neq('status', 'pending').limit(limit);
-  if (turns.error) throw new Error(`chat retention: ${turns.error.message}`);
-  const convIds = ((convs.data ?? []) as { id: string }[]).map((r) => r.id);
-  const turnIds = ((turns.data ?? []) as { id: string }[]).map((r) => r.id);
-  if (o.apply) {
-    if (convIds.length > 0) {
-      const u = await admin.from('si_conversations').update({ user_id: null }).in('id', convIds);
-      if (u.error) throw new Error(`chat retention: ${u.error.message}`);
+  const BATCH = 1000;
+  let conversations = 0;
+  let turns = 0;
+  for (;;) {
+    const convs = await admin.from('si_conversations').select('id').eq('channel', 'chat').not('user_id', 'is', null).lt('started_at', cutoff).limit(BATCH);
+    if (convs.error) throw new Error(`chat retention: ${convs.error.message}`);
+    const ids = ((convs.data ?? []) as { id: string }[]).map((r) => r.id);
+    if (!o.apply) {
+      conversations += ids.length;
+      break;
     }
-    if (turnIds.length > 0) {
-      const u = await admin.from('chat_turns').update({ user_id: null, payer_id: null, fact_proposal: null, buttons: null, anonymised_at: now.toISOString() }).in('id', turnIds);
-      if (u.error) throw new Error(`chat retention: ${u.error.message}`);
-    }
+    if (ids.length > 0) await updateInChunks(admin, 'si_conversations', ids, { user_id: null });
+    conversations += ids.length;
+    if (ids.length < BATCH || Date.now() - started > budget) break;
   }
-  return { conversations: convIds.length, turns: turnIds.length };
+  // Anything still pending this old is from an instance that died.
+  if (o.apply) await admin.from('chat_turns').update({ status: 'failed' }).eq('status', 'pending').lt('created_at', cutoff);
+  for (;;) {
+    const rows = await admin.from('chat_turns').select('id').not('user_id', 'is', null).lt('created_at', cutoff).limit(BATCH);
+    if (rows.error) throw new Error(`chat retention: ${rows.error.message}`);
+    const ids = ((rows.data ?? []) as { id: string }[]).map((r) => r.id);
+    if (!o.apply) {
+      turns += ids.length;
+      break;
+    }
+    if (ids.length > 0) await updateInChunks(admin, 'chat_turns', ids, ANONYMOUS(now));
+    turns += ids.length;
+    if (ids.length < BATCH || Date.now() - started > budget) break;
+  }
+  return { conversations, turns, done: Date.now() - started <= budget };
 }
 
 // ── After an answer: "Not helpful" and "Want me to remember that?" ──────────

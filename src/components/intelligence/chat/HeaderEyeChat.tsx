@@ -15,10 +15,14 @@ import { QuickAsk } from "./QuickAsk";
  */
 export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel; style?: CSSProperties; onDark: CSSProperties; chat: ChatUi }) {
   const [open, setOpen] = useState(false);
+  // Once opened, the panel stays mounted while closed, so an answer on its way isn't lost.
+  const [opened, setOpened] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    // Reopening a kept panel: back to the box (autoFocus only works the first time).
+    wrap.current?.querySelector<HTMLInputElement>("[role=dialog] input")?.focus();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     const onClick = (e: MouseEvent) => wrap.current && !wrap.current.contains(e.target as Node) && setOpen(false);
     document.addEventListener("keydown", onKey);
@@ -34,12 +38,13 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
       <StayfulEye size={24} level={level} />
     </span>
   );
-  const linkStyle: CSSProperties = { ...onDark, ...style, display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" };
+  // No inline display: the classes below decide which link shows (an inline display would beat them).
+  const linkStyle: CSSProperties = { ...onDark, ...style, alignItems: "center", gap: 6, whiteSpace: "nowrap" };
 
   return (
     <span ref={wrap} style={{ position: "relative", display: "inline-flex" }}>
       {/* Phone: full screen. */}
-      <Link href="/intelligence/ask" aria-label={EYE_NAV.label} title={EYE_NAV.label} className="sm:hidden" style={linkStyle}>
+      <Link href="/intelligence/ask" aria-label={EYE_NAV.label} title={EYE_NAV.label} className="inline-flex sm:hidden" style={linkStyle}>
         {eye}
         <span aria-hidden="true">{EYE_NAV.shortLabel}</span>
       </Link>
@@ -54,17 +59,19 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
         style={linkStyle}
         onClick={(e) => {
           e.preventDefault();
+          setOpened(true);
           setOpen((o) => !o);
         }}
       >
         {eye}
         <span aria-hidden="true">{EYE_NAV.label}</span>
       </Link>
-      {open && (
+      {opened && (
         <div
           role="dialog"
           aria-label="Ask Stayful Intelligence"
-          className="absolute left-0 top-full z-50 mt-2 hidden w-[380px] rounded-2xl border border-white/10 bg-[#2E3D2B] p-4 text-left text-white shadow-2xl sm:block"
+          hidden={!open}
+          className={`absolute left-0 top-full z-50 mt-2 w-[380px] rounded-2xl border border-white/10 bg-[#2E3D2B] p-4 text-left text-white shadow-2xl ${open ? "hidden sm:block" : "hidden"}`}
           style={{ ...onDark, whiteSpace: "normal" }}
         >
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -73,7 +80,7 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
               Open full view
             </Link>
           </div>
-          <QuickAsk hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} autoFocus />
+          <QuickAsk hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} />
         </div>
       )}
     </span>

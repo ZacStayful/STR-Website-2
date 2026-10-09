@@ -40,6 +40,10 @@ export function ChatHistory() {
     setBusy(true);
     try {
       const res = await fetch("/api/chat/history", { method: "DELETE" });
+      if (res.status === 409) {
+        setMessage("Wait for my answer to your last question, then delete.");
+        return;
+      }
       if (!res.ok) throw new Error("failed");
       setList([]);
       setMessage("Deleted.");

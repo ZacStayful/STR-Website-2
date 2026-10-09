@@ -8,8 +8,8 @@ export function newTurnId(): string {
 }
 
 /** A quick answer. Throws on a network failure (the caller can retry with the same id). */
-export async function sendQuick(clientTurnId: string, question: string): Promise<ChatReply> {
-  const res = await fetch("/api/chat/quick", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientTurnId, question }) });
+export async function sendQuick(clientTurnId: string, question: string, signal?: AbortSignal): Promise<ChatReply> {
+  const res = await fetch("/api/chat/quick", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ clientTurnId, question }), signal });
   if (res.status === 401) throw new Error("signed_out");
   if (!res.ok) throw new Error(`http_${res.status}`);
   return (await res.json()) as ChatReply;

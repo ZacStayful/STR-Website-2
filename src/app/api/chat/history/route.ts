@@ -42,7 +42,8 @@ export async function DELETE(request: Request) {
   if (!hasServiceRole()) return Response.json({ error: 'Not available.' }, { status: 503 });
   try {
     const out = await deleteMemberHistory(createAdminClient(), user.id);
-    return Response.json({ ok: true, ...out });
+    if (!out.ok) return Response.json({ error: 'Wait for my answer to your last question, then delete.' }, { status: 409 });
+    return Response.json(out);
   } catch (err) {
     console.error('[api/chat/history] delete:', (err as Error)?.message ?? err);
     return Response.json({ error: 'Your history could not be deleted just now. Please try again.' }, { status: 500 });

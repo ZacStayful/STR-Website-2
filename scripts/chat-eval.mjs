@@ -23,7 +23,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 
 const account = accountBlock({ now: new Date(), freeMember: false, balancePence: 1240, planName: 'Pro', autoTopup: { amountPence: null, thresholdPence: 500 }, profileName: 'Leeds R2R', teamMember: false });
 const analysis = { slug: 'analysis', question: 'What is a Full analysis?', answer: 'A Full analysis is £4: a 6-section report on the deal with 12 months of short-let income, costs and comparables, as a PDF.' };
-const ai = { slug: 'chat_is_ai', question: 'Are you an AI?', answer: 'No. I’m Stayful Intelligence, an AI assistant from Stayful.' };
+const ai = { slug: 'chat_is_ai', question: 'Are you an AI?', answer: 'I’m Stayful Intelligence, an AI assistant from Stayful, not a person. Questions I can’t answer go to the Stayful team so the answers get better.' };
 
 // [question, approved answers given, the outcomes that pass]
 const CASES = [

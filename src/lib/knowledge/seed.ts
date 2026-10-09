@@ -460,7 +460,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Are you an AI?',
     variants: ['Am I talking to a bot?', 'Are you a robot?', 'Is this chat a machine?'],
-    answer: 'No. I’m Stayful Intelligence, an AI assistant from Stayful. Questions I can’t answer go to the Stayful team so the answers get better.',
+    answer: 'I’m Stayful Intelligence, an AI assistant from Stayful, not a person. Questions I can’t answer go to the Stayful team so the answers get better.',
   },
 ];
 

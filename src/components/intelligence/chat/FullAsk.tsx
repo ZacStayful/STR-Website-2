@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import type { ChatReply, FullEvent } from "@/lib/chat/reply";
@@ -37,6 +37,15 @@ export function FullAsk({ hintPence, floorPence, initialQuestion = "" }: { hintP
   const [entries, setEntries] = useState<Entry[]>([]);
   const [busy, setBusy] = useState(false);
   const conversationId = useRef<string | null>(null);
+  // The answer streaming now. Leaving the page drops it: the server stops and charges nothing.
+  const inFlight = useRef<AbortController | null>(null);
+  useEffect(
+    () => () => {
+      inFlight.current?.abort();
+      setChatThinking(false);
+    },
+    [],
+  );
 
   const teamMember = Boolean(credit?.member);
   const outOfCredit = credit !== null && !credit.admin && credit.spendableBasePence < floorPence;
@@ -47,24 +56,36 @@ export function FullAsk({ hintPence, floorPence, initialQuestion = "" }: { hintP
     setBusy(true);
     setChatThinking(true);
     update(key, (x) => ({ ...x, clientTurnId, streaming: true, dropped: false, reply: EMPTY }));
+    const ctrl = new AbortController();
+    inFlight.current = ctrl;
     try {
-      const reply = await sendFull({ clientTurnId, question: q, conversationId: conversationId.current }, (e: FullEvent) => {
-        if (e.type === "delta") update(key, (x) => ({ ...x, reply: { ...x.reply, text: x.reply.text + e.text } }));
-        else if (e.type === "clear") update(key, (x) => ({ ...x, reply: { ...x.reply, text: "" } }));
-        else if (e.type === "replace") update(key, (x) => ({ ...x, reply: { ...x.reply, text: e.text } }));
-      });
+      const reply = await sendFull(
+        { clientTurnId, question: q, conversationId: conversationId.current },
+        (e: FullEvent) => {
+          if (e.type === "delta") update(key, (x) => ({ ...x, reply: { ...x.reply, text: x.reply.text + e.text } }));
+          else if (e.type === "clear") update(key, (x) => ({ ...x, reply: { ...x.reply, text: "" } }));
+          else if (e.type === "replace") update(key, (x) => ({ ...x, reply: { ...x.reply, text: e.text } }));
+        },
+        ctrl.signal,
+      );
       if (reply.conversationId) conversationId.current = reply.conversationId;
       if (reply.state === "did_not_finish" && retry) {
         // The first try never finished (and wasn't charged): ask it afresh, as a new question.
-        return ask(q, newTurnId(), key);
+        // Awaited, so this try's finally doesn't clear "busy" while the fresh one streams.
+        await ask(q, newTurnId(), key);
+        return;
       }
-      update(key, (x) => ({ ...x, clientTurnId, streaming: false, dropped: false, reply }));
+      // Still being answered (another tab, or the first try before the server saw the drop): keep "Try again".
+      const later = reply.state === "busy" || reply.state === "too_fast";
+      update(key, (x) => ({ ...x, clientTurnId, streaming: false, dropped: later, reply }));
       if (reply.charged) notifyCreditChanged();
       // A small pulse in the background when an answer lands.
-      publishThinking({ answerSeq: readThinking().answerSeq + 1 });
+      if (!later) publishThinking({ answerSeq: readThinking().answerSeq + 1 });
     } catch {
+      if (ctrl.signal.aborted) return;
       update(key, (x) => ({ ...x, streaming: false, dropped: true, reply: { ...EMPTY, state: "did_not_finish", text: "That answer didn’t finish, so you weren’t charged." } }));
     } finally {
+      if (inFlight.current === ctrl) inFlight.current = null;
       setBusy(false);
       setChatThinking(false);
     }

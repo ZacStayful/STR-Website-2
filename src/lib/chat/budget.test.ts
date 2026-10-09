@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { seedTable } from '../credit/costs.ts';
 import { priceFor } from '../credit/pricing.ts';
 import { MODEL_UNITS } from './config.ts';
-import { budgetFor, chargeLines, costOf, roundMaxTokens, unitsPriced, usageOf, ROUNDING_MARGIN, PROVIDER } from './budget.ts';
+import { affordsLookUp, budgetFor, chargeLines, costOf, roundMaxTokens, unitsPriced, usageOf, ROUNDING_MARGIN, PROVIDER } from './budget.ts';
 
 const table = seedTable();
 
@@ -61,4 +61,22 @@ test('without a price for the output the cost cannot be bounded, so nothing runs
 test('usage takes only real positive numbers', () => {
   assert.deepEqual(usageOf({ input_tokens: 10, output_tokens: null, cache_read_input_tokens: -1 }), { input: 10, output: 0, cacheRead: 0, cacheWrite: 0 });
   assert.deepEqual(usageOf(null), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+});
+
+test('the cached part of the prompt is priced at the read rate', () => {
+  const full = MODEL_UNITS.full;
+  const cold = roundMaxTokens({ table, units: full, markup: 5, budgetPence: 10, spentPence: 0, promptTokens: 8000, cap: 100_000 });
+  const warm = roundMaxTokens({ table, units: full, markup: 5, budgetPence: 10, spentPence: 0, promptTokens: 8000, cachedTokens: 7000, cap: 100_000 });
+  assert.ok(warm > cold);
+  const worst = costOf(table, full, [{ input: 0, output: warm, cacheRead: 7000, cacheWrite: 1000 }], 5).basePence;
+  assert.ok(worst <= 10, String(worst));
+});
+
+test('a look-up is only allowed when an answer can still follow it', () => {
+  const full = MODEL_UNITS.full;
+  const base = { table, units: full, markup: 5, spentPence: 0, promptTokens: 4500, cachedTokens: 0, room: 1200, resultTokens: 1700, finalTokens: 350 };
+  assert.equal(affordsLookUp({ ...base, budgetPence: 25 }), true);
+  assert.equal(affordsLookUp({ ...base, budgetPence: 10 }), false);
+  // near the floor, a smaller round still leaves room
+  assert.equal(affordsLookUp({ ...base, budgetPence: 10, room: 400 }), true);
 });

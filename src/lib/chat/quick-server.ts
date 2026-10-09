@@ -17,12 +17,12 @@ import { getUnitCostTable } from '../credit/unit-costs';
 import { logActivity } from '../activity/log';
 import { MAX_QUESTION_CHARS, MODEL_UNITS, QUICK_MODEL, QUICK_TIMEOUT_MS, DONT_KNOW_LINE, FULL_VIEW_LINE } from './config';
 import { approxTokens, budgetFor, roundMaxTokens, unitsPriced, usageOf, type RoundUsage } from './budget';
-import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion } from './guard';
+import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
 import { buildButtons } from './actions';
 import { accountBlock, parseQuickReply, questionBlock, quickSystemPrompt, QUICK_SCHEMA } from './prompts';
 import { chargeLabel } from './format';
 import { stateReply, type ChatReply } from './reply';
-import { chatMemberFor, chatOn, insertTurn, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember } from './turns-server';
+import { chatMemberFor, chatOn, insertTurn, logFailedCall, preflight, readChatSettings, settle, spendableFor, startHold, type ChatMember } from './turns-server';
 import { logExchange, openConversation, replyForStored } from './log-server';
 import { chatContext } from './context-server';
 import { lookUpKnowledge } from './knowledge-server';
@@ -106,6 +106,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       raw = stop === 'refusal' ? null : msg.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
     } catch (err) {
       console.error('[chat] quick model call failed:', (err as Error)?.message ?? err);
+      await logFailedCall(turn, member);
       await settle(admin, turn, member, hold, { status: 'failed', outcome: null, rounds }, settings);
       return stateReply('failed', { turnId: turn.id });
     }
@@ -116,7 +117,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
     let state: ChatReply['state'];
     let text: string;
     let slug: string | null = null;
-    if (reply?.outcome === 'answer' && reply.text) {
+    if (reply?.outcome === 'answer' && reply.text && !saysDontKnow(reply.text)) {
       const allowed = allowedFigures([account, ...known.answers.map((a) => a.answer), ...known.answers.map((a) => a.question), question]);
       const okSlug = reply.slug === null || slugs.has(reply.slug);
       const figures = checkFigures(reply.text, allowed);
@@ -156,7 +157,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       turn,
       member,
       hold,
-      { status: state === 'answer' ? 'answered' : 'no_answer', outcome, rounds, knowledgeSlug: slug, matchConfidence: known.topConfidence, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons },
+      { status: state === 'answer' ? 'answered' : 'no_answer', outcome, rounds, knowledgeSlug: slug, matchConfidence: known.topConfidence, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons, capPence: budget },
       settings,
     );
     // Record only: a quick answer never counts towards weekly active (Zac, 29 Sep).

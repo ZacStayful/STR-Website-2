@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import type { ChatReply } from "@/lib/chat/reply";
@@ -26,6 +26,9 @@ export function QuickAsk({ hintPence, fullHintPence, floorPence, autoFocus = fal
   const [error, setError] = useState<string | null>(null);
   // Kept across a retry of the same send: the server never asks or charges twice for one id.
   const pending = useRef<{ id: string; question: string } | null>(null);
+  // The send in flight, dropped if the box goes away (a finished answer is still in "Your chat history").
+  const inFlight = useRef<AbortController | null>(null);
+  useEffect(() => () => inFlight.current?.abort(), []);
 
   const teamMember = Boolean(credit?.member);
   const outOfCredit = credit !== null && !credit.admin && credit.spendableBasePence < floorPence;
@@ -34,15 +37,24 @@ export function QuickAsk({ hintPence, fullHintPence, floorPence, autoFocus = fal
     setBusy(true);
     setError(null);
     pending.current = { id, question: q };
+    const ctrl = new AbortController();
+    inFlight.current = ctrl;
     try {
-      const r = await sendQuick(id, q);
+      const r = await sendQuick(id, q, ctrl.signal);
+      // Still being answered (another tab, or this one before a drop): keep the retry for later.
+      if (r.state === "busy" || r.state === "too_fast") {
+        setError(r.text);
+        return;
+      }
       pending.current = null;
       setReply(r);
       setAsked(q);
       if (r.charged) notifyCreditChanged();
     } catch (err) {
+      if (ctrl.signal.aborted) return;
       setError((err as Error)?.message === "signed_out" ? "Please sign in again." : "That didn’t get through.");
     } finally {
+      if (inFlight.current === ctrl) inFlight.current = null;
       setBusy(false);
     }
   }

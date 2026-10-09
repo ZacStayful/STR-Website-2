@@ -185,7 +185,8 @@ export async function preflight(admin: Admin, member: ChatMember, clientTurnId: 
 
   if (!member.admin) {
     const dayStart = londonDayStart(ukDay(now)) ?? new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const { count, error } = await admin.from('chat_turns').select('id', { count: 'exact', head: true }).eq('user_id', member.userId).eq('status', 'no_answer').gte('created_at', dayStart.toISOString());
+    // Uncharged questions that still cost us: no answer, or failed after the model ran (a page closed part-way, again and again).
+    const { count, error } = await admin.from('chat_turns').select('id', { count: 'exact', head: true }).eq('user_id', member.userId).or('status.eq.no_answer,and(status.eq.failed,rounds.gt.0)').gte('created_at', dayStart.toISOString());
     if (error) throw new Error(`chat turn count: ${error.message}`);
     if ((count ?? 0) >= settings.maxUnchargedPerDay) return { kind: 'uncharged_cap' };
   }
@@ -245,6 +246,8 @@ export interface Settlement {
   capped?: boolean;
   factProposal?: FactProposal | null;
   buttons?: readonly ChatButton[];
+  /** The question's hold: the charge never passes it, whatever the rounds cost. */
+  capPence?: number;
 }
 
 export interface Settled {
@@ -295,13 +298,30 @@ export async function settle(admin: Admin, turn: TurnRow, member: ChatMember, ac
   if ((won.data ?? []).length === 0) return { won: false, chargedBasePence: 0, chargedFacePence: 0 };
 
   const charge = s.status === 'answered' && action !== null && !member.admin;
-  const ctx: MeterContext = charge ? action.ctx : { userId: null, admin: member.admin, action: UNBILLED_ACTION, actionId: turn.id };
+  let ctx: MeterContext = charge ? action.ctx : { userId: null, admin: member.admin, action: UNBILLED_ACTION, actionId: turn.id };
+  // The rounds are sized to fit the hold; if the prompt cache missed and they didn't, the charge is
+  // scaled to the hold (the ceiling or the balance): a question never costs more than either.
+  if (charge && s.capPence !== undefined && cost.basePence > s.capPence && cost.basePence > 0) {
+    ctx = { ...ctx, markupOverride: settings.markup * Math.max(0, s.capPence - 0.01) / cost.basePence };
+  }
   await meterRounds(ctx, turn.surface, s.rounds, table);
   if (!charge) return { won: true, chargedBasePence: 0, chargedFacePence: 0 };
 
   const spent = await actionSpend(turn.id);
   await admin.from('chat_turns').update({ charged_base_pence: spent.basePence, charged_face_pence: spent.chargedPence }).eq('id', turn.id);
   return { won: true, chargedBasePence: spent.basePence, chargedFacePence: spent.chargedPence };
+}
+
+/** A model call that threw before any usage came back: logged as a failed call (house, nothing charged) so the spend views see it. */
+export async function logFailedCall(turn: TurnRow, member: ChatMember): Promise<void> {
+  const ctx: MeterContext = { userId: null, admin: member.admin, action: UNBILLED_ACTION, actionId: turn.id };
+  try {
+    await meter({ provider: PROVIDER, unit: MODEL_UNITS[turn.surface].output, quantity: 0, skipPreflight: true, description: CHARGE_DESCRIPTION, question: CHAT_ACTION[turn.surface] }, async () => {
+      throw new Error('model call failed');
+    }, ctx);
+  } catch {
+    /* logged by the meter */
+  }
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   DONT_KNOW_LINE,
   FAILED_LINE,
   FULL_VIEW_LINE,
+  OUT_OF_ROOM_LINE,
   SEAT_PAUSED_LINE,
   TEAM_TOP_UP_LINE,
   TOO_FAST_LINE,
@@ -25,6 +26,7 @@ export type ChatState =
   | 'uncharged_cap'
   | 'busy' // another question from this member is still being answered
   | 'did_not_finish' // a retry of a question that failed part-way
+  | 'out_of_room' // the hold or the time ran out on look-ups before an answer: not charged, not a knowledge gap
   | 'failed'
   | 'off';
 
@@ -71,6 +73,7 @@ export function stateReply(state: Exclude<ChatState, 'answer'>, o: { turnId?: st
     uncharged_cap: UNCHARGED_CAP_LINE,
     busy: 'I’m still answering your last question.',
     did_not_finish: DID_NOT_FINISH_LINE,
+    out_of_room: OUT_OF_ROOM_LINE,
     failed: FAILED_LINE,
     off: 'Questions aren’t switched on just now.',
   };
