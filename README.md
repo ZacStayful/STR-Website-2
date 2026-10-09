@@ -1008,6 +1008,55 @@ edited on `/admin/standout`); the prompts are `src/lib/tailoring/behaviour.ts`.
    `/api/internal/standout` at `35 * * * *` and `58 6 * * *` (41 cron
    entries).
 
+### 24. The typed chat (Batch 26)
+
+Members can type questions to Stayful Intelligence in two places, sharing one
+conversation log (Batch 23's, channel `chat`):
+
+- **Quick answers:** the header eye opens a box (a panel under the eye on a
+  desktop, `/intelligence/ask` full screen on a phone). Haiku 4.5, the
+  member's account basics and the approved answers only, one or two
+  sentences. When a question needs their deals it says "Ask in the full view
+  (about 8p)" and doesn't guess. Record only for weekly active.
+- **The full view:** a box under the tap-to-ask chips on `/intelligence`.
+  Sonnet 5.5 with read-only look-ups over the member's own deals, picks,
+  profile, credit, Part F's what-ifs and why they were or weren't called.
+  Streams; the eye thinks. A question here counts towards weekly active.
+
+A question costs its actual tokens × `si_chat_markup` (5), charged once
+through the credit system and only for a delivered answer: "I don't know",
+"ask in the full view", a refusal, an error or a page that goes away
+part-way are logged as house spend and never charged. Each answer is sized
+so it can never pass its ceiling (`si_chat_quick_ceiling_pence` 3p,
+`si_chat_full_ceiling_pence` 25p) or the member's balance. Every figure in an
+answer must be one a look-up, a setting or an approved answer gave it, and it
+never gives advice, an address or a postcode, or changes anything itself (it
+offers buttons the member taps). The tap-to-ask chips stay free. Everything
+is in `src/lib/chat`; admin is the **Chat** tab of `/admin/intelligence`.
+
+1. **Run `supabase/schema.sql`** (the "Batch 26: typed chat" section).
+   Idempotent and additive, service role only: the conversation log's
+   questions may now come from the chat (R2-87), `chat_turns` (tokens, the
+   charge and the retry guard; never any text) and fifteen `si_chat_*`
+   settings. Nothing in `ACCESS_COLUMNS`.
+2. **Knowledge:** `/admin/intelligence/knowledge` → **Dry run**, then
+   **Seed**: six new drafts (`chat_what`, `chat_cost`, `chat_full_view`,
+   `chat_history`, `chat_no_advice`, `chat_is_ai`). Approve them, **and the
+   other entries allowed on the chat** (most of Batch 24's): the chat only
+   answers from approved entries, so until they are approved nearly every
+   quick answer is "I don't know that one yet".
+3. **Check the settings** on `/admin/intelligence/chat` (ceilings, floors,
+   the price hints, the seconds between questions, the cap on unanswered
+   questions a day).
+4. **Switch it on:** `SI_CHAT_ENABLED=true` on Production (it needs
+   `ANTHROPIC_API_KEY`, which the analyser already has). Off, the eye is the
+   link to the view it always was.
+5. **Check the cron:** Vercel → Settings → Cron Jobs lists
+   `/api/internal/si-chat` (02:40 UTC daily; 42 cron entries). It takes the
+   member's name off chat questions older than `si_transcript_retention_days`
+   (90); `?dry=1` only counts. The transcripts themselves are deleted by
+   Batch 23's `/api/internal/si-calls`, for every channel.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -1045,6 +1094,7 @@ which are required, and what breaks without them.
 | `src/app/account` | Account: the plan (pause, cancel), billing, notifications, what the member is looking for, a quieter "More" list and sign out; a team member sees their team in place of plan and billing. `/account/billing`: credit balance, top-ups, usage history |
 | `src/lib/nav.ts` | The members' nav, and every "where does this live" rule more than one page needs: the kept/passed redirects, the goals editor's link (`GOALS_EDITOR_HREF`: the one line to repoint when it moves), Today's list anchor for the first-week checklist, Account's "More" links. Pure, tested |
 | `src/lib/knowledge` | The Stayful Intelligence knowledge base (Batch 24): templates and placeholders (`template.ts`, `placeholders.ts`, `render.ts`, `figures.ts`), matching (`match.ts`), the seed drafts (`seed.ts`), the service facts the nightly job drafts from (`service-facts.ts`), the agent's knowledge (`agent.ts`), member facts (`facts-rules.ts`), coverage and the Monday email (`coverage.ts`, `weekly.ts`), all pure and tested; the reads and writes are the `*-server.ts` files and `gap/` is the nightly job. Every number is in `config.ts` or a `billing_settings` row (`settings.ts`). `README.md` is the contract for Batches 25 and 26 |
+| `src/lib/chat` | The typed chat (Batch 26): the settings (`settings.ts`, every number a `billing_settings` row edited on `/admin/intelligence/chat`) and structure (`config.ts`); what a question may cost and did cost (`budget.ts`), the figure and advice guard (`guard.ts`), the buttons (`actions.ts`), the prompts (`prompts.ts`, on top of the one persona), the look-ups' schemas (`tools.ts`) and the admin sums (`metrics.ts`), all pure and tested; claiming, holding, settling and charging a question (`turns-server.ts`), the conversation log, history, deletion and the 90-day rule (`log-server.ts`), the two surfaces (`quick-server.ts`, `full-server.ts`) and the member-scoped look-ups (`tools-server.ts`). Routes under `src/app/api/chat`; components in `src/components/intelligence/chat` |
 | `src/lib/standout` | Standout deals (Batch 25): who a deal stands out for (`rules.ts`), how it is described (`copy.ts`), how the member is told (`notify.ts`) and the slower-spender nudge (`nudge.ts`), all pure and tested; the hourly pass (`run.ts`, `server.ts`), the last check before a deal call rings (`calls-server.ts`), the save's meaning elsewhere (`saved-server.ts`), "Saved for you" (`email-server.ts`) and the texts (`texts-server.ts`). Every judgement is a `standout_decisions` row with its reason. `/admin/standout` lists them (member, deal, deal type, match, profit against the minimum and its basis, saved, call, what they did) with a dry run and the settings |
 | `src/app/admin/intelligence` | Stayful Intelligence admin: Overview (Batch 22's reveal), Gaps (what it couldn't answer, with the drafted answers, spend against the cap and the job's runs), Knowledge (every entry, approve / reject / retire, try a question, the seed, the placeholder catalogue) and Coverage (the weekly share answered from approved knowledge). Conversations is `src/app/admin/conversations` |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
