@@ -7,14 +7,15 @@
  */
 
 /**
- * The one list of call types. Batch 25 appends 'deal' (and rebuilds the
- * si_calls_log_call_type_check constraint in its schema section).
+ * The one list of call types. Batch 25 added 'deal' (a standout deal saved
+ * for the member, src/lib/standout); the si_calls_log_call_type_check
+ * constraint lists the same.
  */
-export const CALL_TYPES = ['intro', 'low_credit', 'callback'] as const;
+export const CALL_TYPES = ['intro', 'low_credit', 'callback', 'deal'] as const;
 export type CallType = (typeof CALL_TYPES)[number];
 
 /** The types the system places (callbacks are the member ringing in). */
-export const OUTBOUND_CALL_TYPES: readonly CallType[] = ['intro', 'low_credit'];
+export const OUTBOUND_CALL_TYPES: readonly CallType[] = ['intro', 'low_credit', 'deal'];
 
 export const CALL_STATUSES = ['queued', 'ringing', 'answered', 'missed', 'voicemail', 'failed', 'blocked'] as const;
 export type CallStatus = (typeof CALL_STATUSES)[number];
@@ -33,6 +34,14 @@ export const BLOCKED_REASONS = {
   stale: "Waited too long in the queue",
   // Batch 22f: a management company that has not switched deal-finding on.
   management_no_deals: "Management company without deal-finding",
+  // Batch 25: a deal call re-checked just before dialling (src/lib/standout/calls-server.ts).
+  deal_gone: "The deal went before the call",
+  deal_acted: "They opened the deal, moved it or said Not for me first",
+  monthly_limit: "Deal calls this month used up",
+  below_floor: "Credit below the deal-call floor",
+  type_not_chosen: "They stopped showing this deal type",
+  profile_changed: "Their main profile changed or was paused",
+  deal_calls_off: "Deal calls switched off (STANDOUT_CALLS_ENABLED)",
 } as const;
 export type BlockedReason = keyof typeof BLOCKED_REASONS;
 
@@ -41,10 +50,11 @@ export const CALL_TYPE_LABEL: Record<CallType, string> = {
   intro: 'Introduction',
   low_credit: 'Low credit',
   callback: 'You rang me',
+  deal: 'A standout deal',
 };
 
 /** The texts the agent may send during a call: pre-written templates only. */
-export const CALL_TEXT_TEMPLATES = ['contact_card', 'auto_topup_link', 'resend_last_link'] as const;
+export const CALL_TEXT_TEMPLATES = ['contact_card', 'auto_topup_link', 'deal_link', 'resend_last_link'] as const;
 export type CallTextTemplate = (typeof CALL_TEXT_TEMPLATES)[number];
 
 /** The server tools and their per-call limits. */

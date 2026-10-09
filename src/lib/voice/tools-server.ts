@@ -10,10 +10,15 @@ import 'server-only';
  *                                called. Never a balance, an address or a
  *                                deal. The number argument is ignored: the
  *                                caller is the call's own member.
- *   send_template_text(template) contact_card | auto_topup_link |
+ *   send_template_text(template) contact_card | auto_topup_link | deal_link |
  *                                resend_last_link — a pre-written text, only
  *                                to the member's own verified number on
  *                                file, at most si_texts_per_call_max a call.
+ *                                Batch 25: deal_link is the deal a deal call
+ *                                is about (or, on a callback, the deal the
+ *                                last missed deal call was about); it goes
+ *                                only with the member's Texts switch on and
+ *                                is recorded in sms_messages.
  *   handoff_to_team(summary, question)  emails the handoff address
  *                                (feedback_admin_email) once a call.
  *   log_question(question, outcome, knowledge_ref?)  the conversation log's
@@ -37,7 +42,12 @@ import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, cal
 import { callText } from './templates';
 import { memberFacts } from './member-server';
 import { claimCharge, releaseCharge, settleText } from './charge-server';
-import { callByConversation, claimEvent, lastTemplateSent, logTool, toolCount, updateCall, type CallRow } from './store-server';
+import { callByConversation, claimEvent, lastOutbound, lastTemplateSent, logTool, toolCount, updateCall, type CallRow } from './store-server';
+import { dealCallFacts, type DealCallFacts } from '../standout/calls-server';
+import { sendMemberText } from '../standout/texts-server';
+
+/** How far back a callback looks for the deal call it follows (as the inbound opener does). */
+const DEAL_CALL_WITHIN_MS = 7 * 24 * 60 * 60_000;
 
 export interface ToolRequest {
   conversation_id?: unknown;
@@ -121,7 +131,7 @@ async function lookupCaller(call: CallRow): Promise<ToolAnswer> {
 async function sendTemplateText(call: CallRow, req: ToolRequest, textsPerCallMax: number): Promise<ToolAnswer> {
   const raw = str(req.template, 40);
   const template = CALL_TEXT_TEMPLATES.find((t) => t === raw) as CallTextTemplate | undefined;
-  if (!template) return { ok: false, say: 'I can only send the contact card, the auto top-up link, or the last link again.', detail: { reason: 'bad_template' } };
+  if (!template) return { ok: false, say: 'I can only send the contact card, the auto top-up link, the deal link, or the last link again.', detail: { reason: 'bad_template' } };
   if (!call.user_id) return { ok: false, say: "I can't text an unknown caller. Point them to stayful.co.uk.", detail: { reason: 'unknown_caller' } };
   const admin = createAdminClient();
   if ((await toolCount(admin, call.id, 'send_template_text')) >= textsPerCallMax) return { ok: false, say: "That's the most texts for one call.", detail: { reason: 'limit' } };
@@ -132,7 +142,12 @@ async function sendTemplateText(call: CallRow, req: ToolRequest, textsPerCallMax
   if (onCall && onCall !== m.phone) return { ok: false, say: "I can only text the number on their account. Say it's in the app.", detail: { reason: 'number_mismatch' } };
   const settings = await getBillingSettings();
   const which = template === 'resend_last_link' ? ((await lastTemplateSent(admin, m.userId)) ?? 'contact_card') : template;
-  const body = callText(which, { base: siteUrl(), topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence });
+  let deal: DealCallFacts | null = null;
+  if (which === 'deal_link') {
+    deal = await dealForCall(call);
+    if (!deal?.deal) return { ok: false, say: "I can't find that deal. Say it's saved in their deals in the app.", detail: { reason: 'no_deal' } };
+  }
+  const body = callText(which, { base: siteUrl(), topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence, deal: deal?.deal ?? null });
   // Each template at most once a call (a resend of one already sent here is the same text)…
   const key = `call:${call.id}:text:${which}`;
   const guard = await claimCharge(key, call.id, m.userId, 'text');
@@ -144,14 +159,27 @@ async function sendTemplateText(call: CallRow, req: ToolRequest, textsPerCallMax
     await releaseCharge(guard);
     return { ok: false, say: "That's the most texts for one call.", detail: { reason: 'limit' } };
   }
-  const r = await sendSms({ to: m.phone, body, purpose: `si_${which}`, dryRun: callsDryRun() });
+  const r =
+    which === 'deal_link'
+      ? await sendMemberText(admin, { userId: m.userId, body, kind: 'standout', purpose: `si_${which}`, dryRun: callsDryRun() })
+      : await sendSms({ to: m.phone, body, purpose: `si_${which}`, dryRun: callsDryRun() });
   if (!r.sent && r.reason !== 'unknown') {
     await releaseCharge(guard);
+    if (r.reason === 'texts_off') return { ok: false, say: "Their texts are switched off, so I won't text. Say it's saved in their deals in the app.", detail: { reason: 'texts_off' } };
     return { ok: false, say: "The text didn't go through. Say they'll find it in the app.", detail: { reason: r.reason ?? 'refused' } };
   }
   await settleText(guard, key, call.id, m.userId);
   await updateCall(admin, call.id, { texts_sent: call.texts_sent + 1 });
   return { ok: true, say: 'Sent. Tell them it is on its way.', detail: { template: which, to: maskPhone(m.phone) } };
+}
+
+/** Batch 25: the deal a deal_link text is about: this deal call's, or on a callback the last deal call's. */
+async function dealForCall(call: CallRow): Promise<DealCallFacts | null> {
+  const admin = createAdminClient();
+  if (call.call_type === 'deal') return dealCallFacts(admin, call);
+  if (call.direction !== 'inbound' || !call.user_id) return null;
+  const last = await lastOutbound(admin, call.user_id, DEAL_CALL_WITHIN_MS);
+  return last?.call_type === 'deal' ? dealCallFacts(admin, last) : null;
 }
 
 async function handoff(call: CallRow, req: ToolRequest): Promise<ToolAnswer> {

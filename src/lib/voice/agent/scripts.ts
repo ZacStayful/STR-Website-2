@@ -25,10 +25,23 @@ export const LOW_CREDIT_OPENER = "Hi {{first_name}}, it's Stayful Intelligence, 
 export const LOW_CREDIT_YES = "Done — it's on its way. Speak soon.";
 export const LOW_CREDIT_NO = 'No problem, you can top up any time in the app. Speak soon.';
 
+/**
+ * Batch 25: the deal call (about 25 seconds): a standout deal Stayful
+ * Intelligence saved to the member's deals. {{deal_headline}} is what it is,
+ * where, and what it could make, rounded ("a 2-bed flat to rent in Harrogate
+ * that could make around 1,100 to 1,300 pounds a month") — never an address
+ * or a price (src/lib/standout/copy.ts).
+ */
+export const DEAL_SCRIPT =
+  "Hi {{first_name}}, it's Stayful Intelligence. A deal's just come up that matches you better than anything I've found so far: {{deal_headline}}. I've saved it to your deals, and I'm texting you the link now. Ring me back any time.";
+
+export const DEAL_OPENER = "Hi {{first_name}}, it's Stayful Intelligence. A deal's just come up that matches you better than anything I've found so far: {{deal_headline}}.";
+
 /** Callback openers. */
 export const CALLBACK_MEMBER_OPENER = 'Hi {{first_name}}, how can I help?';
 export const CALLBACK_MISSED_INTRO_OPENER = "Hi {{first_name}}, thanks for ringing back — it's Stayful Intelligence, your AI property assistant from Stayful. I tried to call earlier to introduce myself.";
 export const CALLBACK_MISSED_LOW_CREDIT_OPENER = "Hi {{first_name}}, thanks for ringing back — it's Stayful Intelligence from Stayful. I called because your credit's running low.";
+export const CALLBACK_MISSED_DEAL_OPENER = "Hi {{first_name}}, thanks for ringing back — it's Stayful Intelligence. I called about {{deal_short}}. It's saved in your deals.";
 export const CALLBACK_UNKNOWN_OPENER = "Hello, you've reached Stayful Intelligence, the AI property assistant from Stayful. How can I help?";
 
 /** Handing off: what the agent says before handoff_to_team. */

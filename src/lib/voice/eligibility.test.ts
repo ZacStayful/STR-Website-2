@@ -41,6 +41,20 @@ test('a second outbound call the same UK day is blocked; the intro waits for tom
   assert.deepEqual(checkEligibility(base({ type: 'intro', placedToday: 1 })), { ok: false, defer: 'next_day', reason: 'daily_limit' });
 });
 
+test('Batch 25: a deal call waits for the next weekday when today\'s call is used, or another is in flight', () => {
+  assert.deepEqual(checkEligibility(base({ type: 'deal', placedToday: 1 })), { ok: false, defer: 'next_day', reason: 'daily_limit' });
+  assert.deepEqual(checkEligibility(base({ type: 'deal', otherInFlight: true })), { ok: false, defer: 'next_day', reason: 'in_flight' });
+  // The rest of Batch 23's rules hold as for any call: consent, owner, a verified number, a minute's credit, hours.
+  assert.deepEqual(checkEligibility(base({ type: 'deal', callsOn: false })), { ok: false, reason: 'calls_off', skip: true });
+  assert.deepEqual(checkEligibility(base({ type: 'deal', isOwner: false })), { ok: false, reason: 'not_owner', skip: true });
+  assert.deepEqual(checkEligibility(base({ type: 'deal', numberOk: false })), { ok: false, reason: 'no_number', skip: false });
+  assert.deepEqual(checkEligibility(base({ type: 'deal', affordableSeconds: 59 })), { ok: false, reason: 'no_credit', skip: false });
+  assert.deepEqual(checkEligibility(base({ type: 'deal', now: new Date('2026-10-05T18:30:00Z') })), { ok: false, defer: 'hours' });
+  assert.deepEqual(checkEligibility(base({ type: 'deal', now: new Date('2026-10-10T11:00:00Z') })), { ok: false, defer: 'hours' });
+  // Auto top-up and the first days are the low-credit call's rules only.
+  assert.deepEqual(checkEligibility(base({ type: 'deal', autoTopupOn: true, joinedAt: MON_NOON })), { ok: true });
+});
+
 test('one call in flight', () => {
   assert.deepEqual(checkEligibility(base({ otherInFlight: true })), { ok: false, reason: 'in_flight', skip: false });
 });

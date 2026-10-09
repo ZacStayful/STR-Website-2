@@ -63,6 +63,7 @@ import {
   type StandoutMember,
 } from './server';
 import { processNotifications, type NotifyResult } from './notify-server';
+import { standoutEnabled } from './flags';
 import { processNudges, type NudgeRunResult } from './nudge-server';
 
 /** Each pass starts this far before the last one ended: a recheck committing late is never missed (decisions are unique). */
@@ -72,9 +73,7 @@ const FIRST_LOOKBACK_MS = 2 * 60 * 60_000;
 /** Stop starting live rechecks after this long (the route's limit is 120 s). */
 const RECHECK_BUDGET_MS = 60_000;
 
-export function standoutEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return env.STANDOUT_ENABLED === 'true';
-}
+export { standoutEnabled };
 
 export interface DecisionView {
   userId: string;

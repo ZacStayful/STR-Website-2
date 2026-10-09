@@ -10,6 +10,7 @@ import 'server-only';
  *   mobile on file):
  *     after a missed intro call       → the intro (and the card if not yet sent)
  *     after a missed low-credit call  → the auto top-up offer
+ *     after a missed deal call        → the deal, and the link again (Batch 25)
  *     otherwise                       → "Hi [name], how can I help?"
  *     charged per minute; texts 22p (charged to the owner for a team member)
  *   unknown or withheld: what Stayful Intelligence is and the website. No
@@ -28,7 +29,8 @@ import { callPencePerMinute } from './charge-server';
 import { initiateSecret, toolSecret } from './config';
 import { memberByNumber, memberFacts } from './member-server';
 import { callByConversation, contactCardSent, insertCall, lastOutbound } from './store-server';
-import { callVariables, fill, openerFor, type CallContext } from './agent/variables';
+import { callVariables, contextForType, fill, isCallContext, openerFor, type CallContext } from './agent/variables';
+import { dealCallFacts } from '../standout/calls-server';
 import { knowledgeCallValues } from '../knowledge/agent-server';
 
 const MISSED_WITHIN_MS = 7 * 24 * 60 * 60_000;
@@ -64,8 +66,10 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
     const existing = await callByConversation(admin, req.conversation_id, req.call_sid ?? null);
     if (existing && existing.direction === 'outbound' && existing.user_id) {
       const m = await memberFacts(existing.user_id);
-      const context: CallContext = existing.call_type === 'low_credit' ? 'low_credit' : 'intro';
-      const vars = callVariables({ callType: existing.call_type, context, firstName: m?.firstName ?? null, member: true, cardSent: await contactCardSent(admin, existing.user_id), minutesAvailable: Math.floor(settings.voice.maxCallSeconds / 60), ...base });
+      // R2-86: the context it was placed with.
+      const context: CallContext = isCallContext(existing.context) ? existing.context : contextForType(existing.call_type);
+      const deal = existing.call_type === 'deal' ? (await dealCallFacts(admin, existing))?.vars ?? null : null;
+      const vars = callVariables({ callType: existing.call_type, context, firstName: m?.firstName ?? null, member: true, cardSent: await contactCardSent(admin, existing.user_id), minutesAvailable: Math.floor(settings.voice.maxCallSeconds / 60), ...base, deal });
       return { type: 'conversation_initiation_client_data', dynamic_variables: withSecret(vars) };
     }
   }
@@ -93,9 +97,15 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
     lastOutbound(admin, userId, MISSED_WITHIN_MS, now),
   ]);
   let context: CallContext = 'member';
+  let deal: { headline: string; short: string } | null = null;
   if (last && (last.status === 'missed' || last.status === 'voicemail')) {
     if (last.call_type === 'intro') context = 'missed_intro';
     else if (last.call_type === 'low_credit' && !m?.autoTopupOn) context = 'missed_low_credit';
+    else if (last.call_type === 'deal') {
+      // Batch 25: ringing back after a missed deal call: the opener names the deal.
+      deal = (await dealCallFacts(admin, last))?.vars ?? null;
+      if (deal) context = 'missed_deal';
+    }
   }
   const seconds = payer.suspended ? 60 : affordableSeconds(balance?.totalPence ?? 0, perMin, settings.voice.maxCallSeconds, settings.voice.textsPerCallMax * settings.intelligence.siTextPence);
   const vars = callVariables({
@@ -107,6 +117,7 @@ export async function answerInitiation(req: InitiationRequest, now: Date = new D
     // A recognised member with little credit still gets a short answer; the charge is capped at the balance.
     minutesAvailable: Math.max(1, Math.floor((seconds - settings.voice.wrapUpSeconds) / 60)),
     ...base,
+    deal,
   });
   const conversationId = await startConversation({ channel: 'call', userId, startedAt: now });
   await insertCall(admin, {

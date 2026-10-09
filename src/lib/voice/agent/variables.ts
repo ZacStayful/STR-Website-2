@@ -17,17 +17,34 @@ import { KNOWLEDGE_VARIABLES } from '../../knowledge/agent.ts';
 import type { CallType } from '../config.ts';
 import {
   CALLBACK_MEMBER_OPENER,
+  CALLBACK_MISSED_DEAL_OPENER,
   CALLBACK_MISSED_INTRO_OPENER,
   CALLBACK_MISSED_LOW_CREDIT_OPENER,
   CALLBACK_UNKNOWN_OPENER,
+  DEAL_OPENER,
   INTRO_OPENER,
   LOW_CREDIT_OPENER,
 } from './scripts.ts';
 
-/** What the agent is told about why this call is happening. */
-export type CallContext = 'intro' | 'low_credit' | 'missed_intro' | 'missed_low_credit' | 'member' | 'unknown';
+/** What the agent is told about why this call is happening. Batch 25: deal, missed_deal. */
+export type CallContext = 'intro' | 'low_credit' | 'deal' | 'missed_intro' | 'missed_low_credit' | 'missed_deal' | 'member' | 'unknown';
 
-export const BASE_VARIABLE_NAMES = ['first_name', 'caller_status', 'call_type', 'context', 'card_sent', 'minutes_available', 'topup_amount', 'topup_threshold', 'persona_version'] as const;
+export const CALL_CONTEXTS: readonly CallContext[] = ['intro', 'low_credit', 'deal', 'missed_intro', 'missed_low_credit', 'missed_deal', 'member', 'unknown'];
+
+export function isCallContext(v: unknown): v is CallContext {
+  return typeof v === 'string' && (CALL_CONTEXTS as readonly string[]).includes(v);
+}
+
+/** R2-86: an outbound call's context, from its type when the row does not say. */
+export function contextForType(type: CallType): CallContext {
+  return type === 'intro' ? 'intro' : type === 'deal' ? 'deal' : type === 'low_credit' ? 'low_credit' : 'member';
+}
+
+/**
+ * Batch 25: deal_headline and deal_short describe the deal a deal call is
+ * about (src/lib/standout/copy.ts). Every other call sends "none".
+ */
+export const BASE_VARIABLE_NAMES = ['first_name', 'caller_status', 'call_type', 'context', 'card_sent', 'minutes_available', 'topup_amount', 'topup_threshold', 'persona_version', 'deal_headline', 'deal_short'] as const;
 /** Every variable every call sends: the call's own, then the knowledge base's figures. */
 export const VARIABLE_NAMES: readonly string[] = [...BASE_VARIABLE_NAMES, ...KNOWLEDGE_VARIABLES];
 
@@ -43,7 +60,12 @@ export interface VariablesInput {
   topupThresholdPence: number;
   /** The knowledge variables' values now (src/lib/knowledge/agent-server.ts knowledgeCallValues); any left out are sent as the fallback. */
   knowledge?: Readonly<Record<string, string>>;
+  /** Batch 25: the deal a deal call (or a callback after one) is about. */
+  deal?: { headline: string; short: string } | null;
 }
+
+/** What a call that is not about a deal sends for the deal variables. */
+export const NO_DEAL = 'none';
 
 const pounds = (pence: number) => (pence % 100 === 0 ? `${pence / 100} pounds` : `£${(pence / 100).toFixed(2)}`);
 
@@ -58,6 +80,8 @@ export function callVariables(i: VariablesInput): Record<string, string | number
     topup_amount: pounds(i.topupAmountPence),
     topup_threshold: pounds(i.topupThresholdPence),
     persona_version: PERSONA_VERSION,
+    deal_headline: i.deal?.headline ?? NO_DEAL,
+    deal_short: i.deal?.short ?? NO_DEAL,
     ...Object.fromEntries(KNOWLEDGE_VARIABLES.map((k) => [k, i.knowledge?.[k] ?? CALL_FIGURE_FALLBACK])),
   };
 }
@@ -69,6 +93,10 @@ export function openerFor(context: CallContext): string {
       return INTRO_OPENER;
     case 'low_credit':
       return LOW_CREDIT_OPENER;
+    case 'deal':
+      return DEAL_OPENER;
+    case 'missed_deal':
+      return CALLBACK_MISSED_DEAL_OPENER;
     case 'missed_intro':
       return CALLBACK_MISSED_INTRO_OPENER;
     case 'missed_low_credit':

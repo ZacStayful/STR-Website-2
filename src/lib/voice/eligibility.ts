@@ -1,7 +1,9 @@
 /**
  * Batch 23: may Stayful Intelligence place this outbound call now? One pure
  * rule set for every call type, used when a call is queued and again just
- * before it is dialled. Batch 25's deal calls reuse it unchanged.
+ * before it is dialled. Batch 25's deal calls reuse it, with one change:
+ * like the intro, a deal call waits for the next weekday when today's call
+ * is already used (Batch 23's one outbound call a day still holds).
  *
  * The shared rules (any outbound call):
  *   calls on, the account owner, a verified number that hasn't sent STOP,
@@ -49,7 +51,7 @@ export interface EligibilityInput {
 
 export type Eligibility =
   | { ok: true }
-  /** Not now, but later: outside hours, or (the intro only) today's call is used. */
+  /** Not now, but later: outside hours, or (the intro and a deal call) today's call is used. */
   | { ok: false; defer: 'hours' | 'next_day'; reason?: BlockedReason }
   /** No. `skip` reasons are member choices (no row is written when queueing); the rest are blocked rows. */
   | { ok: false; defer?: undefined; reason: BlockedReason; skip: boolean };
@@ -58,6 +60,9 @@ export type Eligibility =
 const SKIPS: ReadonlySet<BlockedReason> = new Set(['calls_off', 'not_owner', 'auto_topup_on', 'management_no_deals']);
 
 const DAY_MS = 24 * 60 * 60_000;
+
+/** Call types that wait for the next day rather than being blocked when today's call is used. */
+const WAITS_FOR_NEXT_DAY: ReadonlySet<EligibilityInput['type']> = new Set(['intro', 'deal']);
 
 export function checkEligibility(i: EligibilityInput): Eligibility {
   const no = (reason: BlockedReason): Eligibility => ({ ok: false, reason, skip: SKIPS.has(reason) });
@@ -72,10 +77,10 @@ export function checkEligibility(i: EligibilityInput): Eligibility {
   }
   if (i.settings.maxOutboundPerUkDay <= 0) return no('daily_limit');
   if (i.placedToday >= i.settings.maxOutboundPerUkDay) {
-    // The intro waits for another day; any other call is blocked for good.
-    return i.type === 'intro' ? { ok: false, defer: 'next_day', reason: 'daily_limit' } : no('daily_limit');
+    // The intro and a deal call wait for another day; any other call is blocked for good.
+    return WAITS_FOR_NEXT_DAY.has(i.type) ? { ok: false, defer: 'next_day', reason: 'daily_limit' } : no('daily_limit');
   }
-  if (i.otherInFlight) return i.type === 'intro' ? { ok: false, defer: 'next_day', reason: 'in_flight' } : no('in_flight');
+  if (i.otherInFlight) return WAITS_FOR_NEXT_DAY.has(i.type) ? { ok: false, defer: 'next_day', reason: 'in_flight' } : no('in_flight');
   if (i.affordableSeconds < 60) return no('no_credit');
   if (!inOutboundHours(i.now, i.settings)) return { ok: false, defer: 'hours' };
   return { ok: true };
