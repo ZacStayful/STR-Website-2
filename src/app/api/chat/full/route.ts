@@ -16,7 +16,9 @@ import { isUuid } from '@/lib/chat/turns-server';
  * the events are start, thinking, delta, clear, replace and done. If the page
  * goes away before the answer is finished the model is stopped and nothing
  * is charged; a finished answer is charged once and a reconnect with the
- * same id gets it back.
+ * same id gets it back. The page going is seen two ways: the stream being
+ * cancelled, and the request's signal (on Vercel only because vercel.json
+ * opts this route into request cancellation).
  */
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -61,6 +63,8 @@ export async function POST(request: Request) {
       /* already stopped */
     }
   };
+  if (request.signal.aborted) leave();
+  else request.signal.addEventListener('abort', leave, { once: true });
   const stream = new ReadableStream({
     start(controller) {
       const send = (e: FullEvent) => {

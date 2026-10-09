@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isSameOriginJson } from '@/lib/tracking/request';
 import { askQuick } from '@/lib/chat/quick-server';
@@ -10,6 +11,9 @@ import { isUuid } from '@/lib/chat/turns-server';
  * Body: { clientTurnId: uuid (the same id on a retry), question: string }.
  * Always 200 with a ChatReply (src/lib/chat/reply.ts) for a signed-in member:
  * "Top up", "Ask in the full view" and "I don't know" are answers, not errors.
+ * If the page goes away before the answer is back, the model is stopped and
+ * nothing is charged (vercel.json opts this route into request cancellation);
+ * the work runs under after() so that clean-up still finishes.
  */
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -28,6 +32,10 @@ export async function POST(request: Request) {
     /* handled below */
   }
   if (!isUuid(body.clientTurnId)) return Response.json({ error: 'Bad request.' }, { status: 400 });
-  const reply = await askQuick(user, { clientTurnId: body.clientTurnId, question: body.question });
-  return Response.json(reply);
+  const work = askQuick(user, { clientTurnId: body.clientTurnId, question: body.question, signal: request.signal });
+  after(work.then(
+    () => undefined,
+    () => undefined,
+  ));
+  return Response.json(await work);
 }

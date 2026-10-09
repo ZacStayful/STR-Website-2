@@ -1,5 +1,13 @@
 {
 	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"functions": {
+		"src/app/api/chat/quick/route.ts": {
+			"supportsCancellation": true
+		},
+		"src/app/api/chat/full/route.ts": {
+			"supportsCancellation": true
+		}
+	},
 	"crons": [
 		{
 			"path": "/api/internal/alerts",

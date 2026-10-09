@@ -6,7 +6,9 @@ import 'server-only';
  * sentences. When the question needs the member's deals or a look-up the box
  * says "Ask in the full view (about 8p)" instead of guessing; with no approved
  * answer it says "I don't know that one yet". Charged actual tokens × markup,
- * once, only for an answer (src/lib/chat/turns-server.ts).
+ * once, only for an answer (src/lib/chat/turns-server.ts). If the page goes
+ * away before the answer is back (the request's signal), the model is stopped
+ * and nothing is charged, as in the full view.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { User } from '@supabase/supabase-js';
@@ -31,7 +33,7 @@ import type { QuestionOutcome } from '../voice/config';
 /** Haiku 4.5's tool-less request overhead is nil; the JSON-schema instructions add a little: counted generously. */
 const STRUCTURED_OVERHEAD_TOKENS = 300;
 
-export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { clientTurnId: string; question: unknown }, now: Date = new Date()): Promise<ChatReply> {
+export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { clientTurnId: string; question: unknown; signal?: AbortSignal }, now: Date = new Date()): Promise<ChatReply> {
   const admin = createAdminClient();
   const settings = await readChatSettings(admin);
   if (!chatOn(settings)) return stateReply('off');
@@ -56,6 +58,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
   if (inserted.kind === 'existing') return replyForStored(admin, inserted.turn, member);
   if (inserted.kind === 'busy') return stateReply('busy');
   const turn = inserted.turn;
+  const gone = () => input.signal?.aborted === true;
 
   let hold: StartedAction | null = null;
   const rounds: RoundUsage[] = [];
@@ -90,25 +93,42 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       return { ...stateReply('top_up', { teamMember: member.teamMember }), buttons: topUpButtons(member) };
     }
 
+    // The page already went: no model call, nothing charged.
+    if (gone()) {
+      await settle(admin, turn, member, hold, { status: 'failed', outcome: null, rounds }, settings);
+      return stateReply('did_not_finish', { turnId: turn.id });
+    }
+
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: QUICK_TIMEOUT_MS, maxRetries: 0 });
     let raw: string | null = null;
     let stop: string | null = null;
     try {
-      const msg = await client.messages.create({
-        model: QUICK_MODEL,
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: 'user', content: userText }],
-        output_config: { format: { type: 'json_schema', schema: QUICK_SCHEMA as unknown as Record<string, unknown> } },
-      });
+      const msg = await client.messages.create(
+        {
+          model: QUICK_MODEL,
+          max_tokens: maxTokens,
+          system,
+          messages: [{ role: 'user', content: userText }],
+          output_config: { format: { type: 'json_schema', schema: QUICK_SCHEMA as unknown as Record<string, unknown> } },
+        },
+        { signal: input.signal },
+      );
       rounds.push(usageOf(msg.usage));
       stop = msg.stop_reason ?? null;
       raw = stop === 'refusal' ? null : msg.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
     } catch (err) {
-      console.error('[chat] quick model call failed:', (err as Error)?.message ?? err);
+      // No usage came back, so the call is logged as a failed one (house spend); nothing is charged.
+      const left = gone() || err instanceof Anthropic.APIUserAbortError;
+      if (!left) console.error('[chat] quick model call failed:', (err as Error)?.message ?? err);
       await logFailedCall(turn, member);
       await settle(admin, turn, member, hold, { status: 'failed', outcome: null, rounds }, settings);
-      return stateReply('failed', { turnId: turn.id });
+      return stateReply(left ? 'did_not_finish' : 'failed', { turnId: turn.id });
+    }
+
+    // The page went while the model wrote: its tokens are house spend, nothing is charged or logged.
+    if (gone()) {
+      await settle(admin, turn, member, hold, { status: 'failed', outcome: null, rounds }, settings);
+      return stateReply('did_not_finish', { turnId: turn.id });
     }
 
     const reply = stop === 'max_tokens' ? null : parseQuickReply(raw);

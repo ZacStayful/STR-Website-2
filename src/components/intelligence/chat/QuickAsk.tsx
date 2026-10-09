@@ -33,7 +33,7 @@ export function QuickAsk({ hintPence, fullHintPence, floorPence, autoFocus = fal
   const teamMember = Boolean(credit?.member);
   const outOfCredit = credit !== null && !credit.admin && credit.spendableBasePence < floorPence;
 
-  async function send(q: string, id: string) {
+  async function send(q: string, id: string, retry = false): Promise<void> {
     setBusy(true);
     setError(null);
     pending.current = { id, question: q };
@@ -44,6 +44,11 @@ export function QuickAsk({ hintPence, fullHintPence, floorPence, autoFocus = fal
       // Still being answered (another tab, or this one before a drop): keep the retry for later.
       if (r.state === "busy" || r.state === "too_fast") {
         setError(r.text);
+        return;
+      }
+      if (r.state === "did_not_finish" && retry) {
+        // The first try never finished (and wasn't charged): ask it afresh, as a new question.
+        await send(q, newTurnId());
         return;
       }
       pending.current = null;
@@ -96,7 +101,7 @@ export function QuickAsk({ hintPence, fullHintPence, floorPence, autoFocus = fal
         <p className="text-sm text-white" role="alert">
           {error}{" "}
           {pending.current && (
-            <button type="button" className="underline underline-offset-2" onClick={() => pending.current && void send(pending.current.question, pending.current.id)}>
+            <button type="button" className="underline underline-offset-2" onClick={() => pending.current && void send(pending.current.question, pending.current.id, true)}>
               Try again
             </button>
           )}

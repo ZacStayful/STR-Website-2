@@ -1025,10 +1025,11 @@ conversation log (Batch 23's, channel `chat`):
 
 A question costs its actual tokens × `si_chat_markup` (5), charged once
 through the credit system and only for a delivered answer: "I don't know",
-"ask in the full view", a refusal, an error or a full-view page closed
-part-way are logged as house spend and never charged (a quick answer
-finished after its page closed is charged, about 1p, and is in the
-member's history). Each answer is sized
+"ask in the full view", a refusal, an error or a page closed part-way are
+logged as house spend and never charged. An answer the server had already
+finished (the network dropped without the page closing, say) is kept and
+charged once: "Try again" shows it, and so does the member's history. Each
+answer is sized
 so it can never pass its ceiling (`si_chat_quick_ceiling_pence` 3p,
 `si_chat_full_ceiling_pence` 25p) or the member's balance. Every figure in an
 answer must be one a look-up, a setting or an approved answer gave it, and it
@@ -1053,8 +1054,11 @@ is in `src/lib/chat`; admin is the **Chat** tab of `/admin/intelligence`.
 4. **Switch it on:** `SI_CHAT_ENABLED=true` on Production (it needs
    `ANTHROPIC_API_KEY`, which the analyser already has). Off, the eye is the
    link to the view it always was.
-5. **Check the cron:** Vercel → Settings → Cron Jobs lists
-   `/api/internal/si-chat` (02:40 UTC daily; 42 cron entries). It takes the
+5. **Check Vercel:** `vercel.json` opts `/api/chat/quick` and
+   `/api/chat/full` into request cancellation (`supportsCancellation`), so a
+   page closed mid-answer stops the model and isn't charged; nothing to set.
+   Settings → Cron Jobs lists `/api/internal/si-chat` (02:40 UTC daily; 42
+   cron entries). It takes the
    member's name off chat questions older than `si_transcript_retention_days`
    (90); `?dry=1` only counts. The transcripts themselves are deleted by
    Batch 23's `/api/internal/si-calls`, for every channel.
