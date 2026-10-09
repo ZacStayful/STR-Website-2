@@ -440,7 +440,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Can I talk to you instead of typing?',
     variants: ['Can I ask out loud?', 'Do you have voice?', 'Why did you answer out loud?', 'Does talking to you cost more?'],
-    answer: 'Yes. Tap the microphone by the box and ask; when you ask out loud I answer out loud, in my own voice, then listen for your next question (never while I’m speaking). Hearing you and speaking back are charged as AI voice, a little on top of the question, and nothing is charged if I don’t catch what you said.',
+    answer: 'Yes: tap the microphone and ask, and I’ll answer out loud, then listen again (never while I’m speaking). Hearing and speaking are charged as AI voice, a little on top of the question, and nothing if I don’t catch you.',
   },
   {
     slug: 'chat_history',
