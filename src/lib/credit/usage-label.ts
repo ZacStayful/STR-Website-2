@@ -31,6 +31,12 @@ export const ACTION_LABELS: Record<string, string> = {
   pmi_addon: 'Second opinion from PMI',
   todays_5: 'Daily deals',
   briefing: 'Daily briefing',
+  // Batch 23 / Batch 22: these had no label, so members saw the raw action.
+  si_call: 'Stayful Intelligence call',
+  deep_search: 'Deep search',
+  // Batch 26: the typed chat (one line per question, however many look-ups it took).
+  si_chat_quick: 'Stayful Intelligence question',
+  si_chat_full: 'Stayful Intelligence question',
 };
 
 export function actionLabel(action: string | null): string {

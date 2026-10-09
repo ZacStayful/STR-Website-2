@@ -1,5 +1,13 @@
 {
 	"$schema": "https://openapi.vercel.sh/vercel.json",
+	"functions": {
+		"src/app/api/chat/quick/route.ts": {
+			"supportsCancellation": true
+		},
+		"src/app/api/chat/full/route.ts": {
+			"supportsCancellation": true
+		}
+	},
 	"crons": [
 		{
 			"path": "/api/internal/alerts",
@@ -152,6 +160,10 @@
 		{
 			"path": "/api/internal/si-knowledge",
 			"schedule": "50 2 * * *"
+		},
+		{
+			"path": "/api/internal/si-chat",
+			"schedule": "40 2 * * *"
 		},
 		{
 			"path": "/api/internal/si-calls",

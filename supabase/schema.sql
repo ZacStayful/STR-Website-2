@@ -7575,3 +7575,114 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 26: typed chat
+-- =========================
+-- Stayful Intelligence answers typed questions in two places: quick answers
+-- under the header eye (Haiku 4.5, knowledge only) and the full view's text
+-- box (Sonnet 5.5, knowledge plus read-only tools over the member's own
+-- deals). Both are charged actual tokens × si_chat_markup through the credit
+-- system (reserve, meter, release), once, only for a delivered answer; a
+-- failed, empty, refused or "I don't know" answer is logged as house spend
+-- and never charged. The question and answer text live only in Batch 23's
+-- conversation log (channel 'chat'); chat_turns holds the tokens, the charge
+-- and the retry guard, never any text. Code: src/lib/chat. Additive; nothing
+-- is added to ACCESS_COLUMNS.
+
+-- ── R2-87: a question in the log can come from the chat ──
+do $$
+begin
+  alter table public.si_conversation_questions drop constraint if exists si_conversation_questions_source_check;
+  alter table public.si_conversation_questions add constraint si_conversation_questions_source_check check (source in ('tool', 'analysis', 'sms', 'chat'));
+end $$;
+
+-- ── chat_turns: one row per typed question ──
+--   id              also the ledger action_id of its charge (credit_transactions.action_id)
+--   user_id         who asked; nulled after si_transcript_retention_days and when they delete their history
+--   payer_id        whose credit paid (a team member's owner); nulled with user_id
+--   client_turn_id  the browser's id for this send: a retry or reconnect with the same id never asks or charges twice
+--   surface         quick | full
+--   status          pending (one per member at a time) | answered (charged) | no_answer (don't know, ask in the full view, refused) | failed
+--   outcome         the conversation log's outcome for the question
+--   *_tokens        every model round added up; raw_pence our cost; charged_*_pence what the member paid (base, and as deducted)
+--   capped          the answer was cut short at the question's ceiling
+--   fact_proposal   "Want me to remember that?": the fact shown, saved only on the member's yes
+--   log_seq         the answer's turn in si_conversation_turns (a reconnect gets the stored answer back, uncharged)
+--   buttons         the answer's buttons (kinds and internal links only; src/lib/chat/actions.ts)
+--   match_confidence the knowledge matcher's best score for the question (admin's examples either side of the threshold)
+create table if not exists public.chat_turns (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete set null,
+  payer_id uuid,
+  client_turn_id uuid not null,
+  surface text not null check (surface in ('quick', 'full')),
+  status text not null default 'pending' check (status in ('pending', 'answered', 'no_answer', 'failed')),
+  outcome text check (outcome is null or outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off')),
+  conversation_id uuid references public.si_conversations(id) on delete set null,
+  question_id uuid,
+  model text,
+  rounds integer not null default 0,
+  tools_used text[] not null default '{}',
+  knowledge_slug text,
+  match_confidence numeric(4,3),
+  input_tokens integer not null default 0,
+  output_tokens integer not null default 0,
+  cache_read_tokens integer not null default 0,
+  cache_write_tokens integer not null default 0,
+  raw_pence numeric(14,6) not null default 0,
+  charged_base_pence numeric(14,4) not null default 0,
+  charged_face_pence numeric(14,4) not null default 0,
+  capped boolean not null default false,
+  fact_proposal jsonb,
+  log_seq integer,
+  buttons jsonb,
+  created_at timestamptz not null default now(),
+  answered_at timestamptz,
+  anonymised_at timestamptz
+);
+create unique index if not exists chat_turns_client_uidx on public.chat_turns (user_id, client_turn_id);
+create unique index if not exists chat_turns_pending_uidx on public.chat_turns (user_id) where status = 'pending';
+create index if not exists chat_turns_user_idx on public.chat_turns (user_id, created_at desc);
+create index if not exists chat_turns_created_idx on public.chat_turns (created_at);
+alter table public.chat_turns enable row level security;  -- no policies: service role only
+revoke all on public.chat_turns from anon, authenticated;
+
+-- Settings (defaults and bounds in src/lib/chat/settings.ts; a missing or bad
+-- row takes the default). Edited on /admin/intelligence/chat. Prices in base
+-- pence, like every other price. The confidence thresholds are Batch 24's
+-- si_kb_* rows and the 90 days are Batch 23's si_transcript_retention_days.
+--   si_chat_enabled                  false hides the box (SI_CHAT_ENABLED=true is also needed)
+--   si_chat_markup                   what a question costs: actual tokens × this
+--   si_chat_quick_ceiling_pence      the most one quick answer can cost; it is cut short before
+--   si_chat_full_ceiling_pence       the same for a full-view answer
+--   si_chat_quick_floor_pence        below this balance the quick box says "Top up to ask me more"
+--   si_chat_full_floor_pence         the same for the full view
+--   si_chat_quick_hint_pence         the price hint by the quick box ("about 1p")
+--   si_chat_full_hint_pence          the price hint by the full view's box ("about 8p")
+--   si_chat_quick_max_output_tokens  a quick answer's longest reply
+--   si_chat_full_max_words           a full-view answer's longest text
+--   si_chat_full_max_tool_rounds     the most times one full-view answer may look something up
+--   si_chat_history_turns            earlier questions in the same conversation sent back with a new one
+--   si_chat_session_idle_minutes     a full-view conversation ends after this long without a question
+--   si_chat_min_seconds              the shortest gap between two questions from one member
+--   si_chat_max_uncharged_per_day    unanswered questions (not charged) a member may ask in a UK day; answered ones are never capped
+insert into public.billing_settings (key, value) values
+  ('si_chat_enabled', 'true'::jsonb),
+  ('si_chat_markup', '5'::jsonb),
+  ('si_chat_quick_ceiling_pence', '3'::jsonb),
+  ('si_chat_full_ceiling_pence', '25'::jsonb),
+  ('si_chat_quick_floor_pence', '2'::jsonb),
+  ('si_chat_full_floor_pence', '10'::jsonb),
+  ('si_chat_quick_hint_pence', '1'::jsonb),
+  ('si_chat_full_hint_pence', '8'::jsonb),
+  ('si_chat_quick_max_output_tokens', '200'::jsonb),
+  ('si_chat_full_max_words', '80'::jsonb),
+  ('si_chat_full_max_tool_rounds', '4'::jsonb),
+  ('si_chat_history_turns', '6'::jsonb),
+  ('si_chat_session_idle_minutes', '30'::jsonb),
+  ('si_chat_min_seconds', '3'::jsonb),
+  ('si_chat_max_uncharged_per_day', '30'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

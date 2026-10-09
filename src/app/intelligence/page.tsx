@@ -13,6 +13,9 @@ import { requireProfileStart } from "@/lib/profile/server";
 import { loadIntelligence } from "@/lib/intelligence/view-server";
 import { logActivity } from "@/lib/activity/log";
 import { todayKey } from "@/lib/today/day";
+import { FullAsk } from "@/components/intelligence/chat/FullAsk";
+import { chatUi } from "@/lib/chat/turns-server";
+import { MAX_QUESTION_CHARS } from "@/lib/chat/config";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +29,11 @@ export const metadata: Metadata = {
  * with Today's top 3 for the active profile and the question chips. For every
  * member; opening it is recorded, never counted.
  */
-export default async function IntelligencePage({ searchParams }: { searchParams: Promise<{ resume?: string | string[] }> }) {
+export default async function IntelligencePage({ searchParams }: { searchParams: Promise<{ resume?: string | string[]; ask?: string | string[] }> }) {
   const params = await searchParams;
+  // Batch 26: "Ask in the full view" from the quick box carries the question over; it is never sent for them.
+  const askRaw = Array.isArray(params.ask) ? params.ask[0] : params.ask;
+  const ask = typeof askRaw === "string" ? askRaw.slice(0, MAX_QUESTION_CHARS) : "";
   const resumeRaw = Array.isArray(params.resume) ? params.resume[0] : params.resume;
   const resumeId = resumeRaw && /^[0-9a-f-]{36}$/i.test(resumeRaw) ? resumeRaw : null;
   const supabase = await createSupabaseServerClient();
@@ -38,7 +44,7 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
   await requireProfileStart(user.id, "/intelligence");
 
   const now = new Date();
-  const data = await loadIntelligence({ user, supabase, mode: "header", now });
+  const [data, chat] = await Promise.all([loadIntelligence({ user, supabase, mode: "header", now }), chatUi()]);
   logActivity(user.id, "si_view", { extras: { surface: "header", step: "open" }, dedupeKey: `si_view:header:${todayKey(now)}` });
   const cards = intelligenceCards(data, now);
 
@@ -72,6 +78,7 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
           </>
         }
         answers={data.answers}
+        chat={chat ? <FullAsk hintPence={chat.fullHintPence} floorPence={chat.fullFloorPence} initialQuestion={ask} /> : undefined}
       />
     </CreditProvider>
   );

@@ -17,6 +17,8 @@ const TABS = [
   { key: "gaps", label: "Gaps", href: "/admin/intelligence/gaps" },
   { key: "knowledge", label: "Knowledge", href: "/admin/intelligence/knowledge" },
   { key: "coverage", label: "Coverage", href: "/admin/intelligence/coverage" },
+  // Batch 26: the typed chat's figures and settings.
+  { key: "chat", label: "Chat", href: "/admin/intelligence/chat" },
 ] as const;
 
 export type SiTab = (typeof TABS)[number]["key"];

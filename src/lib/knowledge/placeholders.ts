@@ -296,6 +296,15 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const d = outboundDays(g);
     return d ? dayWords(d) : null;
   }),
+  // Batch 26: the typed chat
+  chat_quick_cost: g_('About what a quick answer costs (the price hint)', 'billing_settings.si_chat_quick_hint_pence', (g) => money(pence(g, 'si_chat_quick_hint_pence'))),
+  chat_full_cost: g_('About what a full-view answer costs (the price hint)', 'billing_settings.si_chat_full_hint_pence', (g) => money(pence(g, 'si_chat_full_hint_pence'))),
+  chat_quick_max: g_('The most a quick answer can cost', 'billing_settings.si_chat_quick_ceiling_pence', (g) => money(pence(g, 'si_chat_quick_ceiling_pence'))),
+  chat_full_max: g_('The most a full-view answer can cost', 'billing_settings.si_chat_full_ceiling_pence', (g) => money(pence(g, 'si_chat_full_ceiling_pence'))),
+  chat_markup: g_('What a question costs against the AI’s own cost, e.g. "5 times"', 'billing_settings.si_chat_markup', (g) => {
+    const n = num(raw(g, 'si_chat_markup'));
+    return n === null || n <= 0 ? null : `${n} times`;
+  }),
   // Batch 25: standout deals, deal calls and the slower-spender nudge
   standout_calls_per_month: g_('Deal calls a member may get in a calendar month, in words', 'billing_settings.standout_calls_per_month', (g) => {
     const n = whole(g, 'standout_calls_per_month', 0);

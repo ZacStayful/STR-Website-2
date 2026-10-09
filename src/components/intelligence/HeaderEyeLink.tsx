@@ -2,6 +2,8 @@ import Link from "next/link";
 import type { CSSProperties } from "react";
 import { StayfulEye, type EyeLevel } from "@/components/StayfulEye";
 import { EYE_NAV } from "@/lib/nav";
+import type { ChatUi } from "@/lib/chat/reply";
+import { HeaderEyeChat } from "./chat/HeaderEyeChat";
 
 /**
  * Batch 22: the eye in the app header, first in the row as the brand mark;
@@ -17,7 +19,9 @@ const ON_DARK = {
   "--si-eye-iris-deep": "#0f150e",
 } as CSSProperties;
 
-export function HeaderEyeLink({ level, style }: { level: EyeLevel; style?: CSSProperties }) {
+export function HeaderEyeLink({ level, style, chat = null }: { level: EyeLevel; style?: CSSProperties; chat?: ChatUi | null }) {
+  // Batch 26: with the typed chat on, the eye opens quick answers (full screen on a phone, a panel on a desktop).
+  if (chat) return <HeaderEyeChat level={level} style={style} onDark={ON_DARK} chat={chat} />;
   return (
     <Link href={EYE_NAV.href} aria-label={EYE_NAV.label} title={EYE_NAV.label} style={{ ...ON_DARK, ...style, display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
       <span style={{ lineHeight: 0 }}>

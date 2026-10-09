@@ -24,6 +24,7 @@ import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
 import { MembersFooter } from "@/components/feedback/MembersFooter";
 import { AnnouncementBanner } from "@/components/announcements/AnnouncementBanner";
 import { unseenAnnouncementsFor } from "@/lib/feedback/announcements-server";
+import { chatUi } from "@/lib/chat/turns-server";
 
 /**
  * Server shell for every members-only surface: resolves the member, their
@@ -120,11 +121,12 @@ export async function AppShell({ active, redirectTo, children }: { active: Secti
 
   const announcements = await announcementsRead;
   // Batch 22: the header eye shows the member's match accuracy (a team member's eye is full).
-  const eyeLevel = await eyeLevelFor(profile);
+  // Batch 26: with the typed chat on, the eye opens quick answers (null while it is off).
+  const [eyeLevel, chat] = await Promise.all([eyeLevelFor(profile), chatUi()]);
 
   return (
     <CreditProvider initial={credit}>
-      <AppSwitcher active={active} admin={admin} leads={leads} saved={saved} eyeLevel={eyeLevel} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
+      <AppSwitcher active={active} admin={admin} leads={leads} saved={saved} eyeLevel={eyeLevel} chat={chat} profile={profile && !profile.teamMember ? { percent: profile.progress.percent, complete: profile.progress.complete } : null} />
       <CreditBanner />
       <AnnouncementBanner items={announcements} />
       <VisitHeartbeat />

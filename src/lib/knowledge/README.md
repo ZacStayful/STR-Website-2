@@ -39,8 +39,8 @@ Server-only unless marked pure. `channel` is `'view' | 'call' | 'chat'`.
 
 Log every question the chat answers, or can't, to `si_conversation_questions`
 with the slug used as `knowledge_ref` and the outcome: that is what Coverage
-counts and what the nightly job learns from. (The `'chat'` question source is
-R2-87's.)
+counts and what the nightly job learns from. (Batch 26 added the `'chat'`
+question source, R2-87; `src/lib/chat/log-server.ts` does this.)
 
 ## What runs when
 

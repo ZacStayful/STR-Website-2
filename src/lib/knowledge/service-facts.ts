@@ -60,6 +60,12 @@ CALLS FROM STAYFUL INTELLIGENCE
 - Calls are switched off in Account → Notifications. It never changes settings on a call.
 - Call transcripts are kept for {transcript_days} days; the questions asked and whether they were answered are kept longer to improve the answers, without the member's name.
 
+TYPED QUESTIONS (THE CHAT)
+- Members can type questions: quick answers in the box under the header eye (about {chat_quick_cost}; only the member's account basics and the approved answers) and the full Stayful Intelligence view (about {chat_full_cost}; it can also look up the member's own deals, picks, profile, credit, why nothing matched and why it did or didn't call them).
+- A question costs what the AI actually cost × {chat_markup}, never more than {chat_quick_max} (quick) or {chat_full_max} (full view), and only when it is answered; "I don't know", "ask in the full view" and anything that fails are free. It never takes the balance below zero. The tap-to-ask questions are free.
+- It answers only from approved answers and its look-ups, never gives advice ("Get a survey and your own advice before you offer"), never gives an address or postcode, and never changes anything itself: it offers a button the member taps.
+- Members see their chat for {transcript_days} days in the full view and can delete it; after that the questions are kept without the member's name.
+
 MEMORY
 - Stayful Intelligence can remember a lasting preference or plan (for example "prefers 2-bed flats near stations") only after asking "Want me to remember that?" and hearing yes. Members see and delete everything it remembers in Account → What Stayful Intelligence remembers about you. It never keeps health, money beyond the profile, or anything about other people.
 
