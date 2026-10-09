@@ -156,7 +156,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       turn,
       member,
       hold,
-      { status: state === 'answer' ? 'answered' : 'no_answer', outcome, rounds, knowledgeSlug: slug, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons },
+      { status: state === 'answer' ? 'answered' : 'no_answer', outcome, rounds, knowledgeSlug: slug, matchConfidence: known.topConfidence, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons },
       settings,
     );
     // Record only: a quick answer never counts towards weekly active (Zac, 29 Sep).

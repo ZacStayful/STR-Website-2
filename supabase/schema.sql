@@ -7610,6 +7610,7 @@ end $$;
 --   fact_proposal   "Want me to remember that?": the fact shown, saved only on the member's yes
 --   log_seq         the answer's turn in si_conversation_turns (a reconnect gets the stored answer back, uncharged)
 --   buttons         the answer's buttons (kinds and internal links only; src/lib/chat/actions.ts)
+--   match_confidence the knowledge matcher's best score for the question (admin's examples either side of the threshold)
 create table if not exists public.chat_turns (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete set null,
@@ -7624,6 +7625,7 @@ create table if not exists public.chat_turns (
   rounds integer not null default 0,
   tools_used text[] not null default '{}',
   knowledge_slug text,
+  match_confidence numeric(4,3),
   input_tokens integer not null default 0,
   output_tokens integer not null default 0,
   cache_read_tokens integer not null default 0,

@@ -237,6 +237,8 @@ export interface Settlement {
   rounds: readonly RoundUsage[];
   toolsUsed?: readonly string[];
   knowledgeSlug?: string | null;
+  /** The matcher's best score for the question, when it was looked up. */
+  matchConfidence?: number | null;
   conversationId?: string | null;
   questionId?: string | null;
   logSeq?: number | null;
@@ -272,6 +274,7 @@ export async function settle(admin: Admin, turn: TurnRow, member: ChatMember, ac
       rounds: s.rounds.length,
       tools_used: [...new Set(s.toolsUsed ?? [])],
       knowledge_slug: s.knowledgeSlug ?? null,
+      match_confidence: typeof s.matchConfidence === 'number' && Number.isFinite(s.matchConfidence) ? Math.round(s.matchConfidence * 1000) / 1000 : null,
       conversation_id: s.conversationId ?? null,
       question_id: s.questionId ?? null,
       log_seq: s.logSeq ?? null,

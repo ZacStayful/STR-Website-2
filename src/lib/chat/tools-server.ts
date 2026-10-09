@@ -61,12 +61,14 @@ export interface AnswerState {
   factProposal: string | null;
   toolsUsed: string[];
   knowledgeSlug: string | null;
+  /** The matcher's best score across this answer's knowledge look-ups. */
+  matchConfidence: number | null;
   /** Every tool result, for the figure guard: an answer may only quote these. */
   sources: string[];
 }
 
 export function newAnswerState(): AnswerState {
-  return { deals: new Set(), whatIfs: new Set(), showMe: new Set(), deepSearchOffered: null, buttons: [], factProposal: null, toolsUsed: [], knowledgeSlug: null, sources: [] };
+  return { deals: new Set(), whatIfs: new Set(), showMe: new Set(), deepSearchOffered: null, buttons: [], factProposal: null, toolsUsed: [], knowledgeSlug: null, matchConfidence: null, sources: [] };
 }
 
 export interface ChatTools {
@@ -121,6 +123,7 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
   const tools: Record<ToolInput['tool'], (input: never, state: AnswerState) => Promise<unknown>> = {
     async search_knowledge(input: { question: string }, state) {
       const k = await lookUpKnowledge(input.question, ctx.values, admin);
+      state.matchConfidence = Math.max(state.matchConfidence ?? 0, k.topConfidence);
       if (k.answers.length === 0) return { found: false };
       state.knowledgeSlug ??= k.answers[0].slug;
       return { found: true, answers: k.answers.map((a) => ({ slug: a.slug, question: a.question, answer: a.answer })) };

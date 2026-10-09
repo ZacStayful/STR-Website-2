@@ -274,6 +274,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         rounds,
         toolsUsed: state.toolsUsed,
         knowledgeSlug: replyState === 'answer' ? state.knowledgeSlug : null,
+        matchConfidence: state.matchConfidence,
         conversationId: conv.id,
         questionId: logged.questionId,
         logSeq: logged.agentSeq,
