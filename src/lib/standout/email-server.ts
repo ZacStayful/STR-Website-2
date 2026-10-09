@@ -5,14 +5,19 @@ import 'server-only';
  * Intelligence saved for a member and did not ring them about (the third and
  * later in a month, members without calls on, a call that could not be
  * placed). One line each, in the next daily email, then marked emailed so a
- * deal is told once. Gone, opened, moved or turned-down deals are left out. Every
- * read is tolerant: before the schema is run nothing is added.
+ * deal is told once. Gone, opened, moved or turned-down deals are left out,
+ * and so is a deal whose type the member's main profile no longer shows (or
+ * when that profile is paused, for a client, or can't be read): it waits, and
+ * is told if the profile shows it again. Every read is tolerant: before the
+ * schema is run nothing is added.
  */
 import { createAdminClient } from '../supabase/admin';
 import { propertyKind } from '../listing/suitability';
 import type { DealType } from '../profile/deal-types';
 import type { SavedForYouItem } from '../notify/message';
 import { savedForYouLine } from './copy';
+import { chosenTypesFor } from './calls-server';
+import { shownVerdict } from './rules';
 import type { ProfitBasis } from './rules';
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -20,7 +25,7 @@ type Admin = ReturnType<typeof createAdminClient>;
 const CHUNK = 150;
 
 /** Each member's "Saved for you" lines, newest last; at most five each (the rest wait for the next email). */
-export async function savedForYouFor(admin: Admin, userIds: readonly string[], siteUrl: string): Promise<Map<string, SavedForYouItem[]>> {
+export async function savedForYouFor(admin: Admin, userIds: readonly string[], siteUrl: string, now: Date = new Date()): Promise<Map<string, SavedForYouItem[]>> {
   const out = new Map<string, SavedForYouItem[]>();
   const base = siteUrl.replace(/\/$/, '');
   for (let i = 0; i < userIds.length; i += CHUNK) {
@@ -44,9 +49,17 @@ export async function savedForYouFor(admin: Admin, userIds: readonly string[], s
     const { data: deals, error: dErr } = await admin.from('marketplace_deals').select('id, status, town, postcode_area, bedrooms, raw_type').in('id', [...new Set(rows.map((r) => r.deal_id))]);
     if (dErr) return out;
     const dealBy = new Map(((deals ?? []) as { id: string; status: string; town: string | null; postcode_area: string | null; bedrooms: number | null; raw_type: string | null }[]).map((d) => [d.id, d]));
+    // Still a deal type their main profile shows? Unreadable: nothing from this chunk is told on a guess (it waits for the next email).
+    const chosen = await chosenTypesFor(admin, [...new Set(rows.map((r) => r.user_id))], now);
+    if (!chosen) {
+      console.warn('[standout] saved-for-you: profiles unreadable, left for the next email');
+      continue;
+    }
     for (const r of rows) {
       const d = dealBy.get(r.deal_id);
       if (!d || d.status !== 'live') continue;
+      const c = chosen.get(r.user_id);
+      if (!c || shownVerdict(c, r.deal_type) !== 'ok') continue;
       const list = out.get(r.user_id) ?? [];
       if (list.length >= 5) continue;
       list.push({

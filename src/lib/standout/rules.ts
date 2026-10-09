@@ -118,6 +118,28 @@ export function memberSkip(i: {
   return null;
 }
 
+/** What a member's main profile shows now (calls-server.ts chosenTypesFor), or why it is no longer judged. */
+export type ChosenTypes = { types: DealType[] } | { blocked: 'type_not_chosen' | 'profile_changed' };
+
+/** The deal types a primary profile shows now, or why it is no longer judged (paused, for a client, waiting on answers: profile_changed; no types: type_not_chosen). */
+export function chosenTypesOf(i: { primary: Parameters<typeof memberSkip>[0]['primary']; types: readonly DealType[]; wants: Parameters<typeof memberSkip>[0]['wants'] }): ChosenTypes {
+  if (!i.primary) return { blocked: 'profile_changed' };
+  const skip = memberSkip({ isTeamMember: false, primary: i.primary, chosenTypes: i.types, wants: i.wants });
+  if (skip === 'no_deal_types') return { blocked: 'type_not_chosen' };
+  if (skip) return { blocked: 'profile_changed' };
+  return { types: [...i.types] };
+}
+
+/**
+ * Whether a save may still be told about: 'ok' when the profile shows its
+ * deal type and is still judged, else the reason. For the deal call, the
+ * below-floor text and "Saved for you", which can come a while after the save.
+ */
+export function shownVerdict(chosen: ChosenTypes, dealType: string | null): 'ok' | 'type_not_chosen' | 'profile_changed' {
+  if ('blocked' in chosen) return chosen.blocked;
+  return dealType && chosen.types.includes(dealType as DealType) ? 'ok' : 'type_not_chosen';
+}
+
 /** Best first: the highest match, then the highest profit (Zac: "the one with the highest match (then highest profit)"). */
 export function bestFirst<T extends { matchPct: number | null; profitLow: number | null }>(xs: readonly T[]): T[] {
   return [...xs].sort((a, b) => (b.matchPct ?? -1) - (a.matchPct ?? -1) || (b.profitLow ?? -Infinity) - (a.profitLow ?? -Infinity));

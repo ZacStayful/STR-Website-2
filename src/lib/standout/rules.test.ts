@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeStandout, memberSkip, bestFirst, beatsBest, liveConfirmed, inWindow, savesLeftToday, profitBarFor, matchPctOf, type StandoutInput } from './rules.ts';
+import { judgeStandout, memberSkip, bestFirst, beatsBest, liveConfirmed, inWindow, savesLeftToday, profitBarFor, matchPctOf, chosenTypesOf, shownVerdict, type StandoutInput } from './rules.ts';
 import { DEFAULT_STANDOUT } from './settings.ts';
 import { wantsFor, type Judgement } from '../tailoring/criteria.ts';
 import { judgeRow } from '../tailoring/today.ts';
@@ -177,4 +177,23 @@ test('a BRRR deal is judged on profit after the works (after refinance for a ful
     assert.equal(r.profitLow, j.figures.range!.lowPcm);
     assert.equal(r.minProfit, 300);
   }
+});
+
+test('a save is told about only while the main profile still shows its deal type and is still judged', () => {
+  const ok = { forClient: false, pausedAt: null };
+  const w = { minProfit: null, minProfitR2r: 1000 };
+  const r2rOnly = chosenTypesOf({ primary: ok, types: ['r2r'], wants: w });
+  assert.deepEqual(r2rOnly, { types: ['r2r'] });
+  assert.equal(shownVerdict(r2rOnly, 'r2r'), 'ok');
+  // The member stopped showing BRRR (or never chose it): not told.
+  assert.equal(shownVerdict(r2rOnly, 'brrr'), 'type_not_chosen');
+  assert.equal(shownVerdict(r2rOnly, null), 'type_not_chosen');
+  // Paused, for a client, waiting on answers, or gone: not told.
+  assert.deepEqual(chosenTypesOf({ primary: { ...ok, pausedAt: '2026-10-01T00:00:00Z' }, types: ['r2r'], wants: w }), { blocked: 'profile_changed' });
+  assert.deepEqual(chosenTypesOf({ primary: { ...ok, forClient: true }, types: ['r2r'], wants: w }), { blocked: 'profile_changed' });
+  assert.deepEqual(chosenTypesOf({ primary: { ...ok, awaitingAnswers: true }, types: ['r2r'], wants: w }), { blocked: 'profile_changed' });
+  assert.deepEqual(chosenTypesOf({ primary: null, types: ['r2r'], wants: w }), { blocked: 'profile_changed' });
+  // No types left: not told.
+  assert.deepEqual(chosenTypesOf({ primary: ok, types: [], wants: w }), { blocked: 'type_not_chosen' });
+  assert.equal(shownVerdict({ blocked: 'profile_changed' }, 'r2r'), 'profile_changed');
 });

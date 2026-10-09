@@ -24,7 +24,7 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
 import { allProfilesFor } from '../profiles/server';
-import { primaryOf, seatKey } from '../profiles/rules';
+import { primaryOf, seatKey, type SavedProfile } from '../profiles/rules';
 import { tailoringForSeats } from '../tailoring/server';
 import { wantsFor } from '../tailoring/criteria';
 import { dealTypesFor, type DealType } from '../profile/deal-types';
@@ -37,7 +37,7 @@ import type { DealFacts } from '../voice/templates';
 import type { CallRow } from '../voice/store-server';
 import type { MemberFacts } from '../voice/member-server';
 import { dealHeadline, dealShort, type DealDescription } from './copy';
-import { liveConfirmed, memberSkip, type ProfitBasis } from './rules';
+import { chosenTypesOf, liveConfirmed, shownVerdict, type ChosenTypes, type ProfitBasis } from './rules';
 import { recheckDeal } from './recheck';
 import { dealCallsEnabled } from './flags';
 
@@ -154,22 +154,36 @@ async function stillSiSave(admin: Admin, userId: string, dealId: string): Promis
   return Boolean(r && r.reaction === 'keep' && r.saved_by);
 }
 
-/** The deal types the member's primary profile shows now; a reason when it is no longer judged at all. */
-async function chosenTypesNow(admin: Admin, userId: string, now: Date): Promise<{ types: DealType[] } | { blocked: BlockedReason } | null> {
-  const profiles = await allProfilesFor(admin, [userId]);
+/**
+ * The deal types each member's primary profile shows now, or the reason it
+ * is no longer judged at all (paused, for a client, waiting on answers, no
+ * types). In bulk, for anything that tells members about saves some time
+ * after they were made. Null when the profiles can't be read.
+ */
+export async function chosenTypesFor(admin: Admin, userIds: readonly string[], now: Date): Promise<Map<string, ChosenTypes> | null> {
+  const out = new Map<string, ChosenTypes>();
+  if (userIds.length === 0) return out;
+  const profiles = await allProfilesFor(admin, userIds);
   if (!profiles) return null;
-  const rows = profiles.get(userId) ?? [];
+  const primary = new Map<string, SavedProfile>();
+  for (const userId of userIds) {
+    const p = pickPrimary(profiles.get(userId) ?? []);
+    if (p) primary.set(userId, p);
+    else out.set(userId, { blocked: 'profile_changed' });
+  }
+  const tailoring = await tailoringForSeats(admin, [...primary].map(([userId, p]) => ({ userId, profile: p, goals: p.goals, savedAreas: p.areas })), now);
+  for (const [userId, p] of primary) {
+    const t = tailoring.get(seatKey(userId, p.id)) ?? null;
+    if (!t) continue; // unreadable for this member: absent, so nothing is told on a guess
+    out.set(userId, chosenTypesOf({ primary: p, types: dealTypesFor({ goals: p.goals, about: t.about }), wants: wantsFor(t) }));
+  }
+  return out;
+}
+
+/** Batch 22's primary profile (the earliest live one), from rows already read: primaryProfileFor would create one. */
+function pickPrimary(rows: readonly SavedProfile[]): SavedProfile | null {
   const id = primaryOf(rows);
-  const p = rows.find((r) => r.id === id) ?? null;
-  if (!p) return { blocked: 'profile_changed' };
-  const tailoring = await tailoringForSeats(admin, [{ userId, profile: p, goals: p.goals, savedAreas: p.areas }], now);
-  const t = tailoring.get(seatKey(userId, p.id)) ?? null;
-  if (!t) return null;
-  const types = dealTypesFor({ goals: p.goals, about: t.about });
-  const skip = memberSkip({ isTeamMember: false, primary: p, chosenTypes: types, wants: wantsFor(t) });
-  if (skip === 'no_deal_types') return { blocked: 'type_not_chosen' };
-  if (skip) return { blocked: 'profile_changed' };
-  return { types };
+  return rows.find((r) => r.id === id) ?? null;
 }
 
 /**
@@ -179,10 +193,8 @@ async function chosenTypesNow(admin: Admin, userId: string, now: Date): Promise<
  * member about a save some time after it was made.
  */
 export async function stillShownFor(admin: Admin, userId: string, dealType: string | null, now: Date): Promise<'ok' | BlockedReason | null> {
-  const chosen = await chosenTypesNow(admin, userId, now);
-  if (!chosen) return null;
-  if ('blocked' in chosen) return chosen.blocked;
-  return dealType && chosen.types.includes(dealType as DealType) ? 'ok' : 'type_not_chosen';
+  const chosen = (await chosenTypesFor(admin, [userId], now))?.get(userId);
+  return chosen ? shownVerdict(chosen, dealType) : null;
 }
 
 export type StillWanted =
