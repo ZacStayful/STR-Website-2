@@ -11,6 +11,7 @@
  *
  * Pure.
  */
+import type Anthropic from '@anthropic-ai/sdk';
 import { buildSystemPrompt } from '../persona/stayful-intelligence.ts';
 import { DONT_KNOW_LINE } from './config.ts';
 import { balanceLabel } from './format.ts';
@@ -112,4 +113,22 @@ export function parseQuickReply(raw: string | null): QuickReply | null {
     slug: typeof o.slug === 'string' && o.slug.trim() ? o.slug.trim() : null,
     action: typeof o.action === 'string' ? o.action : null,
   };
+}
+
+/**
+ * Earlier questions and answers in the conversation, as plain text (never a
+ * thinking block: those stay inside the question that made them). Starts with
+ * the member, alternates, and ends on an answer so the new question follows.
+ */
+export function historyMessages(history: readonly { role: 'member' | 'agent'; text: string }[]): Anthropic.MessageParam[] {
+  const out: { role: 'user' | 'assistant'; content: string }[] = [];
+  for (const h of history) {
+    const role = h.role === 'member' ? 'user' : 'assistant';
+    if (out.length === 0 && role !== 'user') continue;
+    const last = out[out.length - 1];
+    if (last && last.role === role) last.content = `${last.content}\n${h.text}`;
+    else out.push({ role, content: h.text });
+  }
+  while (out.length > 0 && out[out.length - 1].role === 'user') out.pop();
+  return out;
 }

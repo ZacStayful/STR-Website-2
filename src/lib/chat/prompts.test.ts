@@ -51,3 +51,12 @@ test('fixed replies use the brief\'s words', () => {
   assert.equal(stateReply('top_up').text, 'Top up to ask me more.');
   assert.match(stateReply('top_up', { teamMember: true }).text, /team owner/);
 });
+
+test('history goes back as plain text: starts with the member, alternates, ends on an answer', async () => {
+  const { historyMessages } = await import('./prompts.ts');
+  assert.deepEqual(historyMessages([{ role: 'agent', text: 'hello' }, { role: 'member', text: 'q1' }, { role: 'agent', text: 'a1' }, { role: 'member', text: 'q2' }]), [
+    { role: 'user', content: 'q1' },
+    { role: 'assistant', content: 'a1' },
+  ]);
+  assert.deepEqual(historyMessages([]), []);
+});
