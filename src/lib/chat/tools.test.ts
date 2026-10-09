@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHAT_TOOLS, parseToolInput, TOOL_NAMES } from './tools.ts';
+import { ANSWER_EXTRAS, CHAT_TOOLS, parseToolInput, statusFor, TOOL_NAMES, TOOL_STATUS } from './tools.ts';
 
 test('no look-up takes a member, a user or an account', () => {
   for (const t of CHAT_TOOLS) {
@@ -24,4 +24,16 @@ test('inputs are checked again: a bad id, stage or date is refused', () => {
   assert.deepEqual(parseToolInput('why_called', { date: '2026-10-08' }), { tool: 'why_called', date: '2026-10-08' });
   assert.equal(parseToolInput('run_sql', {}), null);
   assert.equal(parseToolInput('search_knowledge', { question: '  ' }), null);
+});
+
+test('every look-up has a progress line, and a round shows its real look-up first', () => {
+  for (const name of TOOL_NAMES) assert.ok(TOOL_STATUS[name], name);
+  assert.equal(statusFor(['offer_action', 'todays_picks']), 'Looking at today’s picks…');
+  assert.equal(statusFor(['offer_action']), 'Getting that ready…');
+  assert.equal(statusFor(['run_sql']), null);
+});
+
+test('only buttons and facts are answer extras (they never cost another round)', () => {
+  assert.deepEqual([...ANSWER_EXTRAS].sort(), ['offer_action', 'propose_fact']);
+  for (const name of TOOL_NAMES) if (!ANSWER_EXTRAS.has(name)) assert.ok(!['offer_action', 'propose_fact'].includes(name));
 });

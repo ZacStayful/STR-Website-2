@@ -7686,3 +7686,22 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 26b: the chat's voice
+-- =========================
+-- Members can speak a question to the chat and hear the answer in the Stayful
+-- Intelligence voice. Listening is ElevenLabs speech-to-text, metered per
+-- second of audio (this row); the spoken answer is the existing per-character
+-- row (/api/speak). Both are charged as "AI voice" through the credit system,
+-- like the narrator. si_chat_voice_enabled switches the microphone and the
+-- spoken answers off without a redeploy (typing carries on). Additive.
+insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values
+  ('elevenlabs', 'stt_second', 'ElevenLabs speech-to-text (per second of audio)', 0.005925, 5, 'Scribe v2 batch ≈ $0.27 per hour of audio at 79p a dollar (Oct 2026); reconcile')
+on conflict (provider, unit) do nothing;
+
+insert into public.billing_settings (key, value) values
+  ('si_chat_voice_enabled', 'true'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';

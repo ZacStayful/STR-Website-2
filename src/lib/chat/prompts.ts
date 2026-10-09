@@ -31,7 +31,7 @@ export function fullTask(maxWords: number): string {
     'Look things up with your tools; never answer from your own knowledge. For a question about the service (prices, how things work), use search_knowledge; if it finds nothing, say exactly the don\'t-know line. For their deals, picks, money, profile, why nothing matched or why they were or weren\'t called, use the matching tool.',
     'Quote figures exactly as the tools give them. Never work one out yourself (no differences, totals or averages): if a comparison is needed, say which is higher using the tools\' own figures.',
     `Keep the answer to ${maxWords} words or fewer. Put the figure first.`,
-    'When a button would help (open a deal, run a full analysis, show a suggestion, use a suggestion, top up), call offer_action; the member taps it. You never do the thing yourself.',
+    'When a button would help (open a deal, run a full analysis, show a suggestion, use a suggestion, top up), call offer_action in the same reply as your answer: write the answer, then the offer_action call, and don\'t wait for its result. The member taps it. You never do the thing yourself.',
     'When the member tells you something about what they want that would help next time (for example "I only want 2-beds"), you may call propose_fact once with a short fact; the page asks them "Want me to remember that?" and saves it only on their yes.',
     'Deals are named by their area and type ("the 3-bed in LS6"), never by an address.',
   ].join('\n');

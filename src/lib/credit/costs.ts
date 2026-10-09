@@ -105,6 +105,8 @@ export const UNIT_COST_SEED: UnitCostSeed[] = [
   { provider: 'anthropic', unit: 'sonnet55_cache_write_token', label: 'Anthropic cache write token (Sonnet 5.5)', unitCostPence: (2.5 * USD) / 1_000_000, notes: '$2.50 per MTok (125% of input)' },
   // ── ElevenLabs turbo: Creator plan ≈ $22 per 100k characters ──
   { provider: 'elevenlabs', unit: 'character', label: 'ElevenLabs speech (per character)', unitCostPence: (22 * USD) / 100_000, notes: 'Creator plan; turbo models bill 0.5 credit/char on some tiers — reconcile' },
+  // Batch 26b: the chat's microphone (src/app/api/chat/listen). Charged as AI voice, per second of audio. Also seeded by schema.sql.
+  { provider: 'elevenlabs', unit: 'stt_second', label: 'ElevenLabs speech-to-text (per second of audio)', unitCostPence: (0.27 * USD) / 3600, notes: 'Scribe v2 batch ≈ $0.22–0.27 per hour of audio (Oct 2026); reconcile' },
   // ── Batch 23: Stayful Intelligence call minutes (charged to the member per answered second) ──
   // One blended row so every call type has one price: raw ≈ 13p a minute =
   // ElevenLabs agent ≈ 8p + Twilio UK mobile voice ≈ 3p + the agent's LLM ≈ 2p,

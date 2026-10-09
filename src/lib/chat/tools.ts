@@ -32,6 +32,30 @@ export const TOOL_NAMES = [
 
 export type ToolName = (typeof TOOL_NAMES)[number];
 
+/** Calls that only add to the answer (a button, a fact to offer to remember): never worth another round. */
+export const ANSWER_EXTRAS: ReadonlySet<string> = new Set<ToolName>(['offer_action', 'propose_fact']);
+
+/** What the member sees while a look-up runs, so the wait is never blank. */
+export const TOOL_STATUS: Record<ToolName, string> = {
+  search_knowledge: 'Checking how Stayful works…',
+  my_profile_summary: 'Looking at your profile…',
+  todays_picks: 'Looking at today’s picks…',
+  my_deals: 'Looking at your deals…',
+  deal_facts: 'Looking at that deal…',
+  what_if_suggestions: 'Working out what would find you more…',
+  deals_checked_count: 'Counting what I checked today…',
+  credit_state: 'Checking your credit…',
+  why_called: 'Looking at my calls…',
+  offer_action: 'Getting that ready…',
+  propose_fact: 'Getting that ready…',
+};
+
+/** The line for a round's look-ups: the first real look-up's, or null for an unknown name. */
+export function statusFor(names: readonly string[]): string | null {
+  const lookUp = names.find((n) => !ANSWER_EXTRAS.has(n) && n in TOOL_STATUS) ?? names.find((n) => n in TOOL_STATUS);
+  return lookUp ? TOOL_STATUS[lookUp as ToolName] : null;
+}
+
 export const STAGE_VALUES = ['watching', 'contacted', 'viewing', 'offer', 'secured', 'passed'] as const;
 
 const none: Anthropic.Tool.InputSchema = { type: 'object', properties: {}, required: [], additionalProperties: false };

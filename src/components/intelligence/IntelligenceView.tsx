@@ -7,6 +7,8 @@ import { revealIntro } from "@/lib/intelligence/reveal";
 import { AnswerChips } from "./AnswerChips";
 import { ViewBackground } from "./ViewBackground";
 import { ChatEye } from "./chat/ChatEye";
+import { FullChat, type FullChatConfig } from "./chat/FullChat";
+import { PicksRow } from "./chat/PicksRow";
 
 /**
  * Batch 22, Part E: the Stayful Intelligence view, full screen on the header's
@@ -17,6 +19,11 @@ import { ChatEye } from "./chat/ChatEye";
  * The "ask" region at the bottom holds the question chips and a reserved slot
  * for Batch 26's typed chat (#si-chat-slot), so adding the text box later moves
  * nothing above it.
+ *
+ * Batch 26: with the chat on, the header view is one screen instead
+ * (ChatScreen below, FullChat): the eye and the picks at the top, the
+ * conversation in the middle, the chips and the box pinned at the bottom.
+ * The signup reveal, and the view with the chat off, are unchanged.
  */
 const ON_DARK = {
   "--si-eye": "#8ab382",
@@ -47,24 +54,33 @@ export interface IntelligenceViewProps {
   note?: ReactNode;
   answers: Answer[];
   savedAll?: boolean;
-  /** Batch 26: the typed chat's box, in the reserved slot under the chips (the header view only). */
-  chat?: ReactNode;
+  /** Batch 26: the typed chat (the header view only): the view becomes one screen with the chat in it. */
+  chat?: FullChatConfig;
+}
+
+const FOOTNOTE = "Stayful Intelligence is software, not a person. I describe deals; the decision is yours.";
+
+function TopBar(p: Pick<IntelligenceViewProps, "level" | "continueHref" | "continueLabel">) {
+  return (
+    <div className="sticky top-0 z-20 flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-[#2E3D2B]/95 px-4 py-2 backdrop-blur">
+      <span className="flex items-center gap-2 text-sm font-semibold">
+        <StayfulEye size={24} level={p.level} />
+        <span className="hidden sm:inline">Stayful Intelligence</span>
+      </span>
+      <Link href={p.continueHref} className="rounded-full bg-[#B9D5C6] px-4 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90">
+        {p.continueLabel}
+      </Link>
+    </div>
+  );
 }
 
 export function IntelligenceView(p: IntelligenceViewProps) {
+  if (p.chat) return <ChatScreen {...p} chat={p.chat} />;
   const closest = p.tone === "closest";
   return (
     <div className="min-h-screen bg-[#2E3D2B] text-white" style={ON_DARK}>
       <ViewBackground level={p.level} />
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-white/10 bg-[#2E3D2B]/95 px-4 py-2 backdrop-blur">
-        <span className="flex items-center gap-2 text-sm font-semibold">
-          <StayfulEye size={24} level={p.level} />
-          <span className="hidden sm:inline">Stayful Intelligence</span>
-        </span>
-        <Link href={p.continueHref} className="rounded-full bg-[#B9D5C6] px-4 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90">
-          {p.continueLabel}
-        </Link>
-      </div>
+      <TopBar level={p.level} continueHref={p.continueHref} continueLabel={p.continueLabel} />
 
       <main className="relative z-10 mx-auto max-w-3xl space-y-6 px-4 pb-16 pt-6">
         <header className="flex flex-col items-center text-center">
@@ -122,12 +138,65 @@ export function IntelligenceView(p: IntelligenceViewProps) {
             Anything you’d like to ask me?
           </h2>
           <AnswerChips answers={p.answers} surface={p.surface} />
-          {/* Batch 26's typed chat: the slot was reserved so nothing above moves. */}
-          <div id="si-chat-slot">{p.chat}</div>
+          {/* Batch 26's typed chat: the slot was reserved so nothing above moves (with the chat on, ChatScreen is used instead). */}
+          <div id="si-chat-slot" />
         </section>
 
-        <p className="text-center text-xs text-[#B9D5C6]/80">Stayful Intelligence is software, not a person. I describe deals; the decision is yours.</p>
+        <p className="text-center text-xs text-[#B9D5C6]/80">{FOOTNOTE}</p>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Batch 26: the header view with the chat on, as one screen (100dvh, no page
+ * scroll): today's picks side by side in a row you swipe (one card tall on a
+ * phone), and FullChat around them.
+ */
+function ChatScreen(p: IntelligenceViewProps & { chat: FullChatConfig }) {
+  const closest = p.tone === "closest";
+  const cards: { label: string; node: ReactNode }[] = [];
+  if (p.cardCount > 0) cards.push({ label: closest ? "The closest I have today" : "Your best match", node: p.best });
+  for (const a of p.alternatives) cards.push({ label: "Close alternative", node: a });
+
+  const headline = (
+    <>
+      <h1 className="text-lg font-semibold leading-snug sm:mt-4 sm:text-2xl">
+        {p.tone === "none" ? "I couldn’t find a close match for everything you asked for." : closest ? "This is the closest I have today." : revealIntro(p.cardCount)}
+      </h1>
+      {p.checkedText && <p className="mt-1 text-xs text-[#B9D5C6] sm:mx-auto sm:max-w-xl sm:text-sm">{p.checkedText}</p>}
+      {p.savedAll && (
+        <p className="mt-1 text-sm font-semibold text-[#B9D5C6]" role="status">
+          All 3 saved. I’ll watch them for you.
+        </p>
+      )}
+    </>
+  );
+
+  const picks = (
+    <div className="space-y-4">
+      {cards.length > 0 && <PicksRow cards={cards} />}
+      {p.saveAll}
+      {p.note}
+      {p.whatIfs}
+      {p.nextLevel && (
+        <p className="rounded-xl bg-white/5 p-4 text-sm text-[#d0d6ba]">
+          I’m at {p.levelName} accuracy. Answer {p.nextLevel.needed} more question{p.nextLevel.needed === 1 ? "" : "s"} and my picks get sharper.{" "}
+          <Link href="/welcome" className="font-semibold text-white underline underline-offset-4">
+            Keep going
+          </Link>
+        </p>
+      )}
+    </div>
+  );
+
+  const summary = cards.length === 0 ? null : cards.length === 1 ? (closest ? "the closest I have today" : "your best match") : `your best match and ${cards.length - 1} more`;
+
+  return (
+    <div className="flex h-[100dvh] flex-col overflow-hidden bg-[#2E3D2B] text-white" style={ON_DARK}>
+      <ViewBackground level={p.level} />
+      <TopBar level={p.level} continueHref={p.continueHref} continueLabel={p.continueLabel} />
+      <FullChat config={p.chat} level={p.level} levelName={p.levelName} headline={headline} picks={picks} picksSummary={summary} answers={p.answers} surface={p.surface} footnote={FOOTNOTE} />
     </div>
   );
 }
