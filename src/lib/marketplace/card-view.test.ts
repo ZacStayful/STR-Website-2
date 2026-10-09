@@ -19,6 +19,18 @@ test('unopened: both buttons, the one-tap total is the fixed price', () => {
   assert.equal(v.uplift, null);
 });
 
+test('Batch 25: a deal Stayful Intelligence saved for the account shows its Quick look free; the Full analysis is unchanged', () => {
+  const paid = cardView({ card: CARD, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly) });
+  const free = cardView({ card: CARD, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly), freeOpen: true });
+  assert.notEqual(paid.quickLook?.main, 'Free');
+  assert.equal(free.quickLook?.main, 'Free');
+  assert.equal(free.quickLook?.state, 'ok');
+  assert.equal(free.fullAnalysis?.main, paid.fullAnalysis?.main);
+  assert.equal(free.fullAnalysisBasePence, paid.fullAnalysisBasePence);
+  // Once opened there is no Quick look, free or not.
+  assert.equal(cardView({ card: CARD, state: { opened: true, openPaidBasePence: 0, reportId: null }, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(planOnly), freeOpen: true }).quickLook, null);
+});
+
 test('a top-up payer sees what they pay, and the plan price beside it', () => {
   const v = cardView({ card: CARD, state: NOT_OPENED, admin: false, pricing: PRICING, ladder: DEFAULT_DEAL_OPEN_LADDER, label: labelFor(topupOnly) });
   assert.equal(v.fullAnalysis?.main, '£5.20');

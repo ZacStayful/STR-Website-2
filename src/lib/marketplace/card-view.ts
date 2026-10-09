@@ -137,6 +137,8 @@ export function cardView(input: {
   /** billing_settings.low_entry cheapMaxPrice and lenderMinPrice (getBillingSettings().lowEntry); the decided defaults without them. */
   lowEntry?: Partial<Pick<LowEntrySettings, 'cheapMaxPrice' | 'lenderMinPrice'>>;
   label: (basePence: number) => PriceLabel;
+  /** Batch 25: Stayful Intelligence saved this deal for the member's account, so its Quick look is free (only this deal; the ladder is untouched). */
+  freeOpen?: boolean;
 }): CardView {
   const { card, state } = input;
   // Batch 14: a cash buyer's range has no mortgage in it either, as "Most you can pay" has none (memberFinance).
@@ -154,7 +156,7 @@ export function cardView(input: {
     widths: input.pricing.profitRangePct,
   });
   const analysed = state.reportId !== null;
-  const ladderPence = openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), input.ladder);
+  const ladderPence = input.freeOpen ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), input.ladder);
   const quote = analysisQuote({ admin: input.admin, pricing: input.pricing, opened: state.opened, openPaidBasePence: state.openPaidBasePence, openPricePence: ladderPence, withPmi: false });
   const pay = mostYouCanPay({ kind: card.kind, grossRevenue: card.screening_gross ?? null, bedrooms: card.bedrooms, finance: input.finance ?? null, cashBuyer: input.cashBuyer, widthPct: widthFor(card.screening_confidence ?? null, input.pricing.profitRangePct), checked: (num(card.check_comps) ?? 0) > 0 });
   // Batch 17: a Project deal shows its own numbers: profit after works, works and value added, the cash needed as a range.

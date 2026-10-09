@@ -102,7 +102,7 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
     const cashBuyer = cashBuyerOf(own && !own.isActive ? own.goals ?? activeGoals : activeGoals);
     const state = states.get(c.id) ?? NOT_OPENED;
     const opened = state.opened || item.opened;
-    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, cashBuyer, lowEntry: settings.lowEntry, label: quoter.label });
+    const v = cardView({ card: c, state: { ...state, opened, reportId: state.reportId ?? item.reportId }, admin: adminUser, pricing: settings.dealPricing, ladder: settings.dealOpenLadder, finance, cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, freeOpen: siFree.has(c.id) });
     // Still in its early-access window for this member: a kept deal that went
     // and came back (a revival restarts the window), or a team seat under an
     // owner who has never paid. Nothing on it can be bought yet.
