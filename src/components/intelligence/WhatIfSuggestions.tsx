@@ -14,6 +14,8 @@ export interface WhatIfItem {
   save: "use" | "budget";
   /** The best deal it would find (for "Show me"). */
   bestHref: string | null;
+  /** R3 (R2-67): the quiz question "Change my budget" opens (the project budget for a BRRR what-if). */
+  changeQuestionId?: "budget" | "brrr_budget" | null;
 }
 
 /**
@@ -22,7 +24,8 @@ export interface WhatIfItem {
  * quiz, then the list is chosen again) and Undo. When nothing helps, the plain
  * line.
  */
-export function WhatIfSuggestions({ items, none, surface, tone = "dark", changeHref }: { items: WhatIfItem[]; none: string; surface: "reveal" | "header" | "today"; tone?: "dark" | "light"; changeHref: string }) {
+/** `changeBase` is the quiz with its return path (`/welcome?next=…`); each budget item adds its own `&q=`. */
+export function WhatIfSuggestions({ items, none, surface, tone = "dark", changeBase }: { items: WhatIfItem[]; none: string; surface: "reveal" | "header" | "today"; tone?: "dark" | "light"; changeBase: string }) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [done, setDone] = useState<{ text: string; undo: { questionId: string; value: unknown } | null } | null>(null);
@@ -96,7 +99,7 @@ export function WhatIfSuggestions({ items, none, surface, tone = "dark", changeH
                   Use this
                 </button>
               ) : (
-                <Link href={changeHref} className={btn}>
+                <Link href={`${changeBase}&q=${it.changeQuestionId ?? "budget"}`} className={btn}>
                   Change my budget
                 </Link>
               )}

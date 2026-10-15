@@ -61,7 +61,7 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
         checkedText={data.checkedText}
         best={cards[0] ?? null}
         alternatives={cards.slice(1)}
-        whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="header" changeHref={`/welcome?q=budget&next=${encodeURIComponent("/intelligence")}`} /> : undefined}
+        whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="header" changeBase={`/welcome?next=${encodeURIComponent("/intelligence")}`} /> : undefined}
         note={
           <>
             <SearchProgress running={data.searching} />

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bestWhatIfs, isWhatIfKey, whatIfAnswer, whatIfChanges, whatIfLine, whatIfResults, type WhatIfResult } from './what-if.ts';
+import { bestWhatIfs, changeQuestionFor, isWhatIfKey, whatIfAnswer, whatIfChanges, whatIfLine, whatIfResults, type WhatIfResult } from './what-if.ts';
 import { plainProfile, type TailoringProfile } from '../tailoring/profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
@@ -90,4 +90,11 @@ test('Batch 22c: the budget steps up through the five brackets; the legacy Under
   assert.equal(next('u200')?.goals.budget, '200-350');
   assert.equal(next('350-500')?.goals.budget, '500+');
   assert.equal(next('500+'), undefined, 'nothing above the top bracket');
+});
+
+test('R2-67: "Change my budget" opens the project budget for a BRRR what-if and the Short-let budget otherwise', () => {
+  assert.equal(changeQuestionFor('brrr_budget'), 'brrr_budget');
+  assert.equal(changeQuestionFor('budget'), 'budget');
+  assert.equal(changeQuestionFor('rent_10'), null);
+  assert.equal(changeQuestionFor('areas'), null);
 });

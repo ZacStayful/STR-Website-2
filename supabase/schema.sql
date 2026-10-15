@@ -5922,7 +5922,7 @@ alter table public.profile_today_lists add column if not exists choice jsonb;
 -- ── signup_reveals: one per member, written before the reveal renders ──
 --   deal_ids        the 3 shown (best match first)
 --   offer_deal_ids  the deals the welcome price applies to
---   shown_ids       every deal shown on the reveal, replaced ones included
+--   shown_ids       kept equal to deal_ids (a card a later search replaced is on profile_today_lists.shown_ids)
 --   layer           which layer found #1 (1 stock, 2 signup search, 3 what-if)
 create table if not exists public.signup_reveals (
   user_id uuid primary key references public.profiles(id) on delete cascade,
