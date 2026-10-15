@@ -11,7 +11,7 @@
  *
  * Pure.
  */
-import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, type ToolName } from '../config.ts';
+import { CALL_TEXT_TEMPLATES, CALL_QUESTION_OUTCOMES, type ToolName } from '../config.ts';
 
 interface Param {
   type: 'string' | 'integer' | 'boolean';
@@ -50,7 +50,7 @@ const TOOLS: Record<ToolName, { description: string; params: Record<string, Para
     description: 'Record a question the caller asked and how it went.',
     params: {
       question: { type: 'string', description: 'The question, in the caller’s words.' },
-      outcome: { type: 'string', description: 'answered, low_confidence, could_not_answer, member_unhappy or handed_off', enum: QUESTION_OUTCOMES },
+      outcome: { type: 'string', description: 'answered, low_confidence, could_not_answer, member_unhappy or handed_off', enum: CALL_QUESTION_OUTCOMES },
       knowledge_ref: { type: 'string', description: 'The knowledge id in square brackets used to answer, if any.' },
     },
     required: ['question', 'outcome'],

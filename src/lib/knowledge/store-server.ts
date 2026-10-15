@@ -243,6 +243,9 @@ export async function retireEntry(o: { id: string; version: number; actor: strin
   const row = (data as { id: string; version: number; channels: string[] | null }[] | null)?.[0];
   if (!row) return { ok: false, error: 'This entry changed since you opened it. Reload and try again.' };
   await addHistory(admin, o.id, o.actor, 'retired', { version: row.version, note: o.note ?? undefined });
+  // R3-147: the gaps it covered are open again: no channel can give the answer any more.
+  const { error: gapErr } = await admin.from('si_knowledge_gaps').update({ status: 'open', match_kind: null, decided_at: null, updated_at: new Date().toISOString() }).eq('entry_id', o.id).eq('status', 'covered');
+  if (gapErr) console.error('[knowledge] gaps not reopened on retire:', gapErr.message);
   return { ok: true, id: o.id, version: row.version, channels: row.channels ?? [] };
 }
 

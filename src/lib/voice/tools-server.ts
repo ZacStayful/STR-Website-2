@@ -38,7 +38,7 @@ import { feedbackSettings } from '../feedback/settings-server';
 import { handoffEmail } from '../email/si-calls';
 import { recordQuestion } from '../conversations/log-server';
 import { rememberFact } from '../knowledge/facts-server';
-import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, callsDryRun, type CallTextTemplate, type QuestionOutcome, type ToolName } from './config';
+import { CALL_TEXT_TEMPLATES, CALL_QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, callsDryRun, type CallTextTemplate, type QuestionOutcome, type ToolName } from './config';
 import { callText } from './templates';
 import { memberFacts } from './member-server';
 import { claimCharge, releaseCharge, settleText } from './charge-server';
@@ -228,7 +228,7 @@ async function rememberFactTool(call: CallRow, req: ToolRequest): Promise<ToolAn
 
 async function logQuestion(call: CallRow, req: ToolRequest): Promise<ToolAnswer> {
   const question = str(req.question, 500);
-  const outcome = QUESTION_OUTCOMES.find((o) => o === req.outcome) as QuestionOutcome | undefined;
+  const outcome = CALL_QUESTION_OUTCOMES.find((o) => o === req.outcome) as QuestionOutcome | undefined;
   if (!question || !outcome) return { ok: false, say: 'Carry on.', detail: { reason: 'bad_args' } };
   if (call.conversation_id) await recordQuestion(call.conversation_id, { question, outcome, knowledgeRef: str(req.knowledge_ref, 120) });
   return { ok: true, say: 'Logged. Carry on.', detail: { outcome } };

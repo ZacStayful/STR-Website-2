@@ -519,6 +519,8 @@ export interface SeedRowState {
   seedHash: string | null;
   draftState: 'none' | 'pending' | 'rejected';
   draftSource: string | null;
+  /** Review R3 (R3-146): a retired entry is never proposed to again. */
+  retired?: boolean;
 }
 
 export interface SeedPlan {
@@ -548,6 +550,10 @@ export function planSeed(rows: readonly SeedRowState[], seed: readonly SeedEntry
     }
     if (r.seedHash === hash(e)) {
       plan.unchanged.push(e.slug);
+      continue;
+    }
+    if (r.retired) {
+      plan.skipped.push({ slug: e.slug, reason: 'retired' });
       continue;
     }
     if (r.draftState === 'pending' && r.draftSource !== 'seed') {

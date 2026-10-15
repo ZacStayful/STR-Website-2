@@ -6190,6 +6190,12 @@ create table if not exists public.si_conversation_questions (
   source text not null default 'tool' check (source in ('tool', 'analysis', 'sms')),
   at timestamptz not null default now()
 );
+-- Named and re-added on every run, so a value added later applies to a database that has the table.
+-- 'routed' (Review R3, R3-37): the quick box sent the member to the full view: neither an answer nor a gap.
+do $$ begin
+  alter table public.si_conversation_questions drop constraint if exists si_conversation_questions_outcome_check;
+  alter table public.si_conversation_questions add constraint si_conversation_questions_outcome_check check (outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off', 'routed'));
+end $$;
 create index if not exists si_conversation_questions_conv_idx on public.si_conversation_questions (conversation_id, at);
 create index if not exists si_conversation_questions_outcome_idx on public.si_conversation_questions (outcome, at desc);
 alter table public.si_conversation_questions enable row level security;  -- no policies: service role only
@@ -7641,6 +7647,11 @@ create table if not exists public.chat_turns (
   answered_at timestamptz,
   anonymised_at timestamptz
 );
+-- Named and re-added on every run (Review R3, R3-37: 'routed', the quick box's "ask in the full view").
+do $$ begin
+  alter table public.chat_turns drop constraint if exists chat_turns_outcome_check;
+  alter table public.chat_turns add constraint chat_turns_outcome_check check (outcome is null or outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off', 'routed'));
+end $$;
 create unique index if not exists chat_turns_client_uidx on public.chat_turns (user_id, client_turn_id);
 create unique index if not exists chat_turns_pending_uidx on public.chat_turns (user_id) where status = 'pending';
 create index if not exists chat_turns_user_idx on public.chat_turns (user_id, created_at desc);

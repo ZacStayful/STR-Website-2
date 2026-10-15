@@ -11,7 +11,9 @@ import { runWeeklyGapEmail } from '@/lib/knowledge/weekly-server';
  *                agent re-sync, then group the questions it couldn't answer
  *                and draft answers for Zac (src/lib/knowledge/gap/run.ts).
  *                House spend, inside si_gap_monthly_cap_pence; once a UK day.
- *                Off until SI_GAP_JOB_ENABLED=true; `?dry=1` always works:
+ *                Grouping and drafting are off until SI_GAP_JOB_ENABLED=true
+ *                (the stale check, the agent re-sync, the Monday email and
+ *                retention run either way, Review R3 R3-131); `?dry=1` always works:
  *                it makes the model calls (counted against the cap) and
  *                shows the groups, drafts and cost, writing nothing else.
  *                `&estimate=1` makes no model call. Then the Monday email
@@ -29,7 +31,7 @@ import { runWeeklyGapEmail } from '@/lib/knowledge/weekly-server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// The nightly job drafts for up to GAP_TIME_BUDGET_MS (240 s), then stops.
+// The nightly job starts no model call after GAP_TIME_BUDGET_MS (150 s); one call at its worst and the last writes fit inside this.
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
@@ -49,8 +51,13 @@ export async function GET(request: Request) {
   }
   if (step === '' || step === 'nightly') {
     const estimate = params.get('estimate') === '1';
-    if (!gapJobEnabled() && !dry && !estimate) return Response.json({ enabled: false, reason: 'Set SI_GAP_JOB_ENABLED=true to run the nightly job; ?dry=1 works either way.' });
-    const result = await runGapJob({ dry: dry || estimate, estimate, triggeredBy: request.headers.get('authorization') ? 'cron' : 'internal' });
+    const triggeredBy = request.headers.get('authorization') ? 'cron' : 'internal';
+    if (!gapJobEnabled() && !dry && !estimate) {
+      // R3-131: the switch is for the model spend only; the stale check, the agent re-sync, the Monday email and retention still run.
+      const result = await runGapJob({ dry: false, estimate: false, housekeepingOnly: true, triggeredBy });
+      return Response.json({ enabled: false, reason: 'Set SI_GAP_JOB_ENABLED=true to group and draft; ?dry=1 works either way. The housekeeping steps ran.', ...result.body }, { status: result.status });
+    }
+    const result = await runGapJob({ dry: dry || estimate, estimate, triggeredBy });
     return Response.json(result.body, { status: result.status });
   }
   return Response.json({ error: 'unknown step', steps: ['nightly', 'weekly', 'seed'] }, { status: 400 });

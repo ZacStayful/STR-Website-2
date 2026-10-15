@@ -47,7 +47,7 @@ export const PRODUCT_FACTS = {
   reportSections: 10,
   /** The Full analysis forecast's months. */
   forecastMonths: 12,
-  /** Stayful Management's fee, % of gross plus VAT (src/app/str-report/_lib/calculations.ts). */
+  /** Stayful Management's fee, % of gross plus VAT (src/lib/analysis.ts SHORT_LET_MANAGEMENT_FEE_RATE, and the management page's copy). */
   managementFeePct: 15,
   /** The methodology ledger: the properties Stayful took under management, and the year. */
   ledgerProperties: 6,
@@ -67,9 +67,6 @@ export const CALL_FIGURE_FALLBACK = 'shown in the app';
 /** Credit bands for {credit_balance_band} (view and chat only, never a call): the upper bounds in pence. */
 export const BALANCE_BANDS_PENCE = [500, 2000] as const;
 
-/** How long the store keeps the live set before reading it again (admin writes clear it at once). */
-export const LIVE_CACHE_MS = 30_000;
-
 // ── The nightly gap job ─────────────────────────────────────────────────────
 
 /** The question outcomes that make a gap. */
@@ -82,7 +79,7 @@ export const GAP_GROUP_BATCH = 40;
 export const GAP_GROUP_MAX_TOKENS = 6000;
 /** Room for one drafted answer as JSON. */
 export const GAP_DRAFT_MAX_TOKENS = 700;
-/** A model call that takes longer than this is abandoned (the next night tries again). One retry, so a call can take twice this. */
+/** A model call that takes longer than this is abandoned (the next night tries again; no SDK retry, Review R3 R3-144). */
 export const GAP_MODEL_TIMEOUT_MS = 60_000;
 /**
  * No new model call starts after this long in one run; the rest waits for the

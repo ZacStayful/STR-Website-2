@@ -72,3 +72,14 @@ test('the service facts use only known placeholders, all resolving from the sche
   }
   assert.doesNotMatch(SERVICE_FACTS, /£\s?\d|\d+p\b/);
 });
+
+// Review R3 (R3-146): a retired entry is left alone, whatever its seed text does.
+test('the seed plan skips a retired entry whose seed text changed', async () => {
+  const { planSeed } = await import('./seed.ts');
+  const e = SEED[0];
+  const plan = planSeed([{ slug: e.slug, seedHash: 'old', draftState: 'none', draftSource: null, retired: true }], [e], () => 'different');
+  assert.deepEqual(plan.propose, []);
+  assert.deepEqual(plan.skipped, [{ slug: e.slug, reason: 'retired' }]);
+  const same = planSeed([{ slug: e.slug, seedHash: 'same', draftState: 'none', draftSource: null, retired: true }], [e], () => 'same');
+  assert.deepEqual(same.unchanged, [e.slug]);
+});
