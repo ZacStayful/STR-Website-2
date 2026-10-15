@@ -35,8 +35,10 @@ import { whatIfViewFor } from '../intelligence/what-if-server';
 import { deepQuoteFor, searchStatusFor } from '../sourcing-demand/member-search';
 import { dealTypesFor, DEAL_TYPE_LABELS } from '../profile/deal-types';
 import { BUDGET_LABELS } from '../market/filters';
-import { reasonLabel, callStatusLabel } from '../standout/reasons';
+import { memberReasonLabel, memberCallStatusLabel } from '../standout/reasons';
 import { ukDay } from '../activity/week';
+import { londonDayStart } from '../leads/search';
+import { CALL_TYPE_LABEL, type CallType } from '../voice/config';
 import { formatPence } from '../credit/deal-pricing';
 import { MAX_LIST_DEALS, MAX_TOOL_RESULT_CHARS } from './config';
 import { balanceLabel } from './format';
@@ -134,7 +136,8 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
       if (!p) return { profile: null, note: 'They have no search profile yet.' };
       const goals = p.goals;
       const { data: others } = await admin.from('search_profiles').select('name, paused_at').eq('user_id', member.userId).is('deleted_at', null).neq('id', p.id).order('created_at');
-      const types = dealTypesFor({ goals, about: null });
+      // R3-117: with the profile's About answers, as Today and the standout read it.
+      const types = dealTypesFor({ goals, about: ctx.member.tailoring?.about ?? null });
       return {
         name: p.name,
         paused: ctx.paused,
@@ -250,21 +253,35 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
 
     async why_called(input: { date: string | null }) {
       const day = input.date;
-      let decisions = admin.from('standout_decisions').select('uk_day, outcome, reason, notify, call_status, deal_type, created_at').eq('user_id', member.userId).order('created_at', { ascending: false }).limit(10);
-      let calls = admin.from('si_calls_log').select('uk_day, call_type, status, blocked_reason, direction').eq('user_id', member.userId).order('queued_at', { ascending: false }).limit(10);
+      // R3-106: a call that was never placed has no uk_day: on a given day, the calls queued that UK day count too.
+      const start = day ? londonDayStart(day) : null;
+      const end = start ? new Date(start.getTime() + 24 * 60 * 60 * 1000) : null;
+      let decisions = admin.from('standout_decisions').select('uk_day, outcome, reason, notify, call_status, deal_type, profile_id, created_at').eq('user_id', member.userId).order('created_at', { ascending: false }).limit(10);
+      let calls = admin.from('si_calls_log').select('uk_day, call_type, status, blocked_reason, direction, queued_at').eq('user_id', member.userId).order('queued_at', { ascending: false }).limit(10);
       if (day) {
         decisions = decisions.eq('uk_day', day);
-        calls = calls.eq('uk_day', day);
+        calls = start && end ? calls.or(`uk_day.eq.${day},and(uk_day.is.null,queued_at.gte.${start.toISOString()},queued_at.lt.${end.toISOString()})`) : calls.eq('uk_day', day);
       }
       const [d, k] = await Promise.all([decisions, calls]);
-      const dRows = ((d.data ?? []) as { uk_day: string; outcome: string; reason: string; notify: string | null; call_status: string | null; deal_type: string | null }[]).filter((r) => !day || r.uk_day === day);
-      const kRows = ((k.data ?? []) as { uk_day: string | null; call_type: string; status: string; blocked_reason: string | null; direction: string }[]).filter((r) => !day || r.uk_day === day);
+      const inDay = (r: { uk_day: string | null; queued_at: string }) => {
+        if (!day) return true;
+        if (r.uk_day !== null) return r.uk_day === day;
+        const t = Date.parse(r.queued_at);
+        return start !== null && end !== null && t >= start.getTime() && t < end.getTime();
+      };
+      const dRows = ((d.data ?? []) as { uk_day: string; outcome: string; reason: string; notify: string | null; call_status: string | null; deal_type: string | null; profile_id: string | null }[]).filter((r) => !day || r.uk_day === day);
+      const kRows = ((k.data ?? []) as { uk_day: string | null; call_type: string; status: string; blocked_reason: string | null; direction: string; queued_at: string }[]).filter(inDay);
       if (dRows.length === 0 && kRows.length === 0) return { found: false, day: day ?? null, today: ukDay(now) };
+      // R3-102: which profile each decision was judged on (the main one; the account block names the active one).
+      const profileIds = [...new Set(dRows.map((r) => r.profile_id).filter((id): id is string => Boolean(id)))];
+      const profiles = profileIds.length > 0 ? (await admin.from('search_profiles').select('id, name').in('id', profileIds)).data : null;
+      const nameOf = new Map(((profiles ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
       return {
         found: true,
         day: day ?? null,
-        standout_decisions: dRows.map((r) => ({ day: r.uk_day, outcome: r.outcome, why: reasonLabel(r.reason), told_by: r.notify, call: r.call_status ? callStatusLabel(r.call_status) : null })),
-        calls: kRows.map((r) => ({ day: r.uk_day, direction: r.direction, about: CALL_TYPE_WORDS[r.call_type] ?? r.call_type, status: r.status, not_placed_because: r.blocked_reason })),
+        // R3-98: the member's own words for a reason and a call's status (reasons.ts), never the admin page's.
+        standout_decisions: dRows.map((r) => ({ day: r.uk_day, for_profile: r.profile_id ? (nameOf.get(r.profile_id) ?? null) : null, outcome: r.outcome, why: memberReasonLabel(r.reason), told_by: r.notify, call: r.call_status ? memberCallStatusLabel(r.call_status) : null })),
+        calls: kRows.map((r) => ({ day: r.uk_day, direction: r.direction, about: CALL_TYPE_LABEL[r.call_type as CallType] ?? r.call_type, status: r.status, not_placed_because: r.blocked_reason })),
       };
     },
 
@@ -302,9 +319,3 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
   };
 }
 
-const CALL_TYPE_WORDS: Record<string, string> = {
-  intro: 'the welcome call after signing up',
-  low_credit: 'their credit running low',
-  callback: 'a call back they asked for',
-  deal: 'a standout deal',
-};

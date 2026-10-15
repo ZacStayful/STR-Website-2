@@ -82,6 +82,9 @@ export const TOOL_GRACE_MS = 5 * 60_000;
 export const CALL_MINUTE_UNIT = { provider: 'si', unit: 'call_minute' } as const;
 /** The action name on the ledger. */
 export const CALL_ACTION = 'si_call';
+/** Review R3 (R3-56): a text or an email is its own line on the usage page, never "a call" to a member who was never rung. */
+export const TEXT_ACTION = 'si_text';
+export const EMAIL_ACTION = 'si_email';
 
 export interface VoiceEnv {
   apiKey: string;

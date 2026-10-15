@@ -31,7 +31,8 @@ import type { MeterContext } from '../credit/context';
 import { ukDay } from '../activity/week';
 import { londonDayStart } from '../leads/search';
 import { CHAT_ACTION, CHARGE_DESCRIPTION, MODEL_FOR, MODEL_UNITS, PENDING_STALE_MS, UNBILLED_ACTION, type ChatSurface } from './config';
-import { chargeLines, costOf, PROVIDER, type RoundUsage } from './budget';
+import { chargeLines, costOf, lookUpFloorPence, PROVIDER, type RoundUsage } from './budget';
+import { fullPromptTokens } from './prompts';
 import { parseChatSettings, CHAT_SETTING_KEYS, type ChatSettings } from './settings';
 import type { ChatButton } from './actions';
 import type { ChatUi } from './reply';
@@ -65,7 +66,22 @@ export async function chatSettingsForPage(): Promise<ChatSettings | null> {
 export async function chatUi(): Promise<ChatUi | null> {
   const s = await chatSettingsForPage();
   if (!s || !s.enabled) return null;
-  return { quickHintPence: s.quickHintPence, fullHintPence: s.fullHintPence, quickFloorPence: s.quickFloorPence, fullFloorPence: s.fullFloorPence, voice: voiceOn(s) };
+  return { quickHintPence: s.quickHintPence, fullHintPence: s.fullHintPence, quickFloorPence: s.quickFloorPence, fullFloorPence: await fullFloorFor(s), voice: voiceOn(s) };
+}
+
+/**
+ * Review R3 (R3-27): the full view's floor as the page shows it: the setting,
+ * or the smallest hold that affords one look-up when that is higher
+ * (prepareFull applies the same), so "Top up to ask me more" shows before a
+ * question that could only be "I don't know".
+ */
+export async function fullFloorFor(s: ChatSettings): Promise<number> {
+  try {
+    const table = await getUnitCostTable();
+    return Math.max(s.fullFloorPence, lookUpFloorPence({ table, units: MODEL_UNITS.full, markup: s.markup, promptTokens: fullPromptTokens(s.fullMaxWords), ceilingPence: s.fullCeilingPence }) ?? 0);
+  } catch {
+    return s.fullFloorPence;
+  }
 }
 
 /** Batch 26b: the microphone and spoken answers: the setting, and ElevenLabs configured. */
@@ -183,9 +199,12 @@ export async function preflight(admin: Admin, member: ChatMember, clientTurnId: 
   const stale = new Date(now.getTime() - PENDING_STALE_MS).toISOString();
   await admin.from('chat_turns').update({ status: 'failed' }).eq('user_id', member.userId).eq('status', 'pending').lt('created_at', stale);
 
-  const last = await admin.from('chat_turns').select('created_at').eq('user_id', member.userId).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  // R3-87: the gap is measured from the last answer (a long answer never eats into it), or from the question
+  // itself while it is still being answered.
+  const last = await admin.from('chat_turns').select('created_at, answered_at').eq('user_id', member.userId).order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (last.error) throw new Error(`chat turn read: ${last.error.message}`);
-  const lastAt = last.data ? Date.parse(String((last.data as { created_at: string }).created_at)) : Number.NaN;
+  const lastRow = last.data as { created_at: string; answered_at: string | null } | null;
+  const lastAt = lastRow ? Date.parse(String(lastRow.answered_at ?? lastRow.created_at)) : Number.NaN;
   if (Number.isFinite(lastAt) && now.getTime() - lastAt < settings.minSeconds * 1000) return { kind: 'too_fast' };
 
   if (!member.admin) {

@@ -420,7 +420,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'How much does a question cost?',
     variants: ['Do questions cost credit?', 'Why was I charged for a question?', 'What does asking you cost?'],
-    answer: 'A quick answer is about {chat_quick_cost} and a full-view answer about {chat_full_cost}: you pay {chat_markup} what the AI actually cost, never more than {chat_quick_max} or {chat_full_max}, and nothing when I can’t answer. The questions you tap are free.',
+    // Review R3 (R3-30): the figures are plan-credit pence; top-up credit is spent at its rate, so say so.
+    answer: 'A quick answer is about {chat_quick_cost} and a full-view answer about {chat_full_cost}: you pay {chat_markup} what the AI actually cost, never more than {chat_quick_max} or {chat_full_max} (top-up credit is spent at {topup_rate} the plan rate), and nothing when I can’t answer. The questions you tap are free.',
   },
   {
     slug: 'chat_full_view',

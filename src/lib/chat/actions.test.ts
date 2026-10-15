@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildButton, buildButtons, type ActionContext } from './actions.ts';
+import { buildButton, buildButtons, DEEP_SEARCH_ANCHOR, type ActionContext } from './actions.ts';
 
 const deal = '0b6a3c3e-1111-4222-8333-444455556666';
 const other = '9b6a3c3e-1111-4222-8333-444455556666';
@@ -37,5 +37,7 @@ test('unknown kinds are dropped, repeats removed, at most three', () => {
 
 test('the deep report only while the offer stands', () => {
   assert.equal(buildButton('deep_search', null, ctx()), null);
-  assert.equal(buildButton('deep_search', null, ctx({ deepSearchOffered: true }))?.href, '/intelligence#si-deep-search');
+  // R3-41: the one anchor the offer renders and the full view opens the picks for.
+  assert.equal(buildButton('deep_search', null, ctx({ deepSearchOffered: true }))?.href, `/intelligence#${DEEP_SEARCH_ANCHOR}`);
+  assert.equal(DEEP_SEARCH_ANCHOR, 'si-deep-search');
 });

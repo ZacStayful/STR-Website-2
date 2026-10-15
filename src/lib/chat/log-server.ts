@@ -22,6 +22,8 @@ import { rememberFact, type RememberResult } from '../knowledge/facts-server';
 import type { QuestionOutcome } from '../voice/config';
 import { isUuid, type ChatMember, type FactProposal, type TurnRow } from './turns-server';
 import { PENDING_STALE_MS, type ChatSurface } from './config';
+import { ukDay } from '../activity/week';
+import { londonDayStart } from '../leads/search';
 import { stateReply, type ChatReply } from './reply';
 import { chargeLabel } from './format';
 
@@ -183,16 +185,25 @@ export async function deleteMemberHistory(admin: Admin, userId: string, now: Dat
     conversations += ids.length;
     if (ids.length < ID_CHUNK) break;
   }
-  // A pending question older than PENDING_STALE_MS is from an instance that died.
-  await admin.from('chat_turns').update({ status: 'failed' }).eq('user_id', userId).eq('status', 'pending');
-  for (;;) {
-    const { data, error } = await admin.from('chat_turns').select('id').eq('user_id', userId).limit(1000);
-    if (error) throw new Error(`chat delete turns: ${error.message}`);
-    const ids = ((data ?? []) as { id: string }[]).map((r) => r.id);
-    if (ids.length === 0) break;
-    await updateInChunks(admin, 'chat_turns', ids, ANONYMOUS(now));
-    if (ids.length < 1000) break;
-  }
+  // R3-112: only a pending question older than PENDING_STALE_MS (an instance that died) is failed; one that slipped
+  // in after the check above is still being answered, and settles (and is metered) on its own.
+  await admin.from('chat_turns').update({ status: 'failed' }).eq('user_id', userId).eq('status', 'pending').lt('created_at', new Date(now.getTime() - PENDING_STALE_MS).toISOString());
+  // R3-101: today's questions keep the member's name (never their links to any text), so the day's cap on
+  // unanswered questions still counts them; everything older loses the name too.
+  const dayStart = (londonDayStart(ukDay(now)) ?? new Date(now.getTime() - 24 * 60 * 60 * 1000)).toISOString();
+  const anonymise = async (today: boolean, patch: Record<string, unknown>) => {
+    for (;;) {
+      const base = admin.from('chat_turns').select('id').eq('user_id', userId).is('anonymised_at', null).limit(1000);
+      const { data, error } = await (today ? base.gte('created_at', dayStart) : base.lt('created_at', dayStart));
+      if (error) throw new Error(`chat delete turns: ${error.message}`);
+      const ids = ((data ?? []) as { id: string }[]).map((r) => r.id);
+      if (ids.length === 0) break;
+      await updateInChunks(admin, 'chat_turns', ids, patch);
+      if (ids.length < 1000) break;
+    }
+  };
+  await anonymise(false, ANONYMOUS(now));
+  await anonymise(true, { conversation_id: null, question_id: null, knowledge_slug: null, log_seq: null, fact_proposal: null, buttons: null, anonymised_at: now.toISOString() });
   return { ok: true, conversations };
 }
 

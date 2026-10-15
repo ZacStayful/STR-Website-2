@@ -22,7 +22,7 @@ import { getBillingSettings, getUnitCostTable } from '../credit/unit-costs';
 import { priceFor } from '../credit/pricing';
 import { isAdminEmail } from '../admin';
 import { payerFor } from '../team';
-import { CALL_ACTION, CALL_MINUTE_UNIT } from './config';
+import { CALL_ACTION, CALL_MINUTE_UNIT, EMAIL_ACTION, TEXT_ACTION } from './config';
 import { callablePence, capToBalance, maxSpendRate, minutesChargePence } from './charge';
 
 type Admin = ReturnType<typeof createAdminClient>;
@@ -93,7 +93,9 @@ async function settle(admin: Admin, guardId: string, spec: ChargeSpec): Promise<
     try {
       txId = await debitFace(o.userId, charged, {
         action_id: guardId,
-        action: CALL_ACTION,
+        // R3-56: the usage page names a text a text and an email an email (Batch 25's nudges and below-floor
+        // messages go to members who were never rung).
+        action: o.kind === 'text' ? TEXT_ACTION : o.kind === 'email' ? EMAIL_ACTION : CALL_ACTION,
         provider: o.unit.provider,
         unit: o.unit.unit,
         quantity: o.quantity,

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { formatPence } from "@/lib/credit/deal-pricing";
 import { notifyCreditChanged } from "@/lib/credit/client";
+import { DEEP_SEARCH_ANCHOR } from "@/lib/chat/actions";
 import { recordSiViewAction } from "./actions";
 
 /**
@@ -19,7 +20,7 @@ export function DeepSearchOffer({ aboutBasePence, upToBasePence, firstDiscount, 
     recordSiViewAction({ surface, step: "deep_line" }).catch(() => {});
   }, [surface]);
   return (
-    <div id="si-deep-search" className="scroll-mt-20 rounded-xl bg-white/5 p-4 text-sm text-white">
+    <div id={DEEP_SEARCH_ANCHOR} className="scroll-mt-20 rounded-xl bg-white/5 p-4 text-sm text-white">
       <p>
         Want me to check the latest listings in your areas and nearby? About {formatPence(aboutBasePence)}, up to {formatPence(upToBasePence)}
         {firstDiscount ? " — half price the first time" : ""}.
