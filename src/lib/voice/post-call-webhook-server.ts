@@ -14,13 +14,26 @@ import { webhookSecret } from './config';
 
 export const APP_WEBHOOK_KEY = 'si_post_call_webhook';
 
-/** The webhook the Sync created: its id, and its secret decrypted (null when it can't be). */
-export async function storedPostCallWebhook(): Promise<{ id: string; secret: string | null } | null> {
+let warnedUndecryptable = false;
+
+/**
+ * The webhook the Sync created: its id, its secret decrypted (null when it
+ * can't be), and (R3-69) whether a stored secret failed to decrypt: this
+ * deployment's CRM_ENCRYPTION_KEY is not the one it was kept with, which is
+ * said once in the log and on every Dry run, never hidden behind "absent".
+ */
+export async function storedPostCallWebhook(): Promise<{ id: string; secret: string | null; undecryptable: boolean } | null> {
   if (!hasServiceRole()) return null;
   const { data } = await createAdminClient().from('billing_settings').select('value').eq('key', APP_WEBHOOK_KEY).maybeSingle();
   const v = (data as { value: unknown } | null)?.value as { id?: unknown; secret?: unknown } | null | undefined;
   if (!v || typeof v.id !== 'string' || !v.id) return null;
-  return { id: v.id, secret: typeof v.secret === 'string' ? decryptSecret(v.secret) : null };
+  const secret = typeof v.secret === 'string' ? decryptSecret(v.secret) : null;
+  const undecryptable = typeof v.secret === 'string' && secret === null;
+  if (undecryptable && !warnedUndecryptable) {
+    warnedUndecryptable = true;
+    console.error(`[voice] the stored post-call webhook secret (webhook ${v.id}) can't be decrypted with this deployment's CRM_ENCRYPTION_KEY: call results are refused until the key is put back or the webhook is remade by the Sync`);
+  }
+  return { id: v.id, secret, undecryptable };
 }
 
 export async function savePostCallWebhook(id: string, secret: string): Promise<void> {

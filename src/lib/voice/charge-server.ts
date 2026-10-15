@@ -171,6 +171,12 @@ async function chargeOnce(admin: Admin, o: ChargeSpec): Promise<ChargeResult> {
 /** Answered seconds, at the unit row's per-minute price. */
 export async function chargeCallMinutes(callId: string, userId: string, seconds: number): Promise<ChargeResult> {
   const admin = createAdminClient();
+  // R3-17: never a minute charged to a member who has not switched calls on (Account → Calls), whichever way the call came.
+  const { data: p } = await admin.from('profiles').select('si_calls').eq('id', userId).maybeSingle();
+  if ((p as { si_calls?: boolean | null } | null)?.si_calls !== true) {
+    console.warn('[voice] minutes not charged: calls are not switched on for this member', callId);
+    return { charged: 0, duplicate: false };
+  }
   const table = await getUnitCostTable();
   const perMin = priceFor(table, CALL_MINUTE_UNIT.provider, CALL_MINUTE_UNIT.unit, 1);
   const price = minutesChargePence(seconds, perMin.basePence);
