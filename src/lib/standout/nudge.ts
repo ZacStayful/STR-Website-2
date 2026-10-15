@@ -14,11 +14,13 @@
  *   not quiet (profiles.reengage_since unset: re-engagement has them instead)
  *   no low-credit call placed for this landing
  *   no nudge for this landing yet
+ *   no £5 notice already sent for this landing (Review R3, R3-12: the
+ *   morning email can carry it before a debit asks here)
  *   something can reach them: texts on, or credit emails on
  *
  * Pure.
  */
-import type { Landing } from '../voice/low-credit.ts';
+import { toldSinceLanding, type Landing } from '../voice/low-credit.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -35,6 +37,8 @@ export interface NudgeInput {
   lowCreditCallPlaced: boolean;
   /** A nudge was already decided for this landing. */
   nudgedThisLanding: boolean;
+  /** Review R3 (R3-12): when the £5 notice was last stamped told (profiles.last_low_balance_email_at); at or after the landing, it went already. */
+  toldAt?: string | null;
   /** Verified mobile, texts on, no STOP. */
   canText: boolean;
   /** An email, and credit emails on. */
@@ -62,7 +66,7 @@ export function nudgeDue(i: NudgeInput): NudgeVerdict {
   if (i.autoTopupOn) return { due: false, reason: 'auto_topup_on' };
   if (i.reengageSince) return { due: false, reason: 'quiet' };
   if (i.lowCreditCallPlaced) return { due: false, reason: 'low_credit_call' };
-  if (i.nudgedThisLanding) return { due: false, reason: 'already' };
+  if (i.nudgedThisLanding || toldSinceLanding(i.toldAt, i.landing)) return { due: false, reason: 'already' };
   if (!i.canText && !i.canEmail) return { due: false, reason: 'unreachable' };
   return { due: true, daysToLow: days };
 }

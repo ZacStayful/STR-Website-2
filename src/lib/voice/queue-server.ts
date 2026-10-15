@@ -20,11 +20,18 @@ import 'server-only';
  * script; a deal call is one per member per deal (si_calls_log_deal_uidx);
  * and just before a deal call is dialled it is checked again for the deal
  * itself (src/lib/standout/calls-server.ts dealCallStillWanted).
+ *
+ * Review R3: a low-credit call stopped by a passing reason writes no row and
+ * gives a queued row back (R3-15); just before it dials it is tested again
+ * against the balance, its landing and the nudge (R3-14, R3-45); and a call
+ * ElevenLabs never answered for stays ringing with no ids for the reconcile
+ * to adopt from Twilio (R3-25), instead of being failed while it may ring.
  */
 import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
 import { PERSONA_VERSION } from '../persona/stayful-intelligence';
-import { checkEligibility, type Eligibility } from './eligibility';
+import { checkEligibility, LOW_CREDIT_NO_ROW, type Eligibility } from './eligibility';
+import { lowCreditStillDue } from './low-credit-recheck-server';
 import { nextDayOpening, nextOpening, ukDay } from './hours';
 import { affordableSeconds } from './charge';
 import { callPencePerMinute } from './charge-server';
@@ -98,8 +105,9 @@ export async function enqueueCall(o: { userId: string; type: OutboundType; trigg
   if (!e.ok && e.defer === undefined) {
     // The intro is once ever: a missing number or credit now must not use it up.
     if (e.skip || (o.type === 'intro' && INTRO_WAITS.has(e.reason))) return { outcome: 'skipped', reason: e.reason };
-    // Nor is a deal's one call.
+    // Nor is a deal's one call, nor (R3-15) a landing's one low-credit call.
     if (o.type === 'deal' && DEAL_NO_ROW.has(e.reason)) return { outcome: 'skipped', reason: e.reason };
+    if (o.type === 'low_credit' && LOW_CREDIT_NO_ROW.has(e.reason)) return { outcome: 'skipped', reason: e.reason };
     const r = await insertCall(admin, { ...base, status: 'blocked', blocked_reason: e.reason });
     if (!r.ok) return r.reason === 'duplicate' ? { outcome: 'exists' } : { outcome: 'error' };
     console.log(`[voice] ${o.type} call blocked (${e.reason})`);
@@ -109,7 +117,7 @@ export async function enqueueCall(o: { userId: string; type: OutboundType; trigg
   const r = await insertCall(admin, { ...base, status: 'queued', not_before: notBefore.toISOString() });
   if (!r.ok) {
     // One in flight already, or this intro / this landing's / this deal's call exists.
-    if (r.reason === 'duplicate' && o.type === 'deal' && /in_flight/.test(r.message ?? '')) return { outcome: 'skipped', reason: 'in_flight' };
+    if (r.reason === 'duplicate' && (o.type === 'deal' || o.type === 'low_credit') && /in_flight/.test(r.message ?? '')) return { outcome: 'skipped', reason: 'in_flight' };
     if (r.reason === 'duplicate' && o.type !== 'intro' && /in_flight/.test(r.message ?? '')) {
       const b = await insertCall(admin, { ...base, status: 'blocked', blocked_reason: 'in_flight' });
       return b.ok ? { outcome: 'blocked', reason: 'in_flight', call: b.call } : { outcome: 'exists' };
@@ -130,12 +138,14 @@ export type PlaceResult =
 /**
  * Stop a queued call. An intro that never rang is dropped instead (its row
  * deleted), so it is still owed: the intro is once ever, and it was never made.
+ * R3-15: so is a low-credit call stopped by a passing reason, so its landing's
+ * one call is still open for the rest of the window.
  */
 async function dropOrBlock(call: CallRow, reason: BlockedReason): Promise<void> {
   const admin = createAdminClient();
-  if (call.call_type === 'intro') {
+  if (call.call_type === 'intro' || (call.call_type === 'low_credit' && LOW_CREDIT_NO_ROW.has(reason))) {
     const { error } = await admin.from('si_calls_log').delete().eq('id', call.id).eq('status', 'queued');
-    if (error) console.error('[voice] intro drop failed:', error.message);
+    if (error) console.error(`[voice] ${call.call_type} drop failed:`, error.message);
     return;
   }
   await updateCall(admin, call.id, { status: 'blocked', blocked_reason: reason }, ['queued']);
@@ -170,6 +180,15 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
     }
     if (o.apply) await dropOrBlock(call, e.reason);
     return { outcome: 'blocked', reason: e.reason };
+  }
+
+  // R3-14 / R3-45: a low-credit call is tested again just before it rings: the balance, its landing, the nudge.
+  if (type === 'low_credit') {
+    const still = await lowCreditStillDue(m.userId, call.trigger_ref, now);
+    if (!still.ok) {
+      if (o.apply) await dropOrBlock(call, still.reason);
+      return { outcome: 'blocked', reason: still.reason };
+    }
   }
 
   // Batch 25: a deal call is checked again for the deal itself, just before it rings.
@@ -243,6 +262,15 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
     firstMessage: fill(openerFor(context), vars),
   });
   if (!res.ok) {
+    if (res.message === 'network') {
+      // R3-25 / R2-34: ElevenLabs never answered (a timeout, a dropped connection), so Twilio may have started the
+      // call. The row stays ringing with no ids; the reconcile (run.ts step 3) adopts the call Twilio made to this
+      // number just after placed_at, or fails the row at the cutoff. The day's call is used either way.
+      await updateCall(admin, call.id, { error: 'no answer from ElevenLabs when placed: reconciling' }, ['ringing']);
+      await claimCallSlot(m.userId, now);
+      console.warn(`[voice] ${type} call placed with no ids (${call.id}): the reconcile adopts it from Twilio`);
+      return { outcome: 'placed', conversationId: null };
+    }
     // No redial (Q10): the call is failed, shown on admin, the day's call used.
     await updateCall(admin, call.id, { status: 'failed', error: (res.message ?? 'refused').slice(0, 300), ended_at: new Date().toISOString() });
     return { outcome: 'failed', message: res.message ?? 'refused' };

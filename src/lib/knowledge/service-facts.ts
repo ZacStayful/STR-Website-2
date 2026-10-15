@@ -28,7 +28,7 @@ CREDIT, PLANS AND PAYING
 - Everything is paid from credit. Plans give monthly credit and start at {lowest_plan_cost} a month; plan credit resets each month. Plans can be paused or cancelled in Account.
 - Top-ups: {topup_amounts}, any time, in Account → Billing. Top-up credit never expires but is spent at {topup_rate} the plan rate.
 - Auto top-up adds credit automatically when the balance runs low and needs a saved card; the one-tap offer is {auto_topup_amount} whenever the balance drops below {auto_topup_threshold}.
-- A member whose credit reaches {low_credit_mark} between {nudge_days_min} and {nudge_days_max} days after their last top-up gets one text ({text_cost}) and email ({email_cost}) with the one-tap auto top-up link, instead of the usual low-credit email.
+- A pay-as-you-go member (no plan) whose credit reaches {low_credit_mark} between {nudge_days_min} and {nudge_days_max} days after their last top-up gets one text ({text_cost}) and email ({email_cost}) with the one-tap auto top-up link, instead of the usual low-credit email; one notice per credit, whichever comes first (the call, the nudge or the email).
 - The starter pack, when offered: {pack_credit} of credit for {pack_cost}, once.
 - Account → Usage shows where credit goes; Account → Billing shows every charge, top-ups and receipts. Reopening a saved report never costs anything.
 

@@ -248,7 +248,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Why did you text me about auto top-up?',
     variants: ['Why did I get an auto top-up email?', "I got a message saying I'm down to my last credit"],
-    answer: "When your credit reaches {low_credit_mark} {nudge_days_min} to {nudge_days_max} days after your last top-up, I send one text ({text_cost}) and email ({email_cost}) with a one-tap link: auto top-up adds {auto_topup_amount} whenever you drop below {auto_topup_threshold}, and you can turn it off any time.",
+    answer: "On pay-as-you-go, when your credit reaches {low_credit_mark} {nudge_days_min} to {nudge_days_max} days after your last top-up, I send one text ({text_cost}) and email ({email_cost}) with a one-tap link: auto top-up adds {auto_topup_amount} whenever you drop below {auto_topup_threshold}, and you can turn it off any time.",
   },
   {
     slug: 'noticed_prompts',
