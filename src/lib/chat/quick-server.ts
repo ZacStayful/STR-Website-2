@@ -188,8 +188,8 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       { status: state === 'answer' ? 'answered' : 'no_answer', outcome, rounds, knowledgeSlug: slug, matchConfidence: known.topConfidence, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons, capPence: budget },
       settings,
     );
-    // Record only: a quick answer never counts towards weekly active (Zac, 29 Sep).
-    logActivity(user.id, 'si_chat_quick', { extras: { outcome } });
+    // Record only: a quick answer never counts towards weekly active (Zac, 29 Sep). R3-91: once per turn.
+    logActivity(user.id, 'si_chat_quick', { extras: { outcome }, dedupeKey: `si_chat_quick:${turn.id}` });
     // One line per question (no text): where the seconds went, for the runtime logs.
     console.log(`[chat] quick ${state} in ${Date.now() - started}ms (set-up ${modelStarted - started}, model ${modelEnded - modelStarted}, saving ${Date.now() - modelEnded})`);
     return {

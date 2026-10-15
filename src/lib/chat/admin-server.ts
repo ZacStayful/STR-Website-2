@@ -8,10 +8,11 @@ import 'server-only';
  */
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { QUALIFYING_KINDS } from '../activity/kinds';
+import { metricsExcludedIds } from '../activity/admin-server';
 import { recentWeeks, ukWeekStart, ukWeekRange } from '../activity/week';
 import { readKnowledgeSettings } from '../knowledge/store-server';
 import { readChatSettings } from './turns-server';
-import { activeShare, money, outcomes, perDay, type DayCount, type Money, type Outcomes, type TurnFact, type WeekActive } from './metrics';
+import { activeShare, money, outcomes, perDay, withoutExcluded, type DayCount, type Money, type Outcomes, type TurnFact, type WeekActive } from './metrics';
 import type { ChatSettings } from './settings';
 import type { ChatSurface } from './config';
 
@@ -108,17 +109,20 @@ export async function loadChatAdmin(now: Date = new Date()): Promise<ChatAdminLo
     }
     const near = (r: Raw): NearMiss => ({ question: texts.get(r.question_id!) ?? '(deleted)', confidence: Number(r.match_confidence), outcome: r.outcome, surface: r.surface });
 
-    // Weekly active among chat users, the last few UK weeks.
+    // Weekly active among chat users, the last few UK weeks. R3-67: the headline's definition, so admin, staff
+    // and "Exclude from metrics" accounts are left out of the users and of the events.
     const weeks = recentWeeks(now, ADMIN_WEEKS);
-    const chatUsers = new Map<string, Set<string>>();
+    const seen = new Map<string, Set<string>>();
     for (const f of facts) {
       if (!f.userId) continue;
       const w = ukWeekStart(new Date(f.createdAt));
       if (!weeks.includes(w)) continue;
-      const set = chatUsers.get(w) ?? new Set<string>();
+      const set = seen.get(w) ?? new Set<string>();
       set.add(f.userId);
-      chatUsers.set(w, set);
+      seen.set(w, set);
     }
+    const excluded = await metricsExcludedIds([...new Set([...seen.values()].flatMap((s) => [...s]))]);
+    const chatUsers = withoutExcluded(seen, excluded);
     const everyone = [...new Set([...chatUsers.values()].flatMap((s) => [...s]))];
     const qualifying = new Map<string, Map<string, Set<string>>>();
     if (everyone.length > 0) {

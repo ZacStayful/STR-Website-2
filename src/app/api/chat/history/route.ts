@@ -3,6 +3,7 @@ import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { isSameOrigin } from '@/lib/tracking/request';
 import { getBillingSettings } from '@/lib/credit/unit-costs';
 import { deleteMemberHistory, memberHistory } from '@/lib/chat/log-server';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Batch 26: the member's own chat with Stayful Intelligence (the full view's
@@ -43,6 +44,8 @@ export async function DELETE(request: Request) {
   try {
     const out = await deleteMemberHistory(createAdminClient(), user.id);
     if (!out.ok) return Response.json({ error: 'Wait for my answer to your last question, then delete.' }, { status: 409 });
+    // R3-92: the member's own action, record only. The count only, never anything they asked.
+    logActivity(user.id, 'si_chat_history_deleted', { extras: { conversations: out.conversations } });
     return Response.json(out);
   } catch (err) {
     console.error('[api/chat/history] delete:', (err as Error)?.message ?? err);
