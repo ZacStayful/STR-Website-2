@@ -13,7 +13,7 @@ import { applyWhatIfAction } from "../what-if-actions";
  * cost, "Not helpful", and "Want me to remember that?" when the answer
  * offered to.
  */
-export function ChatAnswer({ reply, streaming = false, tone = "dark" }: { reply: Pick<ChatReply, "state" | "turnId" | "text" | "buttons" | "charged" | "factProposal">; streaming?: boolean; tone?: "dark" | "light" }) {
+export function ChatAnswer({ reply, streaming = false, tone = "dark" }: { reply: Pick<ChatReply, "state" | "turnId" | "text" | "buttons" | "charged" | "factProposal" | "voiceCharged">; streaming?: boolean; tone?: "dark" | "light" }) {
   const muted = tone === "dark" ? "text-[#B9D5C6]" : "text-muted-foreground";
   return (
     <div className={`rounded-xl ${tone === "dark" ? "bg-white/10 text-white" : "bg-muted text-foreground"} p-4 text-sm leading-relaxed`} aria-live="polite" aria-busy={streaming}>
@@ -26,9 +26,10 @@ export function ChatAnswer({ reply, streaming = false, tone = "dark" }: { reply:
         </div>
       )}
       {!streaming && reply.factProposal && reply.turnId && <RememberThat turnId={reply.turnId} fact={reply.factProposal} muted={muted} />}
-      {!streaming && (reply.charged || (reply.state === "answer" && reply.turnId)) && (
+      {!streaming && (reply.charged || reply.voiceCharged || (reply.state === "answer" && reply.turnId)) && (
         <div className={`mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs ${muted}`}>
           {reply.charged && <span>Stayful Intelligence question · {reply.charged}</span>}
+          {reply.voiceCharged && <span>AI voice · {reply.voiceCharged}</span>}
           {reply.state === "answer" && reply.turnId && <NotHelpful turnId={reply.turnId} />}
         </div>
       )}

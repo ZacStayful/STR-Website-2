@@ -17,6 +17,8 @@ import { SETUP_PATH } from '@/lib/management/stamp';
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
+  // R3 (R2-160): a prefetch must never stamp an account; the setup page stamps on a real arrival.
+  if (request.headers.get('next-router-prefetch') === '1') return NextResponse.redirect(new URL(SETUP_PATH, url.origin));
   const via = url.searchParams.get('via');
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();

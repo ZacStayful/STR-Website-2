@@ -67,7 +67,8 @@ export async function briefingCardFor(userId: string, fullName: string | null, n
   if (viaEmail || !hasServiceRole()) return null;
   try {
     const [b, clicked, table] = await Promise.all([briefingFor(userId, ukDay(now)), emailClickToday(userId, now), getUnitCostTable()]);
-    if (!b || clicked) return null;
+    // R3-62: an email click hides the card only when that day's email carried the briefing.
+    if (!b || (clicked && b.emailedAt)) return null;
     const speak = (chars: number) => (table.has('elevenlabs:character') ? priceFor(table, 'elevenlabs', 'character', chars).basePence : null);
     return cardFrom(b, fullName, userId, now, speak);
   } catch (err) {

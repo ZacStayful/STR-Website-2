@@ -35,6 +35,13 @@ test('the seeded figures read as members see them', () => {
   assert.equal(r('call_hours_end'), '7pm');
   assert.equal(r('call_days'), 'weekdays');
   assert.equal(r('management_fee'), '15% + VAT');
+  // Review R3: the briefing ceiling is a setting; the seed is 3p and the switch is seeded off.
+  assert.equal(r('briefing_max_cost'), '3p');
+  assert.equal(PLACEHOLDERS.briefing_max_cost.resolve(schemaSnapshot({ settings: { briefing_ceiling_pence: 2.5 } }), null), '2.5p');
+  assert.equal(PLACEHOLDERS.briefing_max_cost.resolve(schemaSnapshot({ settings: { briefing_ceiling_pence: 0 } }), null), null);
+  assert.equal(CONDITIONS.briefings_on.resolve(g, null), false);
+  assert.equal(CONDITIONS.briefings_on.resolve(schemaSnapshot({ settings: { briefings_enabled: true } }), null), true);
+  assert.equal(CONDITIONS.briefings_on.resolve(schemaSnapshot({ drop: ['briefings_enabled'] }), null), null);
 });
 
 test('a removed or malformed setting resolves to null, never a default', () => {

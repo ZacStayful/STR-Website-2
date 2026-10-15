@@ -51,6 +51,7 @@ import { deepAreas, isStrongMatch, planDeepSearch, planSignupSearch, pmiFollowUp
 import { deepCharge, deepQuote, estimateRaw } from './member-search-quote';
 import { nearestAreas, referencePoint } from '../today/candidates';
 import { previewToday, refreshTodayAfterSearch, type MemberContext } from '../today/selection';
+import { withOwnFinds } from '../marketplace/visibility';
 import { tailoringForMember } from '../tailoring/server';
 import { usesTailoring } from '../tailoring/profile';
 import { judgeRow } from '../tailoring/today';
@@ -247,17 +248,18 @@ async function save(admin: Admin, id: string, patch: Record<string, unknown>): P
 }
 
 /** Records the deals a step inserted as this search's finds (one finder per deal). */
-async function recordFinds(admin: Admin, row: SearchRow, urls: readonly string[]): Promise<number> {
-  if (urls.length === 0) return 0;
+/** Records this slice's finds; returns the deal ids newly recorded for this search. */
+async function recordFinds(admin: Admin, row: SearchRow, urls: readonly string[]): Promise<string[]> {
+  if (urls.length === 0) return [];
   const { data } = await admin.from('marketplace_deals').select('id').in('canonical_url', [...urls]);
   const ids = ((data ?? []) as { id: string }[]).map((r) => r.id);
-  if (ids.length === 0) return 0;
+  if (ids.length === 0) return [];
   const { data: ins, error } = await admin
     .from('member_search_finds')
     .upsert(ids.map((deal_id) => ({ search_id: row.id, user_id: row.user_id, deal_id })), { onConflict: 'deal_id', ignoreDuplicates: true })
     .select('deal_id');
   if (error) console.error('[member-search] finds failed:', error.message);
-  return ins?.length ?? 0;
+  return ((ins ?? []) as { deal_id: string }[]).map((r) => r.deal_id);
 }
 
 async function findRows(admin: Admin, searchId: string): Promise<{ deal_id: string; confirmed_at: string | null; checked_at: string | null }[]> {
@@ -346,7 +348,10 @@ export async function runSearchSlice(id: string, opts: { deadlineMs?: number; no
       console.error('[member-search] step failed:', query.key, (err as Error)?.message ?? err);
     }
     await trueUp(admin, row, cost, unitCostOf, metered);
-    const added = await recordFinds(admin, row, out.inserted);
+    const found = await recordFinds(admin, row, out.inserted);
+    const added = found.length;
+    // R3 (R2-18): the member's own finds are visible to them at once, so the strong-match check sees them.
+    if (added > 0) who.member = { ...who.member, visibility: withOwnFinds(who.member.visibility, found) };
     row.found += added;
     result.found = row.found;
     result.steps += 1;
@@ -456,7 +461,8 @@ async function finish(admin: Admin, row: SearchRow, member: MemberContext, s: In
   const live = ((liveRows ?? []) as { id: string }[]).map((r) => r.id);
   if (live.length > 0) {
     const reveal = await revealRowFor(row.user_id);
-    await refreshTodayAfterSearch(member, live, reveal?.dealIds ?? [], now).catch((err) => console.error('[member-search] refresh failed:', err));
+    // R3 (R2-18): the finds are the member's own: Today may show them inside the free delay.
+    await refreshTodayAfterSearch({ ...member, visibility: withOwnFinds(member.visibility, live) }, live, reveal?.dealIds ?? [], now).catch((err) => console.error('[member-search] refresh failed:', err));
     revalidateDeals();
   }
   const patch: Record<string, unknown> = { status: 'done', stop_reason: stop, finished_at: new Date().toISOString(), lease_until: null, cursor: { next: 0, phase: 'finish' } };

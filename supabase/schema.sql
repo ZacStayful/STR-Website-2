@@ -2698,7 +2698,7 @@ create table if not exists public.sms_messages (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete cascade,
   direction text not null,                    -- outbound | inbound
-  kind text not null,                         -- verify | alert | keyword | standout | nudge (Batch 25)
+  kind text not null,                         -- verify | alert | keyword | standout | nudge (Batch 25) | call (Review R3: a call's texts)
   phone_e164 text not null,
   body text,
   alert_ids uuid[] not null default '{}'::uuid[],
@@ -2724,7 +2724,7 @@ begin
   alter table public.sms_messages drop constraint if exists sms_messages_direction_check;
   alter table public.sms_messages add constraint sms_messages_direction_check check (direction in ('outbound', 'inbound'));
   alter table public.sms_messages drop constraint if exists sms_messages_kind_check;
-  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword', 'standout', 'nudge'));
+  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword', 'standout', 'nudge', 'call'));
   alter table public.sms_messages drop constraint if exists sms_messages_outcome_check;
   alter table public.sms_messages add constraint sms_messages_outcome_check check (outcome in ('pending', 'accepted', 'refused', 'unknown', 'dry_run', 'received'));
 end $$;
@@ -5922,7 +5922,7 @@ alter table public.profile_today_lists add column if not exists choice jsonb;
 -- ── signup_reveals: one per member, written before the reveal renders ──
 --   deal_ids        the 3 shown (best match first)
 --   offer_deal_ids  the deals the welcome price applies to
---   shown_ids       every deal shown on the reveal, replaced ones included
+--   shown_ids       kept equal to deal_ids (a card a later search replaced is on profile_today_lists.shown_ids)
 --   layer           which layer found #1 (1 stock, 2 signup search, 3 what-if)
 create table if not exists public.signup_reveals (
   user_id uuid primary key references public.profiles(id) on delete cascade,
@@ -6888,10 +6888,16 @@ begin
   alter table public.member_briefings add constraint member_briefings_feedback_check check (feedback is null or feedback in ('useful', 'not_for_me'));
 end $$;
 create index if not exists member_briefings_day_idx on public.member_briefings (uk_day, status);
+-- Review R3 (R3-62): when the day's email actually carried the briefing.
+alter table public.member_briefings add column if not exists emailed_at timestamptz;
 alter table public.member_briefings enable row level security;  -- no policies: service role only
 revoke all on public.member_briefings from anon, authenticated;
 
-insert into public.billing_settings (key, value) values ('briefings_enabled', 'true')
+-- Review R3 (R3-68): seeded OFF, so running this section never switches charged AI briefings on by itself;
+-- Zac flips it on in /admin/billing after the ?dry=1 review. The ceiling is a setting too (3p by default).
+insert into public.billing_settings (key, value) values ('briefings_enabled', 'false')
+on conflict (key) do nothing;
+insert into public.billing_settings (key, value) values ('briefing_ceiling_pence', '3')
 on conflict (key) do nothing;
 
 insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values

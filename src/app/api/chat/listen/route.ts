@@ -6,6 +6,9 @@ import { runMetered } from '@/lib/credit/context';
 import { InsufficientCreditError } from '@/lib/credit/ledger';
 import { insufficientCreditResponse } from '@/lib/credit/http';
 import { meter } from '@/lib/credit/meter';
+import { getUnitCostTable } from '@/lib/credit/unit-costs';
+import { priceFor } from '@/lib/credit/pricing';
+import { listenSeconds } from '@/lib/chat/voice-rules';
 import { chatOn, readChatSettings, voiceOn } from '@/lib/chat/turns-server';
 import { MAX_QUESTION_CHARS, STT_LANGUAGE, STT_MODEL, STT_TIMEOUT_MS, VOICE_MAX_BYTES, VOICE_MAX_SECONDS } from '@/lib/chat/config';
 
@@ -66,21 +69,25 @@ export async function POST(request: Request) {
   }
   if (audio.size > VOICE_MAX_BYTES) return Response.json({ error: 'That recording is too long.', code: 'too_long' }, { status: 413 });
 
+  // R3-28: the price of the declared length is held first, so voice can never take a member below zero.
+  const adminUser = isAdminEmail(user.email);
+  const basePence = adminUser ? 0 : priceFor(await getUnitCostTable(), 'elevenlabs', 'stt_second', seconds).basePence;
   let action;
   try {
-    action = await startAction({ userId: user.id, admin: isAdminEmail(user.email), action: 'speak' });
+    action = await startAction({ userId: user.id, admin: adminUser, action: 'speak', maxBasePence: basePence, requireCredit: true });
   } catch (err) {
     if (err instanceof SeatPausedError) return Response.json({ error: 'Your seat is paused. Ask your team owner.', code: 'seat_paused' }, { status: 403 });
     if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, 'speak');
     throw err;
   }
 
-  let heard: { ok: boolean; text: string };
+  let heard: { ok: boolean; text: string; seconds: number };
   try {
     heard = await runMetered(action.ctx, () =>
       meter(
         // Not charged when the service fails or hears nothing (failed → logged at £0).
-        { provider: 'elevenlabs', unit: 'stt_second', quantity: seconds, description: 'Stayful Intelligence listening', failed: (r: { ok: boolean; text: string }) => !r.ok || !r.text },
+        // R3-69: charged for the seconds heard (the last word's end), never more than the page declared.
+        { provider: 'elevenlabs', unit: 'stt_second', quantity: seconds, quantityFrom: (r: { ok: boolean; text: string; seconds: number }) => r.seconds, description: 'Stayful Intelligence listening', failed: (r: { ok: boolean; text: string; seconds: number }) => !r.ok || !r.text },
         async () => {
           const body = new FormData();
           body.append('model_id', STT_MODEL);
@@ -95,10 +102,12 @@ export async function POST(request: Request) {
           });
           if (!res.ok) {
             console.error('[api/chat/listen] ElevenLabs error', res.status, (await res.text().catch(() => '')).slice(0, 300));
-            return { ok: false, text: '' };
+            return { ok: false, text: '', seconds };
           }
-          const json = (await res.json().catch(() => null)) as { text?: unknown } | null;
-          return { ok: true, text: typeof json?.text === 'string' ? json.text.trim() : '' };
+          const json = (await res.json().catch(() => null)) as { text?: unknown; words?: unknown } | null;
+          const words = Array.isArray(json?.words) ? (json.words as { end?: unknown }[]) : [];
+          const lastEnd = words.length ? Number(words[words.length - 1]?.end) : Number.NaN;
+          return { ok: true, text: typeof json?.text === 'string' ? json.text.trim() : '', seconds: listenSeconds({ declared: seconds, heard: Number.isFinite(lastEnd) ? lastEnd : null, max: VOICE_MAX_SECONDS }) };
         },
       ),
     );

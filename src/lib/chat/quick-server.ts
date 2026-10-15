@@ -20,6 +20,7 @@ import { logActivity } from '../activity/log';
 import { MAX_QUESTION_CHARS, MODEL_UNITS, QUICK_MODEL, QUICK_TIMEOUT_MS, DONT_KNOW_LINE, FULL_VIEW_LINE, NOT_APPLICABLE_LINE } from './config';
 import { approxTokens, budgetFor, roundMaxTokens, unitsPriced, usageOf, type RoundUsage } from './budget';
 import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, isNonAnswer } from './guard';
+import { QUICK_MAX_WORDS } from './voice-rules';
 import { buildButtons } from './actions';
 import { accountBlock, parseQuickReply, questionBlock, quickSystemPrompt, QUICK_SCHEMA } from './prompts';
 import { chargeLabel } from './format';
@@ -172,7 +173,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       if (okSlug && figures.ok && advice.length === 0) {
         state = 'answer';
         outcome = 'answered';
-        text = clampWords(reply.text, 60);
+        text = clampWords(reply.text, QUICK_MAX_WORDS);
         slug = reply.slug;
       } else {
         // R3-86: counts only; what the model wrote for the member is never logged.

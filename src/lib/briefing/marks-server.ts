@@ -20,7 +20,8 @@ export async function markBriefingSeenByEmail(userId: string, now: Date = new Da
   if (!hasServiceRole()) return;
   try {
     const day = ukDay(now);
-    const { data } = await createAdminClient().from('member_briefings').update({ seen_email_at: now.toISOString() }).eq('user_id', userId).eq('uk_day', day).is('seen_email_at', null).in('status', ['ready', 'template']).select('id');
+    // R3-62: only a briefing the day's email actually carried (emailed_at) can be seen from that email.
+    const { data } = await createAdminClient().from('member_briefings').update({ seen_email_at: now.toISOString() }).eq('user_id', userId).eq('uk_day', day).is('seen_email_at', null).not('emailed_at', 'is', null).in('status', ['ready', 'template']).select('id');
     if ((data ?? []).length > 0) await recordActivity(userId, 'briefing_seen', { extras: { source: 'email_click' }, dedupeKey: `briefing_seen:email:${day}`, at: now });
   } catch (err) {
     console.warn('[briefing] seen-by-email not recorded:', (err as Error)?.message ?? err);

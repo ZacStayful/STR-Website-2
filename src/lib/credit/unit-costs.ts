@@ -9,6 +9,7 @@ import { DEFAULT_LIFECYCLE, parseLifecycle, type LifecycleSettings } from '../li
 import { DEFAULT_INTELLIGENCE, parseIntelligence, type IntelligenceSettings } from '../intelligence/settings.ts';
 import { DEFAULT_VOICE, parseVoice, type VoiceSettings } from '../voice/settings.ts';
 import { DEFAULT_STANDOUT, parseStandout, type StandoutSettings } from '../standout/settings.ts';
+import { BRIEFING_CEILING_PENCE } from '../briefing/decide.ts';
 
 /**
  * Live unit costs and billing settings, read from Supabase with a short
@@ -78,7 +79,12 @@ export interface BillingSettings {
    * everyone, nothing charged. Missing or unreadable reads as off.
    */
   briefingsEnabled: boolean;
+  /** R3: the most a briefing may be charged, base pence (billing_settings.briefing_ceiling_pence); 3p when absent. */
+  briefingCeilingPence: number;
 }
+
+/** R3: one source for the briefing ceiling default; decide.ts owns the figure. */
+export const DEFAULT_BRIEFING_CEILING_PENCE = BRIEFING_CEILING_PENCE;
 
 export const DEFAULT_AREA_RENT_DAILY_ATTEMPTS = 40;
 
@@ -107,6 +113,7 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   voice: DEFAULT_VOICE,
   standout: DEFAULT_STANDOUT,
   briefingsEnabled: false,
+  briefingCeilingPence: DEFAULT_BRIEFING_CEILING_PENCE,
 };
 
 /** Whole attempts from 0 to 1,000; anything else is the default. */
@@ -137,6 +144,12 @@ export async function getUnitCostTable(): Promise<UnitCostTable> {
     console.error('[credit] unit_costs read failed, using seed:', err);
     return seedTable();
   }
+}
+
+/** R3: a briefing ceiling from 0.1p to 100p; anything else is the 3p default. */
+export function parseBriefingCeiling(raw: unknown): number {
+  const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : Number.NaN;
+  return Number.isFinite(n) && n >= 0.1 && n <= 100 ? n : DEFAULT_BRIEFING_CEILING_PENCE;
 }
 
 /** An on/off setting: true or 'true' is on; anything else, missing included, is off. */
@@ -195,6 +208,7 @@ export async function getBillingSettings(): Promise<BillingSettings> {
       voice: parseVoice((key) => kv.get(key)),
       standout: parseStandout((key) => kv.get(key)),
       briefingsEnabled: parseSwitch(kv.get('briefings_enabled')),
+      briefingCeilingPence: parseBriefingCeiling(kv.get('briefing_ceiling_pence')),
     };
     settingsCache = { at: Date.now(), settings };
     return settings;
