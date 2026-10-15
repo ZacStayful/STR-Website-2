@@ -24,6 +24,9 @@ import { minProfitFor, typeOfFacts, type DealFacts, type Judgement, type MemberF
 import type { DealType } from '../profile/deal-types.ts';
 import type { StandoutSettings } from './settings.ts';
 import type { StandoutReason } from './reasons.ts';
+import { applyCandidateFeedback, feedbackRules, type AppliedRules, type PickFeedback } from '../listing/picks.ts';
+import { listingFromRow, parseStoredDeal, type PoolRow } from '../today/candidates.ts';
+import { parseScreening } from '../listing/screen.ts';
 
 export type ProfitBasis = 'range' | 'after_works' | 'after_refinance';
 
@@ -106,8 +109,14 @@ export function memberSkip(i: {
   primary: { forClient: boolean; pausedAt: string | null; awaitingAnswers?: boolean } | null;
   chosenTypes: readonly DealType[];
   wants: Pick<Wants, 'minProfit' | 'minProfitR2r'> | null;
+  /** Review R3 (R3-64): daily picks paused for inactivity (Batch 20): not judged, not rung. */
+  quiet?: boolean;
+  /** Review R3 (R3-54, R3-65): daily picks off or the subscription paused: no email could tell them, so nothing is saved. */
+  picksOff?: boolean;
 }): StandoutReason | null {
   if (i.isTeamMember) return 'team_member';
+  if (i.quiet) return 'quiet';
+  if (i.picksOff) return 'picks_off';
   if (!i.primary) return 'no_primary_profile';
   if (i.primary.forClient) return 'client_profile';
   if (i.primary.pausedAt) return 'profile_paused';
@@ -178,4 +187,34 @@ export function inWindow(liveSinceIso: string | null, w: { from: string; to: str
 export function savesLeftToday(savedToday: number, maxPerDay: number): number {
   if (maxPerDay <= 0) return Number.POSITIVE_INFINITY;
   return Math.max(0, maxPerDay - savedToday);
+}
+
+/**
+ * Review R3 (R3-13): Today's own pool rules apply to a standout too. A reason
+ * the member gave on a pick ("wrong area", "too expensive", "needs work", "no
+ * flats" …) rules a deal out of their pool (listing/picks.ts
+ * applyCandidateFeedback), so it can never be a standout, whatever its match.
+ */
+export function passesMemberRules(row: PoolRow & { project?: unknown }, feedback: readonly PickFeedback[], rules: AppliedRules = feedbackRules([...feedback])): boolean {
+  if (row.postcode_area && rules.badAreas.has(row.postcode_area.toUpperCase())) return false;
+  return applyCandidateFeedback([{ listing: listingFromRow(row), deal: parseStoredDeal(row.deal), screening: parseScreening(row.screening), project: row.project }], [...feedback], rules).length === 1;
+}
+
+/** What a standout must beat: a deal the member was shown or had saved, with its match, profit and type. */
+export interface KnownDeal {
+  matchPct: number | null;
+  profitLow: number | null;
+  /** Review R3 (R3-52): profits are only compared within a deal type (an R2R margin is not a short-let profit). */
+  dealType: string | null;
+}
+
+/** The best low-end profit among what the member already had at this match or better, of the same deal type. */
+export function bestAtLeast(known: readonly KnownDeal[], matchPct: number | null, dealType: string | null): number | null {
+  let best: number | null = null;
+  for (const k of known) {
+    if (k.profitLow === null || k.matchPct === null || matchPct === null || k.matchPct < matchPct) continue;
+    if (k.dealType && dealType && k.dealType !== dealType) continue;
+    best = best === null ? k.profitLow : Math.max(best, k.profitLow);
+  }
+  return best;
 }

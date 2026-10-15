@@ -366,3 +366,11 @@ test('Batch 25: without "Saved for you" the email is exactly as before', () => {
   assert.deepEqual(after.message, before.message);
   assert.deepEqual(after.savedIds, []);
 });
+
+test('R3-124: "Saved for you" with changes on tracked deals names both in the subject', () => {
+  const built = buildDaily({ siteUrl: SITE, now: NOW, pick: null, teasers: [], changes: [change()], freeCutoffIso: null, unsubscribe: null, savedForYou: [savedItem('s1')] })!;
+  assert.ok(built);
+  assert.match(built.message.subject, /^I saved a deal for you · ./);
+  assert.ok(built.message.sections.some((x) => x.key === 'saved_for_you'));
+  assert.ok(built.message.sections.some((x) => x.key === 'changes'));
+});
