@@ -63,7 +63,7 @@ export default async function AskPage() {
           </span>
         </div>
         <main className="mx-auto flex min-h-0 w-full max-w-xl flex-1 flex-col px-4 pb-[max(env(safe-area-inset-bottom),0.75rem)] pt-4">
-          <QuickChat hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} voice={chat.voice} inputId="si-quick-q" autoFocus />
+          <QuickChat hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} voice={chat.voice} speakHintPence={chat.speakQuickHintPence} inputId="si-quick-q" autoFocus />
           <p className="mt-2 shrink-0 text-center text-[11px] text-[#B9D5C6]/70">Stayful Intelligence is software, not a person. I describe deals; the decision is yours.</p>
         </main>
       </div>

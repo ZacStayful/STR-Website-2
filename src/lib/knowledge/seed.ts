@@ -440,7 +440,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Can I talk to you instead of typing?',
     variants: ['Can I ask out loud?', 'Do you have voice?', 'Why did you answer out loud?', 'Does talking to you cost more?'],
-    answer: 'Yes: tap the microphone and ask, and I’ll answer out loud, then listen again (never while I’m speaking). Hearing and speaking are charged as AI voice, a little on top of the question, and nothing if I don’t catch you.',
+    // Review R3 (R3-1): the price is said, from the row the charge uses; the page shows it under the answer too.
+    answer: 'Yes: tap the mic and ask; I answer out loud, listen once more, then wait for a tap. A spoken answer is charged as AI voice on top of the question, about {chat_speak_quick_cost} quick or {chat_speak_full_cost} full, and shows under the answer; nothing if I don’t catch you.',
   },
   {
     slug: 'chat_history',

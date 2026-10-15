@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import { VOICE_MAX_SECONDS } from "@/lib/chat/config";
+import { followOnAllowed } from "@/lib/chat/voice-rules";
 import { setChatEye } from "./chat-state";
 
 /**
@@ -74,7 +75,7 @@ function closeRecording(r: Recording): void {
   r.context?.close().catch(() => {});
 }
 
-export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => void; onMessage: (message: string) => void }) {
+export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => void; onMessage: (message: string) => void; onSpoken?: (ref: string, charged: string) => void }) {
   const [phase, setPhaseState] = useState<VoicePhase>("idle");
   const [supported, setSupported] = useState(false);
   const phaseRef = useRef<VoicePhase>("idle");
@@ -85,6 +86,8 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
   // A spoken conversation is going on: after a spoken answer, listen again.
   const conversation = useRef(false);
   const followOn = useRef<number | null>(null);
+  // R3-9: how many times it has listened again by itself since the last tap (at most VOICE_FOLLOW_ONS_MAX).
+  const followOns = useRef(0);
   const handlers = useRef(opts);
   useEffect(() => {
     handlers.current = opts;
@@ -193,6 +196,7 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
     if (phaseRef.current !== "idle") return;
     clearFollowOn();
     if (!auto) {
+      followOns.current = 0;
       // On the tap itself: lets a phone play the spoken answer later without another tap.
       try {
         const a = audio();
@@ -299,7 +303,7 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
 
   /** Speaks an answer in the Stayful Intelligence voice (charged as AI voice). */
   const speak = useCallback(
-    async (text: string) => {
+    async (text: string, ref?: string) => {
       const words = text.trim();
       if (!words) return;
       // The member has started another question: don't talk over them.
@@ -311,7 +315,17 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
       setPhase("speaking");
       try {
         const res = await fetch("/api/speak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: words }), signal: ctrl.signal });
+        if (res.status === 402) {
+          // R3-28: out of credit for the voice: the answer stays as text, and it doesn't listen again.
+          conversation.current = false;
+          if (phaseRef.current === "speaking") setPhase("idle");
+          handlers.current.onMessage("You’re out of credit for voice, so the answer is above as text.");
+          return;
+        }
         if (!res.ok) throw new Error(`speak ${res.status}`);
+        // R3-1: what this answer's voice cost, for the page to show under the answer.
+        const charged = res.headers.get("x-si-voice-charge");
+        if (charged && ref) handlers.current.onSpoken?.(ref, charged);
         const blob = await res.blob();
         if (ctrl.signal.aborted) return;
         releaseUrl();
@@ -322,12 +336,16 @@ export function useVoice(opts: { enabled: boolean; onHeard: (text: string) => vo
           releaseUrl();
           if (phaseRef.current !== "speaking") return;
           setPhase("idle");
-          // A conversation: listen again once its voice has stopped (never while it plays).
-          if (finished && conversation.current) {
+          // A conversation: listen again once its voice has stopped (never while it plays), at most
+          // VOICE_FOLLOW_ONS_MAX times per tap (R3-9); after that the member taps the microphone again.
+          if (finished && conversation.current && followOnAllowed(followOns.current)) {
+            followOns.current += 1;
             followOn.current = window.setTimeout(() => {
               followOn.current = null;
               if (conversation.current && phaseRef.current === "idle") void startListening(true);
             }, AFTER_SPEAKING_MS);
+          } else {
+            conversation.current = false;
           }
         };
         a.onended = () => done(true);

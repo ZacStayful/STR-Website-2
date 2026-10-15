@@ -24,6 +24,7 @@ import { BALANCE_BANDS_PENCE, PRODUCT_FACTS, TEAM_EMAIL } from './config.ts';
 import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
 import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 import { callFloorPence } from '../standout/notify.ts';
+import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from '../chat/voice-rules.ts';
 
 /** One billing_plans row, as read. */
 export interface PlanRow {
@@ -304,6 +305,12 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   chat_markup: g_('What a question costs against the AI’s own cost, e.g. "5 times"', 'billing_settings.si_chat_markup', (g) => {
     const n = num(raw(g, 'si_chat_markup'));
     return n === null || n <= 0 ? null : `${n} times`;
+  }),
+  // Review R3 (R3-1): what hearing an answer costs, the elevenlabs:character row × its markup (the sum /api/speak meters) for each surface's word cap.
+  chat_speak_quick_cost: g_('About what hearing a quick answer costs (AI voice, on top of the question)', 'unit_costs elevenlabs:character × markup × a quick answer’s length', (g) => money(speakPricePence(g.units.get('elevenlabs:character'), speakCharsFor(QUICK_MAX_WORDS)))),
+  chat_speak_full_cost: g_('About what hearing a full-view answer costs (AI voice, on top of the question)', 'unit_costs elevenlabs:character × markup × billing_settings.si_chat_full_max_words', (g) => {
+    const words = whole(g, 'si_chat_full_max_words', 1);
+    return words === null ? null : money(speakPricePence(g.units.get('elevenlabs:character'), speakCharsFor(words)));
   }),
   // Batch 25: standout deals, deal calls and the slower-spender nudge
   standout_calls_per_month: g_('Deal calls a member may get in a calendar month, in words', 'billing_settings.standout_calls_per_month', (g) => {
