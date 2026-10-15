@@ -45,3 +45,11 @@ test("a preference written with a pronoun is the member's own, not another perso
   assert.equal(sensitiveTopic('Her husband wants Leeds'), 'people');
   assert.equal(sensitiveTopic('Buying with his brother'), 'people');
 });
+
+test('R3-32: a question that holds contact details or a sensitive topic is not kept beside the fact', () => {
+  const fact = 'Prefers 2-bed flats near stations';
+  assert.deepEqual(checkFact({ fact, asked: 'Want me to remember that?', confirmed: true }), { ok: true, fact, asked: 'Want me to remember that?' });
+  for (const asked of ['My email is sam@example.com, remember I like flats', 'Ring me on 07700 900123 about flats', 'I live at LS1 4AP, flats please', 'See https://example.com/flats']) {
+    assert.deepEqual(checkFact({ fact, asked, confirmed: true }), { ok: true, fact, asked: null }, asked);
+  }
+});

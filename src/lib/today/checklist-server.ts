@@ -22,7 +22,7 @@ import { CHECKLIST_STEPS, checklistVisible, inWindow, isStepKey, rewardEligibili
 import { logActivity } from '../activity/log';
 import { loadTrackedDeals } from '../listing/tracked-server';
 import { KEPT_STATUS } from '../listing/pipeline';
-import { siSavedDealIds } from '../standout/saved-server';
+import { labelledSaves } from '../standout/saved-server';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -150,20 +150,22 @@ async function ownOpens(admin: Admin, userId: string): Promise<number> {
     .eq('user_id', userId)
     .eq('status', 'open')
     .not('verified_via', 'in', '(pick,admin)')
-    .not('transaction_id', 'is', null)
     .limit(50);
   if (error) {
     console.warn('[checklist] opens read failed:', error.message);
     return 0;
   }
-  const ids = ((data ?? []) as { transaction_id: number | string }[]).map((r) => r.transaction_id);
-  if (ids.length === 0) return 0;
+  const rows = (data ?? []) as { transaction_id: number | string | null }[];
+  // R3-55: a free open (a deal Stayful Intelligence saved for them) has no charge, and is the member's own.
+  const free = rows.filter((r) => r.transaction_id === null).length;
+  const ids = rows.map((r) => r.transaction_id).filter((x): x is number | string => x !== null);
+  if (ids.length === 0) return free;
   const { count, error: txErr } = await admin.from('credit_transactions').select('id', { count: 'exact', head: true }).in('id', ids).is('metadata->>member_id', null);
   if (txErr) {
     console.warn('[checklist] open charges read failed:', txErr.message);
-    return 0;
+    return free;
   }
-  return count ?? 0;
+  return free + (count ?? 0);
 }
 
 /** What the member's own records show. A read that fails counts as not done — never as done. */
@@ -182,8 +184,9 @@ async function evidenceFor(admin: Admin, userId: string, marketGoals: unknown): 
   // listing they pasted and kept. Scope 'own', never the team's.
   const keptOnMyDeals = async (): Promise<number> => {
     try {
-      const [load, siSaved] = await Promise.all([loadTrackedDeals(userId, { scope: 'own' }), siSavedDealIds(admin, userId)]);
-      // Batch 25: a deal Stayful Intelligence saved is not one the member kept (it earns nothing until they make it theirs).
+      const [load, siSaved] = await Promise.all([loadTrackedDeals(userId, { scope: 'own' }), labelledSaves(userId)]);
+      // Batch 25: a deal Stayful Intelligence saved is not one the member kept until they make it theirs: R3-109, an
+      // open counts (the label comes off), as does a stage move or an answer.
       return load.view.filter((v) => v.mine && v.stage === KEPT_STATUS && !(v.dealId && siSaved.has(v.dealId))).length;
     } catch (err) {
       console.warn('[checklist] kept read failed:', (err as Error).message);

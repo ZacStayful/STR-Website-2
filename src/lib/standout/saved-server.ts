@@ -37,9 +37,11 @@ export const siKey = (userId: string, dealId: string) => `${userId}:${dealId}`;
 /**
  * The SI saves (Keeps the member hasn't made their own) among these members'
  * reactions, as user:deal keys. Every page is read: a save missed here would
- * count as the member's own Keep.
+ * count as the member's own Keep. R3-108: null when a read fails, so a caller
+ * that must not guess (the morning pick) can wait; the tolerant callers read
+ * null as none.
  */
-export async function siSavedPairs(admin: Admin, userIds: readonly string[] | null, dealIds?: readonly string[]): Promise<Set<string>> {
+export async function siSavedPairs(admin: Admin, userIds: readonly string[] | null, dealIds?: readonly string[]): Promise<Set<string> | null> {
   const out = new Set<string>();
   if (!hasServiceRole()) return out;
   const users = userIds === null ? [null] : chunks([...new Set(userIds)]);
@@ -52,7 +54,10 @@ export async function siSavedPairs(admin: Admin, userIds: readonly string[] | nu
         if (u) q = q.in('user_id', u);
         if (d) q = q.in('deal_id', d);
         const { data, error } = await q.order('user_id', { ascending: true }).order('deal_id', { ascending: true }).range(from, from + PAGE - 1);
-        if (error) return out;
+        if (error) {
+          console.error('[standout] SI saves unreadable:', error.message);
+          return null;
+        }
         for (const r of (data ?? []) as { user_id: string; deal_id: string }[]) out.add(siKey(r.user_id, r.deal_id));
         if ((data?.length ?? 0) < PAGE) break;
       }
@@ -63,7 +68,7 @@ export async function siSavedPairs(admin: Admin, userIds: readonly string[] | nu
 
 /** The deals one member has an SI save on (Keeps they haven't made their own). */
 export async function siSavedDealIds(admin: Admin, userId: string): Promise<Set<string>> {
-  const pairs = await siSavedPairs(admin, [userId]);
+  const pairs = (await siSavedPairs(admin, [userId])) ?? new Set<string>();
   return new Set([...pairs].map((k) => k.slice(userId.length + 1)));
 }
 

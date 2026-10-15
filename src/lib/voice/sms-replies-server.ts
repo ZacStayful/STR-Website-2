@@ -23,7 +23,7 @@ import { feedbackSettings } from '../feedback/settings-server';
 import { textForwardEmail } from '../email/si-calls';
 import { addTurns, recordQuestion, startConversation } from '../conversations/log-server';
 import { SMS_REPLY_OTHER, SMS_REPLY_WHO } from './templates';
-import { replyKind } from './sms-replies';
+import { replyKind, smsQuestionLabel } from './sms-replies';
 import { ukDay } from './hours';
 import { claimEvent, finishEvent } from './store-server';
 import { callerHash } from './inbound-server';
@@ -73,7 +73,8 @@ export async function replyToText(o: { phone: string; body: string; messageSid: 
 
   if (conversationId) {
     await addTurns(conversationId, [{ role: 'member', text, at: now }, ...(reply ? [{ role: 'agent' as const, text: reply, at: now }] : [])]);
-    await recordQuestion(conversationId, { question: text, outcome: kind === 'who' ? 'answered' : 'handed_off', source: 'sms' });
+    // R3-47: the body stays in the turns for the transcript's days; the question kept for the learning log is a label.
+    await recordQuestion(conversationId, { question: smsQuestionLabel(kind), outcome: kind === 'who' ? 'answered' : 'handed_off', source: 'sms' });
   }
 
   if (kind === 'other') {

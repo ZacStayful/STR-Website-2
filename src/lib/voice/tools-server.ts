@@ -73,6 +73,8 @@ const str = (v: unknown, max = 500): string | null => (typeof v === 'string' && 
 async function liveCall(req: ToolRequest, maxCallSeconds: number, now: Date): Promise<CallRow | null> {
   const call = await callByConversation(createAdminClient(), str(req.conversation_id, 200), str(req.call_sid, 64));
   if (!call || call.status !== 'ringing') return null;
+  // R3-50: an inbound row with no Twilio call behind it is not a live call (a forged initiation never gets one).
+  if (call.direction === 'inbound' && !call.twilio_call_sid) return null;
   const since = Date.parse(call.placed_at ?? call.started_at ?? call.queued_at);
   if (!Number.isFinite(since) || now.getTime() - since > maxCallSeconds * 1000 + TOOL_GRACE_MS) return null;
   return call;

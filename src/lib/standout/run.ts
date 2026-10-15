@@ -31,13 +31,15 @@ import { allProfilesFor } from '../profiles/server';
 import { primaryOf, type SavedProfile } from '../profiles/rules';
 import { tailoringForSeats } from '../tailoring/server';
 import { judgeRow } from '../tailoring/today';
-import { wantsFor } from '../tailoring/criteria';
+import { typeOfFacts, wantsFor } from '../tailoring/criteria';
 import { dealTypesFor } from '../profile/deal-types';
+import { feedbackForMember } from '../today/feedback';
+import { feedbackRules } from '../listing/picks';
 import { serverFetchEnabled } from '../listing/fetch';
 import { londonDay, londonParts } from '../sms/uk-time';
 import { seatKey } from '../profiles/rules';
 import type { TailoringProfile } from '../tailoring/profile';
-import { judgeStandout, memberSkip, matchPctOf, bestFirst, beatsBest, liveConfirmed, inWindow, savesLeftToday, type StandoutJudgement } from './rules';
+import { judgeStandout, memberSkip, matchPctOf, bestFirst, bestAtLeast, beatsBest, liveConfirmed, inWindow, passesMemberRules, savesLeftToday, type KnownDeal, type StandoutJudgement } from './rules';
 import { reasonLabel, type StandoutReason } from './reasons';
 import { recheckDeal, requestCheck } from './recheck';
 import {
@@ -55,6 +57,7 @@ import {
   saveStandout,
   savesFor,
   seenDealsFor,
+  settleGoneRetries,
   shownDealIdsFor,
   writeDealDecisions,
   writeMemberDecisions,
@@ -72,6 +75,8 @@ const OVERLAP_MS = 15 * 60_000;
 const FIRST_LOOKBACK_MS = 2 * 60 * 60_000;
 /** Stop starting live rechecks after this long (the route's limit is 120 s). */
 const RECHECK_BUDGET_MS = 60_000;
+/** R3-105: no member's notification or nudge is started after this long into the pass (the route's limit is 120 s). */
+const PASS_BUDGET_MS = 90_000;
 
 export { standoutEnabled };
 
@@ -193,6 +198,9 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
     for (const r of [...(paid ?? []), ...(free ?? []), ...retried]) byId.set(r.id, r);
   }
   out.deals = byId.size;
+  // R3-138: a waiting decision whose listing is no longer live is settled ('gone'), not left waiting for good.
+  const notBack = retry.filter((r) => !byId.has(r.dealId));
+  if (notBack.length > 0 && apply) await settleGoneRetries(admin, notBack, now);
 
   if (byId.size > 0) {
     try {
@@ -205,16 +213,29 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
     if (out.schemaMissing) complete = false;
   }
 
+  // The judging is what the watermarks record; written now (R3-105), so a notify step cut off by the route's
+  // limit never leaves a judged window to be judged again.
+  if (apply && !o.force && !o.onlyUserId && complete) {
+    await recordRun(admin, {
+      kind: o.kind ?? 'cron',
+      startedAt: now,
+      paidThrough: paidTo,
+      freeThrough: freeTo,
+      summary: { deals: out.deals, members: out.members, judged: out.judged, standouts: out.standouts, saved: out.saved, waiting: out.waiting, rechecked: out.rechecked, memberSkips: out.memberSkips, errors: out.errors.slice(0, 5) },
+    });
+  }
+
   // ── 5. Tell members, and the slower-spender nudges ──
+  const deadlineMs = started + PASS_BUDGET_MS;
   if (!o.force) {
     try {
-      out.notifications = await processNotifications({ apply, now, onlyUserId: o.onlyUserId ?? null });
+      out.notifications = await processNotifications({ apply, now, onlyUserId: o.onlyUserId ?? null, deadlineMs });
     } catch (err) {
       console.error('[standout] notifications failed:', err);
       out.errors.push(`notifications: ${err instanceof Error ? err.message : String(err)}`);
     }
     try {
-      out.nudges = await processNudges({ apply: o.apply && enabled, now, onlyUserId: o.onlyUserId ?? null });
+      out.nudges = await processNudges({ apply: o.apply && enabled, now, onlyUserId: o.onlyUserId ?? null, deadlineMs });
     } catch (err) {
       console.error('[standout] nudges failed:', err);
       out.errors.push(`nudges: ${err instanceof Error ? err.message : String(err)}`);
@@ -226,15 +247,6 @@ export async function runStandout(o: { apply: boolean; now?: Date; onlyUserId?: 
   // Once a UK day (the 03:35 pass): not-standout decisions past the keep window go.
   if (apply && !o.force && londonParts(now).hour === 3) out.purged = await purgeOldDecisions(admin, s.keepDays, now);
 
-  if (apply && !o.force && !o.onlyUserId && complete) {
-    await recordRun(admin, {
-      kind: o.kind ?? 'cron',
-      startedAt: now,
-      paidThrough: paidTo,
-      freeThrough: freeTo,
-      summary: { deals: out.deals, members: out.members, judged: out.judged, standouts: out.standouts, saved: out.saved, waiting: out.waiting, rechecked: out.rechecked, memberSkips: out.memberSkips, errors: out.errors.slice(0, 5) },
-    });
-  }
   out.ms = Date.now() - started;
   // An applied pass lists only what mattered; a dry run lists everything.
   if (o.apply) out.decisions = out.decisions.filter((d) => d.outcome !== 'not_standout');
@@ -302,7 +314,8 @@ async function judgeAndSave(c: Ctx): Promise<void> {
         list.push(row);
         continue;
       }
-      if (retrying || (m.paid ? inPaid : inFree || (own && inPaid))) list.push(row);
+      // R3-19: a member who paid inside the free delay is judged on both windows (the existing map stops a second judging).
+      if (retrying || (m.paid ? inPaid || inFree : inFree || (own && inPaid))) list.push(row);
     }
     if (list.length > 0) dealsFor.set(m.id, list);
   }
@@ -329,7 +342,7 @@ async function judgeAndSave(c: Ctx): Promise<void> {
     const p = primaryOfMember.get(m.id) ?? null;
     const t = p ? tailoring.get(seatKey(m.id, p.id)) ?? null : null;
     const types = p && t ? dealTypesFor({ goals: p.goals, about: t.about }) : [];
-    const skip = memberSkip({ isTeamMember: m.isTeamMember, primary: p, chosenTypes: types, wants: t ? wantsFor(t) : null });
+    const skip = memberSkip({ isTeamMember: m.isTeamMember, primary: p, chosenTypes: types, wants: t ? wantsFor(t) : null, quiet: m.quiet, picksOff: m.picksOff });
     if (skip) {
       out.memberSkips[skip] = (out.memberSkips[skip] ?? 0) + 1;
       memberRows.push({ user_id: m.id, profile_id: p?.id ?? null, deal_id: null, deal_type: null, uk_day: c.ukDay, tier: m.paid ? 'paid' : 'free', outcome: 'skipped', reason: skip });
@@ -342,8 +355,11 @@ async function judgeAndSave(c: Ctx): Promise<void> {
   // The signup reveal's #1, judged now as its card is (no reveal, or gone: the floor alone).
   const revealPct = new Map<string, number>();
   const tops = await revealTopsFor(admin, [...able.keys()]);
-  if (tops.size > 0) {
-    const topRows = new Map((await dealRowsByIds(admin, [...tops.values()], { liveOnly: true })).map((r) => [r.id, r]));
+  // R3-53: unreadable reveals: no floor is known, so nothing is saved on a guess; the candidates wait for the next pass.
+  const topsUnreadable = tops === null;
+  if (tops && tops.size > 0) {
+    // R3-51: the reveal's #1 sets the floor even once it has retired (judged as its card was).
+    const topRows = new Map((await dealRowsByIds(admin, [...tops.values()])).map((r) => [r.id, r]));
     for (const [userId, dealId] of tops) {
       const a = able.get(userId);
       const row = topRows.get(dealId);
@@ -360,12 +376,24 @@ async function judgeAndSave(c: Ctx): Promise<void> {
     const a = able.get(m.id);
     if (!a) continue;
     const wants = wantsFor(a.t);
+    // R3-13: Today's own pool rules: the reasons they gave on picks rule deals out here too.
+    const feedback = await feedbackForMember(admin, m.id, now, a.profile.id);
+    const rules = feedbackRules(feedback);
     for (const row of dealsFor.get(m.id) ?? []) {
       const judged = judgeRow(row, a.t, wants, now);
       const j = judgeStandout({ judgement: judged.judgement, facts: judged.facts, figures: judged.figures, wants, chosenTypes: a.types, revealPct: revealPct.get(m.id) ?? null, settings: s, forced: Boolean(c.o.force) });
       out.judged += 1;
       if (!j.inPool) {
         if (c.o.force) out.decisions.push(viewOf(m, row.id, 'not_standout', j));
+        continue;
+      }
+      if (j.outcome === 'standout' && topsUnreadable) {
+        out.waiting += 1;
+        rows.push(decisionRow(m, a.profile.id, row.id, 'waiting', 'retry_later', j, null, null, c.ukDay));
+        continue;
+      }
+      if (j.outcome === 'standout' && !c.o.force && !passesMemberRules(row, feedback, rules)) {
+        rows.push(decisionRow(m, a.profile.id, row.id, 'not_standout', 'not_for_me_rule', j, revealPct.get(m.id) ?? null, null, c.ukDay));
         continue;
       }
       if (j.outcome === 'standout') candidates.push({ member: m, profileId: a.profile.id, row, j, tailoring: a.t, liveConfirmedAt: null, revealPct: revealPct.get(m.id) ?? null });
@@ -376,7 +404,9 @@ async function judgeAndSave(c: Ctx): Promise<void> {
   // ── 3. New to the member ──
   let live = candidates;
   if (live.length > 0) {
-    const seen = await seenDealsFor(admin, [...new Set(live.map((x) => x.member.id))], [...new Set(live.map((x) => x.row.id))], now);
+    // R3-58: a listing the member checked themselves counts as seen too (by its URL, server-side only).
+    const urls = new Map(live.filter((x) => x.row.canonical_url).map((x) => [x.row.id, x.row.canonical_url!]));
+    const seen = await seenDealsFor(admin, [...new Set(live.map((x) => x.member.id))], [...new Set(live.map((x) => x.row.id))], now, urls);
     if (seen === null) {
       // Unreadable: nothing is saved on a guess, and nothing is written off either — the next pass tries again.
       out.errors.push('"already seen" reads failed: standouts wait for the next pass');
@@ -425,29 +455,38 @@ async function judgeAndSave(c: Ctx): Promise<void> {
   for (const [userId, list] of byMember) {
     const m = saves.get(userId) ?? { saved: [], today: 0 };
     let left = c.o.force ? Number.POSITIVE_INFINITY : savesLeftToday(m.today, s.maxPerDay);
-    const known: { matchPct: number | null; profitLow: number | null }[] = [...m.saved];
+    const known: KnownDeal[] = [...m.saved];
     if (!c.o.force && s.beatBestDays > 0) {
       const a = able.get(userId)!;
       const shown = await shownDealIdsFor(admin, userId, s.beatBestDays, now);
+      if (shown === null) {
+        // R3-53: unreadable: the bar is unknown, so nothing is saved on a guess; the next pass tries again.
+        for (const x of list) rows.push(decisionRow(x.member, x.profileId, x.row.id, 'waiting', 'retry_later', x.j, x.revealPct, x.liveConfirmedAt, c.ukDay));
+        out.waiting += list.length;
+        continue;
+      }
       const shownRows = await dealRowsByIds(admin, shown);
       const wants = wantsFor(a.t);
       for (const row of shownRows) {
         const jr = judgeRow(row, a.t, wants, now);
-        known.push({ matchPct: matchPctOf(jr.judgement), profitLow: jr.figures.range?.lowPcm ?? null });
+        known.push({ matchPct: matchPctOf(jr.judgement), profitLow: jr.figures.range?.lowPcm ?? null, dealType: typeOfFacts(jr.facts) });
       }
     }
     for (const x of bestFirst(list.map((y) => ({ ...y, matchPct: y.j.matchPct, profitLow: y.j.profitLow })))) {
-      const best = c.o.force || s.beatBestDays <= 0 ? null : bestAtLeast(known, x.j.matchPct);
+      // R3-52: only deals of the same type set the bar.
+      const best = c.o.force || s.beatBestDays <= 0 ? null : bestAtLeast(known, x.j.matchPct, x.j.dealType);
       if (x.j.profitLow !== null && !beatsBest(x.j.profitLow, best)) {
         rows.push(decisionRow(x.member, x.profileId, x.row.id, 'not_standout', 'not_beating_best', x.j, x.revealPct, x.liveConfirmedAt, c.ukDay));
         continue;
       }
       if (left <= 0) {
-        rows.push(decisionRow(x.member, x.profileId, x.row.id, 'not_standout', 'daily_limit', x.j, x.revealPct, x.liveConfirmedAt, c.ukDay));
+        // R3-60: the day's limit is reached: judged again tomorrow against what was saved, never written off.
+        out.waiting += 1;
+        rows.push(decisionRow(x.member, x.profileId, x.row.id, 'waiting', 'daily_limit', x.j, x.revealPct, x.liveConfirmedAt, c.ukDay));
         continue;
       }
       left -= 1;
-      known.push({ matchPct: x.j.matchPct, profitLow: x.j.profitLow });
+      known.push({ matchPct: x.j.matchPct, profitLow: x.j.profitLow, dealType: x.j.dealType });
       winners.push(x);
       rows.push({ ...decisionRow(x.member, x.profileId, x.row.id, 'standout', x.j.reason, x.j, x.revealPct, x.liveConfirmedAt, c.ukDay), forced: Boolean(c.o.force) });
     }
@@ -476,16 +515,6 @@ async function judgeAndSave(c: Ctx): Promise<void> {
     if (v) v.saved = r;
     if (r === 'saved') out.saved += 1;
   }
-}
-
-/** The best low-end profit among what the member already had at this match or better. */
-function bestAtLeast(known: readonly { matchPct: number | null; profitLow: number | null }[], matchPct: number | null): number | null {
-  let best: number | null = null;
-  for (const k of known) {
-    if (k.profitLow === null || k.matchPct === null || matchPct === null || k.matchPct < matchPct) continue;
-    best = best === null ? k.profitLow : Math.max(best, k.profitLow);
-  }
-  return best;
 }
 
 function decisionRow(m: StandoutMember, profileId: string, dealId: string, outcome: DecisionRow['outcome'], reason: string, j: StandoutJudgement, revealPct: number | null, liveConfirmedAt: string | null, ukDay: string): DecisionRow {

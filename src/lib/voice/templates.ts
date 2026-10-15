@@ -188,16 +188,18 @@ export function dealEmail(kind: 'missed' | 'below_floor', deal: DealFacts | null
 
 /**
  * Batch 25, Part C: the slower-spender nudge's email (its text is the
- * auto_topup_link template, as it is). Every figure from settings: the £5
- * mark (low_credit_pence) and the auto top-up offer.
+ * auto_topup_link template, as it is). Every figure from settings or the
+ * ledger: the member's balance (R3-46) and the auto top-up offer.
  */
-export function nudgeEmail(c: Pick<LinkContext, 'topupAmountPence' | 'topupThresholdPence'> & { lowCreditPence: number }, firstName: string | null): EmailCopy {
+export function nudgeEmail(c: Pick<LinkContext, 'topupAmountPence' | 'topupThresholdPence'> & { balancePence: number }, firstName: string | null): EmailCopy {
   const hi = firstName ? `Hi ${firstName},` : 'Hi,';
+  // R3-46: their balance as it is, never the £5 mark.
+  const left = pounds(Math.max(0, Math.round(c.balancePence)));
   return {
-    subject: `You're down to ${pounds(c.lowCreditPence)}`,
-    title: `You're down to ${pounds(c.lowCreditPence)}`,
+    subject: `You're down to ${left}`,
+    title: `You're down to ${left}`,
     paragraphs: [
-      `${hi} you've got about ${pounds(c.lowCreditPence)} of credit left.`,
+      `${hi} you've got ${left} of credit left.`,
       `Turn on auto top-up and I'll add ${pounds(c.topupAmountPence)} whenever you drop below ${pounds(c.topupThresholdPence)}, so your daily deals and calls never pause. Turn it off any time in Account → Billing.`,
     ],
     cta: { label: 'Turn on auto top-up', path: AUTO_TOPUP_PATH },

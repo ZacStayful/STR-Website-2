@@ -68,6 +68,26 @@ begin
   j := public.member_scanned(jsonb_build_object('user', u, 'join_day', d1, 'today', d3, 'areas', null, 'kinds', jsonb_build_array('sale', 'rent')));
   if (j->>'baseline')::int <> 1 then raise exception 'member scanned: the stored baseline moved (%)', j; end if;
   raise notice 'member scanned ok';
+
+  -- Review R3 (R3-128): the schema's one-off fill runs once, is stamped, and no span can abort it.
+  delete from public.billing_settings where key = 'listing_scan_days_backfill';
+  delete from public.listing_scan_days;
+  j := public.listing_scan_days_backfill();
+  if not (j->>'filled')::boolean or (j->>'days')::int < 1 then raise exception 'backfill: a database with listings is filled: %', j; end if;
+  select coalesce(sum(new_listings), 0) into n from public.listing_scan_days where day = d2;
+  if n <> 2 then raise exception 'backfill: d2 should count B and C, got %', n; end if;
+  if not exists (select 1 from public.billing_settings where key = 'listing_scan_days_backfill') then raise exception 'backfill: not stamped'; end if;
+  j := public.listing_scan_days_backfill();
+  if (j->>'filled')::boolean or j->>'reason' <> 'done' then raise exception 'backfill: a second run is skipped: %', j; end if;
+  -- A listing first seen 4500 days ago is past record_listing_scan_days's 4000-day limit: counted in two runs, not an abort.
+  delete from public.billing_settings where key = 'listing_scan_days_backfill';
+  insert into public.sourced_listings (canonical_url, source, kind, query_key, postcode_area, snapshot, first_seen_at, last_seen_at)
+  values ('https://t.test/old', 'test', 'sale', 'k', 'LS', '{}', now() - interval '4500 days', now() - interval '4500 days');
+  j := public.listing_scan_days_backfill();
+  if not (j->>'filled')::boolean or (j->>'days')::int < 4500 then raise exception 'backfill: a span past 4000 days is covered: %', j; end if;
+  select coalesce(sum(new_listings), 0) into n from public.listing_scan_days where day = ((now() - interval '4500 days') at time zone 'Europe/London')::date;
+  if n <> 1 then raise exception 'backfill: the old listing''s day is counted, got %', n; end if;
+  raise notice 'scan days backfill ok';
 end $$;
 
 rollback;

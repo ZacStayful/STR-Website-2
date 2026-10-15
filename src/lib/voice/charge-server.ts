@@ -76,6 +76,12 @@ export async function claimCharge(key: string, callId: string | null, userId: st
   return String((data as { id: string }).id);
 }
 
+/** Whether a guard for this key exists: an earlier attempt sent (and charged) the thing (R3-149). */
+export async function chargeExists(key: string): Promise<boolean> {
+  const { data, error } = await createAdminClient().from('si_call_charges').select('id').eq('charge_key', key).limit(1);
+  return !error && (data ?? []).length > 0;
+}
+
 /** Give a claim back when the thing it paid for never happened (a text Twilio refused). */
 export async function releaseCharge(guardId: string): Promise<void> {
   const { error } = await createAdminClient().from('si_call_charges').delete().eq('id', guardId).eq('charged_pence', 0).is('transaction_id', null);
@@ -165,6 +171,12 @@ async function chargeOnce(admin: Admin, o: ChargeSpec): Promise<ChargeResult> {
 /** Answered seconds, at the unit row's per-minute price. */
 export async function chargeCallMinutes(callId: string, userId: string, seconds: number): Promise<ChargeResult> {
   const admin = createAdminClient();
+  // R3-17: never a minute charged to a member who has not switched calls on (Account → Calls), whichever way the call came.
+  const { data: p } = await admin.from('profiles').select('si_calls').eq('id', userId).maybeSingle();
+  if ((p as { si_calls?: boolean | null } | null)?.si_calls !== true) {
+    console.warn('[voice] minutes not charged: calls are not switched on for this member', callId);
+    return { charged: 0, duplicate: false };
+  }
   const table = await getUnitCostTable();
   const perMin = priceFor(table, CALL_MINUTE_UNIT.provider, CALL_MINUTE_UNIT.unit, 1);
   const price = minutesChargePence(seconds, perMin.basePence);

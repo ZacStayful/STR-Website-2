@@ -26,7 +26,7 @@ import { siteUrl } from '../url';
 import { inSendingWindow } from '../sms/uk-time';
 import { missedCallEmail as sendSiEmail } from '../email/si-calls';
 import { callsDryRun, callsEnabled } from '../voice/config';
-import { inOutboundHours, ukDay } from '../voice/hours';
+import { inOutboundHours, nextOpening, ukDay } from '../voice/hours';
 import { memberFacts, type MemberFacts } from '../voice/member-server';
 import { enqueueCall, placeCall } from '../voice/queue-server';
 import { callPencePerMinute, claimCharge, releaseCharge, settleEmail, settleText } from '../voice/charge-server';
@@ -73,7 +73,7 @@ interface CallingRow {
   updated_at: string;
 }
 
-export async function processNotifications(o: { apply: boolean; now: Date; onlyUserId: string | null }): Promise<NotifyResult> {
+export async function processNotifications(o: { apply: boolean; now: Date; onlyUserId: string | null; /** R3-105: no member is started after this (ms since the epoch). */ deadlineMs?: number }): Promise<NotifyResult> {
   const out: NotifyResult = { considered: 0, results: [] };
   const admin = createAdminClient();
   await planPass(admin, o, out);
@@ -83,7 +83,7 @@ export async function processNotifications(o: { apply: boolean; now: Date; onlyU
 
 // ── 1. Plan ──
 
-async function planPass(admin: Admin, o: { apply: boolean; now: Date; onlyUserId: string | null }, out: NotifyResult): Promise<void> {
+async function planPass(admin: Admin, o: { apply: boolean; now: Date; onlyUserId: string | null; deadlineMs?: number }, out: NotifyResult): Promise<void> {
   let q = admin
     .from('standout_decisions')
     .select('id, user_id, deal_id, deal_type, match_pct, profit_low_pcm, saved_at, call_status')
@@ -116,15 +116,26 @@ async function planPass(admin: Admin, o: { apply: boolean; now: Date; onlyUserId
   const switchedOn = dealCallsEnabled() && callsEnabled();
 
   for (const [userId, list] of byUser) {
+    if (o.deadlineMs && Date.now() > o.deadlineMs) {
+      // R3-105: the pass is out of time; these saves are planned on the next pass.
+      out.results.push({ userId, dealId: list[0].deal_id, outcome: 'out_of_time' });
+      continue;
+    }
     const rowById = new Map(list.map((r) => [r.id, r]));
     const m = await memberFacts(userId);
-    const [placed, queued] = await Promise.all([dealCallsThisMonth(admin, userId, o.now), queuedDealCall(admin, userId)]);
+    const [placed, queued, quiet, failed] = await Promise.all([dealCallsThisMonth(admin, userId, o.now), queuedDealCall(admin, userId), quietMember(admin, userId), failedDealCalls(admin, userId)]);
     const candidates: NotifyCandidate[] = list.map((r) => ({ decisionId: r.id, matchPct: r.match_pct, profitLow: r.profit_low_pcm, savedAt: r.saved_at, dealLive: live.has(r.deal_id) }));
-    const steps =
-      placed === null || queued === 'error'
+    const steps: NotifyStep[] =
+      placed === null || queued === 'error' || quiet === null || failed === null
         ? list.map((r): NotifyStep => ({ decisionId: r.id, action: 'wait', status: 'pending' }))
-        : planMember({
-            candidates,
+        : quiet
+          ? // R3-64: daily picks paused for inactivity (Batch 20): not rung, not told.
+            list.map((r): NotifyStep => ({ decisionId: r.id, action: 'none', status: 'quiet' }))
+          : [
+              // R3-104: a deal whose call failed twice at the provider goes in "Saved for you", not round again.
+              ...list.filter((r) => (failed.get(r.deal_id) ?? 0) >= 2).map((r): NotifyStep => ({ decisionId: r.id, action: 'email', status: 'failed' })),
+              ...planMember({
+            candidates: candidates.filter((c) => (failed.get(rowById.get(c.decisionId)!.deal_id) ?? 0) < 2),
             callsSwitchedOn: switchedOn,
             member: m ? { isOwner: m.isOwner, callsOn: m.callsOn, numberOk: m.numberOk, managementOnly: m.managementOnly, balancePence: m.balancePence } : null,
             placedThisMonth: placed,
@@ -134,7 +145,8 @@ async function planPass(admin: Admin, o: { apply: boolean; now: Date; onlyUserId
             textWindow: inSendingWindow(o.now),
             now: o.now,
             maxAgeMs: CALL_MAX_AGE_MS,
-          });
+              }),
+            ];
     for (const step of steps) {
       const row = rowById.get(step.decisionId)!;
       const outcome = o.apply ? await applyStep(admin, step, row, m, o.now) : `would_${step.action}${'status' in step ? `:${step.status}` : ''}`;
@@ -168,6 +180,23 @@ async function queuedDealCall(admin: Admin, userId: string): Promise<QueuedDealC
   return { callId: call.id, decisionId: dec?.id ?? null, matchPct: dec?.match_pct ?? null, profitLow: dec?.profit_low_pcm ?? null };
 }
 
+/** R3-64: whether the member's daily picks are paused for inactivity (Batch 20); null when unreadable. */
+async function quietMember(admin: Admin, userId: string): Promise<boolean | null> {
+  const { data, error } = await admin.from('profiles').select('reengage_since, picks_paused_inactive_at').eq('id', userId).maybeSingle();
+  if (error) return null;
+  const p = data as { reengage_since: string | null; picks_paused_inactive_at: string | null } | null;
+  return Boolean(p?.reengage_since || p?.picks_paused_inactive_at);
+}
+
+/** R3-104: deal calls that failed at the provider, counted per deal (one retry; a second failure is told by email). Null when unreadable. */
+async function failedDealCalls(admin: Admin, userId: string): Promise<Map<string, number> | null> {
+  const { data, error } = await admin.from('si_calls_log').select('trigger_ref').eq('user_id', userId).eq('call_type', 'deal').eq('status', 'failed');
+  if (error) return null;
+  const out = new Map<string, number>();
+  for (const r of (data ?? []) as { trigger_ref: string | null }[]) if (r.trigger_ref) out.set(r.trigger_ref, (out.get(r.trigger_ref) ?? 0) + 1);
+  return out;
+}
+
 /** Set a decision's notify once (only while nobody else has). */
 async function claimNotify(admin: Admin, id: string, patch: Record<string, unknown>, now: Date): Promise<boolean> {
   const { data, error } = await admin.from('standout_decisions').update({ ...patch, updated_at: now.toISOString() }).eq('id', id).is('notify', null).select('id');
@@ -197,7 +226,10 @@ async function applyStep(admin: Admin, step: NotifyStep, row: PendingRow, m: Mem
 
 /** A better standout takes over the member's waiting deal call (one call, about the best). */
 async function retarget(admin: Admin, step: Extract<NotifyStep, { action: 'retarget' }>, row: PendingRow, now: Date): Promise<string> {
-  const { data, error } = await admin.from('si_calls_log').update({ trigger_ref: row.deal_id, updated_at: now.toISOString() }).eq('id', step.callId).eq('status', 'queued').select('id');
+  // R3-115: the call is now about this deal, so its clock restarts with it (the stale rule, its next opening).
+  const voice = (await getBillingSettings()).voice;
+  const notBefore = inOutboundHours(now, voice) ? now : nextOpening(now, voice);
+  const { data, error } = await admin.from('si_calls_log').update({ trigger_ref: row.deal_id, queued_at: now.toISOString(), not_before: notBefore.toISOString(), updated_at: now.toISOString() }).eq('id', step.callId).eq('status', 'queued').select('id');
   if (error || (data ?? []).length !== 1) {
     // Rung or stopped meanwhile, or this deal already had its call: tell them in "Saved for you".
     await claimNotify(admin, row.id, { notify: 'email', call_status: 'one_call' }, now);
@@ -208,7 +240,7 @@ async function retarget(admin: Admin, step: Extract<NotifyStep, { action: 'retar
   return 'call:retargeted';
 }
 
-const ENQUEUE_STATUS: Record<string, string> = { calls_off: 'calls_off', not_owner: 'not_owner', management_no_deals: 'management_only', no_number: 'no_number', disabled: 'deal_calls_off', unknown_member: 'calls_off' };
+const ENQUEUE_STATUS: Record<string, string> = { calls_off: 'calls_off', not_owner: 'not_owner', management_no_deals: 'management_only', no_number: 'no_number', disabled: 'deal_calls_off' };
 
 async function startCall(admin: Admin, row: PendingRow, passStart: Date): Promise<string> {
   // Claim the decision first, so two passes never queue two calls for it.
@@ -244,7 +276,8 @@ async function startCall(admin: Admin, row: PendingRow, passStart: Date): Promis
     await again('below_floor');
     return 'wait:no_credit';
   }
-  if (r.outcome === 'error') {
+  // R3-20: a member the queue could not read is a failed read, never their choice.
+  if (r.outcome === 'error' || (r.outcome === 'skipped' && r.reason === 'unknown_member')) {
     await again('error');
     return 'wait:error';
   }

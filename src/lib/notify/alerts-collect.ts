@@ -186,7 +186,7 @@ export async function runCollector(opts: { dry: boolean; onlyUserIds?: string[] 
       keepers.push(...((keeps ?? []) as { user_id: string; deal_id: string }[]));
     }
     // Batch 25: a deal Stayful Intelligence saved for someone is not their interest in it.
-    const siSaved = keepers.length > 0 ? await siSavedPairs(admin, [...new Set(keepers.map((k) => k.user_id))], [...new Set(keepers.map((k) => k.deal_id))]) : new Set<string>();
+    const siSaved = keepers.length > 0 ? ((await siSavedPairs(admin, [...new Set(keepers.map((k) => k.user_id))], [...new Set(keepers.map((k) => k.deal_id))])) ?? new Set<string>()) : new Set<string>();
     const ownKeepers = keepers.filter((k) => !siSaved.has(siKey(k.user_id, k.deal_id)));
     keepers.length = 0;
     keepers.push(...ownKeepers);

@@ -51,3 +51,9 @@ test('days are whole days since the credit landed', () => {
   assert.equal(daysSince(daysAgo(8.99), NOW), 8);
   assert.equal(daysSince(daysAgo(0), NOW), 0);
 });
+
+test('R3-12: a £5 notice that already went for this landing (the morning email carried it) means no nudge; an older one does not', () => {
+  assert.deepEqual(nudgeDue(input({ toldAt: daysAgo(1).toISOString() })), { due: false, reason: 'already' });
+  assert.deepEqual(nudgeDue(input({ toldAt: daysAgo(40).toISOString() })), { due: true, daysToLow: 12 });
+  assert.deepEqual(nudgeDue(input({ toldAt: null })), { due: true, daysToLow: 12 });
+});

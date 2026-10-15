@@ -1051,13 +1051,11 @@ alter table public.area_planning_signals enable row level security;
 -- Stayful house pick when they have no goals, charged at the daily_pick unit
 -- cost. Paused subscriptions are skipped by the cron. Turning picks off writes
 -- sourcing_opted_out_at (declared above the profiles grant), so the backfill
--- below can never re-enrol someone who opted out. Safe to re-run.
+-- can never re-enrol someone who opted out. Safe to re-run.
+-- Review R3 (R3-18 / R2-82): the backfill itself now runs in the Batch 22f
+-- section, after profiles.signup_path exists, so that a management-only
+-- account (stamped there, its picks switched off) is never re-enrolled.
 alter table public.profiles alter column sourcing_alerts set default true;
-update public.profiles
-   set sourcing_alerts = true
- where sourcing_alerts = false
-   and sourcing_opted_out_at is null
-   and sourcing_last_sent_at is null;
 
 -- sourcing_sent grows from a (user, url) dedupe ledger into the pick record
 -- the member sees on /picks and reacts to from the email. The composite
@@ -1821,68 +1819,11 @@ create index if not exists team_seat_charges_owner_idx on public.team_seat_charg
 alter table public.team_seat_charges enable row level security;
 revoke all on public.team_seat_charges from anon, authenticated;
 
--- Debits a FACE amount: exactly p_face_pence of displayed balance, whatever
--- mix of grants pays it. credit_debit takes BASE pence and multiplies by each
--- grant's spend rate, so "£10" would cost £15 of top-up credit — wrong for a
--- seat sold as a flat £10. Each allocation records base = face / rate, so
--- credit_refund reverses it like any other debit. Never overdrafts. Ignores
--- open reservations (they are minutes long and settle themselves).
--- Superseded by the Batch 25 section's definition (R2-13: it also leaves
--- open reservations alone); kept so each section runs on its own.
-create or replace function public.credit_debit_face(p_user uuid, p_face_pence numeric, p_meta jsonb default '{}'::jsonb)
-returns bigint language plpgsql security definer set search_path = public as $$
-declare
-  v_remaining numeric := round(p_face_pence, 4);
-  v_available numeric;
-  v_tx bigint;
-  v_total_base numeric := 0;
-  v_take_grant numeric;
-  v_take_base numeric;
-  g record;
-begin
-  if v_remaining <= 0 then return null; end if;
-  perform 1 from profiles where id = p_user for update;
-
-  select coalesce(sum(remaining_pence), 0) into v_available
-  from credit_grants
-  where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now());
-  if v_available < v_remaining then
-    raise exception 'insufficient_credit' using errcode = 'P0402',
-      detail = json_build_object('required_face', v_remaining, 'available_face', v_available)::text;
-  end if;
-
-  insert into credit_transactions (user_id, kind, amount_pence, base_pence, action_id, action, description, metadata)
-  values (
-    p_user, 'debit', -v_remaining, 0,
-    nullif(p_meta ->> 'action_id', '')::uuid, p_meta ->> 'action', p_meta ->> 'description',
-    p_meta - array['action_id', 'action', 'description']
-  ) returning id into v_tx;
-
-  for g in
-    select id, remaining_pence, spend_rate from credit_grants
-    where user_id = p_user and remaining_pence > 0 and (expires_at is null or expires_at > now())
-    order by priority, expires_at nulls last, created_at
-    for update
-  loop
-    exit when v_remaining <= 0;
-    v_take_grant := least(v_remaining, g.remaining_pence);
-    v_take_base := round(v_take_grant / g.spend_rate, 4);
-    update credit_grants set remaining_pence = remaining_pence - v_take_grant where id = g.id;
-    insert into credit_allocations (transaction_id, grant_id, base_pence, grant_pence, spend_rate) values (v_tx, g.id, v_take_base, v_take_grant, g.spend_rate);
-    v_total_base := v_total_base + v_take_base;
-    v_remaining := v_remaining - v_take_grant;
-  end loop;
-
-  if v_remaining > 0.0001 then
-    raise exception 'insufficient_credit' using errcode = 'P0402',
-      detail = json_build_object('required_face', p_face_pence, 'shortfall_face', v_remaining)::text;
-  end if;
-
-  update credit_transactions set base_pence = v_total_base where id = v_tx;
-  return v_tx;
-end;
-$$;
-revoke execute on function public.credit_debit_face(uuid, numeric, jsonb) from public, anon, authenticated;
+-- credit_debit_face (a FACE debit: exactly p_face_pence of displayed balance,
+-- for a seat sold as a flat £10, and for Batch 23's calls, texts and emails)
+-- is defined once, in the Batch 25 section (R2-13: it leaves open
+-- reservations alone). The copy that stood here was replaced on every run, so
+-- an edit to it was silently lost (Review R3, R3-153).
 
 -- ── Shared team reports ──
 -- A report belongs to the ACCOUNT that paid for it (owner_id) and was run by
@@ -4024,7 +3965,8 @@ alter table public.profile_today_lists add column if not exists shown_ids uuid[]
 alter table public.profile_today_lists add column if not exists tailoring jsonb;
 
 -- ── When each behaviour prompt was shown and answered (src/lib/tailoring/behaviour.ts) ──
--- "You've kept 4 houses but said flats only." One row per member, profile and
+-- "I've noticed you've kept 9 houses, but you said flats only. Want me to
+-- include houses?" (Batch 25's wording). One row per member, profile and
 -- question: asked at most once a week, and not for 30 days after "keep my
 -- answer". scope is the profile's id, or 'member' for a member with no
 -- profile row yet.
@@ -5108,8 +5050,10 @@ on conflict (key) do nothing;
 -- or came from a lead form (profiles.lead_source): its attribution, whether it
 -- has signed in, when it finished the profile, its first report (report_run
 -- or full_analysis) and its first real payment (a card top-up or a paid
--- subscription invoice, annual included, less refunds and disputes). Weekly
--- active is not here: the page reuses Batch 9's activity_weekly_facts.
+-- subscription invoice, annual included, less refunds and disputes), and
+-- whether it redeemed a referral code (profiles.referred_by_code; Review R3,
+-- R3-96: the code itself never leaves the table). Weekly active is not here:
+-- the page reuses Batch 9's activity_weekly_facts.
 -- security definer: it reads auth.users.last_sign_in_at.
 create or replace function public.signup_source_facts(p jsonb)
 returns jsonb language plpgsql stable security definer set search_path = '' as $$
@@ -5130,7 +5074,8 @@ begin
         'method', ma.signup_method, 'team', ma.team_invite) end,
       'profile_done', pq.completed_at,
       'first_report', fr.at,
-      'first_paid', fp.at
+      'first_paid', fp.at,
+      'referred', pr.referred_by_code is not null
     ) order by pr.created_at)
     from public.profiles pr
     left join auth.users au on au.id = pr.id
@@ -6030,12 +5975,13 @@ revoke all on public.resume_intents from anon, authenticated;
 --   first_deep  this purchase is the account's first deep report
 alter table public.analysis_purchases add column if not exists offer text;
 alter table public.analysis_purchases add column if not exists first_deep boolean not null default false;
+-- Dropped and re-added on every run (Review R3, R3-74 / R2-119: guarded by
+-- name, a changed offer list never applied to a database that had the check).
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'analysis_purchases_offer_check') then
-    alter table public.analysis_purchases add constraint analysis_purchases_offer_check
-      check (offer is null or offer in ('welcome', 'welcome_deep', 'first_deep', 'first_pmi'));
-  end if;
+  alter table public.analysis_purchases drop constraint if exists analysis_purchases_offer_check;
+  alter table public.analysis_purchases add constraint analysis_purchases_offer_check
+    check (offer is null or offer in ('welcome', 'welcome_deep', 'first_deep', 'first_pmi'));
 end $$;
 -- One welcome-priced analysis per member and deal; one first deep report per
 -- paying account. A failed purchase frees its claim.
@@ -6187,9 +6133,15 @@ create table if not exists public.si_conversation_questions (
   question text not null check (char_length(question) between 1 and 500),
   outcome text not null check (outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off')),
   knowledge_ref text,
-  source text not null default 'tool' check (source in ('tool', 'analysis', 'sms')),
+  source text not null default 'tool',
   at timestamptz not null default now()
 );
+-- The one list (Review R3, R3-83): 'chat' is Batch 26's (R2-87). A later
+-- section cannot widen a check this one re-adds on every run.
+do $$ begin
+  alter table public.si_conversation_questions drop constraint if exists si_conversation_questions_source_check;
+  alter table public.si_conversation_questions add constraint si_conversation_questions_source_check check (source in ('tool', 'analysis', 'sms', 'chat'));
+end $$;
 create index if not exists si_conversation_questions_conv_idx on public.si_conversation_questions (conversation_id, at);
 create index if not exists si_conversation_questions_outcome_idx on public.si_conversation_questions (outcome, at desc);
 alter table public.si_conversation_questions enable row level security;  -- no policies: service role only
@@ -6638,15 +6590,41 @@ revoke all on function public.member_scanned(jsonb) from public, anon, authentic
 grant execute on function public.member_scanned(jsonb) to service_role;
 
 -- Fill listing_scan_days from what is already stored (every day since the
--- first listing), exactly; re-running recounts the same rows.
-do $$
+-- first listing), exactly, once: stamped in billing_settings
+-- (listing_scan_days_backfill) when it has run, so a later schema run leaves
+-- the daily job's rows alone. Before Review R3 (R3-128 / R2-121) every run
+-- recounted every day and, once the span passed record_listing_scan_days's
+-- 4000-day limit, aborted the whole file; the days are now counted in runs of
+-- at most 4000. Returns {filled, days, rows} or {filled: false, reason}.
+create or replace function public.listing_scan_days_backfill()
+returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
-  v_first date := (select (min(first_seen_at) at time zone 'Europe/London')::date from public.sourced_listings);
+  v_today date := (now() at time zone 'Europe/London')::date;
+  v_first date := (select (min(l.first_seen_at) at time zone 'Europe/London')::date from public.sourced_listings l);
+  v_from date;
+  v_to date;
+  v_days integer := 0;
+  v_rows integer := 0;
 begin
-  if v_first is not null then
-    perform public.record_listing_scan_days(array(select generate_series(v_first, (now() at time zone 'Europe/London')::date, interval '1 day')::date));
+  if exists (select 1 from public.billing_settings s where s.key = 'listing_scan_days_backfill') then
+    return jsonb_build_object('filled', false, 'reason', 'done');
   end if;
+  if v_first is null then return jsonb_build_object('filled', false, 'reason', 'no_listings'); end if;
+  v_from := least(v_first, v_today);
+  while v_from <= v_today loop
+    v_to := least(v_today, v_from + 3999);
+    v_rows := v_rows + public.record_listing_scan_days(array(select generate_series(v_from, v_to, interval '1 day')::date));
+    v_days := v_days + (v_to - v_from + 1);
+    v_from := v_to + 1;
+  end loop;
+  insert into public.billing_settings (key, value)
+    values ('listing_scan_days_backfill', jsonb_build_object('at', now(), 'from', least(v_first, v_today), 'to', v_today, 'days', v_days, 'rows', v_rows))
+    on conflict (key) do nothing;
+  return jsonb_build_object('filled', true, 'days', v_days, 'rows', v_rows);
 end $$;
+revoke all on function public.listing_scan_days_backfill() from public, anon, authenticated;
+grant execute on function public.listing_scan_days_backfill() to service_role;
+do $$ begin perform public.listing_scan_days_backfill(); end $$;
 
 notify pgrst, 'reload schema';
 
@@ -6672,6 +6650,18 @@ alter table public.profiles add column if not exists signup_path_at timestamptz;
 -- How the stamp was set: first_touch | start | quiz | account.
 alter table public.profiles add column if not exists signup_path_via text;
 create index if not exists profiles_signup_path_idx on public.profiles (signup_path_at) where signup_path is not null;
+
+-- Batch 10's daily-picks backfill, moved here (Review R3, R3-18 / R2-82): a
+-- member never sent a pick and never opted out is enrolled, unless they are a
+-- management-only account (src/lib/management/stamp-server.ts switches their
+-- picks off when it stamps them; before this guard every schema run switched
+-- them back on). Safe to re-run.
+update public.profiles
+   set sourcing_alerts = true
+ where sourcing_alerts = false
+   and sourcing_opted_out_at is null
+   and sourcing_last_sent_at is null
+   and signup_path is null;
 -- The funnel-price email (NOT the members' pricing_notice_sent_at, which is for
 -- the investor prices): stamped per owner after a successful send. A legacy
 -- owner moves to tier pricing funnel_notice_days after this.
@@ -7003,6 +6993,7 @@ create or replace view public.si_knowledge_live with (security_invoker = true) a
   select id, slug, version, question, variants, answer, category, channels, show_when, approved_at
   from public.si_knowledge
   where answer is not null and question is not null and category is not null
+    and approved_at is not null  -- Review R3 (R3-125): live means approved, not just "has an answer"
     and stale_reason is null and retired_at is null;
 revoke all on public.si_knowledge_live from anon, authenticated;
 
@@ -7221,6 +7212,10 @@ grant execute on function public.si_fact_remember(jsonb) to service_role;
 -- kept si_question_retention_months, then deleted oldest first, with any gap
 -- whose questions have all gone. Refuses a cutoff less than a year old,
 -- whatever is asked. apply false (the default) only counts.
+-- Review R3 (R3-100 / R2-154): with them, the conversations past the cutoff
+-- whose questions have all gone (their turns went at
+-- si_transcript_retention_days) and the call records past it. Intro rows
+-- stay: si_calls_log_intro_uidx is how "one intro ever" is kept.
 create or replace function public.si_question_retention(p jsonb)
 returns jsonb language plpgsql set search_path = '' as $$
 declare
@@ -7229,6 +7224,8 @@ declare
   v_limit integer := least(200000, greatest(1, coalesce((p->>'limit')::integer, 20000)));
   v_questions integer;
   v_gaps integer;
+  v_conversations integer;
+  v_calls integer;
   v_more boolean;
 begin
   if v_before is null or v_before > now() - interval '12 months' then
@@ -7238,7 +7235,10 @@ begin
     select count(*) into v_questions from public.si_conversation_questions q where q.at < v_before;
     select count(*) into v_gaps from public.si_knowledge_gaps g
       where g.last_asked_at < v_before;
-    return jsonb_build_object('dry', true, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'more', v_questions > v_limit);
+    select count(*) into v_conversations from public.si_conversations c
+      where c.started_at < v_before and not exists (select 1 from public.si_conversation_questions q where q.conversation_id = c.id);
+    select count(*) into v_calls from public.si_calls_log l where l.queued_at < v_before and l.call_type <> 'intro';
+    return jsonb_build_object('dry', true, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'conversations', v_conversations, 'calls', v_calls, 'more', v_questions > v_limit);
   end if;
   with gone as (
     delete from public.si_conversation_questions q
@@ -7251,8 +7251,19 @@ begin
       and not exists (select 1 from public.si_knowledge_gap_questions gq where gq.gap_id = g.id)
     returning 1
   ) select count(*) into v_gaps from gone;
+  with gone as (
+    delete from public.si_conversations c
+    where c.started_at < v_before
+      and not exists (select 1 from public.si_conversation_questions q where q.conversation_id = c.id)
+    returning 1
+  ) select count(*) into v_conversations from gone;
+  with gone as (
+    delete from public.si_calls_log l
+    where l.queued_at < v_before and l.call_type <> 'intro'
+    returning 1
+  ) select count(*) into v_calls from gone;
   select exists (select 1 from public.si_conversation_questions q where q.at < v_before) into v_more;
-  return jsonb_build_object('dry', false, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'more', v_more);
+  return jsonb_build_object('dry', false, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'conversations', v_conversations, 'calls', v_calls, 'more', v_more);
 end $$;
 revoke all on function public.si_question_retention(jsonb) from public, anon, authenticated;
 grant execute on function public.si_question_retention(jsonb) to service_role;
@@ -7479,7 +7490,10 @@ revoke all on public.credit_nudges from anon, authenticated;
 -- ── Deal calls: one per member per deal (R2-168) ──
 -- Without it a deal call that has ended could be queued again for the same
 -- deal by the next pass. trigger_ref is the deal id.
-create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal';
+-- Review R3 (R3-104): a deal call that failed at the provider is not the deal's one call; it may be queued once more
+-- (the standout plan allows one retry, then tells the member by email).
+drop index if exists public.si_calls_log_deal_uidx;
+create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal' and status <> 'failed';
 
 -- ── A face debit never takes credit an open reservation holds (R2-13) ──
 -- Batch 23's calls (minutes, texts, the missed-call email), this batch's deal
@@ -7488,8 +7502,8 @@ create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log 
 -- deep search or funnel lead had reserved, and that action then overdrew (or,
 -- for a deep search, went free). Redefined here as it was, plus one check:
 -- the base pence the walk takes may not exceed credit_available's spendable
--- base (the grants' base value less open reservations). The earlier
--- definition (Batch 23) is replaced on every run, so this one stands.
+-- base (the grants' base value less open reservations). This is the one
+-- definition: the Teams section's earlier copy was removed (Review R3, R3-153).
 create or replace function public.credit_debit_face(p_user uuid, p_face_pence numeric, p_meta jsonb default '{}'::jsonb)
 returns bigint language plpgsql security definer set search_path = public as $$
 declare
@@ -7596,12 +7610,8 @@ notify pgrst, 'reload schema';
 -- and the retry guard, never any text. Code: src/lib/chat. Additive; nothing
 -- is added to ACCESS_COLUMNS.
 
--- ── R2-87: a question in the log can come from the chat ──
-do $$
-begin
-  alter table public.si_conversation_questions drop constraint if exists si_conversation_questions_source_check;
-  alter table public.si_conversation_questions add constraint si_conversation_questions_source_check check (source in ('tool', 'analysis', 'sms', 'chat'));
-end $$;
+-- R2-87: a question in the log can come from the chat ('chat' is in
+-- si_conversation_questions_source_check, in the Batch 23 section).
 
 -- ── chat_turns: one row per typed question ──
 --   id              also the ledger action_id of its charge (credit_transactions.action_id)
@@ -7622,9 +7632,9 @@ create table if not exists public.chat_turns (
   user_id uuid references public.profiles(id) on delete set null,
   payer_id uuid,
   client_turn_id uuid not null,
-  surface text not null check (surface in ('quick', 'full')),
-  status text not null default 'pending' check (status in ('pending', 'answered', 'no_answer', 'failed')),
-  outcome text check (outcome is null or outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off')),
+  surface text not null,
+  status text not null default 'pending',
+  outcome text,
   conversation_id uuid references public.si_conversations(id) on delete set null,
   question_id uuid,
   model text,
@@ -7647,6 +7657,15 @@ create table if not exists public.chat_turns (
   answered_at timestamptz,
   anonymised_at timestamptz
 );
+-- Named and re-added on every run (Review R3, R3-83), so a change to a list applies to a database that has the table.
+do $$ begin
+  alter table public.chat_turns drop constraint if exists chat_turns_surface_check;
+  alter table public.chat_turns add constraint chat_turns_surface_check check (surface in ('quick', 'full'));
+  alter table public.chat_turns drop constraint if exists chat_turns_status_check;
+  alter table public.chat_turns add constraint chat_turns_status_check check (status in ('pending', 'answered', 'no_answer', 'failed'));
+  alter table public.chat_turns drop constraint if exists chat_turns_outcome_check;
+  alter table public.chat_turns add constraint chat_turns_outcome_check check (outcome is null or outcome in ('answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off'));
+end $$;
 create unique index if not exists chat_turns_client_uidx on public.chat_turns (user_id, client_turn_id);
 create unique index if not exists chat_turns_pending_uidx on public.chat_turns (user_id) where status = 'pending';
 create index if not exists chat_turns_user_idx on public.chat_turns (user_id, created_at desc);

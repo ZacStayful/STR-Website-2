@@ -40,6 +40,9 @@ export const CHARGE_DESCRIPTION = 'Stayful Intelligence question';
 /** The longest question: the conversation log keeps up to 500 characters. */
 export const MAX_QUESTION_CHARS = 500;
 
+/** R3-32: the chat's own question when it offers to remember something: stored as the fact's `asked`, never the member's text. */
+export const FACT_PROMPT = 'Want me to remember that?';
+
 /** A turn still pending after this is from an instance that died: marked failed on the member's next question. */
 export const PENDING_STALE_MS = 2 * 60_000;
 

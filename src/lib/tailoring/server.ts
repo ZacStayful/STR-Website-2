@@ -112,7 +112,7 @@ async function signalsFor(admin: Admin, userIds: readonly string[], since: Date)
     if (keeps.error) keeps = await readKeeps('user_id, deal_id, updated_at');
     if (keeps.error) warn(`keeps unreadable: ${keeps.error}`);
     // Batch 25: a Keep Stayful Intelligence made is not the member's signal (no silent leaning).
-    const siSaved = keeps.rows.length > 0 ? await siSavedPairs(admin, some) : new Set<string>();
+    const siSaved = keeps.rows.length > 0 ? ((await siSavedPairs(admin, some)) ?? new Set<string>()) : new Set<string>();
     for (const r of keeps.rows) if (!siSaved.has(siKey(r.user_id, r.deal_id))) out.push({ userId: r.user_id, profileId: r.profile_id ?? null, dealId: r.deal_id, source: 'keep', at: r.updated_at });
 
     const acts = await allPages<{ user_id: string; kind: string; deal_id: string; profile_id: string | null; occurred_at: string }>((from, to) =>
