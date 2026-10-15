@@ -7215,6 +7215,10 @@ grant execute on function public.si_fact_remember(jsonb) to service_role;
 -- kept si_question_retention_months, then deleted oldest first, with any gap
 -- whose questions have all gone. Refuses a cutoff less than a year old,
 -- whatever is asked. apply false (the default) only counts.
+-- Review R3 (R3-100 / R2-154): with them, the conversations past the cutoff
+-- whose questions have all gone (their turns went at
+-- si_transcript_retention_days) and the call records past it. Intro rows
+-- stay: si_calls_log_intro_uidx is how "one intro ever" is kept.
 create or replace function public.si_question_retention(p jsonb)
 returns jsonb language plpgsql set search_path = '' as $$
 declare
@@ -7223,6 +7227,8 @@ declare
   v_limit integer := least(200000, greatest(1, coalesce((p->>'limit')::integer, 20000)));
   v_questions integer;
   v_gaps integer;
+  v_conversations integer;
+  v_calls integer;
   v_more boolean;
 begin
   if v_before is null or v_before > now() - interval '12 months' then
@@ -7232,7 +7238,10 @@ begin
     select count(*) into v_questions from public.si_conversation_questions q where q.at < v_before;
     select count(*) into v_gaps from public.si_knowledge_gaps g
       where g.last_asked_at < v_before;
-    return jsonb_build_object('dry', true, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'more', v_questions > v_limit);
+    select count(*) into v_conversations from public.si_conversations c
+      where c.started_at < v_before and not exists (select 1 from public.si_conversation_questions q where q.conversation_id = c.id);
+    select count(*) into v_calls from public.si_calls_log l where l.queued_at < v_before and l.call_type <> 'intro';
+    return jsonb_build_object('dry', true, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'conversations', v_conversations, 'calls', v_calls, 'more', v_questions > v_limit);
   end if;
   with gone as (
     delete from public.si_conversation_questions q
@@ -7245,8 +7254,19 @@ begin
       and not exists (select 1 from public.si_knowledge_gap_questions gq where gq.gap_id = g.id)
     returning 1
   ) select count(*) into v_gaps from gone;
+  with gone as (
+    delete from public.si_conversations c
+    where c.started_at < v_before
+      and not exists (select 1 from public.si_conversation_questions q where q.conversation_id = c.id)
+    returning 1
+  ) select count(*) into v_conversations from gone;
+  with gone as (
+    delete from public.si_calls_log l
+    where l.queued_at < v_before and l.call_type <> 'intro'
+    returning 1
+  ) select count(*) into v_calls from gone;
   select exists (select 1 from public.si_conversation_questions q where q.at < v_before) into v_more;
-  return jsonb_build_object('dry', false, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'more', v_more);
+  return jsonb_build_object('dry', false, 'before', v_before, 'questions', v_questions, 'gaps', v_gaps, 'conversations', v_conversations, 'calls', v_calls, 'more', v_more);
 end $$;
 revoke all on function public.si_question_retention(jsonb) from public, anon, authenticated;
 grant execute on function public.si_question_retention(jsonb) to service_role;

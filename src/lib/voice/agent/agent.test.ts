@@ -79,6 +79,9 @@ test('the agent uses the one voice, ends voicemail without a message, and keeps 
   assert.equal(a.conversation_config.conversation.max_duration_seconds, 600);
   assert.equal(a.conversation_config.agent.prompt.built_in_tools.voicemail_detection.params.voicemail_message, '');
   assert.equal(a.platform_settings.privacy.retention_days, 90);
+  // R3-6: the policy says calls are not recorded as audio; the agent is told so.
+  assert.equal(a.platform_settings.privacy.record_voice, false);
+  assert.equal(a.platform_settings.privacy.delete_audio, true);
 });
 
 test('call variables carry every name, never a balance; openers are filled', () => {
