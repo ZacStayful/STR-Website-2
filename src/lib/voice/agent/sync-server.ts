@@ -35,7 +35,8 @@ import { secretsConfigured } from '../../crypto/secrets';
 import { savePostCallWebhook, storedPostCallWebhook } from '../post-call-webhook-server';
 import { elevenLabsJson } from '../elevenlabs-server';
 import { toolConfig } from './tools';
-import { agentConfig, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
+import { agentConfig, apiErrorText, findSecret, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_WEBHOOK_NAME, webhookById, workspaceWarnings, type AgentPlatformNow } from './agent-config';
+import { TOOL_HEADER_KEY, toolHeaderViaSecret } from './tool-header-server';
 import { runPhoneCheck } from './phone-check-server';
 import { unknownCallerDefaults } from './variables';
 import { VARIABLE_NAMES } from './variables';
@@ -57,6 +58,23 @@ async function storedToolIds(): Promise<Partial<Record<ToolName, string>>> {
 }
 
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 12);
+
+/**
+ * R3-50 / R2-25: the tools' token as an ElevenLabs workspace secret, one per
+ * token value (named by its hash, so a rotated ELEVENLABS_TOOL_SECRET makes a
+ * new one), found by name or created. Never a call variable from then on.
+ */
+async function ensureToolSecret(apiKey: string, token: string): Promise<{ ok: true; secretId: string; name: string; created: boolean } | { ok: false; message: string }> {
+  const name = `si_tool_token_${hash(token)}`;
+  const list = await elevenLabsJson(apiKey, 'GET', '/v1/convai/secrets');
+  if (!list.ok) return { ok: false, message: `Couldn't list the ElevenLabs workspace secrets (${apiErrorText(list.status, list.json)}).` };
+  const found = findSecret(list.json, name);
+  if (found) return { ok: true, secretId: found, name, created: false };
+  const made = await elevenLabsJson(apiKey, 'POST', '/v1/convai/secrets', { type: 'new', name, value: token });
+  const id = made.ok ? (made.json as { secret_id?: unknown } | null)?.secret_id : null;
+  if (typeof id !== 'string' || !id) return { ok: false, message: `Creating the tools' workspace secret failed (${apiErrorText(made.status, made.json)}).` };
+  return { ok: true, secretId: id, name, created: true };
+}
 
 const INITIATE_PATH = '/api/voice/elevenlabs/initiate';
 const POST_CALL_PATH = '/api/voice/elevenlabs/webhook';
@@ -101,6 +119,9 @@ async function webhookPlan(apiKey: string, cur: CurrentAgent): Promise<{ initiat
       postCallWebhookId = found.id;
       if (found.id !== curPostCall) changes.push(`post-call webhook: ${curPostCall ?? 'none'} → ${found.id}`);
       if (found.autoDisabled) changes.push('warning: ElevenLabs switched the post-call webhook off after failures. Switch it back on in Settings → Webhooks.');
+    } else if (stored?.undecryptable) {
+      // R3-69: the stored secret is there but this deployment's key can't read it: say so, never a second webhook.
+      changes.push(`warning: the stored post-call secret (webhook ${stored.id}) can't be decrypted with this deployment's CRM_ENCRYPTION_KEY, so call results are refused. Put the key back, or delete that webhook in ElevenLabs → Settings → Webhooks and sync again.`);
     } else if (!secretsConfigured()) {
       changes.push("post-call webhook: can't be created here: CRM_ENCRYPTION_KEY isn't set, so its secret couldn't be kept.");
     } else {
@@ -158,16 +179,25 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   else for (const n of TOOL_NAMES) if (!ids[n]) changes.push(`tool ${n}: not created yet (press Sync on /admin/calls)`);
   if (missingDefaults.length) changes.push(`variable defaults: ${missingDefaults.length} missing → set (a call whose details never arrive still starts, as for an unknown caller, instead of "busy")`);
   changes.push(...hooks.changes, ...phone.changes);
+  // R3-50: the tools' token moves from a call variable to a workspace secret on the next Sync.
+  if (o.toolsToo && !(await toolHeaderViaSecret())) changes.push('tool token: sent as the secret__tool_token call variable → kept in ElevenLabs as a workspace secret (the Sync makes it; nothing to copy)');
   // The phone check (read only; saved for later in billing_settings.si_phone_check).
   if (!o.apply) return { ok: true, dry: true, message: 'Dry run: nothing sent.', changes: [...changes, ...(await runPhoneCheck())], promptChars: wantedPrompt.length };
 
   // Tools first, so the agent can list their ids (only from the /admin/calls button: two syncs at once must never create a tool twice).
   const next: Partial<Record<ToolName, string>> = { ...ids };
   if (o.toolsToo) {
+    // R3-50 / R2-25: the tools' token lives in ElevenLabs as a workspace secret, never in a call's variables.
+    const token = toolSecret();
+    if (!token) return { ok: false, dry: false, message: 'Set ELEVENLABS_TOOL_SECRET first: the tools take their token from it.', changes };
+    const sec = await ensureToolSecret(config.apiKey, token);
+    if (!sec.ok) return { ok: false, dry: false, message: sec.message, changes };
     for (const n of TOOL_NAMES) {
-      const body = { tool_config: toolConfig(n, base) };
-      const r = ids[n] ? await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/tools/${encodeURIComponent(ids[n]!)}`, body) : await elevenLabsJson(config.apiKey, 'POST', '/v1/convai/tools', body);
-      if (!r.ok) return { ok: false, dry: false, message: `Tool ${n} failed (HTTP ${r.status}): ${JSON.stringify(r.json).slice(0, 300)}`, changes };
+      const body = { tool_config: toolConfig(n, base, { secretId: sec.secretId }) };
+      let r = ids[n] ? await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/tools/${encodeURIComponent(ids[n]!)}`, body) : await elevenLabsJson(config.apiKey, 'POST', '/v1/convai/tools', body);
+      // R3-151: a tool deleted in the ElevenLabs dashboard is made again, not a failed Sync for good.
+      if (ids[n] && r.status === 404) r = await elevenLabsJson(config.apiKey, 'POST', '/v1/convai/tools', body);
+      if (!r.ok) return { ok: false, dry: false, message: `Tool ${n} failed (${apiErrorText(r.status, r.json)}).`, changes };
       const id = (r.json as { id?: string } | null)?.id ?? ids[n];
       if (id && id !== next[n]) {
         next[n] = id;
@@ -175,13 +205,22 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
         await updateBillingSetting(TOOL_IDS_KEY, next);
       }
     }
+    // From here no call sends the token as a variable (inbound-server.ts and queue-server.ts read this).
+    await updateBillingSetting(TOOL_HEADER_KEY, { mode: 'secret', secret_id: sec.secretId, name: sec.name, at: new Date().toISOString() });
   }
   // The post-call webhook, made here when there is none the app has the secret for (only from the /admin/calls button, like the tools).
   let postCallWebhookId = hooks.postCallWebhookId;
   if (hooks.createPostCall && o.toolsToo) {
     const made = await elevenLabsJson(config.apiKey, 'POST', '/v1/workspace/webhooks', { settings: { auth_type: 'hmac', name: POST_CALL_WEBHOOK_NAME, webhook_url: siteUrl(POST_CALL_PATH) } });
     const hook = made.ok ? parseCreatedWebhook(made.json) : null;
-    if (!hook) return { ok: false, dry: false, message: `Creating the post-call webhook failed (HTTP ${made.status}): ${JSON.stringify(made.json).slice(0, 300)}`, changes };
+    if (!hook) {
+      // R3-136: the create reply is never printed: a parsed one carried the secret, an unparsed one may.
+      const madeId = (made.json as { webhook_id?: unknown } | null)?.webhook_id;
+      const message = made.ok
+        ? `The post-call webhook was created but the reply had no webhook_secret: delete webhook ${typeof madeId === 'string' && madeId ? madeId : '(the newest one for this site)'} in ElevenLabs → Settings → Webhooks and sync again.`
+        : `Creating the post-call webhook failed (${apiErrorText(made.status, made.json)}).`;
+      return { ok: false, dry: false, message, changes };
+    }
     try {
       await savePostCallWebhook(hook.id, hook.secret);
     } catch (err) {
@@ -191,11 +230,12 @@ export async function syncAgent(o: { apply: boolean; knowledge: string; toolsToo
   }
   const final = agentConfig({ knowledge, voiceId: voiceId(), toolIds: TOOL_NAMES.map((n) => next[n]).filter((x): x is string => Boolean(x)), maxCallSeconds: settings.voice.maxCallSeconds, retentionDays: settings.voice.transcriptRetentionDays, initiationWebhook: hooks.initiationWebhook, postCallWebhookId, current: hooks.current, variableDefaults });
   const r = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/agents/${encodeURIComponent(config.agentId)}`, final);
-  if (!r.ok) return { ok: false, dry: false, message: `Agent update failed (HTTP ${r.status}): ${JSON.stringify(r.json).slice(0, 300)}`, changes };
+  // R3-136: the status and the messages only: a validation error would echo the submitted config, secret and all.
+  if (!r.ok) return { ok: false, dry: false, message: `Agent update failed (${apiErrorText(r.status, r.json)}).`, changes };
   // Incoming calls to the number go to this agent (only from the /admin/calls button; the Dry run showed which agent had them).
   if (phone.assign && o.toolsToo) {
     const a = await elevenLabsJson(config.apiKey, 'PATCH', `/v1/convai/phone-numbers/${encodeURIComponent(config.phoneNumberId)}`, { agent_id: config.agentId });
-    if (!a.ok) return { ok: false, dry: false, message: `Agent synced, but giving it the number's incoming calls failed (HTTP ${a.status}): ${JSON.stringify(a.json).slice(0, 300)}`, changes };
+    if (!a.ok) return { ok: false, dry: false, message: `Agent synced, but giving it the number's incoming calls failed (${apiErrorText(a.status, a.json)}).`, changes };
   }
   if (o.toolsToo) await runPhoneCheck();
   return { ok: true, dry: false, message: 'Agent synced.', changes, promptChars: wantedPrompt.length };

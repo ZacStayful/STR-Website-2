@@ -177,3 +177,31 @@ export function isElevenLabsVoiceUrl(url: string | null | undefined): boolean {
     return false;
   }
 }
+
+/**
+ * R3-136: what an ElevenLabs error reply may be shown as on /admin/calls: the
+ * status and pydantic's msg/loc lines, never the submitted input (a
+ * validation error echoes it, and the agent PATCH carries a secret).
+ */
+export function apiErrorText(status: number, json: unknown): string {
+  const j = (json && typeof json === 'object' ? json : null) as Record<string, unknown> | null;
+  const detail = j?.detail;
+  const lines: string[] = [];
+  if (Array.isArray(detail)) {
+    for (const d of detail.slice(0, 5)) {
+      if (!d || typeof d !== 'object') continue;
+      const o = d as Record<string, unknown>;
+      const loc = Array.isArray(o.loc) ? o.loc.map(String).join('.') : null;
+      if (typeof o.msg === 'string') lines.push(loc ? `${loc}: ${o.msg}` : o.msg);
+    }
+  } else if (detail && typeof detail === 'object' && typeof (detail as Record<string, unknown>).message === 'string') lines.push(String((detail as Record<string, unknown>).message));
+  else if (typeof detail === 'string') lines.push(detail);
+  return `HTTP ${status}${lines.length ? `: ${lines.join('; ').slice(0, 300)}` : ''}`;
+}
+
+/** R3-50: a workspace secret by name in GET /v1/convai/secrets ({ secrets: [{ secret_id, name }] }), or null. */
+export function findSecret(json: unknown, name: string): string | null {
+  const list = json && typeof json === 'object' && Array.isArray((json as { secrets?: unknown }).secrets) ? (json as { secrets: Record<string, unknown>[] }).secrets : [];
+  const hit = list.find((s) => s && typeof s === 'object' && s.name === name && typeof s.secret_id === 'string' && s.secret_id);
+  return hit ? String(hit.secret_id) : null;
+}

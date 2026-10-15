@@ -35,6 +35,7 @@ import { placeOutboundCall } from './elevenlabs-server';
 import { callVariables, contextForType, fill, isCallContext, openerFor, type CallContext } from './agent/variables';
 import { knowledgeCallValues } from '../knowledge/agent-server';
 import { claimCallSlot } from './cap-server';
+import { toolHeaderViaSecret } from './agent/tool-header-server';
 import { startConversation } from '../conversations/log-server';
 import { dealCallStillWanted } from '../standout/calls-server';
 
@@ -212,7 +213,8 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
     if (o.apply && !config) console.warn('[voice] not configured (ELEVENLABS_API_KEY / ELEVENLABS_AGENT_ID / ELEVENLABS_PHONE_NUMBER_ID): call left queued');
     return { outcome: 'dry_run', would };
   }
-  const secret = toolSecret();
+  // R3-50: once the tools take their token from an ElevenLabs workspace secret (the Sync sets it), no call carries it.
+  const secret = (await toolHeaderViaSecret(admin)) ? null : toolSecret();
   // Claim the call: queued → ringing with today's UK day. The one-a-day index refuses a second.
   let claim = admin
     .from('si_calls_log')
