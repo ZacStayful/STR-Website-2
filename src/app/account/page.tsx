@@ -237,7 +237,7 @@ export default async function AccountPage({
         <MoreSection keys={accountMoreLinks({ teamMember: false, teamOwnsFunnel })} storeUrl={storeUrl} />
         {/* Batch 22f: the way in for a management company the ad missed (owners only; nav.ts is Batch 22e's). */}
         <p className="mt-1.5 text-sm text-[#7a8274]">
-          <Link href={`${START_PATH}?via=account`} className="text-[#2e3d2b] underline">
+          <Link href={`${START_PATH}?via=account`} prefetch={false} className="text-[#2e3d2b] underline">
             Get leads with your own branded form
           </Link>
           {' · '}a short-let income report for every landlord enquiry, in your name

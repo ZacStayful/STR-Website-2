@@ -14,10 +14,17 @@ import 'server-only';
  * twice. The debit is debitFace — exactly the displayed price, whatever
  * credit pays it — capped at the member's balance, so a call never takes
  * the balance below zero (the rest is absorbed as house spend).
- * Raw cost is logged to provider_calls for /admin/billing's reconciliation.
+ * Raw cost is logged to provider_calls for /admin/billing's reconciliation,
+ * free calls (admin, a suspended seat, a zero price) included (R3-152).
+ *
+ * Review R3: a debit whose reply was lost is read back from the ledger and
+ * recorded as the charge it is (R3-26); a minutes charge whose debit failed
+ * gives its guard back so the redelivery charges once (R2-15 / R3-75); a
+ * text's or email's guard is never given back after the send (the thing
+ * went), so a failed debit there is a charge the house absorbs, logged.
  */
 import { createAdminClient } from '../supabase/admin';
-import { debitFace, getBalance, InsufficientCreditError } from '../credit/ledger';
+import { debitFace, debitFor, getBalance, InsufficientCreditError } from '../credit/ledger';
 import { getBillingSettings, getUnitCostTable } from '../credit/unit-costs';
 import { priceFor } from '../credit/pricing';
 import { isAdminEmail } from '../admin';
@@ -81,17 +88,20 @@ export async function releaseCharge(guardId: string): Promise<void> {
   if (error) console.error('[voice] charge release failed:', error.message);
 }
 
-/** Take the price for a claimed guard, capped at the balance. A team member's usage is paid by their owner. */
-async function settle(admin: Admin, guardId: string, spec: ChargeSpec): Promise<number> {
+/**
+ * Take the price for a claimed guard, capped at the balance. A team member's usage is paid by their owner.
+ * `retriable`: the guard was claimed and settled in one go (minutes), so when the debit failed and nothing is
+ * on the ledger it is given back for the redelivery to charge once (R3-75).
+ */
+async function settle(admin: Admin, guardId: string, spec: ChargeSpec, retriable = false): Promise<number> {
   await admin.from('si_call_charges').update({ quantity: spec.quantity }).eq('id', guardId);
   const payer = await payerFor(spec.userId);
-  if (payer.suspended) return 0;
   const o: ChargeSpec = { ...spec, userId: payer.payerId };
-  // Admin accounts are never charged (the same rule as metered usage).
-  if (o.pricePence <= 0 || (await isAdminAccount(admin, o.userId))) return 0;
+  // Admin accounts are never charged (the same rule as metered usage), nor a suspended seat or a zero price.
+  const free = payer.suspended || o.pricePence <= 0 || (await isAdminAccount(admin, o.userId));
   let charged = 0;
   let txId: number | null = null;
-  for (let attempt = 0; attempt < 2 && txId === null; attempt++) {
+  for (let attempt = 0; !free && attempt < 2 && txId === null; attempt++) {
     const balance = await getBalance(o.userId).catch(() => null);
     // R2-13: never the credit an open reservation holds (the ledger refuses it too).
     charged = capToBalance(o.pricePence, balance ? callablePence(balance, maxSpendRate(balance.rates)) : 0);
@@ -109,26 +119,36 @@ async function settle(admin: Admin, guardId: string, spec: ChargeSpec): Promise<
       });
     } catch (err) {
       // The balance moved between the read and the debit: read it again once.
-      if (!(err instanceof InsufficientCreditError)) {
-        console.error('[voice] debit failed:', err);
+      if (err instanceof InsufficientCreditError) continue;
+      console.error('[voice] debit failed:', err);
+      // R3-26: the debit may have committed with its reply lost; the ledger knows (the debit carries action_id = guardId).
+      const done = await debitFor(guardId).catch(() => null);
+      if (done) {
+        txId = done.id;
+        charged = done.facePence;
         break;
       }
+      if (retriable) {
+        // R2-15 / R3-75: nothing is on the ledger: give the guard back so the redelivery charges once.
+        await releaseCharge(guardId);
+        return 0;
+      }
+      console.error('[voice] charge lost; the guard stays so nothing is sent again:', o.key);
+      break;
     }
   }
   if (txId === null) charged = 0;
   await admin.from('si_call_charges').update({ charged_pence: charged, transaction_id: txId }).eq('id', guardId);
   if (o.callId) await refreshCallCharged(admin, o.callId);
-  // Raw cost for /admin/billing (provider_calls is where unit rows reconcile).
+  // Raw cost for /admin/billing (provider_calls is where unit rows reconcile), free and test calls included (R3-152).
   // Texts' raw cost is already there (sendSms meters it as house spend).
-  if (o.rawPence <= 0) {
-    if (charged > 0) void import('../credit/after-debit').then((m) => m.afterDebit(o.userId)).catch(() => {});
-    return charged;
+  if (o.rawPence > 0) {
+    const { error } = await admin.from('provider_calls').insert({
+      provider: o.unit.provider, question: `si.${o.kind}`, key: o.key, cost_pence: Math.round(o.rawPence), raw_pence: Math.round(o.rawPence * 10_000) / 10_000,
+      user_id: o.userId, billed_user_id: o.userId, ok: true, unit: o.unit.unit, quantity: o.quantity, base_pence: o.pricePence, charged_pence: charged, action_id: guardId, bypass: free,
+    });
+    if (error) console.error('[voice] provider_calls insert failed:', error.message);
   }
-  const { error } = await admin.from('provider_calls').insert({
-    provider: o.unit.provider, question: `si.${o.kind}`, key: o.key, cost_pence: Math.round(o.rawPence), raw_pence: Math.round(o.rawPence * 10_000) / 10_000,
-    user_id: o.userId, billed_user_id: o.userId, ok: true, unit: o.unit.unit, quantity: o.quantity, base_pence: o.pricePence, charged_pence: charged, action_id: guardId, bypass: false,
-  });
-  if (error) console.error('[voice] provider_calls insert failed:', error.message);
   if (charged > 0) void import('../credit/after-debit').then((m) => m.afterDebit(o.userId)).catch(() => {});
   return charged;
 }
@@ -145,7 +165,7 @@ async function refreshCallCharged(admin: Admin, callId: string): Promise<void> {
 async function chargeOnce(admin: Admin, o: ChargeSpec): Promise<ChargeResult> {
   const guardId = await claimCharge(o.key, o.callId, o.userId, o.kind);
   if (!guardId) return { charged: 0, duplicate: true };
-  return { charged: await settle(admin, guardId, o), duplicate: false };
+  return { charged: await settle(admin, guardId, o, true), duplicate: false };
 }
 
 /** Answered seconds, at the unit row's per-minute price. */

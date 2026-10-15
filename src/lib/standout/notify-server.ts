@@ -30,6 +30,7 @@ import { inOutboundHours, ukDay } from '../voice/hours';
 import { memberFacts, type MemberFacts } from '../voice/member-server';
 import { enqueueCall, placeCall } from '../voice/queue-server';
 import { callPencePerMinute, claimCharge, releaseCharge, settleEmail, settleText } from '../voice/charge-server';
+import { textChargeStep } from '../voice/charge';
 import { claimCallSlot } from '../voice/cap-server';
 import { belowFloorText, dealEmail } from '../voice/templates';
 import { dealCallsEnabled } from './flags';
@@ -278,10 +279,11 @@ async function belowFloor(admin: Admin, row: PendingRow, m: MemberFacts, now: Da
     if (guard) {
       const ctx = { base: siteUrl(), topupAmountPence: settings.intelligence.revealAutoTopupAmountPence, topupThresholdPence: settings.intelligence.revealAutoTopupThresholdPence, deal };
       const r = await sendMemberText(admin, { userId: m.userId, body: belowFloorText(ctx), kind: 'standout', purpose: 'si_standout', dryRun: dry, now });
-      if (r.counted) {
-        await settleText(guard, key, null, m.userId);
-        texted = true;
-      } else await releaseCharge(guard);
+      // R3-5: charged only when Twilio took it; no answer keeps the guard (never again) and charges nothing.
+      const step = textChargeStep(r);
+      if (step === 'settle') await settleText(guard, key, null, m.userId);
+      if (step === 'release') await releaseCharge(guard);
+      else texted = true;
     }
   }
   if (m.email) {

@@ -101,7 +101,16 @@ export async function intelligenceMember(user: Pick<User, 'id' | 'email'>, mode:
   return { profile, paused, member: { userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId: profile?.id ?? null, profileActive: profile?.isActive ?? true, tailoring } };
 }
 
-export async function loadIntelligence(input: { user: User; supabase: SupabaseClient; mode: 'reveal' | 'header'; now?: Date }): Promise<IntelligenceData> {
+/** R3 (R2-94): what the reveal page records about itself before its cards are priced. */
+export interface RevealRecord {
+  cards: readonly { id: string }[];
+  profileId: string | null;
+  checked: number | null;
+  noMatch: boolean;
+  level: number;
+}
+
+export async function loadIntelligence(input: { user: User; supabase: SupabaseClient; mode: 'reveal' | 'header'; now?: Date; beforePricing?: (info: RevealRecord) => Promise<void> }): Promise<IntelligenceData> {
   const now = input.now ?? new Date();
   const user = input.user;
   const adminUser = isAdminEmail(user.email);
@@ -120,20 +129,33 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
   const keep = new Set(revealDeals(today.cards.map((c) => c.id)));
   const cards = today.cards.filter((c) => keep.has(c.id));
 
-  const [baseViews, opened, snapshot, storedChoice, contact, offerMember, floors, offerS] = await Promise.all([
+  const [baseViews, opened, snapshot, storedChoice, contact, floors, offerS] = await Promise.all([
     cardViewsFor({ supabase: input.supabase as never, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
     openedDealIds(payer.payerId, cards.map((c) => c.id)),
     getAreaCardsWithin(AREA_WAIT_MS),
     today.selection?.choice ?? (profile ? checkedCountFor(profile.id, now) : Promise.resolve(null)),
     hasServiceRole() ? getContact(createAdminClient(), user.id).catch(() => null) : Promise.resolve(null),
-    offerMemberFor(user.id),
     offerFloors(),
     offerSettings(),
   ]);
   const views = withTailoring(baseViews, cards, tailoring, snapshot, now, { why: true });
+  const tailored = usesTailoring(tailoring);
+  const topPct = cards[0] ? matchPctOf(views.get(cards[0].id)?.explanation?.match ?? null) : null;
+  const nearMiss = today.selection?.nearMiss === true;
+  const tone = revealTone({ cards: cards.length, nearMiss, topMatchPct: tailored ? topPct : null, lowMatchPct: settings.intelligence.revealLowMatchPct });
+  const choice = storedChoice ?? null;
+  const checkedText = choice ? checkedLine({ checked: choice.checked, meeting: choice.meeting, capped: choice.capped, nearby: choice.nearby, finds: choice.finds }, { tailored, smallCount: settings.intelligence.revealSmallCount }) : null;
+
+  const acc = summary ? accuracyView(summary.progress, levelSettings) : null;
+  const level: Level = acc?.level ?? 1;
+  const lvl = acc?.next ?? null;
+
+  // R3 (R2-94): the reveal records itself (and is stamped viewed) before anything is priced, so the
+  // welcome offer is on the first paint and the first tap is quoted as startDealAnalysis will charge it.
+  if (input.beforePricing) await input.beforePricing({ cards, profileId: profile?.id ?? null, checked: choice?.checked ?? null, noMatch: tone === 'none', level });
 
   // Part H: the Full analysis and the Deep report for each card, priced as startDealAnalysis will price them.
-  const [offers, quoter] = await Promise.all([offerPricingFor(user.id, adminUser, now), quoterFor(payer.payerId, adminUser)]);
+  const [offers, quoter, offerMember] = await Promise.all([offerPricingFor(user.id, adminUser, now), quoterFor(payer.payerId, adminUser), offerMemberFor(user.id)]);
   const analyses = new Map<string, IntelligenceData['analyses'] extends Map<string, infer V> ? V : never>();
   for (const c of cards) {
     const v = views.get(c.id);
@@ -153,17 +175,6 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
       deepList: dO ? dO.listTotalPence : null,
     });
   }
-  const tailored = usesTailoring(tailoring);
-  const topPct = cards[0] ? matchPctOf(views.get(cards[0].id)?.explanation?.match ?? null) : null;
-  const nearMiss = today.selection?.nearMiss === true;
-  const tone = revealTone({ cards: cards.length, nearMiss, topMatchPct: tailored ? topPct : null, lowMatchPct: settings.intelligence.revealLowMatchPct });
-  const choice = storedChoice ?? null;
-  const checkedText = choice ? checkedLine({ checked: choice.checked, meeting: choice.meeting, capped: choice.capped, nearby: choice.nearby, finds: choice.finds }, { tailored, smallCount: settings.intelligence.revealSmallCount }) : null;
-
-  const acc = summary ? accuracyView(summary.progress, levelSettings) : null;
-  const level: Level = acc?.level ?? 1;
-  const lvl = acc?.next ?? null;
-
   // The chip answers' facts: every figure from settings or the member's state.
   const list = { fullPence: settings.dealPricing.fullAnalysisPence, pmiPence: settings.dealPricing.pmiAddonPence };
   const firstOffer = offerMember?.offerDealIds[0];

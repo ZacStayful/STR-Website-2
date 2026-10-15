@@ -51,11 +51,7 @@ const nextConfig: NextConfig = {
         destination: "/methodology",
         permanent: true,
       },
-      {
-        source: "/home",
-        destination: "/",
-        permanent: true,
-      },
+      // R3 (R2-159): /home is Batch 22e's Home page, the landing after every sign-in; it is never redirected.
       // Batch 21: the orphan second analyser (invented market data, nothing
       // linked to it) is gone; an old link lands on the real one.
       {

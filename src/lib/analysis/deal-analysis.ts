@@ -72,7 +72,7 @@ import { reminderEvent } from './take-up';
 import { offeredPricesFor } from './offers-server';
 import { offerLabel, type OfferKind } from './offers';
 import { reportProjectFor } from '../project/report-server';
-import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
+import { ANALYSIS_RESERVATION_MINUTES, analysisDescription, analysisMessage, analysisQuote, faceMatches, firstDeepPatch, purchaseStale, quoteMatches, runWindowClosed, type AnalysisErrorCode, type AnalysisQuote } from './deal-analysis-rules';
 
 type ServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
 type Admin = ReturnType<typeof createAdminClient>;
@@ -227,7 +227,7 @@ async function settleIfAbandoned(admin: Admin, row: PurchaseRow, now: Date): Pro
   // Settled only as it was read: a run that claimed it since is alive and left alone.
   let q = admin
     .from('analysis_purchases')
-    .update(reportId ? { status: 'complete', report_id: reportId, failure: 'settled after the run stopped', completed_at: now.toISOString() } : { status: 'failed', failure: 'abandoned', completed_at: now.toISOString() })
+    .update(reportId ? { status: 'complete', report_id: reportId, failure: 'settled after the run stopped', completed_at: now.toISOString(), ...firstDeepPatch({ withPmi: row.with_pmi, pmiDelivered: false }) } : { status: 'failed', failure: 'abandoned', completed_at: now.toISOString() })
     .eq('id', row.id)
     .eq('status', 'pending');
   q = row.run_started_at ? q.eq('run_started_at', row.run_started_at) : q.is('run_started_at', null);
@@ -652,7 +652,7 @@ export async function runDealAnalysis(purchase: PurchaseRow, opts: { adminUser: 
     const [{ error: doneErr }] = await Promise.all([
       admin
         .from('analysis_purchases')
-        .update({ status: 'complete', report_id: reportId, analysis_id: analysisId, reused, second_opinion: Boolean(result.secondOpinion), transaction_ids: txIds, charged_base_pence: charged, completed_at: new Date().toISOString() })
+        .update({ status: 'complete', report_id: reportId, analysis_id: analysisId, reused, second_opinion: Boolean(result.secondOpinion), transaction_ids: txIds, charged_base_pence: charged, completed_at: new Date().toISOString(), ...firstDeepPatch({ withPmi: purchase.with_pmi, pmiDelivered }) })
         .eq('id', purchase.id),
       // This runs after the response (the run route's after()), so it is awaited here.
       recordActivity(purchase.buyer_id, 'full_analysis', {

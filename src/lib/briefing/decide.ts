@@ -27,6 +27,8 @@ export interface DecideInput {
   dayCharge: number;
   /** This briefing's ceiling, base pence. */
   ceiling: number;
+  /** R3: the most any briefing may be charged (billing_settings.briefing_ceiling_pence); the code default when absent. */
+  ceilingMax?: number;
   enabled: boolean;
   writerReady: boolean;
   /** Admins are never charged: their briefing is written whatever the balance. */
@@ -38,7 +40,7 @@ export function decide(i: DecideInput): Plan {
   if (!i.admin && !(left > 0)) return { kind: 'none', reason: 'no_credit' };
   if (!i.enabled) return { kind: 'template', reason: 'switched_off' };
   if (!i.writerReady) return { kind: 'template', reason: 'no_writer' };
-  if (i.ceiling > BRIEFING_CEILING_PENCE) return { kind: 'template', reason: 'over_ceiling' };
+  if (i.ceiling > (i.ceilingMax ?? BRIEFING_CEILING_PENCE)) return { kind: 'template', reason: 'over_ceiling' };
   if (!i.admin && left - i.dayCharge + 1e-9 < i.ceiling) return { kind: 'template', reason: 'low_credit' };
   return { kind: 'ai' };
 }
@@ -67,4 +69,18 @@ export function ceilingPence(p: { inputTokens: number; maxOutputTokens: number; 
 export function afterWriting(p: { replied: boolean; valid: boolean; admin: boolean }): { use: 'ai' | 'template'; charge: boolean } {
   const ok = p.replied && p.valid;
   return { use: ok ? 'ai' : 'template', charge: ok && !p.admin };
+}
+
+/**
+ * R3 (sweep): the tokens to charge for a validated briefing: the real ones,
+ * but never past the ceiling the member was quoted. Above it both counts are
+ * scaled down to meet the cap and the house keeps the difference.
+ */
+export function cappedTokens(p: { inputTokens: number; outputTokens: number; inputPence: number; outputPence: number; capPence: number }): { inputTokens: number; outputTokens: number; scaled: boolean } {
+  const input = Math.max(0, Math.floor(p.inputTokens));
+  const output = Math.max(0, Math.floor(p.outputTokens));
+  const total = input * p.inputPence + output * p.outputPence;
+  if (!(p.capPence > 0) || !(total > p.capPence)) return { inputTokens: input, outputTokens: output, scaled: false };
+  const scale = p.capPence / total;
+  return { inputTokens: Math.floor(input * scale), outputTokens: Math.floor(output * scale), scaled: true };
 }

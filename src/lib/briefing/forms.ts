@@ -132,6 +132,11 @@ Object.assign(WORD_VALUE, {
 /** Every spelled-out number word the validator recognises, lower case. */
 export const NUMBER_WORDS: ReadonlySet<string> = new Set(Object.keys(WORD_VALUE));
 
+/** R3: vague quantities no sheet ever gives ("dozens of"): read as a number that is never on the sheet. */
+export const VAGUE_QUANTITY_WORDS: ReadonlySet<string> = new Set(['dozens', 'hundreds', 'thousands', 'millions']);
+
+const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
+
 export function wordValue(word: string): number | null {
   const v = WORD_VALUE[word.toLowerCase()];
   return v === undefined ? null : v;
@@ -177,8 +182,10 @@ export function numbersIn(text: string): FoundNumbers {
   };
   // Clock times: 07:40, 7.40am, 7am.
   take(/\b\d{1,2}[:.]\d{2}\s?(?:am|pm)?\b|\b\d{1,2}\s?(?:am|pm)\b/gi, (m) => times.push(m[0]));
-  // Dates: 3/10, 03-10-2026, 3rd October.
+  // Dates: 3/10, 03-10-2026; 3rd October, October 3; a bare month name ("this October"), May excepted as it is a verb.
   take(/\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b/g, (m) => times.push(m[0]));
+  take(new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTHS})\\b|\\b(?:${MONTHS})\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`, 'gi'), (m) => times.push(m[0]));
+  take(new RegExp(`\\b(?:${MONTHS.replace('may|', '')})\\b`, 'gi'), (m) => times.push(m[0]));
   take(/£\s?(\d[\d,]*(?:\.\d+)?)\s?(k|m|bn)?\b/gi, (m) => {
     const v = parseFigure(m[1], m[2]);
     if (v !== null) numbers.push({ unit: 'money', value: v });
@@ -194,6 +201,7 @@ export function numbersIn(text: string): FoundNumbers {
   for (const w of rest.toLowerCase().match(/[a-z]+/g) ?? []) {
     const v = wordValue(w);
     if (v !== null) numbers.push({ unit: 'count', value: v });
+    else if (VAGUE_QUANTITY_WORDS.has(w)) numbers.push({ unit: 'count', value: Number.NaN });
   }
   return { numbers, times };
 }

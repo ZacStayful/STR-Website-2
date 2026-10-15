@@ -236,3 +236,10 @@ export function whatIfAnswer(v: WhatIf, before: { goals: MarketGoals; savedAreas
       return { questionId: 'deal_types', value: g.dealTypes, undo: b.dealTypes };
   }
 }
+
+/** R3 (R2-67): the quiz question a "Change my budget" link opens for a budget what-if; null for the rest. */
+export function changeQuestionFor(key: WhatIfKey): 'budget' | 'brrr_budget' | null {
+  if (key === 'budget') return 'budget';
+  if (key === 'brrr_budget') return 'brrr_budget';
+  return null;
+}

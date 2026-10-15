@@ -72,6 +72,7 @@ import { projectClearedUrls } from "../project/read-server";
 import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
 import { emailBriefingsFor } from "../briefing/email";
+import { markBriefingEmailed } from "../briefing/store";
 import { revealedFor } from "../intelligence/reveal-server";
 import { recordScanDays } from "../home/scan-record";
 import { siSavedPairs } from "../standout/saved-server";
@@ -1651,6 +1652,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (lowNotices.has(userId)) await markLowCreditTold(admin, userId);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, userId, built.savedIds);
+    // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.
+    if (built.message.sections.some((s) => s.key === "briefing")) await markBriefingEmailed(admin, userId, day, new Date());
     summary.sections += parts.length;
     summary.unfunded += unfunded.length;
     const sentAt = new Date().toISOString();
