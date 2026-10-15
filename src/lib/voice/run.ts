@@ -8,7 +8,9 @@ import 'server-only';
  *   2. place the queued calls that are due, re-checking every safety rule
  *   3. reconcile calls still "ringing" after 30 minutes from Twilio (a lost
  *      webhook), charging an answered call's minutes once and sending a
- *      missed call's text and email
+ *      missed call's text and email; R3-25: a call placed with no ids
+ *      (ElevenLabs never answered) first adopts the call Twilio made to the
+ *      member's number just after it was placed
  *   4. once a UK day, delete transcripts past retention (questions kept)
  * With apply=false (?dry=1) every step reports what it would do and changes
  * nothing.
@@ -19,7 +21,9 @@ import { callsEnabled, STALE_RINGING_MS } from './config';
 import { ukDay } from './hours';
 import { enqueueCall, placeCall } from './queue-server';
 import { CALL_COLUMNS, claimEvent, finishEvent, isSchemaMissing, updateCall, type CallRow } from './store-server';
-import { fetchCall, statusFromTwilio } from './twilio-voice';
+import { fetchCall, recentCallsTo, statusFromTwilio } from './twilio-voice';
+import { adoptableCallSid } from './adopt';
+import { getContact } from '../sms/store';
 import { sendMissedCallFallback } from './fallback-server';
 import { purgeTranscripts } from './retention-server';
 
@@ -125,10 +129,12 @@ export async function runCalls(o: { apply: boolean; now?: Date; onlyUserId?: str
     const stale = (data ?? []) as CallRow[];
     out.reconciled.due = stale.length;
     for (const call of stale) {
-      const tw = call.twilio_call_sid ? await fetchCall(call.twilio_call_sid) : null;
+      // R3-25: placed with no ids (ElevenLabs never answered): the call Twilio made to this number right after.
+      const sid = call.twilio_call_sid ?? (!call.el_conversation_id ? await adoptTwilioCall(admin, call, o.apply) : null);
+      const tw = sid ? await fetchCall(sid) : null;
       const old = now.getTime() - Date.parse(call.placed_at ?? call.queued_at) > HARD_CUTOFF_MS;
       // Twilio unreadable: wait, but never past the cutoff (a stuck row would block every later call).
-      const status = tw ? (statusFromTwilio(tw) ?? (old ? 'failed' : null)) : call.twilio_call_sid && !old ? null : 'failed';
+      const status = tw ? (statusFromTwilio(tw) ?? (old ? 'failed' : null)) : sid && !old ? null : 'failed';
       out.reconciled.results.push({ id: call.id, status });
       if (!o.apply || !status) continue;
       // With no transcript we can't tell an answered call from an undetected
@@ -165,4 +171,23 @@ export async function runCalls(o: { apply: boolean; now?: Date; onlyUserId?: str
     out.errors.push(`retention: ${(err as Error)?.message ?? err}`);
   }
   return out;
+}
+
+/**
+ * R3-25: a ringing row placed with no ids: the outbound call Twilio made to
+ * the member's number just after placed_at (src/lib/voice/adopt.ts), its sid
+ * written on the row when applying (never a sid another row already has: the
+ * unique index refuses it and the row is left for the cutoff).
+ */
+async function adoptTwilioCall(admin: ReturnType<typeof createAdminClient>, call: CallRow, apply: boolean): Promise<string | null> {
+  const placedAt = Date.parse(call.placed_at ?? '');
+  if (!Number.isFinite(placedAt) || !call.user_id) return null;
+  const contact = await getContact(admin, call.user_id).catch(() => null);
+  if (!contact?.phone_e164) return null;
+  const r = await recentCallsTo(contact.phone_e164, 5);
+  if (!r.ok) return null;
+  const sid = adoptableCallSid(r.json, placedAt);
+  if (!sid || !apply) return sid;
+  const updated = await updateCall(admin, call.id, { twilio_call_sid: sid, error: 'adopted from Twilio: placed with no ids' }, ['ringing']);
+  return updated ? sid : null;
 }

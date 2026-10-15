@@ -59,6 +59,14 @@ export type Eligibility =
 /** Reasons that are the member's own settings, not a safety rule. */
 const SKIPS: ReadonlySet<BlockedReason> = new Set(['calls_off', 'not_owner', 'auto_topup_on', 'management_no_deals']);
 
+/**
+ * Review R3 (R3-15 / R2-23): reasons that pass. A low-credit call stopped by
+ * one writes no row (when queued) or gives its queued row back (when
+ * dialled), so the landing's one call (si_calls_log_low_credit_uidx) is not
+ * used up by a call that could still ring later in its window.
+ */
+export const LOW_CREDIT_NO_ROW: ReadonlySet<BlockedReason> = new Set(['no_number', 'no_credit', 'in_flight', 'daily_limit', 'intro_day']);
+
 const DAY_MS = 24 * 60 * 60_000;
 
 /** Call types that wait for the next day rather than being blocked when today's call is used. */
