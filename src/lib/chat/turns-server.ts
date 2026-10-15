@@ -27,6 +27,8 @@ import { startAction, actionSpend, type StartedAction } from '../credit/action';
 import { meter } from '../credit/meter';
 import { getBalance } from '../credit/ledger';
 import { getUnitCostTable } from '../credit/unit-costs';
+import { unitKey } from '../credit/costs';
+import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from './voice-rules';
 import type { MeterContext } from '../credit/context';
 import { ukDay } from '../activity/week';
 import { londonDayStart } from '../leads/search';
@@ -65,7 +67,18 @@ export async function chatSettingsForPage(): Promise<ChatSettings | null> {
 export async function chatUi(): Promise<ChatUi | null> {
   const s = await chatSettingsForPage();
   if (!s || !s.enabled) return null;
-  return { quickHintPence: s.quickHintPence, fullHintPence: s.fullHintPence, quickFloorPence: s.quickFloorPence, fullFloorPence: s.fullFloorPence, voice: voiceOn(s) };
+  // R3-1: what a spoken answer costs, from the same row /api/speak meters, quoted for each surface's word cap.
+  const row = voiceOn(s) ? ((await getUnitCostTable().catch(() => null))?.get(unitKey('elevenlabs', 'character')) ?? null) : null;
+  const unit = row ? { unitCostPence: row.unitCostPence, markup: row.markup } : null;
+  return {
+    quickHintPence: s.quickHintPence,
+    fullHintPence: s.fullHintPence,
+    quickFloorPence: s.quickFloorPence,
+    fullFloorPence: s.fullFloorPence,
+    voice: voiceOn(s),
+    speakQuickHintPence: speakPricePence(unit, speakCharsFor(QUICK_MAX_WORDS)),
+    speakFullHintPence: speakPricePence(unit, speakCharsFor(s.fullMaxWords)),
+  };
 }
 
 /** Batch 26b: the microphone and spoken answers: the setting, and ElevenLabs configured. */

@@ -77,7 +77,7 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
           </>
         }
         answers={data.answers}
-        chat={chat ? { hintPence: chat.fullHintPence, floorPence: chat.fullFloorPence, initialQuestion: ask, voice: chat.voice } : undefined}
+        chat={chat ? { hintPence: chat.fullHintPence, floorPence: chat.fullFloorPence, initialQuestion: ask, voice: chat.voice, speakHintPence: chat.speakFullHintPence } : undefined}
       />
     </CreditProvider>
   );
