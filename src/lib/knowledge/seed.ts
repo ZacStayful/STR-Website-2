@@ -112,7 +112,8 @@ export const SEED: readonly SeedEntry[] = [
     channels: ['view', 'chat'],
     showWhen: null,
     question: 'How do I top up or turn on auto top-up?',
-    variants: ['How do I add credit?', 'How do I buy more credit?'],
+    // Review R3 (R3-10): "How do I top up?" on its own ties with auto_topup; as a phrasing here it is answered.
+    variants: ['How do I add credit?', 'How do I buy more credit?', 'How do I top up?'],
     answer: 'Top up {topup_amounts} in Account → Billing; auto top-up adds your chosen amount when you drop below your limit and needs a saved card.',
   },
   {
@@ -309,7 +310,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'What does the Property Analyser actually output?',
     variants: ['What is in the analyser report?', 'What sections are in the report?'],
-    answer: 'A {report_sections}-section report: live comparables, amenities and demand, a gross-to-net revenue breakdown, a {forecast_months}-month forecast, the local area, a furnishing quote and a risk assessment, every figure sourced.',
+    // Review R3 (R3-21): no fixed count; a report has the sections its deal needs (up to the most).
+    answer: 'A report with live comparables, amenities and demand, a gross-to-net revenue breakdown, a {forecast_months}-month forecast, the local area, a furnishing quote and a risk assessment, every figure sourced: up to {report_sections} sections, depending on the deal.',
   },
   {
     slug: 'data_sources',

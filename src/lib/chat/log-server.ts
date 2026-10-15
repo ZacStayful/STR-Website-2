@@ -256,7 +256,7 @@ export async function markUnhappy(admin: Admin, userId: string, turnId: string):
   return true;
 }
 
-export type FactAnswer = { ok: true; saved: boolean } | { ok: false; reason: Extract<RememberResult, { ok: false }>['reason'] };
+export type FactAnswer = { ok: true; saved: boolean } | { ok: false; reason: Extract<RememberResult, { ok: false }>['reason']; retry: boolean };
 
 /**
  * The member's Yes or No to "Want me to remember that?". Only the fact the
@@ -274,6 +274,9 @@ export async function answerFact(admin: Admin, member: ChatMember, turnId: strin
   if ((claimed.data ?? []).length === 0) return null;
   if (!yes) return { ok: true, saved: false };
   const result = await rememberFact({ userId: member.userId, fact: proposal.fact, asked: proposal.asked, confirmed: true, channel: 'chat', confirmedVia: 'chat_yes', conversationId: (data?.conversation_id as string | null) ?? null });
-  await admin.from('chat_turns').update({ fact_proposal: { ...proposal, answered: 'yes', saved: result.ok } }).eq('id', turnId);
-  return result.ok ? { ok: true, saved: true } : { ok: false, reason: result.reason };
+  // R3-93: a Yes refused for want of room (they can delete one in Account), or lost to a passing failure, gives the
+  // claim back, so they can say Yes again; a duplicate or a refusal of the fact itself stays answered.
+  const retry = !result.ok && (result.reason === 'cap' || result.reason === 'error');
+  await admin.from('chat_turns').update({ fact_proposal: retry ? { fact: proposal.fact, asked: proposal.asked } : { ...proposal, answered: 'yes', saved: result.ok } }).eq('id', turnId);
+  return result.ok ? { ok: true, saved: true } : { ok: false, reason: result.reason, retry };
 }

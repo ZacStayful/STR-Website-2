@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { CORE, CHANNELS } from '../../persona/stayful-intelligence.ts';
 import { agentPrompt } from './prompt.ts';
 import { agentKnowledge, KNOWLEDGE_VARIABLES, promptVariables } from '../../knowledge/agent.ts';
+import { CALL_FIGURE_FALLBACK } from '../../knowledge/config.ts';
 import { SEED } from '../../knowledge/seed.ts';
 import { schemaSnapshot } from '../../knowledge/test-fixtures.ts';
 import { toolConfig } from './tools.ts';
@@ -23,9 +24,23 @@ test('the phone agent\'s instructions are built from the persona module (CORE + 
   for (const r of CHANNELS.chat) assert.ok(!p.includes(r.full), 'chat rules on the phone');
   // The phone's no-address / no-figures rule.
   assert.match(p, /Never read out an address, exact figures, a balance or card details/);
-  assert.match(p, /I don't know that one yet — I've passed it to the team/);
+  assert.match(p, /I don't know that one yet — it'll help me learn/);
+  assert.doesNotMatch(p, /passed it to the team/, 'R3-76: only handoff_to_team passes anything to the team');
+  assert.match(p, /I'll pass that to the team, they'll email you/);
   // The intro script is in, verbatim.
   assert.match(p, /I'll only call when there's something worth your time/);
+});
+
+// Review R3 (R3-48): no second copy of an approved answer in the prompt.
+test('"why did you call me" on a deal call is answered from the approved entries, not a line in the prompt', () => {
+  // The task part of the prompt: the knowledge below it is where "times a month" belongs.
+  const task = agentPrompt(knowledge).split('Knowledge (answer only from this')[0];
+  assert.doesNotMatch(task, /times a month|k_standout_calls_per_month|matches their answers better/);
+  assert.match(task, /context "deal"[^\n]*answer from \[why_called\] and \[standout_calls\]/);
+  assert.match(task, /context "missed_deal"[^\n]*answer from \[why_called\] and \[standout_calls\]/);
+  const k = agentKnowledge(live, schemaSnapshot());
+  for (const slug of ['why_called', 'standout_calls']) assert.ok(k.slugs.includes(slug), `${slug} is in the knowledge`);
+  assert.deepEqual(agentKnowledge(live.filter((e) => e.slug !== 'why_called'), schemaSnapshot()).missingRequired, ['why_called'], 'a sync is refused without it');
 });
 
 test('the knowledge carries a slug per entry and its figures as call variables, never typed', () => {
@@ -85,7 +100,9 @@ test('call variables carry every name, never a balance; openers are filled', () 
   const v = callVariables({ callType: 'intro', context: 'intro', firstName: 'Sam', member: true, cardSent: false, minutesAvailable: 6.7, topupAmountPence: 2500, topupThresholdPence: 500 });
   assert.deepEqual(Object.keys(v).sort(), [...VARIABLE_NAMES].sort());
   // A knowledge figure not passed in goes out as the neutral fallback, never missing (a missing variable stops the call).
-  assert.equal(v.k_full_analysis_cost, 'shown in the app');
+  // R3-77: an instruction the agent follows, not words it reads out mid-sentence.
+  assert.equal(v.k_full_analysis_cost, CALL_FIGURE_FALLBACK);
+  assert.match(CALL_FIGURE_FALLBACK, /^\(.*shown in the app.*\)$/);
   assert.equal(callVariables({ callType: 'intro', context: 'intro', firstName: 'Sam', member: true, cardSent: false, minutesAvailable: 6, topupAmountPence: 2500, topupThresholdPence: 500, knowledge: { k_full_analysis_cost: '£4' } }).k_full_analysis_cost, '£4');
   assert.equal(v.minutes_available, 6);
   assert.equal(v.topup_amount, '25 pounds');

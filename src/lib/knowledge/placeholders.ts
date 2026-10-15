@@ -328,7 +328,7 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),
   team_seat_days: g_('Days a seat lasts before it renews', 'code SEAT_PERIOD_DAYS (src/lib/team/rules.ts)', () => String(SEAT_PERIOD_DAYS)),
   // Fixed product facts (src/lib/knowledge/config.ts)
-  report_sections: g_("A Full analysis report's sections", 'config PRODUCT_FACTS.reportSections', () => String(PRODUCT_FACTS.reportSections)),
+  report_sections: g_("The most sections a Full analysis report has (a report has the ones its deal needs: say 'up to')", 'config PRODUCT_FACTS.reportSectionsMax', () => String(PRODUCT_FACTS.reportSectionsMax)),
   forecast_months: g_("The forecast's months", 'config PRODUCT_FACTS.forecastMonths', () => String(PRODUCT_FACTS.forecastMonths)),
   management_fee: g_("Stayful Management's fee", 'config PRODUCT_FACTS.managementFeePct', () => `${PRODUCT_FACTS.managementFeePct}% + VAT`),
   ledger_properties: g_('Properties in the methodology ledger, in words', 'config PRODUCT_FACTS.ledgerProperties', () => countWords(PRODUCT_FACTS.ledgerProperties)),

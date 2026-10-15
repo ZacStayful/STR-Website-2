@@ -90,25 +90,34 @@ function NotHelpful({ turnId }: { turnId: string }) {
 }
 
 function RememberThat({ turnId, fact, muted }: { turnId: string; fact: string; muted: string }) {
-  const [message, setMessage] = useState<string | null>(null);
+  /** The last word: the buttons go. */
+  const [done, setDone] = useState<string | null>(null);
+  /** Something to say with the buttons kept (R3-93: a Yes refused for want of room, or a send that failed, can be given again). */
+  const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const answer = async (yes: boolean) => {
     setBusy(true);
+    setNote(null);
     try {
       const res = await fetch("/api/chat/facts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ turnId, yes }) });
-      const body = (await res.json()) as { message?: string };
-      setMessage(body.message ?? (yes ? "Done." : "OK."));
+      const body = (await res.json()) as { ok?: boolean; retry?: boolean; message?: string };
+      const message = body.message ?? (yes ? "Done." : "OK.");
+      if (body.ok === false && body.retry) {
+        setNote(message);
+        setBusy(false);
+      } else setDone(message);
     } catch {
-      setMessage("That didn’t save. Please try again.");
+      setNote("That didn’t save. Please try again.");
       setBusy(false);
     }
   };
-  if (message) return <p className={`mt-3 text-xs ${muted}`}>{message}</p>;
+  if (done) return <p className={`mt-3 text-xs ${muted}`}>{done}</p>;
   return (
     <div className="mt-3 rounded-lg border border-white/20 p-3">
       <p>
         Want me to remember that? <span className="italic">“{fact}”</span>
       </p>
+      {note && <p className={`mt-2 text-xs ${muted}`}>{note}</p>}
       <div className="mt-2 flex gap-2">
         <button type="button" disabled={busy} onClick={() => answer(true)} className="rounded-md bg-[#B9D5C6] px-3 py-1 text-xs font-semibold text-[#1a2118] disabled:opacity-60">
           Yes

@@ -42,5 +42,6 @@ export async function POST(request: Request) {
   const result = await answerFact(createAdminClient(), member, String(body.turnId ?? ''), body.yes === true);
   if (!result) return Response.json({ ok: false, message: 'That has already been answered.' });
   if (result.ok) return Response.json({ ok: true, saved: result.saved, message: result.saved ? 'Done — I’ll remember that. You can see it in Account.' : 'OK, I won’t keep that.' });
-  return Response.json({ ok: false, message: REASONS[result.reason] ?? 'I couldn’t save that just now.' });
+  // retry: the Yes can be given again (R3-93).
+  return Response.json({ ok: false, retry: result.retry, message: REASONS[result.reason] ?? 'I couldn’t save that just now.' });
 }

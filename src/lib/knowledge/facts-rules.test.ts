@@ -36,3 +36,12 @@ test('empty and too long', () => {
   assert.equal(checkFact({ fact: '   ', confirmed: true }).ok, false);
   assert.equal(checkFact({ fact: 'x'.repeat(161), confirmed: true }).ok, false);
 });
+
+// Review R3 (R3-43): the chat's propose_fact writes the member's own preference with a pronoun; that is not about another person.
+test("a preference written with a pronoun is the member's own, not another person's", () => {
+  for (const f of ['He only wants 2-bed flats', 'She is looking in Leeds and York', 'His budget suits a house with parking', 'Wants to buy within six months']) {
+    assert.equal(checkFact({ fact: f, confirmed: true }).ok, true, f);
+  }
+  assert.equal(sensitiveTopic('Her husband wants Leeds'), 'people');
+  assert.equal(sensitiveTopic('Buying with his brother'), 'people');
+});

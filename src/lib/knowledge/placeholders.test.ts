@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import { CALL_PLACEHOLDERS, CONDITIONS, PLACEHOLDERS, countWords, dayWords, hourWords, moneyList } from './placeholders.ts';
 import { SAMPLE_MEMBER } from './render.ts';
 import { schemaSnapshot } from './test-fixtures.ts';
+import { PRODUCT_FACTS } from './config.ts';
+import { sectionsFor } from '../pdf/sections.ts';
+
+// Review R3 (R3-21): the report's sections depend on the deal, so the knowledge base quotes the most a report has, never a count.
+test('report_sections is the most sections a report has, as the PDF counts them', () => {
+  assert.equal(PRODUCT_FACTS.reportSectionsMax, sectionsFor({ setup: true, deal: true, diligence: true, project: true, secondOpinion: true, plan: true }).length);
+  assert.equal(PLACEHOLDERS.report_sections.resolve(schemaSnapshot(), null), String(PRODUCT_FACTS.reportSectionsMax));
+  assert.match(PLACEHOLDERS.report_sections.label, /up to/);
+});
 
 test('every global placeholder resolves against what schema.sql seeds', () => {
   const g = schemaSnapshot();

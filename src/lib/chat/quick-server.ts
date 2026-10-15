@@ -17,9 +17,9 @@ import { InsufficientCreditError } from '../credit/ledger';
 import { SeatPausedError, type StartedAction } from '../credit/action';
 import { getUnitCostTable } from '../credit/unit-costs';
 import { logActivity } from '../activity/log';
-import { MAX_QUESTION_CHARS, MODEL_UNITS, QUICK_MODEL, QUICK_TIMEOUT_MS, DONT_KNOW_LINE, FULL_VIEW_LINE } from './config';
+import { MAX_QUESTION_CHARS, MODEL_UNITS, QUICK_MODEL, QUICK_TIMEOUT_MS, DONT_KNOW_LINE, FULL_VIEW_LINE, NOT_APPLICABLE_LINE } from './config';
 import { approxTokens, budgetFor, roundMaxTokens, unitsPriced, usageOf, type RoundUsage } from './budget';
-import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
+import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, isNonAnswer } from './guard';
 import { buildButtons } from './actions';
 import { accountBlock, parseQuickReply, questionBlock, quickSystemPrompt, QUICK_SCHEMA } from './prompts';
 import { chargeLabel } from './format';
@@ -79,6 +79,23 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
 
     const [ctx, loaded] = await Promise.all([contextP, knowledgeP]);
     const known = await lookUpKnowledge(question, ctx.values, admin, loaded);
+    // R3-33: an approved answer covers the question but doesn't apply to this member (hidden for their
+    // account, or it needs a value they don't have): say so, with the entry as the reference and no model call.
+    if (known.answers.length === 0 && known.hidden) {
+      const conv = await openConversation(admin, member, 'quick', null, { idleMinutes: settings.sessionIdleMinutes, historyTurns: 0, now });
+      const logged = conv ? await logExchange(conv, { question, answer: NOT_APPLICABLE_LINE, outcome: 'answered', knowledgeRef: known.hidden, surface: 'quick', at: now }) : { questionId: null, agentSeq: null };
+      const settled = await settle(
+        admin,
+        turn,
+        member,
+        hold,
+        { status: 'answered', outcome: 'answered', rounds, knowledgeSlug: known.hidden, matchConfidence: known.topConfidence, conversationId: conv?.id ?? null, questionId: logged.questionId, logSeq: logged.agentSeq, buttons: [], capPence: budget },
+        settings,
+      );
+      logActivity(user.id, 'si_chat_quick', { extras: { outcome: 'answered' } });
+      console.log(`[chat] quick answer (not for this member) in ${Date.now() - started}ms`);
+      return { state: 'answer', turnId: turn.id, text: NOT_APPLICABLE_LINE, buttons: [], charged: settled.chargedFacePence > 0 ? chargeLabel(settled.chargedFacePence) : null };
+    }
     const account = accountBlock({
       now,
       freeMember: ctx.values.freeMember,
@@ -145,8 +162,10 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
     let state: ChatReply['state'];
     let text: string;
     let slug: string | null = null;
-    if (reply?.outcome === 'answer' && reply.text && !saysDontKnow(reply.text)) {
-      const allowed = allowedFigures([account, ...known.answers.map((a) => a.answer), ...known.answers.map((a) => a.question), question]);
+    // R3-85: a don't-know in the model's own words is not an answer. R3-88: the member's own figures are not a
+    // source here (the quick box answers from the account basics and the approved answer alone).
+    if (reply?.outcome === 'answer' && reply.text && !isNonAnswer(reply.text, { usedTools: false })) {
+      const allowed = allowedFigures([account, ...known.answers.map((a) => a.answer), ...known.answers.map((a) => a.question)]);
       const okSlug = reply.slug === null || slugs.has(reply.slug);
       const figures = checkFigures(reply.text, allowed);
       const advice = adviceIn(reply.text);
@@ -156,7 +175,8 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
         text = clampWords(reply.text, 60);
         slug = reply.slug;
       } else {
-        console.warn(`[chat] quick answer refused: ${!okSlug ? 'unknown slug' : !figures.ok ? `figures ${figures.figures.join(', ')}` : `advice ${advice.join(', ')}`}`);
+        // R3-86: counts only; what the model wrote for the member is never logged.
+        console.warn(`[chat] quick answer refused: ${!okSlug ? 'unknown slug' : !figures.ok ? `${figures.figures.length} figure(s) it was not given` : `${advice.length} advice phrase(s)`}`);
         state = 'unknown';
         outcome = 'low_confidence';
         text = DONT_KNOW_LINE;

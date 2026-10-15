@@ -10,7 +10,7 @@
  *
  * Pure: no network, no database, no server-only.
  */
-import { BANNED_PHRASES } from '../persona/stayful-intelligence.ts';
+import { BANNED_PHRASES, phraseRe } from '../persona/stayful-intelligence.ts';
 import { allowedNumbers, numbersIn, type AllowedNumber } from './forms.ts';
 import type { FactSheet } from './facts.ts';
 
@@ -57,7 +57,6 @@ export function allowedFor(sheet: FactSheet, extraForms: readonly string[] = [],
 const words = (s: string) => s.trim().split(/\s+/).filter(Boolean).length;
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const phraseRe = (p: string) => new RegExp(`(^|[^a-z0-9'’])${escape(p.toLowerCase()).replace(/'/g, "['’]")}(?=$|[^a-z0-9'’])`, 'i');
 const BANNED = BANNED_PHRASES.map((p) => ({ p, re: phraseRe(p) }));
 
 /** Comparisons the writer may only make when the sheet supports one. */
