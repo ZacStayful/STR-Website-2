@@ -34,6 +34,7 @@ CREDIT, PLANS AND PAYING
 
 DEALS
 - Today shows the member's daily picks (Today's 5) from live deals that fit their profile, also sent as one daily email. Daily deals cost {daily_deals_cost} a day from credit.
+- The daily email and Today open with a morning briefing: a greeting and a short note on one thing in the member's own figures (counts, their kept deals and pipeline; never a listing's title, description or an address). With AI briefings switched on it is written by Stayful Intelligence and charged at most {briefing_max_cost} of credit, after the day's own charge and only if the balance covers it; a rejected, late or switched-off one is the standard line, free. Members who did not come in from the email see it once on Today, where Play reads it aloud at the speak price; "Useful" and "Not for me" are a tap.
 - Browse is the marketplace of screened deals. Opening a deal (the address, photos and listing) costs between {open_cost_min} and {open_cost_max}, depending on how profitable it is.
 - Free members (who have never paid) see a new deal {free_delay_hours} hours after it goes live; members who have paid see it at once.
 - Keep saves a deal to My deals (free); Pass hides it and teaches the matching. My deals groups deals by stage (Kept, Contacted, Viewing, Offer, Secured, Passed).

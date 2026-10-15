@@ -262,6 +262,11 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     return d === null ? null : String(d);
   }),
   daily_deals_cost: g_('Daily deals (Today’s 5) per day', 'billing_settings.todays_5_daily_pence', (g) => money(pence(g, 'todays_5_daily_pence'))),
+  // Batch 23b's morning briefing; Review R3 made its ceiling a setting. Fractions of a penny are kept ("2.5p").
+  briefing_max_cost: g_('The most a morning briefing is charged', 'billing_settings.briefing_ceiling_pence', (g) => {
+    const p = pence(g, 'briefing_ceiling_pence');
+    return p === null ? null : Number.isInteger(p) || p >= 10 ? money(p) : `${p}p`;
+  }),
   free_delay_hours: g_('Hours a free member waits to see a new deal', 'billing_settings.free_deal_delay_hours', (g) => {
     const h = whole(g, 'free_deal_delay_hours', 1);
     return h === null ? null : String(h);
@@ -347,6 +352,14 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
 
 export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
   calls_live: { label: 'Calls are switched on (SI_CALLS_ENABLED)', scope: 'global', resolve: (g) => g.callsLive },
+  briefings_on: {
+    label: 'AI morning briefings are switched on (billing_settings.briefings_enabled)',
+    scope: 'global',
+    resolve: (g) => {
+      const v = raw(g, 'briefings_enabled');
+      return v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
+    },
+  },
   welcome_offer: { label: 'They have a welcome price running', scope: 'member', resolve: (_g, m) => (m ? m.welcome !== null : null) },
   first_deep_offer: { label: 'Their first deep report is discounted', scope: 'member', resolve: (_g, m) => (m ? m.firstDeepPence !== null : null) },
   alerts_by_text: { label: 'Their alerts also come by text', scope: 'member', resolve: (_g, m) => (m ? m.alertsByText : null) },
