@@ -21,6 +21,7 @@ const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-GB"
 interface Conv { id: string; channel: string; user_id: string | null; persona_version: string | null; started_at: string; transcript_purged_at: string | null }
 interface Question { conversation_id: string; question: string; outcome: string; knowledge_ref: string | null }
 interface CallRow { conversation_id: string | null; direction: string; status: string; seconds: number | null; charged_pence: number; handoff: boolean }
+interface ChatTurn { surface: string; status: string; outcome: string | null; rounds: number; tools_used: string[] | null; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; raw_pence: number | string; charged_face_pence: number | string; created_at: string }
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -48,12 +49,23 @@ function callLine(calls: CallRow[]): string | null {
   return calls.map((c) => `${c.direction} ${c.status}, ${length(c.seconds)}, ${charge(c.charged_pence)}${c.handoff ? ", handed off" : ""}`).join("; ");
 }
 
+/** One line per chat turn (R3-134): the surface, how it ended, the rounds and tools, the tokens, and what it cost and charged. */
+function chatTurnLine(t: ChatTurn): string {
+  const n = (x: unknown) => Number(x) || 0;
+  const tools = (t.tools_used ?? []).length ? `tools ${(t.tools_used ?? []).join(", ")}` : "no tools";
+  const pence = (x: unknown) => `${n(x).toFixed(2)}p`;
+  const rounds = n(t.rounds);
+  return `${when(t.created_at)} · ${t.surface} · ${t.status}${t.outcome ? ` (${OUTCOME_TEXT[t.outcome] ?? t.outcome})` : ""} · ${rounds} round${rounds === 1 ? "" : "s"}, ${tools} · ${n(t.input_tokens) + n(t.cache_read_tokens) + n(t.cache_write_tokens)} in / ${n(t.output_tokens)} out tokens · raw ${pence(t.raw_pence)}, charged ${pence(t.charged_face_pence)}`;
+}
+
 /**
  * The shared conversation log (Batch 23): every conversation with Stayful
  * Intelligence on any channel, its questions and how each went, and the
  * transcript while it is kept. Batch 24 adds the section's nav, filters by
  * outcome and member email, the knowledge entry each answer used (linked),
- * and each call's length and charge from si_calls_log.
+ * and each call's length and charge from si_calls_log. A chat's detail lists
+ * each turn from chat_turns: surface, status, rounds, tools, tokens, raw and
+ * charged pence (R3-134).
  */
 export default async function ConversationsAdminPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
@@ -72,11 +84,12 @@ export default async function ConversationsAdminPage({ searchParams }: { searchP
   const email = (oneOf(params.email) ?? "").trim().toLowerCase().slice(0, 200);
 
   if (id && UUID.test(id)) {
-    const [{ data: conv }, { data: turns }, { data: qs }, { data: calls }, entries] = await Promise.all([
+    const [{ data: conv }, { data: turns }, { data: qs }, { data: calls }, { data: chatTurns }, entries] = await Promise.all([
       admin.from("si_conversations").select("id, channel, user_id, persona_version, started_at, transcript_purged_at").eq("id", id).maybeSingle(),
       admin.from("si_conversation_turns").select("seq, role, text, at, knowledge_ref").eq("conversation_id", id).order("seq", { ascending: true }),
       admin.from("si_conversation_questions").select("conversation_id, question, outcome, knowledge_ref").eq("conversation_id", id).order("at", { ascending: true }),
       admin.from("si_calls_log").select("conversation_id, direction, status, seconds, charged_pence, handoff").eq("conversation_id", id),
+      admin.from("chat_turns").select("surface, status, outcome, rounds, tools_used, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, raw_pence, charged_face_pence, created_at").eq("conversation_id", id).order("created_at", { ascending: true }),
       entryIds(admin),
     ]);
     if (!conv) notFound();
@@ -89,6 +102,16 @@ export default async function ConversationsAdminPage({ searchParams }: { searchP
         <h1 className="mt-3 text-2xl font-semibold text-foreground">{c.channel === "call" ? "Call" : c.channel === "sms" ? "Text" : "Chat"} · {when(c.started_at)}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{(person as { email: string | null } | null)?.email ?? "Unknown caller"} · persona {c.persona_version ?? "—"}</p>
         {callLine((calls ?? []) as CallRow[]) && <p className="mt-1 text-sm text-muted-foreground">Call: {callLine((calls ?? []) as CallRow[])}</p>}
+        {(chatTurns ?? []).length > 0 && (
+          <>
+            <h2 className="mt-6 text-sm font-semibold text-foreground">Chat turns</h2>
+            <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+              {((chatTurns ?? []) as ChatTurn[]).map((t, i) => (
+                <li key={i}>{chatTurnLine(t)}</li>
+              ))}
+            </ul>
+          </>
+        )}
         <h2 className="mt-6 text-sm font-semibold text-foreground">Questions</h2>
         <ul className="mt-2 space-y-1 text-sm">
           {((qs ?? []) as Question[]).map((q, i) => (

@@ -15,7 +15,7 @@
  */
 import { OPT_OUT_LINE, toGsm } from '../sms/gsm.ts';
 import { PERSONA_NAME, SMS_SIGN_OFF } from '../persona/stayful-intelligence.ts';
-import type { CallTextTemplate } from './config.ts';
+import type { CallTextTemplate, OutboundCallType } from './config.ts';
 import { bodyProblemFor } from './templates-check.ts';
 
 /** Short paths the texts link to (each redirects or serves; see src/app/si). */
@@ -80,9 +80,6 @@ export function callText(template: Exclude<CallTextTemplate, 'resend_last_link'>
       return dealLinkText(c);
   }
 }
-
-/** The outbound call types (callbacks are the member ringing in). */
-export type OutboundCallType = 'intro' | 'low_credit' | 'deal';
 
 /** "I tried to call you" texts, after a missed outbound call. */
 export function missedCallText(type: OutboundCallType, c: LinkContext): string {

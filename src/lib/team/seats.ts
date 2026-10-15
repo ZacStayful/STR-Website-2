@@ -6,7 +6,7 @@ import { debitFace, getBalance, InsufficientCreditError } from '../credit/ledger
 import { afterDebit } from '../credit/after-debit';
 import { sendEmail } from '../email/send';
 import { seatSuspendedEmail, seatRestoredEmail, type Email } from '../email/team';
-import { SEAT_PRICE_PENCE, periodEnd } from './rules';
+import { SEAT_PRICE_PENCE, periodEnd, seatHeld } from './rules';
 import { personName, profileNames, teamName } from './index';
 
 /**
@@ -61,7 +61,7 @@ export async function chargeSeat(input: { ownerId: string; memberId: string; mem
     if (err instanceof InsufficientCreditError) {
       // Short only because a running action holds some of it: wait, don't suspend.
       const b = await getBalance(input.ownerId).catch(() => null);
-      return b && b.reservedBasePence > 0 && b.totalPence >= SEAT_PRICE_PENCE ? 'held' : 'insufficient';
+      return b && seatHeld(b) ? 'held' : 'insufficient';
     }
     console.error('[team] seat debit failed:', (err as Error).message);
     return 'error';
@@ -90,6 +90,8 @@ export interface SeatRunSummary {
   renewed: number;
   suspended: number;
   reinstated: number;
+  /** Seats the ledger would not take yet: a running action holds part of a balance that covers them (R3-139). Tried again next run; not an error. */
+  held: number;
   errors: string[];
 }
 
@@ -99,7 +101,7 @@ export interface SeatRunSummary {
  * (the cron was down) renews one period per run until it is current.
  */
 export async function renewDueSeats(opts: { dry?: boolean; now?: Date } = {}): Promise<SeatRunSummary> {
-  const summary: SeatRunSummary = { renewed: 0, suspended: 0, reinstated: 0, errors: [] };
+  const summary: SeatRunSummary = { renewed: 0, suspended: 0, reinstated: 0, held: 0, errors: [] };
   if (!hasServiceRole()) return summary;
   const admin = createAdminClient();
   const now = opts.now ?? new Date();
@@ -141,6 +143,9 @@ export async function renewDueSeats(opts: { dry?: boolean; now?: Date } = {}): P
       const team = await teamName(r.owner_id);
       await send(names.get(r.owner_id)?.email, seatSuspendedEmail({ to: 'owner', memberName, teamName: team }));
       await send(names.get(r.member_id)?.email, seatSuspendedEmail({ to: 'member', memberName, teamName: team }));
+    } else if (outcome === 'held') {
+      // R3-139: a running action holds part of the balance; the next run tries again.
+      summary.held += 1;
     } else {
       summary.errors.push(`renew ${r.member_id}: ${outcome}`);
     }
@@ -156,7 +161,7 @@ export async function renewDueSeats(opts: { dry?: boolean; now?: Date } = {}): P
  * charge once; seat_paid_until still runs from now.
  */
 export async function reinstateSeats(opts: { ownerId?: string; dry?: boolean; now?: Date } = {}): Promise<SeatRunSummary> {
-  const summary: SeatRunSummary = { renewed: 0, suspended: 0, reinstated: 0, errors: [] };
+  const summary: SeatRunSummary = { renewed: 0, suspended: 0, reinstated: 0, held: 0, errors: [] };
   if (!hasServiceRole()) return summary;
   const admin = createAdminClient();
   const now = opts.now ?? new Date();
@@ -193,6 +198,11 @@ export async function reinstateSeats(opts: { ownerId?: string; dry?: boolean; no
     const outcome = await chargeSeat({ ownerId: r.owner_id, memberId: r.member_id, memberName, periodStart: new Date(r.suspended_at) });
     if (outcome === 'insufficient') {
       broke.add(r.owner_id);
+      continue;
+    }
+    if (outcome === 'held') {
+      // R3-139: a running action holds part of the balance; the next run tries again.
+      summary.held += 1;
       continue;
     }
     if (outcome !== 'charged' && outcome !== 'already_paid') {

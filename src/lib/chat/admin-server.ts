@@ -65,6 +65,7 @@ export async function loadChatAdmin(now: Date = new Date()): Promise<ChatAdminLo
       admin.from('si_conversation_questions').select('question, outcome').eq('source', 'chat').gte('at', since).limit(ROW_LIMIT),
     ]);
     if (turnsRes.error) return { status: 'failed', message: `chat_turns: ${turnsRes.error.message}` };
+    if (questionsRes.error) return { status: 'failed', message: `si_conversation_questions: ${questionsRes.error.message}` };
     type Raw = { user_id: string | null; created_at: string; surface: ChatSurface; status: TurnFact['status']; outcome: string | null; raw_pence: number; charged_base_pence: number; charged_face_pence: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; match_confidence: number | null; question_id: string | null };
     const raw = (turnsRes.data ?? []) as Raw[];
     const facts: (TurnFact & { userId: string | null })[] = raw.map((r) => ({

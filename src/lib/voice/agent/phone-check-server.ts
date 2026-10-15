@@ -5,9 +5,11 @@ import 'server-only';
  * never a call, never a change to the agent. Runs on every Dry run and Sync
  * on /admin/calls, and from the 5-minute calls cron when
  * billing_settings.si_phone_check_request is newer than the last check
- * (so it can be asked for without anyone at /admin/calls). The result is
- * kept in billing_settings.si_phone_check ({ at, lines }); callers appear
- * only as the last 3 digits of their number.
+ * (so it can be asked for without anyone at /admin/calls); the request row
+ * is removed once the check has run, so one request is one run (R3-137),
+ * and the cron's dry run never runs it. The result is kept in
+ * billing_settings.si_phone_check ({ at, lines }); callers appear only as
+ * the last 3 digits of their number.
  */
 import { createAdminClient } from '../../supabase/admin';
 import { updateBillingSetting } from '../../credit/unit-costs';
@@ -63,11 +65,17 @@ export async function runPhoneCheck(): Promise<string[]> {
 /** From the calls cron: run the check when one was asked for after the last. Never throws. */
 export async function runRequestedPhoneCheck(): Promise<boolean> {
   try {
-    const { data } = await createAdminClient().from('billing_settings').select('key, value').in('key', [PHONE_CHECK_KEY, PHONE_CHECK_REQUEST_KEY]);
+    const admin = createAdminClient();
+    const { data } = await admin.from('billing_settings').select('key, value').in('key', [PHONE_CHECK_KEY, PHONE_CHECK_REQUEST_KEY]);
     const kv = new Map(((data ?? []) as { key: string; value: unknown }[]).map((r) => [r.key, r.value]));
     const last = kv.get(PHONE_CHECK_KEY) as { at?: unknown } | undefined;
     if (!phoneCheckDue(kv.get(PHONE_CHECK_REQUEST_KEY), last?.at)) return false;
     await runPhoneCheck();
+    // R3-137: one request is one run. The request row goes whether or not the
+    // result could be saved (that failure is logged above), so a save that
+    // fails does not re-run the check every five minutes for ever.
+    const { error } = await admin.from('billing_settings').delete().eq('key', PHONE_CHECK_REQUEST_KEY);
+    if (error) console.error('[voice] phone check request not cleared:', error.message);
     return true;
   } catch (err) {
     console.error('[voice] requested phone check failed:', err);

@@ -61,7 +61,7 @@ export default async function ChatAdminPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login?redirect=/admin/intelligence/chat");
   if (!isAdminEmail(user.email)) notFound();
-  const [load, flash] = await Promise.all([loadChatAdmin(), readFlash()]);
+  const [load, flash] = await Promise.all([loadChatAdmin(), readFlash("/admin/intelligence/chat")]);
 
   return (
     <div className="mx-auto max-w-6xl px-5 py-10">

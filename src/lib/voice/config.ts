@@ -14,8 +14,16 @@
 export const CALL_TYPES = ['intro', 'low_credit', 'callback', 'deal'] as const;
 export type CallType = (typeof CALL_TYPES)[number];
 
-/** The types the system places (callbacks are the member ringing in). */
-export const OUTBOUND_CALL_TYPES: readonly CallType[] = ['intro', 'low_credit', 'deal'];
+/**
+ * The types the system places (callbacks are the member ringing in): the one
+ * list the queue, the scripts, the missed-call fallback and the eligibility
+ * rules share (R3-99, R2-171).
+ */
+export type OutboundCallType = Exclude<CallType, 'callback'>;
+export const OUTBOUND_CALL_TYPES: readonly OutboundCallType[] = CALL_TYPES.filter((t): t is OutboundCallType => t !== 'callback');
+export function isOutboundCallType(t: string): t is OutboundCallType {
+  return (OUTBOUND_CALL_TYPES as readonly string[]).includes(t);
+}
 
 export const CALL_STATUSES = ['queued', 'ringing', 'answered', 'missed', 'voicemail', 'failed', 'blocked'] as const;
 export type CallStatus = (typeof CALL_STATUSES)[number];
@@ -76,6 +84,13 @@ export type QuestionOutcome = (typeof QUESTION_OUTCOMES)[number];
 export const STALE_RINGING_MS = 30 * 60_000;
 /** A queued call older than this is dropped (blocked: stale) rather than placed late. */
 export const STALE_QUEUED_MS = 4 * 24 * 60 * 60_000;
+/**
+ * R3-23 (R2-98): the intro call is queued this long after calls are switched
+ * on and placed by the calls cron, never from the screen the member is on,
+ * so it does not ring while they are still answering the sign-up on the same
+ * phone. The cron runs every 5 minutes, so it rings 5–10 minutes later.
+ */
+export const INTRO_DELAY_MS = 5 * 60_000;
 /** Tool requests are accepted for this long after the call's max duration. */
 export const TOOL_GRACE_MS = 5 * 60_000;
 /** The unit row every call minute is priced from. */

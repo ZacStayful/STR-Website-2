@@ -202,7 +202,7 @@ export async function deleteMemberHistory(admin: Admin, userId: string, now: Dat
  * Batch 23, deletes the text for every channel.) A question still marked
  * pending that old is from an instance that died: it goes too. Works through
  * the backlog in batches until it is cleared or the time is up. A dry run
- * only counts.
+ * only counts (the whole backlog, not a batch of it: R3-130).
  */
 export async function anonymiseChat(o: { apply: boolean; days: number; now?: Date; budgetMs?: number }): Promise<{ conversations: number; turns: number; done: boolean }> {
   const admin = createAdminClient();
@@ -212,30 +212,32 @@ export async function anonymiseChat(o: { apply: boolean; days: number; now?: Dat
   const days = Math.max(1, Math.floor(o.days));
   const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
   const BATCH = 1000;
+  if (!o.apply) {
+    // R3-130: a dry run counts the whole backlog, not the first batch of it.
+    const [convs, rows] = await Promise.all([
+      admin.from('si_conversations').select('id', { count: 'exact', head: true }).eq('channel', 'chat').not('user_id', 'is', null).lt('started_at', cutoff),
+      admin.from('chat_turns').select('id', { count: 'exact', head: true }).not('user_id', 'is', null).lt('created_at', cutoff),
+    ]);
+    if (convs.error) throw new Error(`chat retention: ${convs.error.message}`);
+    if (rows.error) throw new Error(`chat retention: ${rows.error.message}`);
+    return { conversations: convs.count ?? 0, turns: rows.count ?? 0, done: true };
+  }
   let conversations = 0;
   let turns = 0;
   for (;;) {
     const convs = await admin.from('si_conversations').select('id').eq('channel', 'chat').not('user_id', 'is', null).lt('started_at', cutoff).limit(BATCH);
     if (convs.error) throw new Error(`chat retention: ${convs.error.message}`);
     const ids = ((convs.data ?? []) as { id: string }[]).map((r) => r.id);
-    if (!o.apply) {
-      conversations += ids.length;
-      break;
-    }
     if (ids.length > 0) await updateInChunks(admin, 'si_conversations', ids, { user_id: null });
     conversations += ids.length;
     if (ids.length < BATCH || Date.now() - started > budget) break;
   }
   // Anything still pending this old is from an instance that died.
-  if (o.apply) await admin.from('chat_turns').update({ status: 'failed' }).eq('status', 'pending').lt('created_at', cutoff);
+  await admin.from('chat_turns').update({ status: 'failed' }).eq('status', 'pending').lt('created_at', cutoff);
   for (;;) {
     const rows = await admin.from('chat_turns').select('id').not('user_id', 'is', null).lt('created_at', cutoff).limit(BATCH);
     if (rows.error) throw new Error(`chat retention: ${rows.error.message}`);
     const ids = ((rows.data ?? []) as { id: string }[]).map((r) => r.id);
-    if (!o.apply) {
-      turns += ids.length;
-      break;
-    }
     if (ids.length > 0) await updateInChunks(admin, 'chat_turns', ids, ANONYMOUS(now));
     turns += ids.length;
     if (ids.length < BATCH || Date.now() - started > budget) break;

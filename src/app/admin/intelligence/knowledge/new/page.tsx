@@ -18,7 +18,7 @@ export default async function NewKnowledgeEntryPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login?redirect=/admin/intelligence/knowledge/new");
   if (!isAdminEmail(user.email)) notFound();
-  const flash = await readFlash();
+  const flash = await readFlash("/admin/intelligence/knowledge/new");
   return (
     <div className="mx-auto max-w-4xl px-5 py-10">
       <SiAdminNav current="knowledge" />

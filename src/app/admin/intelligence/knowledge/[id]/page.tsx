@@ -78,7 +78,7 @@ export default async function KnowledgeEntryPage({ params }: { params: Promise<{
   if (!UUID.test(id) || !hasServiceRole()) notFound();
 
   const admin = createAdminClient();
-  const [row, history, g, flash] = await Promise.all([entryById(id, admin), historyFor(id, admin), readGlobalSnapshot(admin), readFlash()]);
+  const [row, history, g, flash] = await Promise.all([entryById(id, admin), historyFor(id, admin), readGlobalSnapshot(admin), readFlash(`/admin/intelligence/knowledge/${id}`)]);
   if (!row) notFound();
   const status = entryStatus(row);
   const live = liveContent(row);

@@ -19,7 +19,7 @@ import { missedCallEmail as sendMissedEmail } from '../email/si-calls';
 import { missedCallEmail, missedCallTemplate, missedCallText } from './templates';
 import { memberFacts } from './member-server';
 import { claimCharge, releaseCharge, settleEmail, settleText } from './charge-server';
-import { callsDryRun } from './config';
+import { callsDryRun, isOutboundCallType } from './config';
 import { claimCallSlot } from './cap-server';
 import { dealCallFacts } from '../standout/calls-server';
 import { sendMemberText } from '../standout/texts-server';
@@ -27,7 +27,7 @@ import type { CallRow } from './store-server';
 
 export async function sendMissedCallFallback(call: CallRow): Promise<{ text: boolean; email: boolean }> {
   const out = { text: false, email: false };
-  if (call.direction !== 'outbound' || !call.user_id || (call.call_type !== 'intro' && call.call_type !== 'low_credit' && call.call_type !== 'deal')) return out;
+  if (call.direction !== 'outbound' || !call.user_id || !isOutboundCallType(call.call_type)) return out;
   const admin = createAdminClient();
   // Once per call: only the request that stamps fallback_sent_at sends.
   const { data: won, error } = await admin

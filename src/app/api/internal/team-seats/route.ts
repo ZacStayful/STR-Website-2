@@ -32,6 +32,7 @@ export async function GET(request: Request) {
     reinstated: reinstated.reinstated,
     renewed: renewed.renewed,
     suspended: renewed.suspended,
+    held: reinstated.held + renewed.held,
     errors: [...reinstated.errors, ...renewed.errors],
   };
   if (summary.errors.length > 0) console.error('[team-seats]', summary.errors.join('; '));

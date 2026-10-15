@@ -41,6 +41,16 @@ export function nextOpening(now: Date, s: Hours): Date {
   return new Date(now.getTime() + 7 * 24 * 3_600_000);
 }
 
+/**
+ * When a call queued now may be placed: `delayMs` from now, or the opening
+ * after that when the delay runs past closing (R3-23: the intro waits for the
+ * sign-up to finish). No delay: now, as before.
+ */
+export function readyAt(now: Date, delayMs: number, s: Hours): Date {
+  if (delayMs <= 0) return now;
+  return nextOpening(new Date(now.getTime() + delayMs), s);
+}
+
 /** The first opening on a later UK day than `now` (today's one call is used). */
 export function nextDayOpening(now: Date, s: Hours): Date {
   const today = ukDay(now);

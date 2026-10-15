@@ -39,6 +39,16 @@ export function seatDue(paidUntil: Date | string, now: Date = new Date()): boole
   return Number.isFinite(t) && t <= now.getTime();
 }
 
+/**
+ * Batch 25 (R2-13): a seat the ledger refused is 'held', not unpaid, when the
+ * balance covers it but part of it is reserved for an action still running
+ * (an analysis, a deep search, a funnel lead). The next run tries again;
+ * nothing is suspended and nobody is emailed (R3-139).
+ */
+export function seatHeld(b: { reservedBasePence: number; totalPence: number }, price: number = SEAT_PRICE_PENCE): boolean {
+  return b.reservedBasePence > 0 && b.totalPence >= price;
+}
+
 export function normaliseEmail(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const e = raw.trim().toLowerCase();
