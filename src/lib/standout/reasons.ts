@@ -19,10 +19,14 @@ export const STANDOUT_REASONS = {
   awaiting_answers: 'Primary profile is waiting for its answers (Start again)',
   no_deal_types: 'No deal types chosen on the primary profile',
   no_min_profit: 'No real minimum-profit answer: deals reach them through Today instead',
+  // Review R3 (R3-54, R3-64, R3-65): members no deal can reach
+  picks_off: 'Daily picks off or paused: nothing is saved that no email could tell them about',
+  quiet: 'Daily picks paused for inactivity (Batch 20): not judged, not rung',
   // Deal-level: judged, not standout
   type_not_chosen: 'A deal type the primary profile does not show',
   no_min_profit_for_type: 'No minimum-profit answer for this deal type',
   must_have_missed: 'Misses a must-have',
+  not_for_me_rule: 'Ruled out by a reason they gave on a pick (area, price, size, type or work)',
   too_few_checks: 'Too few answers checked',
   match_below_floor: 'Match below the standout floor',
   below_reveal_match: 'Match below their signup reveal’s best match',
@@ -30,7 +34,7 @@ export const STANDOUT_REASONS = {
   profit_short: 'Profit not far enough above their minimum',
   not_new: 'Already shown, saved, answered or opened',
   not_beating_best: 'Does not beat a deal already shown or saved to them',
-  daily_limit: 'A better standout was saved for them today',
+  daily_limit: 'A better standout was saved for them today: judged again tomorrow',
   gone: 'Off the market when checked',
   // Waiting
   needs_recheck: 'Waiting for a live check of the listing',
@@ -63,6 +67,7 @@ export const CALL_STATUS_LABELS: Record<string, string> = {
   no_number: 'No call: no verified mobile',
   not_owner: 'No call: team member',
   management_only: 'No call: management company without deal-finding',
+  quiet: 'No call: daily picks paused for inactivity',
   below_floor: 'No call: credit below the floor (text and email sent)',
   one_call: 'No call: another standout got the call',
   deal_gone: 'No call: the deal went before the call',

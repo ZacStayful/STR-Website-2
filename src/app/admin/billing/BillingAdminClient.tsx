@@ -123,8 +123,8 @@ function DealPricingForm({ settings, guards }: { settings: BillingSettings; guar
   );
 }
 
-/** Batch 23b: AI morning briefings on or off (billing_settings.briefings_enabled). */
-function BriefingsSwitch({ enabled }: { enabled: boolean }) {
+/** Batch 23b: AI morning briefings on or off (billing_settings.briefings_enabled); Review R3: the most one may cost (briefing_ceiling_pence). */
+function BriefingsSwitch({ enabled, ceilingPence }: { enabled: boolean; ceilingPence: number }) {
   const [state, action, pending] = useActionState(updateBriefingsAction, idle);
   return (
     <form action={action} className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4 text-sm">
@@ -132,7 +132,11 @@ function BriefingsSwitch({ enabled }: { enabled: boolean }) {
         <input type="checkbox" name="briefings_enabled" defaultChecked={enabled} />
         AI briefings on
       </label>
-      <span className="text-xs text-muted-foreground">Off: every member with credit gets the template opener, and nothing is charged.</span>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        Most a briefing may cost (base p)
+        <Input name="briefing_ceiling_pence" type="number" step="0.1" min={0.1} max={100} defaultValue={ceilingPence} className="h-8 w-24" />
+      </label>
+      <span className="text-xs text-muted-foreground">Off: every member with credit gets the template opener, and nothing is charged. A briefing estimated over the ceiling gets the template; a written one is never charged past it.</span>
       <Button type="submit" size="sm" disabled={pending}>Save</Button>
       <Msg s={state} />
     </form>
@@ -174,7 +178,7 @@ export function BillingAdminClient({ rows, settings, guards, codes, adjNonce }: 
 
       <DealPricingForm settings={settings} guards={guards} />
 
-      <BriefingsSwitch enabled={settings.briefingsEnabled} />
+      <BriefingsSwitch enabled={settings.briefingsEnabled} ceilingPence={settings.briefingCeilingPence} />
 
       <div className="mt-8 mb-2 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-foreground">Unit costs</h2>

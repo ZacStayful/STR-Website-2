@@ -20,6 +20,8 @@ export const BRIEFING_MODEL = 'claude-haiku-4-5';
 export const BRIEFING_MAX_TOKENS = 400;
 /** Inside the pass's time budget; a slow call gives the template, not a held reservation. */
 const TIMEOUT_MS = 15_000;
+/** The writer gives up after this long; a run with less time left passes a shorter one. */
+export const WRITER_TIMEOUT_MS = TIMEOUT_MS;
 
 /** The unit rows (src/lib/credit/costs.ts) each model is metered at. */
 export function unitsFor(model: string): { input: string; output: string } | null {
@@ -58,10 +60,10 @@ export function writerConfigured(): boolean {
   return Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
-export async function writeBriefing(input: AiInput, model: string = BRIEFING_MODEL): Promise<WriterResult> {
+export async function writeBriefing(input: AiInput, model: string = BRIEFING_MODEL, opts: { timeoutMs?: number } = {}): Promise<WriterResult> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return { output: null, error: 'no_api_key', model, inputTokens: 0, outputTokens: 0 };
-  const client = new Anthropic({ apiKey, timeout: TIMEOUT_MS, maxRetries: 0 });
+  const client = new Anthropic({ apiKey, timeout: Math.max(1_000, Math.min(TIMEOUT_MS, opts.timeoutMs ?? TIMEOUT_MS)), maxRetries: 0 });
   try {
     const msg = await client.messages.create({
       model,

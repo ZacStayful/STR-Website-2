@@ -7,7 +7,8 @@ import 'server-only';
  *                         (copy.ts: town, bedrooms, kind, the rounded profit
  *                         range; never an address, a price or the listing)
  *   dealCallsThisMonth    deal calls placed this UK calendar month (answered
- *                         or not: every placed call counts)
+ *                         or not: every call that rang counts; R3-104: one
+ *                         that failed at the provider does not)
  *   dealCallStillWanted   the last check before a queued deal call is dialled,
  *                         after Batch 23's own (hours, consent, owner, one
  *                         call a day, credit for a minute):
@@ -136,9 +137,9 @@ export async function dealCallFacts(admin: Admin, call: Pick<CallRow, 'user_id' 
   return dealFactsFor(admin, call.user_id, call.trigger_ref);
 }
 
-/** Deal calls placed for this member this UK calendar month (any outcome). Null when unreadable. */
+/** Deal calls that rang for this member this UK calendar month (answered or not; R3-104: a call that failed at the provider is not one). Null when unreadable. */
 export async function dealCallsThisMonth(admin: Admin, userId: string, now: Date, exceptId: string | null = null): Promise<number | null> {
-  const { data, error } = await admin.from('si_calls_log').select('id').eq('user_id', userId).eq('call_type', 'deal').not('placed_at', 'is', null).gte('uk_day', londonMonthStart(now));
+  const { data, error } = await admin.from('si_calls_log').select('id').eq('user_id', userId).eq('call_type', 'deal').not('placed_at', 'is', null).in('status', ['ringing', 'answered', 'missed', 'voicemail']).gte('uk_day', londonMonthStart(now));
   if (error) {
     console.error('[standout] deal calls unreadable:', error.message);
     return null;
@@ -209,7 +210,8 @@ export type StillWanted =
  */
 export async function dealCallStillWanted(admin: Admin, call: CallRow, m: MemberFacts, now: Date, o: { apply: boolean }): Promise<StillWanted> {
   const wait = (why: string): StillWanted => ({ ok: false, wait: true, why });
-  if (!dealCallsEnabled()) return { ok: false, reason: 'deal_calls_off' };
+  // R3-71: the switch off is a wait (an hour, then the stale rule), never the deal's one call used up.
+  if (!dealCallsEnabled()) return wait('deal calls off');
   if (!call.trigger_ref) return { ok: false, reason: 'deal_gone' };
   const dealId = call.trigger_ref;
   const [d, place, siSave, settings] = await Promise.all([savedDecision(admin, m.userId, dealId), dealPlace(admin, dealId), stillSiSave(admin, m.userId, dealId), getBillingSettings()]);
@@ -217,6 +219,12 @@ export async function dealCallStillWanted(admin: Admin, call: CallRow, m: Member
   if (!d || !place) return { ok: false, reason: 'deal_gone' };
   // The member got there first: opened it, moved it, said "Not for me", or made the Keep their own.
   if (d.not_for_me_at || d.opened_at || d.stage_moved_at || !siSave) return { ok: false, reason: 'deal_acted' };
+
+  // R3-64: a member whose daily picks are paused for inactivity is not rung about deals (Batch 20's reason).
+  const { data: q, error: qErr } = await admin.from('profiles').select('reengage_since, picks_paused_inactive_at').eq('id', m.userId).maybeSingle();
+  if (qErr) return wait('profile unreadable');
+  const qp = q as { reengage_since: string | null; picks_paused_inactive_at: string | null } | null;
+  if (qp?.reengage_since || qp?.picks_paused_inactive_at) return { ok: false, reason: 'quiet' };
 
   const shown = await stillShownFor(admin, m.userId, d.deal_type, now);
   if (shown === null) return wait('profile unreadable');

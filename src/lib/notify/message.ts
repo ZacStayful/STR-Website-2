@@ -540,7 +540,11 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
   let subject: string;
   if (kind === 'deal_changes') subject = capitalise(phrase ?? 'Changes on your deals');
   // Batch 25: only what Stayful Intelligence saved, nothing else new this morning.
-  else if (dealCount === 0) subject = saved.length === 1 ? 'I saved a deal for you' : `I saved ${saved.length} deals for you`;
+  else if (dealCount === 0) {
+    // R3-124: with changes on tracked deals in the same email, the subject says so too.
+    const savedHead = saved.length === 1 ? 'I saved a deal for you' : `I saved ${saved.length} deals for you`;
+    subject = phrase ? `${savedHead} · ${phrase}` : savedHead;
+  }
   else {
     // Batch 22: Stayful Intelligence speaks in the first person.
     const head = `I found ${plural(dealCount, 'deal')} for you this morning`;

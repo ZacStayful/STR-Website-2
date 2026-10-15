@@ -28,12 +28,13 @@ CREDIT, PLANS AND PAYING
 - Everything is paid from credit. Plans give monthly credit and start at {lowest_plan_cost} a month; plan credit resets each month. Plans can be paused or cancelled in Account.
 - Top-ups: {topup_amounts}, any time, in Account → Billing. Top-up credit never expires but is spent at {topup_rate} the plan rate.
 - Auto top-up adds credit automatically when the balance runs low and needs a saved card; the one-tap offer is {auto_topup_amount} whenever the balance drops below {auto_topup_threshold}.
-- A member whose credit reaches {low_credit_mark} between {nudge_days_min} and {nudge_days_max} days after their last top-up gets one text ({text_cost}) and email ({email_cost}) with the one-tap auto top-up link, instead of the usual low-credit email.
+- A pay-as-you-go member (no plan) whose credit reaches {low_credit_mark} between {nudge_days_min} and {nudge_days_max} days after their last top-up gets one text ({text_cost}) and email ({email_cost}) with the one-tap auto top-up link, instead of the usual low-credit email; one notice per credit, whichever comes first (the call, the nudge or the email).
 - The starter pack, when offered: {pack_credit} of credit for {pack_cost}, once.
 - Account → Usage shows where credit goes; Account → Billing shows every charge, top-ups and receipts. Reopening a saved report never costs anything.
 
 DEALS
 - Today shows the member's daily picks (Today's 5) from live deals that fit their profile, also sent as one daily email. Daily deals cost {daily_deals_cost} a day from credit.
+- The daily email and Today open with a morning briefing: a greeting and a short note on one thing in the member's own figures (counts, their kept deals and pipeline; never a listing's title, description or an address). With AI briefings switched on it is written by Stayful Intelligence and charged at most {briefing_max_cost} of credit, after the day's own charge and only if the balance covers it; a rejected, late or switched-off one is the standard line, free. Members who did not come in from the email see it once on Today, where Play reads it aloud at the speak price; "Useful" and "Not for me" are a tap.
 - Browse is the marketplace of screened deals. Opening a deal (the address, photos and listing) costs between {open_cost_min} and {open_cost_max}, depending on how profitable it is.
 - Free members (who have never paid) see a new deal {free_delay_hours} hours after it goes live; members who have paid see it at once.
 - Keep saves a deal to My deals (free); Pass hides it and teaches the matching. My deals groups deals by stage (Kept, Contacted, Viewing, Offer, Secured, Passed).
@@ -49,7 +50,7 @@ REPORTS
 
 ALERTS
 - Changes on saved deals (a price drop, back on the market, getting attention, gone) come in the daily email.
-- Text alerts: a member can verify a UK mobile in Account → Notifications and get at most one alert text a day and {sms_monthly_cap} a month, between {sms_hours_start} and {sms_hours_end} UK time. Texts are free. Reply STOP to any text to stop them; START to restart.
+- Text alerts: a member can verify a UK mobile in Account → Notifications and get at most one alert text a day and {sms_monthly_cap} a month, between {sms_hours_start} and {sms_hours_end} UK time. Alert texts are free, and are the only texts those caps count; a text from Stayful Intelligence about a call or a deal it saved costs {text_cost}, needs the same Texts switch, and is outside them. Reply STOP to any text to stop them; START to restart.
 - Every email and text type has its own switch in Account → Notifications.
 
 CALLS FROM STAYFUL INTELLIGENCE
@@ -65,7 +66,7 @@ TYPED QUESTIONS (THE CHAT)
 - A question costs what the AI actually cost × {chat_markup}, never more than {chat_quick_max} (quick) or {chat_full_max} (full view), and only when it is answered; "I don't know", "ask in the full view" and anything that fails are free. It never takes the balance below zero. The tap-to-ask questions are free.
 - It answers only from approved answers and its look-ups, never gives advice ("Get a survey and your own advice before you offer"), never gives an address or postcode, and never changes anything itself: it offers a button the member taps.
 - Members see their chat for {transcript_days} days in the full view and can delete it; after that the questions are kept without the member's name.
-- Members can also talk to it: the microphone by the box records the question (it stops by itself when they stop talking), and a question asked out loud is answered out loud in the Stayful Intelligence voice, and then it listens again for the next one; the microphone is always off while it speaks, so it never hears itself. Typing, or tapping to stop it speaking, ends the spoken conversation. Hearing and speaking are charged as AI voice on top of the question; a recording it couldn't make out is free. Typing works the same as ever.
+- Members can also talk to it: the microphone by the box records the question (it stops by itself when they stop talking), and a question asked out loud is answered out loud in the Stayful Intelligence voice, then it listens once more for a follow-up and after that waits for another tap; the microphone is always off while it speaks, so it never hears itself. Typing, or tapping to stop it speaking, ends the spoken conversation. Hearing a question costs a fraction of a penny; a spoken answer is charged as AI voice on top of the question, about {chat_speak_quick_cost} for a quick answer and {chat_speak_full_cost} for a full one, and that charge is shown under the answer; a recording it couldn't make out is free, and a reply that is not an answer (I don't know, top up, something went wrong) is never read aloud. Typing works the same as ever.
 
 MEMORY
 - Stayful Intelligence can remember a lasting preference or plan (for example "prefers 2-bed flats near stations") only after asking "Want me to remember that?" and hearing yes. Members see and delete everything it remembers in Account → What Stayful Intelligence remembers about you. It never keeps health, money beyond the profile, or anything about other people.

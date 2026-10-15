@@ -20,6 +20,7 @@ import { logActivity } from '../activity/log';
 import { MAX_QUESTION_CHARS, MODEL_UNITS, QUICK_MODEL, QUICK_TIMEOUT_MS, DONT_KNOW_LINE, FULL_VIEW_LINE } from './config';
 import { approxTokens, budgetFor, roundMaxTokens, unitsPriced, usageOf, type RoundUsage } from './budget';
 import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
+import { QUICK_MAX_WORDS } from './voice-rules';
 import { buildButtons } from './actions';
 import { accountBlock, parseQuickReply, questionBlock, quickSystemPrompt, QUICK_SCHEMA } from './prompts';
 import { chargeLabel } from './format';
@@ -153,7 +154,7 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
       if (okSlug && figures.ok && advice.length === 0) {
         state = 'answer';
         outcome = 'answered';
-        text = clampWords(reply.text, 60);
+        text = clampWords(reply.text, QUICK_MAX_WORDS);
         slug = reply.slug;
       } else {
         console.warn(`[chat] quick answer refused: ${!okSlug ? 'unknown slug' : !figures.ok ? `figures ${figures.figures.join(', ')}` : `advice ${advice.join(', ')}`}`);

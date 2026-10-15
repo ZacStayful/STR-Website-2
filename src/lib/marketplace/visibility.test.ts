@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dealVisibility, dealVisible, dealVisibleTo, PAID_VISIBILITY, visibilityOrFilter } from './visibility.ts';
+import { dealVisibility, dealVisible, dealVisibleTo, PAID_VISIBILITY, visibilityOrFilter, withOwnFinds } from './visibility.ts';
 
 const NOW = new Date('2026-09-25T14:37:00Z');
 
@@ -59,7 +59,8 @@ test('Batch 22: the own-finds filter only names UUIDs, and is null without finds
   assert.equal(f, `live_since.lte.${v.cutoffIso},id.in.(11111111-1111-4111-8111-111111111111)`);
 });
 
-test('Batch 22: ownFinds is set in tier.ts and nowhere else', async () => {
+// R3 (R2-18): withOwnFinds in visibility.ts is the one other setter, and only ever on a member's own context.
+test('Batch 22: ownFinds is set in tier.ts and by withOwnFinds, and nowhere else', async () => {
   const { readdirSync, readFileSync, statSync } = await import('node:fs');
   const { join } = await import('node:path');
   const root = new URL('../../', import.meta.url).pathname;
@@ -72,5 +73,15 @@ test('Batch 22: ownFinds is set in tier.ts and nowhere else', async () => {
     }
   };
   walk(root);
-  assert.deepEqual(hits.sort(), ['lib/marketplace/tier.ts']);
+  assert.deepEqual(hits.sort(), ['lib/marketplace/tier.ts', 'lib/marketplace/visibility.ts']);
+});
+
+test('R2-18: a free member sees their own fresh finds at once; a paying account is untouched', () => {
+  const free = dealVisibility('free', NOW, 48);
+  const seen = withOwnFinds({ ...free, ownFinds: ['a'] }, ['b', 'a']);
+  assert.deepEqual(seen.ownFinds, ['a', 'b']);
+  assert.equal(dealVisibleTo({ id: 'b', live_since: NOW.toISOString() }, seen), true);
+  assert.equal(dealVisibleTo({ id: 'c', live_since: NOW.toISOString() }, seen), false);
+  assert.equal(withOwnFinds(free, []), free);
+  assert.equal(withOwnFinds(PAID_VISIBILITY, ['b']), PAID_VISIBILITY);
 });

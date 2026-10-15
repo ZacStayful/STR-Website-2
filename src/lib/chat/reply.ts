@@ -43,6 +43,8 @@ export interface ChatReply {
   factProposal?: string | null;
   /** The answer was cut short at the question's ceiling. */
   capped?: boolean;
+  /** R3-1: the AI-voice charge for a spoken answer ("29p"), beside the question's; set by the page once the voice came back. */
+  voiceCharged?: string | null;
 }
 
 /** What a page needs to draw the chat (src/lib/chat/turns-server.ts chatUi); null while it is off. */
@@ -53,6 +55,9 @@ export interface ChatUi {
   fullFloorPence: number;
   /** Batch 26b: the microphone shows, and spoken questions get spoken answers. */
   voice: boolean;
+  /** R3-1: about what hearing an answer costs (base pence, AI voice on top of the question); null when voice is off or the row is missing. */
+  speakQuickHintPence: number | null;
+  speakFullHintPence: number | null;
 }
 
 /** The full view's stream: start, thinking (or what it is looking up), text as it comes, cleared or replaced, then the reply. */

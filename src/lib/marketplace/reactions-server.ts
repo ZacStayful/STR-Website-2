@@ -156,7 +156,7 @@ export async function dealFeedbackFor(
   }
   if (rows.length === 0) return { entries, passedUrls, byProfile };
   // Batch 25: a Keep Stayful Intelligence made for the member is not their answer: it never trains the picks.
-  const siSaved = await siSavedPairs(admin, userIds);
+  const siSaved = (await siSavedPairs(admin, userIds)) ?? new Set<string>();
   if (siSaved.size > 0) {
     const own = rows.filter((r) => !(r.reaction === 'keep' && siSaved.has(siKey(r.user_id, r.deal_id))));
     rows.length = 0;

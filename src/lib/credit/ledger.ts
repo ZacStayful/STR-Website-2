@@ -232,6 +232,14 @@ export async function redeemCode(userId: string, code: string): Promise<{ kind: 
   return { kind: d.kind ?? 'promo', amountPence: Number(d.amount_pence ?? 0) || 0 };
 }
 
+/** The debit already on the ledger for this action id (its row and face pence), or null: a charge whose reply was lost is still a charge (R3-26). */
+export async function debitFor(actionId: string): Promise<{ id: number; facePence: number } | null> {
+  if (!hasServiceRole()) return null;
+  const { data } = await (await adminClient()).from('credit_transactions').select('id, amount_pence').eq('action_id', actionId).eq('kind', 'debit').order('id', { ascending: false }).limit(1);
+  const row = (data ?? [])[0] as { id: number | string; amount_pence: number | string | null } | undefined;
+  return row ? { id: Number(row.id), facePence: Math.abs(Number(row.amount_pence ?? 0) || 0) } : null;
+}
+
 /** True when a debit for this action id already exists (once-per-action charges). */
 export async function actionAlreadyCharged(actionId: string): Promise<boolean> {
   if (!hasServiceRole()) return false;

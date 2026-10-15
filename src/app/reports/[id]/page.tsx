@@ -5,6 +5,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { isAdminEmail } from "@/lib/admin";
 import { payerFor } from "@/lib/team";
 import { quoterFor } from "@/lib/credit/quote-server";
+import { offeredPmiAddonFor } from "@/lib/analysis/offers-server";
+import { offerLabel } from "@/lib/analysis/offers";
 import { enhancedEnabled } from "@/lib/analysis/run";
 import type { AnalysisResult } from "@/lib/types";
 import { createAdminClient, hasServiceRole } from "@/lib/supabase/admin";
@@ -32,15 +34,19 @@ export default async function SavedReportPage({ params }: { params: Promise<{ id
   const analysedAt = (meta?.analysed_at as string | null | undefined) ?? null;
 
   let pmi = null;
+  let pmiNote: string | null = null;
   // Batch 17: a Project deal's report shows the reader's own locked figures beside ours, read now and never stored on the report.
   const hasProject = Boolean(dealId && parseReportProject(result.project));
   const user = dealId && ((!result.secondOpinion && enhancedEnabled(true)) || hasProject) ? (await supabase.auth.getUser()).data.user : null;
   if (user && dealId && !result.secondOpinion && enhancedEnabled(true)) {
     const { payerId } = await payerFor(user.id);
-    const quoter = await quoterFor(payerId, isAdminEmail(user.email));
-    pmi = quoter.label(quoter.pricing.pmiAddonPence);
+    const adminUser = isAdminEmail(user.email);
+    // R3 (R2-1): the label is the price addSecondOpinion will charge (the member's own offer), never the list price.
+    const [quoter, offered] = await Promise.all([quoterFor(payerId, adminUser), adminUser ? null : offeredPmiAddonFor(user.id).catch(() => null)]);
+    pmi = quoter.label(adminUser ? 0 : offered ? offered.pmiPence : quoter.pricing.pmiAddonPence);
+    pmiNote = offerLabel(offered?.offer);
   }
   const projectMine = user && dealId && hasProject && hasServiceRole() ? await reportProjectMineFor(createAdminClient(), user.id, dealId) : null;
 
-  return <EstimatePage initialResult={{ ...result, reportId: id }} savedAnalysis={dealId ? { dealId, analysedAt, pmi, projectMine } : undefined} />;
+  return <EstimatePage initialResult={{ ...result, reportId: id }} savedAnalysis={dealId ? { dealId, analysedAt, pmi, pmiNote, projectMine } : undefined} />;
 }

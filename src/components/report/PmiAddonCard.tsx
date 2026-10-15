@@ -10,7 +10,7 @@ import { priceText, type PriceLabel } from "@/lib/credit/deal-pricing";
  * (src/lib/credit/quote-server.ts) and is sent back as confirmed: a changed
  * price is refused rather than charged. Out of credit opens the usual modal.
  */
-export function PmiAddonCard({ reportId, label }: { reportId: string; label: PriceLabel }) {
+export function PmiAddonCard({ reportId, label, note = null }: { reportId: string; label: PriceLabel; note?: string | null }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const price = priceText(label);
@@ -52,6 +52,7 @@ export function PmiAddonCard({ reportId, label }: { reportId: string; label: Pri
       <p className="mt-1 text-sm text-muted-foreground">
         An independent revenue estimate for this property from Property Market Intel, set beside ours. Recommended before you make an offer. Charged only if PMI gives one.
       </p>
+      {note && <p className="mt-1 text-xs text-muted-foreground">Your {note}.</p>}
       {label.split && <p className="mt-1 text-xs text-muted-foreground">Paid as {label.split}.</p>}
       <button
         type="button"

@@ -19,7 +19,7 @@ import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
 import { getBalance } from '../credit/ledger';
 import { callsEnabled } from './config';
-import { latestLanding, lowCreditTriggered, spentFromLedger, type GrantRow } from './low-credit';
+import { latestLanding, lowCreditTriggered, spentFromLedger, toldSinceLanding, type GrantRow } from './low-credit';
 import { enqueueCall, placeCall } from './queue-server';
 import { inOutboundHours } from './hours';
 
@@ -31,8 +31,8 @@ export async function maybeQueueLowCreditCall(userId: string, now: Date = new Da
   const admin = createAdminClient();
   const settings = await getBillingSettings();
   // Cheap first: calls on, an owner with no auto top-up (enqueueCall checks it all again).
-  const { data: p } = await admin.from('profiles').select('si_calls, auto_topup_amount_pence').eq('id', userId).maybeSingle();
-  const prof = p as { si_calls?: boolean; auto_topup_amount_pence: number | null } | null;
+  const { data: p } = await admin.from('profiles').select('si_calls, auto_topup_amount_pence, last_low_balance_email_at').eq('id', userId).maybeSingle();
+  const prof = p as { si_calls?: boolean; auto_topup_amount_pence: number | null; last_low_balance_email_at: string | null } | null;
   if (!prof || prof.si_calls !== true || (prof.auto_topup_amount_pence ?? 0) > 0) return { called: false };
 
   const balance = await getBalance(userId).catch(() => null);
@@ -47,6 +47,9 @@ export async function maybeQueueLowCreditCall(userId: string, now: Date = new Da
   const { data: existing } = await admin.from('si_calls_log').select('status').eq('user_id', userId).eq('call_type', 'low_credit').eq('trigger_ref', landing.id).limit(1);
   const prior = ((existing ?? []) as { status: string }[])[0];
   if (prior) return { called: PLACED.has(prior.status) };
+  // Review R3 (with R3-12): one notice per credit landing. A £5 email or nudge that already went for this landing
+  // (a passing block left no row, so the call was never made) means no call for it either.
+  if (toldSinceLanding(prof.last_low_balance_email_at, landing)) return { called: false };
 
   const { data: ledger } = await admin.from('credit_transactions').select('kind, amount_pence').eq('user_id', userId).in('kind', ['debit', 'refund']).gte('at', landing.landedAt.toISOString()).limit(5000);
   const triggered = lowCreditTriggered({

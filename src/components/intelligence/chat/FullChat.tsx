@@ -27,6 +27,8 @@ export interface FullChatConfig {
   floorPence: number;
   initialQuestion: string;
   voice: boolean;
+  /** R3-1: about what hearing a full-view answer costs (AI voice); null when voice is off or unpriced. */
+  speakHintPence?: number | null;
 }
 
 type Entry =
@@ -80,6 +82,8 @@ export function FullChat(p: {
       spokenNext.current = true;
       submit(text);
     },
+    // R3-1: the AI-voice charge, shown under the answer it was for.
+    onSpoken: (key, charged) => setEntries((list) => list.map((e) => (e.key === key && e.kind === "ask" ? { ...e, reply: { ...e.reply, voiceCharged: charged } } : e))),
     onMessage: setNotice,
   });
 
@@ -133,7 +137,11 @@ export function FullChat(p: {
       update(key, (x) => ({ ...x, clientTurnId, streaming: false, status: null, dropped: later, reply }));
       if (reply.charged) notifyCreditChanged();
       if (!later) publishThinking({ answerSeq: readThinking().answerSeq + 1 });
-      if (!later && spokenKeys.current.has(key)) spokenReply = reply.text;
+      // R3-7: only an answer is read aloud; a free outcome stays as text and ends the spoken turn.
+      if (!later && spokenKeys.current.has(key)) {
+        if (reply.state === "answer" && reply.text) spokenReply = reply.text;
+        else voice.endConversation();
+      }
     } catch {
       if (ctrl.signal.aborted) return;
       update(key, (x) => ({ ...x, streaming: false, status: null, dropped: true, reply: { ...EMPTY, state: "did_not_finish", text: "That answer didn’t finish, so you weren’t charged." } }));
@@ -142,8 +150,8 @@ export function FullChat(p: {
       setBusy(false);
       setChatEye("idle");
     }
-    // Asked out loud: answered out loud (after the eye stops thinking, so it can speak).
-    if (spokenReply) void voice.speak(spokenReply);
+    // Asked out loud: answered out loud (after the eye stops thinking, so it can speak); the voice charge comes back to the answer.
+    if (spokenReply) void voice.speak(spokenReply, key);
   }
 
   function submit(q: string) {
@@ -272,7 +280,7 @@ export function FullChat(p: {
             <>
               <ChatComposer id="si-full-q" value={question} onChange={setQuestion} onSubmit={() => submit(question)} busy={busy} placeholder={voice.supported ? "Ask, or tap the mic and talk" : "Ask about your deals, money or picks"} voice={voice} />
               <p className="text-[11px] text-[#B9D5C6]/90">
-                {hintLabel(p.config.hintPence)} a question, only for an answer{voice.supported ? "; spoken answers are charged as AI voice" : ""}. The chips are free.
+                {hintLabel(p.config.hintPence)} a question, only for an answer{voice.supported ? `; a spoken answer is also charged as AI voice${p.config.speakHintPence ? `, ${hintLabel(p.config.speakHintPence)}` : ""}` : ""}. The chips are free.
               </p>
             </>
           )}

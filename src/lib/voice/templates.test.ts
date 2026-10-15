@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bodyProblemFor } from './templates-check.ts';
-import { SMS_REPLY_OTHER, SMS_REPLY_WHO, belowFloorText, callText, dealEmail, missedCallEmail, missedCallTemplate, missedCallText } from './templates.ts';
+import { SMS_REPLY_OTHER, SMS_REPLY_WHO, belowFloorText, callText, dealEmail, missedCallEmail, missedCallTemplate, missedCallText, nudgeEmail } from './templates.ts';
 
 // The longest base URL we expect (a Vercel preview is longer than the live site).
 const BASES = ['https://stayful.co.uk', 'https://str-website-2-git-batch-23-stayful.vercel.app'];
@@ -74,4 +74,12 @@ test('Batch 25: the deal emails link to the deal in the app and say what the bri
   const below = dealEmail('below_floor', deal('the 2-bed in Harrogate'), null, null);
   assert.match(below.paragraphs.join(' '), /Top up to get a call from me next time/);
   assert.doesNotMatch(below.paragraphs.join(' '), /tried to ring/);
+});
+
+test('R3-46: the nudge email says the balance the member actually has', () => {
+  const e = nudgeEmail({ topupAmountPence: 2500, topupThresholdPence: 500, balancePence: 480 }, 'Sam');
+  assert.equal(e.subject, "You're down to £4.80");
+  assert.match(e.paragraphs[0], /^Hi Sam, you've got £4\.80 of credit left\.$/);
+  assert.equal(nudgeEmail({ topupAmountPence: 2500, topupThresholdPence: 500, balancePence: 0 }, null).title, "You're down to £0");
+  assert.match(e.paragraphs[1], /£25 whenever you drop below £5/);
 });

@@ -66,7 +66,14 @@ const TOOLS: Record<ToolName, { description: string; params: Record<string, Para
   },
 };
 
-export function toolConfig(name: ToolName, baseUrl: string): Record<string, unknown> {
+/**
+ * How the tools' token header is filled: an ElevenLabs workspace secret the
+ * Sync keeps there (R3-50 / R2-25), or, until the first such Sync, the
+ * secret__tool_token call variable.
+ */
+export type ToolTokenSource = { secretId: string } | { variable: 'secret__tool_token' };
+
+export function toolConfig(name: ToolName, baseUrl: string, token: ToolTokenSource = { variable: 'secret__tool_token' }): Record<string, unknown> {
   const t = TOOLS[name];
   const properties: Record<string, unknown> = {};
   for (const [k, p] of Object.entries({ ...INJECTED, ...t.params })) {
@@ -81,7 +88,7 @@ export function toolConfig(name: ToolName, baseUrl: string): Record<string, unkn
     api_schema: {
       url: `${baseUrl.replace(/\/$/, '')}/api/voice/tools/${name}`,
       method: 'POST',
-      request_headers: { 'x-si-tool-token': { variable_name: 'secret__tool_token' } },
+      request_headers: { 'x-si-tool-token': 'secretId' in token ? { secret_id: token.secretId } : { variable_name: token.variable } },
       request_body_schema: { type: 'object', properties, required: [...Object.keys(INJECTED).filter((k) => k !== 'caller_id' && k !== 'called_number' && k !== 'call_sid'), ...t.required] },
     },
   };

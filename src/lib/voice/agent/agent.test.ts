@@ -6,7 +6,7 @@ import { agentKnowledge, KNOWLEDGE_VARIABLES, promptVariables } from '../../know
 import { SEED } from '../../knowledge/seed.ts';
 import { schemaSnapshot } from '../../knowledge/test-fixtures.ts';
 import { toolConfig } from './tools.ts';
-import { agentConfig, INITIATE_SECRET_HEADER, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings } from './agent-config.ts';
+import { agentConfig, INITIATE_SECRET_HEADER, isElevenLabsVoiceUrl, parseCreatedWebhook, phoneAssignment, pickPostCallWebhook, POST_CALL_EVENTS, webhookById, workspaceWarnings, apiErrorText, findSecret } from './agent-config.ts';
 import { parseWebhook } from '../elevenlabs.ts';
 import { TOOL_NAMES } from '../config.ts';
 import { callVariables, contextForType, fill, isCallContext, openerFor, unknownCallerDefaults, VARIABLE_NAMES } from './variables.ts';
@@ -79,6 +79,9 @@ test('the agent uses the one voice, ends voicemail without a message, and keeps 
   assert.equal(a.conversation_config.conversation.max_duration_seconds, 600);
   assert.equal(a.conversation_config.agent.prompt.built_in_tools.voicemail_detection.params.voicemail_message, '');
   assert.equal(a.platform_settings.privacy.retention_days, 90);
+  // R3-6: the policy says calls are not recorded as audio; the agent is told so.
+  assert.equal(a.platform_settings.privacy.record_voice, false);
+  assert.equal(a.platform_settings.privacy.delete_audio, true);
 });
 
 test('call variables carry every name, never a balance; openers are filled', () => {
@@ -266,4 +269,22 @@ test('a phone check runs when one was asked for after the last, and Twilio alert
   assert.equal(a[0], '05 Oct, 15:20 error 11200 calling api.elevenlabs.io');
   assert.match(a[1], /warning 13227$/);
   assert.deepEqual(twilioAlertLines(null), []);
+});
+
+test('R3-136: an ElevenLabs error is shown as its status and messages, never the submitted input', () => {
+  const json = { detail: [{ loc: ['body', 'conversation_config', 'agent', 'prompt'], msg: 'field required', input: { secret: 'NEVER-SHOWN' } }, { msg: 'other' }] };
+  const text = apiErrorText(422, json);
+  assert.equal(text, 'HTTP 422: body.conversation_config.agent.prompt: field required; other');
+  assert.doesNotMatch(text, /NEVER-SHOWN/);
+  assert.equal(apiErrorText(500, { detail: { status: 'x', message: 'boom', input: 'NEVER' } }), 'HTTP 500: boom');
+  assert.equal(apiErrorText(404, { detail: 'not found' }), 'HTTP 404: not found');
+  assert.equal(apiErrorText(502, 'gateway'), 'HTTP 502');
+});
+
+test('R3-50: the tools take their token from a workspace secret once the Sync has one; the secret is found by name', () => {
+  const t = toolConfig('lookup_caller', 'https://x', { secretId: 'sec_1' }) as { api_schema: { request_headers: Record<string, unknown> } };
+  assert.deepEqual(t.api_schema.request_headers['x-si-tool-token'], { secret_id: 'sec_1' });
+  assert.equal(findSecret({ secrets: [{ secret_id: 'a', name: 'other' }, { secret_id: 'b', name: 'si_tool_token_abc' }] }, 'si_tool_token_abc'), 'b');
+  assert.equal(findSecret({ secrets: [] }, 'x'), null);
+  assert.equal(findSecret(null, 'x'), null);
 });

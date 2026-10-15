@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { affordableSeconds, callablePence, capToBalance, maxSpendRate, minutesChargePence } from './charge.ts';
+import { affordableSeconds, callablePence, capToBalance, maxSpendRate, minutesChargePence, textChargeStep } from './charge.ts';
 
 test('pro rata per second at 65p a minute, rounded up to the penny', () => {
   assert.equal(minutesChargePence(40, 65), 44);
@@ -41,4 +41,12 @@ test('R2-13: a call never takes credit an open reservation holds; with nothing r
   assert.equal(callablePence({ totalPence: 500, spendableBasePence: -20, reservedBasePence: 520 }, 1.3), 0);
   // Affordability follows: £3 free buys 4 minutes after the texts are kept back (65p a minute, 44p reserve).
   assert.equal(affordableSeconds(callablePence({ totalPence: 600, spendableBasePence: 300, reservedBasePence: 300 }, 1.3), 65, 600, 44), 236);
+});
+
+test('R3-5: a text is charged only when Twilio took it; no answer keeps the guard and charges nothing; a refusal gives it back', () => {
+  assert.equal(textChargeStep({ sent: true }), 'settle');
+  assert.equal(textChargeStep({ sent: false, reason: 'unknown' }), 'keep');
+  for (const reason of ['refused', 'opted_out', 'dry_run', 'texts_off', 'not_configured', 'invalid_number', 'record_failed', undefined, null]) {
+    assert.equal(textChargeStep({ sent: false, reason }), 'release', String(reason));
+  }
 });

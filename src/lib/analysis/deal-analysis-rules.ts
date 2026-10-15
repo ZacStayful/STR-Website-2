@@ -183,3 +183,13 @@ export function analysisDescription(deal: { town: string | null; postcode_area: 
   const where = [deal.town, deal.postcode_area].filter(Boolean).join(', ') || 'a deal';
   return `Full analysis: ${where} (${deal.kind === 'rent' ? 'rent-to-rent' : 'to buy'})${reused ? ', from a saved analysis' : ''}`;
 }
+
+/**
+ * R3 (R2-2): what a completing purchase writes about the first-time price.
+ * A Deep report whose PMI second opinion never arrived has not given the
+ * member their first Deep report, so the once-per-account offer is handed
+ * back (first_deep cleared) and hadDeepReport no longer counts it.
+ */
+export function firstDeepPatch(input: { withPmi: boolean; pmiDelivered: boolean }): { first_deep: false } | Record<string, never> {
+  return input.withPmi && !input.pmiDelivered ? { first_deep: false } : {};
+}

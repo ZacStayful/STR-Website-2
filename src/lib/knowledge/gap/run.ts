@@ -217,16 +217,16 @@ export interface GapRunReport {
   ms: number;
 }
 
-export type RetentionResult = { before: string; questions: number; gaps: number; more: boolean; dry: boolean } | { error: string };
+export type RetentionResult = { before: string; questions: number; gaps: number; conversations: number; calls: number; more: boolean; dry: boolean } | { error: string };
 
-/** Members' questions older than the retention setting (never under 12 months: the database refuses). */
+/** Members' questions older than the retention setting (never under 12 months: the database refuses); R3-100: with them, conversations with no questions left and call records (intros aside) past the cutoff. */
 async function questionRetention(admin: Admin, now: Date, months: number, dry: boolean): Promise<RetentionResult> {
   const before = new Date(now);
   before.setUTCMonth(before.getUTCMonth() - months);
   const { data, error } = await admin.rpc('si_question_retention', { p: { before: before.toISOString(), apply: !dry } });
   if (error) return { error: error.message };
-  const r = data as { questions?: number; gaps?: number; more?: boolean };
-  return { before: before.toISOString(), questions: Number(r.questions) || 0, gaps: Number(r.gaps) || 0, more: Boolean(r.more), dry };
+  const r = data as { questions?: number; gaps?: number; conversations?: number; calls?: number; more?: boolean };
+  return { before: before.toISOString(), questions: Number(r.questions) || 0, gaps: Number(r.gaps) || 0, conversations: Number(r.conversations) || 0, calls: Number(r.calls) || 0, more: Boolean(r.more), dry };
 }
 
 /** One run of the nightly job. Returns the route's status and body. */
