@@ -372,4 +372,185 @@ begin
   raise notice 'R2-13 face debits leave reservations alone: ok';
 end $$;
 
+-- ── Review R3 (R3-126): Batches 24–26's functions and unique indexes ──
+do $$
+declare
+  u uuid := gen_random_uuid();
+  k uuid;                          -- a knowledge entry
+  run_id uuid;                     -- a nightly run
+  conv uuid;                       -- a chat conversation
+  q1 uuid; q2 uuid; q3 uuid;       -- its questions
+  gap uuid;                        -- a gap holding q1
+  deal uuid;                       -- a marketplace deal
+  ct uuid := gen_random_uuid();    -- a browser's client_turn_id
+  j jsonb;
+  refused boolean := false;
+begin
+  insert into auth.users (id, email, raw_user_meta_data, instance_id, aud, role, created_at, updated_at)
+  values (u, 'credit-smoke-' || u::text || '@example.test', '{}'::jsonb, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', now(), now());
+  insert into profiles (id, email) values (u, 'credit-smoke-' || u::text || '@example.test') on conflict (id) do nothing;
+
+  -- ── si_knowledge_approve: a pending draft goes live only at the version and hash the admin saw; live means approved (R3-125) ──
+  insert into si_knowledge (slug, source, draft, draft_state, draft_hash, draft_at)
+  values ('smoke_r3_entry', 'manual', jsonb_build_object('question', 'Smoke?', 'variants', jsonb_build_array('smoke test'), 'answer', 'Yes.', 'category', 'intelligence', 'channels', jsonb_build_array('chat')), 'pending', 'h1', now())
+  returning id into k;
+  j := si_knowledge_approve(jsonb_build_object('id', k, 'version', 1, 'hash', 'not-h1'));
+  if j->>'refused' is distinct from 'changed' then raise exception 'a draft that changed under the click must be refused: %', j; end if;
+  j := si_knowledge_approve(jsonb_build_object('id', k, 'version', 7, 'hash', 'h1'));
+  if j->>'refused' is distinct from 'changed' then raise exception 'an entry that moved on must be refused: %', j; end if;
+  if exists (select 1 from si_knowledge_live where id = k) then raise exception 'a draft is not live'; end if;
+  j := si_knowledge_approve(jsonb_build_object('id', k, 'version', 1, 'hash', 'h1', 'by', 'smoke'));
+  if j ? 'refused' or (j->>'version')::int <> 2 then raise exception 'approve: %', j; end if;
+  if not exists (select 1 from si_knowledge_live where id = k and answer = 'Yes.' and approved_at is not null) then raise exception 'an approved entry is live'; end if;
+  if (select approved_by from si_knowledge where id = k) is distinct from 'smoke' then raise exception 'the approver is recorded'; end if;
+  if (select draft_state from si_knowledge where id = k) <> 'none' or (select draft from si_knowledge where id = k) is not null then raise exception 'the draft is consumed'; end if;
+  j := si_knowledge_approve(jsonb_build_object('id', k, 'version', 2, 'hash', 'h1'));
+  if j->>'refused' is distinct from 'no_draft' then raise exception 'nothing left to approve: %', j; end if;
+  if (select count(*) from si_knowledge_history where entry_id = k and action = 'approved') <> 1 then raise exception 'one history row per approval'; end if;
+  update si_knowledge set approved_at = null where id = k;
+  if exists (select 1 from si_knowledge_live where id = k) then raise exception 'an answer without an approval is not live (R3-125)'; end if;
+  raise notice 'knowledge approve ok';
+
+  -- ── si_gap_claim: a night is claimed once; a failed night again, keeping what it spent; a dry run never ──
+  j := si_gap_claim(jsonb_build_object('kind', 'nightly', 'run_key', 'smoke-night'));
+  if j->>'id' is null then raise exception 'the first claim of a night wins: %', j; end if;
+  run_id := (j->>'id')::uuid;
+  j := si_gap_claim(jsonb_build_object('kind', 'nightly', 'run_key', 'smoke-night'));
+  if j->>'id' is not null then raise exception 'a running night must not be claimed twice: %', j; end if;
+  update si_gap_runs set status = 'failed', cost_pence = 12 where id = run_id;
+  j := si_gap_claim(jsonb_build_object('kind', 'nightly', 'run_key', 'smoke-night'));
+  if (j->>'id')::uuid is distinct from run_id or (j->>'cost_pence')::numeric <> 12 then raise exception 'a failed night is claimed again with its spend: %', j; end if;
+  j := si_gap_claim(jsonb_build_object('kind', 'dry', 'run_key', 'smoke-night'));
+  if j->>'refused' is distinct from 'bad_args' then raise exception 'a dry run is never claimed: %', j; end if;
+  begin
+    insert into si_gap_runs (kind, run_key) values ('nightly', 'smoke-night');
+    raise exception 'one nightly run per key (si_gap_runs_once_uidx)';
+  exception when unique_violation then null;
+  end;
+  insert into si_gap_runs (kind, run_key) values ('dry', 'smoke-night'), ('dry', 'smoke-night');  -- dry runs are not once-only
+  raise notice 'gap claim ok';
+
+  -- ── si_fact_remember: once per member and fact, whatever the case, and never past the cap ──
+  j := si_fact_remember(jsonb_build_object('user_id', u, 'fact', 'Prefers flats', 'channel', 'chat', 'confirmed_via', 'chat_yes', 'max', 2));
+  if j->>'id' is null then raise exception 'remember: %', j; end if;
+  j := si_fact_remember(jsonb_build_object('user_id', u, 'fact', '  prefers FLATS ', 'channel', 'call', 'confirmed_via', 'call_yes', 'max', 2));
+  if j->>'refused' is distinct from 'duplicate' then raise exception 'the same fact again is a duplicate: %', j; end if;
+  j := si_fact_remember(jsonb_build_object('user_id', u, 'fact', 'Two children', 'channel', 'view', 'confirmed_via', 'app', 'max', 2));
+  if j->>'id' is null then raise exception 'remember 2: %', j; end if;
+  j := si_fact_remember(jsonb_build_object('user_id', u, 'fact', 'Has a dog', 'channel', 'chat', 'confirmed_via', 'chat_yes', 'max', 2));
+  if j->>'refused' is distinct from 'cap' then raise exception 'the cap holds: %', j; end if;
+  j := si_fact_remember(jsonb_build_object('user_id', u, 'fact', '   ', 'channel', 'chat', 'confirmed_via', 'chat_yes'));
+  if j->>'refused' is distinct from 'bad_args' then raise exception 'an empty fact is refused: %', j; end if;
+  begin
+    insert into si_member_facts (user_id, fact, channel, confirmed_via, confirmed_at) values (u, 'PREFERS FLATS', 'chat', 'chat_yes', now());
+    raise exception 'one row per member and fact (si_member_facts_once_uidx)';
+  exception when unique_violation then null;
+  end;
+  raise notice 'member facts ok';
+
+  -- ── The learning log: new questions, the coverage counts and retention ──
+  insert into si_conversations (channel, user_id, started_at) values ('chat', u, now() - interval '13 months') returning id into conv;
+  insert into si_conversation_questions (conversation_id, question, outcome, source, at) values (conv, 'Smoke: an old question', 'could_not_answer', 'chat', now() - interval '13 months') returning id into q1;
+  insert into si_conversation_questions (conversation_id, question, outcome, source, knowledge_ref, at) values (conv, 'Smoke: a newer question', 'answered', 'chat', 'smoke_r3_entry', now() - interval '1 day') returning id into q2;
+  insert into si_conversation_questions (conversation_id, question, outcome, source, knowledge_ref, at) values (conv, 'Smoke: that was wrong', 'member_unhappy', 'analysis', 'smoke_r3_unhappy', now() - interval '1 hour') returning id into q3;
+  j := si_gap_new_questions(jsonb_build_object('outcomes', jsonb_build_array('could_not_answer', 'member_unhappy'), 'limit', 2000));
+  if not exists (select 1 from jsonb_array_elements(j) x where (x->>'id')::uuid = q1 and x->>'channel' = 'chat' and x->>'source' = 'chat') then raise exception 'an ungrouped question is offered, with its channel: %', j; end if;
+  if not exists (select 1 from jsonb_array_elements(j) x where (x->>'id')::uuid = q3 and x->>'prior' = 'Smoke: a newer question') then raise exception 'a member-unhappy row carries the question before it: %', j; end if;
+  if exists (select 1 from jsonb_array_elements(j) x where (x->>'id')::uuid = q2) then raise exception 'an answered question is not a gap: %', j; end if;
+  if (select array_position(array(select (x->>'id')::uuid from jsonb_array_elements(j) x), q1)) > (select array_position(array(select (x->>'id')::uuid from jsonb_array_elements(j) x), q3)) then raise exception 'oldest first: %', j; end if;
+  insert into si_knowledge_gaps (label, last_asked_at) values ('Smoke gap', now() - interval '13 months') returning id into gap;
+  insert into si_knowledge_gap_questions (question_id, gap_id) values (q1, gap);
+  j := si_gap_new_questions(jsonb_build_object('outcomes', jsonb_build_array('could_not_answer', 'member_unhappy'), 'limit', 2000));
+  if exists (select 1 from jsonb_array_elements(j) x where (x->>'id')::uuid = q1) then raise exception 'a grouped question is not offered again: %', j; end if;
+
+  j := si_question_counts(jsonb_build_object('since', now() - interval '2 days'));
+  if not exists (select 1 from jsonb_array_elements(j) x where x->>'channel' = 'chat' and x->>'outcome' = 'answered' and x->>'ref' = 'smoke_r3_entry' and (x->>'n')::int = 1) then raise exception 'counts by channel, outcome and entry: %', j; end if;
+  if not exists (select 1 from jsonb_array_elements(j) x where x->>'outcome' = 'member_unhappy' and x->>'ref' = 'smoke_r3_unhappy' and (x->>'n')::int = 1) then raise exception 'counts the unhappy row: %', j; end if;
+  if j::text like '%Smoke: a newer question%' or j::text like '%' || u::text || '%' then raise exception 'no question text or member id leaves the table'; end if;
+  j := si_question_counts(jsonb_build_object('since', now() - interval '2 days', 'until', now() - interval '12 hours'));
+  if not exists (select 1 from jsonb_array_elements(j) x where x->>'ref' = 'smoke_r3_entry') or exists (select 1 from jsonb_array_elements(j) x where x->>'ref' = 'smoke_r3_unhappy') then raise exception 'until bounds the count: %', j; end if;
+
+  begin
+    perform si_question_retention(jsonb_build_object('before', now() - interval '6 months', 'apply', true));
+  exception when others then refused := true;
+  end;
+  if not refused then raise exception 'a cutoff under 12 months must be refused'; end if;
+  j := si_question_retention(jsonb_build_object('before', now() - interval '12 months'));
+  if not (j->>'dry')::boolean or (j->>'questions')::int < 1 then raise exception 'a dry run counts and deletes nothing: %', j; end if;
+  if not exists (select 1 from si_conversation_questions where id = q1) then raise exception 'a dry run deleted a question'; end if;
+  j := si_question_retention(jsonb_build_object('before', now() - interval '12 months', 'apply', true));
+  if (j->>'dry')::boolean or (j->>'questions')::int < 1 then raise exception 'apply: %', j; end if;
+  if exists (select 1 from si_conversation_questions where id = q1) then raise exception 'the old question should be gone'; end if;
+  if not exists (select 1 from si_conversation_questions where id in (q2, q3)) or (select count(*) from si_conversation_questions where id in (q2, q3)) <> 2 then raise exception 'questions inside the retention stay'; end if;
+  if exists (select 1 from si_knowledge_gaps where id = gap) then raise exception 'a gap whose questions have all gone goes with them'; end if;
+  raise notice 'learning log functions ok';
+
+  -- ── Batch 25 and 26's safety rules are unique indexes ──
+  insert into sourced_listings (canonical_url, source, kind, query_key, snapshot) values ('https://smoke.test/r3-deal', 'test', 'sale', 'k', '{}');
+  insert into marketplace_deals (canonical_url, source, kind, band, screening) values ('https://smoke.test/r3-deal', 'test', 'sale', 'qualified', '{}') returning id into deal;
+  insert into standout_decisions (user_id, deal_id, uk_day, tier, outcome, reason, link_token) values (u, deal, current_date, 'paid', 'standout', 'smoke', 'smoke-token');
+  begin
+    insert into standout_decisions (user_id, deal_id, uk_day, tier, outcome, reason) values (u, deal, current_date, 'paid', 'not_standout', 'smoke');
+    raise exception 'one decision per member and deal (standout_decisions_deal_uidx)';
+  exception when unique_violation then null;
+  end;
+  insert into standout_decisions (user_id, deal_id, uk_day, tier, outcome, reason) values (u, null, current_date, 'paid', 'skipped', 'no_profile');
+  begin
+    insert into standout_decisions (user_id, deal_id, uk_day, tier, outcome, reason) values (u, null, current_date, 'paid', 'skipped', 'no_profile');
+    raise exception 'one member-level decision per day and reason (standout_decisions_member_uidx)';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into standout_decisions (user_id, deal_id, uk_day, tier, outcome, reason, link_token) values (u, null, current_date, 'paid', 'skipped', 'other', 'smoke-token');
+    raise exception 'a link token opens one decision (standout_decisions_token_uidx)';
+  exception when unique_violation then null;
+  end;
+  insert into si_calls_log (user_id, direction, call_type, status, trigger_ref) values (u, 'outbound', 'deal', 'answered', deal::text);
+  begin
+    insert into si_calls_log (user_id, direction, call_type, status, trigger_ref) values (u, 'outbound', 'deal', 'missed', deal::text);
+    raise exception 'one deal call per member and deal (si_calls_log_deal_uidx)';
+  exception when unique_violation then null;
+  end;
+  insert into chat_turns (user_id, client_turn_id, surface, status) values (u, ct, 'quick', 'pending');
+  begin
+    insert into chat_turns (user_id, client_turn_id, surface, status) values (u, ct, 'quick', 'pending');
+    raise exception 'a retry with the same client turn id is one row (chat_turns_client_uidx)';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into chat_turns (user_id, client_turn_id, surface, status) values (u, gen_random_uuid(), 'full', 'pending');
+    raise exception 'one pending question per member (chat_turns_pending_uidx)';
+  exception when unique_violation then null;
+  end;
+  update chat_turns set status = 'answered' where user_id = u and client_turn_id = ct;
+  insert into chat_turns (user_id, client_turn_id, surface, status) values (u, gen_random_uuid(), 'full', 'pending');  -- the last one answered, the next may ask
+  begin
+    insert into chat_turns (user_id, client_turn_id, surface, status) values (u, gen_random_uuid(), 'voice', 'pending');
+    raise exception 'surface is quick or full (R3-83: chat_turns_surface_check)';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into si_conversation_questions (conversation_id, question, outcome, source) values (conv, 'Smoke: bad source', 'answered', 'email');
+    raise exception 'source is one of the named list (R3-83: si_conversation_questions_source_check)';
+  exception when check_violation then null;
+  end;
+  insert into member_briefings (user_id, uk_day, status) values (u, current_date, 'template');
+  begin
+    insert into member_briefings (user_id, uk_day, status) values (u, current_date, 'ready');
+    raise exception 'one briefing per member and UK day';
+  exception when unique_violation then null;
+  end;
+  raise notice 'batch 24-26 unique indexes ok';
+
+  if has_function_privilege('authenticated', 'public.si_knowledge_approve(jsonb)', 'execute')
+     or has_function_privilege('anon', 'public.si_fact_remember(jsonb)', 'execute')
+     or has_function_privilege('authenticated', 'public.si_question_retention(jsonb)', 'execute')
+     or has_function_privilege('authenticated', 'public.listing_scan_days_backfill()', 'execute')
+     or has_table_privilege('authenticated', 'public.si_knowledge_live', 'select')
+     or has_table_privilege('anon', 'public.chat_turns', 'select') then
+    raise exception 'Batch 24-26 objects should be service-role only';
+  end if;
+  raise notice 'batch 24-26 privileges ok';
+end $$;
+
 rollback;

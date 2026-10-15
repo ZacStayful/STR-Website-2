@@ -32,7 +32,7 @@ interface Entry {
  * to ask me more". Used by the panel under the header eye (desktop) and the
  * full-screen page (/intelligence/ask, phones).
  */
-export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPence: number; voice: boolean; autoFocus?: boolean; inputId: string }) {
+export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPence: number; voice: boolean; speakHintPence?: number | null; autoFocus?: boolean; inputId: string }) {
   const credit = useCreditOptional()?.credit ?? null;
   const [question, setQuestion] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -52,6 +52,8 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
       spokenNext.current = true;
       submit(text);
     },
+    // R3-1: the AI-voice charge, shown under the answer it was for.
+    onSpoken: (key, charged) => setEntries((list) => list.map((e) => (e.key === key && e.reply ? { ...e, reply: { ...e.reply, voiceCharged: charged } } : e))),
     onMessage: setNotice,
   });
 
@@ -92,7 +94,11 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
       }
       update(key, (e) => ({ ...e, waiting: false, reply: r, error: null }));
       if (r.charged) notifyCreditChanged();
-      if (spokenKeys.current.has(key) && r.text) spokenReply = r.text;
+      // R3-7: only an answer is read aloud; a free outcome ("I don't know", top up, something went wrong) stays as text and ends the spoken turn.
+      if (spokenKeys.current.has(key)) {
+        if (r.state === "answer" && r.text) spokenReply = r.text;
+        else voice.endConversation();
+      }
     } catch (err) {
       if (ctrl.signal.aborted) return;
       update(key, (e) => ({ ...e, waiting: false, error: (err as Error)?.message === "signed_out" ? "Please sign in again." : "That didn’t get through." }));
@@ -101,8 +107,8 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
       setBusy(false);
       setChatEye("idle");
     }
-    // Asked out loud: answered out loud.
-    if (spokenReply) void voice.speak(spokenReply);
+    // Asked out loud: answered out loud (the voice charge comes back and shows under the answer).
+    if (spokenReply) void voice.speak(spokenReply, key);
   }
 
   function submit(q: string) {
@@ -181,7 +187,7 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
           <>
             <ChatComposer id={p.inputId} value={question} onChange={setQuestion} onSubmit={() => submit(question)} busy={busy} placeholder={voice.supported ? "Ask, or tap the mic" : "Ask me something quick"} voice={voice} autoFocus={p.autoFocus} />
             <p className="text-[11px] text-[#B9D5C6]/90">
-              Quick answers, {hintLabel(faceHintPence(p.hintPence, credit))} each, only for an answer{voice.supported ? "; spoken answers are charged as AI voice" : ""}.
+              Quick answers, {hintLabel(faceHintPence(p.hintPence, credit))} each, only for an answer{voice.supported ? `; a spoken answer is also charged as AI voice${p.speakHintPence ? `, ${hintLabel(faceHintPence(p.speakHintPence, credit))}` : ""}` : ""}.
             </p>
           </>
         )}

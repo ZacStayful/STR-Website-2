@@ -126,7 +126,7 @@ export const CHAT_TOOLS: Anthropic.Tool[] = [
     name: 'propose_fact',
     description: 'Offer to remember something the member told you about what they want ("Only wants 2-beds"). The page asks them "Want me to remember that?" and saves it only on their yes. At most once per answer; never anything sensitive or personal.',
     strict: true,
-    input_schema: { type: 'object', properties: { fact: { type: 'string', description: 'The fact, short, in the third person.' } }, required: ['fact'], additionalProperties: false },
+    input_schema: { type: 'object', properties: { fact: { type: 'string', description: 'The fact, short, with no subject, as in "Only wants 2-beds" or "Looking in Leeds and York".' } }, required: ['fact'], additionalProperties: false },
   },
 ];
 

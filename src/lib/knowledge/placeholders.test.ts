@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import { CALL_PLACEHOLDERS, CONDITIONS, PLACEHOLDERS, countWords, dayWords, hourWords, moneyList } from './placeholders.ts';
 import { SAMPLE_MEMBER } from './render.ts';
 import { schemaSnapshot } from './test-fixtures.ts';
+import { PRODUCT_FACTS } from './config.ts';
+import { sectionsFor } from '../pdf/sections.ts';
+
+// Review R3 (R3-21): the report's sections depend on the deal, so the knowledge base quotes the most a report has, never a count.
+test('report_sections is the most sections a report has, as the PDF counts them', () => {
+  assert.equal(PRODUCT_FACTS.reportSectionsMax, sectionsFor({ setup: true, deal: true, diligence: true, project: true, secondOpinion: true, plan: true }).length);
+  assert.equal(PLACEHOLDERS.report_sections.resolve(schemaSnapshot(), null), String(PRODUCT_FACTS.reportSectionsMax));
+  assert.match(PLACEHOLDERS.report_sections.label, /up to/);
+});
 
 test('every global placeholder resolves against what schema.sql seeds', () => {
   const g = schemaSnapshot();
@@ -26,6 +35,13 @@ test('the seeded figures read as members see them', () => {
   assert.equal(r('call_hours_end'), '7pm');
   assert.equal(r('call_days'), 'weekdays');
   assert.equal(r('management_fee'), '15% + VAT');
+  // Review R3: the briefing ceiling is a setting; the seed is 3p and the switch is seeded off.
+  assert.equal(r('briefing_max_cost'), '3p');
+  assert.equal(PLACEHOLDERS.briefing_max_cost.resolve(schemaSnapshot({ settings: { briefing_ceiling_pence: 2.5 } }), null), '2.5p');
+  assert.equal(PLACEHOLDERS.briefing_max_cost.resolve(schemaSnapshot({ settings: { briefing_ceiling_pence: 0 } }), null), null);
+  assert.equal(CONDITIONS.briefings_on.resolve(g, null), false);
+  assert.equal(CONDITIONS.briefings_on.resolve(schemaSnapshot({ settings: { briefings_enabled: true } }), null), true);
+  assert.equal(CONDITIONS.briefings_on.resolve(schemaSnapshot({ drop: ['briefings_enabled'] }), null), null);
 });
 
 test('a removed or malformed setting resolves to null, never a default', () => {

@@ -292,7 +292,7 @@ export function Quiz(start: QuizStart) {
           <p className="mt-1 text-sm text-muted-foreground">
             Give every landlord a short-let income report in your name, from your own link. You can come back to these questions any time.
           </p>
-          <Link href="/for-management-companies/start?via=quiz" className="mt-3 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
+          <Link href="/for-management-companies/start?via=quiz" prefetch={false} className="mt-3 inline-block rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">
             Set up your branded lead form instead
           </Link>
         </div>

@@ -112,7 +112,8 @@ export const SEED: readonly SeedEntry[] = [
     channels: ['view', 'chat'],
     showWhen: null,
     question: 'How do I top up or turn on auto top-up?',
-    variants: ['How do I add credit?', 'How do I buy more credit?'],
+    // Review R3 (R3-10): "How do I top up?" on its own ties with auto_topup; as a phrasing here it is answered.
+    variants: ['How do I add credit?', 'How do I buy more credit?', 'How do I top up?'],
     answer: 'Top up {topup_amounts} in Account → Billing; auto top-up adds your chosen amount when you drop below your limit and needs a saved card.',
   },
   {
@@ -209,6 +210,17 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['What was that call about?', 'Why did Stayful Intelligence ring me?', 'You called me, what was it?'],
     answer: "I only ring for three things: to introduce myself once, when your credit is running low, or when a deal fits you better than anything I've found so far. That deal is saved in My deals and opening it is free.",
   },
+  // ── Batch 23b's morning briefing (drafted in Review R3, when its ceiling became a setting) ──
+  {
+    slug: 'morning_briefing',
+    from: 'review r3 (the Batch 23b handover)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What is the morning briefing?',
+    variants: ['What is the note at the top of my daily email?', 'Does the morning briefing cost anything?', 'Can I hear my briefing?'],
+    answer: 'Your daily email and Today open with a short briefing on something in your own figures, never a listing’s words.{#briefings_on} Written by me it costs at most {briefing_max_cost} of credit, after the day’s own charge; the standard line is free.{/briefings_on}{^briefings_on} It is the standard line, free.{/briefings_on} Play on Today reads it out.',
+  },
   {
     slug: 'why_not_called',
     from: 'batch 25',
@@ -237,7 +249,7 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Why did you text me about auto top-up?',
     variants: ['Why did I get an auto top-up email?', "I got a message saying I'm down to my last credit"],
-    answer: "When your credit reaches {low_credit_mark} {nudge_days_min} to {nudge_days_max} days after your last top-up, I send one text ({text_cost}) and email ({email_cost}) with a one-tap link: auto top-up adds {auto_topup_amount} whenever you drop below {auto_topup_threshold}, and you can turn it off any time.",
+    answer: "On pay-as-you-go, when your credit reaches {low_credit_mark} {nudge_days_min} to {nudge_days_max} days after your last top-up, I send one text ({text_cost}) and email ({email_cost}) with a one-tap link: auto top-up adds {auto_topup_amount} whenever you drop below {auto_topup_threshold}, and you can turn it off any time.",
   },
   {
     slug: 'noticed_prompts',
@@ -309,7 +321,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'What does the Property Analyser actually output?',
     variants: ['What is in the analyser report?', 'What sections are in the report?'],
-    answer: 'A {report_sections}-section report: live comparables, amenities and demand, a gross-to-net revenue breakdown, a {forecast_months}-month forecast, the local area, a furnishing quote and a risk assessment, every figure sourced.',
+    // Review R3 (R3-21): no fixed count; a report has the sections its deal needs (up to the most).
+    answer: 'A report with live comparables, amenities and demand, a gross-to-net revenue breakdown, a {forecast_months}-month forecast, the local area, a furnishing quote and a risk assessment, every figure sourced: up to {report_sections} sections, depending on the deal.',
   },
   {
     slug: 'data_sources',
@@ -441,7 +454,8 @@ export const SEED: readonly SeedEntry[] = [
     showWhen: null,
     question: 'Can I talk to you instead of typing?',
     variants: ['Can I ask out loud?', 'Do you have voice?', 'Why did you answer out loud?', 'Does talking to you cost more?'],
-    answer: 'Yes: tap the microphone and ask, and I’ll answer out loud, then listen again (never while I’m speaking). Hearing and speaking are charged as AI voice, a little on top of the question, and nothing if I don’t catch you.',
+    // Review R3 (R3-1): the price is said, from the row the charge uses; the page shows it under the answer too.
+    answer: 'Yes: tap the mic and ask; I answer out loud, listen once more, then wait for a tap. A spoken answer is charged as AI voice on top of the question, about {chat_speak_quick_cost} quick or {chat_speak_full_cost} full, and shows under the answer; nothing if I don’t catch you.',
   },
   {
     slug: 'chat_history',

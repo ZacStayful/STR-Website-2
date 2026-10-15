@@ -147,8 +147,8 @@ export type Outcome = 'pending' | 'accepted' | 'refused' | 'unknown' | 'dry_run'
 export interface MessageInsert {
   user_id: string | null;
   direction: 'outbound' | 'inbound';
-  /** Batch 25: 'standout' (a saved deal's text below the call floor) and 'nudge' (the slower-spender nudge). */
-  kind: 'verify' | 'alert' | 'keyword' | 'standout' | 'nudge';
+  /** Batch 25: 'standout' (a saved deal's text below the call floor) and 'nudge' (the slower-spender nudge). Review R3: 'call' (a text a call sends, or a missed call's follow-up). */
+  kind: 'verify' | 'alert' | 'keyword' | 'standout' | 'nudge' | 'call';
   phone_e164: string;
   body: string | null;
   alert_ids?: string[];

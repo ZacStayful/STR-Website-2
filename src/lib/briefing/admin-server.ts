@@ -2,7 +2,7 @@ import 'server-only';
 
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { addDays, ukDay } from '../activity/week';
-import { summariseDays, type BriefingDay, type BriefingRowLite } from './admin';
+import { summariseDays, withDayCounts, type BriefingDay, type BriefingRowLite } from './admin';
 
 export type BriefingsAdminStatus = 'ok' | 'no_service_role' | 'schema_missing' | 'failed';
 
@@ -33,5 +33,8 @@ export async function loadBriefingsAdmin(daysBack = 14, now: Date = new Date()):
     if ((data?.length ?? 0) < 1000) break;
   }
   const rejections = rows.filter((r) => r.status === 'template' && r.ai_attempted && r.reject_reason).slice(0, 20).map((r) => ({ day: r.uk_day, angle: r.angle, reason: r.reject_reason! }));
-  return { status: 'ok', message: null, days: summariseDays(rows), rejections };
+  // R3: the pool's counts the pass stored each morning, beside the day's figures.
+  const counts = await admin.from('briefing_day_counts').select('uk_day, screened_yesterday, live_pool, went_live_yesterday').gte('uk_day', from);
+  if (counts.error) console.warn('[briefing] day counts not read:', counts.error.message);
+  return { status: 'ok', message: null, days: withDayCounts(summariseDays(rows), (counts.data ?? []) as Parameters<typeof withDayCounts>[1]), rejections };
 }
