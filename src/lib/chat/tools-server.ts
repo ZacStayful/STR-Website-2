@@ -38,6 +38,7 @@ import { BUDGET_LABELS } from '../market/filters';
 import { reasonLabel, callStatusLabel } from '../standout/reasons';
 import { ukDay } from '../activity/week';
 import { formatPence } from '../credit/deal-pricing';
+import { checkFact } from '../knowledge/facts-rules';
 import { MAX_LIST_DEALS, MAX_TOOL_RESULT_CHARS } from './config';
 import { balanceLabel } from './format';
 import { buildButton, type ChatButton } from './actions';
@@ -124,7 +125,14 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
     async search_knowledge(input: { question: string }, state) {
       const k = await lookUpKnowledge(input.question, ctx.values, admin);
       state.matchConfidence = Math.max(state.matchConfidence ?? 0, k.topConfidence);
-      if (k.answers.length === 0) return { found: false };
+      if (k.answers.length === 0) {
+        // R3-33: covered, but not for this member: say so (with the entry as the reference), not "I don't know".
+        if (k.hidden) {
+          state.knowledgeSlug ??= k.hidden;
+          return { found: false, note: "There is an approved answer to this, but it doesn't apply to this member's account. Tell them that in one sentence; don't guess the answer." };
+        }
+        return { found: false };
+      }
       state.knowledgeSlug ??= k.answers[0].slug;
       return { found: true, answers: k.answers.map((a) => ({ slug: a.slug, question: a.question, answer: a.answer })) };
     },
@@ -281,7 +289,10 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
 
     async propose_fact(input: { fact: string }, state) {
       if (state.factProposal) return { ok: false, note: 'Only one per answer.' };
-      state.factProposal = input.fact;
+      // R3-89: checked now, before the member sees it: nothing sensitive or personal is ever shown as a proposal.
+      const c = checkFact({ fact: input.fact, confirmed: true });
+      if (!c.ok) return { ok: false, note: "That can't be remembered (it's sensitive, personal, or too long), so nothing is offered." };
+      state.factProposal = c.fact;
       return { ok: true, note: 'The page will ask them "Want me to remember that?" under your answer.' };
     },
   };

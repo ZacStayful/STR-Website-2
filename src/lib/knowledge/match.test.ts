@@ -90,6 +90,45 @@ test('the channel filter, an empty question and an empty knowledge base', () => 
   assert.deepEqual(matchKnowledge([], 'how much', opts), { outcome: 'could_not_answer', matches: [] });
 });
 
+// Review R3 (R3-10): an approved entry's own question or phrasing is always answered by it.
+test("the seed's own questions and phrasings are answered, even where stop words and synonyms make two entries tie", () => {
+  const index = buildIndex(KB, 'chat');
+  const own: [string, string][] = [
+    ['Why did you call me?', 'why_called'],
+    ['What does it cost?', 'what_it_costs'],
+    ['How much credit do I have?', 'credits'],
+    ['How do I turn on auto top-up?', 'auto_topup'],
+    ['How do I top up?', 'topup'],
+    ['why did you call me', 'why_called'],
+    ['WHAT DOES IT COST', 'what_it_costs'],
+  ];
+  for (const [q, want] of own) {
+    const r = matchIndex(index, q, opts);
+    assert.equal(r.outcome, 'answered', `"${q}" → ${r.outcome} (${r.matches.map((m) => `${m.slug}:${m.confidence}`).join(', ')})`);
+    assert.equal(r.matches[0]?.slug, want, q);
+  }
+  // Every seed phrasing on the chat answers with its own entry.
+  const wrong: string[] = [];
+  for (const e of KB.filter((e) => e.channels.includes('chat'))) {
+    for (const q of [e.question, ...e.variants]) {
+      const r = matchIndex(index, q, opts);
+      if (r.outcome !== 'answered' || r.matches[0]?.slug !== e.slug) wrong.push(`"${q}" → ${r.matches[0]?.slug ?? 'nothing'} (${r.outcome}), wanted ${e.slug}`);
+    }
+  }
+  assert.deepEqual(wrong, []);
+  // 'why' and 'question' are tokens now, so they tell these apart from the entries they tied with.
+  assert.ok(tokens('Why did you call me?').includes('why'));
+  assert.ok(tokens('Why was I charged for a question?').includes('question'));
+});
+
+test('a phrasing two entries share is not a verbatim hit for either', () => {
+  const twins: Matchable[] = [
+    { id: 'a', slug: 'one', version: 1, question: 'Does credit expire?', variants: [], channels: ['chat'] },
+    { id: 'b', slug: 'two', version: 1, question: 'Is credit lost?', variants: ['Does credit expire?'], channels: ['chat'] },
+  ];
+  assert.notEqual(matchKnowledge(twins, 'does credit expire', opts).outcome, 'answered');
+});
+
 test('two near-equal entries are low confidence, not answered', () => {
   const twins: Matchable[] = [
     { id: 'a', slug: 'plan_credit', version: 1, question: 'Does plan credit expire?', variants: [], channels: ['chat'] },

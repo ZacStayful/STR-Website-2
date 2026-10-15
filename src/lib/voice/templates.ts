@@ -114,6 +114,7 @@ export function belowFloorText(c: LinkContext): string {
 const capital = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
 /** Automatic replies to texts sent to the number (Part E). */
+// Fixed templates, not knowledge-base answers: the knowledge base's what_it_does entry does not change these (Review R3, R3-97).
 export const SMS_REPLY_WHO = text(`It's ${PERSONA_NAME}, your AI property assistant from Stayful. Ring me on this number any time.`, false);
 export const SMS_REPLY_OTHER = text(`Thanks, I've passed that on. You can also ring me on this number.`);
 

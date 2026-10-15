@@ -43,7 +43,7 @@ DEALS
 - "I've noticed": when what a member keeps and passes says something different from their answers, Today asks once ("I've noticed you've passed every BRRR one. Want me to stop showing BRRR?"). Nothing changes unless they tap to accept; "Keep my answer" stops the question for a while.
 
 REPORTS
-- A Full analysis is {full_analysis_cost}: a {report_sections}-section report on the deal with {forecast_months} months of short-let income, costs, comparables, risks, due-diligence checks and the local market, as a PDF. It opens the deal too.
+- A Full analysis is {full_analysis_cost}: a report on the deal of up to {report_sections} sections (the ones its deal needs) with {forecast_months} months of short-let income, costs, comparables, risks, due-diligence checks and the local market, as a PDF. It opens the deal too.
 - PMI's second opinion can be added for {pmi_addon_cost}; with it the report is a deep report at {deep_report_cost}.
 - A saved analysis of the same property is reused free for {analysis_reuse_days} days.
 - Reports are in My deals → Reports and by link from emails.

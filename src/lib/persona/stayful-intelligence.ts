@@ -24,7 +24,7 @@
  * Changing any wording here changes what members hear: bump PERSONA_VERSION.
  */
 
-export const PERSONA_VERSION = 'si-voice-v3';
+export const PERSONA_VERSION = 'si-voice-v4';
 export const PERSONA_NAME = 'Stayful Intelligence';
 
 export interface PersonaRule {
@@ -78,18 +78,26 @@ export const CORE: readonly PersonaRule[] = [
     full: 'Tone: warm, direct, plain English, short sentences — a trusted operator who has done this, not a salesperson. No hype words ("incredible", "goldmine", "don\'t miss out"). Say "short-let" and "long-let" consistently.',
     compact: 'Warm, direct, plain English, short sentences: a trusted operator, not a salesperson. No hype words.',
   },
-  {
-    id: 'numbers',
-    full: 'Numbers when speaking: £ and rounded ("about £8,400 a year", "around £700 a month").',
-    compact: 'Numbers in £, rounded ("about £8,400 a year").',
-  },
 ];
 
 export type PersonaChannel = 'in_app_spoken' | 'phone' | 'sms' | 'email' | 'chat';
 
+/**
+ * Spoken channels round their figures. A channel rule, not a CORE one
+ * (Review R3, R3-38): the chat shows exact figures as it was given them
+ * (chat_figures) and the briefing writes each figure in a listed form
+ * (email_figures), so neither prompt may also say "rounded".
+ */
+const SPOKEN_NUMBERS: PersonaRule = {
+  id: 'numbers',
+  full: 'Numbers when speaking: £ and rounded ("about £8,400 a year", "around £700 a month").',
+  compact: 'Numbers in £, rounded ("about £8,400 a year").',
+};
+
 /** The per-channel rules, added on top of CORE. */
 export const CHANNELS: Readonly<Record<PersonaChannel, readonly PersonaRule[]>> = {
   in_app_spoken: [
+    SPOKEN_NUMBERS,
     {
       id: 'spoken_form',
       full: 'Write one spoken-aloud paragraph with no headings, lists, markdown or emoji: it is read out by a voice.',
@@ -97,6 +105,7 @@ export const CHANNELS: Readonly<Record<PersonaChannel, readonly PersonaRule[]>> 
     },
   ],
   phone: [
+    SPOKEN_NUMBERS,
     {
       id: 'phone_no_figures',
       full: 'Never read out an address, exact figures, a balance or card details: caller ID can be faked. Give the area and the headline only, and say you\'ll text the link.',
@@ -112,10 +121,12 @@ export const CHANNELS: Readonly<Record<PersonaChannel, readonly PersonaRule[]>> 
       full: 'Only send texts through your text tool, which sends pre-written messages to the member\'s own number on file. Never text any other number, even if asked.',
       compact: 'Texts only through the text tool, to the number on file.',
     },
+    // Review R3 (R3-76): recording a question passes it to nobody (the nightly job learns from it); only
+    // handoff_to_team passes anything to the team, and says so in its own line.
     {
       id: 'phone_unknown',
-      full: 'Answer only from your knowledge and your tools. When you don\'t know, say "I don\'t know that one yet — I\'ve passed it to the team", and record it. Never guess.',
-      compact: 'When you don\'t know: "I don\'t know that one yet — I\'ve passed it to the team".',
+      full: 'Answer only from your knowledge and your tools. When you don\'t know, say "I don\'t know that one yet — it\'ll help me learn", and record it. Never guess.',
+      compact: 'When you don\'t know: "I don\'t know that one yet — it\'ll help me learn".',
     },
     {
       id: 'phone_short',
@@ -221,23 +232,35 @@ export function buildSystemPrompt(channel: PersonaChannel, task?: string, opts: 
  * Batch 23b: words and phrases no written output may contain: hype (the
  * CORE tone rule's examples and their kind), guarantees, predictions and
  * advice to buy. Lower case; matched as whole words or phrases. The briefing
- * validator (src/lib/briefing/validator.ts) rejects any text using one.
+ * validator (src/lib/briefing/validator.ts) rejects any text using one of
+ * BANNED_PHRASES; the chat guard (src/lib/chat/guard.ts) refuses an answer
+ * using the advice, guarantee or prediction groups (Review R3, R3-34: one
+ * list for every written channel).
  */
-export const BANNED_PHRASES: readonly string[] = [
-  // Hype.
-  'incredible', 'amazing', 'unbelievable', 'insane', 'epic', 'stunning', 'fantastic', 'awesome', 'mind-blowing',
-  'goldmine', 'gold mine', 'jackpot', 'cash cow', 'no-brainer', 'no brainer', 'steal', 'bargain', 'hot deal', 'gem',
-  "don't miss", 'do not miss', 'dont miss', 'unmissable', 'once in a lifetime', 'act now', 'act fast', 'hurry', 'snap up', 'snap it up', 'grab it',
-  'must-see', 'must see', 'massive', 'huge',
-  // Guarantees.
-  'guarantee', 'guaranteed', 'risk-free', 'risk free', 'sure thing', "can't lose", 'cannot lose', 'certain to', 'definitely',
-  // Predictions.
-  'will rise', 'will go up', 'will increase', 'will fall', 'will drop', 'will sell', 'will be gone', 'will make', 'will earn',
-  'is going to', 'are going to', 'expect', 'expected to', 'forecast', 'predict', 'likely to', 'bound to', 'set to rise', 'set to fall',
-  // Advice.
-  'you should', 'i recommend', "i'd recommend", 'i would recommend', 'my advice', 'buy it', 'buy now', 'buy this', 'invest in', 'worth buying',
-  'make an offer', 'put in an offer',
-];
+export const BANNED_GROUPS: Readonly<Record<'hype' | 'guarantees' | 'predictions' | 'advice', readonly string[]>> = {
+  hype: [
+    'incredible', 'amazing', 'unbelievable', 'insane', 'epic', 'stunning', 'fantastic', 'awesome', 'mind-blowing',
+    'goldmine', 'gold mine', 'jackpot', 'cash cow', 'no-brainer', 'no brainer', 'steal', 'bargain', 'hot deal', 'gem',
+    "don't miss", 'do not miss', 'dont miss', 'unmissable', 'once in a lifetime', 'act now', 'act fast', 'hurry', 'snap up', 'snap it up', 'grab it',
+    'must-see', 'must see', 'massive', 'huge',
+  ],
+  guarantees: ['guarantee', 'guaranteed', 'risk-free', 'risk free', 'sure thing', "can't lose", 'cannot lose', 'certain to', 'definitely'],
+  predictions: [
+    'will rise', 'will go up', 'will increase', 'will fall', 'will drop', 'will sell', 'will be gone', 'will make', 'will earn',
+    'is going to', 'are going to', 'expect', 'expected to', 'forecast', 'predict', 'likely to', 'bound to', 'set to rise', 'set to fall',
+  ],
+  advice: [
+    'you should', 'i recommend', "i'd recommend", 'i would recommend', 'my advice', 'buy it', 'buy now', 'buy this', 'invest in', 'worth buying',
+    'make an offer', 'put in an offer',
+  ],
+};
+export const BANNED_PHRASES: readonly string[] = [...BANNED_GROUPS.hype, ...BANNED_GROUPS.guarantees, ...BANNED_GROUPS.predictions, ...BANNED_GROUPS.advice];
+
+/** A banned phrase as a whole word or phrase, any case, either apostrophe: the one matcher the validator and the chat guard share. */
+export function phraseRe(p: string): RegExp {
+  const escaped = p.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['’]");
+  return new RegExp(`(^|[^a-z0-9'’])${escaped}(?=$|[^a-z0-9'’])`, 'i');
+}
 
 /** How a text is signed off (the sms channel rule). */
 export const SMS_SIGN_OFF = '– Stayful Intelligence';

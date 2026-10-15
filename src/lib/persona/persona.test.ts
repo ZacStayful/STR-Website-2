@@ -30,7 +30,16 @@ test('the phone block has the no-address / no-figures rule', () => {
   assert.match(p, /Never read out an address, exact figures, a balance or card details/);
   assert.match(p, /caller ID can be faked/);
   assert.match(p, /Never text any other number/);
-  assert.match(p, /I don't know that one yet — I've passed it to the team/);
+  assert.match(p, /I don't know that one yet — it'll help me learn/);
+  assert.doesNotMatch(p, /passed it to the team/, 'R3-76: recording a question passes it to nobody');
+});
+
+// Review R3 (R3-38): rounding is a spoken-channel rule; the chat and the briefing have their own figure rules.
+test('spoken channels round their numbers; the chat and the email are told once how to write figures', () => {
+  assert.match(buildSystemPrompt('phone'), /rounded \("about £8,400 a year"/);
+  assert.match(buildSystemPrompt('in_app_spoken'), /rounded \("about £8,400 a year"/);
+  for (const ch of ['chat', 'email', 'sms'] as const) assert.doesNotMatch(buildSystemPrompt(ch), /rounded/, ch);
+  assert.match(buildSystemPrompt('chat'), /written exactly as you were given them/);
 });
 
 test('the core rules name the persona, the AI honesty rule and no advice', () => {
