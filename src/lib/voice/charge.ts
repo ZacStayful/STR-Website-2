@@ -53,3 +53,17 @@ export function affordableSeconds(balancePence: number, perMinutePence: number, 
   const usable = Math.max(0, balancePence - reservePence);
   return Math.max(0, Math.min(maxCallSeconds, Math.floor((usable / perMinutePence) * 60)));
 }
+
+/** What a text's guard does after Twilio was asked to send it (R2-122 / R3-5). */
+export type TextChargeStep = 'settle' | 'keep' | 'release';
+
+/**
+ *   settle   Twilio took the text: charge it.
+ *   keep     Twilio never answered: the text may have gone, so the guard stays
+ *            (it is never sent again) but nothing is charged; the house absorbs it.
+ *   release  refused, a dry run, texts off or never sent: give the guard back.
+ */
+export function textChargeStep(r: { sent: boolean; reason?: string | null }): TextChargeStep {
+  if (r.sent) return 'settle';
+  return r.reason === 'unknown' ? 'keep' : 'release';
+}

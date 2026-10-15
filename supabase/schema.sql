@@ -2698,7 +2698,7 @@ create table if not exists public.sms_messages (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles(id) on delete cascade,
   direction text not null,                    -- outbound | inbound
-  kind text not null,                         -- verify | alert | keyword | standout | nudge (Batch 25)
+  kind text not null,                         -- verify | alert | keyword | standout | nudge (Batch 25) | call (Review R3: a call's texts)
   phone_e164 text not null,
   body text,
   alert_ids uuid[] not null default '{}'::uuid[],
@@ -2724,7 +2724,7 @@ begin
   alter table public.sms_messages drop constraint if exists sms_messages_direction_check;
   alter table public.sms_messages add constraint sms_messages_direction_check check (direction in ('outbound', 'inbound'));
   alter table public.sms_messages drop constraint if exists sms_messages_kind_check;
-  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword', 'standout', 'nudge'));
+  alter table public.sms_messages add constraint sms_messages_kind_check check (kind in ('verify', 'alert', 'keyword', 'standout', 'nudge', 'call'));
   alter table public.sms_messages drop constraint if exists sms_messages_outcome_check;
   alter table public.sms_messages add constraint sms_messages_outcome_check check (outcome in ('pending', 'accepted', 'refused', 'unknown', 'dry_run', 'received'));
 end $$;
