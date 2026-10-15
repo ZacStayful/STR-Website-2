@@ -50,7 +50,7 @@ REPORTS
 
 ALERTS
 - Changes on saved deals (a price drop, back on the market, getting attention, gone) come in the daily email.
-- Text alerts: a member can verify a UK mobile in Account → Notifications and get at most one alert text a day and {sms_monthly_cap} a month, between {sms_hours_start} and {sms_hours_end} UK time. Texts are free. Reply STOP to any text to stop them; START to restart.
+- Text alerts: a member can verify a UK mobile in Account → Notifications and get at most one alert text a day and {sms_monthly_cap} a month, between {sms_hours_start} and {sms_hours_end} UK time. Alert texts are free, and are the only texts those caps count; a text from Stayful Intelligence about a call or a deal it saved costs {text_cost}, needs the same Texts switch, and is outside them. Reply STOP to any text to stop them; START to restart.
 - Every email and text type has its own switch in Account → Notifications.
 
 CALLS FROM STAYFUL INTELLIGENCE

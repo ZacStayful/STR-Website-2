@@ -30,6 +30,7 @@ import { callsDryRun } from '../voice/config';
 import { latestLanding, type GrantRow } from '../voice/low-credit';
 import { callText, nudgeEmail } from '../voice/templates';
 import { claimCharge, releaseCharge, settleEmail, settleText } from '../voice/charge-server';
+import { textChargeStep } from '../voice/charge';
 import { claimCallSlot } from '../voice/cap-server';
 import { firstNameOf } from '../voice/member-server';
 import { standoutEnabled } from './flags';
@@ -186,10 +187,11 @@ async function sendNudge(admin: Admin, r: DueRow, now: Date): Promise<string> {
     const guard = await claimCharge(textKey, null, r.user_id, 'text');
     if (guard) {
       const t = await sendMemberText(admin, { userId: r.user_id, body: callText('auto_topup_link', { base: siteUrl(), ...offer }), kind: 'nudge', purpose: 'si_nudge', dryRun: dry, now });
-      if (t.counted) {
-        await settleText(guard, textKey, null, r.user_id);
-        texted = true;
-      } else await releaseCharge(guard);
+      // R3-5: charged only when Twilio took it; no answer keeps the guard (never again) and charges nothing.
+      const step = textChargeStep(t);
+      if (step === 'settle') await settleText(guard, textKey, null, r.user_id);
+      if (step === 'release') await releaseCharge(guard);
+      else texted = true;
     }
   }
   const emailKey = `nudge:${r.id}:email`;
