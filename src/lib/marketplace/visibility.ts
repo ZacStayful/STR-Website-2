@@ -78,3 +78,13 @@ export function visibilityOrFilter(v: Pick<DealVisibility, 'cutoffIso' | 'ownFin
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * R3 (R2-18): deals this member's own search has just found, added to what
+ * they may see at once (inside the free delay). A paying account sees
+ * everything already, so it is returned untouched.
+ */
+export function withOwnFinds<V extends Pick<DealVisibility, 'cutoffIso' | 'ownFinds'>>(v: V, ids: readonly string[]): V {
+  if (ids.length === 0 || v.cutoffIso === null) return v;
+  return { ...v, ownFinds: [...new Set([...(v.ownFinds ?? []), ...ids])] };
+}

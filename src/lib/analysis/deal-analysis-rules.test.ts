@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analysisQuote, quoteMatches, faceMatches, purchaseStale, runWindowClosed, analysisMessage, analysisHttpStatus, analysisDescription, ANALYSIS_STALE_MS, RUN_START_WINDOW_MS } from './deal-analysis-rules.ts';
+import { analysisQuote, quoteMatches, faceMatches, purchaseStale, runWindowClosed, analysisMessage, analysisHttpStatus, analysisDescription, firstDeepPatch, ANALYSIS_STALE_MS, RUN_START_WINDOW_MS } from './deal-analysis-rules.ts';
 
 const PRICING = { fullAnalysisPence: 400, pmiAddonPence: 200 };
 
@@ -86,4 +86,10 @@ test('the face price confirmed must be what the credit would pay now, to the hal
   // A page from before the check sends none.
   assert.equal(faceMatches(undefined, 475), true);
   assert.equal(faceMatches(null, 475), true);
+});
+
+test('R2-2: a Deep report whose PMI never answered gives the first-time price back; a delivered one keeps it', () => {
+  assert.deepEqual(firstDeepPatch({ withPmi: true, pmiDelivered: false }), { first_deep: false });
+  assert.deepEqual(firstDeepPatch({ withPmi: true, pmiDelivered: true }), {});
+  assert.deepEqual(firstDeepPatch({ withPmi: false, pmiDelivered: false }), {});
 });

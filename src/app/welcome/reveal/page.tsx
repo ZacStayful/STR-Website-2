@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { after } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { CreditProvider } from "@/components/credit/CreditProvider";
 import { IntelligenceView } from "@/components/intelligence/IntelligenceView";
@@ -52,11 +51,21 @@ export default async function RevealPage({ searchParams }: { searchParams: Promi
   const today = todayKey(now);
   if (row?.viewedAt && revealStale(todayKey(new Date(row.viewedAt)), today)) redirect(next);
 
-  const data = await loadIntelligence({ user, supabase, mode: "reveal", now });
-  if (!row) {
-    await recordReveal({ userId: user.id, profileId: data.profile?.id ?? null, day: today, dealIds: data.cards.map((c) => c.id), checked: data.choice?.checked ?? null, noMatch: data.tone === "none", level: data.level });
-  }
-  after(() => markRevealViewed(user.id, now));
+  // R3 (R2-94): the reveal is recorded and stamped viewed BEFORE its cards are priced, so the welcome
+  // price is on the first paint and the first tap is quoted exactly as the server will charge it.
+  const stamped = Boolean(row?.viewedAt);
+  const data = await loadIntelligence({
+    user,
+    supabase,
+    mode: "reveal",
+    now,
+    beforePricing: stamped
+      ? undefined
+      : async (info) => {
+          if (!row) await recordReveal({ userId: user.id, profileId: info.profileId, day: today, dealIds: info.cards.map((c) => c.id), checked: info.checked, noMatch: info.noMatch, level: info.level });
+          await markRevealViewed(user.id, now);
+        },
+  });
 
   const cards = intelligenceCards(data, now);
   const unanswered = data.cards.filter((c) => !data.answered.has(c.id)).map((c) => c.id);
@@ -93,7 +102,7 @@ export default async function RevealPage({ searchParams }: { searchParams: Promi
             </form>
           ) : null
         }
-        whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="reveal" changeHref={`/welcome?q=budget&next=${encodeURIComponent(`/welcome/reveal?next=${encodeURIComponent(next)}`)}`} /> : undefined}
+        whatIfs={data.whatIfs ? <WhatIfSuggestions items={data.whatIfs.items} none={data.whatIfs.none} surface="reveal" changeBase={`/welcome?next=${encodeURIComponent(`/welcome/reveal?next=${encodeURIComponent(next)}`)}`} /> : undefined}
         note={
           <>
             <SearchProgress running={data.searching} />

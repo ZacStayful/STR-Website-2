@@ -66,7 +66,7 @@ export default async function ForManagementCompanies() {
               with your logo and colours, in about a minute. You get the lead, their contact details and the report.
             </p>
             <div style={{ marginTop: 24, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-              <Link href={START_PATH} className="btn btn-primary">
+              <Link href={START_PATH} prefetch={false} className="btn btn-primary">
                 Start
               </Link>
               <span style={{ fontSize: 14, opacity: 0.75 }}>Set up in about 5 minutes. Your form stays paused until you go live.</span>
@@ -160,7 +160,7 @@ export default async function ForManagementCompanies() {
             </p>
           ) : null}
           <p style={{ marginTop: 24 }}>
-            <Link href={START_PATH} className="btn btn-primary">
+            <Link href={START_PATH} prefetch={false} className="btn btn-primary">
               Start
             </Link>
           </p>

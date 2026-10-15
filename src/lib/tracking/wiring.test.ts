@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
 const read = (path: string) => readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
 
@@ -70,4 +70,35 @@ test('sign-up and sign-in bring the cookie choice across first, then attribution
   }
   for (const path of ['src/app/auth/callback/route.ts', 'src/app/auth/confirm/route.ts', 'src/app/(auth)/actions.ts']) assert.match(read(path), /onSignIn\(/, path);
   assert.match(read('src/app/(auth)/actions.ts'), /onEmailSignup\(/);
+});
+
+// Review R3 (R2-159): a redirect in next.config.ts must never point away from a page that exists.
+test('no redirect in next.config.ts hides a page under src/app (R2-159: /home → / hid Home)', () => {
+  const src = read('next.config.ts');
+  const redirects = src.slice(src.indexOf('async redirects()'));
+  const sources = [...redirects.matchAll(/source: "([^"]+)"/g)].map((m) => m[1]).filter((s) => !s.includes(':'));
+  assert.ok(sources.length > 0);
+  const app = new URL('../../../src/app/', import.meta.url);
+  const groups = readdirSync(app).filter((d) => /^\(.*\)$/.test(d));
+  for (const s of sources) {
+    const rel = s.replace(/^\//, '');
+    const pages = [new URL(`${rel}/page.tsx`, app), ...groups.map((g) => new URL(`${g}/${rel}/page.tsx`, app))];
+    assert.ok(!pages.some((u) => existsSync(u)), `${s} is redirected but has a page under src/app`);
+  }
+  assert.doesNotMatch(redirects, /source: "\/home"/);
+});
+
+// Review R3 (R2-160): the management stamp is a GET route handler; a prefetched <Link> would run it.
+test('every link to the management start route is never prefetched', () => {
+  let seen = 0;
+  for (const path of ['src/app/welcome/Quiz.tsx', 'src/app/account/page.tsx', 'src/app/(marketing)/for-management-companies/page.tsx']) {
+    const src = read(path);
+    for (const m of src.matchAll(/<Link\b[^>]*>/g)) {
+      const tag = m[0];
+      if (!/for-management-companies\/start|START_PATH/.test(tag)) continue;
+      seen += 1;
+      assert.match(tag, /prefetch=\{false\}/, `${path}: ${tag.slice(0, 80)}`);
+    }
+  }
+  assert.ok(seen >= 4, 'the four ways in are linked');
 });
