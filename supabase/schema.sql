@@ -6888,10 +6888,16 @@ begin
   alter table public.member_briefings add constraint member_briefings_feedback_check check (feedback is null or feedback in ('useful', 'not_for_me'));
 end $$;
 create index if not exists member_briefings_day_idx on public.member_briefings (uk_day, status);
+-- Review R3 (R3-62): when the day's email actually carried the briefing.
+alter table public.member_briefings add column if not exists emailed_at timestamptz;
 alter table public.member_briefings enable row level security;  -- no policies: service role only
 revoke all on public.member_briefings from anon, authenticated;
 
-insert into public.billing_settings (key, value) values ('briefings_enabled', 'true')
+-- Review R3 (R3-68): seeded OFF, so running this section never switches charged AI briefings on by itself;
+-- Zac flips it on in /admin/billing after the ?dry=1 review. The ceiling is a setting too (3p by default).
+insert into public.billing_settings (key, value) values ('briefings_enabled', 'false')
+on conflict (key) do nothing;
+insert into public.billing_settings (key, value) values ('briefing_ceiling_pence', '3')
 on conflict (key) do nothing;
 
 insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values

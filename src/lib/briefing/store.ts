@@ -42,9 +42,11 @@ export interface StoredBriefing {
   dismissedAt: string | null;
   feedback: 'useful' | 'not_for_me' | null;
   playedCount: number;
+  /** R3-62: when the day's email actually carried this briefing; null until then; a database without the column fails the read, so the schema section runs before this code. */
+  emailedAt: string | null;
 }
 
-const COLUMNS = 'id, user_id, uk_day, status, angle, greeting, opener, subject, nudges, shown_in_app_at, dismissed_at, feedback, played_count';
+const COLUMNS = 'id, user_id, uk_day, status, angle, greeting, opener, subject, nudges, shown_in_app_at, dismissed_at, feedback, played_count, emailed_at';
 
 function nudgesOf(raw: unknown): NudgeLink[] {
   if (!Array.isArray(raw)) return [];
@@ -76,6 +78,7 @@ export function storedOf(r: Record<string, unknown>): StoredBriefing | null {
     dismissedAt: (r.dismissed_at as string | null) ?? null,
     feedback: r.feedback === 'useful' || r.feedback === 'not_for_me' ? r.feedback : null,
     playedCount: Number(r.played_count) || 0,
+    emailedAt: (r.emailed_at as string | null) ?? null,
   };
 }
 
@@ -136,6 +139,13 @@ export async function settledToday(admin: Admin, userIds: readonly string[], ukD
 export interface Claim {
   id: string;
   actionId: string;
+  /** R3: a row a dead run left behind, taken over with its action id: its charge may already be on the ledger. */
+  reclaimed: boolean;
+}
+
+/** R3-11: the Batch 23b tables are not on this database (the deploy step not yet done). */
+export function schemaMissing(message: string | null | undefined): boolean {
+  return /does not exist|schema cache/i.test(message ?? '');
 }
 
 /**
@@ -145,7 +155,7 @@ export interface Claim {
 export async function claimBriefing(admin: Admin, userId: string, ukDay: string, now: Date): Promise<Claim | null> {
   const actionId = randomUUID();
   const { data, error } = await admin.from('member_briefings').insert({ user_id: userId, uk_day: ukDay, status: 'generating', action_id: actionId }).select('id, action_id').maybeSingle();
-  if (!error && data) return { id: String(data.id), actionId: String(data.action_id) };
+  if (!error && data) return { id: String(data.id), actionId: String(data.action_id), reclaimed: false };
   if (error && error.code !== '23505') throw new Error(`claim: ${error.message}`);
   const { data: row } = await admin.from('member_briefings').select('id, status, created_at, action_id').eq('user_id', userId).eq('uk_day', ukDay).maybeSingle();
   if (!row) return null;
@@ -161,7 +171,7 @@ export async function claimBriefing(admin: Admin, userId: string, ukDay: string,
     .select('id, action_id')
     .maybeSingle();
   if (!taken) return null;
-  return { id: String(taken.id), actionId: String(taken.action_id ?? actionId) };
+  return { id: String(taken.id), actionId: String(taken.action_id ?? actionId), reclaimed: true };
 }
 
 export interface Finished {
@@ -215,6 +225,12 @@ export async function finishBriefing(admin: Admin, id: string, f: Finished, now:
 export async function saveProvisional(admin: Admin, id: string, p: { angle: AngleId; greeting: string; opener: string; nudges: NudgeLink[] }): Promise<void> {
   const { error } = await admin.from('member_briefings').update({ angle: p.angle, greeting: p.greeting, opener: p.opener, subject: null, nudges: p.nudges }).eq('id', id).eq('status', 'generating');
   if (error) console.warn('[briefing] provisional template not saved:', error.message);
+}
+
+/** R3-62: the day's email carried the briefing: stamped once, so "seen by email" can mean what it says. Never throws. */
+export async function markBriefingEmailed(admin: Admin, userId: string, ukDay: string, now: Date): Promise<void> {
+  const { error } = await admin.from('member_briefings').update({ emailed_at: now.toISOString() }).eq('user_id', userId).eq('uk_day', ukDay).is('emailed_at', null);
+  if (error) console.warn('[briefing] emailed stamp not written:', error.message);
 }
 
 /** Release a claim that will not be finished (a failure before anything was written or charged): the next run tries again. */

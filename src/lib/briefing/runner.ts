@@ -26,11 +26,13 @@ import 'server-only';
  * ?dry=1: everything up to the writer's reply and the validator, shown and
  * not stored or charged (the model call itself is house spend).
  */
+import { randomUUID } from 'node:crypto';
 import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { getBillingSettings, getUnitCostTable } from '../credit/unit-costs';
 import { getBalance, InsufficientCreditError } from '../credit/ledger';
 import { actionSpend, startAction } from '../credit/action';
 import { approxTokens, meter } from '../credit/meter';
+import type { MeterContext } from '../credit/context';
 import { isAdminEmail } from '../admin';
 import { isPaused } from '../access';
 import { inactivePausedIds } from '../inactivity/server';
@@ -46,16 +48,21 @@ import { buildAiInput, briefingSystemPrompt, briefingUserMessage, nudgeForms } f
 import { nudgeLinks, type NudgeLink } from './nudges';
 import { allowedFor, validateBriefing, type Verdict } from './validator';
 import { greetingLine } from './greeting';
-import { BRIEFING_CEILING_PENCE, afterWriting, ceilingPence, dayChargeEstimate, decide, type Plan } from './decide';
-import { BRIEFING_MAX_TOKENS, BRIEFING_MODEL, unitsFor, writeBriefing, writerConfigured, type WriterResult } from './writer';
+import { afterWriting, cappedTokens, ceilingPence, dayChargeEstimate, decide, type Plan } from './decide';
+import { BRIEFING_MAX_TOKENS, BRIEFING_MODEL, WRITER_TIMEOUT_MS, unitsFor, writeBriefing, writerConfigured, type WriterResult } from './writer';
 import { shouldCharge } from './once';
-import { claimBriefing, finishBriefing, recentAnglesFor, releaseClaim, saveProvisional, settledToday } from './store';
+import { claimBriefing, finishBriefing, recentAnglesFor, releaseClaim, saveProvisional, schemaMissing, settledToday, type Finished } from './store';
 import { dayCounts, loadRunContext, loadSheet, type RunContext } from './sheet-server';
 
 const PAGE = 1000;
 const CONCURRENCY = 6;
-/** Inside the route's 60 s, with room to finish the members already started (the writer times out at 15 s). */
-const TIME_BUDGET_MS = 35_000;
+/** The route's maxDuration (src/app/api/internal/briefings/route.ts). */
+const ROUTE_MS = 60_000;
+/**
+ * R3 (sweep): no member starts with less than ~35 s of the route left, and the writer's timeout is bounded by
+ * what is left, so a member's sheet, writer and charge always fit and a kill can only land before any charge.
+ */
+const TIME_BUDGET_MS = 25_000;
 
 export interface RunOptions {
   dry: boolean;
@@ -115,12 +122,21 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
   const started = Date.now();
   const now = opts.now ?? new Date();
   const admin = createAdminClient();
+  // R3-11: the Batch 23b tables missing is a deploy step, not a crash: a 200 that says so, and nothing else runs.
+  const probe = await admin.from('member_briefings').select('id').limit(1);
+  if (probe.error && schemaMissing(probe.error.message)) {
+    console.warn('[briefing] member_briefings is not on this database; run the Batch 23b section of supabase/schema.sql');
+    return { status: 200, body: { dry: opts.dry, schemaMissing: true, error: 'member_briefings is not on this database: run the "Batch 23b: the morning briefing" section of supabase/schema.sql, then check ?dry=1 again' } };
+  }
   const [settings, table] = await Promise.all([getBillingSettings(), getUnitCostTable()]);
   const model = opts.dry && opts.model ? opts.model : BRIEFING_MODEL;
   const units = unitsFor(model);
   const inRow = units ? table.get(`anthropic:${units.input}`) : undefined;
   const outRow = units ? table.get(`anthropic:${units.output}`) : undefined;
   const writerReady = writerConfigured() && Boolean(inRow && outRow && inRow.unitCostPence > 0 && outRow.unitCostPence > 0);
+  // R3: the most any briefing may be charged (billing_settings.briefing_ceiling_pence), and the token prices the charge uses.
+  const ceilingMax = settings.briefingCeilingPence;
+  const rates = inRow && outRow ? { inputPence: inRow.unitCostPence * inRow.markup, outputPence: outRow.unitCostPence * outRow.markup } : null;
 
   const ctx: RunContext = await loadRunContext(admin, now);
   const counts = await dayCounts(ctx);
@@ -176,9 +192,28 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
     const dayCharge = adminUser ? 0 : dayChargeEstimate({ mode, seats: seats.get(m.id) ?? 1, dailyPence: settings.dealPricing.todays5DailyPence, ladderTopPence: ladderTop, pickUnitPence });
     // £0 first, before anything is claimed or read: their email stays exactly as it is.
     if (!adminUser && !((spendable ?? 0) - (held.get(payer.payerId) ?? 0) > 0)) return { user: m.id, outcome: 'none', reason: 'no_credit' };
+    // R3 (sweep): the day's charge and the most a briefing may cost are set aside NOW, before any await, so a
+    // teammate briefed in the same wave never assumes the same balance; trued up once the plan is known.
+    const provisional = adminUser ? 0 : dayCharge + ceilingMax;
+    let myHold = 0;
+    /** What this member holds from the payer's balance right now: a member with credit always holds the day's charge, and the ceiling only while the writer runs. */
+    const holdNow = (pence: number) => {
+      if (adminUser || pence === myHold) return;
+      held.set(payer.payerId, (held.get(payer.payerId) ?? 0) + pence - myHold);
+      myHold = pence;
+    };
+    holdNow(provisional);
 
-    const claim = opts.dry ? { id: 'dry', actionId: 'dry' } : await claimBriefing(admin, m.id, ctx.ukDay, now);
-    if (!claim) return { user: m.id, outcome: 'held', reason: 'another run has it' };
+    const claim = opts.dry ? { id: 'dry', actionId: 'dry', reclaimed: false } : await claimBriefing(admin, m.id, ctx.ukDay, now);
+    if (!claim) {
+      holdNow(dayCharge);
+      return { user: m.id, outcome: 'held', reason: 'another run has it' };
+    }
+    // R3-16 (and the reclaim findings): a row a dead run left after charging. That charge stands, is never
+    // repeated and is what the row records; nothing is reserved again, and the row is never deleted.
+    const paid = !opts.dry && claim.reclaimed ? (await actionSpend(claim.actionId).catch(() => ({ basePence: 0 }))).basePence : 0;
+    let charged = paid > 0;
+    const finish = (f: Finished) => finishBriefing(admin, claim.id, f, now).catch(() => finishBriefing(admin, claim.id, f, now));
     try {
       const loaded = await loadSheet(ctx, { userId: m.id, joinedAt: m.created_at, adminUser });
       const sheet = buildFactSheet(loaded.inputs);
@@ -187,40 +222,50 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
       const greeting = greetingLine(ctx.ukDay, m.id, m.full_name, true);
       const links = nudgeLinks(loaded.overdue);
       if (!angle) {
-        if (!opts.dry) await finishBriefing(admin, claim.id, finishedOf({ status: 'skipped', angle: null, greeting, opener: null, subject: null, nudges: [], sheet, plan: null, writer: null, verdict: null, charge: 0, rejectReason: 'no_new_angle' }), now);
-        return { user: m.id, outcome: 'skipped', reason: 'no_new_angle' };
+        holdNow(dayCharge);
+        if (!opts.dry) await finish(finishedOf({ status: 'skipped', angle: null, greeting, opener: null, subject: null, nudges: [], sheet, plan: null, writer: null, verdict: null, charge: paid, rejectReason: 'no_new_angle' }));
+        return { user: m.id, outcome: 'skipped', reason: 'no_new_angle', chargePence: paid };
       }
 
       const input = buildAiInput(sheet, angle, history, loaded.overdue, links);
       const promptTokens = approxTokens(briefingSystemPrompt() + briefingUserMessage(input)) + 50;
       const ceiling = inRow && outRow ? ceilingPence({ inputTokens: promptTokens, maxOutputTokens: BRIEFING_MAX_TOKENS, inputUnitPence: inRow.unitCostPence, outputUnitPence: outRow.unitCostPence, inputMarkup: inRow.markup, outputMarkup: outRow.markup }) : 0;
-      const plan: Plan = decide({ spendable, heldThisRun: held.get(payer.payerId) ?? 0, dayCharge, ceiling, enabled: settings.briefingsEnabled, writerReady, admin: adminUser });
+      const plan: Plan =
+        paid > 0
+          ? settings.briefingsEnabled && writerReady
+            ? { kind: 'ai' }
+            : { kind: 'template', reason: settings.briefingsEnabled ? 'no_writer' : 'switched_off' }
+          : decide({ spendable, heldThisRun: (held.get(payer.payerId) ?? 0) - provisional, dayCharge, ceiling, ceilingMax, enabled: settings.briefingsEnabled, writerReady, admin: adminUser });
       if (plan.kind === 'none') {
-        if (!opts.dry) await releaseClaim(admin, claim.id);
+        holdNow(0);
+        if (!opts.dry && !claim.reclaimed) await releaseClaim(admin, claim.id);
         return { user: m.id, outcome: 'none', reason: plan.reason };
       }
-      if (!adminUser) held.set(payer.payerId, (held.get(payer.payerId) ?? 0) + dayCharge + (plan.kind === 'ai' ? ceiling : 0));
+      // The hold becomes what this member really takes: the day's charge, plus the ceiling while an AI briefing is written.
+      holdNow(dayCharge + (plan.kind === 'ai' && paid === 0 ? ceiling : 0));
 
       const template = templateOpener(sheet, angle);
       if (!opts.dry) await saveProvisional(admin, claim.id, { angle, greeting, opener: template, nudges: links });
       if (plan.kind === 'template') {
-        if (!opts.dry) await finishBriefing(admin, claim.id, finishedOf({ status: 'template', angle, greeting, opener: template, subject: null, nudges: links, sheet, plan, writer: null, verdict: null, charge: 0, rejectReason: plan.reason }), now);
-        return { user: m.id, outcome: 'template', reason: plan.reason, angle, greeting, opener: template, subject: null, nudges: links.map((l) => l.text), factsUsed: factsUsed(sheet, angle), ceilingPence: round(ceiling) };
+        if (!opts.dry) await finish(finishedOf({ status: 'template', angle, greeting, opener: template, subject: null, nudges: links, sheet, plan, writer: null, verdict: null, charge: paid, rejectReason: plan.reason }));
+        return { user: m.id, outcome: 'template', reason: plan.reason, angle, greeting, opener: template, subject: null, nudges: links.map((l) => l.text), factsUsed: factsUsed(sheet, angle), chargePence: paid, ceilingPence: round(ceiling) };
       }
 
       // AI: reserve the ceiling (the payer's, for a team seat), write, validate, then charge.
       let action: Awaited<ReturnType<typeof startAction>> | null = null;
-      if (!opts.dry) {
+      if (!opts.dry && paid === 0) {
         try {
           action = await startAction({ userId: m.id, admin: adminUser, action: 'briefing', maxBasePence: ceiling, requireCredit: true, actionId: claim.actionId });
         } catch (err) {
           if (!(err instanceof InsufficientCreditError)) throw err;
-          await finishBriefing(admin, claim.id, finishedOf({ status: 'template', angle, greeting, opener: template, subject: null, nudges: links, sheet, plan, writer: null, verdict: null, charge: 0, rejectReason: 'low_credit' }), now);
+          holdNow(dayCharge);
+          await finish(finishedOf({ status: 'template', angle, greeting, opener: template, subject: null, nudges: links, sheet, plan, writer: null, verdict: null, charge: paid, rejectReason: 'low_credit' }));
           return { user: m.id, outcome: 'template', reason: 'low_credit', angle, opener: template };
         }
       }
       try {
-        const written = await writeBriefing(input, model);
+        // R3 (sweep): the writer never runs past what is left of the route, so a kill cannot land on the charge path.
+        const written = await writeBriefing(input, model, { timeoutMs: Math.min(WRITER_TIMEOUT_MS, ROUTE_MS - 5_000 - (Date.now() - started)) });
         const allowed = allowedFor(sheet, nudgeForms(loaded.overdue, links), loaded.forbidden);
         const verdict: Verdict | null = written.output ? validateBriefing(written.output, allowed, links.length) : null;
         const after = afterWriting({ replied: Boolean(written.output), valid: Boolean(verdict?.ok), admin: adminUser });
@@ -229,15 +274,19 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
         // The writer's nudge lines replace the template's one for one; the links stay code's.
         const nudges: NudgeLink[] = ok ? links.map((l, i) => ({ ...l, text: written.output!.nudges[i] ?? l.text })) : links;
         const wouldCharge = inRow && outRow && ok ? round(written.inputTokens * inRow.unitCostPence * inRow.markup + written.outputTokens * outRow.unitCostPence * outRow.markup) : 0;
-        let charge = 0;
-        if (after.charge && action) charge = await chargeOnce(action, written, units!);
+        let charge = paid;
+        if (paid === 0 && after.charge && action) {
+          // From here a crash must not give the claim back: the ledger may hold the debit (R3-16).
+          charged = true;
+          charge = await chargeOnce(action, written, units!, rates ? { ...rates, capPence: ceiling } : null);
+        } else if (units && (written.inputTokens > 0 || written.outputTokens > 0 || written.error)) {
+          // R3 (sweep): a rejected, failed, dry-run or already-paid call is still a model call: house spend, logged at £0.
+          await logHouseCall(written, units, opts.dry ? randomUUID() : claim.actionId);
+        }
+        // The ceiling was the hold; the real charge is what the payer's balance has lost.
+        holdNow(dayCharge + charge);
         if (!opts.dry) {
-          await finishBriefing(
-            admin,
-            claim.id,
-            finishedOf({ status: ok ? 'ready' : 'template', angle, greeting, opener: ok ? written.output!.opener : template, subject: ok ? written.output!.subject : null, nudges, sheet, plan, writer: written, verdict, charge, rejectReason: rejected }),
-            now,
-          );
+          await finish(finishedOf({ status: ok ? 'ready' : 'template', angle, greeting, opener: ok ? written.output!.opener : template, subject: ok ? written.output!.subject : null, nudges, sheet, plan, writer: written, verdict, charge, rejectReason: rejected }));
         }
         return {
           user: m.id,
@@ -261,8 +310,10 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
         await action?.finish().catch(() => {});
       }
     } catch (err) {
-      // Nothing was charged on any path that throws before chargeOnce: give the claim back for the next run.
-      if (!opts.dry) await releaseClaim(admin, claim.id).catch(() => {});
+      // The claim goes back only when nothing can be on the ledger under it (R3-16): after a charge, or on a
+      // reclaimed row, it stays 'generating' so the next run reclaims it with its action id and finds the debit.
+      if (!charged) holdNow(dayCharge);
+      if (!opts.dry && !charged && !claim.reclaimed) await releaseClaim(admin, claim.id).catch(() => {});
       throw err;
     }
   }
@@ -273,6 +324,7 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
     ukDay: ctx.ukDay,
     model,
     enabled: settings.briefingsEnabled,
+    ceilingMaxPence: ceilingMax,
     writerReady,
     counts,
     audience: rows.length,
@@ -293,13 +345,28 @@ export async function runBriefings(opts: RunOptions): Promise<RunResult> {
 }
 
 /** Charge the tokens of a validated briefing, once: a charge already on the ledger under this action id is never repeated. */
-async function chargeOnce(action: Awaited<ReturnType<typeof startAction>>, written: WriterResult, units: { input: string; output: string }): Promise<number> {
+async function chargeOnce(action: Awaited<ReturnType<typeof startAction>>, written: WriterResult, units: { input: string; output: string }, cap: { inputPence: number; outputPence: number; capPence: number } | null): Promise<number> {
   const actionId = action.ctx.actionId!;
   const before = await actionSpend(actionId);
   if (!shouldCharge(before.basePence)) return before.basePence;
-  await meter({ provider: 'anthropic', unit: units.output, quantity: written.outputTokens, skipPreflight: true, description: 'Daily briefing (output tokens)' }, async () => null, action.ctx);
-  await meter({ provider: 'anthropic', unit: units.input, quantity: written.inputTokens, skipPreflight: true, description: 'Daily briefing (input tokens)' }, async () => null, action.ctx);
+  // R3 (sweep): the real tokens, but never past the ceiling the member was quoted; the dearer part (output) lands first.
+  const q = cap ? cappedTokens({ inputTokens: written.inputTokens, outputTokens: written.outputTokens, ...cap }) : { inputTokens: written.inputTokens, outputTokens: written.outputTokens, scaled: false };
+  if (q.scaled) console.warn('[briefing] charge capped at the ceiling', JSON.stringify({ actionId, inputTokens: written.inputTokens, outputTokens: written.outputTokens, capPence: cap?.capPence }));
+  await meter({ provider: 'anthropic', unit: units.output, quantity: q.outputTokens, skipPreflight: true, description: 'Daily briefing (output tokens)' }, async () => null, action.ctx);
+  await meter({ provider: 'anthropic', unit: units.input, quantity: q.inputTokens, skipPreflight: true, description: 'Daily briefing (input tokens)' }, async () => null, action.ctx);
   return (await actionSpend(actionId)).basePence;
+}
+
+/** R3 (sweep): a model call not charged to the member (rejected, failed, a dry run, a reclaim already paid): house spend, logged at £0 so the spend views see it. */
+async function logHouseCall(written: WriterResult, units: { input: string; output: string }, actionId: string): Promise<void> {
+  const house: MeterContext = { userId: null, admin: false, action: 'briefing', actionId };
+  try {
+    if (written.outputTokens > 0) await meter({ provider: 'anthropic', unit: units.output, quantity: written.outputTokens, skipPreflight: true, description: 'Daily briefing (output tokens, not charged)' }, async () => null, house);
+    if (written.inputTokens > 0) await meter({ provider: 'anthropic', unit: units.input, quantity: written.inputTokens, skipPreflight: true, description: 'Daily briefing (input tokens, not charged)' }, async () => null, house);
+    if (written.error && written.inputTokens === 0 && written.outputTokens === 0) await meter({ provider: 'anthropic', unit: units.input, quantity: 0, skipPreflight: true, description: `Daily briefing (${written.error.slice(0, 60)})`, failed: () => true }, async () => null, house);
+  } catch (err) {
+    console.warn('[briefing] house call not logged:', (err as Error)?.message ?? err);
+  }
 }
 
 function factsUsed(sheet: FactSheet, angle: AngleId): string[] {
@@ -342,5 +409,3 @@ function finishedOf(p: {
     chargePence: p.charge,
   };
 }
-
-export { BRIEFING_CEILING_PENCE };

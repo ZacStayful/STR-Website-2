@@ -38,14 +38,17 @@ export async function updateUnitCostAction(_prev: ActionState, formData: FormDat
   }
 }
 
-/** Batch 23b: the kill switch for AI morning briefings. Off: template openers for everyone, nothing charged. */
+/** Batch 23b: the kill switch for AI morning briefings. Off: template openers for everyone, nothing charged. Review R3: the ceiling is a setting too. */
 export async function updateBriefingsAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   try {
     await requireAdmin();
     const on = formData.get('briefings_enabled') === 'on';
+    const ceiling = Number(formData.get('briefing_ceiling_pence'));
+    if (!Number.isFinite(ceiling) || ceiling < 0.1 || ceiling > 100) return { ok: false, message: 'The ceiling is base pence, from 0.1 to 100.' };
     await updateBillingSetting('briefings_enabled', on);
+    await updateBillingSetting('briefing_ceiling_pence', Math.round(ceiling * 100) / 100);
     revalidatePath('/admin/billing');
-    return { ok: true, message: on ? 'AI briefings on.' : 'AI briefings off: template openers, nothing charged.' };
+    return { ok: true, message: on ? `AI briefings on, never more than ${Math.round(ceiling * 100) / 100}p each.` : 'AI briefings off: template openers, nothing charged.' };
   } catch (err) {
     return { ok: false, message: (err as Error).message };
   }

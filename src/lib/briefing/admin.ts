@@ -37,6 +37,14 @@ export interface BriefingDay {
   notForMe: number;
   /** Base pence charged. */
   chargedPence: number;
+  /** R3: the pool's counts the pass took that morning (briefing_day_counts); null when no row. */
+  counts?: { screenedYesterday: number; livePool: number; wentLiveYesterday: number } | null;
+}
+
+/** The stored day counts, joined on to the days. */
+export function withDayCounts(days: readonly BriefingDay[], counts: readonly { uk_day: string; screened_yesterday: number | string | null; live_pool: number | string | null; went_live_yesterday: number | string | null }[]): BriefingDay[] {
+  const byDay = new Map(counts.map((c) => [String(c.uk_day), { screenedYesterday: Number(c.screened_yesterday) || 0, livePool: Number(c.live_pool) || 0, wentLiveYesterday: Number(c.went_live_yesterday) || 0 }]));
+  return days.map((d) => ({ ...d, counts: byDay.get(d.day) ?? null }));
 }
 
 export function summariseDays(rows: readonly BriefingRowLite[]): BriefingDay[] {

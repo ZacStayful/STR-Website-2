@@ -209,6 +209,17 @@ export const SEED: readonly SeedEntry[] = [
     variants: ['What was that call about?', 'Why did Stayful Intelligence ring me?', 'You called me, what was it?'],
     answer: "I only ring for three things: to introduce myself once, when your credit is running low, or when a deal fits you better than anything I've found so far. That deal is saved in My deals and opening it is free.",
   },
+  // ── Batch 23b's morning briefing (drafted in Review R3, when its ceiling became a setting) ──
+  {
+    slug: 'morning_briefing',
+    from: 'review r3 (the Batch 23b handover)',
+    category: 'how_it_works',
+    channels: ['view', 'chat'],
+    showWhen: null,
+    question: 'What is the morning briefing?',
+    variants: ['What is the note at the top of my daily email?', 'Does the morning briefing cost anything?', 'Can I hear my briefing?'],
+    answer: 'Your daily email and Today open with a short briefing on something in your own figures, never a listing’s words.{#briefings_on} Written by me it costs at most {briefing_max_cost} of credit, after the day’s own charge; the standard line is free.{/briefings_on}{^briefings_on} It is the standard line, free.{/briefings_on} Play on Today reads it out.',
+  },
   {
     slug: 'why_not_called',
     from: 'batch 25',
