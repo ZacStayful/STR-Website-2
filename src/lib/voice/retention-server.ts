@@ -4,6 +4,11 @@ import 'server-only';
  * Batch 23: transcripts are kept si_transcript_retention_days (90), then the
  * turns are deleted; each question's text and outcome stay for Batch 24's
  * learning loop. Once a UK day, from the calls cron.
+ *
+ * Review R3 (R3-22): the member's name comes off the conversation with its
+ * text, for every channel (chat's anonymiseChat does the same and more), so
+ * a call or text question is not linked to a named member for the months
+ * the questions are kept. si_calls_log keeps its own user_id for billing.
  */
 import { createAdminClient } from '../supabase/admin';
 
@@ -23,7 +28,7 @@ export async function purgeTranscripts(o: { apply: boolean; days: number; now?: 
     const chunk = ids.slice(i, i + 100);
     const { error: delErr } = await admin.from('si_conversation_turns').delete().in('conversation_id', chunk);
     if (delErr) throw new Error(delErr.message);
-    const { error: upErr } = await admin.from('si_conversations').update({ transcript_purged_at: new Date().toISOString() }).in('id', chunk);
+    const { error: upErr } = await admin.from('si_conversations').update({ transcript_purged_at: new Date().toISOString(), user_id: null }).in('id', chunk);
     if (upErr) throw new Error(upErr.message);
   }
   return { due: ids.length, purged: ids.length };

@@ -2,7 +2,9 @@
  * Batch 23: the whole ElevenLabs agent as one object — prompt (persona +
  * call task + knowledge), opener, the one SI voice, limits, the built-in
  * tools (end call; voicemail: hang up, no message), data collection for an
- * unhappy member, the opener override, and transcript retention.
+ * unhappy member, the opener override, and transcript retention (never
+ * audio: record_voice false and delete_audio true, Review R3's R3-6, so the
+ * policy's "Calls are not recorded as audio" is what the agent does).
  *
  * The two webhooks are set on this agent only (ElevenLabs' per-agent
  * workspace_overrides), never in the workspace settings: other agents in the
@@ -91,7 +93,7 @@ export function agentConfig(i: AgentConfigInput): Record<string, unknown> {
       data_collection: {
         member_unhappy: { type: 'boolean', description: 'True if the caller seemed unhappy with an answer: said it was not what they asked, or asked the same question twice.' },
       },
-      privacy: { retention_days: i.retentionDays },
+      privacy: { retention_days: i.retentionDays, record_voice: false, delete_audio: true },
     },
   };
 }

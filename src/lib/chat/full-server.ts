@@ -30,7 +30,7 @@ import { SeatPausedError, type StartedAction } from '../credit/action';
 import { getUnitCostTable } from '../credit/unit-costs';
 import type { UnitCostTable } from '../credit/costs';
 import { recordActivity } from '../activity/log';
-import { CAPPED_LINE, DONT_KNOW_LINE, FULL_HARD_DEADLINE_MS, FULL_LOOKUP_DEADLINE_MS, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, LOOKUP_ROUND_MAX_TOKENS, MAX_QUESTION_CHARS, MAX_TOOL_RESULT_CHARS, MIN_ROUND_TIME_MS, MODEL_UNITS } from './config';
+import { CAPPED_LINE, DONT_KNOW_LINE, FULL_HARD_DEADLINE_MS, FULL_LOOKUP_DEADLINE_MS, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, LOOKUP_ROUND_MAX_TOKENS, MAX_QUESTION_CHARS, MAX_TOOL_RESULT_CHARS, MIN_ROUND_TIME_MS, MODEL_UNITS, FACT_PROMPT } from './config';
 import { affordsLookUp, approxTokens, budgetFor, costOf, promptTokensOf, roundMaxTokens, unitsPriced, usageOf, NO_USAGE, type RoundUsage } from './budget';
 import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
 import { buildButtons } from './actions';
@@ -314,7 +314,8 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         questionId: logged.questionId,
         logSeq: logged.agentSeq,
         capped,
-        factProposal: factProposal ? { fact: factProposal, asked: question } : null,
+        // R3-32: what the page asks, not the member's whole question (which may hold what a fact never may).
+        factProposal: factProposal ? { fact: factProposal, asked: FACT_PROMPT } : null,
         buttons,
         capPence: job.budget,
       },
