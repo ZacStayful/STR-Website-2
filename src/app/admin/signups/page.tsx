@@ -54,7 +54,7 @@ export default async function SignupsPage({ searchParams }: { searchParams: Prom
           <h1 className="text-2xl font-semibold text-foreground">Sign-ups by source</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
             Which ads and links bring members, and whether those members stay. A sign-up is an account made in the range on the live site that has signed in at least once. Rows group utm_source, then utm_campaign, then utm_content (the ad); untagged sign-ups sit under
-            “direct / unknown” by the site they came from. Each figure is shown as members / the members it applies to. Weekly active is the same figure as on{" "}
+            “direct / unknown” by the site they came from, or under “referral code” when they redeemed one. Each figure is shown as members / the members it applies to. Weekly active is the same figure as on{" "}
             <Link href="/admin/weekly-active" className="underline">
               Weekly active
             </Link>
@@ -135,7 +135,7 @@ export default async function SignupsPage({ searchParams }: { searchParams: Prom
       </div>
       <p className="mt-3 text-xs text-muted-foreground">
         Rows with fewer than {TRACKING.minRowSignups} sign-ups are greyed: too few to trust. Left out: {left.teamInvites} team invitee{left.teamInvites === 1 ? "" : "s"} (their team pays), {left.excluded} admin, staff or excluded account
-        {left.excluded === 1 ? "" : "s"}, {left.neverSignedIn} never signed in, {left.notProduction} made on a preview or local build. Lead-form accounts show under their lead source.
+        {left.excluded === 1 ? "" : "s"}, {left.neverSignedIn} never signed in, {left.notProduction} made on a preview or local build. Lead-form accounts show under their lead source. {report.referred} of the sign-ups shown redeemed a referral code (the code itself is never shown here).
       </p>
 
       <MetaStatus meta={meta} />
