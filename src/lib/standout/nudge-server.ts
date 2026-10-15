@@ -148,7 +148,7 @@ interface DueRow {
   decided_at: string;
 }
 
-export async function processNudges(o: { apply: boolean; now: Date; onlyUserId: string | null }): Promise<NudgeRunResult> {
+export async function processNudges(o: { apply: boolean; now: Date; onlyUserId: string | null; /** R3-105: no nudge is started after this (ms since the epoch). */ deadlineMs?: number }): Promise<NudgeRunResult> {
   const out: NudgeRunResult = { due: 0, results: [] };
   const admin = createAdminClient();
   let q = admin.from('credit_nudges').select('id, user_id, landing_id, decided_at').eq('status', 'due').order('decided_at', { ascending: true }).limit(200);
@@ -163,6 +163,11 @@ export async function processNudges(o: { apply: boolean; now: Date; onlyUserId: 
     return out;
   }
   for (const r of rows) {
+    if (o.deadlineMs && Date.now() > o.deadlineMs) {
+      // R3-105: the pass is out of time; the next pass sends it.
+      out.results.push({ userId: r.user_id, outcome: 'out_of_time' });
+      continue;
+    }
     out.results.push({ userId: r.user_id, outcome: o.apply ? await sendNudge(admin, r, o.now) : 'would_send' });
   }
   return out;

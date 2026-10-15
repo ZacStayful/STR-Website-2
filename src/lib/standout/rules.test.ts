@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { judgeStandout, memberSkip, bestFirst, beatsBest, liveConfirmed, inWindow, savesLeftToday, profitBarFor, matchPctOf, chosenTypesOf, shownVerdict, type StandoutInput } from './rules.ts';
+import { judgeStandout, memberSkip, bestFirst, beatsBest, bestAtLeast, liveConfirmed, inWindow, savesLeftToday, passesMemberRules, profitBarFor, matchPctOf, chosenTypesOf, shownVerdict, type StandoutInput } from './rules.ts';
+import type { PickFeedback } from '../listing/picks.ts';
 import { DEFAULT_STANDOUT } from './settings.ts';
 import { wantsFor, type Judgement } from '../tailoring/criteria.ts';
 import { judgeRow } from '../tailoring/today.ts';
@@ -196,4 +197,39 @@ test('a save is told about only while the main profile still shows its deal type
   // No types left: not told.
   assert.deepEqual(chosenTypesOf({ primary: ok, types: [], wants: w }), { blocked: 'type_not_chosen' });
   assert.equal(shownVerdict({ blocked: 'profile_changed' }, 'r2r'), 'profile_changed');
+});
+
+// ── Review R3 ──
+
+test('R3-13: a "wrong area" pass rules that area out of standouts; a price cap rules out dearer deals', () => {
+  const row = (over: Record<string, unknown> = {}) => ({ id: 'd1', source: 'rightmove', kind: 'sale', postcode_area: 'LS', outcode: 'LS1', bedrooms: 2, raw_type: 'Flat', price_amount: 150_000, price_period: 'total', tenure: null, listed_date: null, ...over }) as unknown as PoolRow;
+  const pass = (over: Partial<PickFeedback> = {}) => ({ reaction: 'no', reactionSource: 'form', reasons: ['wrong_area'], kind: 'sale', postcodeArea: 'LS', bedrooms: 2, amount: 150_000, rawType: 'Flat', outcode: 'LS1', ...over }) as unknown as PickFeedback;
+  assert.equal(passesMemberRules(row(), [pass()]), false);
+  assert.equal(passesMemberRules(row({ postcode_area: 'YO', outcode: 'YO1' }), [pass()]), true);
+  assert.equal(passesMemberRules(row(), []), true);
+  // "Too expensive" at £150k caps the member's purchases 10% below it: a dearer deal is out, one under the cap is in.
+  assert.equal(passesMemberRules(row({ postcode_area: 'YO', outcode: 'YO1', price_amount: 160_000 }), [pass({ reasons: ['too_expensive'] })]), false);
+  assert.equal(passesMemberRules(row({ postcode_area: 'YO', outcode: 'YO1', price_amount: 130_000 }), [pass({ reasons: ['too_expensive'] })]), true);
+});
+
+test('R3-54, R3-64: a quiet member or one with daily picks off is not judged at all', () => {
+  const primary = { forClient: false, pausedAt: null };
+  const wants = { minProfit: 500, minProfitR2r: null };
+  assert.equal(memberSkip({ isTeamMember: false, primary, chosenTypes: ['buy_str'], wants }), null);
+  assert.equal(memberSkip({ isTeamMember: false, primary, chosenTypes: ['buy_str'], wants, quiet: true }), 'quiet');
+  assert.equal(memberSkip({ isTeamMember: false, primary, chosenTypes: ['buy_str'], wants, picksOff: true }), 'picks_off');
+  assert.equal(memberSkip({ isTeamMember: true, primary, chosenTypes: ['buy_str'], wants, quiet: true }), 'team_member');
+});
+
+test('R3-52: "beats everything shown" compares within a deal type', () => {
+  const known = [
+    { matchPct: 100, profitLow: 900, dealType: 'r2r' },
+    { matchPct: 100, profitLow: 1_400, dealType: 'buy_str' },
+    { matchPct: 80, profitLow: 2_000, dealType: 'buy_str' },
+  ];
+  assert.equal(bestAtLeast(known, 100, 'buy_str'), 1_400);
+  assert.equal(bestAtLeast(known, 100, 'r2r'), 900);
+  assert.equal(bestAtLeast(known, 100, 'brrr'), null);
+  assert.equal(bestAtLeast(known, 90, 'buy_str'), 1_400);
+  assert.equal(bestAtLeast([{ matchPct: 100, profitLow: 700, dealType: null }], 100, 'buy_str'), 700);
 });

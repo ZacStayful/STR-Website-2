@@ -37,6 +37,8 @@ export const BLOCKED_REASONS = {
   nudged: "The auto top-up nudge was the notice",
   // Batch 22f: a management company that has not switched deal-finding on.
   management_no_deals: "Management company without deal-finding",
+  // Review R3 (R3-64): daily picks paused for inactivity (Batch 20): not rung about deals.
+  quiet: "Daily picks paused for inactivity",
   // Batch 25: a deal call re-checked just before dialling (src/lib/standout/calls-server.ts).
   deal_gone: "The deal went before the call",
   deal_acted: "They opened the deal, moved it or said Not for me first",

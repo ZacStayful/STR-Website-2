@@ -7499,7 +7499,10 @@ revoke all on public.credit_nudges from anon, authenticated;
 -- ── Deal calls: one per member per deal (R2-168) ──
 -- Without it a deal call that has ended could be queued again for the same
 -- deal by the next pass. trigger_ref is the deal id.
-create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal';
+-- Review R3 (R3-104): a deal call that failed at the provider is not the deal's one call; it may be queued once more
+-- (the standout plan allows one retry, then tells the member by email).
+drop index if exists public.si_calls_log_deal_uidx;
+create unique index if not exists si_calls_log_deal_uidx on public.si_calls_log (user_id, trigger_ref) where call_type = 'deal' and status <> 'failed';
 
 -- ── A face debit never takes credit an open reservation holds (R2-13) ──
 -- Batch 23's calls (minutes, texts, the missed-call email), this batch's deal
