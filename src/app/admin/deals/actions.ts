@@ -21,6 +21,8 @@ import { DEAL_CHECKS_KEY, LOW_ENTRY_KEY, parseDealChecks, parseLowEntry, type De
 import { parseProjectAllowance, parseProjectChecks, PROJECT_CHECKS_KEY, type ProjectChecksSettings } from '@/lib/project/config';
 import { runProjectChecks } from '@/lib/project/check-run';
 import { runProjectBackfill } from '@/lib/project/live-backfill-run';
+import { parseBtlAllowance } from '@/lib/btl/config';
+import { runBtlScreen } from '@/lib/btl/screen-server';
 
 // Mirrored in page.tsx: a 'use server' module may only export async functions.
 const RUN_COOKIE = 'sf_deals_run';
@@ -196,13 +198,34 @@ export async function updateDealChecksAction(formData: FormData): Promise<void> 
   // Batch 17: the Project photo checks' own allowance lives in the same row (project/config.ts parseProjectAllowance).
   const allowance = { projectPhotoChecks: whole('projectPhotoChecks'), projectCapPence: whole('projectCapPence') };
   const parsedAllowance = parseProjectAllowance(allowance);
+  // Batch 28: the buy-to-let shortlist's line lives in the same row (btl/config.ts parseBtlAllowance).
+  const btl = { btlValuations: whole('btlValuations'), btlCapPence: whole('btlCapPence') };
+  const parsedBtl = parseBtlAllowance(btl);
   const same =
     (['perDay', 'dailyCapPence', 'maxCallsPerCheck', 'validDays', 'shortlistExpiryDays', 'lowEntryShortlistExpiryDays', 'recheckCeilingPence'] as const).every((k) => parsed[k] === next[k]) &&
     parsed.split.top60 === next.split.top60 && parsed.split.low_entry === next.split.low_entry && parsed.split.r2r === next.split.r2r && parsed.split.project === next.split.project &&
-    parsedAllowance.photoChecks === allowance.projectPhotoChecks && parsedAllowance.capPence === allowance.projectCapPence;
+    parsedAllowance.photoChecks === allowance.projectPhotoChecks && parsedAllowance.capPence === allowance.projectCapPence &&
+    parsedBtl.valuations === btl.btlValuations && parsedBtl.capPence === btl.btlCapPence;
   if (!same) redirect('/admin/deals?msg=bad_deal_checks');
-  await updateBillingSetting(DEAL_CHECKS_KEY, { ...parsed, projectPhotoChecks: parsedAllowance.photoChecks, projectCapPence: parsedAllowance.capPence });
+  await updateBillingSetting(DEAL_CHECKS_KEY, { ...parsed, projectPhotoChecks: parsedAllowance.photoChecks, projectCapPence: parsedAllowance.capPence, btlValuations: parsedBtl.valuations, btlCapPence: parsedBtl.capPence });
   redirect('/admin/deals?msg=deal_checks_saved');
+}
+
+// ── Batch 28: the buy-to-let screen ──
+
+/**
+ * "Dry run" works out every listing's buy-to-let lens, what it would let in,
+ * bring back and retire, and the shortlist it would buy (never an address),
+ * spending nothing; "Run" does it, buying the shortlist inside the day's line.
+ */
+export async function runBtlScreenAction(formData: FormData): Promise<void> {
+  const user = await requireAdmin();
+  const dry = formData.get('mode') !== 'run';
+  const result = await runBtlScreen({ dry, triggeredBy: user.email ?? 'admin' });
+  const body = result.body as Record<string, unknown>;
+  const flat = Object.fromEntries(Object.entries(body).map(([k, v]) => [k, v && typeof v === 'object' && !Array.isArray(v) ? JSON.stringify(v) : v]));
+  const would = Array.isArray(body.wouldBuy) ? { wouldBuy: (body.wouldBuy as Record<string, unknown>[]).slice(0, 10).map((w) => `${String(w.outcode ?? '?')} ${String(w.bedrooms ?? '?')}-bed (${String(w.confidence ?? '')}, low end £${String(w.lowCashflow ?? '?')})`).join(' | ') } : {};
+  await finish(dry ? 'btl-screen-dry' : 'btl-screen', { ...flat, ...would });
 }
 
 // ── Batch 17: the Project checks ──

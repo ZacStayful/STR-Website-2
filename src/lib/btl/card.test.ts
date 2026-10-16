@@ -8,6 +8,7 @@ import { btlSuitability, shortLeaseFlag } from './listing.ts';
 import { epcLine, RULES_NOTE } from './nation.ts';
 import { DEFAULT_BTL_SETTINGS, parseBtlBands, parseBtlBenchmark, parseBtlSettings, parseBtlAllowance, parseBtlLaunchFrom, parseBtlRent } from './config.ts';
 import type { SourcedListing } from '../listing/sourcing.ts';
+import { btlOnlyBand, btlRowAction, pickShortlist, rentCompFrom, screenForBtl, valuationPropertyType, type BtlScreenContext, type ShortlistCandidate } from './screen.ts';
 
 function b44Card() {
   const rent = rentRangeFor({ bedrooms: 3, kind: 'house', postcodeArea: 'B', lat: 52.54, lng: -1.86, districtRentPcm: 1_155.64, districtYieldPct: 6.2 }, [])!;
@@ -136,4 +137,88 @@ test('the paid shortlist’s line in Batch 16’s deal_checks row, and the launc
   assert.equal(parseBtlLaunchFrom('null'), null);
   assert.equal(parseBtlLaunchFrom('"2026-10-20T08:00:00Z"'), '2026-10-20T08:00:00.000Z');
   assert.equal(parseBtlLaunchFrom('soon'), null);
+});
+
+// ─── The nightly screen (screen.ts) ────────────────────────────────────
+
+
+function ctxWith(over: Partial<BtlScreenContext> = {}): BtlScreenContext {
+  return {
+    settings: DEFAULT_BTL_SETTINGS,
+    buyingCosts: 2_500,
+    ratePct: 5.13,
+    rateDate: 'Sep 2026',
+    district: (oc) => (oc === 'ST1' ? { row: { outcode: 'ST1', avgPrice: 120_000, avgPricePsf: null, avgRentWeekly: 181.15, avgYieldPct: 7.2, growth1y: 8.7, growth3y: null, growth5y: 24.7, growth7y: null, salesPerMonth: null, turnoverPct: null }, region: 'west_midlands', asOf: '2026-09-27' } : null),
+    rentals: () => [],
+    epc: () => null,
+    valuation: () => null,
+    now: new Date('2026-10-16T04:50:00Z'),
+    ...over,
+  };
+}
+
+test('screening a listing: suitable, the rent from its district, every figure, and the hard rules', () => {
+  const r = screenForBtl(listing({ canonicalUrl: 'st1', postcode: 'ST1 2AB', lat: 53.02, lng: -2.18 }), ctxWith());
+  assert.equal(r.suitability, 'ok');
+  assert.ok(r.card);
+  assert.equal(r.card.rent.mid, 785);
+  assert.equal(r.card.taxName, 'SDLT');
+  assert.equal(r.card.band, '25k_50k');
+  assert.equal(r.pass, true);
+  assert.equal(r.benchmark?.band, '25k_50k');
+  // No district rent and no comparables: no figure at all.
+  assert.equal(screenForBtl(listing({ outcode: 'ZZ9' }), ctxWith()).card, null);
+  assert.equal(screenForBtl(listing({ features: ['Cash buyers only'] }), ctxWith()).suitability, 'cash_only');
+});
+
+test('the pool row: let in, bring back, retire only a buy-to-let-only row, never touch a short-let row', () => {
+  const live = { status: 'live' as const, band: 'qualified', project: false, retiredReason: null };
+  assert.equal(btlRowAction(null, true, false, false), 'insert');
+  assert.equal(btlRowAction(null, true, true, false), 'skip', 'a short-let qualifier is the short-let intake’s');
+  assert.equal(btlRowAction(null, true, false, true), 'skip', 'gone from the feed');
+  assert.equal(btlRowAction(null, false, false, false), 'skip');
+  assert.equal(btlRowAction(live, false, true, false), 'write', 'a short-let deal keeps its row');
+  assert.equal(btlRowAction({ ...live, band: 'unqualified' }, false, false, false), 'retire');
+  assert.equal(btlRowAction({ ...live, band: 'unqualified', project: true }, false, false, false), 'write', 'a BRRR deal keeps its row');
+  assert.equal(btlRowAction({ ...live, status: 'retired', retiredReason: 'unqualified' }, true, false, false), 'revive');
+  assert.equal(btlRowAction({ ...live, status: 'retired', retiredReason: 'sold' }, true, false, false), 'skip');
+  assert.equal(btlOnlyBand('qualified'), 'unqualified');
+  assert.equal(btlOnlyBand('medium'), 'medium');
+});
+
+test('the paid shortlist: deals a valuation could flip first, members’ areas first, full postcodes only', () => {
+  const base = b44Card();
+  const c = (url: string, area: string, low: number, mid: number, confidence: 'low' | 'high', over: Partial<ShortlistCandidate> = {}): ShortlistCandidate => ({
+    url, postcode: `${area}1 2AB`, postcodeArea: area, valued: false,
+    card: { ...base, rent: { ...base.rent, confidence }, cashflowMonthly: { low, mid, high: mid + 100 }, floorsOk: low >= 0 },
+    ...over,
+  });
+  const picks = pickShortlist([
+    c('rough-pass', 'B', 50, 200, 'low'),
+    c('border-far', 'L', -20, 100, 'high'),
+    c('border-wanted', 'B', -40, 100, 'high'),
+    c('solid', 'B', 300, 400, 'high'),
+    c('no-postcode', 'B', -10, 100, 'high', { postcode: 'B44' }),
+    c('already', 'B', -10, 100, 'high', { valued: true }),
+  ], new Set(['B']), 3);
+  assert.deepEqual(picks.map((p) => p.url), ['border-wanted', 'border-far', 'rough-pass']);
+  assert.equal(pickShortlist([c('x', 'B', -10, 100, 'high')], new Set(), 0).length, 0);
+});
+
+test('the valuation asks for the listing’s own property type', () => {
+  assert.equal(valuationPropertyType('Flat', 'flat'), 'flat');
+  assert.equal(valuationPropertyType('Semi-detached house', 'house'), 'semi-detached_house');
+  assert.equal(valuationPropertyType('End of terrace house', 'house'), 'terraced_house');
+  assert.equal(valuationPropertyType('Detached bungalow', 'house'), 'detached_house');
+  assert.equal(valuationPropertyType(null, 'unknown'), 'flat');
+});
+
+test('rentals: whole homes let by the month only', () => {
+  const row = { postcode_area: 'st', price: { amount: 775, period: 'pcm' }, bedrooms: 2, lat: 53, lng: -2.2, raw_type: 'Terraced house', title: '2 bedroom terraced house to rent' };
+  assert.deepEqual(rentCompFrom(row), { pcm: 775, bedrooms: 2, kind: 'house', postcodeArea: 'ST', lat: 53, lng: -2.2 });
+  assert.equal(rentCompFrom({ ...row, raw_type: 'House share' }), null);
+  assert.equal(rentCompFrom({ ...row, title: 'Double room to rent in a shared house' }), null);
+  assert.equal(rentCompFrom({ ...row, price: { amount: 180, period: 'pw' } }), null);
+  assert.equal(rentCompFrom({ ...row, bedrooms: null }), null);
+  assert.equal(rentCompFrom({ ...row, raw_type: 'Flat', title: '1 bedroom flat to rent' })?.kind, 'flat');
 });

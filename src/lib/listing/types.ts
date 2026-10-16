@@ -89,6 +89,9 @@ export interface ListingSnapshot {
   agentHash?: string | null;
   /** Years left on the lease, when the portal states it. Under ~80 is unmortgageable. */
   yearsRemainingOnLease?: number;
+  /** Batch 28: a flat's service charge and ground rent, £ a year, when the page states them. */
+  serviceChargeAnnual?: number;
+  groundRentAnnual?: number;
   /**
    * Batch 17: renovation wording in the page's own text (the description is
    * read and dropped): our phrase keys, never the listing's words. Sales only;

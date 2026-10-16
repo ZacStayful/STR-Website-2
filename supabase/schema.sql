@@ -5971,7 +5971,7 @@ alter table public.resume_intents enable row level security;  -- no policies: se
 revoke all on public.resume_intents from anon, authenticated;
 
 -- ── analysis_purchases: the offer a purchase was priced at ──
---   offer       welcome | welcome_deep | first_deep | first_pmi (null: list price)
+--   offer       welcome | welcome_deep | first_deep | first_pmi | welcome_btl (Batch 28) (null: list price)
 --   first_deep  this purchase is the account's first deep report
 alter table public.analysis_purchases add column if not exists offer text;
 alter table public.analysis_purchases add column if not exists first_deep boolean not null default false;
@@ -5981,7 +5981,7 @@ do $$
 begin
   alter table public.analysis_purchases drop constraint if exists analysis_purchases_offer_check;
   alter table public.analysis_purchases add constraint analysis_purchases_offer_check
-    check (offer is null or offer in ('welcome', 'welcome_deep', 'first_deep', 'first_pmi'));
+    check (offer is null or offer in ('welcome', 'welcome_deep', 'first_deep', 'first_pmi', 'welcome_btl'));
 end $$;
 -- One welcome-priced analysis per member and deal; one first deep report per
 -- paying account. A failed purchase frees its claim.
@@ -7809,7 +7809,7 @@ revoke all on public.si_instructions from anon, authenticated;
 -- ── si_action_steps: one row per thing the eye did (or was asked to and didn't) ──
 --   id                 also the step's idempotency key: a step is claimed (queued → running) once, so a retry never runs it twice
 --   seq                its place in the instruction (the order charged steps run and are capped in)
---   action             keep | pass | stage_move | full_analysis | deep_report | deep_search | check_link | change_criteria
+--   action             keep | pass | stage_move | full_analysis | deep_report | deep_search | check_link | change_criteria | btl_report (Batch 28)
 --   deal_id            the marketplace deal (never another member's: only deals the member's own look-ups returned)
 --   target_label       how the eye names it: area and type, never an address
 --   params             the stage, the profile question and value, or the link (its canonical URL)
@@ -7850,7 +7850,7 @@ create table if not exists public.si_action_steps (
 );
 do $$ begin
   alter table public.si_action_steps drop constraint if exists si_action_steps_action_check;
-  alter table public.si_action_steps add constraint si_action_steps_action_check check (action in ('keep', 'pass', 'stage_move', 'full_analysis', 'deep_report', 'deep_search', 'check_link', 'change_criteria'));
+  alter table public.si_action_steps add constraint si_action_steps_action_check check (action in ('keep', 'pass', 'stage_move', 'full_analysis', 'deep_report', 'deep_search', 'check_link', 'change_criteria', 'btl_report'));
   alter table public.si_action_steps drop constraint if exists si_action_steps_status_check;
   alter table public.si_action_steps add constraint si_action_steps_status_check check (status in ('queued', 'deferred', 'running', 'handed_out', 'done', 'failed', 'dropped', 'stopped', 'declined', 'skipped'));
   alter table public.si_action_steps drop constraint if exists si_action_steps_part_check;
@@ -7884,5 +7884,158 @@ insert into public.billing_settings (key, value) values
   ('si_action_max_targets', '50'::jsonb),
   ('si_action_confirm_minutes', '10'::jsonb)
 on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 28: buy-to-let
+-- =========================
+-- A standard long let to tenants, judged on rent: a sale listing bought with
+-- a 75% interest-only mortgage at the live 2–3-year fixed rate (src/lib/btl).
+-- A deal's buy-to-let lens lives on its marketplace_deals row beside the
+-- short-let one, so it keeps one id, one open, one Keep / Pass and one share.
+-- band = 'qualified' still means a short-let deal; btl_pass means a
+-- buy-to-let deal; a row can be both. The nightly btl-screen job writes the
+-- lens, lets in sales that pass only as buy-to-let, and stores the
+-- benchmarks. Additive; nothing is added to ACCESS_COLUMNS, and nothing in
+-- DEAL_COLUMNS / CARD_COLUMNS reads these columns (they are read tolerantly,
+-- so the site keeps working before this section is run).
+
+-- ── marketplace_deals: the buy-to-let lens ──
+--   btl              the stored lens (src/lib/btl/card.ts BtlCard): rent range and confidence, every
+--                    figure as a range, the lender test, growth, flags. Never an address, link or coordinates.
+--   btl_pass         the hard rules pass: the lender rent test on the middle rent, and low-end cashflow ≥ £0,
+--                    on a whole home a lender would lend on. Only a passing row is ever a buy-to-let deal.
+--   btl_screened_at  when the lens was last worked out
+alter table public.marketplace_deals add column if not exists btl jsonb;
+alter table public.marketplace_deals add column if not exists btl_pass boolean not null default false;
+alter table public.marketplace_deals add column if not exists btl_screened_at timestamptz;
+create index if not exists marketplace_deals_live_btl_idx on public.marketplace_deals (postcode_area) where status = 'live' and btl_pass;
+
+-- ── btl_apply_screen: the nightly job's writes, in one statement ──
+--   rows  [{canonical_url, btl, pass}]  -> the number of rows written
+create or replace function public.btl_apply_screen(p_rows jsonb)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  n integer;
+begin
+  update public.marketplace_deals d
+     set btl = x.btl,
+         btl_pass = coalesce(x.pass, false),
+         btl_screened_at = now()
+    from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as x(canonical_url text, btl jsonb, pass boolean)
+   where d.canonical_url = x.canonical_url;
+  get diagnostics n = row_count;
+  return n;
+end;
+$$;
+revoke all on function public.btl_apply_screen(jsonb) from public, anon, authenticated;
+grant execute on function public.btl_apply_screen(jsonb) to service_role;
+
+-- ── btl_benchmarks: "the typical deal in their budget", per area and cash band ──
+--   area_code      a postcode area (the member's chosen area); the search widens out from its centre
+--   band           under_25k | 25k_50k | 50k_100k | 100k_plus
+--   step           10mi | 25mi | 50mi | region | national: the step that held enough deals
+--   deal_count     deals in the band at that step; thin: under the minimum even nationally;
+--   no_compare     under the floor: nothing to compare with (the hard rules alone decide)
+--   steps          every step tried, with its count
+--   *_median / *_p40  ROI and annual growth, % (growth null when no deal has a figure)
+-- Rebuilt by every btl-screen run; read by Today, the deal page and the standout calls, never per page view.
+create table if not exists public.btl_benchmarks (
+  area_code text not null,
+  band text not null,
+  step text not null,
+  radius_miles numeric,
+  deal_count integer not null default 0,
+  roi_median numeric,
+  roi_p40 numeric,
+  growth_median numeric,
+  growth_p40 numeric,
+  thin boolean not null default false,
+  no_compare boolean not null default false,
+  steps jsonb not null default '[]'::jsonb,
+  computed_at timestamptz not null default now(),
+  primary key (area_code, band)
+);
+do $$ begin
+  alter table public.btl_benchmarks drop constraint if exists btl_benchmarks_band_check;
+  alter table public.btl_benchmarks add constraint btl_benchmarks_band_check check (band in ('under_25k', '25k_50k', '50k_100k', '100k_plus'));
+end $$;
+alter table public.btl_benchmarks enable row level security;  -- no policies: service role only
+revoke all on public.btl_benchmarks from anon, authenticated;
+
+-- ── btl_reports: the £2 BTL report (Part G) ──
+--   purchase_id  the analysis_purchases row (kind btl_report) it was charged under; charged once, never on failure
+--   deal_id      the marketplace deal, when it was run on one; canonical_url the listing either way
+--   result       src/lib/btl/report.ts BtlReport
+create table if not exists public.btl_reports (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  purchase_id uuid unique references public.analysis_purchases(id) on delete set null,
+  deal_id uuid,
+  canonical_url text,
+  result jsonb not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists btl_reports_user_idx on public.btl_reports (user_id, created_at desc);
+alter table public.btl_reports enable row level security;  -- no policies: service role only
+revoke all on public.btl_reports from anon, authenticated;
+-- One welcome-priced BTL report per member (Q17); a failed purchase frees it.
+create unique index if not exists analysis_purchases_welcome_btl_uidx on public.analysis_purchases (buyer_id)
+  where offer = 'welcome_btl' and status <> 'failed';
+create unique index if not exists analysis_purchases_btl_running_uidx on public.analysis_purchases (user_id, canonical_url)
+  where kind = 'btl_report' and status = 'pending';
+
+-- ── The launch (Part I): the one line in the next daily email, sent once ──
+alter table public.profiles add column if not exists btl_launch_line_at timestamptz;
+
+-- The ledger label for the report (its price comes from btl_report_pence).
+insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values
+  ('marketplace', 'btl_report', 'BTL report (£2, priced by billing_settings.btl_report_pence)', 0, 5, 'labels the ledger only; the base pence come from btl_report_pence')
+on conflict (provider, unit) do nothing;
+
+-- ── Settings (defaults and bounds in src/lib/btl/config.ts; a missing or bad row takes the default) ──
+--   btl_report_pence  the £2 BTL report
+--   btl_finance       75% LTV; the lender test: 125% cover at the higher of the live rate + 2% or 5.5%; the rate used when none is cached
+--   btl_costs         letting agent 12% incl. VAT and repairs 8% of the rent collected, one empty month, insurance £25 a month, safety certificates £300 a year
+--   btl_rent          the rent range: the district rent read as a 2-bed; comparables in the same area, size and type within 5 km (5+ to count, 8+ for high confidence), seen in 45 days; widths 10–25%, 20% when rough
+--   btl_flats         a flat's service charge (£1,500 a year, London £2,500) and ground rent (£150) when the listing does not say, ±40%
+--   btl_epc           the upgrade allowance on the high end of cash in: D £5,000, E–G £10,000, not checked £5,000
+--   btl_bands         "How much cash can you put in?": the band tops (under £25k, £25–50k, £50–100k, £100k+)
+--   btl_benchmark     10, 25, 50 miles, the region, the country, until 30 deals; under 10 nationally compares with nothing; "a bit of both" at the 40th percentile
+--   btl_standout      the low end beats 125% of the median; an income standout also needs 6% at the low end
+--   btl_listing       a lease under 70 years is refused, under 85 flagged
+--   btl_launch_from   when the launch email line starts (null: not yet)
+-- The paid shortlist's line (rent valuations and EPCs) sits in Batch 16's deal_checks row as
+-- btlValuations (20 a day) and btlCapPence (100p a day), beside its cap on /admin/deals.
+insert into public.billing_settings (key, value) values
+  ('btl_report_pence', '200'::jsonb),
+  ('btl_finance', '{"ltvPct":75,"icrPct":125,"stressAddPct":2,"stressFloorPct":5.5,"fallbackRatePct":5.5}'::jsonb),
+  ('btl_costs', '{"agentPct":12,"repairsPct":8,"emptyMonths":1,"insurancePcm":25,"safetyPerYear":300}'::jsonb),
+  ('btl_rent', '{"ladderBaseBedrooms":2,"compsMin":5,"compsHigh":8,"compsRadiusKm":5,"compsMaxAgeDays":45,"minWidthPct":10,"maxWidthPct":25,"lowWidthPct":20,"agreeHighPct":15,"disagreePct":25,"valuationMinWidthPct":10}'::jsonb),
+  ('btl_flats', '{"serviceChargeYear":1500,"serviceChargeLondonYear":2500,"groundRentYear":150,"spreadPct":40}'::jsonb),
+  ('btl_epc', '{"allowanceD":5000,"allowanceEtoG":10000,"unknownAllowance":5000}'::jsonb),
+  ('btl_bands', '[25000,50000,100000]'::jsonb),
+  ('btl_benchmark', '{"stepsMiles":[10,25,50],"region":true,"national":true,"minDeals":30,"floorDeals":10,"balancedPercentile":40}'::jsonb),
+  ('btl_standout', '{"lowOverMedianPct":125,"minLowRoiPct":6}'::jsonb),
+  ('btl_listing', '{"minLeaseYears":70,"shortLeaseYears":85}'::jsonb),
+  ('btl_launch_from', 'null'::jsonb)
+on conflict (key) do nothing;
+
+-- Today's mix with four types (Part E, decided: 2 short-let, 1 buy-to-let, 1 BRRR,
+-- 1 rent-to-rent). The three-type mix a profile chose "All of them" on before
+-- buy-to-let existed is kept as `three`, so their day does not change until they
+-- tap. Once only: a row that already names btl is never touched again, so an
+-- admin's edit survives every re-run.
+update public.billing_settings
+   set value = jsonb_set(jsonb_set(value, '{three}', coalesce(value->'three', value->'all')), '{all}', '{"buy_str":2,"btl":1,"brrr":1,"r2r":1}'::jsonb),
+       updated_at = now()
+ where key = 'today_mix'
+   and jsonb_typeof(value->'all') = 'object'
+   and not (value->'all' ? 'btl');
 
 notify pgrst, 'reload schema';

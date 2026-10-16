@@ -18,7 +18,7 @@ interface RmPropertyData {
   location?: { latitude?: unknown; longitude?: unknown; pinType?: unknown };
   prices?: { primaryPrice?: unknown; secondaryPrice?: unknown; displayPriceQualifier?: unknown };
   tenure?: { tenureType?: unknown; yearsRemainingOnLease?: unknown };
-  livingCosts?: { councilTaxBand?: unknown };
+  livingCosts?: { councilTaxBand?: unknown; annualServiceCharge?: unknown; annualGroundRent?: unknown };
   keyFeatures?: unknown;
   images?: unknown;
   status?: { published?: unknown; archived?: unknown };
@@ -136,6 +136,11 @@ export function parseRightmove(html: string, ctx: ParseContext): ListingSnapshot
   }
   snap.agentHash = agentHash(toStr(p?.customer?.branchDisplayName) ?? toStr(p?.customer?.displayName) ?? toStr(p?.customer?.companyName));
   snap.councilTaxBand = toStr(p?.livingCosts?.councilTaxBand) ?? undefined;
+  // Batch 28: a flat's charges. 0 is Rightmove's "not stated", as it is for the lease.
+  const serviceCharge = toNum(p?.livingCosts?.annualServiceCharge);
+  if (serviceCharge !== null && serviceCharge > 0) snap.serviceChargeAnnual = Math.round(serviceCharge);
+  const groundRent = toNum(p?.livingCosts?.annualGroundRent);
+  if (groundRent !== null && groundRent > 0) snap.groundRentAnnual = Math.round(groundRent);
   snap.features = strArray(p?.keyFeatures);
   if (p?.lettings) {
     const furnish = toStr(p.lettings.furnishType);

@@ -11,7 +11,7 @@ import { describeBand, formatOpenPrice, ladderBandIndex } from "@/lib/marketplac
 import { sweepEnabled } from "@/lib/marketplace/sweep-run";
 import { recheckEnabled } from "@/lib/marketplace/recheck-run";
 import { SOURCE_HOURLY_CAPS } from "@/lib/marketplace/cadence";
-import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, runProjectBackfillAction, updateProjectChecksAction, runRestreamAction, runCheapRescreenAction } from "./actions";
+import { dryRunSweepAction, runSweepPassAction, dryRunRecheckAction, runRecheckPassAction, retireDealAction, restoreDealAction, updateLadderAction, updateR2rBarAction, dryRunLowEntryAction, runLowEntryPassAction, updateLowEntryAction, runDealChecksAction, runDealRecheckAction, retireUncheckedAction, updateDealChecksAction, runMortgageBackfillAction, runProjectChecksAction, runProjectBackfillAction, updateProjectChecksAction, runRestreamAction, runCheapRescreenAction, runBtlScreenAction } from "./actions";
 import { R2R_MEDIUM_PROFIT, R2R_QUALIFIED_PROFIT } from "@/lib/listing/screen";
 import { latestLowEntryRuns, lowEntrySearchEnabled } from "@/lib/deal-quality/low-entry-run";
 import { weekSpentPence } from "@/lib/deal-quality/low-entry-plan";
@@ -23,6 +23,9 @@ import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
 import { readProjectSettings } from "@/lib/project/settings-server";
 import { projectChecksView } from "@/lib/project/check-run";
 import type { CheckResult } from "@/lib/deal-quality/checks";
+import { ukDayStart } from "@/lib/deal-quality/checks";
+import { readBtlSettings, btlScreenEnabled } from "@/lib/btl/settings-server";
+import { BTL_SCREEN_KIND } from "@/lib/btl/screen-server";
 
 const RUN_COOKIE = "sf_deals_run";
 
@@ -57,7 +60,7 @@ const MESSAGES: Record<string, string> = {
   low_entry_saved: "Low-entry settings saved. New records and the next search pass use them within a minute.",
   bad_low_entry: "Those settings did not parse: whole numbers, cheap price and search cap £10,000–£2,000,000, lender note £0–£2,000,000, cash in £0–£1,000,000, weekly cap 0–100,000p, bedrooms 0–6, areas a pass 1–30.",
   deal_checks_saved: "Deal-check settings saved. The next pass and the next re-screen use them within a minute.",
-  bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days (low entry 1–60), re-check ceiling 0–100,000p, Project photo checks 0–100 a day, Project spend 0–100,000p a day.",
+  bad_deal_checks: "Those settings did not parse: whole numbers, checks a day 0–500, daily cap 0–100,000p, each stream's slots 0–500, calls a check 1–10, a check good for 1–730 days, shortlist 1–60 days (low entry 1–60), re-check ceiling 0–100,000p, Project photo checks 0–100 a day, Project spend 0–100,000p a day, buy-to-let valuations 0–500 a day, buy-to-let spend 0–100,000p a day.",
   project_checks_saved: "Project-check settings saved. The next pass uses them within a minute.",
   bad_project_checks: "Those settings did not parse: whole numbers, sold-price lookups 0–200 a day, give up after 1–30 days, 1–20 photos, reuse 0–365 days, effort low, medium or high.",
   bad_url: "That is not a listing URL.",
@@ -175,6 +178,14 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
   // Batch 17: the Project photo checks' own line (the same row, read with its defaults), and the Project job.
   const projectSettings = await readProjectSettings(admin);
   const projectAllowance = projectSettings.allowance;
+  // Batch 28: the buy-to-let shortlist's line in the same cap, and today's screens.
+  const btlAllowance = (await readBtlSettings(admin)).settings.allowance;
+  const { data: btlRunData } = await admin.from("marketplace_runs").select("id, kind, dry, started_at, finished_at, summary").eq("kind", BTL_SCREEN_KIND).eq("dry", false).gte("started_at", sinceIso(7)).order("started_at", { ascending: false }).limit(14);
+  const btlRuns = (btlRunData ?? []) as RunRow[];
+  const btlDayStart = ukDayStart(new Date()).getTime();
+  const btlToday = btlRuns.filter((r) => new Date(r.started_at).getTime() >= btlDayStart);
+  const btlSpentToday = btlToday.reduce((sum, r) => sum + n(r.summary.rawCostPence), 0);
+  const btlValuedToday = btlToday.reduce((sum, r) => sum + n(r.summary.valuations), 0);
   const project = await projectChecksView(admin, projectSettings);
   const lastCheckResults = ((checks?.runs.find((r) => Array.isArray(r.summary.results))?.summary.results as CheckResult[] | undefined) ?? []).slice(0, 40);
   const lowEntryWeekSpent = weekSpentPence(lowEntryRuns.map((r) => ({ startedAt: r.started_at, rawCostPence: r.summary.rawCostPence })), new Date());
@@ -359,10 +370,31 @@ export default async function DealsAdminPage({ searchParams }: { searchParams: P
           <label className="text-sm">Slots: Project candidates<input name="splitProject" type="text" inputMode="numeric" defaultValue={checkSettings.split.project} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Project photo checks a day<input name="projectPhotoChecks" type="text" inputMode="numeric" defaultValue={projectAllowance.photoChecks} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Project spend a day, pence<input name="projectCapPence" type="text" inputMode="numeric" defaultValue={projectAllowance.capPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Buy-to-let rent valuations a day<input name="btlValuations" type="text" inputMode="numeric" defaultValue={btlAllowance.valuations} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+          <label className="text-sm">Buy-to-let spend a day, pence<input name="btlCapPence" type="text" inputMode="numeric" defaultValue={btlAllowance.capPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Shortlist waits, days<input name="shortlistExpiryDays" type="text" inputMode="numeric" defaultValue={checkSettings.shortlistExpiryDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Low entry waits, days<input name="lowEntryShortlistExpiryDays" type="text" inputMode="numeric" defaultValue={checkSettings.lowEntryShortlistExpiryDays} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <label className="text-sm">Re-check ceiling, pence<input name="recheckCeilingPence" type="text" inputMode="numeric" defaultValue={checkSettings.recheckCeilingPence} className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1" /></label>
           <div className="flex items-end sm:col-span-3"><button type="submit" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Save deal-check settings</button></div>
+        </form>
+      </section>
+
+      {/* Batch 28: the buy-to-let screen and its line in the cap. */}
+      <section className="mt-8 rounded-xl border border-border bg-card p-5">
+        <h2 className="text-base font-semibold text-foreground">Buy-to-let screen</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {btlScreenEnabled() ? "ON" : "OFF (BTL_SCREEN_ENABLED is not 'true'; the buttons work either way)"} · 04:50 and 06:57 UTC. Every sale seen this week is screened for buy-to-let from data already held (key stats, live rentals, the cached rate, cached EPCs); a short shortlist gets a PropertyData rent valuation and an EPC. House spend, its own line: {btlAllowance.valuations} valuations and {gbp(btlAllowance.capPence)} a UK day, whichever binds first. Set valuations to 0 to buy nothing.
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Stat label="Spent today" value={`${gbp(btlSpentToday)} of ${gbp(btlAllowance.capPence)}`} sub={`${btlToday.length} run${btlToday.length === 1 ? "" : "s"} today`} />
+          <Stat label="Valuations today" value={`${btlValuedToday} of ${btlAllowance.valuations}`} />
+          <Stat label="Passing (last run)" value={n(btlRuns[0]?.summary.passing)} sub={btlRuns[0] ? `of ${n(btlRuns[0].summary.screened)} screened` : "No run yet"} />
+          <Stat label="Let in / retired (last run)" value={`${n(btlRuns[0]?.summary.inserted)} / ${n(btlRuns[0]?.summary.retired)}`} sub={btlRuns[0] ? `${n(btlRuns[0].summary.revived)} brought back` : undefined} />
+        </div>
+        <form action={runBtlScreenAction} className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="submit" name="mode" value="dry" className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted">Dry-run the screen</button>
+          <button type="submit" name="mode" value="run" className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90">Run the screen</button>
+          <span className="text-xs text-muted-foreground">Dry run spends nothing and writes nothing. <Link href="/admin/deals/btl" className="underline">Buy-to-let figures</Link></span>
         </form>
       </section>
 
