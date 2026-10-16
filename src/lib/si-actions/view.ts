@@ -243,8 +243,11 @@ export function cardView(i: InstructionLike, steps: readonly StepLike[], o: { no
   const laterLeft = steps.some((s) => s.status === 'deferred');
 
   let confirm: ConfirmView | null = null;
-  if (i.status === 'awaiting_confirm' && i.confirm_kind) {
-    const rest = i.confirm_kind === 'over_cap' && laterLeft;
+  // The cap's question is only about steps still waiting for a yes: once a yes has queued them, it is answered, even
+  // if this view was read in the moment before the instruction itself moved on (preview test, 16 Oct: a refresh landing
+  // then showed the low-credit question instead).
+  if (i.status === 'awaiting_confirm' && (i.confirm_kind === 'low_balance' || (i.confirm_kind === 'over_cap' && laterLeft))) {
+    const rest = i.confirm_kind === 'over_cap';
     const totalPence = rest ? i.later_face_pence : i.quoted_face_pence;
     const after = i.balance_before_pence === null ? null : i.balance_before_pence - totalPence;
     confirm = {

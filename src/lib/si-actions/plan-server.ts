@@ -276,7 +276,8 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
           : null,
     not_enough_credit: decision.kind === 'insufficient' ? `It needs ${formatPence(decision.requiredFacePence)} and they don't have enough credit, so nothing that costs anything will run. A top-up offer shows under your answer.` : null,
     stop: decision.kind === 'run' ? `It starts after a ${config.stopGraceSeconds}-second countdown; they can tap Stop until then.` : null,
-    dropped: droppedNotes.filter((d) => d.why),
-    how_to_answer: 'In one or two short sentences, say what you are doing (quote the spend line\'s price exactly when there is one) and anything that was dropped and why. Don\'t list buttons: the card under your answer shows the countdown, Stop, the progress and Undo.',
+    // Only when something was: an empty list had the eye telling the member "Nothing was dropped" (preview test, 16 Oct).
+    ...(droppedNotes.some((d) => d.why) ? { dropped: droppedNotes.filter((d) => d.why) } : {}),
+    how_to_answer: 'In one or two short sentences, say what you are doing (quote the spend line\'s price exactly when there is one) and, only if the dropped list is here, what was left out and why (never say that nothing was dropped). Don\'t list buttons: the card under your answer shows the countdown, Stop, the progress and Undo.',
   };
 }

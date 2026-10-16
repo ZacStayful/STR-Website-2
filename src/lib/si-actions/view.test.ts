@@ -97,6 +97,14 @@ test('the rest past the cap asks for the other ones', () => {
   assert.equal(v.confirm?.text, 'Run the other 2 for £8?');
 });
 
+test('once a yes has queued the rest, the cap question is answered, even read before the instruction moves on', () => {
+  // Preview test (16 Oct): a refresh landing between the yes queuing the steps and the instruction leaving
+  // awaiting_confirm showed the low-credit question ("That would leave …") for a moment.
+  const steps = [step({ id: 'a', action: 'full_analysis', status: 'done', quote_face_pence: 400 }), step({ id: 'b', action: 'full_analysis', status: 'queued', quote_face_pence: 400 })];
+  const v = cardView(instruction({ status: 'awaiting_confirm', confirm_kind: 'over_cap', confirm_answer: 'yes', later_face_pence: 400, quoted_face_pence: 400, balance_before_pence: 4600 }), steps, { now, undoHours: 24 });
+  assert.equal(v.confirm, null);
+});
+
 test('Undo shows inside the window for undoable steps, never for a charge', () => {
   assert.ok(cardView(instruction({}), [step({ action: 'pass' })], { now, undoHours: 24 }).undo);
   assert.equal(cardView(instruction({}), [step({ action: 'pass', finished_at: at(30) })], { now, undoHours: 24 }).undo, null);
