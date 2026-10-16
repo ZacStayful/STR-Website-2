@@ -178,7 +178,7 @@ export function notDoneLines(steps: readonly StepLike[]): string[] {
   return out;
 }
 
-const CHARGED: ReadonlySet<StepKind> = new Set<StepKind>(['full_analysis', 'deep_report', 'deep_search', 'check_link']);
+const CHARGED: ReadonlySet<StepKind> = new Set<StepKind>(['full_analysis', 'deep_report', 'deep_search', 'check_link', 'btl_report']);
 
 function progressState(s: StepLike): ProgressState {
   switch (s.status) {
@@ -202,12 +202,14 @@ function progressState(s: StepLike): ProgressState {
   }
 }
 
-const KIND_LABEL: Record<string, string> = { full_analysis: 'Full analysis', deep_report: 'Deep report', deep_search: 'Deep search', check_link: 'Listing check' };
+const KIND_LABEL: Record<string, string> = { full_analysis: 'Full analysis', deep_report: 'Deep report', deep_search: 'Deep search', check_link: 'Listing check', btl_report: 'Buy-to-let report' };
 
 function hrefFor(s: StepLike): string | null {
   if (s.status !== 'done') return null;
   const report = typeof s.after?.reportId === 'string' ? s.after.reportId : null;
   if (report) return `/reports/${report}`;
+  // Batch 28: a buy-to-let report has its own page.
+  if (typeof s.after?.btlReportId === 'string') return `/btl-report/${s.after.btlReportId}`;
   if (s.action === 'deep_search') return '/today';
   if ((s.action === 'full_analysis' || s.action === 'deep_report') && s.deal_id) return `/deals/${s.deal_id}`;
   return null;

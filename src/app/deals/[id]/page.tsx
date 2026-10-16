@@ -30,6 +30,8 @@ import { readBtlBenchmark } from "@/lib/btl/settings-server";
 import { regionForArea } from "@/lib/market/regions";
 import { dealTypeFor, dealTypeOf } from "@/lib/profile/deal-types";
 import { BuyToLetSection } from "../_components/BuyToLetSection";
+import { BtlReportButton } from "@/components/report/BtlReportButton";
+import { latestBtlReportId, quoteBtlReport } from "@/lib/btl/report-server";
 import { kindWordFor, projectNumbersFor, projectSummary } from "@/lib/project/display";
 import { ProjectSection } from "../_components/ProjectSection";
 import { ProjectWorking } from "../_components/ProjectWorking";
@@ -61,6 +63,7 @@ import { myDealsFocusPath } from "@/lib/listing/return-path";
 import { KEPT_STATUS } from "@/lib/listing/pipeline";
 import { readableReportFor } from "@/lib/analysis/deal-analysis";
 import { offerPricingFor } from "@/lib/analysis/offers-server";
+import { offerLabel } from "@/lib/analysis/offers";
 import { analysisQuote } from "@/lib/analysis/deal-analysis-rules";
 import { dealAnalysisInput, dealListingPrice } from "@/lib/analysis/deal-input";
 import { enhancedEnabled } from "@/lib/analysis/run";
@@ -272,6 +275,8 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   // Batch 28: once opened, the whole buy-to-let working, against the benchmark for where they search and their band.
   const btlBand = btlLooker.cashBand ?? btlCard?.band ?? null;
   const btlBench = btlCard && priv && btlLooker.centre && btlBand ? await readBtlBenchmark(createAdminClient(), btlLooker.centre, btlBand) : null;
+  // Part G: the £2 buy-to-let report, at this member's own price (the welcome price on a revealed deal), or the one they have.
+  const [btlQuote, btlReportId] = btlCard ? await Promise.all([quoteBtlReport(user.id, adminUser, { dealId: deal.id }), latestBtlReportId(user.id, { dealId: deal.id })]) : [null, null];
   const btlSheetData = btlCard && priv ? btlSheet(btlCard, { priority: btlLooker.priority ?? DEFAULT_BTL_PRIORITY, benchmark: btlBench, regionName: btlLooker.centre ? regionPhrase(regionForArea(btlLooker.centre).name) : null }) : null;
   // Part E: what holds them back leads the sheet. "Knowing the numbers": the
   // Full analysis first. "Landlord or agent consent": Batch 7's first message
@@ -487,7 +492,15 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             )}
 
             {/* Batch 28: the buy-to-let lens: first for a member who sees it as Buy to let, the other lens for one who sees it as a short-let. */}
-            {btlView && <BuyToLetSection numbers={btlView.numbers} flags={btlView.flags} sheet={btlSheetData} pending={btlView.pending} />}
+            {btlView && (
+              <BuyToLetSection
+                numbers={btlView.numbers}
+                flags={btlView.flags}
+                sheet={btlSheetData}
+                pending={btlView.pending}
+                report={btlQuote && (btlReportId || deal.status === "live") ? <BtlReportButton dealId={deal.id} label={quoter.label(btlQuote.basePence)} note={offerLabel(btlQuote.offer)} reportId={btlReportId} /> : null}
+              />
+            )}
 
             {pn && projectCard && (
               <ProjectSection

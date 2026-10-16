@@ -18,6 +18,7 @@ import 'server-only';
  * Each price is quoted the way its own code will check it, so a step never
  * fails on "the price changed" because the eye priced it differently.
  */
+import { runBtlReport } from '../btl/report-server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { after } from 'next/server';
 import { createAdminClient } from '../supabase/admin';
@@ -296,6 +297,17 @@ export async function startAnalysis(m: ActingMember, supabase: SupabaseClient, s
   if (r.ok) return { ok: true, handOut: { kind: 'analysis', stepId, dealId: s.dealId, purchaseId: r.purchaseId }, ledgerRef: r.purchaseId, after: null, done: false };
   if (r.code === 'already_done') return { ok: true, handOut: null, ledgerRef: null, after: r.reportId ? { reportId: r.reportId } : null, done: true };
   return { ok: false, code: r.code, requiredPence: (r as { requiredPence?: number }).requiredPence, availablePence: (r as { availablePence?: number }).availablePence };
+}
+
+/**
+ * Batch 28: the £2 buy-to-let report, run here and now by its own path
+ * (btl/report-server.ts: it checks the price, and charges only once the
+ * report is written; never on a failure).
+ */
+export async function startBtlReport(m: ActingMember, s: { dealId: string; quotedBasePence: number }): Promise<ChargedStart> {
+  const r = await runBtlReport({ userId: m.userId, adminUser: m.admin, target: { dealId: s.dealId }, quotedBasePence: s.quotedBasePence });
+  if (r.ok) return { ok: true, handOut: null, ledgerRef: r.purchaseId, after: { btlReportId: r.reportId }, done: true };
+  return { ok: false, code: r.code, requiredPence: r.requiredPence, availablePence: r.availablePence };
 }
 
 /** The PMI add-on to a finished report: the button's own route runs it (it checks the price, charges and writes). */

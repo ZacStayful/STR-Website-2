@@ -52,6 +52,8 @@ export function categorise(line: LedgerLine, oneTap: ReadonlySet<string>): Usage
     case 'cron:sourcing':
       return 'daily';
     case 'full_analysis':
+    // Batch 28: a buy-to-let report is research on a deal, as the Full analysis is.
+    case 'btl_report':
       return 'full';
     case 'pmi_addon':
       return 'pmi';

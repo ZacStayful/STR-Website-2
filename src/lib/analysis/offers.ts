@@ -21,7 +21,7 @@
  * Pure: no network, no database, no server-only.
  */
 
-export type OfferKind = 'welcome' | 'welcome_deep' | 'first_deep' | 'first_pmi';
+export type OfferKind = 'welcome' | 'welcome_deep' | 'first_deep' | 'first_pmi' | 'welcome_btl';
 
 export interface OfferSettings {
   revealAnalysisDiscountPct: number;
@@ -125,9 +125,23 @@ export function pmiAddonOffer(input: { listPmiPence: number; hadDeepReport: bool
   return { pmiPence: price, offer: 'first_pmi', firstDeep: true };
 }
 
+/**
+ * Batch 28 (Q17): the £2 buy-to-let report on a deal the member's reveal
+ * showed, within the same window, at the same discount, once per member
+ * (analysis_purchases_welcome_btl_uidx), floored at its worst-case raw cost.
+ */
+export function btlReportOffer(input: { dealId: string | null; listPence: number; member: OfferMember | null; usedWelcomeBtl: boolean; settings: OfferSettings; floorPence: number; now: Date }): { pence: number; offer: 'welcome_btl' | null; listPence: number } {
+  const none = { pence: input.listPence, offer: null, listPence: input.listPence };
+  const m = input.member;
+  if (!m || !input.dealId || input.usedWelcomeBtl || !m.paysForSelf || !m.offerDealIds.includes(input.dealId)) return none;
+  if (pct(input.settings.revealAnalysisDiscountPct) <= 0 || !withinWindow(m.revealViewedAt, input.settings.revealWelcomeDays, input.now)) return none;
+  const pence = Math.max(round2(input.listPence * (1 - pct(input.settings.revealAnalysisDiscountPct) / 100)), floorTo(input.floorPence));
+  return pence < input.listPence ? { pence, offer: 'welcome_btl', listPence: input.listPence } : none;
+}
+
 /** The ledger line's suffix for an offer. */
 export function offerLabel(offer: OfferKind | null | undefined): string | null {
-  if (offer === 'welcome' || offer === 'welcome_deep') return 'welcome price';
+  if (offer === 'welcome' || offer === 'welcome_deep' || offer === 'welcome_btl') return 'welcome price';
   if (offer === 'first_deep' || offer === 'first_pmi') return 'first-time price';
   return null;
 }

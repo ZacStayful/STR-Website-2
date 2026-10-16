@@ -16,6 +16,7 @@ import 'server-only';
  * Every figure is formatted here, the way the app writes it, so the answer
  * can quote it exactly (the figure guard checks it did).
  */
+import { readBtlSettingsCached } from '../btl/settings-server';
 import { btlLookerFor } from '../btl/view';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '../supabase/admin';
@@ -289,6 +290,8 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
         auto_top_up: member.teamMember ? 'set by the team owner' : c?.autoTopup?.amountPence ? `on: ${balanceLabel(c.autoTopup.amountPence)} when below ${balanceLabel(c.autoTopup.thresholdPence)}` : 'off',
         prices: {
           full_analysis: formatPence(s.dealPricing.fullAnalysisPence),
+          // Batch 28: on a buy-to-let deal (a welcome price can apply on a revealed one: the deal's sheet shows theirs).
+          buy_to_let_report: formatPence((await readBtlSettingsCached(admin)).settings.reportPence),
           second_opinion_add_on: formatPence(s.dealPricing.pmiAddonPence),
           opening_a_deal: ladder.length > 0 ? `${formatPence(Math.min(...ladder))} to ${formatPence(Math.max(...ladder))}` : null,
           top_up_amounts: s.topupPresetsPence.map((p) => balanceLabel(p)),

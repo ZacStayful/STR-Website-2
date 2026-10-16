@@ -12,6 +12,7 @@ import 'server-only';
  * first, and what was dropped and why. Every figure in it is one the
  * answer's figure guard then allows.
  */
+import { quoteBtlReport } from '../btl/report-server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '../supabase/admin';
 import { getBalance } from '../credit/ledger';
@@ -62,7 +63,7 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
   const tracked = new Map(load.view.filter((d) => d.dealId).map((d) => [d.dealId as string, d]));
   const untracked = ids.filter((id) => !load.cards.has(id));
   const [live, states] = await Promise.all([untracked.length > 0 ? dealCardsByIds(untracked, load.visibility) : Promise.resolve([] as DealCard[]), cardStatesFor(supabase as never, m.userId, m.payerId, ids)]);
-  const cards = new Map<string, Pick<DealCard, 'bedrooms' | 'raw_type' | 'tenure' | 'outcode' | 'town'>>([...load.cards.entries(), ...live.map((c) => [c.id, c] as const)]);
+  const cards = new Map<string, Pick<DealCard, 'bedrooms' | 'raw_type' | 'tenure' | 'outcode' | 'town' | 'btl_pass'>>([...load.cards.entries(), ...live.map((c) => [c.id, c] as const)]);
   for (const id of ids) {
     const card = cards.get(id);
     if (!card) continue;
@@ -75,6 +76,7 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
       opened: Boolean(item?.opened || state?.opened || m.admin),
       analysed: Boolean(state?.reportId),
       reportId: state?.reportId ?? null,
+      btl: card.btl_pass === true,
     });
   }
   return out;
@@ -165,6 +167,10 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
         continue;
       }
       planned.push({ step, row: { ...base, target_label: q.areas.length > 0 ? q.areas.slice(0, 6).join(', ') : null, params: { upToBasePence: q.upToBasePence, firstDiscount: q.firstDiscount } }, basePence: q.upToBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });
+    } else if (step.kind === 'btl_report') {
+      // Batch 28: priced exactly as its own path will charge it (the welcome price on a revealed deal).
+      const q = await quoteBtlReport(m.userId, m.admin, { dealId: step.dealId }, now);
+      planned.push({ step, row: base, basePence: q.basePence, aboutBasePence: null, opensDeal: false });
     } else if (step.kind === 'check_link') {
       const q = await quoteLinkCheck();
       planned.push({ step, row: { ...base, target_label: step.source, params: { url: step.url, aboutBasePence: q.aboutBasePence } }, basePence: q.maxBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });

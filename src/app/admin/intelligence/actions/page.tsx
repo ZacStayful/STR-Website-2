@@ -27,6 +27,7 @@ const LABEL: Record<StepKind, string> = {
   deep_search: "Deep search",
   check_link: "Listing check",
   change_criteria: "Criteria change",
+  btl_report: "Buy-to-let report",
 };
 
 const FIELDS = Object.keys(ACTION_SETTING_BOUNDS) as Exclude<keyof ActionSettings, "enabled">[];

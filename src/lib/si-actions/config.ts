@@ -19,7 +19,7 @@
 import type { PipelineStatus } from '../listing/pipeline.ts';
 
 /** Every kind of step the eye can carry out. Anything else a model proposes is dropped. */
-export const STEP_KINDS = ['keep', 'pass', 'stage_move', 'full_analysis', 'deep_report', 'deep_search', 'check_link', 'change_criteria'] as const;
+export const STEP_KINDS = ['keep', 'pass', 'stage_move', 'full_analysis', 'deep_report', 'deep_search', 'check_link', 'change_criteria', 'btl_report'] as const;
 export type StepKind = (typeof STEP_KINDS)[number];
 
 export function isStepKind(v: unknown): v is StepKind {
@@ -27,7 +27,7 @@ export function isStepKind(v: unknown): v is StepKind {
 }
 
 /** Steps that cost credit (each at exactly what its button charges). The rest are free and run at once. */
-export const CHARGED_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['full_analysis', 'deep_report', 'deep_search', 'check_link']);
+export const CHARGED_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['full_analysis', 'deep_report', 'deep_search', 'check_link', 'btl_report']);
 
 /** Steps Undo can put back (Zac, 29 Sep: Keep/Pass, stage moves and profile changes). Charges are never undone. */
 export const UNDOABLE_KINDS: ReadonlySet<StepKind> = new Set<StepKind>(['keep', 'pass', 'stage_move', 'change_criteria']);
@@ -113,6 +113,7 @@ export const DROP_REASONS = {
   too_many: 'That’s more than I do in one go.',
   busy: 'I’m still working on your last instruction: stop it or let it finish first.',
   not_a_deal_kind: 'There is no next step for that kind of deal.',
+  not_btl: 'That deal isn’t a buy-to-let deal, so it has no buy-to-let report.',
 } as const;
 export type DropReason = keyof typeof DROP_REASONS;
 

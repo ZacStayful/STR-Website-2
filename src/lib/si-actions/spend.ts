@@ -115,6 +115,7 @@ const COUNT_WORDS: Record<string, [string, string]> = {
   deep_report: ['a Deep report', 'Deep reports'],
   deep_search: ['a deep search', 'deep searches'],
   check_link: ['a listing check', 'listing checks'],
+  btl_report: ['a buy-to-let report', 'buy-to-let reports'],
 };
 
 /** "3 full analyses and a deep search", in the order the kinds first appear. */

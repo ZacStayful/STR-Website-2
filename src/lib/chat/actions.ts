@@ -16,6 +16,7 @@ import type { ChatSurface } from './config.ts';
 export const ACTION_KINDS = [
   'open_deal',
   'full_analysis',
+  'btl_report',
   'deep_search',
   'show_me',
   'use_this',
@@ -43,6 +44,8 @@ export const QUICK_ACTIONS: readonly ActionKind[] = ['auto_topup', 'notification
 export const ACTION_LABELS: Record<ActionKind, string> = {
   open_deal: 'Open deal',
   full_analysis: 'Run full analysis',
+  // Batch 28: the £2 buy-to-let report is on the deal's own sheet, priced for the member there.
+  btl_report: 'Buy-to-let report',
   // Batch 27: it opens the paid area search, so it says so (the Deep report is a deal's full analysis with PMI).
   deep_search: 'Deep search',
   show_me: 'Show me',
@@ -99,6 +102,8 @@ export function buildButton(kind: unknown, target: unknown, ctx: ActionContext):
       return UUID.test(t) && ctx.allowedDeals.has(t) ? link(NAV_DESTINATIONS.deal(t)) : null;
     case 'full_analysis':
       return UUID.test(t) && ctx.allowedDeals.has(t) ? link(`${NAV_DESTINATIONS.deal(t)}?analysis=1`) : null;
+    case 'btl_report':
+      return UUID.test(t) && ctx.allowedDeals.has(t) ? link(`${NAV_DESTINATIONS.deal(t)}#buy-to-let`) : null;
     case 'show_me':
       return UUID.test(t) && ctx.allowedShowMe.has(t) ? link(NAV_DESTINATIONS.deal(t)) : null;
     case 'use_this':
