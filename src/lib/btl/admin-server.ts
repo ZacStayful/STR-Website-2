@@ -140,7 +140,7 @@ export async function btlAdminView(admin: Admin, now: Date = new Date()): Promis
       'reports',
     ),
     paged<{ user_id: string; kind: string; extras: Record<string, unknown> | null }>(
-      (a, b) => admin.from('activity_events').select('user_id, kind, extras').in('kind', ['explorer_btl_toggle', 'report_run', 'profile_edited']).gte('occurred_at', since).order('occurred_at').range(a, b),
+      (a, b) => admin.from('activity_events').select('user_id, kind, extras').in('kind', ['explorer_btl_toggle', 'report_run', 'profile_edited', 'profile_answered', 'profile_not_sure']).gte('occurred_at', since).order('occurred_at').range(a, b),
       'activity',
     ),
     dayUse(admin, ukDayStart(now)),
@@ -261,7 +261,8 @@ export async function btlAdminView(admin: Admin, now: Date = new Date()): Promis
       const q = a.extras?.question;
       if (a.kind === 'explorer_btl_toggle') activity.explorerToggles += 1;
       else if (a.kind === 'report_run' && a.extras?.type === 'btl') activity.reportsRun += 1;
-      else if (a.kind === 'profile_edited' && (q === 'btl_priority' || q === 'btl_cash')) activity.btlAnswers += 1;
+      // First answers (profile_answered / profile_not_sure, as every quiz question logs) and changes (profile_edited).
+      else if ((q === 'btl_priority' || q === 'btl_cash') && a.kind.startsWith('profile_')) activity.btlAnswers += 1;
       else if (a.kind === 'profile_edited' && q === 'deal_types') activity.dealTypeEdits += 1;
     }
   }

@@ -134,3 +134,26 @@ test('"Your week": a buy-to-let-only deal that went is never a missed short-let 
   assert.equal(matchesFilters(went(ROWS[0]), { ...DEFAULT_FILTERS, types: ['buy_str'] }), true);
   assert.equal(matchesFilters(went(ROWS[3]), { ...DEFAULT_FILTERS, types: ['buy_str', 'btl'] }), true, 'a dual deal is a short-let deal to a Short-let member');
 });
+
+test('a sale kept only as buy to let is never made a short-let deal again by a page read or a feed price', async () => {
+  const { keptAsBtlOnly, btlOnlyBand } = await import('./screen.ts');
+  // Kept as buy to let (its comps check, the page or a price failed): the band it would be given stays below qualified.
+  for (const band of ['unqualified', 'medium', 'insufficient-data']) {
+    assert.equal(keptAsBtlOnly('sale', band), true, band);
+    assert.notEqual(btlOnlyBand('qualified'), 'qualified');
+  }
+  // A short-let deal, and a rental, are judged as before.
+  assert.equal(keptAsBtlOnly('sale', 'qualified'), false);
+  assert.equal(keptAsBtlOnly('rent', 'unqualified'), false);
+  // And whatever the area figures say, the row is still never shown to a profile without Buy to let.
+  const row: TypedDeal = { kind: 'sale', band: btlOnlyBand('qualified'), project: null, btl_pass: true };
+  assert.equal(dealFitsTypes(row, ['buy_str', 'brrr', 'r2r']), false);
+});
+
+test('a deal chosen into a list earlier that is buy-to-let-only now no longer fits a profile without Buy to let', () => {
+  const nowBtlOnly: TypedDeal = { kind: 'sale', band: 'unqualified', project: null, btl_pass: true };
+  const stillDual: TypedDeal = { kind: 'sale', band: 'qualified', project: null, btl_pass: true };
+  assert.equal(dealFitsTypes(nowBtlOnly, ['buy_str', 'r2r']), false);
+  assert.equal(dealFitsTypes(stillDual, ['buy_str', 'r2r']), true);
+  assert.equal(dealFitsTypes(nowBtlOnly, ['btl']), true);
+});

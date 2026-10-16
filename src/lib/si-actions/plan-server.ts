@@ -12,9 +12,9 @@ import 'server-only';
  * first, and what was dropped and why. Every figure in it is one the
  * answer's figure guard then allows.
  */
-import { quoteBtlReport } from '../btl/report-server';
+import { quoteBtlReport, reportIdsFor } from '../btl/report-server';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createAdminClient } from '../supabase/admin';
+import { createAdminClient, hasServiceRole } from '../supabase/admin';
 import { getBalance } from '../credit/ledger';
 import { quoterFor } from '../credit/quote-server';
 import { formatPence } from '../credit/deal-pricing';
@@ -62,7 +62,12 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
   const load = await loadTrackedDeals(m.userId, { scope: 'own', adminUser: m.admin });
   const tracked = new Map(load.view.filter((d) => d.dealId).map((d) => [d.dealId as string, d]));
   const untracked = ids.filter((id) => !load.cards.has(id));
-  const [live, states] = await Promise.all([untracked.length > 0 ? dealCardsByIds(untracked, load.visibility) : Promise.resolve([] as DealCard[]), cardStatesFor(supabase as never, m.userId, m.payerId, ids)]);
+  const [live, states, btlReports] = await Promise.all([
+    untracked.length > 0 ? dealCardsByIds(untracked, load.visibility) : Promise.resolve([] as DealCard[]),
+    cardStatesFor(supabase as never, m.userId, m.payerId, ids),
+    // Batch 28: the deals the member already has a buy-to-let report on (charged once).
+    hasServiceRole() ? reportIdsFor(createAdminClient(), m.userId, { dealIds: ids }) : Promise.resolve(null),
+  ]);
   const cards = new Map<string, Pick<DealCard, 'bedrooms' | 'raw_type' | 'tenure' | 'outcode' | 'town' | 'btl_pass'>>([...load.cards.entries(), ...live.map((c) => [c.id, c] as const)]);
   for (const id of ids) {
     const card = cards.get(id);
@@ -77,6 +82,7 @@ async function planDeals(m: ActingMember, supabase: SupabaseClient, ids: string[
       analysed: Boolean(state?.reportId),
       reportId: state?.reportId ?? null,
       btl: card.btl_pass === true,
+      btlReported: btlReports?.has(id) ?? false,
     });
   }
   return out;

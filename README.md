@@ -1400,7 +1400,8 @@ In this order:
 
 Member actions recorded:
 
-- deal types, and the priority and cash band, are `profile_edited`;
+- deal types, and the priority and cash band, are `profile_answered` when
+  first answered and `profile_edited` when changed (as every quiz question);
 - the report is `report_run` with `type: btl`;
 - the Explorer's "Buy to let" view is `explorer_btl_toggle`, record only.
 

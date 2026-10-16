@@ -29,6 +29,8 @@ export async function POST(request: Request) {
   if (!dealId && !url) return Response.json({ error: 'We couldn’t find that listing.', code: 'missing' }, { status: 404 });
   const outcome = await runBtlReport({ userId: user.id, adminUser: isAdminEmail(user.email), target: { dealId, url }, quotedBasePence: body.quotedBasePence, quotedFacePence: body.quotedFacePence });
   if (outcome.ok) return Response.json({ ok: true, reportId: outcome.reportId, chargedBasePence: outcome.chargedBasePence });
+  // Charged once: the report they already have on this listing opens instead.
+  if (outcome.code === 'already_done' && outcome.reportId) return Response.json({ ok: true, reportId: outcome.reportId, chargedBasePence: 0, already: true });
   if (outcome.code === 'insufficient_credit' && outcome.requiredPence !== undefined) {
     const res = insufficientCreditResponse({ requiredPence: outcome.requiredPence, availablePence: outcome.availablePence ?? 0 }, 'btl_report');
     const payload = (await res.json()) as Record<string, unknown>;

@@ -204,6 +204,15 @@ export function btlRowAction(row: PoolRowFacts | null, pass: boolean, shortLetQu
   return 'write';
 }
 
+/**
+ * A pool row already kept only as a buy-to-let deal: a sale whose stored band is below 'qualified' (only Batch 28
+ * puts a live or waiting sale there; the short-let intake admits qualifying ones only). A page read or a feed price
+ * never makes it a short-let deal again on the area figures: that takes the short-let intake and its comps check.
+ */
+export function keptAsBtlOnly(kind: string, storedBand: string | null | undefined): boolean {
+  return kind === 'sale' && storedBand !== 'qualified';
+}
+
 /** The short-let band a buy-to-let-only row carries: never 'qualified', which means a short-let deal. */
 export function btlOnlyBand(band: string): string {
   return band === 'qualified' ? 'unqualified' : band;

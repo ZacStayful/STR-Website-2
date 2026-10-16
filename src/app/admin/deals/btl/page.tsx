@@ -142,7 +142,7 @@ export default async function BtlAdminPage() {
           <h2 className="text-base font-semibold text-foreground">Members&apos; actions this week</h2>
           <ul className="mt-2 text-muted-foreground">
             <li>Deal types changed: {dash(v.activity?.dealTypeEdits)}</li>
-            <li>Buy-to-let priority or cash band answered: {dash(v.activity?.btlAnswers)}</li>
+            <li>Buy-to-let priority or cash band answered or changed: {dash(v.activity?.btlAnswers)}</li>
             <li>BTL reports run: {dash(v.activity?.reportsRun)}</li>
             <li>Explorer &quot;Buy to let&quot; view opened: {dash(v.activity?.explorerToggles)} (recorded only; not weekly-active)</li>
           </ul>

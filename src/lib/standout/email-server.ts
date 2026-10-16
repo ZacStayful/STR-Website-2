@@ -14,6 +14,7 @@ import 'server-only';
 import { createAdminClient } from '../supabase/admin';
 import { propertyKind } from '../listing/suitability';
 import type { DealType } from '../profile/deal-types';
+import { dealTypeListsByIds } from '../marketplace/queries';
 import type { SavedForYouItem } from '../notify/message';
 import { savedForYouLine } from './copy';
 import { chosenTypesFor } from './calls-server';
@@ -49,6 +50,8 @@ export async function savedForYouFor(admin: Admin, userIds: readonly string[], s
     const { data: deals, error: dErr } = await admin.from('marketplace_deals').select('id, status, town, postcode_area, bedrooms, raw_type').in('id', [...new Set(rows.map((r) => r.deal_id))]);
     if (dErr) return out;
     const dealBy = new Map(((deals ?? []) as { id: string; status: string; town: string | null; postcode_area: string | null; bedrooms: number | null; raw_type: string | null }[]).map((d) => [d.id, d]));
+    // Batch 28: still the type it was saved as (a short-let deal kept only as buy to let since is not told with its short-let figure).
+    const typesOf = await dealTypeListsByIds([...dealBy.keys()]);
     // Still a deal type their main profile shows? Unreadable: nothing from this chunk is told on a guess (it waits for the next email).
     const chosen = await chosenTypesFor(admin, [...new Set(rows.map((r) => r.user_id))], now);
     if (!chosen) {
@@ -58,6 +61,7 @@ export async function savedForYouFor(admin: Admin, userIds: readonly string[], s
     for (const r of rows) {
       const d = dealBy.get(r.deal_id);
       if (!d || d.status !== 'live') continue;
+      if (r.deal_type && !(typesOf.get(r.deal_id) ?? []).includes(r.deal_type as DealType)) continue;
       const c = chosen.get(r.user_id);
       if (!c || shownVerdict(c, r.deal_type) !== 'ok') continue;
       const list = out.get(r.user_id) ?? [];

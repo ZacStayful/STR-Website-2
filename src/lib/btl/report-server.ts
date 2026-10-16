@@ -58,9 +58,10 @@ import { DEFAULT_BTL_PRIORITY, regionPhrase } from './today';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
-export type BtlReportCode = 'missing' | 'not_sale' | 'no_postcode' | 'unsuitable' | 'no_figures' | 'seat_paused' | 'price_changed' | 'insufficient_credit' | 'running' | 'failed';
+export type BtlReportCode = 'missing' | 'not_sale' | 'no_postcode' | 'unsuitable' | 'no_figures' | 'seat_paused' | 'price_changed' | 'insufficient_credit' | 'running' | 'already_done' | 'failed';
 
-export type BtlReportResult = { ok: true; reportId: string; purchaseId: string; chargedBasePence: number } | { ok: false; code: BtlReportCode; message: string; pricePence?: number; requiredPence?: number; availablePence?: number };
+/** `already_done` carries the member's report on that listing: it is opened again, never sold again. */
+export type BtlReportResult = { ok: true; reportId: string; purchaseId: string; chargedBasePence: number } | { ok: false; code: BtlReportCode; message: string; pricePence?: number; requiredPence?: number; availablePence?: number; reportId?: string };
 
 const MESSAGES: Record<BtlReportCode, string> = {
   missing: 'We couldn’t find that listing.',
@@ -72,6 +73,7 @@ const MESSAGES: Record<BtlReportCode, string> = {
   price_changed: 'The price has changed since this page loaded. Nothing was charged; check the new price and try again.',
   insufficient_credit: 'Not enough credit for the buy-to-let report. Nothing was charged.',
   running: 'Your report is already on its way. Refresh in a moment.',
+  already_done: 'You already have a buy-to-let report on this one, so it opens instead. Nothing was charged.',
   failed: 'Something went wrong making the report. Nothing was charged; please try again.',
 };
 
@@ -82,6 +84,7 @@ function fail(code: BtlReportCode, extra: { pricePence?: number; requiredPence?:
 export function btlReportHttpStatus(code: BtlReportCode): number {
   if (code === 'missing') return 404;
   if (code === 'insufficient_credit' || code === 'seat_paused') return 402;
+  if (code === 'already_done') return 200;
   if (code === 'running' || code === 'price_changed') return 409;
   if (code === 'not_sale' || code === 'no_postcode' || code === 'unsuitable' || code === 'no_figures') return 422;
   return 500;
@@ -145,6 +148,10 @@ export async function runBtlReport(input: { userId: string; adminUser: boolean; 
   const l = found.listing;
   if (l.kind !== 'sale') return fail('not_sale');
   if (!l.postcode || l.bedrooms === null) return fail('no_postcode');
+  // Charged once: a report the member already has on this listing opens again (a stale tab, Back, or asking the eye twice).
+  const had = await reportIdsFor(admin, input.userId, { urls: [l.canonicalUrl] });
+  const already = had?.values().next().value;
+  if (already) return { ...fail('already_done'), reportId: already } as BtlReportResult;
 
   const payer = await payerFor(input.userId);
   if (payer.suspended) return fail('seat_paused');
@@ -311,6 +318,26 @@ export async function btlReportFor(userId: string, reportId: string): Promise<{ 
   const { parseBtlReport } = await import('./report');
   const report = parseBtlReport((data as { result: unknown }).result);
   return report ? { report, createdAt: String((data as { created_at: string }).created_at), dealId: (data as { deal_id: string | null }).deal_id } : null;
+}
+
+/**
+ * The member's own reports by deal id or listing, latest first (deal id or url → report id). Null when unreadable,
+ * so a caller that must not sell twice can tell "none" from "couldn't look".
+ */
+export async function reportIdsFor(admin: ReturnType<typeof createAdminClient>, userId: string, by: { dealIds?: readonly string[]; urls?: readonly string[] }): Promise<Map<string, string> | null> {
+  const out = new Map<string, string>();
+  const read = async (column: 'deal_id' | 'canonical_url', values: readonly string[]) => {
+    if (values.length === 0) return true;
+    const { data, error } = await admin.from('btl_reports').select(`id, ${column}`).eq('user_id', userId).in(column, [...values]).order('created_at', { ascending: false }).limit(500);
+    if (error) return false;
+    for (const r of (data ?? []) as unknown as Record<string, string | null>[]) {
+      const k = r[column];
+      if (k && !out.has(k)) out.set(k, String(r.id));
+    }
+    return true;
+  };
+  if (!(await read('deal_id', by.dealIds ?? [])) || !(await read('canonical_url', by.urls ?? []))) return null;
+  return out;
 }
 
 /** The member's latest report on this deal (or listing), so the deal page links it instead of selling another. */

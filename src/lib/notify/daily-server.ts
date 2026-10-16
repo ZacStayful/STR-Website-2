@@ -21,7 +21,7 @@ import { withProjectCards } from '../marketplace/queries';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { payersFor, type Payer } from '../team';
 import { seatKey } from '../profiles/rules';
-import { dealTypeFor, type DealType } from '../profile/deal-types';
+import { dealFitsTypes, dealTypeFor, type DealType } from '../profile/deal-types';
 import { parseStoredChoice } from '../today/choice';
 import type { BtlWiden } from '../btl/today';
 
@@ -170,5 +170,6 @@ export function teasersFrom(plan: TodayPlan, pickDealId: string | null, visibili
     return card ? dealTypeFor(card, plan.types ?? []) : null;
   };
   const order = displayOrder(plan.stored, pickDealId, plan.answered, TODAY_SIZE, pickDealId ? typeOf : undefined).filter((id) => id !== pickDealId);
-  return order.map((id) => plan.cards.get(id)).filter((c): c is DealCard => c !== undefined && dealVisible(c.live_since ?? null, visibility.cutoffIso));
+  // Batch 28: only deals still a type this profile shows (one kept only as buy to let since it was chosen leaves, as on /today).
+  return order.map((id) => plan.cards.get(id)).filter((c): c is DealCard => c !== undefined && dealVisible(c.live_since ?? null, visibility.cutoffIso) && (!plan.types?.length || dealFitsTypes(c, plan.types)));
 }

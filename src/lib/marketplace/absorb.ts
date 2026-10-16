@@ -33,7 +33,7 @@ import { retiredReasonFor } from './status';
 import { nextCheckDueAt } from './cadence';
 import { REACTIVATABLE_REASONS, RETURNING_REASONS, type DealRow } from './types';
 import { chunk, isBtlDeal, loadDealsByUrls, priceChangeColumns, recordColumns, retireDeal, writeWithoutMissing, type Admin } from './server';
-import { btlOnlyBand } from '../btl/screen';
+import { btlOnlyBand, keptAsBtlOnly } from '../btl/screen';
 import { serverFetchEnabled } from '../listing/fetch';
 import { SERVER_FETCHABLE } from '../listing/detect';
 import type { NeedsWork } from '../project/needs-work';
@@ -288,8 +288,13 @@ async function reconcileDeal(admin: Admin, deal: DealRow, l: SourcedListing, bui
   }
   const { columns: priceCols } = priceChangeColumns(deal, rec, stamp);
   const repriced = Object.keys(priceCols).length > 0;
-  // Batch 28: a buy-to-let deal is repriced rather than retired; its lens waits for the next screen at the new price.
-  const btlOnly = repriced && !qualifiesForMarketplace(rec) && (await isBtlDeal(admin, deal.canonical_url));
+  // Batch 28: a buy-to-let deal is repriced rather than retired, and its lens (on a row that is only that, or both) waits
+  // for the next screen at the new price. A sale already kept only as a buy-to-let deal is never made a short-let one
+  // again by a feed price (that takes the short-let intake and its check).
+  const keptAsBtl = keptAsBtlOnly(l.kind, deal.band);
+  // (isBtlDeal is false before the schema section, so btl_pass is only ever written where the column exists.)
+  const btlLens = repriced && l.kind === 'sale' && (await isBtlDeal(admin, deal.canonical_url));
+  const btlOnly = repriced && (keptAsBtl || (!qualifiesForMarketplace(rec) && btlLens));
   if (repriced && !qualifiesForMarketplace(rec) && !btlOnly) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
     count('unqualified');
@@ -300,7 +305,7 @@ async function reconcileDeal(admin: Admin, deal: DealRow, l: SourcedListing, bui
   if (!(deal.last_confirmed_via === 'live' && deal.last_checked_live_at && now.getTime() - new Date(deal.last_checked_live_at).getTime() < 24 * 60 * 60 * 1000)) update.last_confirmed_via = 'feed';
   if (repriced) {
     // A shortlisted deal keeps its expiry (next_check_due_at is when it is dropped unchecked); the rest move to the recheck cadence.
-    Object.assign(update, priceCols, { price_amount: rec.priceAmount, price_period: rec.pricePeriod, screening: rec.screening, deal: rec.deal, annual_profit: rec.annualProfit, uplift_pct: rec.upliftPct, band: btlOnly ? btlOnlyBand(rec.band) : rec.band, next_check_due_at: deal.status === 'pending_check' ? deal.next_check_due_at : nextCheckDueAt(l.kind, rec.annualProfit, now) }, btlOnly ? { btl_pass: false } : {});
+    Object.assign(update, priceCols, { price_amount: rec.priceAmount, price_period: rec.pricePeriod, screening: rec.screening, deal: rec.deal, annual_profit: rec.annualProfit, uplift_pct: rec.upliftPct, band: btlOnly ? btlOnlyBand(rec.band) : rec.band, next_check_due_at: deal.status === 'pending_check' ? deal.next_check_due_at : nextCheckDueAt(l.kind, rec.annualProfit, now) }, btlLens ? { btl_pass: false } : {});
     counters.repriced += 1;
   }
   const { error } = await admin.from('marketplace_deals').update(update).eq('canonical_url', deal.canonical_url);

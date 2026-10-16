@@ -173,3 +173,10 @@ test('Batch 28: a buy-to-let report runs only on a buy-to-let deal, once', () =>
   assert.deepEqual(r.steps, [{ kind: 'btl_report', dealId: A, label: '2-bed flat in LS6' }]);
   assert.deepEqual(r.dropped.map((d) => d.reason), ['duplicate', 'not_btl']);
 });
+
+test('Batch 28: a buy-to-let report the member already has is never sold again', () => {
+  const c = ctx({ deals: new Map([[A, deal(A, { btl: true, btlReported: true })]]) });
+  const r = checkPlan([step({ action: 'btl_report', dealId: A })], c);
+  assert.deepEqual(r.steps, []);
+  assert.deepEqual(r.dropped.map((d) => d.reason), ['already_done']);
+});

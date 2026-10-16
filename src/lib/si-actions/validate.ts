@@ -45,6 +45,8 @@ export interface PlanDeal {
   analysed: boolean;
   /** Batch 28: it passes the buy-to-let rules, so a buy-to-let report can run on it. */
   btl?: boolean;
+  /** Batch 28: the member already has a buy-to-let report on it (charged once: never sold again). */
+  btlReported?: boolean;
 }
 
 export interface PlanContext {
@@ -239,6 +241,10 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
       const key = `btl:${deal.dealId}`;
       if (seen.has(key)) {
         drop(step, 'duplicate', deal.label);
+        continue;
+      }
+      if (deal.btlReported) {
+        drop(step, 'already_done', deal.label);
         continue;
       }
       if (!deal.btl) {

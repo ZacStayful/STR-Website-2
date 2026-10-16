@@ -77,6 +77,8 @@ interface SaleRow {
 
 interface PoolRow extends PoolRowFacts {
   url: string;
+  /** The rent valuation its stored lens already holds (bought by an earlier run), monthly; null for none. */
+  valuation: number | null;
 }
 
 type Page<T> = { data: T[] | null; error: { message: string } | null };
@@ -144,13 +146,14 @@ async function loadDistricts(): Promise<Map<string, DistrictStats>> {
 async function loadPoolRows(admin: Admin, urls: readonly string[]): Promise<Map<string, PoolRow> | null> {
   const out = new Map<string, PoolRow>();
   for (const some of chunk([...urls], URL_CHUNK)) {
-    const { data, error } = await admin.from('marketplace_deals').select('canonical_url, status, band, retired_reason, btl_pass, project').in('canonical_url', some);
+    const { data, error } = await admin.from('marketplace_deals').select('canonical_url, status, band, retired_reason, btl_pass, project, valuation:btl->rent->valuation').in('canonical_url', some);
     if (error) {
       console.error('[btl-screen] pool rows unreadable (Batch 28 schema section not run?):', error.message);
       return null;
     }
-    for (const r of (data ?? []) as { canonical_url: string; status: PoolRow['status']; band: string; retired_reason: RetiredReason | null; project: unknown }[]) {
-      out.set(r.canonical_url, { url: r.canonical_url, status: r.status, band: r.band, project: r.project !== null && r.project !== undefined, retiredReason: r.retired_reason });
+    for (const r of (data ?? []) as { canonical_url: string; status: PoolRow['status']; band: string; retired_reason: RetiredReason | null; project: unknown; valuation: unknown }[]) {
+      const valuation = typeof r.valuation === 'number' && Number.isFinite(r.valuation) && r.valuation > 0 ? r.valuation : null;
+      out.set(r.canonical_url, { url: r.canonical_url, status: r.status, band: r.band, project: r.project !== null && r.project !== undefined, retiredReason: r.retired_reason, valuation });
     }
   }
   return out;
@@ -189,6 +192,19 @@ async function wantedAreas(admin: Admin): Promise<Set<string>> {
   const out = new Set<string>();
   for (const r of (data ?? []) as { areas: string[] | null }[]) for (const a of r.areas ?? []) out.add(a.toUpperCase());
   return out;
+}
+
+/** What the meter recorded under one action, exact pence (whole pence before Batch 16's raw_pence); null when unreadable. */
+async function meteredPence(admin: Admin, actionId: string): Promise<number | null> {
+  type Row = { raw_pence?: unknown; cost_pence?: unknown };
+  const read = (columns: string) => admin.from('provider_calls').select(columns).eq('action_id', actionId).eq('cache_hit', false);
+  let res = await read('raw_pence, cost_pence');
+  if (res.error && /raw_pence/.test(res.error.message)) res = await read('cost_pence');
+  if (res.error) {
+    console.warn('[btl-screen] metered spend unreadable:', res.error.message);
+    return null;
+  }
+  return ((res.data ?? []) as unknown as Row[]).reduce((sum, r) => sum + (Number(r.raw_pence ?? r.cost_pence) || 0), 0);
 }
 
 /** Today's spend and valuations on this line (UK day), from the runs' own records; unreadable reads as the whole cap spent. */
@@ -243,7 +259,10 @@ export async function runBtlScreen(opts: BtlScreenOptions): Promise<BtlScreenRes
   const pool = await loadPoolRows(admin, listings.map((l) => l.canonicalUrl));
   if (!pool) return { status: 503, body: { error: 'marketplace_deals has no buy-to-let columns yet: run the "Batch 28: buy-to-let" section of supabase/schema.sql' } };
   const epcs = await cachedEpcs(admin, listings);
+  // A valuation an earlier run bought stays with the deal (rent does not move with the price), so a later run
+  // never rewrites its lens without it, and it is never bought twice.
   const valuations = new Map<string, Valuation>();
+  for (const row of pool.values()) if (row.valuation !== null) valuations.set(row.url, { monthly: row.valuation });
 
   const ctx: BtlScreenContext = {
     settings,
@@ -320,6 +339,10 @@ export async function runBtlScreen(opts: BtlScreenOptions): Promise<BtlScreenRes
           }
         });
       });
+      // What the meter recorded for this run is what it cost (every charged attempt, not just the answered ones);
+      // the line's next run reads it from this run's record.
+      const metered = await meteredPence(admin, actionId);
+      if (metered !== null) spentPence = Math.max(spentPence, metered);
       // The shortlist re-screened on what was bought.
       for (const c of shortlist) {
         const l = byUrl.get(c.url);

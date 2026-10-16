@@ -307,6 +307,8 @@ export async function startAnalysis(m: ActingMember, supabase: SupabaseClient, s
 export async function startBtlReport(m: ActingMember, s: { dealId: string; quotedBasePence: number }): Promise<ChargedStart> {
   const r = await runBtlReport({ userId: m.userId, adminUser: m.admin, target: { dealId: s.dealId }, quotedBasePence: s.quotedBasePence });
   if (r.ok) return { ok: true, handOut: null, ledgerRef: r.purchaseId, after: { btlReportId: r.reportId }, done: true };
+  // Charged once: the member's report on it already exists, so the step ends with it and nothing is charged.
+  if (r.code === 'already_done') return { ok: true, handOut: null, ledgerRef: null, after: r.reportId ? { btlReportId: r.reportId } : null, done: true };
   return { ok: false, code: r.code, requiredPence: r.requiredPence, availablePence: r.availablePence };
 }
 

@@ -30,7 +30,7 @@ import { projectChecksOn, readProjectSettings } from '../project/settings-server
 import { projectHoldFor } from '../project/hold';
 import { projectFactsOf } from '../project/check-plan';
 import { btlSuitability } from '../btl/listing';
-import { BTL_KEEP_REASONS, btlOnlyBand } from '../btl/screen';
+import { BTL_KEEP_REASONS, btlOnlyBand, keptAsBtlOnly } from '../btl/screen';
 
 export const DEALS_TAG = 'marketplace-deals';
 
@@ -315,8 +315,13 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   if (snapErr) console.error('[marketplace] snapshot write failed:', snapErr.message);
   const suitability = suitabilityFromSnapshot(s, listing.kind);
   // Batch 28: a row the short let cannot have stays as a buy-to-let deal when it is one and the page still allows it (asked only then).
-  let btlKeeps: boolean | null = null;
-  const keepsForBtl = async (): Promise<boolean> => (btlKeeps ??= merged.kind === 'sale' && btlSuitability(merged) === 'ok' && (await isBtlDeal(admin, deal.canonical_url)));
+  // A sale already kept only as a buy-to-let deal (its short-let side failed: a comps check, the page or a price) is never made
+  // a short-let deal again by a page read on the area figures (that takes the short-let intake and its check); it stays a
+  // buy-to-let row while the page allows one, and the nightly screen judges its lens (and retires it when that fails).
+  const keptAsBtl = keptAsBtlOnly(merged.kind, deal.band);
+  let btlLens: boolean | null = null;
+  const isBtl = async (): Promise<boolean> => (btlLens ??= await isBtlDeal(admin, deal.canonical_url));
+  const keepsForBtl = async (): Promise<boolean> => merged.kind === 'sale' && btlSuitability(merged) === 'ok' && (keptAsBtl || (await isBtl()));
   if (suitability !== 'ok' && !(await keepsForBtl())) {
     await retireDeal(admin, deal.canonical_url, 'unsuitable', now);
     return { kind: 'retired', reason: 'unsuitable' };
@@ -326,7 +331,7 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   const check = validCheckFor(checkOf(deal.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
   const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, deal.postcode_area, deal.canonical_url) : null;
   const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, cohort, now });
-  const btlOnly = suitability !== 'ok' || !qualifiesForMarketplace(rec);
+  const btlOnly = keptAsBtl || suitability !== 'ok' || !qualifiesForMarketplace(rec);
   if (btlOnly && !(await keepsForBtl())) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
     return { kind: 'retired', reason: 'unqualified' };
@@ -357,11 +362,15 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   }
   const held = hold.kind === 'hold';
   const { columns: priceCols } = priceChangeColumns(deal, rec, nowIso);
+  // Batch 28: at a new price a buy-to-let lens (on a row that is only that, or both) waits for the next screen, never shown at the old price.
+  // (isBtlDeal is false before the schema section, so the column is only ever written where it exists.)
+  const relens = merged.kind === 'sale' && Object.keys(priceCols).length > 0 && (await isBtl());
   const update: Record<string, unknown> = {
     ...recordColumns(merged, rec),
     ...priceCols,
-    // Batch 28: kept only as a buy-to-let deal, never a short-let one; at a new price its lens waits for the next screen.
-    ...(btlOnly ? { band: btlOnlyBand(rec.band), ...(Object.keys(priceCols).length > 0 ? { btl_pass: false } : {}) } : {}),
+    // Batch 28: kept only as a buy-to-let deal, never a short-let one.
+    ...(btlOnly ? { band: btlOnlyBand(rec.band) } : {}),
+    ...(relens ? { btl_pass: false } : {}),
     // Batch 17: the renovation wording (our phrase keys) for the Project ranking; written where the column exists.
     ...(merged.kind === 'sale' ? { needs_work: merged.needsWork && merged.needsWork.phrases.length > 0 ? merged.needsWork : null } : {}),
     photos: s.photos.length > 0 ? s.photos : (deal.photos ?? null),
