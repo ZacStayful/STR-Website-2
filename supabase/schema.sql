@@ -7752,6 +7752,7 @@ notify pgrst, 'reload schema';
 --   user_id / payer_id    who asked, and whose credit pays (a team member's owner)
 --   status                proposed | cancelled | done | ready | awaiting_confirm | running | stopped | declined | blocked | expired
 --                         (src/lib/si-actions/config.ts says what each means)
+--   decision              what the priced plan came to (src/lib/si-actions/spend.ts): free | run | confirm | insufficient
 --   confirm_kind          low_balance | over_cap (the rest past si_action_instruction_cap_pence) | null
 --   confirm_answer        yes | no, once the member answered
 --   quoted_*_pence        the charged steps' quotes, added up (base, and face: what comes off the balance)
@@ -7765,6 +7766,7 @@ create table if not exists public.si_instructions (
   user_id uuid references public.profiles(id) on delete cascade,
   payer_id uuid,
   status text not null default 'proposed',
+  decision text not null default 'free',
   confirm_kind text,
   confirm_answer text,
   confirmed_at timestamptz,
@@ -7786,6 +7788,8 @@ create table if not exists public.si_instructions (
 do $$ begin
   alter table public.si_instructions drop constraint if exists si_instructions_status_check;
   alter table public.si_instructions add constraint si_instructions_status_check check (status in ('proposed', 'cancelled', 'done', 'ready', 'awaiting_confirm', 'running', 'stopped', 'declined', 'blocked', 'expired'));
+  alter table public.si_instructions drop constraint if exists si_instructions_decision_check;
+  alter table public.si_instructions add constraint si_instructions_decision_check check (decision in ('free', 'run', 'confirm', 'insufficient'));
   alter table public.si_instructions drop constraint if exists si_instructions_confirm_check;
   alter table public.si_instructions add constraint si_instructions_confirm_check check ((confirm_kind is null or confirm_kind in ('low_balance', 'over_cap')) and (confirm_answer is null or confirm_answer in ('yes', 'no')));
   alter table public.si_instructions drop constraint if exists si_instructions_report_check;
