@@ -8,9 +8,15 @@
 
 export const FEEDBACK_EVENT = 'stayful:feedback';
 
-export function openFeedback(): void {
+/** Batch 27: what to fill the form in with (Stayful Intelligence's feature request); the member checks it and sends. */
+export interface FeedbackPrefill {
+  kind: 'bug' | 'feature';
+  text: string;
+}
+
+export function openFeedback(prefill?: FeedbackPrefill): void {
   if (typeof window === 'undefined') return;
-  window.dispatchEvent(new Event(FEEDBACK_EVENT));
+  window.dispatchEvent(prefill ? new CustomEvent<FeedbackPrefill>(FEEDBACK_EVENT, { detail: prefill }) : new Event(FEEDBACK_EVENT));
 }
 
 /** What the form reports about where it was sent from (checked again on the server). */

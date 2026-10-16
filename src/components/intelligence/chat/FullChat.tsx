@@ -247,7 +247,7 @@ export function FullChat(p: {
                     {e.status ?? "Thinking…"}
                   </p>
                 ) : (
-                  <ChatAnswer reply={e.reply} streaming={e.streaming} />
+                  <ChatAnswer reply={e.reply} streaming={e.streaming} onChoose={busy ? undefined : (c) => submit(c)} />
                 )}
                 {e.dropped && (
                   <button type="button" disabled={busy} className="text-xs text-[#B9D5C6] underline underline-offset-2" onClick={() => void ask(e.question, e.clientTurnId, e.key, true)}>

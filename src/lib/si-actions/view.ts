@@ -120,8 +120,6 @@ export interface ActionCardView {
 
 const STAGE_WORDS: Record<string, string> = { watching: 'Kept', contacted: 'Contacted', viewing: 'Viewing', offer: 'Offer', secured: 'Secured', passed: 'Passed' };
 
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} ${many}`);
-
 /** The free steps that ran, as lines: "Passed 4 deals", "Moved the 2 bed flat in LS6 to Viewing", "Bedrooms: 2 — 212 → 64 matches". */
 export function doneLines(steps: readonly StepLike[]): string[] {
   const done = steps.filter((s) => s.status === 'done' && !s.undone_at);
@@ -275,10 +273,10 @@ export function cardView(i: InstructionLike, steps: readonly StepLike[], o: { no
   };
 }
 
-/** For a banner or a count: how many of a kind this instruction did ("Passed 4 deals"). */
+/** For My deals' banner: what the eye changed that Undo could put back ("Passed 4 deals", "Kept a listing you checked"). */
 export function summaryLine(steps: readonly StepLike[]): string {
   const lines = doneLines(steps);
-  if (lines.length > 0) return lines.join('. ');
-  const charged = steps.filter((s) => CHARGED.has(s.action) && s.status === 'done').length;
-  return charged > 0 ? plural(charged, 'One thing done', 'things done') : '';
+  const kept = steps.filter((s) => s.action === 'check_link' && typeof s.after?.checkedListingId === 'string' && !s.undone_at).length;
+  if (kept > 0) lines.push(kept === 1 ? 'Kept a listing you checked' : `Kept ${kept} listings you checked`);
+  return lines.join('. ');
 }

@@ -14,7 +14,7 @@ export function FeedbackTrigger({ variant }: { variant: "header" | "footer" | "b
     return (
       <button
         type="button"
-        onClick={openFeedback}
+        onClick={() => openFeedback()}
         aria-haspopup="dialog"
         title="Tell us about a bug, or an idea"
         style={{ background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 999, padding: "2px 10px", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6, border: 0, cursor: "pointer", fontFamily: "inherit", lineHeight: "inherit" }}
@@ -26,14 +26,14 @@ export function FeedbackTrigger({ variant }: { variant: "header" | "footer" | "b
   }
   if (variant === "button") {
     return (
-      <button type="button" onClick={openFeedback} aria-haspopup="dialog" className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90">
+      <button type="button" onClick={() => openFeedback()} aria-haspopup="dialog" className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90">
         <MessageSquare aria-hidden="true" size={16} />
         Send feedback
       </button>
     );
   }
   return (
-    <button type="button" onClick={openFeedback} aria-haspopup="dialog" className="font-medium text-foreground underline underline-offset-2 hover:opacity-80">
+    <button type="button" onClick={() => openFeedback()} aria-haspopup="dialog" className="font-medium text-foreground underline underline-offset-2 hover:opacity-80">
       Send feedback
     </button>
   );

@@ -5,15 +5,29 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { ChatReply } from "@/lib/chat/reply";
 import { DEEP_SEARCH_EVENT, type ChatButton } from "@/lib/chat/actions";
-import { applyWhatIfAction } from "../what-if-actions";
+import type { ActionCardView } from "@/lib/si-actions/view";
+import { ActionCard } from "./ActionCard";
+import { DraftCard, FeatureRequest } from "./DraftCard";
 
 /**
  * Batch 26: one answer as the member sees it: the text, the buttons (the
- * member taps; Stayful Intelligence never does the thing itself), what it
- * cost, "Not helpful", and "Want me to remember that?" when the answer
- * offered to.
+ * member taps them), what it cost, "Not helpful", and "Want me to remember
+ * that?" when the answer offered to. Batch 27: what the eye is doing for the
+ * member (ActionCard: spend line, Stop, confirm, progress, Undo), a drafted
+ * message to copy, a feature request to send, and tap choices.
  */
-export function ChatAnswer({ reply, streaming = false, tone = "dark" }: { reply: Pick<ChatReply, "state" | "turnId" | "text" | "buttons" | "charged" | "factProposal" | "voiceCharged">; streaming?: boolean; tone?: "dark" | "light" }) {
+export function ChatAnswer({
+  reply,
+  streaming = false,
+  tone = "dark",
+  onChoose,
+}: {
+  reply: Pick<ChatReply, "state" | "turnId" | "text" | "buttons" | "charged" | "factProposal" | "voiceCharged" | "actions" | "draft" | "report" | "featureRequest" | "choices">;
+  streaming?: boolean;
+  tone?: "dark" | "light";
+  /** A tap choice is sent as the member's next question. */
+  onChoose?: (text: string) => void;
+}) {
   const muted = tone === "dark" ? "text-[#B9D5C6]" : "text-muted-foreground";
   return (
     <div className={`rounded-xl ${tone === "dark" ? "bg-white/10 text-white" : "bg-muted text-foreground"} p-4 text-sm leading-relaxed`} aria-live="polite" aria-busy={streaming}>
@@ -21,10 +35,23 @@ export function ChatAnswer({ reply, streaming = false, tone = "dark" }: { reply:
       {!streaming && reply.buttons.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {reply.buttons.map((b) => (
-            <AnswerButton key={`${b.kind}:${b.href ?? b.whatIfKey}`} button={b} />
+            <AnswerButton key={`${b.kind}:${b.href ?? b.whatIfKey}`} button={b} turnId={reply.turnId} />
           ))}
         </div>
       )}
+      {!streaming && reply.choices && reply.choices.length > 0 && onChoose && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {reply.choices.map((c) => (
+            <button key={c} type="button" onClick={() => onChoose(c)} className="rounded-full border border-white/30 px-3 py-1.5 text-sm font-medium hover:bg-white/10">
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
+      {!streaming && reply.actions && <ActionCard key={reply.actions.instructionId} initial={reply.actions} />}
+      {!streaming && reply.draft && <DraftCard draft={reply.draft} turnId={reply.turnId} />}
+      {!streaming && reply.featureRequest && <FeatureRequest text={reply.featureRequest} />}
+      {!streaming && reply.report && !reply.actions && <p className={`mt-3 text-xs ${muted}`}>Reported to the Stayful team · #{reply.report.ref}</p>}
       {!streaming && reply.factProposal && reply.turnId && <RememberThat turnId={reply.turnId} fact={reply.factProposal} muted={muted} />}
       {!streaming && (reply.charged || reply.voiceCharged || (reply.state === "answer" && reply.turnId)) && (
         <div className={`mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs ${muted}`}>
@@ -37,9 +64,10 @@ export function ChatAnswer({ reply, streaming = false, tone = "dark" }: { reply:
   );
 }
 
-function AnswerButton({ button }: { button: ChatButton }) {
+function AnswerButton({ button, turnId }: { button: ChatButton; turnId: string | null }) {
   const router = useRouter();
   const [done, setDone] = useState<string | null>(null);
+  const [card, setCard] = useState<ActionCardView | null>(null);
   const [busy, setBusy] = useState(false);
   const cls = "inline-block rounded-md bg-[#B9D5C6] px-3 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90 disabled:opacity-60";
   if (button.href) {
@@ -56,7 +84,9 @@ function AnswerButton({ button }: { button: ChatButton }) {
       </Link>
     );
   }
-  if (button.whatIfKey) {
+  if (button.whatIfKey && turnId) {
+    // Batch 27: applied as one of the eye's steps (Batch 22's own save), with Undo for the window.
+    if (card) return <div className="basis-full"><ActionCard initial={card} /></div>;
     if (done) return <span className="self-center text-xs">{done}</span>;
     return (
       <button
@@ -65,12 +95,13 @@ function AnswerButton({ button }: { button: ChatButton }) {
         disabled={busy}
         onClick={async () => {
           setBusy(true);
-          const r = await applyWhatIfAction(button.whatIfKey).catch(() => ({ ok: false as const, error: "That didn’t save. Please try again." }));
+          const res = await fetch(`/api/si/actions/${turnId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "use_this", key: button.whatIfKey }) }).catch(() => null);
+          const body = res ? ((await res.json().catch(() => ({}))) as { card?: ActionCardView; error?: string }) : {};
           setBusy(false);
-          if (r.ok) {
-            setDone("Done — I’ve changed that in your profile.");
+          if (body.card) {
+            setCard(body.card);
             router.refresh();
-          } else setDone(r.error);
+          } else setDone(body.error ?? "That didn’t save. Please try again.");
         }}
       >
         {button.label}
