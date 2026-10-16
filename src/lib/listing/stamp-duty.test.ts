@@ -69,3 +69,14 @@ test('the API figure is used verbatim and keeps the nation the API named', () =>
   assert.equal(g.effectiveRatePct, 6);
   assert.equal(stampDutyFromApi({ name: 'SDLT', payable: 15_000, effectiveRatePct: null, countryUsed: null, modeUsed: null, transactionDate: null }, 'england', 0).effectiveRatePct, 0);
 });
+
+test('under £40,000 the higher rates do not apply, so there is no tax in any nation (Batch 28)', () => {
+  assert.equal(stampDutyLocal(39_999, 'england').amount, 0);
+  assert.equal(stampDutyLocal(39_999, 'northern_ireland').amount, 0);
+  assert.equal(stampDutyLocal(39_999, 'wales').amount, 0);
+  assert.equal(stampDutyLocal(39_999, 'scotland').amount, 0);
+  // At £40,000 the higher rates apply to the whole price, as before.
+  assert.equal(stampDutyLocal(40_000, 'england').amount, 2_000);
+  assert.equal(stampDutyLocal(40_000, 'wales').amount, 2_000);
+  assert.equal(stampDutyLocal(40_000, 'scotland').amount, 3_200);
+});

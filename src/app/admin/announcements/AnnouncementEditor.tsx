@@ -30,6 +30,8 @@ export interface EditorInitial {
   title: string;
   body: string;
   link: string;
+  /** Batch 28: the button's own words; empty for "Take a look". */
+  label: string;
   refs: string;
   state: "draft" | "live" | "ended" | "unpublished";
 }
@@ -39,6 +41,7 @@ export function AnnouncementEditor({ initial }: { initial: EditorInitial }) {
   const [title, setTitle] = useState(initial.title);
   const [body, setBody] = useState(initial.body);
   const [link, setLink] = useState(initial.link);
+  const [label, setLabel] = useState(initial.label);
   const [saveState, setSaveState] = useState<EditorState>(null);
   const [saving, startSaving] = useTransition();
   // Not a form action: React resets a form's fields when its action
@@ -54,8 +57,8 @@ export function AnnouncementEditor({ initial }: { initial: EditorInitial }) {
   const errors = saveState?.errors ?? {};
   const [previewAt] = useState(() => new Date().toISOString());
   const preview = useMemo(
-    () => [{ id: "preview", kind, title: title.trim() || "A short title", body: body.trim() || "Two or three lines about what’s new.", linkPath: link.trim() || null, publishedAt: previewAt }],
-    [kind, title, body, link, previewAt],
+    () => [{ id: "preview", kind, title: title.trim() || "A short title", body: body.trim() || "Two or three lines about what’s new.", linkPath: link.trim() || null, linkLabel: label.trim() || null, publishedAt: previewAt }],
+    [kind, title, body, link, label, previewAt],
   );
   const err = (k: keyof typeof errors) => (errors[k] ? <span className="text-xs text-[#991b1b]">{errors[k]}</span> : null);
 
@@ -90,9 +93,14 @@ export function AnnouncementEditor({ initial }: { initial: EditorInitial }) {
         </label>
         <div className="flex flex-wrap gap-3">
           <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs text-muted-foreground">
-            “Take a look” goes to (optional, a page on this site)
+            The button goes to (optional, a page on this site)
             <input name="link" value={link} onChange={(e) => setLink(e.target.value)} placeholder="/today" className={field} />
             {err("link")}
+          </label>
+          <label className="flex min-w-[10rem] flex-col gap-1 text-xs text-muted-foreground">
+            Button words (optional, {label.length}/{LIMITS.announcementLinkLabelMax})
+            <input name="label" value={label} onChange={(e) => setLabel(e.target.value)} maxLength={LIMITS.announcementLinkLabelMax} placeholder="Take a look" className={field} />
+            {err("label")}
           </label>
           <label className="flex min-w-[10rem] flex-col gap-1 text-xs text-muted-foreground">
             Reports it answers (optional)

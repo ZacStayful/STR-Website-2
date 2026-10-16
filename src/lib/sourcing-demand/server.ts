@@ -355,9 +355,9 @@ export interface PoolRow {
   created_at: string;
 }
 
-/** Live deals (status live), paged past PostgREST's 1,000-row limit. Null when unreadable. */
+/** Live deals (status live), paged past PostgREST's 1,000-row limit. Null when unreadable. Batch 28: the short-let supply, as before (never a buy-to-let-only row). */
 export async function livePool(admin: Admin): Promise<PoolRow[] | null> {
-  return poolRows(admin, (q) => q.eq('status', 'live'));
+  return poolRows(admin, (q) => q.eq('status', 'live').eq('band', 'qualified'));
 }
 
 /** Every deal added to the pool since `sinceIso`, whatever its status now. Null when unreadable. */

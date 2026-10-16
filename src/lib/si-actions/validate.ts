@@ -43,6 +43,10 @@ export interface PlanDeal {
   opened: boolean;
   /** It has a full report the member can read. */
   analysed: boolean;
+  /** Batch 28: it passes the buy-to-let rules, so a buy-to-let report can run on it. */
+  btl?: boolean;
+  /** Batch 28: the member already has a buy-to-let report on it (charged once: never sold again). */
+  btlReported?: boolean;
 }
 
 export interface PlanContext {
@@ -62,6 +66,8 @@ export type ValidStep =
   /** addOn: the deal already has its full report, so the Deep report is the PMI second opinion added to it. */
   | { kind: 'deep_report'; dealId: string; label: string; opened: boolean; addOn: boolean }
   | { kind: 'deep_search' }
+  /** Batch 28: the £2 buy-to-let report on a buy-to-let deal. */
+  | { kind: 'btl_report'; dealId: string; label: string }
   | { kind: 'check_link'; url: string; source: string }
   | { kind: 'change_criteria'; question: CriteriaQuestion; value: string };
 
@@ -79,11 +85,12 @@ export interface CheckedPlan {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The names a member uses for each deal type (Batch 17's three available types). */
+/** The names a member uses for each deal type (Batch 17's three; Batch 28's Buy to let). */
 const TYPE_WORDS: Record<string, readonly string[]> = {
   buy_str: ['short-let', 'short let', 'shortlet', 'short-lets', 'short lets', 'holiday let', 'serviced accommodation'],
   brrr: ['brrr', 'brr'],
   r2r: ['rent-to-rent', 'rent to rent', 'r2r'],
+  btl: ['buy to let', 'buy-to-let', 'btl', 'long-term let', 'long term let', 'long-let', 'long let', 'long-term tenants'],
 };
 
 const REMOVE_WORDS = /\b(remove|drop|stop|exclude|no more|take (?:off|out)|get rid of|don't want|do not want|not interested in)\b/g;
@@ -222,6 +229,35 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
       seen.add(key);
       targets.add(deal.dealId);
       steps.push({ kind, dealId: deal.dealId, label: deal.label, stage, from: deal.stage });
+      continue;
+    }
+
+    if (kind === 'btl_report') {
+      const deal = dealTarget(step, ctx);
+      if (typeof deal === 'string') {
+        drop(step, deal);
+        continue;
+      }
+      const key = `btl:${deal.dealId}`;
+      if (seen.has(key)) {
+        drop(step, 'duplicate', deal.label);
+        continue;
+      }
+      if (deal.btlReported) {
+        drop(step, 'already_done', deal.label);
+        continue;
+      }
+      if (!deal.btl) {
+        drop(step, 'not_btl', deal.label);
+        continue;
+      }
+      if (!targets.has(deal.dealId) && targets.size >= ctx.maxTargets) {
+        drop(step, 'too_many', deal.label);
+        continue;
+      }
+      seen.add(key);
+      targets.add(deal.dealId);
+      steps.push({ kind, dealId: deal.dealId, label: deal.label });
       continue;
     }
 

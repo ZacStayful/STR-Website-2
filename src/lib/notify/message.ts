@@ -119,13 +119,13 @@ export interface TeaserExtras {
  * Built from public columns only. `figureFor` (Batch 10) gives the profit as
  * the member's range ("£450–£700/mo · area estimate"); without it, the old line.
  */
-export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null, extras: TeaserExtras = {}): Item {
+export function teaserItem(card: DealCard, todayUrl: string, now: Date = new Date(), figureFor?: (card: DealCard) => string | null, extras: TeaserExtras = {}, kindFor?: (card: DealCard) => string): Item {
   const figure = figureFor ? figureFor(card) : figureLine(card);
   const first = [priceLine(card), placeOf(card)].filter((x): x is string => Boolean(x)).join(' · ');
   const type = describeType(card);
   const why = motivationLine({ kind: card.kind, motivation: card.motivation, price_history: card.price_history, listed_date: card.listed_date }, now);
-  // Batch 17: "Project" for a Project deal.
-  const kindWord = kindWordFor(card);
+  // Batch 17: "Project" for a Project deal. Batch 28: "Buy to let" for a deal the member is shown as one.
+  const kindWord = kindFor ? kindFor(card) : kindWordFor(card);
   const title = figure ?? kindWord;
   const answers = extras.answers;
   return {
@@ -358,6 +358,12 @@ export interface DailyInput {
    * email with only these still goes. Absent: the email is as it was.
    */
   savedForYou?: SavedForYouItem[] | null;
+  /**
+   * Batch 28, Part I: the buy-to-let launch line (src/lib/btl/launch.ts
+   * btlLaunchSection), once, in whichever daily email the member gets next.
+   * It never makes an email on its own.
+   */
+  btlLaunch?: Section | null;
 }
 
 /** Batch 25: one "Saved for you" line: what it is, where, and what it could make (src/lib/standout/copy.ts), never an address. */
@@ -418,10 +424,14 @@ export interface ProfileDeals {
   pickDealId?: string | null;
   teasers: DealCard[];
   advice?: string | null;
+  /** Batch 28: "Not enough buy-to-let deals in Leeds today, so I looked up to 25 miles out" (btl/today.ts btlWidenLine). */
+  btlLine?: string | null;
   /** "Open Today" for this profile: /today, or through the switch route for another profile. */
   todayUrl?: string;
   /** Each teaser's profit at this profile's finance; defaults to the input's. */
   figureFor?: (card: DealCard) => string | null;
+  /** Batch 28: each teaser's kind word as this profile is shown it ("Buy to let" for a deal that is both, to a member who chose it first). */
+  kindFor?: (card: DealCard) => string;
 }
 
 /** "Your profile is 60% done: finish it for better deals and £5 credit." */
@@ -458,6 +468,8 @@ export interface BuiltMessage {
   droppedTeasers: string[];
   /** Batch 25: the "Saved for you" deals in the email: what to mark emailed once it has gone. */
   savedIds: string[];
+  /** Batch 28: the buy-to-let launch line is in it: what to mark once it has gone. */
+  btlLaunch: boolean;
 }
 
 /**
@@ -503,8 +515,10 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     if (kept.length > 0) {
       const blocks: Block[] = [];
       if (part.advice) blocks.push({ type: 'text', text: part.advice, tone: 'callout' });
+      // Batch 28: the day had to look further for its buy-to-let deals, and says so.
+      if (part.btlLine && kept.some((c) => c.btl_pass === true)) blocks.push({ type: 'text', text: part.btlLine });
       const extras: TeaserExtras = { answers: input.answerToken ? { siteUrl: base, token: input.answerToken } : null, actFast: input.actFast };
-      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor, extras)) });
+      blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor, extras, part.kindFor)) });
       blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !part.pick }] });
       sections.push({ key: 'teasers', title: part.pick ? `The other ${plural(kept.length, 'deal')} on your Today` : `${plural(kept.length, 'deal')} on your Today`, blocks });
     }
@@ -527,12 +541,14 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     const nudges = nudgesSection(briefing.nudges);
     if (nudges) sections.push(nudges);
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    if (input.btlLaunch) sections.push(input.btlLaunch);
     sections.push(...credit);
     if (input.lowCredit) sections.push(input.lowCredit);
   } else {
     sections.push(...credit);
     if (changes) sections.push(changes);
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    if (input.btlLaunch) sections.push(input.btlLaunch);
   }
 
   const phrase = changesPhrase(used);
@@ -568,6 +584,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     refusedIds: input.changes.filter((c) => !used.includes(c)).flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     droppedTeasers: dropped,
     savedIds: saved.map((x) => x.dealId),
+    btlLaunch: Boolean(input.btlLaunch),
   };
 }
 

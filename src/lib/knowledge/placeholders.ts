@@ -100,6 +100,15 @@ const pence = (g: GlobalSnapshot, key: string): number | null => {
   const n = num(raw(g, key));
   return n !== null && n > 0 ? n : null;
 };
+/** A number inside a stored object ("btl_finance".ltvPct); null when the row or the field is missing or not a number. */
+const field = (g: GlobalSnapshot, key: string, name: string): number | null => {
+  const v = raw(g, key);
+  return v && typeof v === 'object' && !Array.isArray(v) ? num((v as Record<string, unknown>)[name]) : null;
+};
+/** Whole pounds with separators: 10000 → "£10,000". */
+const pounds = (n: number): string => `£${Math.round(n).toLocaleString('en-GB')}`;
+/** 75 → "75", 5.5 → "5.5". */
+const pctText = (n: number): string => (Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10));
 /** A whole number at least `min`. */
 const whole = (g: GlobalSnapshot, key: string, min: number): number | null => {
   const n = num(raw(g, key));
@@ -332,6 +341,49 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   si_action_stop_seconds: g_('Seconds to tap Stop before the first paid step starts', 'billing_settings.si_action_stop_grace_seconds', (g) => {
     const n = whole(g, 'si_action_stop_grace_seconds', 1);
     return n === null ? null : String(n);
+  }),
+  // Batch 28: buy-to-let deals (src/lib/btl/config.ts; each read strictly from its billing_settings row)
+  btl_report_cost: g_("The buy-to-let report's price", 'billing_settings.btl_report_pence', (g) => money(pence(g, 'btl_report_pence'))),
+  btl_ltv: g_('The buy-to-let mortgage, as a share of the price, e.g. 75%', 'billing_settings.btl_finance.ltvPct', (g) => {
+    const n = field(g, 'btl_finance', 'ltvPct');
+    return n === null || n <= 0 || n >= 100 ? null : `${pctText(n)}%`;
+  }),
+  btl_rent_test: g_("The lender's rent test, in words", 'billing_settings.btl_finance (icrPct, stressAddPct, stressFloorPct)', (g) => {
+    const icr = field(g, 'btl_finance', 'icrPct');
+    const add = field(g, 'btl_finance', 'stressAddPct');
+    const floor = field(g, 'btl_finance', 'stressFloorPct');
+    if (icr === null || add === null || floor === null || icr <= 0 || add < 0 || floor <= 0) return null;
+    return `at least ${pctText(icr)}% of the monthly mortgage interest worked out at the higher of the live rate plus ${pctText(add)}% or ${pctText(floor)}%`;
+  }),
+  btl_running_costs: g_('The running costs in every buy-to-let figure, listed', 'billing_settings.btl_costs', (g) => {
+    const agent = field(g, 'btl_costs', 'agentPct');
+    const repairs = field(g, 'btl_costs', 'repairsPct');
+    const empty = field(g, 'btl_costs', 'emptyMonths');
+    const insurance = field(g, 'btl_costs', 'insurancePcm');
+    const safety = field(g, 'btl_costs', 'safetyPerYear');
+    if (agent === null || repairs === null || empty === null || insurance === null || safety === null || agent < 0 || repairs < 0 || empty < 0 || insurance < 0 || safety < 0) return null;
+    return `a letting agent at ${pctText(agent)}% of the rent (VAT included), repairs at ${pctText(repairs)}%, ${countWords(empty)} empty month${empty === 1 ? '' : 's'} a year, insurance at ${formatPence(insurance * 100)} a month and ${pounds(safety)} a year of safety certificates`;
+  }),
+  btl_epc_allowance: g_('The energy-upgrade allowance on the top of the cash in, in words', 'billing_settings.btl_epc', (g) => {
+    const d = field(g, 'btl_epc', 'allowanceD');
+    const eg = field(g, 'btl_epc', 'allowanceEtoG');
+    const unknown = field(g, 'btl_epc', 'unknownAllowance');
+    if (d === null || eg === null || unknown === null || d < 0 || eg < 0 || unknown < 0) return null;
+    return `${pounds(d)} for an EPC of D, ${pounds(eg)} for E to G, and ${pounds(unknown)} while the EPC isn't checked`;
+  }),
+  btl_cash_bands: g_('The "How much cash can you put in?" bands, listed', 'billing_settings.btl_bands', (g) => {
+    const v = raw(g, 'btl_bands');
+    if (!Array.isArray(v) || v.length === 0) return null;
+    const tops = v.map(num);
+    if (tops.some((t, i) => t === null || t <= 0 || (i > 0 && t <= (tops[i - 1] as number)))) return null;
+    const k = (n: number) => `£${Math.round(n / 1000)}k`;
+    const ts = tops as number[];
+    const bands = [`under ${k(ts[0])}`, ...ts.slice(1).map((t, i) => `${k(ts[i])}–${k(t)}`), `${k(ts[ts.length - 1])} or more`];
+    return `${bands.slice(0, -1).join(', ')} or ${bands[bands.length - 1]}`;
+  }),
+  btl_standout_margin: g_('How far above the typical deal a buy-to-let standout must be, e.g. 125%', 'billing_settings.btl_standout.lowOverMedianPct', (g) => {
+    const n = field(g, 'btl_standout', 'lowOverMedianPct');
+    return n === null || n <= 100 ? null : `${pctText(n)}%`;
   }),
   // Batch 25: standout deals, deal calls and the slower-spender nudge
   standout_calls_per_month: g_('Deal calls a member may get in a calendar month, in words', 'billing_settings.standout_calls_per_month', (g) => {

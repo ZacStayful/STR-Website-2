@@ -4,9 +4,10 @@ import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { parseMarketGoals, type Priority } from '@/lib/market/goals';
-import { profileSummaryFor } from '@/lib/profile/server';
+import { answerQuestion, profileSummaryFor } from '@/lib/profile/server';
+import { isAvailableDealType, typesShown } from '@/lib/profile/deal-types';
 import { logActivity } from '@/lib/activity/log';
-import { GOALS_EDITOR_HREF } from '@/lib/nav';
+import { GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF } from '@/lib/nav';
 import { isSwitchable } from '@/lib/tailoring/profile';
 import { rechooseForMember, saveFilterMode } from '@/lib/tailoring/server';
 import { isAdminEmail } from '@/lib/admin';
@@ -113,4 +114,32 @@ export async function startAgainAction(formData: FormData): Promise<void> {
   if (!out.ok) redirect(`/profile/start-again?error=${encodeURIComponent(out.error)}`);
   revalidatePath('/', 'layout');
   redirect(quizPathFor(GOALS_EDITOR_HREF));
+}
+
+/**
+ * Batch 28, Part I: "Add Buy to let" from the launch announcement
+ * (/profile?add=btl). The member confirms on their profile page; the type is
+ * added to the profile's chosen ones (never replacing them) through the
+ * quiz's own answer, so it is logged as profile_edited and Today is chosen
+ * again; then the quiz asks what Buy to let needs ("What are you after?",
+ * "How much cash can you put in?").
+ */
+export async function addDealTypeAction(formData: FormData): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/login?redirect=/profile');
+  const type = String(formData.get('type') ?? '');
+  if (!isAvailableDealType(type)) redirect(GOALS_EDITOR_HREF);
+  const s = await profileSummaryFor(user.id);
+  if (!s) redirect(GOALS_EDITOR_HREF);
+  // What the profile is shown now (an unanswered one sees the defaults): kept, with the new type added.
+  const current = typesShown({ goals: s.answers.goals, about: s.answers.about });
+  if (!current.includes(type)) {
+    const r = await answerQuestion({ userId: user.id, email: user.email ?? null, supabase, questionId: 'deal_types', value: [...current, type], notSure: false, editing: true });
+    if (!r.ok) redirect(`${GOALS_EDITOR_HREF}?add=${encodeURIComponent(type)}&error=1`);
+  }
+  revalidatePath(GOALS_EDITOR_HREF);
+  redirect(`${PROFILE_QUIZ_HREF}?next=${encodeURIComponent(GOALS_EDITOR_HREF)}`);
 }

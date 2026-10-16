@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isoFromCompactDate, isoFromUkDate, parseListingUpdate } from './shared.ts';
+import { annualChargeFrom, isoFromCompactDate, isoFromUkDate, parseListingUpdate } from './shared.ts';
 
 test('compact portal dates become ISO', () => {
   assert.equal(isoFromCompactDate('20260811'), '2026-08-11');
@@ -52,4 +52,15 @@ test('wording we do not recognise is not an event', () => {
   for (const v of [null, undefined, '', 'Featured property', 'New home']) {
     assert.equal(parseListingUpdate(v), null, JSON.stringify(v));
   }
+});
+
+test('a flat\'s yearly charge from the portal\'s line (Batch 28)', () => {
+  assert.equal(annualChargeFrom('£2,028 per annum'), 2028);
+  assert.equal(annualChargeFrom('£250 per annum  |  review period: unconfirmed'), 250);
+  assert.equal(annualChargeFrom('£95 per month'), 1140);
+  assert.equal(annualChargeFrom('£1,200 pa'), 1200);
+  assert.equal(annualChargeFrom('£150.50 per year'), 151);
+  assert.equal(annualChargeFrom('Ask agent'), null);
+  assert.equal(annualChargeFrom(''), null);
+  assert.equal(annualChargeFrom(null), null);
 });

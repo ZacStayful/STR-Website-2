@@ -29,6 +29,9 @@ export const ACTION_LABELS: Record<string, string> = {
   team_seat: 'Team seat',
   full_analysis: 'Full analysis',
   pmi_addon: 'Second opinion from PMI',
+  // Batch 28: the £2 buy-to-let report (and the house's own shortlist checks, which members never pay for).
+  btl_report: 'Buy-to-let report',
+  btl_shortlist: 'Buy-to-let shortlist checks',
   todays_5: 'Daily deals',
   briefing: 'Daily briefing',
   // Batch 23 / Batch 22: these had no label, so members saw the raw action.

@@ -5,6 +5,9 @@ import { plainProfile, type TailoringProfile } from '../tailoring/profile.ts';
 import { DEFAULT_GOALS, type MarketGoals } from '../market/goals.ts';
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
 import type { PoolRow } from '../today/candidates.ts';
+import { btlDeal } from '../btl/deal.ts';
+import { rentRangeFor } from '../btl/rent.ts';
+import { buildBtlCard } from '../btl/card.ts';
 
 const NOW = new Date('2026-09-28T09:00:00Z');
 const WIDTHS = { high: 10, medium: 15, low: 25 };
@@ -45,7 +48,8 @@ test('variants: the next budget band, +10 miles, bedrooms ±1, the other propert
 test('keys are validated', () => {
   assert.equal(isWhatIfKey('budget'), true);
   assert.equal(isWhatIfKey('add_brrr'), true);
-  assert.equal(isWhatIfKey('add_btl'), false);
+  assert.equal(isWhatIfKey('add_btl'), true, 'Batch 28: Buy to let can be the type suggested');
+  assert.equal(isWhatIfKey('add_hmo'), false);
   assert.equal(isWhatIfKey('drop table'), false);
 });
 
@@ -97,4 +101,21 @@ test('R2-67: "Change my budget" opens the project budget for a BRRR what-if and 
   assert.equal(changeQuestionFor('budget'), 'budget');
   assert.equal(changeQuestionFor('rent_10'), null);
   assert.equal(changeQuestionFor('areas'), null);
+});
+
+test('Batch 28: "add Buy to let" counts the buy-to-let deals it would show, judged on their own card, never a short-let figure', async () => {
+  const rent = rentRangeFor({ bedrooms: 3, kind: 'house', postcodeArea: 'NG', lat: 52.95, lng: -1.15, districtRentPcm: 1_000, districtYieldPct: 7 }, [])!;
+  const deal = btlDeal(120_000, rent, { ratePct: 5.13, country: 'england', buyingCosts: 2_500, flat: null, epc: null })!;
+  const card = buildBtlCard({ computedAt: AT, bedrooms: 3, kind: 'house', country: 'england', outcode: 'NG7', region: 'east_midlands', rent, deal, growth: null, rateDate: null, band: '25k_50k', serviceChargeConfirmed: null, epc: null, shortLease: false });
+  const rows = [row('sl'), row('btl', { band: 'unqualified', btl_pass: true, btl: card, annual_profit: 99_000 })];
+  const reads: Pick<ChooseReads, 'pool'> = { pool: async (f, limit) => rows.filter((r) => f.kind === 'both' || r.kind === f.kind).slice(0, limit) };
+  const p = profile({ budget: '200-350', dealTypes: ['buy_str', 'brrr', 'r2r'] });
+  const input: ChooseInput = { goals: p.goals, savedAreas: p.savedAreas, feedback: [], exclude: new Set(), cards: null, now: NOW, tailoring: p };
+  const add = whatIfChanges(p, { nearbyAreas: [] }).filter((v) => v.key === 'add_btl');
+  assert.equal(add.length, 1, 'the type an "All" profile from before can add');
+  const [r] = await whatIfResults(input, p, reads, add);
+  assert.equal(r.count, 1);
+  assert.equal(r.best?.dealId, 'btl');
+  assert.equal(r.best?.matchPct, null);
+  assert.match(r.best!.profitLine!, /^£[\d,]+–£[\d,]+\/month as a buy to let$/, 'its cashflow, not its £99,000 short-let figure');
 });

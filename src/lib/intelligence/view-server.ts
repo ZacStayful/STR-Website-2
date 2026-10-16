@@ -10,6 +10,7 @@ import 'server-only';
  *   - "I checked N live deals" (the day's stored choice)
  *   - the facts the question chips are answered from
  */
+import { btlLookerFor } from '../btl/view';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { isAdminEmail } from '../admin';
 import { payerFor } from '../team';
@@ -130,7 +131,7 @@ export async function loadIntelligence(input: { user: User; supabase: SupabaseCl
   const cards = today.cards.filter((c) => keep.has(c.id));
 
   const [baseViews, opened, snapshot, storedChoice, contact, floors, offerS] = await Promise.all([
-    cardViewsFor({ supabase: input.supabase as never, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
+    cardViewsFor({ supabase: input.supabase as never, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, member.savedAreas, tailoring?.about ?? null) }),
     openedDealIds(payer.payerId, cards.map((c) => c.id)),
     getAreaCardsWithin(AREA_WAIT_MS),
     today.selection?.choice ?? (profile ? checkedCountFor(profile.id, now) : Promise.resolve(null)),

@@ -24,7 +24,7 @@ export default async function AdminAnnouncementPage({ params, searchParams }: { 
   if (!isAdminEmail(user.email)) notFound();
   const { saved } = await searchParams;
 
-  let initial: EditorInitial = { id: null, kind: "feature", title: "", body: "", link: "", refs: "", state: "draft" };
+  let initial: EditorInitial = { id: null, kind: "feature", title: "", body: "", link: "", label: "", refs: "", state: "draft" };
   let stats: { shown: number; dismissed: number; clicked: number } | null = null;
   if (id !== "new") {
     if (!UUID.test(id)) notFound();
@@ -47,6 +47,7 @@ export default async function AdminAnnouncementPage({ params, searchParams }: { 
       title: row.title,
       body: row.body,
       link: row.linkPath ?? "",
+      label: row.linkLabel ?? "",
       refs: row.reportRefs.map((r) => `#${r}`).join(", "),
       state: announcementState(row, new Date(), settings.announcementMaxAgeDays),
     };

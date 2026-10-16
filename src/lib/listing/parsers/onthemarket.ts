@@ -1,6 +1,6 @@
 import type { ListingSnapshot } from '../types.ts';
 import { scriptJsonById, metaContent, titleOf, parsePrice, findPostcode, findOutcode } from '../html.ts';
-import { toNum, toStr, statusFromText, baseSnapshot, addProjectFacts, floorAreaSqftFrom, leaseYearsFrom, SNAPSHOT_PHOTO_LIMIT, type ParseContext } from './shared.ts';
+import { toNum, toStr, statusFromText, baseSnapshot, addProjectFacts, floorAreaSqftFrom, leaseYearsFrom, annualChargeFrom, SNAPSHOT_PHOTO_LIMIT, type ParseContext } from './shared.ts';
 import { shortLetsAllowed, stripHtml } from '../suitability.ts';
 import { AUCTION_WORDING } from '../../deal-quality/auction.ts';
 
@@ -95,6 +95,15 @@ export function parseOnTheMarket(html: string, ctx: ParseContext): ListingSnapsh
       if (years !== null) snap.yearsRemainingOnLease = years;
     }
     if (t.startsWith('council tax')) snap.councilTaxBand = v.replace(/^band\s*/i, '').trim();
+    // Batch 28: a flat's charges, as the agent states them.
+    if (t.startsWith('service charge')) {
+      const n = annualChargeFrom(v);
+      if (n !== null) snap.serviceChargeAnnual = n;
+    }
+    if (t.startsWith('ground rent')) {
+      const n = annualChargeFrom(v);
+      if (n !== null) snap.groundRentAnnual = n;
+    }
   }
   if (!snap.councilTaxBand) {
     const f = snap.features.find((x) => /council tax band/i.test(x));

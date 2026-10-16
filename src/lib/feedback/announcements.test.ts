@@ -18,7 +18,7 @@ const row = (id: string, publishedDaysAgo: number | null, extra: Partial<Announc
 
 test('a draft is checked field by field', () => {
   const ok = cleanAnnouncement({ kind: 'fix', title: '  Faster Today page\n', body: 'Today now loads in half the time.\r\n\r\n\r\nThanks for telling us.', link: '/today', refs: '#12, 15 #12' });
-  assert.deepEqual(ok, { ok: true, draft: { kind: 'fix', title: 'Faster Today page', body: 'Today now loads in half the time.\n\nThanks for telling us.', linkPath: '/today', reportRefs: [12, 15] } });
+  assert.deepEqual(ok, { ok: true, draft: { kind: 'fix', title: 'Faster Today page', body: 'Today now loads in half the time.\n\nThanks for telling us.', linkPath: '/today', linkLabel: null, reportRefs: [12, 15] } });
   const noLink = cleanAnnouncement({ kind: 'feature', title: 'X', body: 'Y', link: '   ', refs: '' });
   assert.equal(noLink.ok && noLink.draft.linkPath, null);
 });
@@ -32,6 +32,18 @@ test('a bad draft says what is wrong with each field', () => {
     assert.equal(r.ok, false, link);
   }
   const long = cleanAnnouncement({ kind: 'fix', title: 'x'.repeat(LIMITS.announcementTitleMax + 1), body: 'B', link: '', refs: '' });
+  assert.equal(long.ok, false);
+});
+
+test('Batch 28: the button can say its own words, with a link, in 24 characters', () => {
+  const labelled = cleanAnnouncement({ kind: 'feature', title: 'New: buy-to-let deals', body: 'B', link: '/profile?add=btl', label: '  Add Buy to let ', refs: '' });
+  assert.equal(labelled.ok && labelled.draft.linkLabel, 'Add Buy to let');
+  const blank = cleanAnnouncement({ kind: 'feature', title: 'T', body: 'B', link: '/today', label: '   ', refs: '' });
+  assert.equal(blank.ok && blank.draft.linkLabel, null, 'blank keeps "Take a look"');
+  const noLink = cleanAnnouncement({ kind: 'feature', title: 'T', body: 'B', link: '', label: 'Add Buy to let', refs: '' });
+  assert.equal(noLink.ok, false);
+  if (!noLink.ok) assert.deepEqual(Object.keys(noLink.errors), ['label']);
+  const long = cleanAnnouncement({ kind: 'feature', title: 'T', body: 'B', link: '/today', label: 'x'.repeat(LIMITS.announcementLinkLabelMax + 1), refs: '' });
   assert.equal(long.ok, false);
 });
 

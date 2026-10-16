@@ -13,7 +13,9 @@ import { parseMarketGoals } from "@/lib/market/goals";
 import { rangeCaption, rangeFromScreening } from "@/lib/marketplace/profit-range";
 import { checkOf } from "@/lib/deal-quality/checks";
 import { parseScreening } from "@/lib/listing/screen";
-import { projectCardsFor } from "@/lib/marketplace/queries";
+import { btlCardsFor, projectCardsFor } from "@/lib/marketplace/queries";
+import { dealTypeOf } from "@/lib/profile/deal-types";
+import { formatRange } from "@/lib/marketplace/profit-range";
 import { kindWordFor, projectNumbersFor, projectRangeLine } from "@/lib/project/display";
 
 export const metadata: Metadata = { title: "Opened deals — Stayful Intelligence", robots: { index: false, follow: false } };
@@ -57,7 +59,9 @@ export default async function OpenedDealsPage() {
     for (const t of (data ?? []) as { id: number; amount_pence: number | string }[]) paid.set(Number(t.id), Math.abs(Number(t.amount_pence) || 0));
   }
   // Batch 17: an opened Project deal shows its own numbers.
-  const projects = await projectCardsFor(rows.map((r) => r.deal?.id).filter((id): id is string => typeof id === "string"));
+  const dealIds = rows.map((r) => r.deal?.id).filter((id): id is string => typeof id === "string");
+  // Batch 28: a buy-to-let deal shows its own cashflow, never a short-let range.
+  const [projects, btlCards] = await Promise.all([projectCardsFor(dealIds), btlCardsFor(dealIds)]);
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
@@ -73,8 +77,11 @@ export default async function OpenedDealsPage() {
           <ul className="mt-6 space-y-2">
             {rows.map(({ open, deal }) => {
               const area = deal?.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
-              const range = deal ? rangeFromScreening(deal, finance, settings.dealPricing.profitRangePct) : null;
               const project = deal ? projects.get(deal.id) ?? null : null;
+              const btl = deal ? btlCards.get(deal.id) ?? null : null;
+              const btlOnly = deal !== null && deal !== undefined && dealTypeOf({ kind: deal.kind, band: deal.band, project, btl_pass: btl !== null }) === "btl";
+              const range = deal && !btlOnly ? rangeFromScreening(deal, finance, settings.dealPricing.profitRangePct) : null;
+              const btlLine = btlOnly ? (btl ? `${formatRange(btl.cashflowMonthly.low, btl.cashflowMonthly.high)} as a buy to let, before tax` : "Buy-to-let figures being updated") : null;
               const sc = project && deal ? parseScreening(deal.screening) : null;
               const projectLine = project && deal ? projectRangeLine(projectNumbersFor({ screening_gross: sc?.grossRevenue?.value ?? null, screening_confidence: sc?.confidence ?? null, check_comps: checkOf(deal.screening)?.compCount ?? null }, project, finance, settings.dealPricing.profitRangePct)) : null;
               // What the open itself cost. The daily pick under daily deals is linked to that day's charge but cost nothing itself: "included".
@@ -88,7 +95,7 @@ export default async function OpenedDealsPage() {
                         {deal ? [deal.town, area?.name && area.name !== deal.town ? area.name : null, deal.outcode].filter(Boolean).join(" · ") : "Deal"}
                       </Link>
                       <p className="text-xs text-muted-foreground">
-                        {[deal ? kindWordFor({ kind: deal.kind, project }) : null, deal?.bedrooms ? `${deal.bedrooms} bed` : null, deal ? priceLine(deal) : null, projectLine ?? (range ? `${range.label} ${rangeCaption(deal ? checkOf(deal.screening)?.compCount : null)}` : null)].filter(Boolean).join(" · ")}
+                        {[deal ? kindWordFor({ kind: deal.kind, project, band: deal.band, btl_pass: btl !== null }) : null, deal?.bedrooms ? `${deal.bedrooms} bed` : null, deal ? priceLine(deal) : null, btlLine ?? projectLine ?? (range ? `${range.label} ${rangeCaption(deal ? checkOf(deal.screening)?.compCount : null)}` : null)].filter(Boolean).join(" · ")}
                       </p>
                     </div>
                     <div className="text-right text-xs">

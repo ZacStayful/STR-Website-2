@@ -77,7 +77,9 @@ test('the mandatory questions are one money question per chosen type (Q27)', () 
   assert.equal(p.mandatoryDone, false);
   assert.equal(p.next, 'budget');
   const all = answer(two, 'deal_types', ['all']);
-  assert.deepEqual(progress(all, quiz(marks)).mandatory, ['roles', 'deal_types', 'where', 'budget', 'brrr_budget', 'max_rent'], 'All: three budgets, each asked once');
+  assert.deepEqual(progress(all, quiz(marks)).mandatory, ['roles', 'deal_types', 'where', 'budget', 'brrr_budget', 'max_rent', 'btl_priority', 'btl_cash'], 'All: every money question, each asked once, and Buy to let’s priority');
+  const before = answer(two, 'deal_types', ['buy_str', 'brrr', 'r2r']);
+  assert.deepEqual(progress(before, quiz(marks)).mandatory, ['roles', 'deal_types', 'where', 'budget', 'brrr_budget', 'max_rent'], 'an "All" profile from before Buy to let: as it was');
   const exploring = answer(fresh(), 'roles', ['exploring']);
   assert.deepEqual(progress(exploring, EMPTY_QUIZ).mandatory, ['roles', 'deal_types', 'where'], 'no follow-up role question any more');
 });

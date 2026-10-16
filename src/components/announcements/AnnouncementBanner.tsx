@@ -10,7 +10,8 @@ import { announcementKindLabel, type LiveAnnouncement } from "@/lib/feedback/ann
  * What's new (Batch 18): the announcements a member has not yet dismissed or
  * opened, as one banner at the top of the members' pages, newest first
  * (after the third, the rest fold under "N more"). It stays, page after
- * page, until they tap Dismiss or "Take a look"; then it never returns.
+ * page, until they tap Dismiss or "Take a look" (or the button's own words,
+ * Batch 28); then it never returns.
  *
  * The banner reports back only once it is really on screen (never from a
  * prefetch). What was dismissed or opened is also remembered in this tab, so
@@ -110,7 +111,7 @@ export function AnnouncementBanner({ items, preview = false }: { items: LiveAnno
                   }}
                   className="mt-2 inline-flex h-8 items-center rounded-lg bg-[#2e3d2b] px-3 text-xs font-semibold text-white hover:opacity-90"
                 >
-                  Take a look
+                  {a.linkLabel ?? "Take a look"}
                 </Link>
               )}
             </div>

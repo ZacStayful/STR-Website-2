@@ -14,14 +14,16 @@ import 'server-only';
  * without teasers rather than a list that might differ from the page.
  */
 import type { createAdminClient } from '../supabase/admin';
-import { todaySelection, type MemberContext } from '../today/selection';
+import { todaySelection, typesFor, type MemberContext } from '../today/selection';
 import { displayOrder, todayKey, TODAY_SIZE } from '../today/day';
 import { CARD_COLUMNS, type DealCard } from '../marketplace/grid';
-import { projectCardsFor } from '../marketplace/queries';
+import { withProjectCards } from '../marketplace/queries';
 import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { payersFor, type Payer } from '../team';
 import { seatKey } from '../profiles/rules';
-import { dealTypeOf, type DealType } from '../profile/deal-types';
+import { dealFitsTypes, dealTypeFor, type DealType } from '../profile/deal-types';
+import { parseStoredChoice } from '../today/choice';
+import type { BtlWiden } from '../btl/today';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -35,6 +37,10 @@ export interface TodayPlan {
   answered: Set<string>;
   /** Live cards for the stored deals, by id (visibility is applied per member at draw time). */
   cards: Map<string, DealCard>;
+  /** Batch 28: the types this profile is shown, so a deal that is two types is the one it chose (dealTypeFor). */
+  types?: DealType[];
+  /** Batch 28: how far the day looked for its buy-to-let deals (the stored choice), for the email's line. */
+  btlWiden?: BtlWiden | null;
 }
 
 /** payersFor, a chunk at a time: one `.in()` over every member would outgrow the request at scale. */
@@ -112,11 +118,18 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
     if (error) console.warn('[notify] today cards read failed:', error.message);
     for (const { photo, ...card } of (data ?? []) as unknown as (DealCard & { photo: string | null })[]) cards.set(card.id, { ...card, has_photo: Boolean(photo) });
   }
-  // Batch 17: a Project teaser shows its own numbers and label.
-  const projects = await projectCardsFor([...cards.values()].filter((c) => c.kind === 'sale').map((c) => c.id));
-  for (const [id, project] of projects) {
-    const card = cards.get(id);
-    if (card) cards.set(id, { ...card, project });
+  // Batch 17: a Project teaser shows its own numbers and label; Batch 28: a buy-to-let one its own.
+  for (const card of await withProjectCards([...cards.values()])) cards.set(card.id, card);
+  // Batch 28: the day's "I looked further" line, for the profiles that chose Buy to let (the stored choice, Batch 22's column).
+  const btlWiden = new Map<string, BtlWiden>();
+  const btlSeats = members.filter((m) => m.profileId && typesFor(m).includes('btl') && (lists.get(planKey(m))?.stored.length ?? 0) > 0);
+  for (let i = 0; i < btlSeats.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('profile_today_lists').select('user_id, profile_id, choice').eq('day', todayKey(now)).in('profile_id', btlSeats.slice(i, i + ID_CHUNK).map((m) => m.profileId!));
+    if (error) console.warn('[notify] buy-to-let widen line unreadable:', error.message);
+    for (const r of (data ?? []) as { user_id: string; profile_id: string; choice: unknown }[]) {
+      const w = parseStoredChoice(r.choice)?.btlWiden ?? null;
+      if (w) btlWiden.set(planKey({ userId: r.user_id, profileId: r.profile_id }), w);
+    }
   }
   const answered = new Map<string, Set<string>>();
   const withLists = [...new Set(members.filter((m) => (lists.get(planKey(m))?.stored.length ?? 0) > 0).map((m) => m.userId))];
@@ -138,7 +151,7 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
       const c = cards.get(id);
       if (c) mine.set(id, c);
     }
-    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine });
+    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine, types: typesFor(m), btlWiden: btlWiden.get(planKey(m)) ?? null });
   }
   return out;
 }
@@ -154,8 +167,9 @@ export function teasersFrom(plan: TodayPlan, pickDealId: string | null, visibili
   const typeOf = (id: string): DealType | null => {
     if (id === pickDealId) return pickType;
     const card = plan.cards.get(id);
-    return card ? dealTypeOf(card) : null;
+    return card ? dealTypeFor(card, plan.types ?? []) : null;
   };
   const order = displayOrder(plan.stored, pickDealId, plan.answered, TODAY_SIZE, pickDealId ? typeOf : undefined).filter((id) => id !== pickDealId);
-  return order.map((id) => plan.cards.get(id)).filter((c): c is DealCard => c !== undefined && dealVisible(c.live_since ?? null, visibility.cutoffIso));
+  // Batch 28: only deals still a type this profile shows (one kept only as buy to let since it was chosen leaves, as on /today).
+  return order.map((id) => plan.cards.get(id)).filter((c): c is DealCard => c !== undefined && dealVisible(c.live_since ?? null, visibility.cutoffIso) && (!plan.types?.length || dealFitsTypes(c, plan.types)));
 }

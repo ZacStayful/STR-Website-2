@@ -33,7 +33,7 @@ import { actionsOn, claimStep, instructionFor, liveInstructionFor, logActionLine
 import { applyWhatIf } from '../intelligence/what-if-apply-server';
 import { questionById } from '../profile/questions';
 import { activeProfileFor } from '../profiles/server';
-import { applyCriteria, criteriaNow, checkLink, handOutPmi, keepCheckedListing, runStageStep, startAnalysis, startSearch, type ActingMember, type ChargedStart, type HandOut } from './steps-server';
+import { applyCriteria, criteriaNow, checkLink, handOutPmi, keepCheckedListing, runStageStep, startAnalysis, startBtlReport, startSearch, type ActingMember, type ChargedStart, type HandOut } from './steps-server';
 import { fileAutoBug, unexpectedFailure } from './report-server';
 import { leftBehind } from './live';
 import type { PipelineStatus } from '../listing/pipeline';
@@ -341,6 +341,7 @@ export async function nextStep(m: ActingMember, supabase: SupabaseClient, id: un
     else if (step.action === 'deep_report') r = typeof step.params.reportId === 'string' ? handOutPmi(step.id, step.params.reportId, step.quote_base_pence) : { ok: false, code: 'missing' };
     else if (step.action === 'deep_search') r = await startSearch(m, Number(step.params.upToBasePence ?? step.quote_base_pence));
     else if (step.action === 'check_link') r = await checkLink(m, supabase, i.id, String(step.params.url ?? ''));
+    else if (step.action === 'btl_report') r = await startBtlReport(m, { dealId: String(step.deal_id), quotedBasePence: step.quote_base_pence });
     else r = { ok: false, code: 'failed' };
   } catch (err) {
     console.error('[si-actions] charged step threw:', (err as Error)?.message ?? err);

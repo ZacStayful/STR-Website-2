@@ -78,6 +78,8 @@ export const LIMITS = {
   announcementTitleMax: 80,
   /** An announcement's text: two or three lines. */
   announcementBodyMax: 300,
+  /** Batch 28: the button's own words in place of "Take a look" ("Add Buy to let"). */
+  announcementLinkLabelMax: 24,
   /** The one line sent with a status email. */
   statusMessageMax: 200,
   adminNoteMax: 5000,

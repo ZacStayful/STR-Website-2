@@ -14,11 +14,27 @@ import { feedbackSettings } from './settings-server';
  * always comes from the session.
  */
 
-type RawRow = { id: string; kind: string; title: string; body: string; link_path: string | null; report_ids?: string[] | null; published_at: string | null; unpublished_at: string | null; created_at?: string; updated_at?: string };
+type RawRow = { id: string; kind: string; title: string; body: string; link_path: string | null; link_label?: string | null; report_ids?: string[] | null; published_at: string | null; unpublished_at: string | null; created_at?: string; updated_at?: string };
 
 function toRow(r: RawRow): AnnouncementRow | null {
   if (!isAnnouncementKind(r.kind)) return null;
-  return { id: r.id, kind: r.kind, title: r.title, body: r.body, linkPath: r.link_path, publishedAt: r.published_at, unpublishedAt: r.unpublished_at };
+  return { id: r.id, kind: r.kind, title: r.title, body: r.body, linkPath: r.link_path, linkLabel: r.link_label ?? null, publishedAt: r.published_at, unpublishedAt: r.unpublished_at };
+}
+
+/**
+ * Batch 28's announcements.link_label (the button's own words). Until the
+ * schema section is run a read naming it fails: the first such failure is
+ * remembered and every read after goes without (every button "Take a look").
+ */
+let labelMissing = false;
+const withLabel = (columns: string) => (labelMissing ? columns : `${columns}, link_label`);
+async function labelTolerant<R extends { error: { message: string } | null }>(run: (cols: (c: string) => string) => PromiseLike<R>): Promise<R> {
+  const res = await run(withLabel);
+  if (res.error && !labelMissing && /link_label/.test(res.error.message)) {
+    labelMissing = true;
+    return run(withLabel);
+  }
+  return res;
 }
 
 // The live list is the same for every member, so each server keeps it for a
@@ -38,20 +54,22 @@ function warn(message: string) {
 async function liveRows(now: Date, maxAgeDays: number): Promise<AnnouncementRow[]> {
   if (live && Date.now() - live.at < CACHE_MS) return live.rows;
   const since = new Date(now.getTime() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await createAdminClient()
-    .from('announcements')
-    .select('id, kind, title, body, link_path, published_at, unpublished_at')
-    .not('published_at', 'is', null)
-    .is('unpublished_at', null)
-    .gte('published_at', since)
-    .order('published_at', { ascending: false })
-    .limit(50);
+  const { data, error } = await labelTolerant((cols) =>
+    createAdminClient()
+      .from('announcements')
+      .select(cols('id, kind, title, body, link_path, published_at, unpublished_at'))
+      .not('published_at', 'is', null)
+      .is('unpublished_at', null)
+      .gte('published_at', since)
+      .order('published_at', { ascending: false })
+      .limit(50),
+  );
   if (error) {
     warn(isSchemaMissing(error) ? 'not shown: run the Batch 18 section of supabase/schema.sql' : `could not read: ${error.message}`);
     live = { at: Date.now(), rows: [] };
     return [];
   }
-  const rows = ((data ?? []) as RawRow[]).map(toRow).filter((r): r is AnnouncementRow => r !== null);
+  const rows = ((data ?? []) as unknown as RawRow[]).map(toRow).filter((r): r is AnnouncementRow => r !== null);
   live = { at: Date.now(), rows };
   return rows;
 }
@@ -164,13 +182,13 @@ export async function listAnnouncements(): Promise<{ status: LoadStatus; message
   if (!hasServiceRole()) return { status: 'no_service_role', message: null, rows: [] };
   const admin = createAdminClient();
   const [{ data, error }, stats] = await Promise.all([
-    admin.from('announcements').select('id, kind, title, body, link_path, report_ids, published_at, unpublished_at, created_at, updated_at').order('created_at', { ascending: false }).limit(200),
+    labelTolerant((cols) => admin.from('announcements').select(cols('id, kind, title, body, link_path, report_ids, published_at, unpublished_at, created_at, updated_at')).order('created_at', { ascending: false }).limit(200)),
     admin.rpc('announcement_stats', { p: {} }),
   ]);
   if (error) return { status: isSchemaMissing(error) ? 'schema_missing' : 'failed', message: error.message, rows: [] };
   const counts = new Map(((stats.data ?? []) as { id: string; shown: number; dismissed: number; clicked: number }[]).map((s) => [s.id, s]));
   const rows: AdminAnnouncement[] = [];
-  for (const r of (data ?? []) as RawRow[]) {
+  for (const r of (data ?? []) as unknown as RawRow[]) {
     const row = toRow(r);
     if (!row) continue;
     const c = counts.get(r.id);
@@ -182,9 +200,9 @@ export async function listAnnouncements(): Promise<{ status: LoadStatus; message
 export async function getAnnouncement(id: string): Promise<{ status: LoadStatus; row: (AdminAnnouncement & { reportRefs: number[] }) | null }> {
   if (!hasServiceRole()) return { status: 'no_service_role', row: null };
   const admin = createAdminClient();
-  const { data, error } = await admin.from('announcements').select('id, kind, title, body, link_path, report_ids, published_at, unpublished_at, created_at, updated_at').eq('id', id).maybeSingle();
+  const { data, error } = await labelTolerant((cols) => admin.from('announcements').select(cols('id, kind, title, body, link_path, report_ids, published_at, unpublished_at, created_at, updated_at')).eq('id', id).maybeSingle());
   if (error) return { status: isSchemaMissing(error) ? 'schema_missing' : 'failed', row: null };
-  const raw = data as RawRow | null;
+  const raw = data as unknown as RawRow | null;
   const row = raw ? toRow(raw) : null;
   if (!raw || !row) return { status: 'ok', row: null };
   const ids = raw.report_ids ?? [];
@@ -210,14 +228,24 @@ export async function saveAnnouncement(draft: AnnouncementDraft, id: string | nu
     if (missing.length > 0) return { ok: false, message: `There is no report ${missing.map((m) => `#${m}`).join(', ')}.` };
     reportIds = draft.reportRefs.map((ref) => found.find((f) => f.ref === ref)!.id);
   }
-  const values = { kind: draft.kind satisfies AnnouncementKind, title: draft.title, body: draft.body, link_path: draft.linkPath, report_ids: reportIds, updated_at: new Date().toISOString() };
+  const base = { kind: draft.kind satisfies AnnouncementKind, title: draft.title, body: draft.body, link_path: draft.linkPath, report_ids: reportIds, updated_at: new Date().toISOString() };
+  // Batch 28: the button's words, while the column is there (without it, the button says "Take a look").
+  const values = labelMissing ? base : { ...base, link_label: draft.linkLabel };
   if (id) {
-    const { error } = await admin.from('announcements').update(values).eq('id', id);
+    let { error } = await admin.from('announcements').update(values).eq('id', id);
+    if (error && /link_label/.test(error.message)) {
+      labelMissing = true;
+      ({ error } = await admin.from('announcements').update(base).eq('id', id));
+    }
     if (error) return { ok: false, message: `Could not save: ${error.message}` };
     forgetLiveAnnouncements();
     return { ok: true, id };
   }
-  const { data, error } = await admin.from('announcements').insert({ ...values, created_by: by }).select('id').single();
+  let { data, error } = await admin.from('announcements').insert({ ...values, created_by: by }).select('id').single();
+  if (error && /link_label/.test(error.message)) {
+    labelMissing = true;
+    ({ data, error } = await admin.from('announcements').insert({ ...base, created_by: by }).select('id').single());
+  }
   if (error || !data) return { ok: false, message: `Could not save: ${error?.message ?? 'no row'}` };
   return { ok: true, id: (data as { id: string }).id };
 }

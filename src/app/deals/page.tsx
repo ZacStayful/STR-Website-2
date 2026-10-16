@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { btlLookerFor } from "@/lib/btl/view";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
@@ -96,7 +97,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
     const goals = parseMarketGoals(profile?.market_goals);
     const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
     const active = savedProfiles.readable ? savedProfiles.active : null;
-    return { goals, profileId: active?.id ?? null, tailoring: await tailoringForMember(user.id, active, goals, savedAreas, now) };
+    return { goals, savedAreas, profileId: active?.id ?? null, tailoring: await tailoringForMember(user.id, active, goals, savedAreas, now) };
   });
   // The member's own passes shape the grid: a passed deal leaves it (and is on My deals, under Passed).
   // "Best for you" (the default): the member's own order; on any failure, the grid's own query by profit, so Browse never goes blank.
@@ -106,7 +107,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
       ? Promise.all([answersReady, snapshotReady]).then(async ([a, cards]) => (await bestForYouPage(filters, visibility, { userId: user.id, profileId: a.profileId, goals: a.goals, tailoring: a.tailoring }, cards)) ?? listDeals({ ...filters, sort: "profit" }, visibility, { userId: user.id }))
       : listDeals(filters, visibility, { userId: user.id });
   // Early access: a free member gets one line with the real count of deals they are waiting on (matching this search); a paying member gets a badge on each of those deals.
-  const [page, counts, settings, waiting, { goals, tailoring }, snapshot] = await Promise.all([
+  const [page, counts, settings, waiting, { goals, savedAreas, tailoring }, snapshot] = await Promise.all([
     pageReady,
     liveCountsByArea(visibility.hourCutoffIso),
     getBillingSettings(),
@@ -123,7 +124,7 @@ export default async function DealsPage({ searchParams }: { searchParams: Promis
   const [opened, reactions, baseViews, emailed] = await Promise.all([
     openedDealIds((await payerFor(user.id)).payerId, ids),
     reactionsFor(user.id, ids),
-    cardViewsFor({ supabase, userId: user.id, adminUser, cards: shownCards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }),
+    cardViewsFor({ supabase, userId: user.id, adminUser, cards: shownCards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, savedAreas, tailoring?.about ?? null) }),
     emailedDealDates(user.id, ids),
   ]);
   const capped = "capped" in page && page.capped;

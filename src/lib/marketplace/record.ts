@@ -248,6 +248,9 @@ export function mergeSnapshotIntoListing(l: SourcedListing, s: ListingSnapshot):
     // Batch 17 (bug 4): the lease and the council tax band were dropped here.
     yearsRemainingOnLease: s.yearsRemainingOnLease ?? l.yearsRemainingOnLease ?? null,
     councilTaxBand: s.councilTaxBand ?? l.councilTaxBand ?? null,
+    // Batch 28: a flat's charges, for the buy-to-let costs.
+    serviceChargeAnnual: s.serviceChargeAnnual ?? l.serviceChargeAnnual ?? null,
+    groundRentAnnual: s.groundRentAnnual ?? l.groundRentAnnual ?? null,
     // The card's needs-work wording and the page's together; the page decides the exclusions.
     needsWork: s.needsWork || l.needsWork ? mergeNeedsWork(l.needsWork ?? null, s.needsWork ?? null) : null,
     projectExclusion: s.projectExclusion !== undefined ? s.projectExclusion : l.projectExclusion ?? null,

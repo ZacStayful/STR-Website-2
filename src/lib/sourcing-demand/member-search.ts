@@ -174,7 +174,8 @@ async function areaStock(admin: Admin, ctx: ScreenContext, areas: readonly strin
   const fetched = new Map<string, string>();
   for (const r of (cache ?? []) as { key: string; fetched_at: string }[]) if (!fetched.has(r.key) || fetched.get(r.key)! < r.fetched_at) fetched.set(r.key, r.fetched_at);
   for (const k of keys) {
-    const { count } = await admin.from('marketplace_deals').select('id', { count: 'exact', head: true }).eq('status', 'live').eq('kind', k.kind).eq('postcode_area', k.area);
+    // Batch 28: the short-let stock, as before (a buy-to-let-only row never makes an area less thin).
+    const { count } = await admin.from('marketplace_deals').select('id', { count: 'exact', head: true }).eq('status', 'live').eq('band', 'qualified').eq('kind', k.kind).eq('postcode_area', k.area);
     out.push({ area: k.area, kind: k.kind, screenable: data.get(k.area)?.screenable === true, live: count ?? 0, searchedAt: fetched.get(k.key) ?? null });
   }
   return out;
@@ -358,7 +359,7 @@ export async function runSearchSlice(id: string, opts: { deadlineMs?: number; no
     cursor.next += 1;
     // Signup: PMI only where the area stays thin after OnTheMarket.
     if (row.purpose === 'signup') {
-      const { count } = await admin.from('marketplace_deals').select('id', { count: 'exact', head: true }).eq('status', 'live').eq('kind', step.kind).eq('postcode_area', step.area);
+      const { count } = await admin.from('marketplace_deals').select('id', { count: 'exact', head: true }).eq('status', 'live').eq('band', 'qualified').eq('kind', step.kind).eq('postcode_area', step.area);
       const follow = pmiFollowUp(step, count ?? 0, settings.signupThinStock);
       if (follow) steps.splice(cursor.next, 0, follow);
     }

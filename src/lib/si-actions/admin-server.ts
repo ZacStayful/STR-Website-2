@@ -90,7 +90,7 @@ async function chargesFor(admin: Admin, steps: readonly RawStep[]): Promise<Map<
     if (!s.ledger_ref) continue;
     if (s.action === 'deep_search') searchIds.add(s.ledger_ref);
     else if (s.action === 'deep_report' && s.params?.addOn === true) addOnReports.add(s.ledger_ref);
-    else if (s.action === 'full_analysis' || s.action === 'deep_report') purchaseIds.add(s.ledger_ref);
+    else if (s.action === 'full_analysis' || s.action === 'deep_report' || s.action === 'btl_report') purchaseIds.add(s.ledger_ref);
   }
   const purchases = new Map<string, number>();
   for (const ids of chunks([...purchaseIds])) {

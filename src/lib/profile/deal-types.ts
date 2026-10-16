@@ -7,10 +7,17 @@
  *   Short-let     a sale to buy and run as a holiday let (buy_str)
  *   BRRR          a Project deal: a sale that needs work (buy, refurb, refinance)
  *   Rent-to-rent  a rental (r2r)
- *   Buy to let    long-term tenants (btl): declared, coming soon (Batch 28).
- *                 No profile can hold it and nothing shows it until it is in
- *                 AVAILABLE_DEAL_TYPES (market/goals.ts), the one list the
- *                 question's "Coming soon" state and "All of them" read.
+ *   Buy to let    long-term tenants (btl, Batch 28): a sale that passes the
+ *                 buy-to-let hard rules (marketplace_deals.btl_pass). A
+ *                 profile that chose "All of them" before it existed holds
+ *                 the three older types, so it sees none until it taps.
+ *
+ * One pool row can be more than one type (Batch 28): a sale can be a
+ * short-let deal (band 'qualified') and a buy-to-let deal (btl_pass) at
+ * once. dealTypesOf lists every type a row is; dealTypeFor picks the one a
+ * member is shown it as (the first of those they chose). A sale whose band
+ * is below 'qualified' is never a short-let deal: it is in the pool only as
+ * a buy-to-let deal, and never shows short-let figures.
  *
  * Never call a short-let purchase "buy to let" or "buy and let": Buy to let
  * is its own deal type (long-term tenants).
@@ -140,10 +147,54 @@ export function typesShown(p: TypedProfile | null | undefined): DealType[] {
   return t.length > 0 ? t : [...UNANSWERED_TYPES];
 }
 
-/** A deal's own type: a rental is rent-to-rent; a sale with a Project estimate is BRRR; any other sale Short-let. */
-export function dealTypeOf(deal: { kind: 'sale' | 'rent' | string; project?: unknown }): DealType {
-  if (deal.kind === 'rent') return 'r2r';
-  return parseProjectCard(deal.project) ? 'brrr' : 'buy_str';
+/**
+ * What a reader needs to tell a pool row's types apart. `band` and
+ * `btl_pass` are marketplace_deals' own columns; a reader that leaves `band`
+ * out (undefined) is one from before Batch 28 and reads every non-Project
+ * sale as Short-let, so every reader of live deals selects both.
+ */
+export interface TypedDeal {
+  kind: 'sale' | 'rent' | string;
+  project?: unknown;
+  band?: string | null;
+  btl_pass?: unknown;
+}
+
+/**
+ * Every type this row is, in the order a member is shown it: a rental is
+ * Rent-to-rent; a sale with a Project estimate is BRRR, and one without
+ * that passed the short-let screen ('qualified') is Short-let; a sale that
+ * passes the buy-to-let rules is also Buy to let. A sale that is none of
+ * these (a buy-to-let deal whose figures are being redone after a price
+ * change) is Buy to let, never Short-let: it never shows short-let figures.
+ */
+export function dealTypesOf(deal: TypedDeal): DealType[] {
+  if (deal.kind === 'rent') return ['r2r'];
+  const out: DealType[] = [];
+  if (parseProjectCard(deal.project)) out.push('brrr');
+  else if (deal.band === undefined || deal.band === 'qualified') out.push('buy_str');
+  if (deal.btl_pass === true) out.push('btl');
+  return out.length > 0 ? out : ['btl'];
+}
+
+/** A deal's own type: the first of dealTypesOf (Short-let before Buy to let for a row that is both). */
+export function dealTypeOf(deal: TypedDeal): DealType {
+  return dealTypesOf(deal)[0];
+}
+
+/**
+ * The type a member is shown this deal as: the first of its types they
+ * chose (decided, Q14: a deal that is both is shown once, as one type).
+ * None of them chosen (Browse's "All types", a shared link): its own type.
+ */
+export function dealTypeFor(deal: TypedDeal, chosen: readonly DealType[]): DealType {
+  const types = dealTypesOf(deal);
+  return types.find((t) => chosen.includes(t)) ?? types[0];
+}
+
+/** Whether any of this deal's types is one of these. */
+export function dealFitsTypes(deal: TypedDeal, chosen: readonly DealType[]): boolean {
+  return dealTypesOf(deal).some((t) => chosen.includes(t));
 }
 
 /** The listing kinds these types search: sale, rent or both (only available types count). */

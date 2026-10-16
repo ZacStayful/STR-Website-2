@@ -55,7 +55,7 @@ import { liveMortgageRate } from '../listing/mortgage-rate';
 import { postcodeAreaOf } from '../listing/normalise';
 import { dealTrackingFor } from '../listing/tracked-server';
 import { parseMarketGoals } from '../market/goals';
-import { openDeal, existingOpen, dealListingFor } from '../marketplace/open';
+import { openDeal, existingOpen, dealListingFor, openBasisOf } from '../marketplace/open';
 import { loadDealById } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { dealVisibilityFor } from '../marketplace/tier';
@@ -317,7 +317,7 @@ export async function startDealAnalysis(input: { supabase: ServerClient; userId:
   const pricing = offered && offered.offer ? { ...settings.dealPricing, fullAnalysisPence: offered.fullPence, pmiAddonPence: offered.pmiPence } : settings.dealPricing;
   // An offer-priced purchase is never run into an overdraft, whatever the enforcement setting.
   const mustAfford = isEnforcing() || Boolean(offered?.offer);
-  const ladderPence = openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
+  const ladderPence = openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder);
   const quote = analysisQuote({ admin: input.adminUser, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladderPence, withPmi });
   if (!quoteMatches(input.quotedBasePence, quote.due)) return fail('price_changed', { quote });
   if (!input.adminUser && quote.due.purchaseBasePence > 0 && mustAfford) {

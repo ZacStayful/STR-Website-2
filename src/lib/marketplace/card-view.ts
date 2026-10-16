@@ -22,6 +22,7 @@ import { cashLine, isCheapPrice, lenderNote } from '../deal-quality/streams.ts';
 import { DEFAULT_LOW_ENTRY, type LowEntrySettings } from '../deal-quality/config.ts';
 import type { DealCard } from './grid.ts';
 import { projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
+import { btlViewFor, openProfitFor, showsAsBtl, type BtlLooker, type BtlView } from '../btl/view.ts';
 
 export interface CardState {
   /** Open to the member's account (theirs or a teammate's open). */
@@ -121,10 +122,16 @@ export interface CardView {
   fullAnalysisBasePence: number;
   /** Batch 22: "welcome price" / "first-time price" when the Full analysis is offer-priced. */
   offerNote?: string | null;
+  /**
+   * Batch 28: the deal shown as a buy-to-let deal (btl/view.ts): the badge,
+   * its three numbers (also in `numbers`), its flags and its cash in. Every
+   * short-let figure above is then null; absent for any other deal.
+   */
+  btl?: BtlView | null;
 }
 
 export function cardView(input: {
-  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_price' | 'deal_auction' | 'deal_setup' | 'check_comps' | 'project'>>;
+  card: Pick<DealCard, 'kind' | 'price_amount' | 'price_period' | 'bedrooms' | 'annual_profit' | 'uplift_pct' | 'screening_gross' | 'screening_confidence'> & Partial<Pick<DealCard, 'outcode' | 'deal_cash' | 'deal_price' | 'deal_auction' | 'deal_setup' | 'check_comps' | 'project' | 'band' | 'btl' | 'btl_pass' | 'postcode_area'>>;
   state: CardState;
   admin: boolean;
   pricing: Pick<DealPricing, 'fullAnalysisPence' | 'pmiAddonPence' | 'profitRangePct'>;
@@ -139,8 +146,11 @@ export function cardView(input: {
   label: (basePence: number) => PriceLabel;
   /** Batch 25: Stayful Intelligence saved this deal for the member's account, so its Quick look is free (only this deal; the ladder is untouched). */
   freeOpen?: boolean;
+  /** Batch 28: who is looking, so a deal is shown as the type they chose (a buy-to-let-only deal is always Buy to let). */
+  btl?: BtlLooker | null;
 }): CardView {
   const { card, state } = input;
+  if (showsAsBtl(card, input.btl)) return btlCardView(input);
   // Batch 14: a cash buyer's range has no mortgage in it either, as "Most you can pay" has none (memberFinance).
   const finance = input.cashBuyer ? { ...(input.finance ?? {}), depositPct: 100 } : input.finance ?? null;
   const cash = cashInFor(card, finance);
@@ -156,7 +166,7 @@ export function cardView(input: {
     widths: input.pricing.profitRangePct,
   });
   const analysed = state.reportId !== null;
-  const ladderPence = input.freeOpen ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), input.ladder);
+  const ladderPence = input.freeOpen ? 0 : openPricePence(openProfitFor(card), input.ladder);
   const quote = analysisQuote({ admin: input.admin, pricing: input.pricing, opened: state.opened, openPaidBasePence: state.openPaidBasePence, openPricePence: ladderPence, withPmi: false });
   const pay = mostYouCanPay({ kind: card.kind, grossRevenue: card.screening_gross ?? null, bedrooms: card.bedrooms, finance: input.finance ?? null, cashBuyer: input.cashBuyer, widthPct: widthFor(card.screening_confidence ?? null, input.pricing.profitRangePct), checked: (num(card.check_comps) ?? 0) > 0 });
   // Batch 17: a Project deal shows its own numbers: profit after works, works and value added, the cash needed as a range.
@@ -179,5 +189,38 @@ export function cardView(input: {
     fullAnalysis: analysed ? null : input.label(quote.due.purchaseBasePence),
     fullAnalysisBasePence: quote.due.purchaseBasePence,
     offerNote: analysed ? null : input.offerNote ?? null,
+  };
+}
+
+/**
+ * Batch 28: a deal shown as Buy to let. Its numbers, flags and cash in come
+ * from the stored buy-to-let card alone; the short-let range, the uplift,
+ * "Most you can pay" and the lender note are left off (they are short-let
+ * figures). The Full analysis is a short-let report, so the card offers
+ * the buy-to-let report instead (Part G); the Quick look is priced on the
+ * same ladder as every open (openProfitFor).
+ */
+function btlCardView(input: Parameters<typeof cardView>[0]): CardView {
+  const { card, state } = input;
+  const btl = btlViewFor(card, input.btl);
+  const ladderPence = input.freeOpen ? 0 : openPricePence(openProfitFor(card), input.ladder);
+  return {
+    range: null,
+    caption: btl.caption,
+    pay: null,
+    numbers: btl.numbers.map((n) => ({ ...n, help: null })),
+    uplift: null,
+    cash: btl.cash,
+    lowEntry: false,
+    lenderNote: null,
+    projectLine: null,
+    opened: state.opened,
+    analysed: false,
+    reportId: null,
+    quickLook: state.opened ? null : input.label(input.admin ? 0 : ladderPence),
+    fullAnalysis: null,
+    fullAnalysisBasePence: 0,
+    offerNote: null,
+    btl,
   };
 }

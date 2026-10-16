@@ -31,6 +31,9 @@ test('rightmove sale page', () => {
   assert.equal(s.sharedOwnership, false);
   assert.equal(s.shortLetsPermitted, null);
   assert.equal(s.councilTaxBand, 'D');
+  // Batch 28: Rightmove's 0 is "not stated", never a free flat.
+  assert.equal(s.serviceChargeAnnual, undefined);
+  assert.equal(s.groundRentAnnual, undefined);
   assert.ok(s.features.includes('Residents Parking'));
   assert.ok(s.photos[0]?.startsWith('https://media.rightmove.co.uk/'));
   assert.equal(s.status, 'available');
@@ -95,6 +98,9 @@ test('onthemarket sale page', () => {
   assert.deepEqual(s.price, { amount: 120000, period: 'total' });
   assert.equal(s.tenure, 'leasehold');
   assert.equal(s.councilTaxBand, 'D');
+  // Batch 28: the flat's own charges, from the key info.
+  assert.equal(s.serviceChargeAnnual, 2028);
+  assert.equal(s.groundRentAnnual, 250);
   assert.ok(s.features.includes('Two double bedrooms'));
   assert.equal(s.status, 'available');
   assert.ok(!JSON.stringify(s).includes('Example Agent'));

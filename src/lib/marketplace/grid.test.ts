@@ -135,12 +135,13 @@ test('Batch 16, Part C: the card columns carry the check’s comparables count, 
 test('type=: known types in the question’s order; "all" survives the round trip; nothing is "not chosen here"', () => {
   assert.deepEqual(typesParam('r2r,buy_str'), ['buy_str', 'r2r']);
   assert.deepEqual(typesParam(['brrr', 'junk']), ['brrr']);
-  assert.deepEqual(typesParam('all'), ['buy_str', 'brrr', 'r2r']);
+  assert.deepEqual(typesParam('all'), ['buy_str', 'brrr', 'r2r', 'btl']);
   assert.deepEqual(typesParam(undefined), []);
   assert.equal(filtersToSearch({ types: ['buy_str', 'r2r'] }), '?type=buy_str%2Cr2r');
-  assert.equal(filtersToSearch({ types: ['buy_str', 'brrr', 'r2r'] }), '?type=all');
+  assert.equal(filtersToSearch({ types: ['buy_str', 'brrr', 'r2r'] }), '?type=buy_str%2Cbrrr%2Cr2r', 'Batch 28: three of four is a filter');
+  assert.equal(filtersToSearch({ types: ['buy_str', 'brrr', 'r2r', 'btl'] }), '?type=all');
   assert.equal(filtersToSearch({ types: [] }), '');
-  assert.deepEqual(parseDealFilters({ type: 'all' }).types, ['buy_str', 'brrr', 'r2r']);
+  assert.deepEqual(parseDealFilters({ type: 'all' }).types, ['buy_str', 'brrr', 'r2r', 'btl']);
   assert.deepEqual(parseDealFilters({}).types, []);
   assert.equal(filtersToSearch(parseDealFilters({ type: 'all' })), '?type=all', '"All types" is kept by every link built from it');
 });
@@ -149,9 +150,10 @@ test('Browse starts on the profile’s own types; the URL wins; an old kind= lin
   const none = parseDealFilters({});
   assert.deepEqual(browseFilters(none, false, ['buy_str']).types, ['buy_str']);
   assert.deepEqual(browseFilters(none, false, ['r2r', 'buy_str']).types, ['buy_str', 'r2r'], 'an unanswered profile: Short-let + Rent-to-rent, no BRRR (Q22)');
-  assert.deepEqual(browseFilters(none, false, ['buy_str', 'brrr', 'r2r']).types, [], 'all three chosen: every type, nothing in the URL');
+  assert.deepEqual(browseFilters(none, false, ['buy_str', 'brrr', 'r2r', 'btl']).types, [], 'all four chosen: every type, nothing in the URL');
+  assert.deepEqual(browseFilters(none, false, ['buy_str', 'brrr', 'r2r']).types, ['buy_str', 'brrr', 'r2r'], 'an "All" profile from before Buy to let: still its three');
   const all = parseDealFilters({ type: 'all' });
-  assert.deepEqual(browseFilters(all, true, ['buy_str']).types, ['buy_str', 'brrr', 'r2r'], '"All types" is one click');
+  assert.deepEqual(browseFilters(all, true, ['buy_str']).types, ['buy_str', 'brrr', 'r2r', 'btl'], '"All types" is one click');
   const sale = browseFilters(parseDealFilters({ kind: 'sale' }), false, ['r2r']);
   assert.deepEqual([sale.kind, sale.types], ['both', ['buy_str', 'brrr']]);
   const rent = browseFilters(parseDealFilters({ kind: 'rent' }), false, ['buy_str']);
@@ -161,22 +163,27 @@ test('Browse starts on the profile’s own types; the URL wins; an old kind= lin
   assert.equal(kindOfTypes([]), 'both');
 });
 
-test('the types as query clauses: a rental is Rent-to-rent, a sale with a Project estimate BRRR, any other sale Short-let', () => {
-  assert.equal(typeClauseFor([], true), null);
-  assert.equal(typeClauseFor(['buy_str', 'brrr', 'r2r'], true), null);
-  assert.deepEqual(typeClauseFor(['buy_str'], true), { kind: 'sale', project: 'null' });
+test('the types as query clauses: a rental is Rent-to-rent, a sale with a Project estimate BRRR, a short-let-qualified sale Short-let, a btl_pass sale Buy to let', () => {
+  const Q = 'and(kind.eq.sale,band.eq.qualified)';
+  const BTL = 'and(kind.eq.sale,btl_pass.is.true)';
+  assert.deepEqual(typeClauseFor([], true), { or: `kind.eq.rent,${Q},project.not.is.null,${BTL}` });
+  assert.deepEqual(typeClauseFor(['buy_str'], true), { kind: 'sale', project: 'null', band: 'qualified' });
   assert.deepEqual(typeClauseFor(['brrr'], true), { kind: 'sale', project: 'not_null' });
   assert.deepEqual(typeClauseFor(['r2r'], true), { kind: 'rent' });
-  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], true), { kind: 'sale' });
-  assert.deepEqual(typeClauseFor(['buy_str', 'r2r'], true), { project: 'null' });
+  assert.deepEqual(typeClauseFor(['btl'], true), { kind: 'sale', btl: true });
+  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], true), { or: `${Q},project.not.is.null` });
+  assert.deepEqual(typeClauseFor(['buy_str', 'r2r'], true), { or: 'kind.eq.rent,and(kind.eq.sale,project.is.null,band.eq.qualified)' });
   assert.deepEqual(typeClauseFor(['brrr', 'r2r'], true), { or: 'kind.eq.rent,project.not.is.null' });
-  // Before the schema section: no Project deals, every sale Short-let.
+  assert.deepEqual(typeClauseFor(['buy_str', 'btl'], true), { or: `and(kind.eq.sale,project.is.null,band.eq.qualified),${BTL}` });
+  // Before Batch 17's section: no Project deals. Before Batch 28's: no buy-to-let deals, and every row is 'qualified'.
   assert.deepEqual(typeClauseFor(['brrr'], false), { none: true });
-  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], false), { kind: 'sale' });
-  assert.equal(typeClauseFor(['buy_str', 'r2r'], false), null);
+  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], false, false, false), { kind: 'sale' });
+  assert.equal(typeClauseFor(['buy_str', 'r2r'], false, false, false), null);
+  assert.equal(typeClauseFor(['buy_str', 'brrr', 'r2r'], true, false, false), null);
+  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], false), { kind: 'sale', band: 'qualified' });
   // "Light refresh" (Q24): of the Project deals, the light ones only.
   assert.deepEqual(typeClauseFor(['brrr'], true, true), { kind: 'sale', project: 'light' });
-  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], true, true), { kind: 'sale', or: 'project.is.null,project->>level.eq.light' });
+  assert.deepEqual(typeClauseFor(['buy_str', 'brrr'], true, true), { or: 'and(kind.eq.sale,project.is.null,band.eq.qualified),project->>level.eq.light' });
   assert.deepEqual(typeClauseFor(['brrr', 'r2r'], true, true), { or: 'kind.eq.rent,project->>level.eq.light' });
-  assert.deepEqual(typeClauseFor(['buy_str', 'r2r'], true, true), { project: 'null' }, 'no BRRR asked for: nothing changes');
+  assert.deepEqual(typeClauseFor(['buy_str', 'r2r'], true, true), typeClauseFor(['buy_str', 'r2r'], true), 'no BRRR asked for: nothing changes');
 });

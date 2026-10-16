@@ -137,6 +137,23 @@ export function leaseYearsFrom(...texts: (string | null | undefined)[]): number 
   return null;
 }
 
+/**
+ * Batch 28: a flat's yearly charge from the portal's own line: "£2,028 per
+ * annum", "£250 per annum | review period: unconfirmed", "£95 per month",
+ * "£1,200 pa". Null when the line gives no amount ("Ask agent", "Unknown")
+ * or no period it can trust. Only ever a figure the listing states.
+ */
+export function annualChargeFrom(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const m = /£\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.(\d{1,2}))?\s*(per\s+annum|p\.?\s?a\.?\b|per\s+year|a\s+year|yearly|annually|per\s+month|p\.?\s?c\.?\s?m\.?\b|a\s+month|monthly)?/i.exec(text);
+  if (!m) return null;
+  const amount = Number(m[1].replace(/,/g, '')) + (m[2] ? Number(`0.${m[2]}`) : 0);
+  if (!Number.isFinite(amount) || amount < 0 || amount > 100_000) return null;
+  const period = (m[3] ?? '').toLowerCase();
+  if (/month|pcm|p\.?c\.?m/.test(period)) return Math.round(amount * 12);
+  return Math.round(amount);
+}
+
 const SQ_M_TO_FT = 10.7639;
 
 /**

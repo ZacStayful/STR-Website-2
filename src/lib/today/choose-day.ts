@@ -5,7 +5,8 @@
  * golden record through this function.
  *
  * Batch 17: a profile shows the deal types it chose (Short-let, BRRR,
- * Rent-to-rent). Each type is chosen on its own — the same chooser, its pool
+ * Rent-to-rent; Batch 28: Buy to let, chosen by btl/today.ts on its own
+ * answers and the stored card). Each type is chosen on its own — the same chooser, its pool
  * narrowed to that type, judged on that type's own money answer (a BRRR
  * deal on the project budget) — and the day is their mix (mix.ts): the
  * starting mix shifted toward the types the member keeps, at least one of
@@ -26,17 +27,35 @@ import { chooseTodayFrom, type ChooseInput, type ChooseReads, type TodayChoice }
 import { TODAY_SIZE } from './day.ts';
 import { goalsForType, lightOnlyFor } from './type-filters.ts';
 import { DEFAULT_TODAY_MIX, fillMix, mixSlots, type Strength } from './mix.ts';
+import { btlWidenFor, chooseBtlDay, type BtlDayChoice, type BtlWiden } from '../btl/today.ts';
 
 export interface DayChoice extends TodayChoice {
   /** Tailored: the deals meeting every must-have ("N deals match you"). Null on the untailored path. */
   mustMatches: number | null;
   /** That count reached the pool's read limit. */
   capped: boolean;
+  /** Batch 28: how far the day looked for the buy-to-let deals it shows; null or absent when it did not have to. */
+  btlWiden?: BtlWiden | null;
 }
 
 async function chooseOne(input: ChooseInput, reads: ChooseReads, opts: TailoredOptions): Promise<DayChoice> {
   if (usesTailoring(input.tailoring)) return chooseTailored(input, input.tailoring, reads, opts);
   return { ...(await chooseTodayFrom(input, reads)), mustMatches: null, capped: false };
+}
+
+/**
+ * Batch 28: the buy-to-let list (btl/today.ts): judged on the member's
+ * buy-to-let answers and the card alone, never on short-let figures, and
+ * found nearest first. A tailored profile's "N deals match you" counts the
+ * ones in its own areas.
+ */
+async function chooseBtl(input: ChooseInput, reads: ChooseReads): Promise<{ day: DayChoice; btl: BtlDayChoice }> {
+  const btl = await chooseBtlDay(
+    { goals: input.goals, savedAreas: input.savedAreas, feedback: withoutKindFlips(input.feedback), exclude: input.exclude, settings: input.btlSettings },
+    { pool: (filters, limit) => reads.pool({ ...filters, types: ['btl'] }, limit), benchmark: (area, band) => (reads.btlBenchmark ? reads.btlBenchmark(area, band) : Promise.resolve(null)) },
+  );
+  const tailored = usesTailoring(input.tailoring);
+  return { day: { dealIds: btl.dealIds, nearMiss: false, advice: null, best: btl.best, mustMatches: tailored ? (btl.ownMatches ?? btl.picks.length) : null, capped: false }, btl };
 }
 
 /** The member's feedback without the kind flips (a type is chosen, not flipped): picks.ts. */
@@ -83,6 +102,11 @@ export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: Ta
   const current = opts.current ?? [];
   const typeOf = current.length > 0 && reads.dealTypes ? await reads.dealTypes([...current]) : new Map<string, DealType>();
   const optsFor = (t: DealType): TailoredOptions => (current.length === 0 || !reads.dealTypes ? opts : { ...opts, current: current.filter((id) => typeOf.get(id) === t) });
+  if (types.length === 1 && types[0] === 'btl') {
+    const { day, btl } = await chooseBtl(input, reads);
+    const dealIds = day.dealIds.slice(0, TODAY_SIZE);
+    return { ...day, dealIds, btlWiden: btlWidenFor(btl, dealIds) };
+  }
   if (types.length === 1) return chooseOne(inputForType(input, types[0]), readsFor(input, reads, types[0]), optsFor(types[0]));
 
   const lists: Partial<Record<DealType, string[]>> = {};
@@ -91,8 +115,11 @@ export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: Ta
   let mustMatches = 0;
   let tailored = false;
   let capped = false;
+  let btlChoice: BtlDayChoice | null = null;
   for (const t of types) {
-    const c = await chooseOne(inputForType(input, t), readsFor(input, reads, t), optsFor(t));
+    let c: DayChoice;
+    if (t === 'btl') ({ day: c, btl: btlChoice } = await chooseBtl(input, reads));
+    else c = await chooseOne(inputForType(input, t), readsFor(input, reads, t), optsFor(t));
     if (c.mustMatches !== null) {
       tailored = true;
       mustMatches += c.mustMatches;
@@ -151,5 +178,5 @@ export async function chooseDay(input: ChooseInput, reads: ChooseReads, opts: Ta
     if (closest) return { ...closest, mustMatches: tailored ? mustMatches : null, capped };
     return { dealIds: [], nearMiss: false, advice: null, mustMatches: tailored ? mustMatches : null, capped, best: null };
   }
-  return { dealIds, nearMiss: false, advice: tailored ? shortListAdvice(dealIds.length) : null, mustMatches: tailored ? mustMatches : null, capped, best: null };
+  return { dealIds, nearMiss: false, advice: tailored ? shortListAdvice(dealIds.length) : null, mustMatches: tailored ? mustMatches : null, capped, best: null, btlWiden: btlChoice ? btlWidenFor(btlChoice, dealIds) : null };
 }

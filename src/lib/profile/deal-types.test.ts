@@ -56,7 +56,10 @@ test('kinds for the searches, and the words for the page', () => {
   assert.equal(kindsFor(['brrr', 'r2r']), 'both');
   assert.equal(kindsFor([]), 'both', 'unanswered: Short-let + Rent-to-rent');
   assert.equal(describeTypes(['r2r', 'buy_str']), 'Short-let · Rent-to-rent');
-  assert.equal(describeTypes(['buy_str', 'brrr', 'r2r']), 'All of them');
+  assert.equal(describeTypes(['buy_str', 'brrr', 'r2r', 'btl']), 'All of them');
+  assert.equal(describeTypes(['buy_str', 'brrr', 'r2r']), 'Short-let · BRRR · Rent-to-rent', 'Batch 28: three is no longer all of them');
+  assert.equal(kindsFor(['btl']), 'sale');
+  assert.equal(kindsFor(['btl', 'r2r']), 'both');
 });
 
 test('goals keep the new answers through a save and a read', () => {

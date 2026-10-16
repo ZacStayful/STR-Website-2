@@ -29,6 +29,8 @@ import { cachedCohortLookup, type CohortLookup } from './cohorts-server';
 import { projectChecksOn, readProjectSettings } from '../project/settings-server';
 import { projectHoldFor } from '../project/hold';
 import { projectFactsOf } from '../project/check-plan';
+import { btlSuitability } from '../btl/listing';
+import { BTL_KEEP_REASONS, btlOnlyBand, keptAsBtlOnly } from '../btl/screen';
 
 export const DEALS_TAG = 'marketplace-deals';
 
@@ -207,8 +209,39 @@ export function recordColumns(l: SourcedListing, rec: DealRecord): Record<string
   };
 }
 
+/**
+ * Batch 28: whether the row is a buy-to-let deal (btl_pass, written by the
+ * nightly screen). Read on its own and tolerantly: false when the column is
+ * not there yet, so every path behaves exactly as before the schema section.
+ */
+export async function isBtlDeal(admin: Admin, canonicalUrl: string): Promise<boolean> {
+  const { data, error } = await admin.from('marketplace_deals').select('btl_pass').eq('canonical_url', canonicalUrl).maybeSingle();
+  return !error && (data as { btl_pass?: unknown } | null)?.btl_pass === true;
+}
+
+/**
+ * Batch 28: a short-let (or BRRR) failure on a row that is also a buy-to-let
+ * deal keeps the row as a buy-to-let deal: its band drops below 'qualified'
+ * (it is no longer a short-let deal) and a row waiting on the short-let
+ * shortlist goes to its page read instead. False (nothing changed) when it is
+ * not a buy-to-let deal, or the column is not there yet.
+ */
+async function keepForBtl(admin: Admin, canonicalUrl: string, nowIso: string): Promise<boolean> {
+  const waiting = await admin
+    .from('marketplace_deals')
+    .update({ band: 'unqualified', status: 'pending_verify', next_check_due_at: nowIso, check_requested_at: null, updated_at: nowIso }, { count: 'exact' })
+    .eq('canonical_url', canonicalUrl)
+    .eq('btl_pass', true)
+    .eq('status', 'pending_check');
+  if (waiting.error) return false;
+  if ((waiting.count ?? 0) > 0) return true;
+  const shown = await admin.from('marketplace_deals').update({ band: 'unqualified', updated_at: nowIso }, { count: 'exact' }).eq('canonical_url', canonicalUrl).eq('btl_pass', true).in('status', ['pending_verify', 'live']);
+  return !shown.error && (shown.count ?? 0) > 0;
+}
+
 export async function retireDeal(admin: Admin, canonicalUrl: string, reason: RetiredReason, now: Date = new Date()): Promise<void> {
   const nowIso = now.toISOString();
+  if (BTL_KEEP_REASONS.has(reason) && (await keepForBtl(admin, canonicalUrl, nowIso))) return;
   const { error } = await admin
     .from('marketplace_deals')
     .update({ status: 'retired', retired_reason: reason, retired_at: nowIso, check_requested_at: null, next_check_due_at: null, updated_at: nowIso })
@@ -281,7 +314,15 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   const { error: snapErr } = await admin.from('sourced_listings').update({ snapshot: merged, last_seen_at: nowIso }).eq('canonical_url', deal.canonical_url);
   if (snapErr) console.error('[marketplace] snapshot write failed:', snapErr.message);
   const suitability = suitabilityFromSnapshot(s, listing.kind);
-  if (suitability !== 'ok') {
+  // Batch 28: a row the short let cannot have stays as a buy-to-let deal when it is one and the page still allows it (asked only then).
+  // A sale already kept only as a buy-to-let deal (its short-let side failed: a comps check, the page or a price) is never made
+  // a short-let deal again by a page read on the area figures (that takes the short-let intake and its check); it stays a
+  // buy-to-let row while the page allows one, and the nightly screen judges its lens (and retires it when that fails).
+  const keptAsBtl = keptAsBtlOnly(merged.kind, deal.band);
+  let btlLens: boolean | null = null;
+  const isBtl = async (): Promise<boolean> => (btlLens ??= await isBtlDeal(admin, deal.canonical_url));
+  const keepsForBtl = async (): Promise<boolean> => merged.kind === 'sale' && btlSuitability(merged) === 'ok' && (keptAsBtl || (await isBtl()));
+  if (suitability !== 'ok' && !(await keepsForBtl())) {
     await retireDeal(admin, deal.canonical_url, 'unsuitable', now);
     return { kind: 'retired', reason: 'unsuitable' };
   }
@@ -290,13 +331,14 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   const check = validCheckFor(checkOf(deal.screening), merged, ctx.rules.checks?.validDays ?? DEFAULT_DEAL_CHECKS.validDays, now);
   const cohort = ctx.cohorts ? await ctx.cohorts.find(merged, deal.postcode_area, deal.canonical_url) : null;
   const rec = buildDealRecord(merged, { card, rentTable: ctx.rentTable, r2rBar: ctx.r2rBar, rules: ctx.rules, check, firstSeenAt: deal.first_seen_at, cohort, now });
-  if (!qualifiesForMarketplace(rec)) {
+  const btlOnly = keptAsBtl || suitability !== 'ok' || !qualifiesForMarketplace(rec);
+  if (btlOnly && !(await keepsForBtl())) {
     await retireDeal(admin, deal.canonical_url, 'unqualified', now);
     return { kind: 'retired', reason: 'unqualified' };
   }
   const project = ctx.rules.project;
   const hold =
-    project?.hold && deal.status === 'pending_verify' && merged.kind === 'sale'
+    project?.hold && !btlOnly && deal.status === 'pending_verify' && merged.kind === 'sale'
       ? projectHoldFor(
           {
             kind: 'sale',
@@ -320,9 +362,15 @@ export async function applyLiveResult(admin: Admin, deal: DealRow, listing: Sour
   }
   const held = hold.kind === 'hold';
   const { columns: priceCols } = priceChangeColumns(deal, rec, nowIso);
+  // Batch 28: at a new price a buy-to-let lens (on a row that is only that, or both) waits for the next screen, never shown at the old price.
+  // (isBtlDeal is false before the schema section, so the column is only ever written where it exists.)
+  const relens = merged.kind === 'sale' && Object.keys(priceCols).length > 0 && (await isBtl());
   const update: Record<string, unknown> = {
     ...recordColumns(merged, rec),
     ...priceCols,
+    // Batch 28: kept only as a buy-to-let deal, never a short-let one.
+    ...(btlOnly ? { band: btlOnlyBand(rec.band) } : {}),
+    ...(relens ? { btl_pass: false } : {}),
     // Batch 17: the renovation wording (our phrase keys) for the Project ranking; written where the column exists.
     ...(merged.kind === 'sale' ? { needs_work: merged.needsWork && merged.needsWork.phrases.length > 0 ? merged.needsWork : null } : {}),
     photos: s.photos.length > 0 ? s.photos : (deal.photos ?? null),

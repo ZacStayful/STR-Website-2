@@ -75,6 +75,9 @@ export interface SourcedListing {
    */
   yearsRemainingOnLease?: number | null;
   councilTaxBand?: string | null;
+  /** Batch 28: a flat's service charge and ground rent, £ a year, from the page when it has been read. */
+  serviceChargeAnnual?: number | null;
+  groundRentAnnual?: number | null;
   /** Batch 17: renovation wording (our phrase keys only), the card's text merged with the page's once read. */
   needsWork?: NeedsWork | null;
   /** Batch 17: the first reason it can never be a Project deal, from the page (null: none; absent: not read). */

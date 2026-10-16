@@ -155,9 +155,28 @@ test('removal words and type names', () => {
   assert.equal(memberAskedToRemove('remove the 3-beds from my search and show me more rent to rent', 'r2r'), false);
   assert.equal(dealTypeOf('Short-let'), 'buy_str');
   assert.equal(dealTypeOf('r2r'), 'r2r');
-  assert.equal(dealTypeOf('btl'), null);
+  // Batch 28: Buy to let is a type the eye can add or remove, by its names.
+  assert.equal(dealTypeOf('btl'), 'btl');
+  assert.equal(dealTypeOf('Buy to let'), 'btl');
+  assert.equal(dealTypeOf('hmo'), null);
+  assert.equal(memberAskedToRemove('stop showing me buy to let deals', 'btl'), true);
+  assert.equal(memberAskedToRemove('add buy to let', 'btl'), false);
 });
 
 test('area codes: letters only, upper-cased, no repeats', () => {
   assert.deepEqual(areaCodes('bd, LS ls 12 B1'), ['BD', 'LS']);
+});
+
+test('Batch 28: a buy-to-let report runs only on a buy-to-let deal, once', () => {
+  const c = ctx({ deals: new Map([[A, deal(A, { btl: true })], [B, deal(B)]]) });
+  const r = checkPlan([step({ action: 'btl_report', dealId: A }), step({ action: 'btl_report', dealId: A }), step({ action: 'btl_report', dealId: B })], c);
+  assert.deepEqual(r.steps, [{ kind: 'btl_report', dealId: A, label: '2-bed flat in LS6' }]);
+  assert.deepEqual(r.dropped.map((d) => d.reason), ['duplicate', 'not_btl']);
+});
+
+test('Batch 28: a buy-to-let report the member already has is never sold again', () => {
+  const c = ctx({ deals: new Map([[A, deal(A, { btl: true, btlReported: true })]]) });
+  const r = checkPlan([step({ action: 'btl_report', dealId: A })], c);
+  assert.deepEqual(r.steps, []);
+  assert.deepEqual(r.dropped.map((d) => d.reason), ['already_done']);
 });

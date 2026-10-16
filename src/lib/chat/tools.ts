@@ -139,7 +139,7 @@ export const CHAT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'offer_action',
-    description: 'Put a button under the answer for the member to tap. It does nothing itself. target is a deal id (open_deal, full_analysis, show_me), a what-if key (use_this), a stage (my_deals), or null.',
+    description: 'Put a button under the answer for the member to tap. It does nothing itself. target is a deal id (open_deal, full_analysis, btl_report, show_me), a what-if key (use_this), a stage (my_deals), or null.',
     strict: true,
     input_schema: { type: 'object', properties: { kind: { type: 'string', enum: [...ACTION_KINDS] }, target: nullable({ type: 'string' }) }, required: ['kind', 'target'], additionalProperties: false },
   },
@@ -163,8 +163,8 @@ export const CHAT_TOOLS: Anthropic.Tool[] = [
           items: {
             type: 'object',
             properties: {
-              action: { type: 'string', enum: [...STEP_KINDS], description: 'keep, pass, stage_move (needs stage), full_analysis, deep_report, deep_search, check_link (needs url), change_criteria (needs question and value).' },
-              deal_id: nullable({ type: 'string', description: 'For keep, pass, stage_move, full_analysis and deep_report: a deal_id from a look-up in this answer.' }),
+              action: { type: 'string', enum: [...STEP_KINDS], description: 'keep, pass, stage_move (needs stage), full_analysis, deep_report, deep_search, check_link (needs url), change_criteria (needs question and value), btl_report (the £2 buy-to-let report, on a deal whose type is buy to let).' },
+              deal_id: nullable({ type: 'string', description: 'For keep, pass, stage_move, full_analysis, deep_report and btl_report: a deal_id from a look-up in this answer.' }),
               stage: nullable({ type: 'string', enum: [...STAGE_VALUES], description: 'For stage_move (watching = Kept).' }),
               url: nullable({ type: 'string', description: 'For check_link: the link they pasted, exactly.' }),
               question: nullable({ type: 'string', enum: [...CRITERIA_QUESTIONS], description: 'For change_criteria.' }),

@@ -30,6 +30,7 @@ import { FilterBar } from "./FilterBar";
 import { CardGrid } from "./CardGrid";
 import { MarketCard } from "./MarketCard";
 import { SubMarketCard } from "./SubMarketCard";
+import { BtlDistrictsPane } from "./BtlDistrictsPane";
 
 /** Districts sort by the figures they carry; keys that need a score fall back to revenue. */
 function districtSortValue(d: DistrictCardData, key: SortKey): number | null {
@@ -99,6 +100,8 @@ export function FindShell({
   const [listingSort, setListingSort] = useState<ListingSort>("fit");
   const [listingCompare, setListingCompare] = useState<string[]>([]);
   const [listingNotice, setListingNotice] = useState<string | null>(null);
+  // Batch 28, Part H: the "Buy to let" view (districts by yield and growth from the cached key stats).
+  const [btlView, setBtlView] = useState(false);
 
   // "Your goals" and "set your goals" go to the profile page (Batch 12): the quiz is the one editor.
   const openGoals = useCallback(() => router.push(GOALS_EDITOR_HREF), [router]);
@@ -235,8 +238,10 @@ export function FindShell({
       <FilterBar search={search} filters={filters} onFilters={changeFilters} goals={goals} onEditGoals={openGoals} sort={effectiveSort} onSort={changeSort} resultCount={visible.length} savedCount={saved.size} trendSortReady={trendSortReady} autoFocusSearch={Boolean(initialCheckUrl)} />
 
       <div className="mx2-find-body">
-        <CardGrid level={level} onLevel={changeLevel} counts={{ markets: visible.length, sub: readyDistricts, deals: liveDeals }} shown={shown} sort={effectiveSort} onSort={changeSort} goals={goals} trendSortReady={trendSortReady} hideSort={level === "deals"}>
-          {level === "deals" ? (
+        <CardGrid level={level} onLevel={changeLevel} counts={{ markets: visible.length, sub: readyDistricts, deals: liveDeals }} shown={shown} sort={effectiveSort} onSort={changeSort} goals={goals} trendSortReady={trendSortReady} hideSort={level === "deals"} btl={level === "deals" ? null : { on: btlView, onToggle: () => setBtlView((v) => !v) }}>
+          {btlView && level !== "deals" ? (
+            <BtlDistrictsPane region={region} q={filters.q} />
+          ) : level === "deals" ? (
             <>
               {listingNotice && <div className="mx-note mx-note--error" role="alert">{listingNotice}</div>}
               <ListingsPane listings={listings} verdicts={verdicts} statusFilter={listingStatusFilter} onStatusFilter={setListingStatusFilter} sort={listingSort} onSort={setListingSort} areaFit={areaFit} onSelect={openListing} />

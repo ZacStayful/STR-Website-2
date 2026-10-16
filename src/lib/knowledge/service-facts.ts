@@ -12,7 +12,7 @@
 
 export const SERVICE_FACTS = `
 WHAT IT IS
-- Stayful Intelligence is a deal-finding service for UK short-let investors, rent-to-rent operators and deal sourcers, run by Stayful Ltd (which also runs a separate short-let management company, Stayful Management, at {management_fee}).
+- Stayful Intelligence is a deal-finding service for UK short-let and buy-to-let investors, rent-to-rent operators and deal sourcers, run by Stayful Ltd (which also runs a separate short-let management company, Stayful Management, at {management_fee}).
 - It searches live UK property listings every day, checks each one against comparable short-lets and long-let rents, and picks the ones that fit what the member told it they want. Figures come from comparables (Airbtics), long-let and area data (PropertyData), amenities (Google Places), events (Ticketmaster) and the real operating data of the properties Stayful runs.
 - It also has the Property Analyser (type an address, get a report), Market Explorer (areas compared on short-let figures) and a browser extension that checks a listing while browsing Rightmove, Zoopla or OnTheMarket.
 - It describes deals and numbers. It never tells anyone to buy or rent a property, never guarantees returns, and never gives financial, mortgage or legal advice.
@@ -41,6 +41,15 @@ DEALS
 - The more a member answers and keeps or passes, the better the picks fit.
 - Standout deals: when a deal fits a member's main profile better than anything found for them so far ({standout_min_match} match or better, on a deal type that profile chose, well above their minimum profit, and confirmed still on the market), Stayful Intelligence saves it to their My deals, marked "Saved for you by Stayful Intelligence". Opening it is free. "Not for me" passes it (with a few seconds to undo). Saves it doesn't call about are listed under "Saved for you" in the next daily email.
 - "I've noticed": when what a member keeps and passes says something different from their answers, Today asks once ("I've noticed you've passed every BRRR one. Want me to stop showing BRRR?"). Nothing changes unless they tap to accept; "Keep my answer" stops the question for a while.
+
+BUY-TO-LET DEALS
+- Buy to let is a deal type: a sale listing bought with a {btl_ltv} interest-only buy-to-let mortgage at the typical 2–3-year fixed rate and let to long-term tenants, judged on the rent. Members tick it in their profile's deal types and then say what they're after (income, growth or a bit of both) and the cash they can put in ({btl_cash_bands}). Profiles that chose "All of them" before buy to let arrived don't get it until the member taps Add Buy to let.
+- The rent is a range from the district's rent and live rentals nearby (same area, size and type), sometimes checked against a PropertyData rent valuation; a rough one is labelled. Every figure is a range at the low, middle and high rent, before tax, with {btl_running_costs}, a flat's service charge and ground rent (an estimate when the listing doesn't say). Cash in is the deposit, the tax on a second home for its nation and the buying costs; the top end adds {btl_epc_allowance}.
+- A buy-to-let deal must pass the lender's rent test (the rent {btl_rent_test}) on the middle rent and break even at the low end, on a home a lender would lend on (not cash buyers only, an auction or a short lease).
+- It is compared with the typical deal on the market in the member's cash band, starting near their area and widening out (miles, then the region, then the UK) until there are enough deals; Today and the email say when it looked further. A standout needs its low end to be {btl_standout_margin} of the typical deal's.
+- The card shows the cash in, the monthly cashflow and the return or growth (by what the member is after), with flags such as "Rough rent estimate", "Service charge not confirmed" and "EPC not checked". The deal page shows the costs line by line, the rent test, what it was compared with and the rules for the nation (drafts). It never says buy, and says "Before tax. An estimate, not advice. Get a mortgage broker's view."
+- A buy-to-let report is {btl_report_cost}: rent and sale valuations, sold prices nearby, the EPC, flood and planning checks and the figures with all of it in. The price is shown first, it's charged once and only when made, never on failure, and a deal revealed in the member's first days can have a welcome price. Web only, saved in My deals.
+- The Full analysis has a "Buy to let instead?" section from its own long-let valuation, at no extra charge. The Market Explorer has a free "Buy to let" view of districts by gross yield, growth, average price and typical cash in.
 
 REPORTS
 - A Full analysis is {full_analysis_cost}: a report on the deal of up to {report_sections} sections (the ones its deal needs) with {forecast_months} months of short-let income, costs, comparables, risks, due-diligence checks and the local market, as a PDF. It opens the deal too.

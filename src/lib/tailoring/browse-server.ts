@@ -103,6 +103,9 @@ export async function bestForYouPage(
   return { cards: got, total, page, pages, capped: order.capped };
 }
 
+/** What the Explorer's shared "deals on the market here" block shows (its figures are short-let and rent-to-rent ones). */
+const SHARED_BLOCK_TYPES: readonly DealType[] = ['buy_str', 'brrr', 'r2r'];
+
 /**
  * The Market Explorer's "deals on the market here" (Batch 14): the area's
  * top deals in the member's own order, at their own visibility and without
@@ -117,7 +120,9 @@ export async function bestForYouInArea(
   n = 3,
 ): Promise<DealCard[] | null> {
   try {
-    const [rows, passed] = await Promise.all([browsePool({ ...DEFAULT_FILTERS, areas: [code] }, visibility, TAILORING.poolLimit, BROWSE_RANK_COLUMNS), passedIds(member.userId)]);
+    // Batch 28: the shared block shows short-let figures, so its deals are the short-let, BRRR and
+    // rent-to-rent ones (the block's own types, as before); buy-to-let has the Explorer's own toggle.
+    const [rows, passed] = await Promise.all([browsePool({ ...DEFAULT_FILTERS, areas: [code], types: [...SHARED_BLOCK_TYPES] }, visibility, TAILORING.poolLimit, BROWSE_RANK_COLUMNS), passedIds(member.userId)]);
     if (!rows || !passed) return null;
     const open = (rows as BrowseRow[]).filter((r) => !passed.has(r.id));
     const byId = new Map(open.map((r) => [r.id, r]));

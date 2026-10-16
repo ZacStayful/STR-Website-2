@@ -9,12 +9,13 @@ import 'server-only';
  * Moved here from src/app/today/page.tsx unchanged.
  */
 import { dealCardsByIds, dealTypesByIds } from '../marketplace/queries';
+import { dealFitsTypes } from '../profile/deal-types';
 import { reactionsFor } from '../marketplace/reactions-server';
 import type { DealReaction } from '../marketplace/reaction-state';
 import { usesTailoring } from '../tailoring/profile';
 import type { WidenOption } from '../tailoring/widen';
 import { displayOrder, TODAY_SIZE } from './day';
-import { todaySelection, todaysPick, widenOptionsFor, type MemberContext, type TodaySelection, type TodaysPick } from './selection';
+import { todaySelection, todaysPick, typesFor, widenOptionsFor, type MemberContext, type TodaySelection, type TodaysPick } from './selection';
 
 export interface TodayView {
   selection: TodaySelection | null;
@@ -48,9 +49,12 @@ export async function loadTodayView(member: MemberContext, now: Date, opts: { pa
     reactionsFor(member.userId, onDay),
     short && opts.widen ? widenOptionsFor(member, onDay, now) : Promise.resolve([] as WidenOption[]),
     // Batch 17: the pick makes room from the most shown type, so the day's mix holds.
-    pickDealId && stored.length >= TODAY_SIZE ? dealTypesByIds(onDay) : Promise.resolve(null),
+    pickDealId && stored.length >= TODAY_SIZE ? dealTypesByIds(onDay, typesFor(member)) : Promise.resolve(null),
   ]);
   const order = displayOrder(stored, pickDealId, new Set(answered.keys()), TODAY_SIZE, typeOf ? (id) => typeOf.get(id) ?? null : undefined);
-  const cards = await dealCardsByIds(order, member.visibility);
+  // Batch 28: a deal chosen earlier that is no longer a type this profile shows (a short-let deal kept only as
+  // buy to let since, for a profile without Buy to let) leaves the day, as a deal that left live does.
+  const types = typesFor(member);
+  const cards = (await dealCardsByIds(order, member.visibility)).filter((c) => dealFitsTypes(c, types));
   return { selection, pick, pickDealId, onDay, answered, short, widen, order, cards };
 }

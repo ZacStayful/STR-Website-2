@@ -44,7 +44,7 @@ test('every question has an id, a why line, a photo or answer cards, and a short
 
 test('the mandatory questions are the only ones without "Not sure", and every option value is stored as given', () => {
   const mandatory = QUESTIONS.filter((q) => q.mandatory).map((q) => q.id).sort();
-  assert.deepEqual(mandatory, ['brrr_budget', 'budget', 'deal_types', 'max_rent', 'roles', 'where'].sort(), 'which describes you, which deals, where, and one money question per deal type');
+  assert.deepEqual(mandatory, ['brrr_budget', 'btl_cash', 'btl_priority', 'budget', 'deal_types', 'max_rent', 'roles', 'where'].sort(), 'which describes you, which deals, where, one money question per deal type, and Buy to let’s "What are you after?"');
   // Every single-choice option round-trips through applyAnswer and reads back with its label.
   for (const q of QUESTIONS) {
     if (q.kind !== 'single') continue;
@@ -82,12 +82,12 @@ test('"All of them" ticks every type; the kind searched follows; nothing is requ
   assert.equal(applyAnswer('deal_types', [], a).ok, false);
   assert.equal(applyAnswer('deal_types', ['nonsense'], a).ok, false);
   a = answer(a, 'deal_types', ['all']);
-  assert.deepEqual(a.goals.dealTypes, ['buy_str', 'brrr', 'r2r']);
+  assert.deepEqual(a.goals.dealTypes, ['buy_str', 'brrr', 'r2r', 'btl']);
   assert.equal(a.goals.sourcingKind, 'both');
   assert.equal(answerLabel('deal_types', a), 'All of them');
-  assert.deepEqual(moneyQuestionsFor(a.goals.dealTypes!), ['budget', 'brrr_budget', 'max_rent']);
+  assert.deepEqual(moneyQuestionsFor(a.goals.dealTypes!), ['budget', 'brrr_budget', 'max_rent', 'btl_cash']);
   const ids = questionsFor(a).map((q) => q.id);
-  for (const id of ['budget', 'brrr_budget', 'max_rent', 'brrr_work', 'cash_available', 'setup_budget'] as QuestionId[]) assert.ok(ids.includes(id), id);
+  for (const id of ['budget', 'brrr_budget', 'max_rent', 'btl_priority', 'btl_cash', 'brrr_work', 'cash_available', 'setup_budget'] as QuestionId[]) assert.ok(ids.includes(id), id);
   assert.equal(ids.filter((id) => id === 'cash_available').length, 1, 'shared follow-ups once');
   a = answer(a, 'deal_types', ['r2r']);
   assert.equal(a.goals.sourcingKind, 'rent');
@@ -103,7 +103,9 @@ test('the question count per combination (the plan’s table), plus the role sec
   assert.equal(count(['buy_str', 'brrr']), 23);
   assert.equal(count(['buy_str', 'r2r']), 28);
   assert.equal(count(['brrr', 'r2r']), 29);
-  assert.equal(count(['all']), 30);
+  assert.equal(count(['all']), 32, 'Batch 28: Buy to let adds its two');
+  assert.equal(count(['btl']), 12, 'Buy to let alone: the two, and none of the short-let questions');
+  assert.equal(count(['buy_str', 'brrr', 'r2r']), 30, 'an "All" profile from before Buy to let: as it was');
   assert.equal(count(['buy_str'], ['investor', 'sourcer']), 24, 'sourcing adds 3');
   assert.equal(count(['buy_str'], ['manager']), 25, 'management adds 4');
 });
@@ -283,4 +285,21 @@ test('Batch 22c: the budget questions offer five brackets; a stored Under £200k
   a = answer(a, 'budget', 'u200');
   assert.equal(a.goals.budget, 'u200');
   assert.equal(answerLabel('budget', a), 'Under £200k');
+});
+
+test('Batch 28: Buy to let asks "What are you after?" and "How much cash can you put in?" once, only when it is chosen', () => {
+  let a = answer(answer(fresh(), 'roles', ['investor']), 'deal_types', ['buy_str']);
+  let ids = questionsFor(a).map((q) => q.id);
+  assert.ok(!ids.includes('btl_priority') && !ids.includes('btl_cash'));
+  a = answer(a, 'deal_types', ['buy_str', 'btl']);
+  ids = questionsFor(a).map((q) => q.id);
+  assert.equal(ids.filter((id) => id === 'btl_priority').length, 1);
+  assert.equal(ids.filter((id) => id === 'btl_cash').length, 1);
+  assert.equal(ids.filter((id) => id === 'cash_available').length, 1, 'the short-let cash question is its own');
+  a = answer(answer(a, 'btl_priority', 'growth'), 'btl_cash', '25k_50k');
+  assert.deepEqual(a.goals.btl, { priority: 'growth', cashBand: '25k_50k' });
+  assert.equal(answerLabel('btl_priority', a), 'Value going up');
+  assert.equal(answerLabel('btl_cash', a), '£25k to £50k');
+  assert.equal(applyAnswer('btl_cash', '1m', a).ok, false);
+  assert.deepEqual(clearAnswer('btl_priority', a).goals.btl, a.goals.btl, 'mandatory: no "Not sure"');
 });

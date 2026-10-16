@@ -18,6 +18,7 @@ import 'server-only';
  * Each price is quoted the way its own code will check it, so a step never
  * fails on "the price changed" because the eye priced it differently.
  */
+import { runBtlReport } from '../btl/report-server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { after } from 'next/server';
 import { createAdminClient } from '../supabase/admin';
@@ -28,7 +29,7 @@ import { openCreditBase } from '../credit/deal-pricing';
 import { analysisQuote } from '../analysis/deal-analysis-rules';
 import { offeredPmiAddonFor, offeredPricesFor } from '../analysis/offers-server';
 import { startDealAnalysis } from '../analysis/deal-analysis';
-import { existingOpen } from '../marketplace/open';
+import { existingOpen, openBasisOf } from '../marketplace/open';
 import { loadDealById } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { setDealReaction } from '../marketplace/reactions-server';
@@ -83,7 +84,7 @@ export async function quoteAnalysis(m: ActingMember, dealId: string, withPmi: bo
   const [settings, open, offered] = await Promise.all([getBillingSettings(), existingOpen(admin, m.payerId, deal.canonical_url), m.admin ? Promise.resolve(null) : offeredPricesFor(m.userId, dealId, withPmi).catch(() => null)]);
   const isOpen = open?.status === 'open';
   const pricing = offered && offered.offer ? { ...settings.dealPricing, fullAnalysisPence: offered.fullPence, pmiAddonPence: offered.pmiPence } : settings.dealPricing;
-  const ladder = openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
+  const ladder = openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder);
   const quote = analysisQuote({ admin: m.admin, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladder, withPmi });
   return { basePence: quote.due.purchaseBasePence, opensDeal: !quote.opened };
 }
@@ -296,6 +297,19 @@ export async function startAnalysis(m: ActingMember, supabase: SupabaseClient, s
   if (r.ok) return { ok: true, handOut: { kind: 'analysis', stepId, dealId: s.dealId, purchaseId: r.purchaseId }, ledgerRef: r.purchaseId, after: null, done: false };
   if (r.code === 'already_done') return { ok: true, handOut: null, ledgerRef: null, after: r.reportId ? { reportId: r.reportId } : null, done: true };
   return { ok: false, code: r.code, requiredPence: (r as { requiredPence?: number }).requiredPence, availablePence: (r as { availablePence?: number }).availablePence };
+}
+
+/**
+ * Batch 28: the £2 buy-to-let report, run here and now by its own path
+ * (btl/report-server.ts: it checks the price, and charges only once the
+ * report is written; never on a failure).
+ */
+export async function startBtlReport(m: ActingMember, s: { dealId: string; quotedBasePence: number }): Promise<ChargedStart> {
+  const r = await runBtlReport({ userId: m.userId, adminUser: m.admin, target: { dealId: s.dealId }, quotedBasePence: s.quotedBasePence });
+  if (r.ok) return { ok: true, handOut: null, ledgerRef: r.purchaseId, after: { btlReportId: r.reportId }, done: true };
+  // Charged once: the member's report on it already exists, so the step ends with it and nothing is charged.
+  if (r.code === 'already_done') return { ok: true, handOut: null, ledgerRef: null, after: r.reportId ? { btlReportId: r.reportId } : null, done: true };
+  return { ok: false, code: r.code, requiredPence: r.requiredPence, availablePence: r.availablePence };
 }
 
 /** The PMI add-on to a finished report: the button's own route runs it (it checks the price, charges and writes). */

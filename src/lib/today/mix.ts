@@ -2,9 +2,12 @@
  * Today's 5 as a mix of the profile's chosen deal types (Batch 17, Part I;
  * the numbers decided 29 Sep, Q18 and Q28).
  *
- *   STARTING MIX  All three: 2 Short-let / 2 Rent-to-rent / 1 BRRR.
- *                 Two: 3 / 2, the extra slot to the type whose best match
- *                 is stronger that day. One: all 5.
+ *   STARTING MIX  All four (Batch 28): 2 Short-let / 1 Buy to let / 1 BRRR /
+ *                 1 Rent-to-rent. Short-let + BRRR + Rent-to-rent (what
+ *                 "All of them" was before Buy to let): 2 / 1 / 2, kept as
+ *                 it was. Any other three: the four-type mix rescaled to the
+ *                 day. Two: 3 / 2, the extra slot to the type whose best
+ *                 match is stronger that day. One: all 5.
  *   THE SHIFT     Each chosen type's weight is its starting slots plus the
  *                 Keeps of that type on this profile in the last 14 days ÷ 3.
  *                 The 5 slots are shared in proportion to the weights (largest
@@ -28,6 +31,12 @@ export const TODAY_MIX_KEY = 'today_mix';
 export interface TodayMixSettings {
   /** The starting mix when every available type is chosen (a coming-soon type never has slots). */
   all: Partial<Record<DealType, number>>;
+  /**
+   * Batch 28: the mix for Short-let + BRRR + Rent-to-rent, the three a
+   * profile that chose "All of them" before Buy to let existed holds, so
+   * their day does not change until they add it (decided).
+   */
+  three: Partial<Record<DealType, number>>;
   /** Two types: the stronger one's slots, then the other's. */
   two: [number, number];
   /** Keeps counted over this many days. */
@@ -38,8 +47,12 @@ export interface TodayMixSettings {
   floor: number;
 }
 
+/** The three types "All of them" meant before Batch 28. */
+export const LEGACY_ALL_TYPES: readonly DealType[] = ['buy_str', 'brrr', 'r2r'];
+
 export const DEFAULT_TODAY_MIX: TodayMixSettings = {
-  all: { buy_str: 2, brrr: 1, r2r: 2 },
+  all: { buy_str: 2, btl: 1, brrr: 1, r2r: 1 },
+  three: { buy_str: 2, brrr: 1, r2r: 2 },
   two: [3, 2],
   windowDays: 14,
   keepsPerSlot: 3,
@@ -62,18 +75,25 @@ function wholeIn(raw: unknown, min: number, max: number): number | null {
   return Number.isInteger(n) && n >= min && n <= max ? n : null;
 }
 
+/** One mix: every one of these types needs its share, and they fill the day; anything else in it is ignored. Null when it does not. */
+function sharesOf(raw: unknown, types: readonly DealType[]): Partial<Record<DealType, number>> | null {
+  const a = asObject(raw);
+  const shares = types.map((t) => [t, wholeIn(a[t], 0, TODAY_SIZE)] as const);
+  const ok = shares.every(([, n]) => n !== null) && shares.reduce((sum, [, n]) => sum + (n ?? 0), 0) === TODAY_SIZE;
+  return ok ? (Object.fromEntries(shares) as Partial<Record<DealType, number>>) : null;
+}
+
 /** The stored row; anything missing or out of bounds keeps its default, and each mix must add up to the day. */
 export function parseTodayMix(raw: unknown): TodayMixSettings {
   const o = asObject(raw);
   const d = DEFAULT_TODAY_MIX;
-  const a = asObject(o.all);
-  // Every available type needs its share, and they fill the day; anything else in the row is ignored.
-  const shares = AVAILABLE_DEAL_TYPES.map((t) => [t, wholeIn(a[t], 0, TODAY_SIZE)] as const);
-  const allOk = shares.every(([, n]) => n !== null) && shares.reduce((sum, [, n]) => sum + (n ?? 0), 0) === TODAY_SIZE;
+  const all = sharesOf(o.all, AVAILABLE_DEAL_TYPES);
+  const three = sharesOf(o.three, LEGACY_ALL_TYPES);
   const two = Array.isArray(o.two) ? o.two.map((v) => wholeIn(v, 0, TODAY_SIZE)) : [];
   const twoOk = two.length === 2 && two[0] !== null && two[1] !== null && two[0] + two[1] === TODAY_SIZE && two[0] >= two[1];
   return {
-    all: allOk ? (Object.fromEntries(shares) as Partial<Record<DealType, number>>) : { ...d.all },
+    all: all ?? { ...d.all },
+    three: three ?? { ...d.three },
     two: twoOk ? [two[0]!, two[1]!] : [...d.two],
     windowDays: wholeIn(o.windowDays, 1, 90) ?? d.windowDays,
     keepsPerSlot: wholeIn(o.keepsPerSlot, 1, 50) ?? d.keepsPerSlot,
@@ -101,7 +121,33 @@ export function baseSlots(types: readonly DealType[], strength: Strength = {}, s
     const [strong, weak] = byStrength(chosen, strength);
     return { [strong]: s.two[0], [weak]: s.two[1] };
   }
-  return Object.fromEntries(chosen.map((t) => [t, s.all[t] ?? 0])) as Partial<Record<DealType, number>>;
+  if (chosen.length === LEGACY_ALL_TYPES.length && LEGACY_ALL_TYPES.every((t) => chosen.includes(t))) return Object.fromEntries(chosen.map((t) => [t, s.three[t] ?? 0])) as Partial<Record<DealType, number>>;
+  return rescaled(chosen, s.all, size);
+}
+
+/**
+ * These types' shares of the four-type mix, rescaled to fill the day
+ * (largest remainder; a tie to the question's order). Every type keeps at
+ * least one slot while there are slots to give.
+ */
+function rescaled(chosen: readonly DealType[], all: Partial<Record<DealType, number>>, size: number): Partial<Record<DealType, number>> {
+  const share = new Map(chosen.map((t) => [t, Math.max(0, all[t] ?? 0)]));
+  const total = [...share.values()].reduce((a, b) => a + b, 0);
+  if (total === size) return Object.fromEntries(share) as Partial<Record<DealType, number>>;
+  const exact = new Map(chosen.map((t) => [t, total > 0 ? (share.get(t)! / total) * size : size / chosen.length]));
+  const out = new Map(chosen.map((t) => [t, Math.floor(exact.get(t)!)]));
+  const byRemainder = [...chosen].sort((a, b) => exact.get(b)! - Math.floor(exact.get(b)!) - (exact.get(a)! - Math.floor(exact.get(a)!)) || DEAL_TYPES.indexOf(a) - DEAL_TYPES.indexOf(b));
+  let left = size - [...out.values()].reduce((a, b) => a + b, 0);
+  for (let i = 0; left > 0; i = (i + 1) % byRemainder.length, left -= 1) out.set(byRemainder[i], out.get(byRemainder[i])! + 1);
+  for (const t of chosen) {
+    while (out.get(t)! < 1) {
+      const donor = [...chosen].filter((x) => out.get(x)! > 1).sort((a, b) => out.get(b)! - out.get(a)!)[0];
+      if (!donor) break;
+      out.set(donor, out.get(donor)! - 1);
+      out.set(t, 1);
+    }
+  }
+  return Object.fromEntries(out) as Partial<Record<DealType, number>>;
 }
 
 /** The shift toward the types the member Keeps (largest remainder over the day, the floor honoured). */

@@ -183,6 +183,14 @@
 			"schedule": "2,12,22,32,42,52 5 * * *"
 		},
 		{
+			"path": "/api/internal/btl-screen",
+			"schedule": "50 4 * * *"
+		},
+		{
+			"path": "/api/internal/btl-screen",
+			"schedule": "57 6 * * *"
+		},
+		{
 			"path": "/api/internal/marketplace-recheck",
 			"schedule": "30 * * * *"
 		},

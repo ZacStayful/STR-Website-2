@@ -15,6 +15,8 @@
  *
  * Pure: no network, no database, no server-only.
  */
+import { dealTypeOf } from '../profile/deal-types.ts';
+import { btlFigureLine, type BtlCard } from '../btl/card.ts';
 import { cardRangeLine, type ProfitRangeInput } from '../marketplace/profit-range.ts';
 import { parseProjectCard, PROJECT_BADGE, projectNumbers, type ProjectCardData, type ProjectNumbers } from './headline.ts';
 
@@ -51,17 +53,21 @@ export function projectRangeLine(n: ProjectNumbers): string {
   return [n.profit, n.profit ? n.caption : null, n.valueAdded, n.works, n.cash].filter((x): x is string => Boolean(x)).join(' · ');
 }
 
-type LineCard = Parameters<typeof cardRangeLine>[0] & { project?: unknown };
+type LineCard = Parameters<typeof cardRangeLine>[0] & { project?: unknown; band?: string | null; btl_pass?: unknown; btl?: BtlCard | null };
 
 /** Every email and list line: a Project deal's own numbers, else the ordinary range line. */
 export function rangeLineFor(card: LineCard, finance: ProfitRangeInput['finance'], widths: ProfitRangeInput['widths']): string | null {
+  // Batch 28: a deal in the pool only as a buy-to-let deal has no short-let range to give.
+  if (card.kind === 'sale' && dealTypeOf(card) === 'btl') return btlFigureLine(card);
   const project = projectOf(card);
   if (!project) return cardRangeLine(card, finance, widths);
   return projectRangeLine(projectNumbersFor(card, project, finance, widths));
 }
 
 /** The kind word on a card, a teaser or a share: "Project", "Rent-to-rent" or "To buy". */
-export function kindWordFor(card: { kind: string; project?: unknown }): string {
+export function kindWordFor(card: { kind: string; project?: unknown; band?: string | null; btl_pass?: unknown }): string {
   if (card.kind === 'rent') return 'Rent-to-rent';
-  return projectOf(card) ? PROJECT_BADGE : 'To buy';
+  if (projectOf(card)) return PROJECT_BADGE;
+  // Batch 28: a deal in the pool only as a buy-to-let deal is never "To buy" (a short-let purchase).
+  return dealTypeOf(card) === 'btl' ? 'Buy to let' : 'To buy';
 }

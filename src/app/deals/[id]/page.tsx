@@ -22,7 +22,16 @@ import { parseStoredDeal } from "@/lib/marketplace/record";
 import { cashLine, isCheapPrice, lenderNote } from "@/lib/deal-quality/streams";
 import { readDealQualitySettings } from "@/lib/deal-quality/settings-server";
 import { isHeldForProject, projectEstimateFor } from "@/lib/project/read-server";
-import { projectCardsFor } from "@/lib/marketplace/queries";
+import { btlCardsFor, projectCardsFor } from "@/lib/marketplace/queries";
+import { BTL_BADGE, btlLookerFor, btlViewFor, openProfitFor } from "@/lib/btl/view";
+import { btlSheet } from "@/lib/btl/sheet";
+import { DEFAULT_BTL_PRIORITY, regionPhrase } from "@/lib/btl/today";
+import { readBtlBenchmark, readBtlSettingsCached } from "@/lib/btl/settings-server";
+import { regionForArea } from "@/lib/market/regions";
+import { dealTypeFor, dealTypeOf } from "@/lib/profile/deal-types";
+import { BuyToLetSection } from "../_components/BuyToLetSection";
+import { BtlReportButton } from "@/components/report/BtlReportButton";
+import { latestBtlReportId, quoteBtlReport } from "@/lib/btl/report-server";
 import { kindWordFor, projectNumbersFor, projectSummary } from "@/lib/project/display";
 import { ProjectSection } from "../_components/ProjectSection";
 import { ProjectWorking } from "../_components/ProjectWorking";
@@ -37,7 +46,7 @@ import { openPricePence } from "@/lib/marketplace/ladder";
 import { isFreeStandoutOpen } from "@/lib/standout/saved-server";
 import { AUCTION_LABEL, badgesFor, describeType, isAuctionCard, type DealCard as Card } from "@/lib/marketplace/grid";
 import { photoUrlFor } from "@/lib/marketplace/queries";
-import { moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/marketplace/profit-range";
+import { formatRange, moneyRange, profitRange, spread, upliftTag, rangeCaption } from "@/lib/marketplace/profit-range";
 import { dealReturnPath, returnLabel } from "@/lib/listing/return-path";
 import { basisLine, cashBuyerOf, gapLine, memberFinance, mostYouCanPay, payLine } from "@/lib/marketplace/most-you-can-pay";
 import { profilesFor } from "@/lib/profiles/server";
@@ -54,6 +63,7 @@ import { myDealsFocusPath } from "@/lib/listing/return-path";
 import { KEPT_STATUS } from "@/lib/listing/pipeline";
 import { readableReportFor } from "@/lib/analysis/deal-analysis";
 import { offerPricingFor } from "@/lib/analysis/offers-server";
+import { offerLabel } from "@/lib/analysis/offers";
 import { analysisQuote } from "@/lib/analysis/deal-analysis-rules";
 import { dealAnalysisInput, dealListingPrice } from "@/lib/analysis/deal-input";
 import { enhancedEnabled } from "@/lib/analysis/run";
@@ -120,12 +130,22 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const heldForProject = deal.status === "pending_check" ? await isHeldForProject(createAdminClient(), deal.id) : false;
   // Batch 17: a Project deal's card numbers (card-safe); its working only once opened (below).
   const projectCard = deal.kind === "sale" ? (await projectCardsFor([deal.id])).get(deal.id) ?? null : null;
+  // Batch 28: its buy-to-let card (card-safe numbers), when it passes the buy-to-let rules.
+  const btlCard = deal.kind === "sale" ? (await btlCardsFor([deal.id])).get(deal.id) ?? null : null;
   const [settings, credit, cards, profileRes, quoter, savedRes, savedProfiles] = await Promise.all([getBillingSettings(), getCreditSummary(payerId).catch(() => null), getAreaCards().catch(() => []), supabase.from("profiles").select("market_goals").eq("id", user.id).single(), quoterFor(payerId, adminUser), supabase.from("saved_areas").select("postcode_area").eq("user_id", user.id), profilesFor(user.id)]);
   const goals = parseMarketGoals(profileRes.data?.market_goals);
   // Batch 14: the member's finance as their figures use it (a cash buyer borrows nothing).
   const finance = memberFinance(goals);
   // Batch 14: the member's tailoring (their active profile), for the numbers that lead the sheet.
-  const tailoring = await tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, goals, ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area));
+  const savedAreas = ((savedRes.data ?? []) as { postcode_area: string }[]).map((r) => r.postcode_area);
+  const tailoring = await tailoringForMember(user.id, savedProfiles.readable ? savedProfiles.active : null, goals, savedAreas);
+  // Batch 28: which type this member sees the deal as. A deal in the pool only as a buy-to-let deal
+  // (btlOnly) never shows a short-let figure; one that is both shows both, the chosen one first.
+  const btlLooker = btlLookerFor(goals, savedAreas, tailoring?.about ?? null);
+  const typed = { kind: deal.kind, band: deal.band, project: projectCard, btl_pass: btlCard !== null };
+  const btlOnly = dealTypeOf(typed) === "btl";
+  const asBtl = dealTypeFor(typed, btlLooker.types ?? []) === "btl";
+  const btlView = btlCard || btlOnly ? btlViewFor({ btl: btlCard, postcode_area: deal.postcode_area }, btlLooker) : null;
   const pricing = quoter.pricing;
   const now = new Date();
   const card: Card = { ...deal, has_photo: Boolean(deal.photo) } as unknown as Card;
@@ -135,10 +155,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const auction = isAuctionCard(card);
   const area = deal.postcode_area ? areaMetaForCode(deal.postcode_area) : null;
   const areaCard = deal.postcode_area ? cards.find((c) => c.code === deal.postcode_area) ?? null : null;
-  const profit = deal.annual_profit === null ? null : Number(deal.annual_profit);
   // Batch 25: a deal Stayful Intelligence saved for this account opens free (only this deal: the ladder is untouched).
   const freeStandoutOpen = !priv && !adminUser ? await isFreeStandoutOpen(payerId, deal.id) : false;
-  const ladderPence = freeStandoutOpen ? 0 : openPricePence(profit, settings.dealOpenLadder);
+  const ladderPence = freeStandoutOpen ? 0 : openPricePence(openProfitFor({ ...deal, project: projectCard, btl: btlCard }), settings.dealOpenLadder);
   const screening = parseScreening(deal.screening);
   // Batch 16: the deal's own comparables check, when it has one (the count is all the page says of it).
   const check = checkOf(deal.screening);
@@ -249,19 +268,29 @@ export default async function DealPage({ params, searchParams }: { params: Promi
     deal_payback: model?.kind === "rent-to-rent" ? model.paybackMonths : null,
     deal_margin: model?.kind === "rent-to-rent" ? model.monthlyMargin : null,
   };
-  const numbers = numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
+  // Batch 28: a deal shown as Buy to let has its numbers in its own section (BuyToLetSection).
+  const numbers = asBtl ? null : numbersForCard(sheetCard, tailoring, areaLookup(cards), now);
   // Part D: why it fits them, and how well, in the same words as their card.
   const explanation = numbers ? explainCard(sheetCard, tailoring, areaLookup(cards), now) : null;
+  // Batch 28: once opened, the whole buy-to-let working, against the benchmark for where they search and their band.
+  const btlBand = btlLooker.cashBand ?? btlCard?.band ?? null;
+  const btlBench = btlCard && priv && btlLooker.centre && btlBand ? await readBtlBenchmark(createAdminClient(), btlLooker.centre, btlBand) : null;
+  // Part G: the £2 buy-to-let report, at this member's own price (the welcome price on a revealed deal), or the one they have.
+  const [btlQuote, btlReportId] = btlCard ? await Promise.all([quoteBtlReport(user.id, adminUser, { dealId: deal.id }), latestBtlReportId(user.id, { dealId: deal.id })]) : [null, null];
+  // The labels name the stored finance and costs ("12% incl. VAT"), as the figures were worked out with them.
+  const btlLabels = btlCard && priv ? (await readBtlSettingsCached(createAdminClient())).settings : undefined;
+  const btlSheetData = btlCard && priv ? btlSheet(btlCard, { priority: btlLooker.priority ?? DEFAULT_BTL_PRIORITY, benchmark: btlBench, regionName: btlLooker.centre ? regionPhrase(regionForArea(btlLooker.centre).name) : null, settings: btlLabels }) : null;
   // Part E: what holds them back leads the sheet. "Knowing the numbers": the
   // Full analysis first. "Landlord or agent consent": Batch 7's first message
   // first, as the next-step card on a deal on their My deals, else its
   // opening lines (never the address).
   const lead = leadFor(tailoring);
-  const analysisFirst = lead === "analysis" && canBuy;
+  // Batch 28: the Full analysis is a short-let report; a deal in the pool only as a buy-to-let deal is not offered one.
+  const analysisFirst = lead === "analysis" && canBuy && !btlOnly;
   const consentStep = lead === "consent" && Boolean(priv) && tracking.tracked;
   const consentLines = lead === "consent" && !consentStep ? consentOpening(factsFromCard(deal, false, null), now) : null;
   // Batch 10: at Kept the next step leads with the Full analysis.
-  const stepLead = tracking.stage === KEPT_STATUS && canBuy && !blocked ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null;
+  const stepLead = tracking.stage === KEPT_STATUS && canBuy && !blocked && !btlOnly ? { text: `Run the full analysis${priceText(analysisPrice.without) ? ` · ${priceText(analysisPrice.without)}` : ""}`, href: `${dealPath}?analysis=1&from=kept_step`, note: "The exact figures for this property before you contact the agent.", seen: { dealId: deal.id, stage: tracking.stage } } : null;
   const pctRange = (v: number) => {
     const [lo, hi] = spread(v, pct, 0.1);
     return `${lo.toFixed(1)}–${hi.toFixed(1)}%`;
@@ -340,18 +369,22 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{deal.source === "zoopla" ? "Photos on the listing" : "Photo coming"}</div>
                 )}
                 <div className="absolute left-3 top-3 flex flex-wrap gap-1">
-                  <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{kindWordFor({ kind: deal.kind, project: projectCard })}</span>
+                  <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{asBtl ? BTL_BADGE : kindWordFor({ kind: deal.kind, project: projectCard })}</span>
                   {badges.tags.map((t) => (
                     <span key={t} className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">{t}</span>
                   ))}
                   {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
-                  {lowEntry && !pn && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
+                  {lowEntry && !pn && !asBtl && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-primary-foreground">Low entry</span>}
                   {deal.status === "retired" && <span className="rounded-full bg-destructive px-2 py-0.5 text-[11px] font-semibold text-white">Off the market</span>}
                 </div>
               </div>
               <div className="p-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  {pn ? (
+                  {asBtl && btlView ? (
+                    <p className="text-2xl font-bold text-foreground">
+                      {btlCard ? formatRange(btlCard.cashflowMonthly.low, btlCard.cashflowMonthly.high) : "—"} <span className="text-sm font-normal text-muted-foreground">{btlView.caption}{btlCard ? " · cashflow before tax" : ""}</span>
+                    </p>
+                  ) : pn ? (
                     <p className="text-2xl font-bold text-foreground">
                       {pn.range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{pn.caption}{pn.range ? " · profit after works" : ""}</span>
                     </p>
@@ -360,17 +393,17 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                       {range?.label ?? "—"} <span className="text-sm font-normal text-muted-foreground">{caption}{range ? ` · ${range.basis}` : ""}</span>
                     </p>
                   )}
-                  {(price || (pn ? pn.cash : cashText)) && (
+                  {(price || (asBtl ? btlView?.cash : pn ? pn.cash : cashText)) && (
                     <p className="text-lg font-semibold text-foreground">
                       {price ? (auction ? `Guide ${price}` : price) : ""}
-                      {(pn ? pn.cash : cashText) && <span className={"text-sm font-medium text-muted-foreground" + (price ? " ml-2" : "")}>{pn ? pn.cash : cashText}</span>}
+                      {(asBtl ? btlView?.cash : pn ? pn.cash : cashText) && <span className={"text-sm font-medium text-muted-foreground" + (price ? " ml-2" : "")}>{asBtl ? btlView?.cash : pn ? pn.cash : cashText}</span>}
                     </p>
                   )}
-                  {lenderText && <p className="mt-0.5 text-xs text-muted-foreground">{lenderText}</p>}
+                  {lenderText && !asBtl && <p className="mt-0.5 text-xs text-muted-foreground">{lenderText}</p>}
                 </div>
                 {/* Batch 17: a Project deal's works and value added; "value added", never "uplift", which is the short-let gain over a long let. */}
                 {pn && <p className="mt-1 text-sm font-medium text-foreground">{projectSummary(pn)}</p>}
-                {uplift && !pn && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
+                {uplift && !pn && !asBtl && <p className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">{uplift}</p>}
                 <p className="mt-2 text-sm font-medium text-foreground">{priv ? (priv.address ?? where) : where}</p>
                 <p className="text-xs text-muted-foreground">{describeType(card)}{priv?.postcode ? ` · ${priv.postcode}` : ""}</p>
                 <p className={"mt-1 text-[11px] " + (badges.freshnessKind === "live" ? "text-primary" : "text-muted-foreground")}>{badges.freshness}{deal.listed_date ? ` · listed ${new Date(deal.listed_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}` : ""}</p>
@@ -390,7 +423,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                   )}
                 </div>
                 {/* Batch 10: past Kept without a Full analysis, an advisory line (never a block). */}
-                {stagePastKept && canBuy && !blocked && <StageReminder itemKey={`d-${deal.id}`} dealId={deal.id} stage={tracking.stage} href={`${dealPath}?analysis=1&from=stage`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
+                {stagePastKept && canBuy && !blocked && !btlOnly && <StageReminder itemKey={`d-${deal.id}`} dealId={deal.id} stage={tracking.stage} href={`${dealPath}?analysis=1&from=stage`} price={priceText(analysisPrice.without)} recommendPmi={tracking.stage === "offer" && Boolean(pmiLabel)} />}
                 {/* Batch 7: the next step, for the member's own opened deal only. At Kept it leads with the Full analysis. */}
                 {!consentStep && <NextStepSlot stage={tracking.stage} dealId={deal.id} checkedListingId={tracking.checkedListingId} opened={Boolean(priv)} itemKey={`d-${deal.id}`} mine={tracking.tracked} facts={factsFromCard(deal, Boolean(priv), priv?.address ?? null)} variant="full" lead={stepLead} />}
 
@@ -408,14 +441,14 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                     {report ? (
                       <Link href={`/reports/${report.id}?back=${encodeURIComponent(dealPath)}`} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">Open full analysis{reportBy ? ` · ${reportBy}’s` : ""}</Link>
                     ) : null}
-                    <Link href={`/deals?type=${pn ? "brrr" : deal.kind === "rent" ? "r2r" : "buy_str"}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
+                    <Link href={`/deals?type=${pn ? "brrr" : deal.kind === "rent" ? "r2r" : asBtl ? "btl" : "buy_str"}${deal.postcode_area ? `&areas=${deal.postcode_area}` : ""}${deal.bedrooms ? `&beds=${Math.min(deal.bedrooms, 4)}${deal.bedrooms >= 4 ? "%2B" : ""}` : ""}`} className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted">More like this</Link>
                     {priv.open.id !== "admin" && <span className="text-[11px] text-muted-foreground">Opened {new Date(priv.open.opened_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
                   </div>
                 ) : deal.status === "live" ? (
                   <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3">
                     <p className="text-sm font-semibold text-foreground">Take a Quick look, or get the Full analysis</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      A Quick look opens the address, postcode, photos and the {SOURCE_LABELS[deal.source]} link. We check it is still on the market before charging, and once opened it’s yours for good. A Full analysis includes the Quick look.
+                      A Quick look opens the address, postcode, photos and the {SOURCE_LABELS[deal.source]} link. We check it is still on the market before charging, and once opened it’s yours for good.{btlOnly ? "" : " A Full analysis includes the Quick look."}
                     </p>
                     <form action={openDealAction} className="mt-2">
                       <input type="hidden" name="id" value={deal.id} />
@@ -425,7 +458,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
                 ) : (
                   <p className="mt-4 text-sm text-muted-foreground">{deal.status === "pending_verify" ? "We’re checking this listing’s page before it goes live. Come back in an hour." : deal.status === "pending_check" ? (heldForProject ? "We’re checking this one’s condition before it goes live. Come back tomorrow." : "We’re checking this property’s own Airbnb comparables before it goes live. Come back tomorrow.") : "This deal is off the market and cannot be opened."}</p>
                 )}
-                {canBuy && !analysisFirst && (
+                {canBuy && !analysisFirst && !btlOnly && (
                   <div className="mt-3">
                     <AnalysisPanel dealId={deal.id} initialOpen={analysis === "1"} blocked={blocked} price={analysisPrice} pmi={pmiLabel ? addOnLabel(analysisPrice.withPmi, analysisPrice.without, adminUser ? 0 : pricing.pmiAddonPence) : null} opensDeal={!opened} recommendPmi={tracking.stage === "offer"} sampleHref={SAMPLE_REPORT} from={reminderWhere(from)} />
                   </div>
@@ -460,6 +493,17 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               </section>
             )}
 
+            {/* Batch 28: the buy-to-let lens: first for a member who sees it as Buy to let, the other lens for one who sees it as a short-let. */}
+            {btlView && (
+              <BuyToLetSection
+                numbers={btlView.numbers}
+                flags={btlView.flags}
+                sheet={btlSheetData}
+                pending={btlView.pending}
+                report={btlQuote && (btlReportId || deal.status === "live") ? <BtlReportButton dealId={deal.id} label={quoter.label(btlQuote.basePence)} note={offerLabel(btlQuote.offer)} reportId={btlReportId} /> : null}
+              />
+            )}
+
             {pn && projectCard && (
               <ProjectSection
                 dealId={deal.id}
@@ -471,6 +515,7 @@ export default async function DealPage({ params, searchParams }: { params: Promi
               />
             )}
 
+            {!btlOnly && (
             <MoreNumbers folded={Boolean(numbers)}>
             {screening && screening.band !== "insufficient-data" && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">
@@ -537,8 +582,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
             )}
 
             </MoreNumbers>
+            )}
 
-            {canBuy && <AnalysisPreview />}
+            {canBuy && !btlOnly && <AnalysisPreview />}
 
             {history.length > 0 && (
               <section className="mt-4 rounded-xl border border-border bg-card p-4">

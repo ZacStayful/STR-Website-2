@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { openProfitFor } from "@/lib/btl/view";
 import { dealRowTitle } from "@/lib/listing/row-title";
 import { SOURCE_LABELS } from "@/lib/listing/detect";
 import { formatListingPrice } from "@/lib/listing/format";
@@ -109,7 +110,7 @@ export function DealRow({
     sub = [KIND[item.kind] ?? null, l?.bedrooms ? `${l.bedrooms} bed` : null, l ? SOURCE_LABELS[l.source] : null].filter(Boolean).join(" · ");
   }
   const gone = card?.status === "retired";
-  const openPence = card && !item.opened ? (adminUser || freeOpen ? 0 : openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder)) : null;
+  const openPence = card && !item.opened ? (adminUser || freeOpen ? 0 : openPricePence(openProfitFor(card), ladder)) : null;
   // What this member pays for the Quick look and the Full analysis (Batch 10).
   const payGap = card && view?.pay ? gapLine(card.price_amount === null ? null : Number(card.price_amount), view.pay) : null;
   const openLabel = freeOpen && !item.opened ? "Free" : view?.quickLook ? priceText(view.quickLook) : null;

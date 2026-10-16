@@ -88,3 +88,18 @@ test('formatters', () => {
   assert.equal(dayWords([1, 2, 3, 4, 5, 6]), 'Monday to Saturday');
   assert.equal(dayWords([1, 3]), 'Mondays and Wednesdays');
 });
+
+test('Batch 28: the buy-to-let figures read from their settings, and a malformed row reads as nothing', () => {
+  const g = schemaSnapshot();
+  const r = (n: string) => PLACEHOLDERS[n].resolve(g, null);
+  assert.equal(r('btl_report_cost'), '£2');
+  assert.equal(r('btl_ltv'), '75%');
+  assert.equal(r('btl_rent_test'), 'at least 125% of the monthly mortgage interest worked out at the higher of the live rate plus 2% or 5.5%');
+  assert.equal(r('btl_running_costs'), 'a letting agent at 12% of the rent (VAT included), repairs at 8%, one empty month a year, insurance at £25 a month and £300 a year of safety certificates');
+  assert.equal(r('btl_epc_allowance'), "£5,000 for an EPC of D, £10,000 for E to G, and £5,000 while the EPC isn't checked");
+  assert.equal(r('btl_cash_bands'), 'under £25k, £25k–£50k, £50k–£100k or £100k or more');
+  assert.equal(r('btl_standout_margin'), '125%');
+  assert.equal(PLACEHOLDERS.btl_ltv.resolve(schemaSnapshot({ settings: { btl_finance: { ltvPct: 'lots' } } }), null), null);
+  assert.equal(PLACEHOLDERS.btl_cash_bands.resolve(schemaSnapshot({ settings: { btl_bands: [50000, 25000] } }), null), null);
+  assert.equal(PLACEHOLDERS.btl_report_cost.resolve(schemaSnapshot({ drop: ['btl_report_pence'] }), null), null);
+});
