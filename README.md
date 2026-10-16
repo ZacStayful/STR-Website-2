@@ -1044,6 +1044,15 @@ never gives advice, an address or a postcode, or changes anything itself (it
 offers buttons the member taps). The tap-to-ask chips stay free. Everything
 is in `src/lib/chat`; admin is the **Chat** tab of `/admin/intelligence`.
 
+Below the floors (`si_chat_quick_floor_pence` 2p, `si_chat_full_floor_pence`
+10p) the box says "Top up to ask me more" rather than at £0: a question must
+be able to afford an answer, and a full-view question one look-up, so the full
+view's floor is raised to the smallest hold that affords one (about 12p with
+today's prompt) on the page and again when a question is taken. Review R3
+(R3-90, R3-27) kept the floors rather than setting them to 0. The price hints
+are shown as they will come off the member's balance (top-up credit at its
+rate); the settings themselves are plan-credit pence.
+
 1. **Run `supabase/schema.sql`** (the "Batch 26: typed chat" section).
    Idempotent and additive, service role only: the conversation log's
    questions may now come from the chat (R2-87), `chat_turns` (tokens, the

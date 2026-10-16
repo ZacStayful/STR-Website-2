@@ -155,15 +155,6 @@ export async function markChoicesDone(userId: string, now: Date = new Date()): P
   await createAdminClient().from('signup_reveals').update({ choices_at: now.toISOString(), updated_at: now.toISOString() }).eq('user_id', userId).is('choices_at', null);
 }
 
-/** A search refresh replaced a card the member was shown: it stays in shown_ids. */
-export async function addRevealShown(userId: string, dealIds: readonly string[]): Promise<void> {
-  if (!hasServiceRole() || dealIds.length === 0) return;
-  const row = await revealRowFor(userId);
-  if (!row) return;
-  const shown = [...new Set([...row.shownIds, ...dealIds])];
-  await createAdminClient().from('signup_reveals').update({ shown_ids: shown, updated_at: new Date().toISOString() }).eq('user_id', userId);
-}
-
 /** Every deal any member's reveal showed, of these: the morning pick never repeats one (bug 5, revealed deals). */
 export async function revealedFor(userIds: readonly string[]): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();

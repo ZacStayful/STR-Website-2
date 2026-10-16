@@ -216,7 +216,7 @@ export default async function ChatAdminPage() {
                 ))}
               </tbody>
             </table>
-            <p className="mt-2 text-xs text-muted-foreground">A full-view question counts towards weekly active by itself; a quick answer doesn’t. “Beyond the chat” leaves the chat out.</p>
+            <p className="mt-2 text-xs text-muted-foreground">A full-view question counts towards weekly active by itself; a quick answer doesn’t. “Beyond the chat” leaves the chat out. Admin, staff and excluded accounts are left out, as on Weekly active.</p>
           </section>
 
           <section className={CARD}>

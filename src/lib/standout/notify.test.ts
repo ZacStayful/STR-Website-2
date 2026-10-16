@@ -41,7 +41,8 @@ test('members who can\'t be called are saved and told in "Saved for you"', () =>
   assert.deepEqual(planMember(input({ member: { ...member, isOwner: false } })), [{ decisionId: 'a', action: 'email', status: 'not_owner' }]);
   assert.deepEqual(planMember(input({ member: { ...member, numberOk: false } })), [{ decisionId: 'a', action: 'email', status: 'no_number' }]);
   assert.deepEqual(planMember(input({ member: { ...member, managementOnly: true } })), [{ decisionId: 'a', action: 'email', status: 'management_only' }]);
-  assert.deepEqual(planMember(input({ member: null })), [{ decisionId: 'a', action: 'email', status: 'calls_off' }]);
+  // R3-20: an unreadable member is not a choice of theirs: the plan waits.
+  assert.deepEqual(planMember(input({ member: null })), [{ decisionId: 'a', action: 'wait', status: 'pending' }]);
 });
 
 test('credit below the floor: no call; the text and email go inside the text window, else wait', () => {
@@ -61,10 +62,13 @@ test('a deal that has gone is told nothing; a save too old to ring about goes in
   assert.deepEqual(planMember(input({ candidates: [cand('a', 100, 1_300, { savedAt: hoursAgo(80) })] })), [{ decisionId: 'a', action: 'email', status: 'stale' }]);
 });
 
-test('below the floor, the text goes only with texts on and credit for both; else the email, charged if it can be, free if not', () => {
+test('below the floor, each channel is charged when the balance covers it, in order: the text (texts on), then the email, free if not (R3-114)', () => {
   const p = { textPence: 22, emailPence: 20 };
   assert.deepEqual(belowFloorChannels({ textsOn: true, balancePence: 42, ...p }), { text: true, chargeEmail: true });
-  assert.deepEqual(belowFloorChannels({ textsOn: true, balancePence: 41, ...p }), { text: false, chargeEmail: false });
+  assert.deepEqual(belowFloorChannels({ textsOn: true, balancePence: 41, ...p }), { text: true, chargeEmail: false });
+  assert.deepEqual(belowFloorChannels({ textsOn: true, balancePence: 21, ...p }), { text: false, chargeEmail: true });
+  assert.deepEqual(belowFloorChannels({ textsOn: true, balancePence: 19, ...p }), { text: false, chargeEmail: false });
+  assert.deepEqual(belowFloorChannels({ textsOn: false, balancePence: 41, ...p }), { text: false, chargeEmail: true });
   assert.deepEqual(belowFloorChannels({ textsOn: false, balancePence: 20, ...p }), { text: false, chargeEmail: true });
   assert.deepEqual(belowFloorChannels({ textsOn: false, balancePence: 19, ...p }), { text: false, chargeEmail: false });
 });

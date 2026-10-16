@@ -41,18 +41,18 @@ export interface GroupingQuestion {
 
 export interface GroupingInput {
   questions: readonly GroupingQuestion[];
-  /** Open gaps, so a question asked again joins its group. */
-  gaps: readonly { id: string; label: string }[];
-  /** Approved and rejected entries, so a question they cover isn't drafted again. */
-  entries: readonly { slug: string; question: string; status: 'approved' | 'rejected' }[];
+  /** Open gaps, so a question asked again joins its group; and the decided ones (Review R3, R3-66), so a re-asked one is counted against the decision, never drafted again. */
+  gaps: readonly { id: string; label: string; status?: string }[];
+  /** Approved and rejected entries, so a question they cover isn't drafted again; with the channels each is allowed on (R3-57). */
+  entries: readonly { slug: string; question: string; status: 'approved' | 'rejected'; channels?: readonly string[] }[];
 }
 
 export const GROUPING_SYSTEM = `You sort questions that members asked Stayful Intelligence (a UK short-let deal-finding service) and that it could not answer well.
 
 Group questions that ask the same thing, in any wording. For each group:
 - "label": the question in plain words, as a member would ask it, at most 20 words, no names, numbers or personal details;
-- "existing_gap": the key of an open gap it continues (gN), or null;
-- "entry": the slug of an approved or rejected answer that already covers it exactly, or null;
+- "existing_gap": the key of a gap it continues (gN: an open one, or one already rejected, dismissed, covered or given up on, marked as such), or null;
+- "entry": the slug of an approved or rejected answer that already covers it exactly, or null (an answer's channels are listed; the sorting does not depend on them);
 - "questions": the keys of its questions (qN).
 Put every question key in exactly one group, or in "not_questions" if it is not a question about the service (greetings, noise, a transcription fragment).
 
@@ -89,9 +89,9 @@ export function groupingMessage(input: GroupingInput): { text: string; questionK
   input.gaps.forEach((g, i) => gapKeys.set(`g${i + 1}`, g.id));
   const lines: string[] = [];
   lines.push('<open_gaps>');
-  input.gaps.forEach((g, i) => lines.push(`g${i + 1}: ${redactQuestion(g.label)}`));
+  input.gaps.forEach((g, i) => lines.push(`g${i + 1}${g.status && g.status !== 'open' && g.status !== 'drafted' ? ` [${g.status}]` : ''}: ${redactQuestion(g.label)}`));
   lines.push('</open_gaps>', '<answers>');
-  for (const e of input.entries) lines.push(`${e.slug} (${e.status}): ${redactQuestion(e.question.replace(/\{[^}]*\}/g, '…'))}`);
+  for (const e of input.entries) lines.push(`${e.slug} (${e.status}${e.channels?.length ? `; ${e.channels.join('/')}` : ''}): ${redactQuestion(e.question.replace(/\{[^}]*\}/g, '…'))}`);
   lines.push('</answers>', '<member_questions>');
   input.questions.forEach((q, i) => lines.push(`q${i + 1} [${q.channel}]: ${JSON.stringify(redactQuestion(q.text))}`));
   lines.push('</member_questions>');

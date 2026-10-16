@@ -13,8 +13,8 @@ export const dynamic = "force-dynamic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHANNELS = ["call", "sms", "chat"] as const;
-const OUTCOMES = ["answered", "low_confidence", "could_not_answer", "member_unhappy", "handed_off"] as const;
-const OUTCOME_TEXT: Record<string, string> = { answered: "answered", low_confidence: "unsure", could_not_answer: "couldn't answer", member_unhappy: "member unhappy", handed_off: "handed off" };
+const OUTCOMES = ["answered", "low_confidence", "could_not_answer", "member_unhappy", "handed_off", "routed"] as const;
+const OUTCOME_TEXT: Record<string, string> = { answered: "answered", low_confidence: "unsure", could_not_answer: "couldn't answer", member_unhappy: "member unhappy", handed_off: "handed off", routed: "sent to the full view" };
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" }) : "—");
 

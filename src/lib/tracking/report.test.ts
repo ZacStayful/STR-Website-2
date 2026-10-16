@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSignupReport, DIRECT, pathFor, shareText, weeksToCover, type ActiveWeeks, type SignupFact } from './report.ts';
+import { buildSignupReport, DIRECT, pathFor, REFERRAL, shareText, weeksToCover, type ActiveWeeks, type SignupFact } from './report.ts';
 
 // Wednesday 1 July 2026, 10:00 UK: week 1 is Mon 29 Jun – Sun 5 Jul.
 const CREATED = '2026-07-01T09:00:00Z';
@@ -116,4 +116,21 @@ test('the weekly figures cover the range plus the four weeks after, capped', () 
   assert.equal(weeksToCover(new Date('2026-07-30T09:00:00Z'), NOW), 5);
   assert.equal(weeksToCover(null, NOW), 56);
   assert.equal(weeksToCover(new Date('2020-01-01T00:00:00Z'), NOW), 56);
+});
+
+// Review R3 (R3-96): profiles.referred_by_code is read: an untagged sign-up that redeemed a referral code sits under "referral code".
+test('an untagged sign-up that redeemed a referral code sits under "referral code"; a tagged one stays under its ad', () => {
+  const untagged = { src: null, med: null, cmp: null, cnt: null, fb: false, ref: null, env: 'production', method: 'email', team: false };
+  assert.deepEqual(pathFor(fact({ u: 'a', a: untagged, referred: true })), [REFERRAL, '(no referring site)']);
+  assert.deepEqual(pathFor(fact({ u: 'b', a: { ...untagged, ref: 'wa.me' }, referred: true })), [REFERRAL, 'wa.me']);
+  assert.deepEqual(pathFor(fact({ u: 'c', a: untagged, referred: false })), [DIRECT, '(no referring site)']);
+  assert.deepEqual(pathFor(fact({ u: 'd', a: untagged })), [DIRECT, '(no referring site)'], 'absent before the schema has run');
+  assert.deepEqual(pathFor(fact({ u: 'e', referred: true })), ['facebook', 'Spring', 'Ad 1']);
+  assert.deepEqual(pathFor(fact({ u: 'f', a: null, lead: 'facebook_lead_ad', referred: true })), ['facebook_lead_ad (lead form)']);
+  const r = buildSignupReport(
+    [fact({ u: 'a', a: untagged, referred: true }), fact({ u: 'e', referred: true }), fact({ u: 'c', a: untagged }), fact({ u: 'left', referred: true, signed_in: false })],
+    { now: NOW, weekly: null, excluded: new Set() },
+  );
+  assert.equal(r.referred, 2, 'counted sign-ups that redeemed a code, tagged or not; those left out are not counted');
+  assert.deepEqual(r.rows.map((x) => [x.label, x.signups]), [[DIRECT, 1], ['facebook', 1], [REFERRAL, 1]]);
 });

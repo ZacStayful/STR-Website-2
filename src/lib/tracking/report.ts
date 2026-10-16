@@ -8,7 +8,9 @@
  *
  * Rows: utm_source → utm_campaign → utm_content (the ad), grouped without
  * regard to case. Untagged sign-ups sit under "direct / unknown", split by
- * the referring site; lead-form accounts under their lead source.
+ * the referring site, or under "referral code" when they redeemed one
+ * (Review R3, R3-96: profiles.referred_by_code, as a yes/no; the code is
+ * never shown); lead-form accounts under their lead source.
  *
  * Columns, each "n / base": sign-ups; finished the profile; first report
  * within 7 days (only members whose 7 days are over); paid (a top-up or a
@@ -42,6 +44,8 @@ export interface SignupFact {
   profile_done: string | null;
   first_report: string | null;
   first_paid: string | null;
+  /** Redeemed a referral code. Absent until the Review R3 schema has run (then never). */
+  referred?: boolean | null;
 }
 
 /** `n` of `base`; the page shows both beside the %. */
@@ -70,6 +74,8 @@ export interface SignupReport {
   total: SourceRow;
   rows: SourceRow[];
   left: { teamInvites: number; excluded: number; neverSignedIn: number; notProduction: number };
+  /** Sign-ups counted above that redeemed a referral code (tagged ones stay under their ad). */
+  referred: number;
 }
 
 /**
@@ -83,6 +89,8 @@ export interface ActiveWeeks {
 }
 
 export const DIRECT = 'direct / unknown';
+/** An untagged sign-up that redeemed a referral code: a friend sent them, not an ad. */
+export const REFERRAL = 'referral code';
 const DAY_MS = 86_400_000;
 
 function clean(v: string | null | undefined): string | null {
@@ -96,7 +104,7 @@ export function pathFor(f: SignupFact): string[] {
   if (!f.a && lead) return [`${lead} (lead form)`];
   const a = f.a;
   const tagged = !!a && !!(clean(a.src) || clean(a.med) || clean(a.cmp) || clean(a.cnt) || a.fb);
-  if (!a || !tagged) return [DIRECT, clean(a?.ref) ?? '(no referring site)'];
+  if (!a || !tagged) return [f.referred ? REFERRAL : DIRECT, clean(a?.ref) ?? '(no referring site)'];
   return [clean(a.src) ?? (a.fb ? 'facebook (click id only)' : '(no source)'), clean(a.cmp) ?? '(no campaign)', clean(a.cnt) ?? '(no ad)'];
 }
 
@@ -173,6 +181,7 @@ export function buildSignupReport(
   const left = { teamInvites: 0, excluded: 0, neverSignedIn: 0, notProduction: 0 };
   const total = node('total', 'All sign-ups', 0);
   const roots = new Map<string, Node>();
+  let referred = 0;
   for (const f of facts) {
     if (f.a?.env && f.a.env !== 'production') {
       left.notProduction += 1;
@@ -192,6 +201,7 @@ export function buildSignupReport(
     }
     const stats = statsFor(f, opts.now, opts.weekly, days);
     total.stats.push(stats);
+    if (f.referred) referred += 1;
     let level: Map<string, Node> = roots;
     pathFor(f).forEach((label, i) => {
       const key = label.toLowerCase();
@@ -205,7 +215,7 @@ export function buildSignupReport(
     });
   }
   const rows = [...roots.values()].map((r) => toRow(r, minRow)).sort((a, b) => b.signups - a.signups || a.label.localeCompare(b.label));
-  return { total: { ...toRow(total, minRow), grey: false }, rows, left };
+  return { total: { ...toRow(total, minRow), grey: false }, rows, left, referred };
 }
 
 /** "3 / 12 (25%)", or "—" when there is nothing to divide by. */

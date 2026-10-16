@@ -8,7 +8,7 @@ import 'server-only';
  */
 import { createAdminClient } from '../supabase/admin';
 import { CARD_COLUMNS } from '../marketplace/grid';
-import { PAID_TIER_COLUMNS, hasEverPaid, type PaidTierAccount } from '../access';
+import { PAID_TIER_COLUMNS, hasEverPaid, isPaused, type PaidTierAccount } from '../access';
 import { isAdminEmail } from '../admin';
 import { recordActivity } from '../activity/log';
 import type { PoolRow } from '../today/candidates';
@@ -16,11 +16,13 @@ import type { PoolRow } from '../today/candidates';
 export type Admin = ReturnType<typeof createAdminClient>;
 
 /** A deal as the standout judging reads it: Today's pool row, plus what the live check and the wording need. */
-export const STANDOUT_DEAL_COLUMNS = `${CARD_COLUMNS}, deal, suitability, screening, project`;
+export const STANDOUT_DEAL_COLUMNS = `${CARD_COLUMNS}, deal, suitability, screening, project, canonical_url`;
 
 export type StandoutDealRow = PoolRow & {
   project?: unknown;
   live_since?: string | null;
+  /** R3-58: the listing's own URL, read server-side only, so a listing the member checked themselves counts as seen. Never in a view. */
+  canonical_url?: string | null;
 };
 
 const PAGE = 1000;
@@ -99,13 +101,28 @@ export interface StandoutMember {
   /** Paid tier: hears the moment a deal goes live. Free: after the free delay. */
   paid: boolean;
   isTeamMember: boolean;
+  /** R3-54, R3-65: daily picks off, or the subscription paused: no email could tell them, so nothing is saved. */
+  picksOff: boolean;
+  /** R3-64: daily picks paused for inactivity, or re-engagement has them (Batch 20): not judged, not rung. */
+  quiet: boolean;
+}
+
+interface MemberRow extends PaidTierAccount {
+  id: string;
+  email: string | null;
+  created_at: string;
+  sourcing_alerts: boolean | null;
+  subscription_paused_from: string | null;
+  subscription_paused_until: string | null;
+  reengage_since: string | null;
+  picks_paused_inactive_at: string | null;
 }
 
 /** Every account, owners and team members alike (team members are skipped with a reason). */
 export async function loadMembers(admin: Admin, onlyUserId: string | null = null): Promise<StandoutMember[]> {
-  const rows: (PaidTierAccount & { id: string; email: string | null; created_at: string })[] = [];
+  const rows: MemberRow[] = [];
   for (let from = 0; from < 50 * PAGE; from += PAGE) {
-    let q = admin.from('profiles').select(`id, email, created_at, ${PAID_TIER_COLUMNS}`).order('id', { ascending: true }).range(from, from + PAGE - 1);
+    let q = admin.from('profiles').select(`id, email, created_at, sourcing_alerts, subscription_paused_from, subscription_paused_until, reengage_since, picks_paused_inactive_at, ${PAID_TIER_COLUMNS}`).order('id', { ascending: true }).range(from, from + PAGE - 1);
     if (onlyUserId) q = q.eq('id', onlyUserId);
     const { data, error } = await q;
     if (error) {
@@ -126,7 +143,15 @@ export async function loadMembers(admin: Admin, onlyUserId: string | null = null
     }
     for (const r of (data ?? []) as { member_id: string }[]) team.add(r.member_id);
   }
-  return rows.map((r) => ({ id: r.id, email: r.email ?? null, createdAt: r.created_at, paid: hasEverPaid(r, { admin: isAdminEmail(r.email ?? null) }), isTeamMember: team.has(r.id) }));
+  return rows.map((r) => ({
+    id: r.id,
+    email: r.email ?? null,
+    createdAt: r.created_at,
+    paid: hasEverPaid(r, { admin: isAdminEmail(r.email ?? null) }),
+    isTeamMember: team.has(r.id),
+    picksOff: r.sourcing_alerts !== true || isPaused(r),
+    quiet: Boolean(r.reengage_since || r.picks_paused_inactive_at),
+  }));
 }
 
 /** Deals each free member's own search found (visible to them at once, Batch 22). */
@@ -195,11 +220,19 @@ export async function retryDecisions(admin: Admin, now: Date): Promise<{ userId:
  * picked, on any Today list, in their signup reveal, hidden from My deals.
  * A standout is always new to them. Unreadable: everything counts as seen.
  */
-export async function seenDealsFor(admin: Admin, userIds: readonly string[], dealIds: readonly string[], now: Date): Promise<Map<string, Set<string>> | null> {
+export async function seenDealsFor(admin: Admin, userIds: readonly string[], dealIds: readonly string[], now: Date, urlsByDeal?: ReadonlyMap<string, string>): Promise<Map<string, Set<string>> | null> {
   const out = new Map<string, Set<string>>();
   const add = (u: string, d: string) => out.set(u, new Set([...(out.get(u) ?? []), d]));
   const wanted = new Set(dealIds);
+  // R3-58: a listing the member checked themselves (the analyser, the extension) is not new to them either.
+  const dealsByUrl = new Map<string, string[]>();
+  for (const [dealId, url] of urlsByDeal ?? []) if (url) dealsByUrl.set(url, [...(dealsByUrl.get(url) ?? []), dealId]);
   for (const users of chunks(userIds)) {
+    for (const urls of chunks([...dealsByUrl.keys()])) {
+      const checked = await allRows<{ user_id: string; canonical_url: string }>((from, to) => admin.from('checked_listings').select('user_id, canonical_url').in('user_id', users).in('canonical_url', urls).order('user_id', { ascending: true }).order('canonical_url', { ascending: true }).range(from, to));
+      if (checked.error) return null;
+      for (const r of checked.rows) for (const d of dealsByUrl.get(r.canonical_url) ?? []) add(r.user_id, d);
+    }
     for (const deals of chunks(dealIds)) {
       // Paged: rows with the same (member, deal) are interchangeable, so ties never lose one.
       const pairs = (table: string) =>
@@ -229,8 +262,8 @@ export async function seenDealsFor(admin: Admin, userIds: readonly string[], dea
   return out;
 }
 
-/** The deals shown to a member in the last `days` (Today lists, picks, the reveal): what a standout must beat. */
-export async function shownDealIdsFor(admin: Admin, userId: string, days: number, now: Date): Promise<string[]> {
+/** The deals shown to a member in the last `days` (Today lists, picks, the reveal): what a standout must beat. R3-53: null when unreadable (then nothing is saved on a guess). */
+export async function shownDealIdsFor(admin: Admin, userId: string, days: number, now: Date): Promise<string[] | null> {
   const since = daysAgo(now, days);
   const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const [lists, sent, reveal] = await Promise.all([
@@ -238,6 +271,10 @@ export async function shownDealIdsFor(admin: Admin, userId: string, days: number
     admin.from('sourcing_sent').select('deal_id').eq('user_id', userId).gte('sent_at', since).not('deal_id', 'is', null),
     admin.from('signup_reveals').select('deal_ids, created_at').eq('user_id', userId).gte('created_at', since),
   ]);
+  if (lists.error || sent.error || reveal.error) {
+    console.error('[standout] shown deals unreadable:', (lists.error ?? sent.error ?? reveal.error)?.message);
+    return null;
+  }
   const out = new Set<string>();
   for (const r of (lists.data ?? []) as { deal_ids: unknown; shown_ids: unknown }[]) for (const d of [...ids(r.deal_ids), ...ids(r.shown_ids)]) out.add(d);
   for (const r of (sent.data ?? []) as { deal_id: string }[]) out.add(r.deal_id);
@@ -245,18 +282,18 @@ export async function shownDealIdsFor(admin: Admin, userId: string, days: number
   return [...out].slice(0, 400);
 }
 
-/** A member's standout saves in the last `days`: their match and profit (to beat), and how many today. Throws when unreadable (a pass never saves past the day's limit on a guess). */
-export async function savesFor(admin: Admin, userIds: readonly string[], days: number, ukDay: string, now: Date): Promise<Map<string, { saved: { matchPct: number | null; profitLow: number | null }[]; today: number }>> {
-  const out = new Map<string, { saved: { matchPct: number | null; profitLow: number | null }[]; today: number }>();
+/** A member's standout saves in the last `days`: their match, profit and type (to beat), and how many today. Throws when unreadable (a pass never saves past the day's limit on a guess). */
+export async function savesFor(admin: Admin, userIds: readonly string[], days: number, ukDay: string, now: Date): Promise<Map<string, { saved: { matchPct: number | null; profitLow: number | null; dealType: string | null }[]; today: number }>> {
+  const out = new Map<string, { saved: { matchPct: number | null; profitLow: number | null; dealType: string | null }[]; today: number }>();
   const since = daysAgo(now, Math.max(days, 1));
   for (const users of chunks(userIds)) {
-    const { rows, error } = await allRows<{ user_id: string; uk_day: string; match_pct: number | null; profit_low_pcm: number | null }>((from, to) =>
-      admin.from('standout_decisions').select('id, user_id, uk_day, match_pct, profit_low_pcm').in('user_id', users).not('saved_at', 'is', null).gte('saved_at', since).order('id', { ascending: true }).range(from, to),
+    const { rows, error } = await allRows<{ user_id: string; uk_day: string; match_pct: number | null; profit_low_pcm: number | null; deal_type: string | null }>((from, to) =>
+      admin.from('standout_decisions').select('id, user_id, uk_day, match_pct, profit_low_pcm, deal_type').in('user_id', users).not('saved_at', 'is', null).gte('saved_at', since).order('id', { ascending: true }).range(from, to),
     );
     if (error) throw new Error(`saves unreadable: ${error}`);
     for (const r of rows) {
       const m = out.get(r.user_id) ?? { saved: [], today: 0 };
-      m.saved.push({ matchPct: r.match_pct, profitLow: r.profit_low_pcm });
+      m.saved.push({ matchPct: r.match_pct, profitLow: r.profit_low_pcm, dealType: r.deal_type });
       if (r.uk_day === ukDay) m.today += 1;
       out.set(r.user_id, m);
     }
@@ -264,12 +301,15 @@ export async function savesFor(admin: Admin, userIds: readonly string[], days: n
   return out;
 }
 
-/** Each member's signup reveal #1 (the deal id), when they had a reveal. */
-export async function revealTopsFor(admin: Admin, userIds: readonly string[]): Promise<Map<string, string>> {
+/** Each member's signup reveal #1 (the deal id), when they had a reveal. R3-53: null when unreadable (then nothing is judged without its floor). */
+export async function revealTopsFor(admin: Admin, userIds: readonly string[]): Promise<Map<string, string> | null> {
   const out = new Map<string, string>();
   for (const users of chunks(userIds)) {
     const { data, error } = await admin.from('signup_reveals').select('user_id, deal_ids').in('user_id', users);
-    if (error) continue;
+    if (error) {
+      console.error('[standout] reveals unreadable:', error.message);
+      return null;
+    }
     for (const r of (data ?? []) as { user_id: string; deal_ids: unknown }[]) {
       const first = Array.isArray(r.deal_ids) ? r.deal_ids.find((x): x is string => typeof x === 'string') : undefined;
       if (first) out.set(r.user_id, first);
@@ -303,10 +343,11 @@ export interface DecisionRow {
 export async function writeDealDecisions(admin: Admin, rows: readonly DecisionRow[], existing: Map<string, ExistingDecision>): Promise<Map<string, string>> {
   const ids = new Map<string, string>();
   const fresh = rows.filter((r) => r.deal_id && !existing.has(decisionKey(r.user_id, r.deal_id)));
-  // A waiting decision moves on; a forced test may overwrite any decision that saved nothing.
+  // A waiting decision moves on, as does a standout whose save never ran (R3-150: the retry's verdict replaces it,
+  // whatever it is); a forced test may overwrite any decision that saved nothing.
   const moving = rows.filter((r) => {
     const prev = r.deal_id ? existing.get(decisionKey(r.user_id, r.deal_id)) : undefined;
-    return prev !== undefined && !prev.savedAt && (prev.outcome === 'waiting' || (r.forced === true && prev.outcome !== 'standout'));
+    return prev !== undefined && !prev.savedAt && (prev.outcome === 'waiting' || prev.outcome === 'standout' || (r.forced === true && prev.outcome !== 'standout'));
   });
   for (const some of chunks(fresh, 200)) {
     const { data, error } = await admin.from('standout_decisions').upsert(some.map((r) => ({ ...r, forced: r.forced ?? false })), { onConflict: 'user_id,deal_id', ignoreDuplicates: true }).select('id, user_id, deal_id');
@@ -395,4 +436,27 @@ export async function purgeOldDecisions(admin: Admin, keepDays: number, now: Dat
     return 0;
   }
   return (data ?? []).length;
+}
+
+/**
+ * R3-138: waiting decisions whose listing did not come back live for the
+ * retry are settled as 'gone' (checked once more here: a read that fails
+ * settles nothing), so /admin/standout never shows a wait that cannot end.
+ */
+export async function settleGoneRetries(admin: Admin, pairs: readonly { userId: string; dealId: string }[], now: Date): Promise<number> {
+  let settled = 0;
+  const ids = [...new Set(pairs.map((p) => p.dealId))];
+  const live = new Set<string>();
+  for (const some of chunks(ids)) {
+    const { data, error } = await admin.from('marketplace_deals').select('id').in('id', some).eq('status', 'live');
+    if (error) return settled;
+    for (const r of (data ?? []) as { id: string }[]) live.add(r.id);
+  }
+  for (const p of pairs) {
+    if (live.has(p.dealId)) continue;
+    const { data, error } = await admin.from('standout_decisions').update({ outcome: 'not_standout', reason: 'gone', updated_at: now.toISOString() }).eq('user_id', p.userId).eq('deal_id', p.dealId).eq('outcome', 'waiting').is('saved_at', null).select('id');
+    if (error) console.error('[standout] gone retry not settled:', error.message);
+    settled += (data ?? []).length;
+  }
+  return settled;
 }

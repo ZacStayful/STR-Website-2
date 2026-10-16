@@ -51,3 +51,15 @@ test('weeks outside the list are ignored; an empty week has no share', () => {
   assert.equal(shareChange(0.5, 0.5), 'no change');
   assert.equal(shareChange(0.49, 0.5), 'down 1 point');
 });
+
+// Review R3 (R3-37): "ask in the full view" is neither an answer nor a gap, so it is not an asked question here.
+test('a question routed to the full view is not counted: it is asked again there', () => {
+  const routed = parseCounts([
+    { week: '2026-09-21', channel: 'chat', outcome: 'routed', ref: null, n: 4 },
+    { week: '2026-09-21', channel: 'chat', outcome: 'answered', ref: 'credits', n: 1 },
+  ]);
+  const [w] = tallyWeeks(routed, ['2026-09-21'], new Set(['credits']));
+  assert.equal(w.total.asked, 1);
+  assert.equal(w.total.fromKnowledge, 1);
+  assert.equal(w.total.lowConfidence, 0);
+});

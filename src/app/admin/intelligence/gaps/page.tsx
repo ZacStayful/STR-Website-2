@@ -19,7 +19,7 @@ import { BUTTON, BUTTON_QUIET, CARD, FlashBox, SiAdminNav, when } from "../SiAdm
 
 export const metadata: Metadata = { title: "Gaps — Stayful Intelligence", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
-// "Run now" and "Dry run" run the nightly job in this page's server action (it stops drafting at 240 s).
+// "Run now" and "Dry run" run the nightly job in this page's server action (it starts no model call after GAP_TIME_BUDGET_MS, 150 s).
 export const maxDuration = 300;
 
 type GapStatus = "open" | "drafted" | "covered" | "rejected" | "dismissed" | "failed";
@@ -322,6 +322,8 @@ export default async function GapsAdminPage({ searchParams }: { searchParams: Pr
                     Answered by <Link href={`/admin/intelligence/knowledge/${entry.id}`} className="text-primary hover:underline">{entry.slug}</Link>
                     {live ? `: ${live.question}` : ""}
                   </p>
+                  {/* Review R3 (R3-57): the entry is not allowed on every channel the question came from, so the gap stays open. */}
+                  {gap.status === "open" && <p className="mt-1 text-amber-800">On some channels only{gap.last_error ? ` (${gap.last_error})` : ""}: add the missing channel to the entry to close this gap.</p>}
                   {newPhrasings.length > 0 && (
                     <form action={addVariantsAction} className="mt-2">
                       <input type="hidden" name="entryId" value={entry.id} />

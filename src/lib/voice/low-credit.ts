@@ -90,3 +90,10 @@ export function spentFromLedger(rows: readonly { kind: string; amount_pence: num
   }
   return Math.max(0, n);
 }
+
+/** Review R3: a £5 notice (the email, the nudge or the call) already went for this credit: told at or after it landed. */
+export function toldSinceLanding(toldAt: string | null | undefined, landing: Landing | null): boolean {
+  if (!toldAt || !landing) return false;
+  const t = Date.parse(toldAt);
+  return Number.isFinite(t) && t >= landing.landedAt.getTime();
+}

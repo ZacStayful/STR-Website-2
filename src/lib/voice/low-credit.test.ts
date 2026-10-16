@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { latestLanding, lowCreditTriggered, spentFromLedger, type GrantRow } from './low-credit.ts';
+import { latestLanding, lowCreditTriggered, spentFromLedger, toldSinceLanding, type GrantRow } from './low-credit.ts';
 import { DEFAULT_VOICE } from './settings.ts';
 
 const g = (id: string, kind: string, amount: number, ref: string | null, at: string): GrantRow => ({ id, kind, amount_pence: amount, source_ref: ref, created_at: at });
@@ -39,4 +39,14 @@ test('fires at £5 left with 80% of a fresh top-up spent inside 7 days', () => {
 
 test('spend from the ledger: debits less refunds, in face pence', () => {
   assert.equal(spentFromLedger([{ kind: 'debit', amount_pence: -100 }, { kind: 'debit', amount_pence: -65 }, { kind: 'refund', amount_pence: 40 }, { kind: 'grant', amount_pence: 2500 }]), 125);
+});
+
+test('R3-12: a notice stamped told at or after the landing means this credit was told; before it, or never, means not', () => {
+  const landing = { id: 'g1', amountPence: 2_500, landedAt: new Date('2026-10-01T09:00:00Z') };
+  assert.equal(toldSinceLanding('2026-10-05T07:10:00Z', landing), true);
+  assert.equal(toldSinceLanding('2026-10-01T09:00:00Z', landing), true);
+  assert.equal(toldSinceLanding('2026-09-20T07:10:00Z', landing), false);
+  assert.equal(toldSinceLanding(null, landing), false);
+  assert.equal(toldSinceLanding('not a date', landing), false);
+  assert.equal(toldSinceLanding('2026-10-05T07:10:00Z', null), false);
 });

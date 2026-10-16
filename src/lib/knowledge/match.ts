@@ -15,7 +15,11 @@
  *     score (at the average word's weight), so "can I bring my dog" doesn't
  *     match an entry on the strength of one shared word;
  *   - the best entry must lead the second by MATCH_MIN_LEAD to count as
- *     answered, so two near-equal entries make it low confidence.
+ *     answered, so two near-equal entries make it low confidence;
+ *   - except a verbatim hit (Review R3, R3-10): a question that is one
+ *     entry's own question or phrasing, bar case, punctuation and spacing,
+ *     and no other entry's, is answered by that entry whatever the lead
+ *     (stop words and synonyms can make two entries tie at the top).
  * The thresholds are billing_settings (si_kb_answer_min_confidence,
  * si_kb_low_confidence_min).
  *
@@ -93,6 +97,14 @@ export function tokens(text: string): string[] {
   return out;
 }
 
+/** A phrasing or question with case, punctuation and spacing removed: equal means the member typed an approved phrasing. */
+export function exactKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 interface Doc {
   entry: Matchable;
   phrasing: string;
@@ -111,13 +123,19 @@ export interface MatchIndex {
   idf: Map<string, number>;
   /** The average weight a known word has: what an unknown word in a question weighs. */
   unknownWeight: number;
+  /** Each phrasing's exactKey → the entries that have it (R3-10). */
+  exact: Map<string, { entry: Matchable; phrasing: string }[]>;
 }
 
 export function buildIndex(entries: readonly Matchable[], channel?: string): MatchIndex {
   const docs: Doc[] = [];
+  const exact = new Map<string, { entry: Matchable; phrasing: string }[]>();
   for (const e of entries) {
     if (channel && !e.channels.includes(channel)) continue;
     for (const phrasing of [e.question, ...e.variants]) {
+      // Every phrasing is an exact key, even one that is all stop words ("Who are you?"): typed as written, it is answered.
+      const k = exactKey(phrasing);
+      if (k) exact.set(k, [...(exact.get(k) ?? []), { entry: e, phrasing }]);
       const ts = tokens(phrasing);
       if (ts.length) docs.push({ entry: e, phrasing, tf: termFreq(ts) });
     }
@@ -129,7 +147,7 @@ export function buildIndex(entries: readonly Matchable[], channel?: string): Mat
   // Smoothed, so a word in every phrasing still weighs a little and a tiny corpus doesn't swing wildly.
   for (const [t, f] of df) idf.set(t, Math.log(1 + (n + 1) / (f + 0.5)));
   const avg = idf.size ? [...idf.values()].reduce((a, b) => a + b, 0) / idf.size : 1;
-  return { docs, idf, unknownWeight: avg };
+  return { docs, idf, unknownWeight: avg, exact };
 }
 
 const weight = (tf: number, idf: number) => (1 + Math.log(tf)) * idf;
@@ -162,7 +180,12 @@ export interface MatchOptions {
 
 export function matchIndex(index: MatchIndex, question: string, o: MatchOptions): MatchResult {
   const q = termFreq(tokens(question));
-  if (q.size === 0 || index.docs.length === 0) return { outcome: 'could_not_answer', matches: [] };
+  // R3-10: the member typed one entry's own phrasing (and no other entry's): that entry answers, whatever the lead,
+  // and whether or not any token is left of it after the stop words ("Who are you?").
+  const hits = index.exact.get(exactKey(question)) ?? [];
+  const verbatim = new Set(hits.map((h) => h.entry.id)).size === 1 ? hits[0] : null;
+  const asMatch = (h: { entry: Matchable; phrasing: string }): Match => ({ entryId: h.entry.id, slug: h.entry.slug, version: h.entry.version, confidence: 1, phrasing: h.phrasing });
+  if (q.size === 0 || index.docs.length === 0) return verbatim ? { outcome: 'answered', matches: [asMatch(verbatim)] } : { outcome: 'could_not_answer', matches: [] };
   const best = new Map<string, Match>();
   for (const d of index.docs) {
     const c = cosine(q, d.tf, index);
@@ -170,10 +193,12 @@ export function matchIndex(index: MatchIndex, question: string, o: MatchOptions)
     const prev = best.get(d.entry.id);
     if (!prev || c > prev.confidence) best.set(d.entry.id, { entryId: d.entry.id, slug: d.entry.slug, version: d.entry.version, confidence: Math.round(c * 1000) / 1000, phrasing: d.phrasing });
   }
-  const matches = [...best.values()].sort((a, b) => b.confidence - a.confidence || a.slug.localeCompare(b.slug)).slice(0, o.limit ?? MATCH_MAX_RESULTS);
+  let matches = [...best.values()].sort((a, b) => b.confidence - a.confidence || a.slug.localeCompare(b.slug));
+  if (verbatim) matches = [asMatch(verbatim), ...matches.filter((m) => m.entryId !== verbatim.entry.id)];
+  matches = matches.slice(0, o.limit ?? MATCH_MAX_RESULTS);
   const top = matches[0]?.confidence ?? 0;
   const second = matches[1]?.confidence ?? 0;
-  const outcome: MatchOutcome = top >= o.answerMin && top - second >= MATCH_MIN_LEAD ? 'answered' : top >= o.lowMin ? 'low_confidence' : 'could_not_answer';
+  const outcome: MatchOutcome = verbatim || (top >= o.answerMin && top - second >= MATCH_MIN_LEAD) ? 'answered' : top >= o.lowMin ? 'low_confidence' : 'could_not_answer';
   return { outcome, matches };
 }
 

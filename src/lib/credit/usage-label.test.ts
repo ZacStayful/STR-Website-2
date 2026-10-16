@@ -99,3 +99,13 @@ test('Batch 22f: a tier-priced funnel lead carries its number in the month', asy
   assert.equal(leadNumberFromMeta({ lead_number: 'x' }), null);
   assert.equal(leadNumberFromMeta(null), null);
 });
+
+// Review R3 (R3-56, R3-95): a member reads what each Stayful Intelligence line was.
+test('Stayful Intelligence lines are told apart: a call, a text, an email, a quick answer, a full-view question', () => {
+  assert.equal(actionLabel('si_call'), 'Stayful Intelligence call');
+  assert.equal(actionLabel('si_text'), 'Stayful Intelligence text');
+  assert.equal(actionLabel('si_email'), 'Stayful Intelligence email');
+  assert.notEqual(actionLabel('si_chat_quick'), actionLabel('si_chat_full'));
+  assert.match(actionLabel('si_chat_quick'), /quick/);
+  assert.match(actionLabel('si_chat_full'), /full view/);
+});

@@ -33,10 +33,13 @@ export const ACTION_LABELS: Record<string, string> = {
   briefing: 'Daily briefing',
   // Batch 23 / Batch 22: these had no label, so members saw the raw action.
   si_call: 'Stayful Intelligence call',
+  // Review R3 (R3-56): texts and emails are their own lines (Batch 25 sends them to members who were never rung).
+  si_text: 'Stayful Intelligence text',
+  si_email: 'Stayful Intelligence email',
   deep_search: 'Deep search',
-  // Batch 26: the typed chat (one line per question, however many look-ups it took).
-  si_chat_quick: 'Stayful Intelligence question',
-  si_chat_full: 'Stayful Intelligence question',
+  // Batch 26: the typed chat (one line per question, however many look-ups it took); Review R3 (R3-95): told apart.
+  si_chat_quick: 'Stayful Intelligence quick answer',
+  si_chat_full: 'Stayful Intelligence question (full view)',
 };
 
 export function actionLabel(action: string | null): string {

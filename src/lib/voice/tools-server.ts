@@ -16,9 +16,12 @@ import 'server-only';
  *                                file, at most si_texts_per_call_max a call.
  *                                Batch 25: deal_link is the deal a deal call
  *                                is about (or, on a callback, the deal the
- *                                last missed deal call was about); it goes
- *                                only with the member's Texts switch on and
- *                                is recorded in sms_messages.
+ *                                last missed deal call was about). Review R3:
+ *                                every template goes only with the member's
+ *                                Texts switch on and is recorded in
+ *                                sms_messages (kind 'call'; the deal's link
+ *                                'standout'), and is charged only when Twilio
+ *                                took it.
  *   handoff_to_team(summary, question)  emails the handoff address
  *                                (feedback_admin_email) once a call.
  *   log_question(question, outcome, knowledge_ref?)  the conversation log's
@@ -31,17 +34,17 @@ import 'server-only';
  */
 import { createAdminClient } from '../supabase/admin';
 import { siteUrl } from '../url';
-import { sendSms } from '../sms/send';
 import { maskPhone, ukMobile } from '../sms/phone';
 import { getBillingSettings } from '../credit/unit-costs';
 import { feedbackSettings } from '../feedback/settings-server';
 import { handoffEmail } from '../email/si-calls';
 import { recordQuestion } from '../conversations/log-server';
 import { rememberFact } from '../knowledge/facts-server';
-import { CALL_TEXT_TEMPLATES, QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, callsDryRun, type CallTextTemplate, type QuestionOutcome, type ToolName } from './config';
+import { CALL_TEXT_TEMPLATES, CALL_QUESTION_OUTCOMES, TOOL_GRACE_MS, TOOL_LIMITS, callsDryRun, type CallTextTemplate, type QuestionOutcome, type ToolName } from './config';
 import { callText } from './templates';
 import { memberFacts } from './member-server';
 import { claimCharge, releaseCharge, settleText } from './charge-server';
+import { textChargeStep } from './charge';
 import { callByConversation, claimEvent, lastOutbound, lastTemplateSent, logTool, toolCount, updateCall, type CallRow } from './store-server';
 import { dealCallFacts, type DealCallFacts } from '../standout/calls-server';
 import { sendMemberText } from '../standout/texts-server';
@@ -70,6 +73,8 @@ const str = (v: unknown, max = 500): string | null => (typeof v === 'string' && 
 async function liveCall(req: ToolRequest, maxCallSeconds: number, now: Date): Promise<CallRow | null> {
   const call = await callByConversation(createAdminClient(), str(req.conversation_id, 200), str(req.call_sid, 64));
   if (!call || call.status !== 'ringing') return null;
+  // R3-50: an inbound row with no Twilio call behind it is not a live call (a forged initiation never gets one).
+  if (call.direction === 'inbound' && !call.twilio_call_sid) return null;
   const since = Date.parse(call.placed_at ?? call.started_at ?? call.queued_at);
   if (!Number.isFinite(since) || now.getTime() - since > maxCallSeconds * 1000 + TOOL_GRACE_MS) return null;
   return call;
@@ -78,6 +83,12 @@ async function liveCall(req: ToolRequest, maxCallSeconds: number, now: Date): Pr
 /** A per-call text slot (si_webhook_events as a once-only claim); its key, or null when taken. */
 async function claimEventSlot(key: string): Promise<string | null> {
   return (await claimEvent(createAdminClient(), 'si_text_slot', key)) === 'new' ? key : null;
+}
+
+/** A slot whose text never went is given back (R3-116). */
+async function releaseEventSlot(key: string): Promise<void> {
+  const { error } = await createAdminClient().from('si_webhook_events').delete().eq('provider', 'si_text_slot').eq('event_key', key);
+  if (error) console.error('[voice] text slot release failed:', error.message);
 }
 
 export async function runTool(tool: ToolName, req: ToolRequest, now: Date = new Date()): Promise<ToolAnswer> {
@@ -159,16 +170,16 @@ async function sendTemplateText(call: CallRow, req: ToolRequest, textsPerCallMax
     await releaseCharge(guard);
     return { ok: false, say: "That's the most texts for one call.", detail: { reason: 'limit' } };
   }
-  const r =
-    which === 'deal_link'
-      ? await sendMemberText(admin, { userId: m.userId, body, kind: 'standout', purpose: `si_${which}`, dryRun: callsDryRun() })
-      : await sendSms({ to: m.phone, body, purpose: `si_${which}`, dryRun: callsDryRun() });
-  if (!r.sent && r.reason !== 'unknown') {
+  const r = await sendMemberText(admin, { userId: m.userId, body, kind: which === 'deal_link' ? 'standout' : 'call', purpose: `si_${which}`, dryRun: callsDryRun() });
+  const step = textChargeStep(r);
+  if (step === 'release') {
     await releaseCharge(guard);
-    if (r.reason === 'texts_off') return { ok: false, say: "Their texts are switched off, so I won't text. Say it's saved in their deals in the app.", detail: { reason: 'texts_off' } };
+    await releaseEventSlot(slot);
+    if (r.reason === 'texts_off') return { ok: false, say: "Their texts are switched off in Account, so I can't text. Say it's in the app.", detail: { reason: 'texts_off' } };
     return { ok: false, say: "The text didn't go through. Say they'll find it in the app.", detail: { reason: r.reason ?? 'refused' } };
   }
-  await settleText(guard, key, call.id, m.userId);
+  // Sent, or maybe sent (Twilio never answered): it counts and is never repeated; charged only when Twilio took it (R3-5).
+  if (step === 'settle') await settleText(guard, key, call.id, m.userId);
   await updateCall(admin, call.id, { texts_sent: call.texts_sent + 1 });
   return { ok: true, say: 'Sent. Tell them it is on its way.', detail: { template: which, to: maskPhone(m.phone) } };
 }
@@ -228,7 +239,7 @@ async function rememberFactTool(call: CallRow, req: ToolRequest): Promise<ToolAn
 
 async function logQuestion(call: CallRow, req: ToolRequest): Promise<ToolAnswer> {
   const question = str(req.question, 500);
-  const outcome = QUESTION_OUTCOMES.find((o) => o === req.outcome) as QuestionOutcome | undefined;
+  const outcome = CALL_QUESTION_OUTCOMES.find((o) => o === req.outcome) as QuestionOutcome | undefined;
   if (!question || !outcome) return { ok: false, say: 'Carry on.', detail: { reason: 'bad_args' } };
   if (call.conversation_id) await recordQuestion(call.conversation_id, { question, outcome, knowledgeRef: str(req.knowledge_ref, 120) });
   return { ok: true, say: 'Logged. Carry on.', detail: { outcome } };

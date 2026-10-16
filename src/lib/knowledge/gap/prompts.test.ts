@@ -36,3 +36,19 @@ test('drafting: the cached part is the same for every gap; replies are parsed st
   assert.equal(parseDraft({ covered: true, question: 'Q', answer: '', category: 'deals', missing: '' }), null);
   assert.equal(parseDraft('nope'), null);
 });
+
+// Review R3 (R3-66, R3-57): the grouping model sees the decided gaps (marked) and each answer's channels.
+test('the grouping message marks decided gaps and lists an answer\'s channels', async () => {
+  const { groupingMessage } = await import('./prompts.ts');
+  const m = groupingMessage({
+    questions: [{ id: 'q-1', text: 'Can I bring my dog?', channel: 'call' }],
+    gaps: [{ id: 'gap-open', label: 'Changing my email' }, { id: 'gap-rej', label: 'Bringing a dog to a viewing', status: 'rejected' }, { id: 'gap-drafted', label: 'Parking', status: 'drafted' }],
+    entries: [{ slug: 'credits', question: 'How does credit work?', status: 'approved', channels: ['view', 'chat'] }, { slug: 'old', question: 'Old one', status: 'rejected' }],
+  });
+  assert.match(m.text, /g1: Changing my email/);
+  assert.match(m.text, /g2 \[rejected\]: Bringing a dog to a viewing/);
+  assert.match(m.text, /g3: Parking/);
+  assert.match(m.text, /credits \(approved; view\/chat\): How does credit work\?/);
+  assert.match(m.text, /old \(rejected\): Old one/);
+  assert.equal(m.gapKeys.get('g2'), 'gap-rej');
+});

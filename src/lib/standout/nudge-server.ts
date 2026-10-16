@@ -17,6 +17,12 @@ import 'server-only';
  *
  * Off (nothing claimed, so Batch 20's notice runs as before) until
  * STANDOUT_ENABLED=true. With apply=false nothing is written or sent.
+ *
+ * Review R3: a nudge is never claimed after the £5 notice went for the same
+ * landing (R3-12); a queued low-credit call counts as the call having it
+ * (R3-45); a claimed nudge that sends nothing gives the £5 notice back
+ * (R3-44); one pass at a time per nudge, an earlier attempt's charge guard
+ * counting as sent (R3-149); and the email says the real balance (R3-46).
  */
 import { createAdminClient } from '../supabase/admin';
 import { getBillingSettings } from '../credit/unit-costs';
@@ -29,7 +35,9 @@ import { nudgeEmail as sendNudgeEmail } from '../email/si-calls';
 import { callsDryRun } from '../voice/config';
 import { latestLanding, type GrantRow } from '../voice/low-credit';
 import { callText, nudgeEmail } from '../voice/templates';
-import { claimCharge, releaseCharge, settleEmail, settleText } from '../voice/charge-server';
+import { chargeExists, claimCharge, releaseCharge, settleEmail, settleText } from '../voice/charge-server';
+import { textChargeStep } from '../voice/charge';
+import { claimEvent, finishEvent } from '../voice/store-server';
 import { claimCallSlot } from '../voice/cap-server';
 import { firstNameOf } from '../voice/member-server';
 import { standoutEnabled } from './flags';
@@ -43,8 +51,8 @@ export interface NudgeRunResult {
   results: { userId: string; outcome: string }[];
 }
 
-/** Low-credit calls that rang: the call (or its missed-call text and email) told them. */
-const PLACED = ['ringing', 'answered', 'missed', 'voicemail'];
+/** Low-credit calls that rang, or (R3-45) are waiting to: the call (or its missed-call text and email) is the notice. */
+const PLACED = ['queued', 'ringing', 'answered', 'missed', 'voicemail'];
 
 interface NudgeProfile {
   email: string | null;
@@ -52,7 +60,11 @@ interface NudgeProfile {
   auto_topup_amount_pence: number | null;
   reengage_since: string | null;
   full_name: string | null;
+  /** When the £5 notice was last stamped told (R3-12). */
+  last_low_balance_email_at: string | null;
 }
+
+const PROFILE_COLUMNS = 'email, alert_credit, auto_topup_amount_pence, reengage_since, full_name, last_low_balance_email_at';
 
 /** What the rule needs for one member now; null when anything can't be read (then no nudge). */
 async function nudgeFacts(admin: Admin, userId: string, now: Date, balancePence?: number): Promise<{ verdict: NudgeVerdict; landingId: string | null; existing: string | null } | null> {
@@ -60,7 +72,7 @@ async function nudgeFacts(admin: Admin, userId: string, now: Date, balancePence?
   const s = settings.standout;
   const since = new Date(now.getTime() - (s.slowerSpenderMaxDays + 31) * 86_400_000).toISOString();
   const [{ data: p, error: pErr }, { data: grants, error: gErr }] = await Promise.all([
-    admin.from('profiles').select('email, alert_credit, auto_topup_amount_pence, reengage_since, full_name').eq('id', userId).maybeSingle(),
+    admin.from('profiles').select(PROFILE_COLUMNS).eq('id', userId).maybeSingle(),
     admin.from('credit_grants').select('id, kind, amount_pence, source_ref, created_at').eq('user_id', userId).gt('amount_pence', 0).gte('created_at', since).order('created_at', { ascending: false }).limit(20),
   ]);
   if (pErr || gErr || !p) return null;
@@ -90,6 +102,7 @@ async function nudgeFacts(admin: Admin, userId: string, now: Date, balancePence?
     reengageSince: prof.reengage_since,
     lowCreditCallPlaced: called,
     nudgedThisLanding: existing !== null,
+    toldAt: prof.last_low_balance_email_at,
     canText: await textsOnFor(admin, userId),
     canEmail: Boolean(prof.email) && prof.alert_credit !== false,
     admin: isAdminEmail(prof.email),
@@ -132,12 +145,13 @@ interface DueRow {
   id: string;
   user_id: string;
   landing_id: string;
+  decided_at: string;
 }
 
-export async function processNudges(o: { apply: boolean; now: Date; onlyUserId: string | null }): Promise<NudgeRunResult> {
+export async function processNudges(o: { apply: boolean; now: Date; onlyUserId: string | null; /** R3-105: no nudge is started after this (ms since the epoch). */ deadlineMs?: number }): Promise<NudgeRunResult> {
   const out: NudgeRunResult = { due: 0, results: [] };
   const admin = createAdminClient();
-  let q = admin.from('credit_nudges').select('id, user_id, landing_id').eq('status', 'due').order('decided_at', { ascending: true }).limit(200);
+  let q = admin.from('credit_nudges').select('id, user_id, landing_id, decided_at').eq('status', 'due').order('decided_at', { ascending: true }).limit(200);
   if (o.onlyUserId) q = q.eq('user_id', o.onlyUserId);
   const { data, error } = await q;
   if (error) return out;
@@ -149,6 +163,11 @@ export async function processNudges(o: { apply: boolean; now: Date; onlyUserId: 
     return out;
   }
   for (const r of rows) {
+    if (o.deadlineMs && Date.now() > o.deadlineMs) {
+      // R3-105: the pass is out of time; the next pass sends it.
+      out.results.push({ userId: r.user_id, outcome: 'out_of_time' });
+      continue;
+    }
     out.results.push({ userId: r.user_id, outcome: o.apply ? await sendNudge(admin, r, o.now) : 'would_send' });
   }
   return out;
@@ -160,9 +179,14 @@ async function finish(admin: Admin, id: string, patch: Record<string, unknown>):
 }
 
 async function sendNudge(admin: Admin, r: DueRow, now: Date): Promise<string> {
+  // R3-149: one pass at a time per nudge (an overlapping "Run now" beside the cron, a retry after a failed status
+  // write): si_webhook_events as the once-only claim; a crashed pass is retried after two minutes, and an earlier
+  // attempt's charge guards then count as sent below.
+  const ev = await claimEvent(admin, 'nudge_send', r.id);
+  if (ev !== 'new' && ev !== 'retry') return `raced:${ev}`;
   const settings = await getBillingSettings();
   const [{ data: p }, balance] = await Promise.all([
-    admin.from('profiles').select('email, alert_credit, auto_topup_amount_pence, reengage_since, full_name').eq('id', r.user_id).maybeSingle(),
+    admin.from('profiles').select(PROFILE_COLUMNS).eq('id', r.user_id).maybeSingle(),
     getBalance(r.user_id).catch(() => null),
   ]);
   const prof = p as NudgeProfile | null;
@@ -186,29 +210,37 @@ async function sendNudge(admin: Admin, r: DueRow, now: Date): Promise<string> {
     const guard = await claimCharge(textKey, null, r.user_id, 'text');
     if (guard) {
       const t = await sendMemberText(admin, { userId: r.user_id, body: callText('auto_topup_link', { base: siteUrl(), ...offer }), kind: 'nudge', purpose: 'si_nudge', dryRun: dry, now });
-      if (t.counted) {
-        await settleText(guard, textKey, null, r.user_id);
-        texted = true;
-      } else await releaseCharge(guard);
-    }
+      // R3-5: charged only when Twilio took it; no answer keeps the guard (never again) and charges nothing.
+      const step = textChargeStep(t);
+      if (step === 'settle') await settleText(guard, textKey, null, r.user_id);
+      if (step === 'release') await releaseCharge(guard);
+      else texted = true;
+    } else if (await chargeExists(textKey)) texted = true; // an earlier attempt's guard: it went (R3-149)
   }
   const emailKey = `nudge:${r.id}:email`;
   if (prof.email && prof.alert_credit !== false) {
     const guard = await claimCharge(emailKey, null, r.user_id, 'email');
     if (guard) {
-      const sent = dry ? false : await sendNudgeEmail(prof.email, nudgeEmail({ ...offer, lowCreditPence: settings.lifecycle.lowCreditPence }, firstNameOf(prof.full_name)), `si-nudge:${r.id}`);
+      // R3-46: the email says the balance they actually have.
+      const sent = dry ? false : await sendNudgeEmail(prof.email, nudgeEmail({ ...offer, balancePence: balance.totalPence }, firstNameOf(prof.full_name)), `si-nudge:${r.id}`);
       if (sent) {
         await settleEmail(guard, emailKey, null, r.user_id);
         emailed = true;
       } else await releaseCharge(guard);
-    }
+    } else if (await chargeExists(emailKey)) emailed = true; // an earlier attempt's guard: it went (R3-149)
   }
   if (!texted && !emailed) {
     await finish(admin, r.id, { status: 'skipped', skip_reason: dry ? 'dry_run' : 'nothing_sent' });
+    // R3-44: the claim stamped the £5 notice told; nothing went, so the notice is owed again (the next debit or
+    // morning email carries it). Only the claim's own stamp is cleared, never an older one.
+    const { error } = await admin.from('profiles').update({ last_low_balance_email_at: null }).eq('id', r.user_id).gte('last_low_balance_email_at', r.decided_at);
+    if (error) console.error('[nudge] told stamp not given back:', error.message);
+    await finishEvent(admin, 'nudge_send', r.id, null);
     return 'skipped:nothing_sent';
   }
   await finish(admin, r.id, { status: 'sent', sent_at: now.toISOString(), text_sent: texted, email_sent: emailed });
   await recordActivity(r.user_id, 'si_nudge_sent', { source: 'system', dedupeKey: `si_nudge_sent:${r.id}`, extras: { text: texted, email: emailed } });
   await claimCallSlot(r.user_id, now);
+  await finishEvent(admin, 'nudge_send', r.id, null);
   return `sent:${texted ? 'text+' : ''}${emailed ? 'email' : 'no_email'}`;
 }

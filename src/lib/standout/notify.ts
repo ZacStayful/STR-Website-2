@@ -100,6 +100,11 @@ export function planMember(i: NotifyPlanInput): NotifyStep[] {
     else fresh.push(c);
   }
   if (fresh.length === 0) return steps;
+  // R3-20: the member unreadable is not a choice of theirs: everything waits for the next pass.
+  if (i.member === null) {
+    for (const c of fresh) steps.push({ decisionId: c.decisionId, action: 'wait', status: 'pending' });
+    return steps;
+  }
   const [best, ...rest] = bestFirst(fresh);
   for (const c of rest) steps.push({ decisionId: c.decisionId, action: 'email', status: 'one_call' });
 
@@ -124,11 +129,17 @@ export function planMember(i: NotifyPlanInput): NotifyStep[] {
   return steps;
 }
 
-/** What a below-floor member is sent, from their balance (Zac: email only, uncharged, when the balance can't cover it). */
+/**
+ * What a below-floor member is sent, from their balance (Zac: email only,
+ * uncharged, when the balance can't cover it). R3-114: decided per channel in
+ * order: the text when texts are on and the balance covers it, then the email
+ * charged when what is left covers it, free otherwise. The same balance pays
+ * the same whatever the Texts switch says about the email.
+ */
 export function belowFloorChannels(i: { textsOn: boolean; balancePence: number; textPence: number; emailPence: number }): { text: boolean; chargeEmail: boolean } {
-  if (i.textsOn && i.balancePence >= i.textPence + i.emailPence) return { text: true, chargeEmail: true };
-  if (!i.textsOn && i.balancePence >= i.emailPence) return { text: false, chargeEmail: true };
-  return { text: false, chargeEmail: false };
+  const text = i.textsOn && i.balancePence >= i.textPence;
+  const chargeEmail = i.balancePence - (text ? i.textPence : 0) >= i.emailPence;
+  return { text, chargeEmail };
 }
 
 /** The deal-call floor: the setting, or Batch 23's own check if that is higher (a minute's calling plus the texts kept back). */
@@ -145,7 +156,7 @@ export type CallSync =
   | { callStatus: string; notify: null };
 
 /** Block reasons after which the member is told nothing more. */
-const NOTHING_MORE: ReadonlySet<string> = new Set(['deal_gone', 'deal_acted', 'type_not_chosen', 'profile_changed']);
+const NOTHING_MORE: ReadonlySet<string> = new Set(['deal_gone', 'deal_acted', 'type_not_chosen', 'profile_changed', 'quiet']);
 
 export function syncFromCall(call: { status: string; blocked_reason: string | null } | null): CallSync | null {
   if (!call) return { callStatus: 'error', notify: null };

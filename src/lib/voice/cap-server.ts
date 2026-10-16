@@ -7,11 +7,18 @@ import 'server-only';
  * sent alone) find it used and go tomorrow — and goes anyway when it is not.
  * The morning picks and digest (07:00 / 08:10 UTC) normally send before 9am
  * calls, so on most call days there is nothing left to move.
+ *
+ * Review R3 (R3-24, R3-49): never before the morning's daily emails have gone
+ * (08:30 UTC, the same mark the £5 notice waits for): a call, a text or a
+ * nudge that took the slot earlier would move that day's Today's 5 or digest
+ * to tomorrow instead of the capped emails after it.
  */
 import { createAdminClient } from '../supabase/admin';
 import { claimSlot, finishSend, markSending } from '../notify/sends';
+import { lowCreditMayGoAlone } from '../credit/low-credit';
 
 export async function claimCallSlot(userId: string, now: Date = new Date()): Promise<void> {
+  if (!lowCreditMayGoAlone(now)) return;
   try {
     const admin = createAdminClient();
     const claim = await claimSlot(admin, userId, 'si_call', now);

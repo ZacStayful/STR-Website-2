@@ -10,7 +10,7 @@ import 'server-only';
  *   deal_view    a deal page on screen: once per deal per UK day
  *   report_view  a saved report on screen: once per report per UK day
  *   explorer_view / my_deals_view   the Explorer or My deals on screen: once a UK day (Batch 21, E6)
- *   home_view    Home on screen: once a UK day (Batch 22e)
+ *   home_view    Home on screen: once a UK day (Batch 22e); record only, never weekly active (Review R3, R3-63)
  *   email_click / sms_click   the page was reached from our email or text:
  *                once per visit, and never counting towards weekly active
  *

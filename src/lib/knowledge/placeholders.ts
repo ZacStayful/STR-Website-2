@@ -24,6 +24,7 @@ import { BALANCE_BANDS_PENCE, PRODUCT_FACTS, TEAM_EMAIL } from './config.ts';
 import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
 import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 import { callFloorPence } from '../standout/notify.ts';
+import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from '../chat/voice-rules.ts';
 
 /** One billing_plans row, as read. */
 export interface PlanRow {
@@ -262,6 +263,11 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     return d === null ? null : String(d);
   }),
   daily_deals_cost: g_('Daily deals (Today’s 5) per day', 'billing_settings.todays_5_daily_pence', (g) => money(pence(g, 'todays_5_daily_pence'))),
+  // Batch 23b's morning briefing; Review R3 made its ceiling a setting. Fractions of a penny are kept ("2.5p").
+  briefing_max_cost: g_('The most a morning briefing is charged', 'billing_settings.briefing_ceiling_pence', (g) => {
+    const p = pence(g, 'briefing_ceiling_pence');
+    return p === null ? null : Number.isInteger(p) || p >= 10 ? money(p) : `${p}p`;
+  }),
   free_delay_hours: g_('Hours a free member waits to see a new deal', 'billing_settings.free_deal_delay_hours', (g) => {
     const h = whole(g, 'free_deal_delay_hours', 1);
     return h === null ? null : String(h);
@@ -305,6 +311,12 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
     const n = num(raw(g, 'si_chat_markup'));
     return n === null || n <= 0 ? null : `${n} times`;
   }),
+  // Review R3 (R3-1): what hearing an answer costs, the elevenlabs:character row × its markup (the sum /api/speak meters) for each surface's word cap.
+  chat_speak_quick_cost: g_('About what hearing a quick answer costs (AI voice, on top of the question)', 'unit_costs elevenlabs:character × markup × a quick answer’s length', (g) => money(speakPricePence(g.units.get('elevenlabs:character'), speakCharsFor(QUICK_MAX_WORDS)))),
+  chat_speak_full_cost: g_('About what hearing a full-view answer costs (AI voice, on top of the question)', 'unit_costs elevenlabs:character × markup × billing_settings.si_chat_full_max_words', (g) => {
+    const words = whole(g, 'si_chat_full_max_words', 1);
+    return words === null ? null : money(speakPricePence(g.units.get('elevenlabs:character'), speakCharsFor(words)));
+  }),
   // Batch 25: standout deals, deal calls and the slower-spender nudge
   standout_calls_per_month: g_('Deal calls a member may get in a calendar month, in words', 'billing_settings.standout_calls_per_month', (g) => {
     const n = whole(g, 'standout_calls_per_month', 0);
@@ -328,7 +340,7 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   team_seat_cost: g_("A team member's seat, from the owner's credit", 'code SEAT_PRICE_PENCE (src/lib/team/rules.ts)', () => formatPence(SEAT_PRICE_PENCE)),
   team_seat_days: g_('Days a seat lasts before it renews', 'code SEAT_PERIOD_DAYS (src/lib/team/rules.ts)', () => String(SEAT_PERIOD_DAYS)),
   // Fixed product facts (src/lib/knowledge/config.ts)
-  report_sections: g_("A Full analysis report's sections", 'config PRODUCT_FACTS.reportSections', () => String(PRODUCT_FACTS.reportSections)),
+  report_sections: g_("The most sections a Full analysis report has (a report has the ones its deal needs: say 'up to')", 'config PRODUCT_FACTS.reportSectionsMax', () => String(PRODUCT_FACTS.reportSectionsMax)),
   forecast_months: g_("The forecast's months", 'config PRODUCT_FACTS.forecastMonths', () => String(PRODUCT_FACTS.forecastMonths)),
   management_fee: g_("Stayful Management's fee", 'config PRODUCT_FACTS.managementFeePct', () => `${PRODUCT_FACTS.managementFeePct}% + VAT`),
   ledger_properties: g_('Properties in the methodology ledger, in words', 'config PRODUCT_FACTS.ledgerProperties', () => countWords(PRODUCT_FACTS.ledgerProperties)),
@@ -347,6 +359,14 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
 
 export const CONDITIONS: Readonly<Record<string, ConditionDef>> = {
   calls_live: { label: 'Calls are switched on (SI_CALLS_ENABLED)', scope: 'global', resolve: (g) => g.callsLive },
+  briefings_on: {
+    label: 'AI morning briefings are switched on (billing_settings.briefings_enabled)',
+    scope: 'global',
+    resolve: (g) => {
+      const v = raw(g, 'briefings_enabled');
+      return v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
+    },
+  },
   welcome_offer: { label: 'They have a welcome price running', scope: 'member', resolve: (_g, m) => (m ? m.welcome !== null : null) },
   first_deep_offer: { label: 'Their first deep report is discounted', scope: 'member', resolve: (_g, m) => (m ? m.firstDeepPence !== null : null) },
   alerts_by_text: { label: 'Their alerts also come by text', scope: 'member', resolve: (_g, m) => (m ? m.alertsByText : null) },

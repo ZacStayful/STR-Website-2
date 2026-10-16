@@ -7,6 +7,7 @@
  */
 import { GAP_DRAFT_MODEL, GAP_GROUP_MODEL } from '../config.ts';
 import { slugFrom } from '../forms.ts';
+import { matchKnowledge } from '../match.ts';
 import { PLACEHOLDERS, type GlobalSnapshot } from '../placeholders.ts';
 import type { LiveEntry } from '../render.ts';
 
@@ -49,6 +50,49 @@ export function usagePence(units: ModelUnits, u: Usage, price: UnitPence): numbe
 /** Room under the month's cap for a call that may cost `worst`. A cap of 0 switches the job's model calls off. */
 export function fitsCap(spentPence: number, worstPence: number, capPence: number): boolean {
   return capPence > 0 && spentPence + worstPence <= capPence;
+}
+
+/**
+ * Review R3 (R3-148): the unit rows the job cannot price. With one missing,
+ * every call would be priced at 0p and the month's cap could never trip, so
+ * the run makes no model call until the row is there.
+ */
+export function unpricedUnits(price: UnitPence): string[] {
+  return [...new Set(Object.values(MODEL_UNITS).flatMap((u) => [u.input, u.output, u.cacheRead, u.cacheWrite]))].filter((u) => !(price(u) > 0));
+}
+
+/** Review R3 (R3-145): a draft that failed (a bad reply, or an entry that couldn't be written) counts, and the gap is given up on after MAX_DRAFT_ATTEMPTS. */
+export function afterDraftFailure(draftAttempts: number): { draft_attempts: number; status: 'open' | 'failed' } {
+  const attempts = draftAttempts + 1;
+  return { draft_attempts: attempts, status: attempts >= MAX_DRAFT_ATTEMPTS ? 'failed' : 'open' };
+}
+
+/** Gap statuses that are a decision: a question that matches one is counted against it, never drafted again (R3-66). */
+export const DECIDED_GAP_STATUSES: ReadonlySet<GapRow['status']> = new Set(['rejected', 'dismissed', 'failed', 'covered']);
+
+/**
+ * Review R3 (R3-66): before a new gap is opened, its label is matched against
+ * the gaps already decided (rejected, dismissed, given up on, covered), the
+ * way a question is matched to an answer; a confident match is that gap.
+ */
+export function findDecidedGap<G extends { id: string; label: string; status: GapRow['status'] }>(label: string, gaps: readonly G[], thresholds: { answerMin: number; lowMin: number }): G | null {
+  const decided = gaps.filter((g) => DECIDED_GAP_STATUSES.has(g.status));
+  if (decided.length === 0) return null;
+  const r = matchKnowledge(decided.map((g) => ({ id: g.id, slug: g.id, version: 1, question: g.label, variants: [], channels: ['gap'] })), label, { ...thresholds, channel: 'gap', limit: 1 });
+  if (r.outcome !== 'answered') return null;
+  return decided.find((g) => g.id === r.matches[0].entryId) ?? null;
+}
+
+/**
+ * Review R3 (R3-57): whether an approved entry answers a group on every
+ * channel its questions came from. A call question is covered only by an
+ * entry allowed on calls, a chat question only by one allowed on the chat; a
+ * text (an auto-reply template, outside the knowledge base) needs nothing.
+ */
+export function coversChannels(entryChannels: readonly string[], questionChannels: readonly string[]): { ok: boolean; missing: string[] } {
+  const need = new Set(questionChannels.filter((c) => c === 'call' || c === 'chat'));
+  const missing = [...need].filter((c) => !entryChannels.includes(c));
+  return { ok: missing.length === 0, missing };
 }
 
 export interface GapRow {

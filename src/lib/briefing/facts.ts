@@ -90,6 +90,8 @@ export function placeName(raw: string | null | undefined): string | null {
   const t = (raw ?? '').trim().replace(/\s+/g, ' ');
   if (!t || t.length > 40) return null;
   if (!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ' ’-]*$/.test(t)) return null;
+  // R3: a town is a few words; a sentence without punctuation is not.
+  if (t.split(' ').length > 4) return null;
   return t;
 }
 

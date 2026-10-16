@@ -128,3 +128,23 @@ test("Batch 24's member-facts kinds are registered and record only", () => {
     assert.equal(isCounted(k), false, k);
   }
 });
+
+// Review R3 (R3-63 / R2-56): logging in is not being active.
+test('looking at Home is recorded, never weekly active', () => {
+  assert.equal(isActivityKind('home_view'), true);
+  assert.equal(isQualifying('home_view'), false);
+  assert.equal(isCounted('home_view'), false);
+  assert.ok(!QUALIFYING_KINDS.includes('home_view'));
+  assert.equal(isQualifying('browse_filter'), true, 'a deliberate choice on Home still counts');
+});
+
+// Review R3 (R3-92): every chat action a member takes is logged, record only.
+test("the chat's own actions are registered and record only", () => {
+  for (const k of ['si_chat_unhappy', 'si_chat_history_deleted', 'si_fact_declined']) {
+    assert.equal(isActivityKind(k), true, k);
+    assert.equal(isQualifying(k), false, k);
+    assert.equal(isCounted(k), false, k);
+  }
+  assert.equal(isQualifying('si_chat_full'), true, 'a full-view question still counts');
+  assert.equal(isQualifying('reaction_clear'), true, 'taking back a Pass counts, as the Pass did (R3-107)');
+});

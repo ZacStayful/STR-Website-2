@@ -27,6 +27,14 @@ export const ACTION_KINDS = [
 
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
+/**
+ * Review R3 (R3-41): the deep-search offer's anchor on /intelligence (it sits
+ * inside today's picks), and the page event the "Deep report" button sends
+ * so the picks open before the page scrolls to it.
+ */
+export const DEEP_SEARCH_ANCHOR = 'si-deep-search';
+export const DEEP_SEARCH_EVENT = 'si:deep-search';
+
 /** What the quick box may offer: nothing about a deal (it doesn't see deals). */
 export const QUICK_ACTIONS: readonly ActionKind[] = ['auto_topup', 'notifications', 'top_up', 'open_today', 'open_full_view'];
 
@@ -93,7 +101,7 @@ export function buildButton(kind: unknown, target: unknown, ctx: ActionContext):
     case 'use_this':
       return isWhatIfKey(t) && ctx.allowedWhatIfs.has(t) ? { kind, label: ACTION_LABELS[kind], href: null, whatIfKey: t } : null;
     case 'deep_search':
-      return ctx.deepSearchOffered ? link('/intelligence#si-deep-search') : null;
+      return ctx.deepSearchOffered ? link(`/intelligence#${DEEP_SEARCH_ANCHOR}`) : null;
     case 'auto_topup':
       return ctx.teamMember ? null : link('/account/billing#auto-topup');
     case 'top_up':

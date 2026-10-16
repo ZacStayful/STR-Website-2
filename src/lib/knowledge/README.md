@@ -27,6 +27,10 @@ figure in it is a `{placeholder}` read from the settings when it is shown.
 ## For Batches 25 and 26
 
 Server-only unless marked pure. `channel` is `'view' | 'call' | 'chat'`.
+Texts are not a channel: the SMS auto-replies ("who is this?" and the
+hand-off line, `src/lib/voice/sms-replies-server.ts`) are Batch 23's fixed
+templates in `src/lib/voice/templates.ts`, outside the knowledge base, so
+editing `what_it_does` here does not change them (Review R3, R3-97).
 
 | Function | File | What it does |
 |---|---|---|

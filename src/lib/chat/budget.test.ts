@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { seedTable } from '../credit/costs.ts';
 import { priceFor } from '../credit/pricing.ts';
-import { MODEL_UNITS } from './config.ts';
-import { affordsLookUp, budgetFor, chargeLines, costOf, roundMaxTokens, unitsPriced, usageOf, ROUNDING_MARGIN, PROVIDER } from './budget.ts';
+import { FULL_FINAL_ROUND_MIN_TOKENS, LOOKUP_ROUND_MAX_TOKENS, MODEL_UNITS } from './config.ts';
+import { affordsLookUp, budgetFor, chargeLines, costOf, lookUpFloorPence, roundFailureState, roundMaxTokens, unitsPriced, usageOf, LOOKUP_RESULT_TOKENS, ROUNDING_MARGIN, PROVIDER } from './budget.ts';
 
 const table = seedTable();
 
@@ -79,4 +79,24 @@ test('a look-up is only allowed when an answer can still follow it', () => {
   assert.equal(affordsLookUp({ ...base, budgetPence: 10 }), false);
   // near the floor, a smaller round still leaves room
   assert.equal(affordsLookUp({ ...base, budgetPence: 10, room: 400 }), true);
+});
+
+// Review R3 (R3-27): the floor affords one look-up, so nobody can ask a question that can only be "I don't know".
+test('the look-up floor is the smallest hold that affords one look-up', () => {
+  const full = MODEL_UNITS.full;
+  const floor = lookUpFloorPence({ table, units: full, markup: 5, promptTokens: 4500, ceilingPence: 25 });
+  assert.ok(floor !== null && floor > 0 && floor <= 25, String(floor));
+  const at = (budgetPence: number) => affordsLookUp({ table, units: full, markup: 5, budgetPence, spentPence: 0, promptTokens: 4500, cachedTokens: 0, room: LOOKUP_ROUND_MAX_TOKENS, resultTokens: LOOKUP_RESULT_TOKENS, finalTokens: FULL_FINAL_ROUND_MIN_TOKENS });
+  assert.equal(at(floor!), true);
+  assert.equal(at(floor! - 0.2), false, 'a fifth of a penny less cannot');
+  assert.equal(lookUpFloorPence({ table, units: full, markup: 5, promptTokens: 4500, ceilingPence: 1 }), null, 'a 1p ceiling never affords one: the setting stands');
+  assert.equal(lookUpFloorPence({ table: new Map(), units: full, markup: 5, promptTokens: 4500, ceilingPence: 25 }), null, 'no prices: the setting stands');
+});
+
+// Review R3 (R3-40): a round cut by its own clock is out of room, not a failure and not "the page left".
+test('what a round that threw means', () => {
+  assert.equal(roundFailureState({ gone: true, timedOut: true, aborted: true }), 'did_not_finish');
+  assert.equal(roundFailureState({ gone: false, timedOut: true, aborted: true }), 'out_of_room');
+  assert.equal(roundFailureState({ gone: false, timedOut: false, aborted: true }), 'did_not_finish');
+  assert.equal(roundFailureState({ gone: false, timedOut: false, aborted: false }), 'failed');
 });

@@ -40,3 +40,12 @@ export type SmsReplyKind = 'who' | 'other';
 export function replyKind(body: string): SmsReplyKind {
   return isWhoIsThis(body) ? 'who' : 'other';
 }
+
+/**
+ * Review R3 (R3-47 / R2-153): what the learning log keeps as the question
+ * for a text to the number: a fixed label for each kind, never the text's
+ * body (that is the transcript, kept si_transcript_retention_days).
+ */
+export function smsQuestionLabel(kind: SmsReplyKind): string {
+  return kind === 'who' ? 'Who is this?' : 'A text to the number (handed to the team)';
+}

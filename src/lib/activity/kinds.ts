@@ -33,8 +33,9 @@ export const ACTIVITY_KINDS = {
   // Batch 21 (E6): the Explorer (its search and area pages) and My deals on screen, once a UK day each.
   explorer_view: inApp('Looked at the Market Explorer'),
   my_deals_view: inApp('Looked at My deals'),
-  // Batch 22e: Home on screen, once a UK day. Login lands there, so logging in now counts as active.
-  home_view: inApp('Looked at Home'),
+  // Batch 22e: Home on screen, once a UK day. Login lands there, so from Review R3 (R3-63 / R2-56) it is record
+  // only: logging in is not being active (the Home-only section of /admin/weekly-active went with it).
+  home_view: recordOnly('Looked at Home'),
   // Batch 22e: a change to the Browse filters (a deliberate choice, so it counts).
   browse_filter: inApp('Changed the Browse filters'),
   // Batch 22e: a Home tile or "This week" item tapped. Record only: the page it opens logs its own view.
@@ -226,6 +227,10 @@ export const ACTIVITY_KINDS = {
   // own kind on the page it opens.
   si_chat_full: inApp('Asked Stayful Intelligence a question'),
   si_chat_quick: recordOnly('Asked Stayful Intelligence a quick question'),
+  // Review R3 (R3-92): the other things a member does in the chat, record only.
+  si_chat_unhappy: recordOnly('Said an answer was not helpful'),
+  si_chat_history_deleted: recordOnly('Deleted their chat history'),
+  si_fact_declined: recordOnly('Said no to Stayful Intelligence remembering something'),
 } as const satisfies Record<string, KindInfo>;
 
 export type ActivityKind = keyof typeof ACTIVITY_KINDS;

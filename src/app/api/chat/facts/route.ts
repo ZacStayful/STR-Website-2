@@ -3,6 +3,7 @@ import { createAdminClient, hasServiceRole } from '@/lib/supabase/admin';
 import { isSameOriginJson } from '@/lib/tracking/request';
 import { answerFact } from '@/lib/chat/log-server';
 import { chatMemberFor } from '@/lib/chat/turns-server';
+import { logActivity } from '@/lib/activity/log';
 
 /**
  * Batch 26: the member's Yes or No to "Want me to remember that?" under a
@@ -41,6 +42,9 @@ export async function POST(request: Request) {
   const member = await chatMemberFor(user);
   const result = await answerFact(createAdminClient(), member, String(body.turnId ?? ''), body.yes === true);
   if (!result) return Response.json({ ok: false, message: 'That has already been answered.' });
+  // R3-92: a No is the member's own action too, record only (a Yes is logged by rememberFact as si_fact_confirmed).
+  if (result.ok && !result.saved) logActivity(user.id, 'si_fact_declined', { dedupeKey: `si_fact_declined:${String(body.turnId)}` });
   if (result.ok) return Response.json({ ok: true, saved: result.saved, message: result.saved ? 'Done — I’ll remember that. You can see it in Account.' : 'OK, I won’t keep that.' });
-  return Response.json({ ok: false, message: REASONS[result.reason] ?? 'I couldn’t save that just now.' });
+  // retry: the Yes can be given again (R3-93).
+  return Response.json({ ok: false, retry: result.retry, message: REASONS[result.reason] ?? 'I couldn’t save that just now.' });
 }
