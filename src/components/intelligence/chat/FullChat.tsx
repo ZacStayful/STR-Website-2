@@ -8,7 +8,8 @@ import { notifyCreditChanged } from "@/lib/credit/client";
 import type { ChatReply, FullEvent } from "@/lib/chat/reply";
 import type { Answer } from "@/lib/intelligence/answers";
 import type { EyeLevel } from "@/components/StayfulEye";
-import { hintLabel } from "@/lib/chat/format";
+import { faceHintPence, hintLabel } from "@/lib/chat/format";
+import { DEEP_SEARCH_ANCHOR, DEEP_SEARCH_EVENT } from "@/lib/chat/actions";
 import { FULL_SUGGESTIONS, MAX_QUESTION_CHARS } from "@/lib/chat/config";
 import { publishThinking, readThinking } from "@/lib/intelligence/thinking-signal";
 import { recordSiViewAction } from "../actions";
@@ -96,6 +97,18 @@ export function FullChat(p: {
     [],
   );
 
+  // R3-41: the "Deep report" button points at the offer inside today's picks, which fold away once the member is
+  // chatting: open them, then scroll to it (a link that arrives with the hash does the same).
+  useEffect(() => {
+    const open = () => {
+      setPicksOpen(true);
+      window.setTimeout(() => document.getElementById(DEEP_SEARCH_ANCHOR)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+    };
+    if (window.location.hash === `#${DEEP_SEARCH_ANCHOR}`) open();
+    window.addEventListener(DEEP_SEARCH_EVENT, open);
+    return () => window.removeEventListener(DEEP_SEARCH_EVENT, open);
+  }, []);
+
   // Keep the newest words in view as they arrive.
   const lastText = entries.length ? (entries[entries.length - 1].kind === "ask" ? (entries[entries.length - 1] as Extract<Entry, { kind: "ask" }>).reply.text : "") : "";
   useEffect(() => {
@@ -144,7 +157,8 @@ export function FullChat(p: {
       }
     } catch {
       if (ctrl.signal.aborted) return;
-      update(key, (x) => ({ ...x, streaming: false, status: null, dropped: true, reply: { ...EMPTY, state: "did_not_finish", text: "That answer didn’t finish, so you weren’t charged." } }));
+      // R3-29: the server may have finished (and charged once) after the connection dropped: Try again shows that answer.
+      update(key, (x) => ({ ...x, streaming: false, status: null, dropped: true, reply: { ...EMPTY, state: "did_not_finish", text: "That answer may not have reached you. Tap Try again to see it — you’re never charged twice." } }));
     } finally {
       if (inFlight.current === ctrl) inFlight.current = null;
       setBusy(false);
@@ -280,7 +294,7 @@ export function FullChat(p: {
             <>
               <ChatComposer id="si-full-q" value={question} onChange={setQuestion} onSubmit={() => submit(question)} busy={busy} placeholder={voice.supported ? "Ask, or tap the mic and talk" : "Ask about your deals, money or picks"} voice={voice} />
               <p className="text-[11px] text-[#B9D5C6]/90">
-                {hintLabel(p.config.hintPence)} a question, only for an answer{voice.supported ? `; a spoken answer is also charged as AI voice${p.config.speakHintPence ? `, ${hintLabel(p.config.speakHintPence)}` : ""}` : ""}. The chips are free.
+                {hintLabel(faceHintPence(p.config.hintPence, credit))} a question, only for an answer{voice.supported ? `; a spoken answer is also charged as AI voice${p.config.speakHintPence ? `, ${hintLabel(faceHintPence(p.config.speakHintPence, credit))}` : ""}` : ""}. The solid chips are free; a dashed one is a question.
               </p>
             </>
           )}

@@ -13,8 +13,10 @@
  */
 import type Anthropic from '@anthropic-ai/sdk';
 import { buildSystemPrompt } from '../persona/stayful-intelligence.ts';
-import { DONT_KNOW_LINE } from './config.ts';
+import { DONT_KNOW_LINE, FULL_FIRST_MESSAGE_TOKENS, FULL_TOOL_SYSTEM_TOKENS } from './config.ts';
+import { approxTokens } from './budget.ts';
 import { balanceLabel } from './format.ts';
+import { CHAT_TOOLS } from './tools.ts';
 
 export const QUICK_TASK = [
   'This is a quick answer in the box under the header. You can see only the member\'s account basics and, when there is one, an approved answer to their question. You cannot see their deals, picks, reports, searches or calls, and you can\'t look anything up.',
@@ -34,7 +36,14 @@ export function fullTask(maxWords: number): string {
     'When a button would help (open a deal, run a full analysis, show a suggestion, use a suggestion, top up), call offer_action in the same reply as your answer: write the answer, then the offer_action call, and don\'t wait for its result. The member taps it. You never do the thing yourself.',
     'When the member tells you something about what they want that would help next time (for example "I only want 2-beds"), you may call propose_fact once with a short fact; the page asks them "Want me to remember that?" and saves it only on their yes.',
     'Deals are named by their area and type ("the 3-bed in LS6"), never by an address.',
+    // Review R3 (R3-102): the standout judges the main profile; everything else here is about the active one.
+    "Standout deals (why_called) are judged on the member's main profile, the earliest one, named in the result as for_profile; the account block names their active profile, which can differ.",
   ].join('\n');
+}
+
+/** Review R3 (R3-27): what the first full-view round sends before any look-up (the fixed prompt, the tools, a short first message), to size the floor. */
+export function fullPromptTokens(maxWords: number): number {
+  return approxTokens(fullSystemPrompt(maxWords) + JSON.stringify(CHAT_TOOLS)) + FULL_TOOL_SYSTEM_TOKENS + FULL_FIRST_MESSAGE_TOKENS;
 }
 
 export function quickSystemPrompt(): string {

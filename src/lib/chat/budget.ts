@@ -11,9 +11,12 @@
  */
 import { priceFor, round4 } from '../credit/pricing.ts';
 import type { UnitCostTable } from '../credit/costs.ts';
-import { CHARS_PER_TOKEN, MIN_ROUND_OUTPUT_TOKENS, type ModelUnits } from './config.ts';
+import { CHARS_PER_TOKEN, FULL_FINAL_ROUND_MIN_TOKENS, LOOKUP_ROUND_MAX_TOKENS, MAX_TOOL_RESULT_CHARS, MIN_ROUND_OUTPUT_TOKENS, type ModelUnits } from './config.ts';
 
 export const PROVIDER = 'anthropic';
+
+/** A look-up's result at its longest, as the next round's prompt carries it (twice over: the call and its result). */
+export const LOOKUP_RESULT_TOKENS = Math.ceil(MAX_TOOL_RESULT_CHARS / CHARS_PER_TOKEN) * 2;
 
 /** Base pence kept back from every round for the meter's per-line rounding (≤ 0.0003p a line). */
 export const ROUNDING_MARGIN = 0.01;
@@ -152,4 +155,37 @@ export function affordsLookUp(p: { table: UnitCostTable; units: ModelUnits; mark
   const worstThisRound = cached * readEach + (p.promptTokens - cached) * inputEach + p.room * each(p.units.output);
   const next = roundMaxTokens({ table: p.table, units: p.units, markup: p.markup, budgetPence: p.budgetPence, spentPence: p.spentPence + worstThisRound, promptTokens: p.promptTokens + p.room + p.resultTokens, cachedTokens: p.promptTokens, cap: p.finalTokens });
   return next >= p.finalTokens;
+}
+
+/**
+ * Review R3 (R3-27): the smallest hold that affords one look-up on a fresh
+ * conversation, to a tenth of a penny, or null when not even the ceiling
+ * does (the setting's floor then stands). A member between the setting's
+ * floor and this could only ever be answered "I don't know" (and counted
+ * against the unanswered cap, and logged as a gap), so the full view's floor
+ * is raised to it, on the page and when a question is taken.
+ */
+export function lookUpFloorPence(p: { table: UnitCostTable; units: ModelUnits; markup: number; promptTokens: number; ceilingPence: number }): number | null {
+  const affords = (budgetPence: number) =>
+    affordsLookUp({ table: p.table, units: p.units, markup: p.markup, budgetPence, spentPence: 0, promptTokens: p.promptTokens, cachedTokens: 0, room: LOOKUP_ROUND_MAX_TOKENS, resultTokens: LOOKUP_RESULT_TOKENS, finalTokens: FULL_FINAL_ROUND_MIN_TOKENS });
+  if (!(p.ceilingPence > 0) || !affords(p.ceilingPence)) return null;
+  let lo = 0;
+  let hi = p.ceilingPence;
+  while (hi - lo > 0.05) {
+    const mid = (lo + hi) / 2;
+    if (affords(mid)) hi = mid;
+    else lo = mid;
+  }
+  return Math.ceil(hi * 10) / 10;
+}
+
+/**
+ * Review R3 (R3-40): what a round that threw means for the question: the
+ * page left (nothing charged, "ask again"), the round ran out of time (out
+ * of room: the stream was cut by its own clock), or a real failure.
+ */
+export function roundFailureState(o: { gone: boolean; timedOut: boolean; aborted: boolean }): 'did_not_finish' | 'out_of_room' | 'failed' {
+  if (o.gone) return 'did_not_finish';
+  if (o.timedOut) return 'out_of_room';
+  return o.aborted ? 'did_not_finish' : 'failed';
 }

@@ -65,6 +65,12 @@ export const LOOKUP_ROUND_MAX_TOKENS = 600;
 export const FULL_ROUND_MAX_TOKENS = 1_200;
 /** A round that cannot afford this many output tokens is not started: the answer ends there. */
 export const MIN_ROUND_OUTPUT_TOKENS = 120;
+/** A full-view round with less room than this answers instead of looking anything else up. */
+export const FULL_FINAL_ROUND_MIN_TOKENS = 350;
+/** Sonnet 5.5's tool-use system prompt (auto), per the pricing page. */
+export const FULL_TOOL_SYSTEM_TOKENS = 286;
+/** A short first message (the account block and a question), for sizing the full view's floor (Review R3, R3-27). */
+export const FULL_FIRST_MESSAGE_TOKENS = 150;
 
 /** A tool result is cut to this many characters before the model sees it. */
 export const MAX_TOOL_RESULT_CHARS = 6_000;

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCreditOptional } from "@/components/credit/CreditProvider";
 import { notifyCreditChanged } from "@/lib/credit/client";
 import type { ChatReply } from "@/lib/chat/reply";
-import { hintLabel } from "@/lib/chat/format";
+import { faceHintPence, hintLabel } from "@/lib/chat/format";
 import { MAX_QUESTION_CHARS, QUICK_SUGGESTIONS } from "@/lib/chat/config";
 import { ChatAnswer } from "./ChatAnswer";
 import { ChatComposer } from "./ChatComposer";
@@ -165,7 +165,7 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
               <div className="rounded-xl bg-white/10 p-3 text-sm text-white">
                 <p>{e.reply.text}</p>
                 <Link href={`/intelligence?ask=${encodeURIComponent(e.question)}#si-ask`} className="mt-2 inline-block rounded-md bg-[#B9D5C6] px-3 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90">
-                  Ask in the full view ({hintLabel(p.fullHintPence)})
+                  Ask in the full view ({hintLabel(faceHintPence(p.fullHintPence, credit))})
                 </Link>
               </div>
             )}
@@ -187,7 +187,7 @@ export function QuickChat(p: { hintPence: number; fullHintPence: number; floorPe
           <>
             <ChatComposer id={p.inputId} value={question} onChange={setQuestion} onSubmit={() => submit(question)} busy={busy} placeholder={voice.supported ? "Ask, or tap the mic" : "Ask me something quick"} voice={voice} autoFocus={p.autoFocus} />
             <p className="text-[11px] text-[#B9D5C6]/90">
-              Quick answers, {hintLabel(p.hintPence)} each, only for an answer{voice.supported ? `; a spoken answer is also charged as AI voice${p.speakHintPence ? `, ${hintLabel(p.speakHintPence)}` : ""}` : ""}.
+              Quick answers, {hintLabel(faceHintPence(p.hintPence, credit))} each, only for an answer{voice.supported ? `; a spoken answer is also charged as AI voice${p.speakHintPence ? `, ${hintLabel(faceHintPence(p.speakHintPence, credit))}` : ""}` : ""}.
             </p>
           </>
         )}

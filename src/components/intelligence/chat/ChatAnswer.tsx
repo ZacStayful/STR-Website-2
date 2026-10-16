@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { ChatReply } from "@/lib/chat/reply";
-import type { ChatButton } from "@/lib/chat/actions";
+import { DEEP_SEARCH_EVENT, type ChatButton } from "@/lib/chat/actions";
 import { applyWhatIfAction } from "../what-if-actions";
 
 /**
@@ -44,7 +44,14 @@ function AnswerButton({ button }: { button: ChatButton }) {
   const cls = "inline-block rounded-md bg-[#B9D5C6] px-3 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90 disabled:opacity-60";
   if (button.href) {
     return (
-      <Link href={button.href} className={cls}>
+      <Link
+        href={button.href}
+        className={cls}
+        // R3-41: the deep-search offer sits inside today's picks, folded away while chatting: the full view opens them.
+        onClick={() => {
+          if (button.kind === "deep_search") window.dispatchEvent(new Event(DEEP_SEARCH_EVENT));
+        }}
+      >
         {button.label}
       </Link>
     );
