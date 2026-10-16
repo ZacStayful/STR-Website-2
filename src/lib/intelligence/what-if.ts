@@ -23,7 +23,7 @@
  */
 import type { MarketGoals } from '../market/goals.ts';
 import { BUDGET_CHOICES, BUDGET_LABELS, type Budget } from '../market/filters.ts';
-import { AVAILABLE_DEAL_TYPES, DEAL_TYPE_LABELS, dealTypeOf, typesShown, withAddedType, type DealType } from '../profile/deal-types.ts';
+import { AVAILABLE_DEAL_TYPES, DEAL_TYPE_LABELS, dealTypeFor, typesShown, withAddedType, type DealType, type TypedDeal } from '../profile/deal-types.ts';
 import { activeCriteria, modeOf, wantsFor } from '../tailoring/criteria.ts';
 import type { CriterionKey, TailoringProfile } from '../tailoring/profile.ts';
 import { WHAT_IF_BUDGET_STEPS, WHAT_IF_EXTRA_MILES, WHAT_IF_MAX_VARIANTS, WHAT_IF_MIN_PROFIT_STEP } from './config.ts';
@@ -180,10 +180,11 @@ export async function whatIfResults(input: ChooseInput, p: TailoringProfile, rea
   const wide = { ...p, goals: { ...p.goals!, sourcingKind: 'both' as const } };
   const { rows } = await tailoredRows(reads, wide, tailoredFilters(wide, input.feedback), extraAreas);
   const byId = new Map(rows.map((r) => [r.id, r]));
-  // Never a deal type the answers don't choose (Batch 17): each variant sees only its own types.
+  // Never a deal type the answers don't choose (Batch 17): each variant sees only its own types,
+  // each deal as the type it would be shown as (Batch 28: a buy-to-let-only row is never Short-let).
   const ofTypes = (goals: MarketGoals | null) => {
-    const allowed = new Set(typesShown({ goals, about: p.about }));
-    return rows.filter((r) => allowed.has(dealTypeOf({ kind: r.kind, project: (r as { project?: unknown }).project })));
+    const allowed = typesShown({ goals, about: p.about });
+    return rows.filter((r) => allowed.includes(dealTypeFor(r as TypedDeal, allowed)));
   };
   const already = new Set(admissible(ofTypes(p.goals), input, p).map((c) => c.dealId));
   return variants.map((v) => {

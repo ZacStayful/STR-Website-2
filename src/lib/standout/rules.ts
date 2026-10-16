@@ -20,7 +20,7 @@
  *
  * Pure.
  */
-import { minProfitFor, typeOfFacts, type DealFacts, type Judgement, type MemberFigures, type Wants } from '../tailoring/criteria.ts';
+import { forTypes, minProfitFor, typeOfFacts, type DealFacts, type Judgement, type MemberFigures, type Wants } from '../tailoring/criteria.ts';
 import type { DealType } from '../profile/deal-types.ts';
 import type { StandoutSettings } from './settings.ts';
 import type { StandoutReason } from './reasons.ts';
@@ -53,7 +53,7 @@ export interface StandoutJudgement {
 
 export interface StandoutInput {
   judgement: Judgement;
-  facts: Pick<DealFacts, 'kind' | 'dealType' | 'project'>;
+  facts: Pick<DealFacts, 'kind' | 'dealType' | 'dealTypes' | 'project'>;
   figures: Pick<MemberFigures, 'range'>;
   wants: Pick<Wants, 'minProfit' | 'minProfitR2r'>;
   chosenTypes: readonly DealType[];
@@ -82,16 +82,20 @@ export function profitBarFor(minProfit: number, overPct: number): number {
 
 export function judgeStandout(i: StandoutInput): StandoutJudgement {
   const j = i.judgement;
-  const dealType = typeOfFacts(i.facts);
+  // Batch 28: a deal that is two types is judged as the first of them the member chose.
+  const facts = forTypes(i.facts, i.chosenTypes);
+  const dealType = typeOfFacts(facts);
   const matchPct = matchPctOf(j);
   const profitLow = i.figures.range ? i.figures.range.lowPcm : null;
   const profitHigh = i.figures.range ? i.figures.range.highPcm : null;
-  const minProfit = minProfitFor(i.facts, i.wants);
+  const minProfit = minProfitFor(facts, i.wants);
   const profitBar = minProfit === null ? null : profitBarFor(minProfit, i.settings.profitOverMinPct);
-  const base = { dealType, matchPct, met: j.met, checked: j.checked, profitLow, profitHigh, profitBasis: profitBasisOf(i.facts), minProfit, profitBar };
+  const base = { dealType, matchPct, met: j.met, checked: j.checked, profitLow, profitHigh, profitBasis: profitBasisOf(facts), minProfit, profitBar };
   const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...base });
 
   if (!i.chosenTypes.includes(dealType)) return no('type_not_chosen', false);
+  // A buy-to-let deal is never judged on short-let figures.
+  if (dealType === 'btl') return no('type_not_chosen', false);
   if (j.mustFails.length > 0) return no('must_have_missed', false);
   if (i.forced) return { outcome: 'standout', reason: 'forced', inPool: true, ...base };
   if (minProfit === null) return no('no_min_profit_for_type');

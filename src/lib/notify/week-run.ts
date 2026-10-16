@@ -33,7 +33,7 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { filtersForType } from '../today/type-filters';
 import { typesShown } from '../profile/deal-types';
 import { parseAboutYou } from '../profile/about';
-import { isMissingProjectColumn } from '../marketplace/queries';
+import { isMissingBtlColumn, isMissingProjectColumn, typeColumns } from '../marketplace/queries';
 import type { MarketGoals } from '../market/goals';
 import { parseHistory } from '../listing/recheck';
 import { sendEmail, isEmailConfigured } from '../email/send';
@@ -150,23 +150,20 @@ export async function runYourWeek(opts: { dry: boolean; onlyUserIds?: string[] }
   const went: WentDeal[] = [];
   {
     const earliest = new Date(now.getTime() - MAX_WINDOW_MS).toISOString();
-    // Batch 17: a Project deal's numbers tell its type; without the column yet, every sale is Short-let.
-    let withProject = true;
+    // Batch 17: a Project deal's numbers tell its type; Batch 28: the band and btl_pass a buy-to-let
+    // one (typeColumns, less whatever the schema has not caught up with).
     for (let from = 0; ; from += PAGE) {
       const read = () =>
         admin
           .from('marketplace_deals')
-          .select(`id, kind, postcode_area, town, bedrooms, price_amount, price_period, raw_type, tenure, annual_profit, uplift_pct, listed_date, first_seen_at, live_since, retired_reason, retired_at, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence${withProject ? ', project' : ''}`)
+          .select(`id, postcode_area, town, bedrooms, price_amount, price_period, raw_type, tenure, annual_profit, uplift_pct, listed_date, first_seen_at, live_since, retired_reason, retired_at, screening_gross:screening->grossRevenue->>value, screening_confidence:screening->>confidence, ${typeColumns()}`)
           .eq('status', 'retired')
           .in('retired_reason', [...WENT_REASONS])
           .gte('retired_at', earliest)
           .order('retired_at', { ascending: true })
           .range(from, from + PAGE - 1);
       let { data, error } = await read();
-      if (error && withProject && isMissingProjectColumn(error)) {
-        withProject = false;
-        ({ data, error } = await read());
-      }
+      for (let i = 0; i < 2 && error && (isMissingProjectColumn(error) || isMissingBtlColumn(error)); i += 1) ({ data, error } = await read());
       if (error) {
         console.error('[your-week] went deals read failed:', error.message);
         break;

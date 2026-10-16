@@ -54,7 +54,7 @@ import type { QuestionId } from '../profile/questions.ts';
 import { profitRange, type ProfitRange } from '../marketplace/profit-range.ts';
 import { memberFinance } from '../marketplace/most-you-can-pay.ts';
 import type { DealCard } from '../marketplace/grid.ts';
-import { dealTypeOf, type DealType } from '../profile/deal-types.ts';
+import { dealTypeOf, dealTypesOf, type DealType } from '../profile/deal-types.ts';
 import { parseProjectCard, type ProjectCardData } from '../project/headline.ts';
 import { profitAfterWorksRange } from '../project/finance.ts';
 import { TAILORING } from './config.ts';
@@ -239,6 +239,12 @@ export interface DealFacts {
   needsWork: boolean;
   /** Batch 17: the deal's own type (dealTypeOf); absent reads as its kind's (a sale is Short-let). */
   dealType?: DealType;
+  /**
+   * Batch 28: every type the deal is (dealTypesOf), when that is more than
+   * its own: a sale that is a short-let deal and a buy-to-let deal at once.
+   * forTypes() reads the deal as the first of them a member chose.
+   */
+  dealTypes?: DealType[];
   /** Batch 17: a Project (BRRR) deal's card numbers; null or absent for any other deal. */
   project?: ProjectCardData | null;
 }
@@ -246,6 +252,21 @@ export interface DealFacts {
 /** The deal's type: its own, else its kind's. */
 export function typeOfFacts(f: Pick<DealFacts, 'kind' | 'dealType'>): DealType {
   return f.dealType ?? (f.kind === 'rent' ? 'r2r' : 'buy_str');
+}
+
+/** Every type the deal is (Batch 28): its list, else its own type. */
+export function typesOfFacts(f: Pick<DealFacts, 'kind' | 'dealType' | 'dealTypes'>): DealType[] {
+  return f.dealTypes && f.dealTypes.length > 0 ? f.dealTypes : [typeOfFacts(f)];
+}
+
+/**
+ * The deal as the type a member is shown it as (Batch 28, Q14): the first
+ * of its types they chose; unchanged when they chose none of them (it then
+ * fails their type check as it always has).
+ */
+export function forTypes<F extends Pick<DealFacts, 'kind' | 'dealType' | 'dealTypes'>>(f: F, chosen: readonly DealType[]): F {
+  const t = typesOfFacts(f).find((x) => chosen.includes(x));
+  return t && t !== typeOfFacts(f) ? { ...f, dealType: t } : f;
 }
 
 const num = (v: unknown): number | null => {
@@ -264,6 +285,9 @@ export function tenureOf(raw: string | null | undefined): DealFacts['tenure'] {
 type RowForFacts = Pick<DealCard, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'price_period' | 'raw_type' | 'tenure' | 'screening_gross' | 'screening_confidence' | 'check_comps'> & {
   /** Batch 17: marketplace_deals.project, where the read carried it (never in CARD_COLUMNS). */
   project?: unknown;
+  /** Batch 28: the short-let band and the buy-to-let lens, which tell the deal's types apart (dealTypesOf). */
+  band?: string | null;
+  btl_pass?: unknown;
 };
 
 /** A marketplace row (Today's pool, the grid) as facts. */
@@ -288,7 +312,8 @@ export function factsFromRow(row: RowForFacts, deal: Deal | null, motivation: { 
     motivationQualifies: motivation.qualifies,
     motivationScore: motivation.score,
     needsWork: project !== null || NEEDS_WORK.test(row.raw_type ?? '') || (motivation.fired ?? []).includes('auction'),
-    dealType: dealTypeOf({ kind: row.kind, project }),
+    dealType: dealTypeOf({ kind: row.kind, project, band: row.band, btl_pass: row.btl_pass }),
+    ...(row.kind === 'sale' ? { dealTypes: dealTypesOf({ kind: row.kind, project, band: row.band, btl_pass: row.btl_pass }) } : {}),
     project,
   };
 }

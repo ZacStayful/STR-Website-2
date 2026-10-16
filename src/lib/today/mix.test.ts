@@ -8,6 +8,15 @@ const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `
 
 test('the starting mix: All 2 / 2 / 1; two types 3 / 2 to the stronger best match; one type all 5', () => {
   assert.deepEqual(baseSlots(['buy_str', 'brrr', 'r2r']), { buy_str: 2, brrr: 1, r2r: 2 });
+  // Batch 28: all four 2 / 1 / 1 / 1; Short-let + BRRR + Rent-to-rent keeps its 2 / 1 / 2; any other three rescaled.
+  assert.deepEqual(baseSlots(['buy_str', 'brrr', 'r2r', 'btl']), { buy_str: 2, brrr: 1, r2r: 1, btl: 1 });
+  assert.deepEqual(baseSlots(['buy_str', 'r2r', 'btl']), { buy_str: 3, r2r: 1, btl: 1 });
+  assert.deepEqual(baseSlots(['brrr', 'r2r', 'btl']), { brrr: 2, r2r: 2, btl: 1 });
+  for (const t of [['buy_str', 'brrr', 'btl'], ['buy_str', 'r2r', 'btl'], ['brrr', 'r2r', 'btl'], ['buy_str', 'brrr', 'r2r', 'btl']] as DealType[][]) {
+    const b = baseSlots(t);
+    assert.equal(Object.values(b).reduce((x, y) => x + (y ?? 0), 0), 5, t.join());
+    for (const x of t) assert.ok((b[x] ?? 0) >= 1, `${x} in ${t.join()}`);
+  }
   assert.deepEqual(baseSlots(['buy_str', 'r2r'], { buy_str: 60, r2r: 80 }), { r2r: 3, buy_str: 2 });
   assert.deepEqual(baseSlots(['buy_str', 'r2r'], { buy_str: 80, r2r: 60 }), { buy_str: 3, r2r: 2 });
   assert.deepEqual(baseSlots(['brrr', 'r2r'], {}), { brrr: 3, r2r: 2 }, 'a tie goes to the question’s order');
@@ -71,8 +80,14 @@ test('the pick’s room comes from the most represented type, never an answered 
 
 test('the settings row: each mix must fill the day, anything else keeps the default', () => {
   assert.deepEqual(parseTodayMix(null), DEFAULT_TODAY_MIX);
-  assert.deepEqual(parseTodayMix({ all: { buy_str: 1, brrr: 2, r2r: 2 } }).all, { buy_str: 1, brrr: 2, r2r: 2 });
-  assert.deepEqual(parseTodayMix({ all: { buy_str: 3, brrr: 2, r2r: 2 } }).all, DEFAULT_TODAY_MIX.all);
+  assert.deepEqual(parseTodayMix({ all: { buy_str: 1, btl: 2, brrr: 1, r2r: 1 } }).all, { buy_str: 1, brrr: 1, r2r: 1, btl: 2 });
+  assert.deepEqual(parseTodayMix({ all: { buy_str: 1, brrr: 2, r2r: 2 } }).all, DEFAULT_TODAY_MIX.all, 'a row from before Batch 28 has no Buy to let share: the default');
+  assert.deepEqual(parseTodayMix({ all: { buy_str: 3, btl: 1, brrr: 2, r2r: 2 } }).all, DEFAULT_TODAY_MIX.all);
+  assert.deepEqual(parseTodayMix({ three: { buy_str: 1, brrr: 2, r2r: 2 } }).three, { buy_str: 1, brrr: 2, r2r: 2 });
+  assert.deepEqual(parseTodayMix({ three: { buy_str: 1, brrr: 1, r2r: 1 } }).three, DEFAULT_TODAY_MIX.three);
+  // The schema's one-off update: the old `all` kept as `three`, and the four-type mix.
+  const migrated = parseTodayMix({ all: { buy_str: 2, btl: 1, brrr: 1, r2r: 1 }, three: { buy_str: 2, brrr: 1, r2r: 2 }, two: [3, 2] });
+  assert.deepEqual([migrated.all, migrated.three], [DEFAULT_TODAY_MIX.all, DEFAULT_TODAY_MIX.three]);
   assert.deepEqual(parseTodayMix({ two: [4, 1] }).two, [4, 1]);
   assert.deepEqual(parseTodayMix({ two: [2, 3] }).two, [3, 2], 'the stronger type never gets fewer');
   assert.equal(parseTodayMix(JSON.stringify({ windowDays: 7, keepsPerSlot: 2 })).windowDays, 7);

@@ -45,7 +45,8 @@ test('variants: the next budget band, +10 miles, bedrooms ±1, the other propert
 test('keys are validated', () => {
   assert.equal(isWhatIfKey('budget'), true);
   assert.equal(isWhatIfKey('add_brrr'), true);
-  assert.equal(isWhatIfKey('add_btl'), false);
+  assert.equal(isWhatIfKey('add_btl'), true, 'Batch 28: Buy to let can be the type suggested');
+  assert.equal(isWhatIfKey('add_hmo'), false);
   assert.equal(isWhatIfKey('drop table'), false);
 });
 

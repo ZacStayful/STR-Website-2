@@ -141,8 +141,9 @@ export const GOAL_OPTIONS = {
    *   buy_str  Short-let: buy it and run it as a holiday let
    *   brrr     BRRR: buy, refurb, refinance (a Project deal)
    *   r2r      Rent-to-rent
-   *   btl      Buy to let (long-term tenants): declared, NOT available yet
-   *            (AVAILABLE_DEAL_TYPES below). Batch 28 switches it on.
+   *   btl      Buy to let (long-term tenants): Batch 28. A profile that chose
+   *            "All of them" before it existed holds the three older types
+   *            and gets it only after a tap (decided).
    *
    * Reserved for later, not a type yet: 'hmo'.
    */
@@ -197,12 +198,11 @@ export type DealType = GoalOption<'dealTypes'>;
 
 /**
  * The deal types a profile can choose and hold today: the one list the
- * "Coming soon" state comes from. Buy to let (long-term tenants) is declared
- * but not here, so the question shows it greyed out, "All of them" means
- * these three, a stored 'btl' is dropped when read, and nothing sources,
- * ranks or shows it. Batch 28 switches it on by adding it here.
+ * "Coming soon" state comes from (a declared type missing here is shown
+ * greyed out, dropped when read, and never sourced, ranked or shown). Batch
+ * 28 switched Buy to let on by adding it here; nothing is coming soon now.
  */
-export const AVAILABLE_DEAL_TYPES: readonly DealType[] = ['buy_str', 'brrr', 'r2r'];
+export const AVAILABLE_DEAL_TYPES: readonly DealType[] = ['buy_str', 'brrr', 'r2r', 'btl'];
 
 export interface R2rGoals {
   /**
@@ -422,7 +422,7 @@ export function parseSourcerGoals(raw: unknown): SourcerGoals {
 }
 
 /** The chosen deal types in the question's order, duplicates and unknowns dropped; null when none (never answered). */
-/** The stored types: available ones only (a 'btl' cannot be held while it is coming soon), in the question's order. */
+/** The stored types: available ones only (a declared type not yet available is dropped), in the question's order. */
 export function parseDealTypes(raw: unknown): DealType[] | null {
   if (!Array.isArray(raw)) return null;
   const set = new Set(raw.filter((v) => (AVAILABLE_DEAL_TYPES as readonly unknown[]).includes(v)) as DealType[]);

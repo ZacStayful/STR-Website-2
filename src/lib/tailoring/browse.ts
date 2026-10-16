@@ -27,8 +27,8 @@ import type { MarketGoals } from '../market/goals.ts';
 import { DEFAULT_FILTERS, type DealCard } from '../marketplace/grid.ts';
 import { motivationFor } from '../today/candidates.ts';
 import { candidateContext } from '../today/choose.ts';
-import { CRITERIA, factsFromRow, judgeDeal, rentalFromCard, wantsFor } from './criteria.ts';
-import { dealTypeOf } from '../profile/deal-types.ts';
+import { CRITERIA, factsFromRow, forTypes, judgeDeal, rentalFromCard, wantsFor } from './criteria.ts';
+import { dealFitsTypes } from '../profile/deal-types.ts';
 import type { DealType } from '../market/goals.ts';
 import { adjustmentsFor, areaLookup, bonusOf, compareKeys, leaningsFor, orderKey, type OrderKey } from './order.ts';
 import { usesTailoring, type CriterionKey, type TailoringProfile } from './profile.ts';
@@ -148,10 +148,11 @@ export function profileFits(rows: readonly BrowseRow[], p: TailoringProfile | nu
   const out = new Map<string, ProfileFit>();
   for (const row of rows) {
     const misses: MissKey[] = [];
-    if (wanted.size > 0 && !wanted.has(dealTypeOf(row))) misses.push('deal_type');
+    // Batch 28: a deal that is two types fits when either is chosen, and is judged as that one.
+    if (wanted.size > 0 && !dealFitsTypes(row, types)) misses.push('deal_type');
     const { qualifies } = motivationFor(row, p.goals, now);
     const m = parseMotivation(row.motivation);
-    const facts = factsFromRow(row, rentalFromCard(row), { qualifies, score: m?.score ?? 0, fired: m?.fired });
+    const facts = forTypes(factsFromRow(row, rentalFromCard(row), { qualifies, score: m?.score ?? 0, fired: m?.fired }), types);
     const { judgement } = judgeDeal(facts, p, wants);
     for (const c of judgement.checks) {
       if (c.verdict !== 'fail') continue;

@@ -19,7 +19,8 @@ import { expiringPayload, signPayload, signingConfigured } from '../crypto/sign'
 import { DEALS_TAG } from './server';
 import { type DealVisibility, dealVisibleTo, visibilityOrFilter } from './visibility';
 import { reactionFilter, type ReactionFilter } from './reactions';
-import { dealTypeOf, type DealType } from '../profile/deal-types';
+import { dealTypesOf, type DealType, type TypedDeal } from '../profile/deal-types';
+import { parseBtlCard, type BtlCard } from '../btl/card';
 import { parseProjectCard, type ProjectCardData } from '../project/headline';
 
 export interface DealPage {
@@ -54,10 +55,35 @@ export function isMissingProjectColumn(error: { code?: string; message?: string 
   return hit;
 }
 
-/** A read built by `run`, run again once without the project column when that was the failure. */
+/**
+ * Batch 28's marketplace_deals.btl and btl_pass (the buy-to-let lens), read
+ * the same way: until the schema section is run there are no buy-to-let
+ * deals, so the first failure naming them is remembered and every read after
+ * goes without. Never in CARD_COLUMNS (withProjectCards attaches the lens).
+ */
+let btlColumnMissing = false;
+
+/** Whether the error is the buy-to-let columns not being there yet; remembered when it is. */
+export function isMissingBtlColumn(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  const message = error.message ?? '';
+  const hit = /btl/.test(message) && (error.code === '42703' || error.code === 'PGRST204' || /does not exist|could not find/i.test(message));
+  if (hit && !btlColumnMissing) {
+    btlColumnMissing = true;
+    console.warn('[marketplace] marketplace_deals.btl_pass is not there yet (the Batch 28 schema section not run?): reading without it');
+  }
+  return hit;
+}
+
+/** Whether the buy-to-let columns are known to be missing (a reader then skips the lens). */
+export function btlColumnsMissing(): boolean {
+  return btlColumnMissing;
+}
+
+/** A read built by `run`, run again without the project or buy-to-let columns when one was the failure (twice: one each). */
 async function tolerant<R extends { error: { code?: string; message?: string } | null }>(run: () => PromiseLike<R>): Promise<R> {
-  const res = await run();
-  if (res.error && isMissingProjectColumn(res.error)) return run();
+  let res = await run();
+  for (let i = 0; i < 2 && res.error && (isMissingProjectColumn(res.error) || isMissingBtlColumn(res.error)); i += 1) res = await run();
   return res;
 }
 
@@ -70,7 +96,7 @@ interface QueryOptions {
   earlyAfter?: string;
   /** Columns read on top of the card's, for a server-side caller that never sends them to a page (the Today ranking). */
   extraColumns?: string;
-  /** Batch 17: read the project column too (while it exists). */
+  /** Batch 17: read the project column too (while it exists); Batch 28: and the buy-to-let lens. */
   withProject?: boolean;
 }
 
@@ -81,7 +107,7 @@ interface QueryOptions {
  * here and nowhere else.
  */
 function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, opts: QueryOptions) {
-  const extra = [opts.extraColumns, opts.withProject && !projectColumnMissing ? 'project' : null].filter(Boolean).join(', ');
+  const extra = [opts.extraColumns, opts.withProject && !projectColumnMissing ? 'project' : null, opts.withProject && !btlColumnMissing ? 'btl, btl_pass' : null].filter(Boolean).join(', ');
   const columns = opts.countOnly ? 'id' : `${CARD_COLUMNS}, photo${extra ? `, ${extra}` : ''}`;
   let q = admin
     .from('marketplace_deals')
@@ -101,14 +127,17 @@ function dealsQuery(admin: Admin, f: DealFilters, visibility: DealVisibility, op
   } else if (ownFilter) q = q.or(ownFilter);
   else if (visibility.cutoffIso) q = q.lte('live_since', visibility.cutoffIso);
   if (f.kind !== 'both') q = q.eq('kind', f.kind);
-  // Batch 17: the deal types shown (Browse's type filter, Today's per-type pools).
-  const types = typeClauseFor(f.types ?? [], !projectColumnMissing, f.brrrLightOnly === true);
+  // Batch 17: the deal types shown (Browse's type filter, Today's per-type pools). Batch 28: a
+  // buy-to-let-only row matches Buy to let and nothing else.
+  const types = typeClauseFor(f.types ?? [], !projectColumnMissing, f.brrrLightOnly === true, !btlColumnMissing);
   if (types?.none) q = q.in('id', []);
   else if (types) {
     if (types.kind) q = q.eq('kind', types.kind);
     if (types.project === 'null') q = q.is('project', null);
     else if (types.project === 'not_null') q = q.not('project', 'is', null);
     else if (types.project === 'light') q = q.eq('project->>level', 'light');
+    if (types.band) q = q.eq('band', types.band);
+    if (types.btl) q = q.eq('btl_pass', true);
     if (types.or) q = q.or(types.or);
   }
   if (f.areas.length > 0) q = q.in('postcode_area', f.areas);
@@ -233,6 +262,14 @@ const RANKING_COLUMNS = 'deal, suitability, screening';
 
 export type RankingRow = DealCard & { deal: unknown; suitability: unknown; screening: unknown; project?: unknown };
 
+/** Batch 28: a read's raw buy-to-let lens as the card carries it (the stored card parsed; only while it passes). */
+function withBtlLens<T extends { btl?: unknown; btl_pass?: unknown }>(row: T): Omit<T, 'btl' | 'btl_pass'> & { btl?: BtlCard | null; btl_pass?: boolean } {
+  const { btl, btl_pass, ...rest } = row;
+  if (btl_pass === undefined && btl === undefined) return rest;
+  const pass = btl_pass === true;
+  return { ...rest, btl_pass: pass, btl: pass ? parseBtlCard(btl) : null };
+}
+
 /**
  * The pool the Today screen ranks for one member: the grid's own query
  * (visibility cutoff, their passes left out, kind, areas, price), best
@@ -257,9 +294,9 @@ export async function rankingPool(f: DealFilters, visibility: DealVisibility, me
     console.error('[marketplace] rankingPool failed:', res.error.message);
     return [];
   }
-  return ((res.data ?? []) as unknown as (RankingRow & { photo: string | null; deal_reactions?: unknown })[]).map(({ photo, deal_reactions: _r, ...row }) => {
+  return ((res.data ?? []) as unknown as (Omit<RankingRow, 'btl'> & { btl?: unknown; photo: string | null; deal_reactions?: unknown })[]).map(({ photo, deal_reactions: _r, ...row }) => {
     void _r;
-    return { ...row, has_photo: Boolean(photo) };
+    return { ...withBtlLens(row), has_photo: Boolean(photo) };
   });
 }
 
@@ -280,32 +317,43 @@ export async function browsePool(f: DealFilters, visibility: DealVisibility, lim
     console.error('[marketplace] browsePool failed:', res.error.message);
     return null;
   }
-  return ((res.data ?? []) as unknown as (DealCard & { photo: string | null })[]).map(({ photo, ...row }) => ({ ...row, has_photo: Boolean(photo) }));
+  return ((res.data ?? []) as unknown as (Omit<DealCard, 'btl'> & { btl?: unknown; photo: string | null })[]).map(({ photo, ...row }) => ({ ...withBtlLens(row), has_photo: Boolean(photo) }));
 }
 
 const TYPE_CHUNK = 150;
 
+/** The columns dealTypesOf reads, less any the schema has not caught up with. */
+export function typeColumns(): string {
+  return ['kind', 'band', projectColumnMissing ? null : 'project', btlColumnMissing ? null : 'btl_pass'].filter(Boolean).join(', ');
+}
+
 /**
- * Batch 17: each deal's type by id — Rent-to-rent for a rental, BRRR for a
- * sale with a Project estimate, Short-let for any other sale. Until the
- * schema section is run every sale is Short-let. Deals it cannot read are
- * absent.
+ * Batch 17: each deal's types by id (dealTypesOf: Rent-to-rent for a
+ * rental, BRRR for a sale with a Project estimate, Short-let for one that
+ * passed the short-let screen, and Batch 28's Buy to let), the first being
+ * its own type. Deals it cannot read are absent.
  */
-export async function dealTypesByIds(ids: readonly string[]): Promise<Map<string, DealType>> {
-  const out = new Map<string, DealType>();
+export async function dealTypeListsByIds(ids: readonly string[]): Promise<Map<string, DealType[]>> {
+  const out = new Map<string, DealType[]>();
   if (!hasServiceRole() || ids.length === 0) return out;
   const admin = createAdminClient();
   const list = [...new Set(ids)];
   for (let i = 0; i < list.length; i += TYPE_CHUNK) {
     const some = list.slice(i, i + TYPE_CHUNK);
-    const res = await tolerant(() => admin.from('marketplace_deals').select(projectColumnMissing ? 'id, kind' : 'id, kind, project').in('id', some));
+    const res = await tolerant(() => admin.from('marketplace_deals').select(`id, ${typeColumns()}`).in('id', some));
     if (res.error) {
       console.warn('[marketplace] deal types unreadable:', res.error.message);
       continue;
     }
-    for (const r of (res.data ?? []) as unknown as { id: string; kind: string; project?: unknown }[]) out.set(r.id, dealTypeOf(r));
+    for (const r of (res.data ?? []) as unknown as ({ id: string } & TypedDeal)[]) out.set(r.id, dealTypesOf(r));
   }
   return out;
+}
+
+/** Each deal's own type by id (the first of its types); `chosen`: the first of its types the member chose (dealTypeFor). */
+export async function dealTypesByIds(ids: readonly string[], chosen?: readonly DealType[]): Promise<Map<string, DealType>> {
+  const lists = await dealTypeListsByIds(ids);
+  return new Map([...lists].map(([id, types]) => [id, (chosen && types.find((t) => chosen.includes(t))) || types[0]]));
 }
 
 /**
@@ -364,16 +412,46 @@ export async function projectCardsFor(ids: readonly string[]): Promise<Map<strin
 }
 
 /**
- * Batch 17: the cards with their Project numbers attached (card-safe: numbers
- * only), for every surface that prints a range. The rest come back as they
- * were; so do all of them until the schema section is run.
+ * Batch 28: the buy-to-let cards (card-safe: numbers only) of these deals,
+ * by id; only the ones that pass now (btl_pass). Empty until the schema
+ * section is run.
  */
-export async function withProjectCards<T extends { id: string; kind?: string }>(cards: T[]): Promise<(T & { project?: ProjectCardData | null })[]> {
+export async function btlCardsFor(ids: readonly string[]): Promise<Map<string, BtlCard>> {
+  const out = new Map<string, BtlCard>();
+  if (!hasServiceRole() || ids.length === 0 || btlColumnMissing) return out;
+  const admin = createAdminClient();
+  const list = [...new Set(ids)];
+  for (let i = 0; i < list.length; i += TYPE_CHUNK) {
+    const { data, error } = await admin.from('marketplace_deals').select('id, btl').in('id', list.slice(i, i + TYPE_CHUNK)).eq('btl_pass', true);
+    if (error) {
+      if (!isMissingBtlColumn(error)) console.warn('[marketplace] buy-to-let cards unreadable:', error.message);
+      return out;
+    }
+    for (const r of (data ?? []) as { id: string; btl: unknown }[]) {
+      const card = parseBtlCard(r.btl);
+      if (card) out.set(r.id, card);
+    }
+  }
+  return out;
+}
+
+/**
+ * Batch 17: the cards with their Project numbers attached (card-safe: numbers
+ * only), for every surface that prints a range; Batch 28: and their
+ * buy-to-let lens (btl_pass true and the card) when they pass. The rest come
+ * back as they were; so do all of them until the schema sections are run.
+ */
+export async function withProjectCards<T extends { id: string; kind?: string }>(cards: T[]): Promise<(T & { project?: ProjectCardData | null; btl?: BtlCard | null; btl_pass?: boolean })[]> {
   const sales = cards.filter((c) => c.kind === undefined || c.kind === 'sale');
   if (sales.length === 0) return cards;
-  const projects = await projectCardsFor(sales.map((c) => c.id));
-  if (projects.size === 0) return cards;
-  return cards.map((c) => (projects.has(c.id) ? { ...c, project: projects.get(c.id)! } : c));
+  const [projects, btl] = await Promise.all([projectCardsFor(sales.map((c) => c.id)), btlCardsFor(sales.map((c) => c.id))]);
+  if (projects.size === 0 && btl.size === 0) return cards;
+  return cards.map((c) => {
+    const p = projects.get(c.id);
+    const b = btl.get(c.id);
+    if (!p && !b) return c;
+    return { ...c, ...(p ? { project: p } : {}), ...(b ? { btl: b, btl_pass: true } : {}) };
+  });
 }
 
 /**
@@ -408,7 +486,8 @@ async function countsByAreaUncached(cutoffIso: string | null): Promise<AreaCount
   const PAGE = 1000;
   const byArea = new Map<string, AreaCount>();
   for (let from = 0; ; from += PAGE) {
-    let q = admin.from('marketplace_deals').select('postcode_area, kind').eq('status', 'live');
+    // Batch 28: the public short-let counts; a sale in the pool only as a buy-to-let deal is not one.
+    let q = admin.from('marketplace_deals').select('postcode_area, kind').eq('status', 'live').eq('band', 'qualified');
     if (cutoffIso) q = q.lte('live_since', cutoffIso);
     const { data, error } = await q.order('canonical_url', { ascending: true }).range(from, from + PAGE - 1);
     if (error) {
@@ -502,7 +581,8 @@ export interface AreaTeaser {
 async function teaserUncached(code: string, cutoffIso: string | null): Promise<AreaTeaser | null> {
   if (!hasServiceRole()) return null;
   const admin = createAdminClient();
-  let q = admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`).eq('status', 'live').eq('postcode_area', code);
+  // Batch 28: the area's short-let and rent-to-rent deals (their profit is what this page shows); never a buy-to-let-only one.
+  let q = admin.from('marketplace_deals').select(`${PUBLIC_DEAL_COLUMNS}, photo`).eq('status', 'live').eq('postcode_area', code).eq('band', 'qualified');
   if (cutoffIso) q = q.lte('live_since', cutoffIso);
   const { data, error } = await q.order('annual_profit', { ascending: false, nullsFirst: false }).limit(2000);
   if (error) {

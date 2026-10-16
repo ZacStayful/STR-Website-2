@@ -614,15 +614,17 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // Batch 16: the deal's own comparables check, when the row carries one, so the pick is screened on it.
   const urlToCheck = new Map<string, StoredCheck | null>();
   const poolFor = async (query: SourcingQuery): Promise<SourcedListing[] | null> => {
-    const { data, error } = await admin
+    let pool = admin
       .from("marketplace_deals")
       .select("canonical_url, id, live_since, screening, annual_profit")
       .eq("status", "live")
       .eq("kind", query.kind)
       .eq("postcode_area", query.area)
-      .gte("first_seen_at", poolCutoffIso)
-      .order("annual_profit", { ascending: false, nullsFirst: false })
-      .limit(300);
+      .gte("first_seen_at", poolCutoffIso);
+    // Batch 28: the pick is a short-let, BRRR or rent-to-rent deal. A sale in the pool only as a
+    // buy-to-let deal (band below 'qualified') is never one: its short-let figures failed.
+    if (query.kind === "sale") pool = pool.eq("band", "qualified");
+    const { data, error } = await pool.order("annual_profit", { ascending: false, nullsFirst: false }).limit(300);
     if (error) {
       console.error("[sourcing] pool read failed:", error.message);
       return null;

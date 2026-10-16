@@ -82,7 +82,7 @@ test('"All of them" ticks every type; the kind searched follows; nothing is requ
   assert.equal(applyAnswer('deal_types', [], a).ok, false);
   assert.equal(applyAnswer('deal_types', ['nonsense'], a).ok, false);
   a = answer(a, 'deal_types', ['all']);
-  assert.deepEqual(a.goals.dealTypes, ['buy_str', 'brrr', 'r2r']);
+  assert.deepEqual(a.goals.dealTypes, ['buy_str', 'brrr', 'r2r', 'btl']);
   assert.equal(a.goals.sourcingKind, 'both');
   assert.equal(answerLabel('deal_types', a), 'All of them');
   assert.deepEqual(moneyQuestionsFor(a.goals.dealTypes!), ['budget', 'brrr_budget', 'max_rent']);

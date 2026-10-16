@@ -11,6 +11,7 @@ import { AVAILABLE_DEAL_TYPES, type DealType } from '../market/goals.ts';
 import type { ConfirmedVia, DealStatus } from './types.ts';
 import { profitRange, rangeCaption, upliftTag } from './profit-range.ts';
 import type { ProjectCardData } from '../project/headline.ts';
+import type { BtlCard } from '../btl/card.ts';
 import { kindWordFor, projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
 
 export type DealKindFilter = 'both' | 'sale' | 'rent';
@@ -108,44 +109,65 @@ export function browseFilters(parsed: DealFilters, typeInUrl: boolean, profileTy
 
 /** The listing kind these types cover, for figures kept by kind (the area counts). */
 export function kindOfTypes(types: readonly DealType[]): DealKindFilter {
-  const sale = types.length === 0 || types.includes('buy_str') || types.includes('brrr');
+  const sale = types.length === 0 || types.includes('buy_str') || types.includes('brrr') || types.includes('btl');
   const rent = types.length === 0 || types.includes('r2r');
   return sale && rent ? 'both' : rent ? 'rent' : 'sale';
 }
 
 /**
- * The deal-types filter as query clauses (Batch 17). A rental is
+ * The deal-types filter as query clauses (Batch 17; Batch 28). A rental is
  * Rent-to-rent; a sale with a Project estimate (marketplace_deals.project) is
- * BRRR; any other sale Short-let. `projectColumn` false: the schema section
- * has not been run, so there are no Project deals and every sale is Buy and
- * let. `lightOnly`: of the Project deals, the light refreshes only. Null: no
- * filter. `none`: nothing can match.
+ * BRRR; a sale without one that passed the short-let screen (band
+ * 'qualified') is Short-let; a sale that passes the buy-to-let rules
+ * (btl_pass) is Buy to let, whatever else it is. A buy-to-let-only row (band
+ * below 'qualified') never matches Short-let: this is the leak guard, so a
+ * profile that did not choose Buy to let never sees one.
+ *
+ * `projectColumn` false: Batch 17's section has not been run, so there are
+ * no Project deals. `btlColumn` false: Batch 28's has not been run, so there
+ * are no buy-to-let deals and every pool row is 'qualified'. `lightOnly`: of
+ * the Project deals, the light refreshes only. Null: no filter. `none`:
+ * nothing can match. `or` is one PostgREST logic tree (nested and(...)).
  */
-export type TypeClause = { none: true } | { none?: false; kind?: 'sale' | 'rent'; project?: 'null' | 'not_null' | 'light'; or?: string };
+export type TypeClause =
+  | { none: true }
+  | { none?: false; kind?: 'sale' | 'rent'; project?: 'null' | 'not_null' | 'light'; band?: 'qualified'; btl?: true; or?: string };
 
 const LIGHT = 'project->>level.eq.light';
 
-export function typeClauseFor(types: readonly DealType[], projectColumn: boolean, lightOnly = false): TypeClause | null {
+export function typeClauseFor(types: readonly DealType[], projectColumn: boolean, lightOnly = false, btlColumn = true): TypeClause | null {
   // Only available types are ever shown: a list naming none of them matches nothing.
   const set = new Set(types.length === 0 ? TYPE_VALUES : types.filter((t) => TYPE_VALUES.includes(t)));
   if (set.size === 0) return { none: true };
-  const bl = set.has('buy_str');
+  const light = lightOnly && projectColumn;
+  const shortLet = set.has('buy_str');
   const brrr = set.has('brrr') && projectColumn;
   const r2r = set.has('r2r');
-  if (!projectColumn) {
-    if (bl && r2r) return null;
-    if (bl) return { kind: 'sale' };
+  const btl = set.has('btl') && btlColumn;
+  const chosen = [shortLet, brrr, r2r, btl].filter(Boolean).length;
+  if (chosen === 0) return { none: true };
+  // Before Batch 28's section every pool row is 'qualified', so the band is no filter yet.
+  const band = btlColumn ? ({ band: 'qualified' } as const) : {};
+  if (chosen === 1) {
+    if (shortLet) return projectColumn ? { kind: 'sale', project: 'null', ...band } : { kind: 'sale', ...band };
+    if (brrr) return { kind: 'sale', project: light ? 'light' : 'not_null' };
     if (r2r) return { kind: 'rent' };
-    return { none: true };
+    return { kind: 'sale', btl: true };
   }
-  const light = brrr && lightOnly;
-  if (bl && brrr && r2r) return light ? { or: `project.is.null,${LIGHT}` } : null;
-  if (bl && brrr) return light ? { kind: 'sale', or: `project.is.null,${LIGHT}` } : { kind: 'sale' };
-  if (bl && r2r) return { project: 'null' };
-  if (brrr && r2r) return { or: `kind.eq.rent,${light ? LIGHT : 'project.not.is.null'}` };
-  if (bl) return { kind: 'sale', project: 'null' };
-  if (brrr) return { kind: 'sale', project: light ? 'light' : 'not_null' };
-  return { kind: 'rent' };
+  // Every type there is, with no light-only narrowing: no filter, until buy-to-let rows exist to keep apart.
+  const everything = shortLet && r2r && (brrr || !projectColumn) && (btl || !btlColumn) && !(brrr && light);
+  if (everything && !btlColumn) return null;
+  const parts: string[] = [];
+  if (r2r) parts.push('kind.eq.rent');
+  if (shortLet && brrr && !light) {
+    // Short-let or BRRR: a sale that passed the short-let screen or holds a Project estimate.
+    parts.push(btlColumn ? 'and(kind.eq.sale,band.eq.qualified)' : 'kind.eq.sale', 'project.not.is.null');
+  } else {
+    if (shortLet) parts.push(projectColumn ? (btlColumn ? 'and(kind.eq.sale,project.is.null,band.eq.qualified)' : 'and(kind.eq.sale,project.is.null)') : btlColumn ? 'and(kind.eq.sale,band.eq.qualified)' : 'kind.eq.sale');
+    if (brrr) parts.push(light ? LIGHT : 'project.not.is.null');
+  }
+  if (btl) parts.push('and(kind.eq.sale,btl_pass.is.true)');
+  return { or: [...new Set(parts)].join(',') };
 }
 
 /** Every value is whitelisted or clamped; junk falls back to the default rather than erroring. */
@@ -288,6 +310,14 @@ export interface DealCard {
    * CARD_COLUMNS, so the site works before the schema section is run.
    */
   project?: ProjectCardData | null;
+  /**
+   * Batch 28: the buy-to-let lens (marketplace_deals.btl_pass and the stored
+   * card, numbers only, never an address or a link), attached by
+   * withProjectCards to a sale that passes; never in CARD_COLUMNS, so the
+   * site works before the schema section is run.
+   */
+  btl_pass?: boolean;
+  btl?: BtlCard | null;
 }
 
 const HOUR_MS = 60 * 60 * 1000;

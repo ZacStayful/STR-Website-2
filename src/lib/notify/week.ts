@@ -21,7 +21,7 @@
  * Pure: no network, no database, no server-only.
  */
 import { describeType, headlineFigure, type DealCard, type DealFilters } from '../marketplace/grid.ts';
-import { dealTypeOf } from '../profile/deal-types.ts';
+import { AVAILABLE_DEAL_TYPES, dealTypeFor } from '../profile/deal-types.ts';
 import { parseProjectCard } from '../project/headline.ts';
 import { areaChangeLine, type AlertChange } from '../market/alerts.ts';
 import { manageNotificationsUrl } from '../url.ts';
@@ -43,6 +43,9 @@ export type WentDeal = Pick<DealCard, 'id' | 'kind' | 'postcode_area' | 'town' |
   retired_at: string;
   /** Batch 17: a Project deal's card numbers (marketplace_deals.project), where the read carried them. */
   project?: unknown;
+  /** Batch 28: the short-let band and the buy-to-let lens, which tell a buy-to-let-only deal apart (dealTypesOf). */
+  band?: string | null;
+  btl_pass?: unknown;
 };
 
 const num = (v: unknown): number | null => {
@@ -56,14 +59,15 @@ const time = (iso: string | null | undefined): number | null => {
 };
 
 /** Whether a deal matches a member's filters: the same tests the grid's query applies (queries.ts dealsQuery). */
-export function matchesFilters(d: Pick<WentDeal, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'annual_profit' | 'uplift_pct' | 'project'>, f: DealFilters): boolean {
+export function matchesFilters(d: Pick<WentDeal, 'kind' | 'postcode_area' | 'bedrooms' | 'price_amount' | 'annual_profit' | 'uplift_pct' | 'project' | 'band' | 'btl_pass'>, f: DealFilters): boolean {
   if (f.kind !== 'both' && d.kind !== f.kind) return false;
-  // Batch 17: the deal types (a light-refresh answer takes light projects only).
-  if (f.types.length > 0) {
-    const t = dealTypeOf(d);
-    if (!f.types.includes(t)) return false;
-    if (t === 'brrr' && f.brrrLightOnly && parseProjectCard(d.project)?.level !== 'light') return false;
-  }
+  // Batch 17: the deal types (a light-refresh answer takes light projects only). Batch 28: a deal
+  // that is two types counts as the one chosen; a buy-to-let deal is never a missed profit, since
+  // what this section counts is short-let and rent-to-rent profit.
+  const types = f.types.length > 0 ? f.types : AVAILABLE_DEAL_TYPES;
+  const t = dealTypeFor(d, types);
+  if (!types.includes(t) || t === 'btl') return false;
+  if (t === 'brrr' && f.brrrLightOnly && parseProjectCard(d.project)?.level !== 'light') return false;
   if (f.areas.length > 0 && !(d.postcode_area && f.areas.includes(d.postcode_area))) return false;
   if (f.beds === '4+') {
     if (!(d.bedrooms !== null && d.bedrooms >= 4)) return false;

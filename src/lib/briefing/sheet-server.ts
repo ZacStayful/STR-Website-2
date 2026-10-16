@@ -79,6 +79,8 @@ export async function loadRunContext(admin: Admin, now: Date): Promise<RunContex
       admin
         .from('marketplace_deals')
         .select('live_since, postcode_area, kind')
+        // Batch 28: "qualified" is the short-let screen's word; a buy-to-let-only deal did not pass it.
+        .eq('band', 'qualified')
         .gte('live_since', new Date(Date.parse(`${liveFrom}T00:00:00Z`) - DAY_MS).toISOString())
         .order('live_since')
         .order('id')

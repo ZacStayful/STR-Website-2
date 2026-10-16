@@ -14,7 +14,7 @@ import type { DealReaction } from '../marketplace/reaction-state';
 import { usesTailoring } from '../tailoring/profile';
 import type { WidenOption } from '../tailoring/widen';
 import { displayOrder, TODAY_SIZE } from './day';
-import { todaySelection, todaysPick, widenOptionsFor, type MemberContext, type TodaySelection, type TodaysPick } from './selection';
+import { todaySelection, todaysPick, typesFor, widenOptionsFor, type MemberContext, type TodaySelection, type TodaysPick } from './selection';
 
 export interface TodayView {
   selection: TodaySelection | null;
@@ -48,7 +48,7 @@ export async function loadTodayView(member: MemberContext, now: Date, opts: { pa
     reactionsFor(member.userId, onDay),
     short && opts.widen ? widenOptionsFor(member, onDay, now) : Promise.resolve([] as WidenOption[]),
     // Batch 17: the pick makes room from the most shown type, so the day's mix holds.
-    pickDealId && stored.length >= TODAY_SIZE ? dealTypesByIds(onDay) : Promise.resolve(null),
+    pickDealId && stored.length >= TODAY_SIZE ? dealTypesByIds(onDay, typesFor(member)) : Promise.resolve(null),
   ]);
   const order = displayOrder(stored, pickDealId, new Set(answered.keys()), TODAY_SIZE, typeOf ? (id) => typeOf.get(id) ?? null : undefined);
   const cards = await dealCardsByIds(order, member.visibility);

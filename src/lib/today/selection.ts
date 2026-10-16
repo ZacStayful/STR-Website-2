@@ -425,7 +425,11 @@ async function keepsByType(admin: Admin, member: MemberContext, windowStart: Dat
   }
   // Batch 25: only the member's own Keeps shift the mix, never a deal Stayful Intelligence saved for them.
   const siSaved = await siSavedDealIds(admin, member.userId);
-  const types = await dealTypesByIds(((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id).filter((id) => !siSaved.has(id)));
+  // Batch 28: a Keep of a deal that is two types counts as the one the member was shown it as.
+  const types = await dealTypesByIds(
+    ((data ?? []) as { deal_id: string }[]).map((r) => r.deal_id).filter((id) => !siSaved.has(id)),
+    typesFor(member),
+  );
   const out: Partial<Record<DealType, number>> = {};
   for (const t of types.values()) out[t] = (out[t] ?? 0) + 1;
   return out;
@@ -452,7 +456,7 @@ async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<str
     {
       pool: tally.wrap((filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit)),
       fullListings: (dealIds) => fullListingsFor(admin, dealIds),
-      dealTypes: (dealIds) => dealTypesByIds(dealIds),
+      dealTypes: (dealIds) => dealTypesByIds(dealIds, types),
     },
     opts,
   );

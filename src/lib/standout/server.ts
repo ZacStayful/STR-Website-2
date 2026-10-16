@@ -18,8 +18,29 @@ export type Admin = ReturnType<typeof createAdminClient>;
 /** A deal as the standout judging reads it: Today's pool row, plus what the live check and the wording need. */
 export const STANDOUT_DEAL_COLUMNS = `${CARD_COLUMNS}, deal, suitability, screening, project, canonical_url`;
 
+/**
+ * Batch 28: plus the buy-to-let lens, which tells a short-let deal from a
+ * buy-to-let-only one (dealTypesOf). Until the schema section is run the
+ * read goes without it, and every row there is a short-let one.
+ */
+const WITH_BTL = `${STANDOUT_DEAL_COLUMNS}, btl, btl_pass`;
+let btlMissing = false;
+
+async function standoutRead<R extends { data: unknown; error: { code?: string; message: string } | null }>(run: (columns: string) => PromiseLike<R>): Promise<R> {
+  if (btlMissing) return run(STANDOUT_DEAL_COLUMNS);
+  const res = await run(WITH_BTL);
+  if (res.error && /btl/.test(res.error.message) && (res.error.code === '42703' || /does not exist|could not find/i.test(res.error.message))) {
+    btlMissing = true;
+    return run(STANDOUT_DEAL_COLUMNS);
+  }
+  return res;
+}
+
 export type StandoutDealRow = PoolRow & {
   project?: unknown;
+  /** Batch 28: the buy-to-let lens, where the schema has it. */
+  btl?: unknown;
+  btl_pass?: boolean;
   live_since?: string | null;
   /** R3-58: the listing's own URL, read server-side only, so a listing the member checked themselves counts as seen. Never in a view. */
   canonical_url?: string | null;
@@ -59,15 +80,17 @@ export async function liveDealsInWindow(admin: Admin, fromIso: string, toIso: st
   if (Date.parse(toIso) <= Date.parse(fromIso)) return [];
   const out: StandoutDealRow[] = [];
   for (let from = 0; from < 20 * PAGE; from += PAGE) {
-    const { data, error } = await admin
-      .from('marketplace_deals')
-      .select(STANDOUT_DEAL_COLUMNS)
-      .eq('status', 'live')
-      .gt('live_since', fromIso)
-      .lte('live_since', toIso)
-      .order('live_since', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, from + PAGE - 1);
+    const { data, error } = await standoutRead((columns) =>
+      admin
+        .from('marketplace_deals')
+        .select(columns)
+        .eq('status', 'live')
+        .gt('live_since', fromIso)
+        .lte('live_since', toIso)
+        .order('live_since', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1),
+    );
     if (error) {
       console.error('[standout] deals unreadable:', error.message);
       return null;
@@ -82,9 +105,10 @@ export async function liveDealsInWindow(admin: Admin, fromIso: string, toIso: st
 export async function dealRowsByIds(admin: Admin, ids: readonly string[], opts: { liveOnly?: boolean } = {}): Promise<StandoutDealRow[]> {
   const out: StandoutDealRow[] = [];
   for (const some of chunks([...new Set(ids)])) {
-    let q = admin.from('marketplace_deals').select(STANDOUT_DEAL_COLUMNS).in('id', some);
-    if (opts.liveOnly) q = q.eq('status', 'live');
-    const { data, error } = await q;
+    const { data, error } = await standoutRead((columns) => {
+      const q = admin.from('marketplace_deals').select(columns).in('id', some);
+      return opts.liveOnly ? q.eq('status', 'live') : q;
+    });
     if (error) {
       console.error('[standout] deals by id unreadable:', error.message);
       continue;

@@ -35,13 +35,13 @@ import { modesFor } from './modes-server';
 import { isAdminEmail } from '../admin';
 import { payerFor } from '../team';
 import { dealVisibilityFor } from '../marketplace/tier';
-import { isMissingProjectColumn, rankingPool } from '../marketplace/queries';
+import { isMissingBtlColumn, isMissingProjectColumn, rankingPool, typeColumns } from '../marketplace/queries';
 import { DEFAULT_FILTERS } from '../marketplace/grid';
 import { latestRestartsFor, profilesFor } from '../profiles/server';
 import { afterRestart } from '../profiles/reset';
 import { rechooseToday, type TodaySelection } from '../today/selection';
 import { mustMatchCount, tailoredRows } from './today';
-import { dealTypeOf, typesShown } from '../profile/deal-types';
+import { dealTypeOf, typesShown, type TypedDeal } from '../profile/deal-types';
 import { goalsForType } from '../today/type-filters';
 import { isPromptQuestion, type PassAnswer, type PromptQuestion, type PromptState } from './behaviour';
 import { siKey, siSavedPairs } from '../standout/saved-server';
@@ -136,25 +136,22 @@ async function signalsFor(admin: Admin, userIds: readonly string[], since: Date)
 /** The deal behind each signal: kind, type, size, area and price only. A deal that has since gone still counts. */
 async function signalFacts(admin: Admin, dealIds: readonly string[]): Promise<Map<string, Omit<Signal, 'dealId' | 'source' | 'at'>>> {
   const out = new Map<string, Omit<Signal, 'dealId' | 'source' | 'at'>>();
-  // Batch 17: the project column tells a BRRR deal; until the schema section is run, every sale is Short-let.
-  let withProject = true;
+  // Batch 17: the project column tells a BRRR deal; Batch 28: the band and btl_pass a buy-to-let one
+  // (typeColumns, less whatever the schema has not caught up with).
   for (const some of chunks(dealIds)) {
-    const read = () => admin.from('marketplace_deals').select(`id, kind, raw_type, bedrooms, postcode_area, price_amount, price_period${withProject ? ', project' : ''}`).in('id', some);
+    const read = () => admin.from('marketplace_deals').select(`id, raw_type, bedrooms, postcode_area, price_amount, price_period, ${typeColumns()}`).in('id', some);
     let { data, error } = await read();
-    if (error && withProject && isMissingProjectColumn(error)) {
-      withProject = false;
-      ({ data, error } = await read());
-    }
+    for (let i = 0; i < 2 && error && (isMissingProjectColumn(error) || isMissingBtlColumn(error)); i += 1) ({ data, error } = await read());
     if (error) {
       warn(`signal deals unreadable: ${error.message}`);
       continue;
     }
-    for (const r of (data ?? []) as unknown as { id: string; kind: string; raw_type: string | null; bedrooms: number | null; postcode_area: string | null; price_amount: number | string | null; price_period: string | null; project?: unknown }[]) {
+    for (const r of (data ?? []) as unknown as ({ id: string; kind: string; raw_type: string | null; bedrooms: number | null; postcode_area: string | null; price_amount: number | string | null; price_period: string | null } & TypedDeal)[]) {
       if (r.kind !== 'sale' && r.kind !== 'rent') continue;
       const n = r.price_amount === null ? NaN : Number(r.price_amount);
       const period = r.price_period === 'pw' || r.price_period === 'pcm' || r.price_period === 'total' ? r.price_period : r.kind === 'rent' ? 'pcm' : 'total';
       const amount = !Number.isFinite(n) || n <= 0 ? null : r.kind === 'rent' ? rentPcm({ amount: n, period }) : period === 'total' ? n : null;
-      out.set(r.id, { kind: r.kind, propertyKind: propertyKind(r.raw_type, null), bedrooms: r.bedrooms, area: r.postcode_area ? r.postcode_area.toUpperCase() : null, amount, dealType: dealTypeOf({ kind: r.kind, project: r.project }) });
+      out.set(r.id, { kind: r.kind, propertyKind: propertyKind(r.raw_type, null), bedrooms: r.bedrooms, area: r.postcode_area ? r.postcode_area.toUpperCase() : null, amount, dealType: dealTypeOf(r) });
     }
   }
   return out;
