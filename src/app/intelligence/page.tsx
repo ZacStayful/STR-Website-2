@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { CreditProvider } from "@/components/credit/CreditProvider";
+import { FeedbackDialog } from "@/components/feedback/FeedbackDialog";
 import { IntelligenceView } from "@/components/intelligence/IntelligenceView";
 import { intelligenceCards } from "@/components/intelligence/cards";
 import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
@@ -79,6 +80,8 @@ export default async function IntelligencePage({ searchParams }: { searchParams:
         answers={data.answers}
         chat={chat ? { hintPence: chat.fullHintPence, floorPence: chat.fullFloorPence, initialQuestion: ask, voice: chat.voice, speakHintPence: chat.speakFullHintPence } : undefined}
       />
+      {/* Batch 27: the eye's feature request opens Batch 18's own form, filled in (this page has no AppShell). */}
+      <FeedbackDialog />
     </CreditProvider>
   );
 }

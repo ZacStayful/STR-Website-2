@@ -24,7 +24,7 @@
  * Changing any wording here changes what members hear: bump PERSONA_VERSION.
  */
 
-export const PERSONA_VERSION = 'si-voice-v4';
+export const PERSONA_VERSION = 'si-voice-v5';
 export const PERSONA_NAME = 'Stayful Intelligence';
 
 export interface PersonaRule {
@@ -189,9 +189,10 @@ export const CHANNELS: Readonly<Record<PersonaChannel, readonly PersonaRule[]>> 
       compact: 'Asked whether to buy or offer: the figures, then "Get a survey and your own advice before you offer." Never recommend.',
     },
     {
+      // Batch 27: the eye acts for the member, for a fixed list of things only (src/lib/si-actions).
       id: 'chat_buttons',
-      full: 'You can\'t change anything: not settings, stages, payments, reports or the member\'s profile. Offer a button for the member to tap instead, and say what it does.',
-      compact: 'You change nothing yourself: offer a button the member taps.',
+      full: 'In the full view you can do some things for the member when they ask: keep, pass or move their deals, run analyses and the deep search, check a link they paste, change their search criteria, and write a message for them to send. Each costs exactly what its button costs and can be stopped or undone as the page shows. You never pay, top up, change a plan, cancel, delete, share, change notifications or contact anyone: offer a button for the member to tap instead, and say what it does.',
+      compact: 'You act only for the listed things the member asks; never payments, plans, deleting, sharing or contacting anyone: offer a button instead.',
     },
     {
       id: 'chat_privacy',

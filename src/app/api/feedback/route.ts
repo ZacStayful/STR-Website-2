@@ -1,11 +1,9 @@
-import { after } from 'next/server';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { logActivity } from '@/lib/activity/log';
 import { BRAND } from '@/lib/brand';
 import { IMAGE, LIMITS, isReportKind } from '@/lib/feedback/config';
-import { activityKey, cleanClientContext, cleanText, maxScreenshotBytes, screenshotProblem, sniffScreenshot, type ScreenshotType } from '@/lib/feedback/rules';
+import { cleanClientContext, cleanText, maxScreenshotBytes, screenshotProblem, sniffScreenshot, type ScreenshotType } from '@/lib/feedback/rules';
 import { feedbackSettings } from '@/lib/feedback/settings-server';
-import { sendAdminReportEmail, submitReport } from '@/lib/feedback/server';
+import { REPORT_KEY, sendMemberReport } from '@/lib/feedback/send-server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -51,7 +49,7 @@ export async function POST(request: Request) {
   const text = cleanText(form.get('text'));
   if (!text.ok) return text.reason === 'empty' ? refuse(400, 'empty', 'Please write a few words first.') : refuse(400, 'too_long', `Please keep it under ${LIMITS.textMax.toLocaleString('en-GB')} characters.`);
   const key = String(form.get('key') ?? '');
-  if (!/^[A-Za-z0-9-]{8,64}$/.test(key)) return refuse(400, 'bad_request', 'We couldn’t read that. Please try again.');
+  if (!REPORT_KEY.test(key)) return refuse(400, 'bad_request', 'We couldn’t read that. Please try again.');
   const rawContext = String(form.get('context') ?? '');
   let client = cleanClientContext(null);
   if (rawContext.length > 0 && rawContext.length <= 4000) {
@@ -77,30 +75,23 @@ export async function POST(request: Request) {
     images.push({ bytes, type: sniffScreenshot(bytes) as ScreenshotType });
   }
 
-  const outcome = await submitReport({
+  // The save, the member's activity and the admin email: Batch 18's one way in, shared with Stayful Intelligence (Batch 27).
+  const outcome = await sendMemberReport({
     userId: user.id,
     email: user.email ?? null,
     kind,
-    body: text.text,
-    clientKey: key,
-    client,
+    text: text.text,
+    key,
+    context: client,
     userAgent: request.headers.get('user-agent'),
     files: images,
     settings,
+    memberAction: true,
   });
   if (!outcome.ok) {
     if (outcome.error === 'limit') return refuse(429, 'limit', `You’ve sent ${outcome.limit ?? settings.dailyLimit} today — the most we take in a day. Thank you! If it’s urgent, email ${BRAND.contactEmail}.`);
     if (outcome.error === 'unavailable') return refuse(503, 'unavailable', `Feedback isn’t switched on yet. Please email ${BRAND.contactEmail}.`);
     return refuse(500, 'failed', 'We couldn’t send that just now. Please try again.');
-  }
-
-  if (!outcome.duplicate) {
-    logActivity(user.id, 'feedback_sent', { dedupeKey: activityKey.sent(outcome.id), extras: { kind, screenshots: outcome.attached } });
-    const { id, failed } = outcome;
-    after(async () => {
-      const res = await sendAdminReportEmail(id, { failedImages: failed });
-      if (!res.sent) console.warn(`[feedback] admin email for ${id} not sent (${res.reason ?? 'unknown'}); the daily run will retry it`);
-    });
   }
   return Response.json({ ok: true, ref: outcome.ref, attached: outcome.attached, failed: outcome.failed });
 }

@@ -3,11 +3,8 @@
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { answerQuestion } from '@/lib/profile/server';
 import { rechooseForMember } from '@/lib/tailoring/server';
-import { logActivity } from '@/lib/activity/log';
-import { intelligenceMember } from '@/lib/intelligence/view-server';
-import { isWhatIfKey, whatIfAnswer, whatIfChanges } from '@/lib/intelligence/what-if';
-import { nearestAreas, referencePoint } from '@/lib/today/candidates';
-import { WHAT_IF_NEARBY_AREAS } from '@/lib/intelligence/config';
+import { isWhatIfKey } from '@/lib/intelligence/what-if';
+import { applyWhatIf } from '@/lib/intelligence/what-if-apply-server';
 
 export type WhatIfActionResult = { ok: true; undo: { questionId: string; value: unknown } | null } | { ok: false; error: string };
 
@@ -24,19 +21,10 @@ export async function applyWhatIfAction(key: unknown): Promise<WhatIfActionResul
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'Please sign in again.' };
-  const now = new Date();
-  // Answers are the active profile's: the header view's member.
-  const { member } = await intelligenceMember(user, 'header', now);
-  if (!member.tailoring || !member.goals) return { ok: false, error: 'That suggestion isn’t available right now.' };
-  const nearby = member.goals.where === 'near' ? [] : nearestAreas(referencePoint(member.goals, member.savedAreas), new Set(member.savedAreas), WHAT_IF_NEARBY_AREAS);
-  const v = whatIfChanges(member.tailoring, { nearbyAreas: nearby }).find((x) => x.key === key);
-  const answer = v ? whatIfAnswer(v, { goals: member.goals, savedAreas: member.savedAreas }) : null;
-  if (!v || !answer) return { ok: false, error: 'That suggestion has changed. Please reload.' };
-  const r = await answerQuestion({ userId: user.id, email: user.email ?? null, supabase, questionId: answer.questionId, value: answer.value, notSure: false, editing: true });
-  if (!r.ok) return { ok: false, error: r.error };
-  logActivity(user.id, 'si_view', { extras: { surface: 'reveal', step: 'show_me', use: key } });
-  await rechooseForMember({ userId: user.id, email: user.email ?? null, now, answeredAt: now.toISOString() });
-  return { ok: true, undo: answer.undo === null || answer.undo === undefined ? null : { questionId: answer.questionId, value: answer.undo } };
+  // The one way a what-if is applied (shared with the chat's "Use this", Batch 27).
+  const r = await applyWhatIf(user, supabase, key, new Date());
+  if (!r.ok) return r;
+  return { ok: true, undo: r.undo === null || r.undo === undefined ? null : { questionId: r.questionId, value: r.undo } };
 }
 
 /** "Undo": the answer as it was, through the quiz again. */

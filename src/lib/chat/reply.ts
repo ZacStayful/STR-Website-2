@@ -3,6 +3,7 @@
  * so the components and the routes share one shape.
  */
 import type { ChatButton } from './actions.ts';
+import type { ActionCardView, DraftView } from '../si-actions/view.ts';
 import {
   DID_NOT_FINISH_LINE,
   DONT_KNOW_LINE,
@@ -45,6 +46,16 @@ export interface ChatReply {
   capped?: boolean;
   /** R3-1: the AI-voice charge for a spoken answer ("29p"), beside the question's; set by the page once the voice came back. */
   voiceCharged?: string | null;
+  /** Batch 27: what the eye is doing for the member (spend line, Stop, progress, confirm, Undo), from src/lib/si-actions. */
+  actions?: ActionCardView | null;
+  /** Batch 27: a drafted agent message, with Copy (never stored; the member sends it). */
+  draft?: DraftView | null;
+  /** Batch 27: a bug the eye filed for the member (Batch 18's #ref). */
+  report?: { kind: 'bug'; ref: number } | null;
+  /** Batch 27: a feature request, filled in, for the member to send from the feedback form. */
+  featureRequest?: string | null;
+  /** Batch 27: tap choices when it was unclear what they meant; a tap sends it as their next question. */
+  choices?: string[];
 }
 
 /** What a page needs to draw the chat (src/lib/chat/turns-server.ts chatUi); null while it is off. */

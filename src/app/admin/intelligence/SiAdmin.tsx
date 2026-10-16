@@ -19,6 +19,8 @@ const TABS = [
   { key: "coverage", label: "Coverage", href: "/admin/intelligence/coverage" },
   // Batch 26: the typed chat's figures and settings.
   { key: "chat", label: "Chat", href: "/admin/intelligence/chat" },
+  // Batch 27: what the eye did for members, and its settings.
+  { key: "actions", label: "Actions", href: "/admin/intelligence/actions" },
 ] as const;
 
 export type SiTab = (typeof TABS)[number]["key"];

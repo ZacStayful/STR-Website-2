@@ -203,6 +203,10 @@
 			"schedule": "40 2 * * *"
 		},
 		{
+			"path": "/api/internal/si-actions",
+			"schedule": "55 2 * * *"
+		},
+		{
 			"path": "/api/internal/si-calls",
 			"schedule": "*/5 * * * *"
 		},

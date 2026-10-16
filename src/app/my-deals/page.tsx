@@ -20,6 +20,7 @@ import { dealVisibleTo } from "@/lib/marketplace/visibility";
 import { parseMarketGoals } from "@/lib/market/goals";
 import { FocusScroll } from "./_components/FocusScroll";
 import { ReportsList } from "./_components/ReportsList";
+import { SiUndoBanner } from "./_components/SiUndoBanner";
 import { profilesFor } from "@/lib/profiles/server";
 import { profileTagsFor } from "@/lib/profiles/deal-tags";
 import { labelsShown, profileLabel } from "@/lib/profiles/rules";
@@ -175,6 +176,9 @@ export default async function MyDealsPage({ searchParams }: { searchParams: Prom
         )}
 
         {message && !reportsTab && <p className="rounded-md border border-primary/40 bg-primary/10 p-3 text-sm text-foreground">{message}</p>}
+
+        {/* Batch 27: what Stayful Intelligence changed here, with Undo. */}
+        {!reportsTab && <SiUndoBanner userId={user.id} />}
 
         {reportsTab ? (
           <ReportsList userId={user.id} showAuthors={team} q={q} shownOnDeals={shownOnDeals} />

@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   }
   if (!isUuid(body.clientTurnId)) return Response.json({ error: 'Bad request.' }, { status: 400 });
 
-  const prepared = await prepareFull(user, supabase, { clientTurnId: body.clientTurnId, question: body.question, conversationId: body.conversationId ?? null });
+  const prepared = await prepareFull(user, supabase, { clientTurnId: body.clientTurnId, question: body.question, conversationId: body.conversationId ?? null, userAgent: request.headers.get('user-agent') });
   if (prepared.kind === 'reply') return Response.json(prepared.reply);
 
   let gone = false;
