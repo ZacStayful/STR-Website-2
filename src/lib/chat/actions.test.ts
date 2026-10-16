@@ -18,7 +18,7 @@ test('the quick box never offers a deal', () => {
   assert.equal(buildButton('top_up', null, ctx({ surface: 'quick' }))?.href, '/account/billing#topup');
 });
 
-test('Use this only for a what-if this answer offered; it performs nothing itself', () => {
+test('Use this only for a what-if this answer offered (the page applies it, with Undo: Batch 27)', () => {
   assert.deepEqual(buildButton('use_this', 'areas', ctx()), { kind: 'use_this', label: 'Use this', href: null, whatIfKey: 'areas' });
   assert.equal(buildButton('use_this', 'miles', ctx()), null);
   assert.equal(buildButton('use_this', 'drop_table', ctx()), null);

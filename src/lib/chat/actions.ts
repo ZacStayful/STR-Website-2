@@ -1,9 +1,11 @@
 /**
- * Batch 26: the buttons an answer can carry. Stayful Intelligence never
- * changes anything itself: it offers a button and the member taps it. Every
+ * Batch 26: the buttons an answer can carry: the member taps them. Every
  * button is one of these kinds, built here from internal paths only
  * (src/lib/nav.ts NAV_DESTINATIONS, "for Batch 26's take me there"), so a
- * model can never put a link of its own in front of a member.
+ * model can never put a link of its own in front of a member. Batch 27's
+ * actions (the eye doing things for the member) are not buttons: they are
+ * planned with propose_actions and carried out by src/lib/si-actions, and
+ * everything on the "never" list stays a button only.
  *
  * Pure.
  */
@@ -41,7 +43,8 @@ export const QUICK_ACTIONS: readonly ActionKind[] = ['auto_topup', 'notification
 export const ACTION_LABELS: Record<ActionKind, string> = {
   open_deal: 'Open deal',
   full_analysis: 'Run full analysis',
-  deep_search: 'Deep report',
+  // Batch 27: it opens the paid area search, so it says so (the Deep report is a deal's full analysis with PMI).
+  deep_search: 'Deep search',
   show_me: 'Show me',
   use_this: 'Use this',
   auto_topup: 'Turn on auto top-up',

@@ -33,7 +33,31 @@ test('every look-up has a progress line, and a round shows its real look-up firs
   assert.equal(statusFor(['run_sql']), null);
 });
 
-test('only buttons and facts are answer extras (they never cost another round)', () => {
-  assert.deepEqual([...ANSWER_EXTRAS].sort(), ['offer_action', 'propose_fact']);
-  for (const name of TOOL_NAMES) if (!ANSWER_EXTRAS.has(name)) assert.ok(!['offer_action', 'propose_fact'].includes(name));
+test('only buttons, facts and tap choices are answer extras (they never cost another round)', () => {
+  assert.deepEqual([...ANSWER_EXTRAS].sort(), ['ask_which', 'offer_action', 'propose_fact']);
+  for (const name of TOOL_NAMES) if (!ANSWER_EXTRAS.has(name)) assert.ok(!['offer_action', 'propose_fact', 'ask_which'].includes(name));
+});
+
+test('Batch 27: a plan is parsed step by step; nothing in it can name a member', () => {
+  const r = parseToolInput('propose_actions', { steps: [{ action: 'pass', deal_id: '0b6a3c3e-1111-4222-8333-444455556666', stage: null, url: null, question: null, value: null }, { action: 'top_up', deal_id: null, stage: null, url: null, question: null, value: '50' }] });
+  assert.deepEqual(r, {
+    tool: 'propose_actions',
+    steps: [
+      { action: 'pass', dealId: '0b6a3c3e-1111-4222-8333-444455556666', stage: null, url: null, question: null, value: null },
+      // An unknown action is kept here and dropped by the plan's own check (src/lib/si-actions/validate.ts), with its reason.
+      { action: 'top_up', dealId: null, stage: null, url: null, question: null, value: '50' },
+    ],
+  });
+  assert.equal(parseToolInput('propose_actions', { steps: [] }), null);
+  const steps = (CHAT_TOOLS.find((t) => t.name === 'propose_actions')!.input_schema as { properties: { steps: { items: { properties: Record<string, unknown> } } } }).properties.steps.items.properties;
+  for (const p of Object.keys(steps)) assert.doesNotMatch(p, /user|member|account|email|owner/i, p);
+});
+
+test('Batch 27: drafts, reports and tap choices are checked again', () => {
+  assert.deepEqual(parseToolInput('draft_message', { deal_id: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offer_amount: '£140k' }), { tool: 'draft_message', dealId: '0b6a3c3e-1111-4222-8333-444455556666', message: 'offer', offerAmount: 140000 });
+  assert.equal(parseToolInput('draft_message', { deal_id: '0b6a3c3e-1111-4222-8333-444455556666', message: 'send_it', offer_amount: null }), null);
+  assert.equal(parseToolInput('report_issue', { kind: 'refund', summary: 'x', their_words: 'y' }), null);
+  assert.deepEqual(parseToolInput('report_issue', { kind: 'bug', summary: 'Wrong price', their_words: 'It says £165k' }), { tool: 'report_issue', kind: 'bug', summary: 'Wrong price', theirWords: 'It says £165k' });
+  assert.equal(parseToolInput('ask_which', { options: ['Only one'] }), null);
+  assert.deepEqual(parseToolInput('ask_which', { options: ['The 2 bed in LS6', 'The 3 bed in LS11', 'The 2 bed in LS6'] }), { tool: 'ask_which', options: ['The 2 bed in LS6', 'The 3 bed in LS11'] });
 });

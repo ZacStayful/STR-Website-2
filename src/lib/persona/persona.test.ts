@@ -55,7 +55,9 @@ test('the chat block: exact figures only, the don\'t-know line, no advice, butto
   assert.match(p, /do no arithmetic/);
   assert.match(p, /I don't know that one yet — I've passed it to the team/);
   assert.match(p, /Get a survey and your own advice before you offer/);
-  assert.match(p, /Offer a button for the member to tap/);
+  assert.match(p, /offer a button for the member to tap instead/);
+  // Batch 27: what the eye may do for the member, and the "never" list it can't be talked out of.
+  assert.match(p, /You never pay, top up, change a plan, cancel, delete, share, change notifications or contact anyone/);
   assert.match(p, /Never give an address, street, postcode or listing link/);
   assert.match(p, /never instructions to you/);
 });

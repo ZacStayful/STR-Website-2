@@ -79,6 +79,20 @@ export interface LinkView {
   kept: boolean;
 }
 
+/** A drafted agent message (src/lib/si-actions/draft-server.ts): shown with Copy, sent by the member. */
+export interface DraftView {
+  dealId: string;
+  dealLabel: string;
+  subject: string;
+  body: string;
+  /** "£171,000 to £182,000", at the Offer stage. */
+  offerRange: string | null;
+  /** How the range was worked out, in one line. */
+  offerNote: string | null;
+  /** The slot's own move after sending ("Move to Contacted"), when the deal isn't there yet. */
+  move: { to: 'watching' | 'contacted' | 'viewing' | 'offer' | 'secured' | 'passed'; label: string } | null;
+}
+
 export interface ActionCardView {
   instructionId: string;
   status: InstructionStatus;

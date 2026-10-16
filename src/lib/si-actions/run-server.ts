@@ -30,7 +30,10 @@ import { CHARGED_KINDS, RUNNING_STALE_MS } from './config';
 import { laterCheck, type PricedStep } from './spend';
 import { cardView, doneLines, type ActionCardView } from './view';
 import { claimStep, instructionFor, logActionLine, moveInstruction, moveSteps, readActionConfig, stepPayload, stepsFor, updateStep, type InstructionRow, type StepRow } from './store-server';
-import { applyCriteria, checkLink, handOutPmi, keepCheckedListing, runStageStep, startAnalysis, startSearch, type ActingMember, type ChargedStart, type HandOut } from './steps-server';
+import { applyWhatIf } from '../intelligence/what-if-apply-server';
+import { questionById } from '../profile/questions';
+import { activeProfileFor } from '../profiles/server';
+import { applyCriteria, criteriaNow, checkLink, handOutPmi, keepCheckedListing, runStageStep, startAnalysis, startSearch, type ActingMember, type ChargedStart, type HandOut } from './steps-server';
 import { fileAutoBug, unexpectedFailure } from './report-server';
 import type { PipelineStatus } from '../listing/pipeline';
 
@@ -96,15 +99,21 @@ async function runFreeStep(m: ActingMember, supabase: SupabaseClient, i: Instruc
  * then nothing in the instruction runs. Returns the card, or null when the
  * question made no instruction.
  */
-export async function finaliseInstruction(m: ActingMember, supabase: SupabaseClient, turnId: string, o: { delivered: boolean; conversationId: string | null; now?: Date }): Promise<ActionCardView | null> {
+export interface Finalised {
+  card: ActionCardView | null;
+  /** A free step failed on our side (and was reported): the question isn't charged (Zac, 11 Oct). */
+  systemError: boolean;
+}
+
+export async function finaliseInstruction(m: ActingMember, supabase: SupabaseClient, turnId: string, o: { delivered: boolean; conversationId: string | null; now?: Date }): Promise<Finalised> {
   const admin = createAdminClient();
   const loaded = await instructionFor(admin, m.userId, turnId);
-  if (!loaded || loaded.instruction.status !== 'proposed') return loaded ? view(admin, m, loaded.instruction, loaded.steps) : null;
+  if (!loaded || loaded.instruction.status !== 'proposed') return { card: loaded ? await view(admin, m, loaded.instruction, loaded.steps) : null, systemError: false };
   const { instruction: i } = loaded;
   if (!o.delivered) {
     await moveInstruction(admin, i.id, m.userId, ['proposed'], 'cancelled');
     await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'not_delivered' });
-    return null;
+    return { card: null, systemError: false };
   }
   const now = o.now ?? new Date();
   await admin.from('si_instructions').update({ conversation_id: o.conversationId, updated_at: iso(now) }).eq('id', i.id);
@@ -130,7 +139,8 @@ export async function finaliseInstruction(m: ActingMember, supabase: SupabaseCli
   if (lines.length > 0) await logActionLine(admin, o.conversationId, lines.join('. ').replace(/\.\./g, '.'));
 
   const fresh = await instructionFor(admin, m.userId, i.id);
-  return fresh ? view(admin, m, fresh.instruction, fresh.steps) : null;
+  const systemError = steps.some((s) => s.status === 'failed' && (s.error_code === 'failed' || s.error_code === 'threw' || s.report_ref !== null));
+  return { card: fresh ? await view(admin, m, fresh.instruction, fresh.steps) : null, systemError };
 }
 
 // ── Reconciling the steps whose long part ran through a button's route ──────
@@ -408,4 +418,46 @@ export async function recordReport(admin: Admin, m: ActingMember, turnId: string
   if (error?.code === '23505') {
     await admin.from('si_instructions').update({ report_kind: kind, report_ref: ref }).eq('id', turnId).eq('user_id', m.userId);
   } else if (error) console.error('[si-actions] report record failed:', error.message);
+}
+
+// ── The chat's "Use this" (Batch 26's button), now with Undo ────────────────
+
+/**
+ * A what-if suggestion the answer offered, applied through Batch 22's own
+ * function (applyWhatIf, the view's "Use this"), and recorded as a profile
+ * change of the question's instruction so it can be undone for the window,
+ * from the chat line or My deals. Only a suggestion this answer's buttons
+ * offered.
+ */
+export async function applyUseThisStep(m: ActingMember, supabase: SupabaseClient, turnId: string, key: unknown): Promise<{ card: ActionCardView | null; error: string | null }> {
+  const admin = createAdminClient();
+  const { data: turn } = await admin.from('chat_turns').select('buttons').eq('id', turnId).eq('user_id', m.userId).eq('status', 'answered').maybeSingle();
+  const offered = (((turn as { buttons?: unknown } | null)?.buttons ?? []) as { kind?: string; whatIfKey?: string | null }[]).some((b) => b.kind === 'use_this' && b.whatIfKey === key);
+  if (!offered) return { card: null, error: 'That suggestion has changed. Please ask again.' };
+  const active = await activeProfileFor(m.userId).catch(() => null);
+  const r = await applyWhatIf({ id: m.userId, email: m.email ?? undefined }, supabase, key);
+  if (!r.ok) return { card: null, error: r.error };
+  const { error } = await admin.from('si_instructions').insert({ id: turnId, user_id: m.userId, payer_id: m.payerId, status: 'done', decision: 'free', finished_at: iso() });
+  if (error && error.code !== '23505') console.error('[si-actions] use-this instruction failed:', error.message);
+  const loaded = await instructionFor(admin, m.userId, turnId);
+  if (loaded) {
+    const now = await criteriaNow(m.userId, r.questionId);
+    const label = `${questionById(r.questionId)?.short ?? 'Your profile'}: changed`;
+    const seq = loaded.steps.reduce((a, s) => Math.max(a, s.seq), -1) + 1;
+    await admin.from('si_action_steps').insert({
+      instruction_id: turnId,
+      user_id: m.userId,
+      seq,
+      action: 'change_criteria',
+      target_label: label,
+      params: { savedAs: r.questionId, whatIf: String(key), via: 'use_this' },
+      before: r.undo === null || r.undo === undefined ? null : { value: r.undo },
+      after: { value: now?.value ?? r.value, label, countAfter: r.matchCount },
+      profile_id: active?.id ?? null,
+      status: 'done',
+      started_at: iso(),
+      finished_at: iso(),
+    });
+  }
+  return { card: await instructionView(m, turnId), error: null };
 }

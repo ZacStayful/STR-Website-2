@@ -28,6 +28,13 @@ import { usesTailoring } from '../tailoring/profile';
 import { getAreaCardsWithin } from '../market/cached';
 import { loadTrackedDeals } from '../listing/tracked-server';
 import { PIPELINE_STATUSES } from '../listing/pipeline';
+import { groupByStage } from '../listing/tracked';
+import { offMarketReason } from '../pipeline/facts';
+import { proposeActions } from '../si-actions/plan-server';
+import { draftMessage } from '../si-actions/draft-server';
+import type { DraftView } from '../si-actions/view';
+import { fileMemberBug } from '../si-actions/report-server';
+import { checkFigures, allowedFigures } from './guard';
 import { todayKey } from '../today/day';
 import { todaysPick, checkedCountFor } from '../today/selection';
 import { checkedLine } from '../today/checked';
@@ -68,10 +75,32 @@ export interface AnswerState {
   matchConfidence: number | null;
   /** Every tool result, for the figure guard: an answer may only quote these. */
   sources: string[];
+  /** Batch 27: this answer proposed an instruction (src/lib/si-actions); it runs once the answer is delivered. */
+  instruction: boolean;
+  /** Batch 27: a drafted agent message, for the member to copy and send. Never stored, never seen by the model. */
+  draft: DraftView | null;
+  /** Batch 27: a bug the eye filed for the member (Batch 18's #ref). Such a question isn't charged (Zac, 11 Oct). */
+  report: { kind: 'bug'; ref: number } | null;
+  /** Batch 27: a feature request for the member to send from its card (the feedback form, filled in). */
+  featureRequest: string | null;
+  /** Batch 27: tap choices when it was unclear what they meant. */
+  choices: string[];
 }
 
 export function newAnswerState(): AnswerState {
-  return { deals: new Set(), whatIfs: new Set(), showMe: new Set(), deepSearchOffered: null, buttons: [], factProposal: null, toolsUsed: [], knowledgeSlug: null, matchConfidence: null, sources: [] };
+  return { deals: new Set(), whatIfs: new Set(), showMe: new Set(), deepSearchOffered: null, buttons: [], factProposal: null, toolsUsed: [], knowledgeSlug: null, matchConfidence: null, sources: [], instruction: false, draft: null, report: null, featureRequest: null, choices: [] };
+}
+
+/** Batch 27: what the action tools need besides the member: the question itself and its hold. */
+export interface ToolTurn {
+  /** The question's chat_turns.id (the instruction's id, the report's retry key). */
+  turnId: string;
+  /** The member's own words. */
+  question: string;
+  email: string | null;
+  /** The question's hold, base pence: kept out of what its actions may spend. */
+  holdPence: number;
+  userAgent: string | null;
 }
 
 export interface ChatTools {
@@ -105,8 +134,9 @@ function capped(value: unknown): string {
   return s.length <= MAX_TOOL_RESULT_CHARS ? s : `${s.slice(0, MAX_TOOL_RESULT_CHARS)}…(cut)`;
 }
 
-export function chatTools(member: ChatMember, ctx: ChatContext, supabase: SupabaseClient, now: Date): ChatTools {
+export function chatTools(member: ChatMember, ctx: ChatContext, supabase: SupabaseClient, now: Date, turn: ToolTurn | null = null): ChatTools {
   const admin = createAdminClient();
+  const acting = { userId: member.userId, email: turn?.email ?? null, payerId: member.payerId, admin: member.admin, teamMember: member.teamMember };
   const finance = ctx.member.goals?.finance ?? null;
   const cashBuyer = cashBuyerOf(ctx.member.goals);
 
@@ -178,14 +208,18 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
 
     async my_deals(input: { stage: string | null }, state) {
       const load = await loadTrackedDeals(member.userId, { scope: 'own', adminUser: member.admin });
-      const rows = load.view.filter((d) => d.dealId && (input.stage ? d.stage === input.stage : d.stage !== 'passed')).slice(0, MAX_LIST_DEALS);
+      // Batch 27: in the order My deals shows them (by stage, then most recently changed first), so "my top 3" is its first three.
+      const ordered = groupByStage(load.view).flatMap((g) => g.items);
+      const rows = ordered.filter((d) => d.dealId && (input.stage ? d.stage === input.stage : d.stage !== 'passed')).slice(0, MAX_LIST_DEALS);
       const cards = rows.map((d) => load.cards.get(d.dealId!)).filter((c): c is NonNullable<typeof c> => Boolean(c));
       const v = await views(cards);
       for (const c of cards) state.deals.add(c.id);
       return {
         deals: rows.map((d) => {
           const card = load.cards.get(d.dealId!);
-          return { stage: PIPELINE_STATUSES.find((x) => x.key === d.stage)?.label ?? d.stage, ...(card ? dealFacts(card, v.get(card.id)) : { deal_id: d.dealId, type: d.kind === 'rent' ? 'rent-to-rent' : 'to buy', where: d.area }) };
+          // Batch 27: whether it has gone off the market (sold, under offer, let agreed, removed), as the next-step slot says it.
+          const off = card ? offMarketReason({ dealStatus: card.status, retiredReason: card.retired_reason ?? null }) : null;
+          return { stage: PIPELINE_STATUSES.find((x) => x.key === d.stage)?.label ?? d.stage, off_market: off ? off.replace(/_/g, ' ') : null, ...(card ? dealFacts(card, v.get(card.id)) : { deal_id: d.dealId, type: d.kind === 'rent' ? 'rent-to-rent' : 'to buy', where: d.area }) };
         }),
         total_in_my_deals: load.view.filter((d) => d.stage !== 'passed').length,
       };
@@ -302,6 +336,45 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
       if (!b) return { ok: false, note: 'That button is not available here.' };
       if (!state.buttons.some((x) => x.kind === b.kind && x.href === b.href && x.whatIfKey === b.whatIfKey) && state.buttons.length < 3) state.buttons.push(b);
       return { ok: true, button: b.label };
+    },
+
+    async propose_actions(input: { steps: Parameters<typeof proposeActions>[0]['steps'] }, state) {
+      if (!turn) return { ok: false, note: 'Not available here.' };
+      if (state.instruction) return { ok: false, note: 'Only one plan per answer: the first one stands.' };
+      const out = await proposeActions({ member: acting, supabase, turnId: turn.turnId, question: turn.question, seenDeals: state.deals, steps: input.steps, holdPence: turn.holdPence, now });
+      if (out.ok === true) state.instruction = true;
+      return out;
+    },
+
+    async draft_message(input: { dealId: string; message: 'enquiry' | 'follow_up' | 'offer' | null; offerAmount: number | null }, state) {
+      if (!turn) return { ok: false, note: 'Not available here.' };
+      if (!state.deals.has(input.dealId)) return { ok: false, note: 'Look the deal up first (my_deals or deal_facts), then use its deal_id.' };
+      if (state.draft) return { ok: false, note: 'One message per answer.' };
+      const out = await draftMessage(acting, { dealId: input.dealId, kind: input.message, offerAmount: input.offerAmount });
+      if (!out.ok) return { ok: false, note: out.note };
+      state.draft = out.draft;
+      return out.forModel;
+    },
+
+    async report_issue(input: { kind: 'bug' | 'feature'; summary: string; theirWords: string }, state) {
+      if (!turn) return { ok: false, note: 'Not available here.' };
+      if (state.report || state.featureRequest) return { ok: false, note: 'Once per answer.' };
+      const words = input.theirWords || turn.question;
+      if (input.kind === 'feature') {
+        state.featureRequest = `${words}${input.summary && input.summary !== words ? `\n\n(${input.summary})` : ''}`.slice(0, 1500);
+        return { ok: true, note: "A feature request, filled in, shows under your answer for them to check and send. Say so in one sentence; don't say it has been sent." };
+      }
+      const r = await fileMemberBug({ userId: member.userId, email: turn.email, turnId: turn.turnId, memberWords: words, summary: input.summary, page: '/intelligence', userAgent: turn.userAgent });
+      if (!r.ok) return { ok: false, note: r.error === 'limit' ? "They have sent the most reports we take in a day: say it couldn't be filed today and give the team's email from search_knowledge." : "It couldn't be filed just now: say so, and that they can use Feedback in the menu." };
+      state.report = { kind: 'bug', ref: r.ref };
+      return { ok: true, filed: true, reference: `#${r.ref}`, note: 'Filed for them with the Stayful team. Tell them its reference in one sentence; they will hear back by email when it is fixed.' };
+    },
+
+    async ask_which(input: { options: string[] }, state) {
+      // Every choice is a figure the member will see: none may carry one the answer wasn't given.
+      const allowed = allowedFigures([...state.sources, turn?.question ?? '']);
+      state.choices = input.options.filter((o) => checkFigures(o, allowed).ok).slice(0, 4);
+      return { ok: true, note: 'The choices show under your answer as buttons.' };
     },
 
     async propose_fact(input: { fact: string }, state) {

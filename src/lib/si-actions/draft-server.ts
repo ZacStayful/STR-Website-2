@@ -21,26 +21,15 @@ import { factsFromTracked } from '../pipeline/slot-facts';
 import { withOfferAmount, OFFER_SLOT } from '../pipeline/offer-amount';
 import { PIPELINE_STATUSES, type PipelineStatus } from '../listing/pipeline';
 import { describeType } from '../marketplace/grid';
+import { DRAFT_KINDS, type DraftKind } from './config';
+import type { DraftView } from './view';
 import { instructionFor, updateStep, type Admin } from './store-server';
 import { runStageStep, type ActingMember } from './steps-server';
 
-export const DRAFT_KINDS = ['enquiry', 'follow_up', 'offer'] as const;
-export type DraftKind = (typeof DRAFT_KINDS)[number];
+export { DRAFT_KINDS, type DraftKind, type DraftView };
 
 /** Which stage's template each message is. */
 const STAGE_OF: Record<DraftKind, PipelineStatus> = { enquiry: 'watching', follow_up: 'contacted', offer: 'offer' };
-
-export interface DraftView {
-  dealId: string;
-  dealLabel: string;
-  subject: string;
-  body: string;
-  /** "£171,000 to £182,000", with how it was worked out; at the Offer stage. */
-  offerRange: string | null;
-  offerNote: string | null;
-  /** The slot's own move after sending ("Move to Contacted"), when the deal isn't there yet. */
-  move: { to: PipelineStatus; label: string } | null;
-}
 
 export type DraftResult = { ok: true; draft: DraftView; forModel: Record<string, unknown> } | { ok: false; note: string };
 

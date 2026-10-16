@@ -45,6 +45,8 @@ import { logExchange, openConversation, replyForStored } from './log-server';
 import type { ChatSettings } from './settings';
 import { chatContext } from './context-server';
 import { chatTools, newAnswerState } from './tools-server';
+import { finaliseInstruction, recordReport } from '../si-actions/run-server';
+import { isLinkOnly, linkOnlyReply } from '../si-actions/link-server';
 import type { QuestionOutcome } from '../voice/config';
 
 export type { FullEvent };
@@ -61,11 +63,13 @@ export interface FullJob {
   question: string;
   conversationId: unknown;
   now: Date;
+  /** Batch 27: for a bug the eye files for the member (Batch 18 records the device). */
+  userAgent: string | null;
 }
 
 export type Prepared = { kind: 'reply'; reply: ChatReply } | { kind: 'run'; job: FullJob };
 
-export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: SupabaseClient, input: { clientTurnId: string; question: unknown; conversationId: unknown }, now: Date = new Date()): Promise<Prepared> {
+export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: SupabaseClient, input: { clientTurnId: string; question: unknown; conversationId: unknown; userAgent?: string | null }, now: Date = new Date()): Promise<Prepared> {
   const admin = createAdminClient();
   // Reads that don't depend on each other go together: every one is a round trip to the database.
   const [settings, member, table] = await Promise.all([readChatSettings(admin), chatMemberFor(user), getUnitCostTable()]);
@@ -76,6 +80,12 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
   const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member)]);
   if (pre.kind === 'existing') return { kind: 'reply', reply: await replyForStored(admin, pre.turn, member) };
   if (pre.kind !== 'ok') return { kind: 'reply', reply: stateReply(pre.kind) };
+
+  // Batch 27: a message that is only a listing link needs no model: checked at its own price, the question free.
+  if (isLinkOnly(question)) {
+    const linked = await linkOnlyReply({ user, supabase, member, settings, clientTurnId: input.clientTurnId, question, conversationId: input.conversationId, now });
+    if (linked) return { kind: 'reply', reply: linked };
+  }
 
   if (!unitsPriced(table, MODEL_UNITS.full) || !process.env.ANTHROPIC_API_KEY) {
     console.error('[chat] full: no unit prices or no API key');
@@ -95,7 +105,7 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
   logActivity(user.id, 'si_chat_full', { extras: { outcome: 'asked' }, dedupeKey: `si_chat_full:${inserted.turn.id}` });
   try {
     const hold = await startHold(member, inserted.turn, budget, settings);
-    return { kind: 'run', job: { user, supabase, member, settings, turn: inserted.turn, hold, budget, table, question, conversationId: input.conversationId, now } };
+    return { kind: 'run', job: { user, supabase, member, settings, turn: inserted.turn, hold, budget, table, question, conversationId: input.conversationId, now, userAgent: input.userAgent ?? null } };
   } catch (err) {
     await settle(admin, inserted.turn, member, null, { status: 'failed', outcome: null, rounds: [] }, settings);
     if (err instanceof SeatPausedError) return { kind: 'reply', reply: stateReply('seat_paused') };
@@ -123,9 +133,13 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
   let settled = false;
   const started = Date.now();
   let firstTextAt = 0;
+  // Batch 27: who the eye acts for, from the session (never anything the model passes).
+  const acting = { userId: member.userId, email: job.user.email ?? null, payerId: member.payerId, admin: member.admin, teamMember: member.teamMember };
   const fail = async (state: 'failed' | 'did_not_finish' | 'out_of_room'): Promise<ChatReply> => {
     if (!settled) {
       settled = true;
+      // No answer was delivered, so nothing it planned runs.
+      await finaliseInstruction(acting, job.supabase, turn.id, { delivered: false, conversationId: null }).catch((e) => console.error('[chat] plan cancel failed:', e));
       await settle(admin, turn, member, hold, { status: 'failed', outcome: null, rounds }, settings).catch((e) => console.error('[chat] settle failed:', e));
     }
     const reply = stateReply(state, { turnId: turn.id });
@@ -141,7 +155,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       openConversation(admin, member, 'full', job.conversationId, { idleMinutes: settings.sessionIdleMinutes, historyTurns: settings.historyTurns, now }),
     ]);
     if (!conv) return await fail('failed');
-    const tools = chatTools(member, ctx, job.supabase, now);
+    const tools = chatTools(member, ctx, job.supabase, now, { turnId: turn.id, question, email: job.user.email ?? null, holdPence: job.budget, userAgent: job.userAgent });
     const state = newAnswerState();
 
     const account = accountBlock({
@@ -321,12 +335,18 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     const factProposal = replyState === 'answer' ? state.factProposal : null;
 
     const logged = await logExchange(conv, { question, answer: shown, outcome, knowledgeRef: replyState === 'answer' ? state.knowledgeSlug : null, surface: 'full', at: now });
+    // Batch 27: what the answer planned runs only now that it has been delivered (the free steps at once; the
+    // charged ones after the Stop countdown or a yes); an answer that wasn't one cancels it. A bug the eye filed,
+    // or a free step that failed on our side, means the question isn't charged (Zac, 11 Oct).
+    const fin = state.instruction ? await finaliseInstruction(acting, job.supabase, turn.id, { delivered: replyState === 'answer', conversationId: conv.id }) : { card: null, systemError: false };
+    if (state.report) await recordReport(admin, acting, turn.id, 'bug', state.report.ref);
+    const noCharge = Boolean(state.report) || fin.systemError;
     settled = true;
     const s = await settle(
       admin,
       turn,
       member,
-      hold,
+      noCharge ? null : hold,
       {
         status: replyState === 'answer' ? 'answered' : 'no_answer',
         outcome,
@@ -354,6 +374,11 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       conversationId: conv.id,
       factProposal,
       capped,
+      actions: fin.card,
+      draft: replyState === 'answer' ? state.draft : null,
+      report: state.report,
+      featureRequest: replyState === 'answer' ? state.featureRequest : null,
+      choices: replyState === 'answer' ? state.choices : [],
     };
     send({ type: 'done', reply });
     // The question was recorded as the member's action when it was taken (prepareFull, R3-42).

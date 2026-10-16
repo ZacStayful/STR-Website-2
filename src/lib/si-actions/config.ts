@@ -115,6 +115,10 @@ export const DROP_REASONS = {
 } as const;
 export type DropReason = keyof typeof DROP_REASONS;
 
+/** The agent messages the eye drafts: the next-step slot's own templates (src/lib/pipeline/next-steps.ts). */
+export const DRAFT_KINDS = ['enquiry', 'follow_up', 'offer'] as const;
+export type DraftKind = (typeof DRAFT_KINDS)[number];
+
 /** How many full analyses run at once (Part H's "Analyse all" runs two). */
 export const ANALYSES_AT_ONCE = 2;
 
