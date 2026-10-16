@@ -14,6 +14,7 @@ import { judgedOf, RENT_CONFIDENCE_WORDS, type BtlCard } from './card.ts';
 import type { CashBand, Range3 } from './deal.ts';
 import { BTL_DISCLAIMER, epcLine, RULES_NOTE } from './nation.ts';
 import { BTL_PRIORITY_LABELS, passesFor, type BtlPriority } from './rules.ts';
+import { DEFAULT_BTL_SETTINGS, type BtlSettings } from './config.ts';
 
 export const CASH_BAND_LABELS: Record<CashBand, string> = {
   under_25k: 'under £25k',
@@ -48,9 +49,9 @@ const money = (r: Pick<Range3, 'low' | 'high'>) => (Math.round(r.low) === Math.r
 const pcts = (r: Pick<Range3, 'low' | 'high'>, suffix = '') => `${pct1(r.low)}${r.low < 0 || r.high < 0 ? ' to ' : '–'}${pct1(r.high)}${suffix}`;
 
 /** The lender's rent test, in words, with "tight" when the low end of the rent would fail it. */
-export function rentTestWords(card: Pick<BtlCard, 'rentTest' | 'rent'>): BtlSheet['rentTest'] {
+export function rentTestWords(card: Pick<BtlCard, 'rentTest' | 'rent'>, icrPct: number = DEFAULT_BTL_SETTINGS.finance.icrPct): BtlSheet['rentTest'] {
   const t = card.rentTest;
-  const how = `125% of the interest at ${pct1(t.stressRatePct)}`;
+  const how = `${Math.round(icrPct)}% of the interest at ${pct1(t.stressRatePct)}`;
   if (t.pass) {
     const tight = card.rent.low < t.requiredRent ? `Tight: at the low end of the rent range (${gbp(card.rent.low)}) it would not pass.` : null;
     return { pass: true, text: `Passes the lender’s rent test: ${gbp(t.rent)} rent against ${gbp(t.requiredRent)} needed (${how}).`, tight };
@@ -86,13 +87,23 @@ export function verdictWords(priority: BtlPriority, card: BtlCard, bm: Benchmark
   return v.pass ? `Beats the typical deal for “${what}”: ${figures}.` : `Below the typical deal for “${what}”: ${figures}.`;
 }
 
-export function btlSheet(card: BtlCard, opts: { priority: BtlPriority; benchmark: Benchmark | null; regionName?: string | null; rateLabel?: string | null }): BtlSheet {
+/** The share of the price the card's loan is, as the label says it ("75% interest-only"). */
+const ltvOf = (card: Pick<BtlCard, 'loan' | 'price'>) => (card.price > 0 ? Math.round((card.loan / card.price) * 100) : DEFAULT_BTL_SETTINGS.finance.ltvPct);
+const num = (n: number) => (Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10));
+
+/**
+ * `settings`: the finance and running costs the labels name (the lender's
+ * cover, the agent's and repairs' shares, the empty months); the stored
+ * settings, else the decided defaults. The loan's share comes from the card.
+ */
+export function btlSheet(card: BtlCard, opts: { priority: BtlPriority; benchmark: Benchmark | null; regionName?: string | null; rateLabel?: string | null; settings?: Pick<BtlSettings, 'finance' | 'costs'> }): BtlSheet {
+  const { finance, costs: costSettings } = opts.settings ?? DEFAULT_BTL_SETTINGS;
   const rows: SheetRow[] = [
     { label: 'Rent a month', value: money(card.rent), sub: `${RENT_CONFIDENCE_WORDS[card.rent.confidence]}${card.rent.compCount > 0 ? ` · ${card.rent.compCount} rentals nearby` : ''}${card.rent.valuation ? ' · checked against a rent valuation' : ''}` },
     { label: 'Gross yield', value: pcts(card.grossYieldPct) },
     { label: 'Net yield', value: pcts(card.netYieldPct), sub: 'after running costs' },
     { label: 'Running costs a month', value: money(card.monthlyCosts) },
-    { label: 'Mortgage interest a month', value: gbp(card.mortgageMonthly), sub: `75% interest-only loan of ${gbp(card.loan)}` },
+    { label: 'Mortgage interest a month', value: gbp(card.mortgageMonthly), sub: `${ltvOf(card)}% interest-only loan of ${gbp(card.loan)}` },
     { label: 'Cashflow a month', value: money(card.cashflowMonthly), sub: 'before tax' },
     { label: 'Cash in', value: money(card.cashIn), sub: `${gbp(card.deposit)} deposit, ${gbp(card.tax)} ${card.taxName}, ${gbp(card.buyingCosts)} buying costs${card.epcAllowance > 0 ? `; the top end adds ${gbp(card.epcAllowance)} for an energy upgrade` : ''}` },
     { label: 'ROI', value: pcts(card.roiPct), sub: 'a year’s cashflow on the cash in, before tax' },
@@ -103,9 +114,9 @@ export function btlSheet(card: BtlCard, opts: { priority: BtlPriority; benchmark
   }
   const c = card.costLines;
   const costs: SheetRow[] = [
-    { label: 'Empty month (1 a year)', value: gbp(c.emptyMonths) },
-    { label: 'Letting agent (12% incl. VAT)', value: gbp(c.agent) },
-    { label: 'Repairs (8%)', value: gbp(c.repairs) },
+    { label: `Empty ${costSettings.emptyMonths === 1 ? 'month' : 'months'} (${num(costSettings.emptyMonths)} a year)`, value: gbp(c.emptyMonths) },
+    { label: `Letting agent (${num(costSettings.agentPct)}% incl. VAT)`, value: gbp(c.agent) },
+    { label: `Repairs (${num(costSettings.repairsPct)}%)`, value: gbp(c.repairs) },
     { label: 'Insurance', value: gbp(c.insurance) },
     { label: 'Safety certificates', value: gbp(c.safety) },
     ...(c.serviceCharge > 0 ? [{ label: card.flags.serviceChargeConfirmed ? 'Service charge' : 'Service charge (not confirmed: an estimate)', value: gbp(c.serviceCharge) }] : []),
@@ -116,7 +127,7 @@ export function btlSheet(card: BtlCard, opts: { priority: BtlPriority; benchmark
   return {
     rows,
     costs,
-    rentTest: rentTestWords(card),
+    rentTest: rentTestWords(card, finance.icrPct),
     benchmark: benchmarkWords(opts.benchmark, opts.regionName ?? null),
     verdict: verdictWords(opts.priority, card, opts.benchmark),
     epc: epcLine(country, card.flags.epc),

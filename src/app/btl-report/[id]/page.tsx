@@ -3,6 +3,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { btlReportFor } from "@/lib/btl/report-server";
+import { readBtlSettingsCached } from "@/lib/btl/settings-server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { btlFlags, btlNumbers } from "@/lib/btl/card";
 import { btlSheet, CASH_BAND_LABELS } from "@/lib/btl/sheet";
 import { BTL_PRIORITY_LABELS } from "@/lib/btl/rules";
@@ -33,7 +35,8 @@ export default async function BtlReportPage({ params }: { params: Promise<{ id: 
   const found = await btlReportFor(user.id, id);
   if (!found) notFound();
   const { report: r, createdAt, dealId } = found;
-  const sheet = btlSheet(r.card, { priority: r.priority, benchmark: r.benchmark, regionName: r.regionName });
+  const { settings } = await readBtlSettingsCached(createAdminClient());
+  const sheet = btlSheet(r.card, { priority: r.priority, benchmark: r.benchmark, regionName: r.regionName, settings });
   const made = new Date(createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
   return (

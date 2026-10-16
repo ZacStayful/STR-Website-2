@@ -32,6 +32,8 @@ export const ACTIVITY_KINDS = {
   report_view: inApp('Opened a saved report'),
   // Batch 21 (E6): the Explorer (its search and area pages) and My deals on screen, once a UK day each.
   explorer_view: inApp('Looked at the Market Explorer'),
+  // Batch 28: the Explorer's "Buy to let" view switched on (record only: the Explorer on screen already counts).
+  explorer_btl_toggle: recordOnly('Switched the Market Explorer to Buy to let'),
   my_deals_view: inApp('Looked at My deals'),
   // Batch 22e: Home on screen, once a UK day. Login lands there, so from Review R3 (R3-63 / R2-56) it is record
   // only: logging in is not being active (the Home-only section of /admin/weekly-active went with it).

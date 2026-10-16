@@ -21,11 +21,13 @@ export interface AnnouncementDraft {
   body: string;
   /** A page on this site for "Take a look", or none. */
   linkPath: string | null;
+  /** Batch 28: the button's own words in place of "Take a look"; null for those. */
+  linkLabel: string | null;
   /** The report numbers (#ref) it answers. */
   reportRefs: number[];
 }
 
-export type DraftField = 'kind' | 'title' | 'body' | 'link' | 'refs';
+export type DraftField = 'kind' | 'title' | 'body' | 'link' | 'label' | 'refs';
 
 /**
  * "#12, #15" or "12 15" as report numbers, each once, in the order given.
@@ -47,7 +49,7 @@ export function parseRefs(raw: unknown): number[] | null {
 }
 
 /** What admin typed, checked field by field, with a line for each problem. */
-export function cleanAnnouncement(input: { kind: unknown; title: unknown; body: unknown; link: unknown; refs: unknown }): { ok: true; draft: AnnouncementDraft } | { ok: false; errors: Partial<Record<DraftField, string>> } {
+export function cleanAnnouncement(input: { kind: unknown; title: unknown; body: unknown; link: unknown; label?: unknown; refs: unknown }): { ok: true; draft: AnnouncementDraft } | { ok: false; errors: Partial<Record<DraftField, string>> } {
   const errors: Partial<Record<DraftField, string>> = {};
   const kind = isAnnouncementKind(input.kind) ? input.kind : null;
   if (!kind) errors.kind = 'Choose New feature or Bug fix.';
@@ -58,10 +60,14 @@ export function cleanAnnouncement(input: { kind: unknown; title: unknown; body: 
   const rawLink = typeof input.link === 'string' ? input.link.trim() : '';
   const linkPath = rawLink === '' ? null : memberPath(rawLink);
   if (rawLink !== '' && !linkPath) errors.link = 'A page on this site, starting with / (for example /today).';
+  const rawLabel = typeof input.label === 'string' ? input.label.trim() : '';
+  const label = rawLabel === '' ? null : cleanLine(rawLabel, LIMITS.announcementLinkLabelMax);
+  if (label && !label.ok) errors.label = `A button label is at most ${LIMITS.announcementLinkLabelMax} characters.`;
+  else if (label && !linkPath) errors.label = 'A button label needs a page to link to.';
   const refs = parseRefs(input.refs);
   if (!refs) errors.refs = 'Report numbers, like #12, #15 (at most 20).';
-  if (!kind || !title.ok || !body.ok || errors.link || !refs) return { ok: false, errors };
-  return { ok: true, draft: { kind, title: title.text, body: body.text, linkPath, reportRefs: refs } };
+  if (!kind || !title.ok || !body.ok || errors.link || errors.label || !refs) return { ok: false, errors };
+  return { ok: true, draft: { kind, title: title.text, body: body.text, linkPath, linkLabel: label && label.ok ? label.text : null, reportRefs: refs } };
 }
 
 export interface AnnouncementRow {
@@ -70,6 +76,8 @@ export interface AnnouncementRow {
   title: string;
   body: string;
   linkPath: string | null;
+  /** Batch 28: the button's words, or null for "Take a look". */
+  linkLabel?: string | null;
   publishedAt: string | null;
   unpublishedAt: string | null;
 }
@@ -81,6 +89,8 @@ export interface LiveAnnouncement {
   title: string;
   body: string;
   linkPath: string | null;
+  /** Batch 28: the button's words, or null for "Take a look". */
+  linkLabel?: string | null;
   publishedAt: string;
 }
 
@@ -119,7 +129,7 @@ export function visibleAnnouncements(rows: readonly AnnouncementRow[], views: Re
     })
     .sort((a, b) => (time(b.publishedAt) ?? 0) - (time(a.publishedAt) ?? 0))
     .slice(0, BANNER_MAX)
-    .map((r) => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, linkPath: r.linkPath, publishedAt: r.publishedAt as string }));
+    .map((r) => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, linkPath: r.linkPath, linkLabel: r.linkLabel ?? null, publishedAt: r.publishedAt as string }));
 }
 
 export type AnnouncementState = 'draft' | 'live' | 'ended' | 'unpublished';

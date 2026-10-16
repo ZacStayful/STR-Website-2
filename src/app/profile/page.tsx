@@ -5,13 +5,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { GOALS_EDITOR_HREF, PROFILE_QUIZ_HREF } from "@/lib/nav";
 import { MIN_MONTHS_RANGE, MIN_WEEKS_RANGE, MOTIVATION_MODE_LABELS, PRIORITY_LABELS, type MotivationMode, type Priority } from "@/lib/market/goals";
 import { answerLabel, questionsFor, SECTION_TITLES, type SectionId } from "@/lib/profile/questions";
-import { describeTypes } from "@/lib/profile/deal-types";
+import { describeTypes, typesShown } from "@/lib/profile/deal-types";
 import { matchLabel } from "@/lib/profile/matching";
 import { minutesLeftLabel, pillLabel } from "@/lib/profile/state";
 import { creditViewFor, matchCountFor, profileSummaryFor } from "@/lib/profile/server";
 import { logActivity } from "@/lib/activity/log";
 import { todayKey } from "@/lib/today/day";
-import { saveAdvancedAction } from "./actions";
+import { addDealTypeAction, saveAdvancedAction } from "./actions";
 import { profilesFor } from "@/lib/profiles/server";
 import { labelsShown } from "@/lib/profiles/rules";
 import { tailoringForMember } from "@/lib/tailoring/server";
@@ -35,7 +35,7 @@ const SECTION_ORDER: SectionId[] = ["about", "buy", "r2r", "source", "manage"];
  * count Today shows, so a change moves it at once; the day's deals follow
  * from the next Today's 5.
  */
-export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ via?: string | string[]; saved?: string | string[]; new?: string | string[]; mode?: string | string[] }> }) {
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ via?: string | string[]; saved?: string | string[]; new?: string | string[]; mode?: string | string[]; add?: string | string[]; error?: string | string[] }> }) {
   const params = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   const supabase = await createSupabaseServerClient();
@@ -74,10 +74,31 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   const editHref = (id: string) => `${PROFILE_QUIZ_HREF}?q=${encodeURIComponent(id)}&next=${encodeURIComponent(GOALS_EDITOR_HREF)}`;
   const continueHref = `${PROFILE_QUIZ_HREF}?next=${encodeURIComponent(GOALS_EDITOR_HREF)}`;
   const line = matchLabel(count, !progress.complete);
+  // Batch 28, Part I: "Add Buy to let" from the announcement: the member confirms here (nothing changes without a tap).
+  const adding = first(params.add) === "btl" ? "btl" : null;
+  const hasBtl = typesShown({ goals: answers.goals, about: answers.about }).includes("btl");
 
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-2xl space-y-5 px-4 py-6 sm:py-8">
+        {adding && (
+          <section aria-labelledby="add-btl" className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+            {hasBtl ? (
+              <p id="add-btl" className="text-sm text-foreground">Buy to let is already one of the deals you see.</p>
+            ) : (
+              <>
+                <h2 id="add-btl" className="text-sm font-semibold text-foreground">Add Buy to let (long-term tenants)?</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Buy-to-let deals join your Today and your daily email, judged on what you’re after and the cash you can put in. The deals you see now stay as they are, and it costs nothing more each day.</p>
+                {first(params.error) === "1" && <p className="mt-1 text-sm text-destructive">That couldn’t be saved just now. Please try again.</p>}
+                <form action={addDealTypeAction} className="mt-3 flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="type" value="btl" />
+                  <button type="submit" className="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground hover:opacity-90">Add Buy to let</button>
+                  <Link href={GOALS_EDITOR_HREF} className="text-sm text-muted-foreground hover:underline">Not now</Link>
+                </form>
+              </>
+            )}
+          </section>
+        )}
         <header>
           <p className="text-xs font-semibold uppercase tracking-wider text-primary">{pillLabel(progress)}</p>
           <h1 className="mt-1 text-2xl font-bold text-foreground">{profileName ?? "Your profile"}</h1>

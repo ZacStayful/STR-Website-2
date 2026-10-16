@@ -18,6 +18,7 @@ export function CardGrid({
   goals,
   trendSortReady,
   hideSort = false,
+  btl = null,
   children,
 }: {
   level: Level;
@@ -30,6 +31,8 @@ export function CardGrid({
   goals: MarketGoals | null;
   trendSortReady: boolean;
   hideSort?: boolean;
+  /** Batch 28: the "Buy to let" view, switched on and off here. */
+  btl?: { on: boolean; onToggle: () => void } | null;
   children: ReactNode;
 }) {
   const allowed = (k: SortKey) => (goals || (k !== "personal" && k !== "distance")) && (trendSortReady || k !== "trend") && (k !== "distance" || !!goals?.home);
@@ -42,7 +45,12 @@ export function CardGrid({
           <button type="button" aria-pressed={level === "deals"} onClick={() => onLevel("deals")}>My deals{counts.deals ? <span className="mx2-seg-count">{counts.deals}</span> : null}</button>
         </div>
         <span className="mx2-shown">{shown}</span>
-        {!hideSort && (
+        {btl && (
+          <button type="button" className="mx2-seg-toggle rounded-full border border-border px-2.5 py-1 text-xs font-medium" aria-pressed={btl.on} onClick={btl.onToggle}>
+            Buy to let{btl.on ? " · on" : ""}
+          </button>
+        )}
+        {!hideSort && !btl?.on && (
           <label className="mx2-sort">
             Sort by
             <select className="mx2-select mx2-select--inline" value={sort} onChange={(e) => isSortKey(e.target.value) && onSort(e.target.value)}>

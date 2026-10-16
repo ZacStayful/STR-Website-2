@@ -23,7 +23,7 @@ async function requireAdmin(): Promise<{ email: string }> {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type EditorState = { ok: boolean; message: string; errors?: Partial<Record<'kind' | 'title' | 'body' | 'link' | 'refs', string>> } | null;
+export type EditorState = { ok: boolean; message: string; errors?: Partial<Record<'kind' | 'title' | 'body' | 'link' | 'label' | 'refs', string>> } | null;
 
 function refresh(id?: string) {
   revalidatePath('/admin/announcements');
@@ -37,7 +37,7 @@ export async function saveAction(_prev: EditorState, formData: FormData): Promis
     const { email } = await requireAdmin();
     const rawId = String(formData.get('id') ?? '');
     const id = UUID.test(rawId) ? rawId : null;
-    const clean = cleanAnnouncement({ kind: formData.get('kind'), title: formData.get('title'), body: formData.get('body'), link: formData.get('link'), refs: formData.get('refs') });
+    const clean = cleanAnnouncement({ kind: formData.get('kind'), title: formData.get('title'), body: formData.get('body'), link: formData.get('link'), label: formData.get('label'), refs: formData.get('refs') });
     if (!clean.ok) return { ok: false, message: 'Check the fields marked below.', errors: clean.errors };
     const res = await saveAnnouncement(clean.draft, id, email);
     if (!res.ok) return { ok: false, message: res.message };

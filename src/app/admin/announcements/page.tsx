@@ -97,7 +97,7 @@ export default async function AdminAnnouncementsPage() {
                         </Link>
                         <span className="block text-xs text-muted-foreground">
                           {announcementKindLabel(a.kind)}
-                          {a.linkPath ? ` · ${a.linkPath}` : ""}
+                          {a.linkPath ? ` · ${a.linkLabel ? `“${a.linkLabel}” → ` : ""}${a.linkPath}` : ""}
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2">{STATE_LABEL[announcementState(a, now, settings.announcementMaxAgeDays)]}</td>

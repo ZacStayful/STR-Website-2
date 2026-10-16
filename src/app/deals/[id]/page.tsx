@@ -26,7 +26,7 @@ import { btlCardsFor, projectCardsFor } from "@/lib/marketplace/queries";
 import { BTL_BADGE, btlLookerFor, btlViewFor, openProfitFor } from "@/lib/btl/view";
 import { btlSheet } from "@/lib/btl/sheet";
 import { DEFAULT_BTL_PRIORITY, regionPhrase } from "@/lib/btl/today";
-import { readBtlBenchmark } from "@/lib/btl/settings-server";
+import { readBtlBenchmark, readBtlSettingsCached } from "@/lib/btl/settings-server";
 import { regionForArea } from "@/lib/market/regions";
 import { dealTypeFor, dealTypeOf } from "@/lib/profile/deal-types";
 import { BuyToLetSection } from "../_components/BuyToLetSection";
@@ -277,7 +277,9 @@ export default async function DealPage({ params, searchParams }: { params: Promi
   const btlBench = btlCard && priv && btlLooker.centre && btlBand ? await readBtlBenchmark(createAdminClient(), btlLooker.centre, btlBand) : null;
   // Part G: the £2 buy-to-let report, at this member's own price (the welcome price on a revealed deal), or the one they have.
   const [btlQuote, btlReportId] = btlCard ? await Promise.all([quoteBtlReport(user.id, adminUser, { dealId: deal.id }), latestBtlReportId(user.id, { dealId: deal.id })]) : [null, null];
-  const btlSheetData = btlCard && priv ? btlSheet(btlCard, { priority: btlLooker.priority ?? DEFAULT_BTL_PRIORITY, benchmark: btlBench, regionName: btlLooker.centre ? regionPhrase(regionForArea(btlLooker.centre).name) : null }) : null;
+  // The labels name the stored finance and costs ("12% incl. VAT"), as the figures were worked out with them.
+  const btlLabels = btlCard && priv ? (await readBtlSettingsCached(createAdminClient())).settings : undefined;
+  const btlSheetData = btlCard && priv ? btlSheet(btlCard, { priority: btlLooker.priority ?? DEFAULT_BTL_PRIORITY, benchmark: btlBench, regionName: btlLooker.centre ? regionPhrase(regionForArea(btlLooker.centre).name) : null, settings: btlLabels }) : null;
   // Part E: what holds them back leads the sheet. "Knowing the numbers": the
   // Full analysis first. "Landlord or agent consent": Batch 7's first message
   // first, as the next-step card on a deal on their My deals, else its

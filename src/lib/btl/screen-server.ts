@@ -192,7 +192,7 @@ async function wantedAreas(admin: Admin): Promise<Set<string>> {
 }
 
 /** Today's spend and valuations on this line (UK day), from the runs' own records; unreadable reads as the whole cap spent. */
-async function dayUse(admin: Admin, dayStart: Date): Promise<{ pence: number; valuations: number }> {
+export async function dayUse(admin: Admin, dayStart: Date): Promise<{ pence: number; valuations: number }> {
   const { data, error } = await admin.from('marketplace_runs').select('summary').eq('kind', BTL_SCREEN_KIND).eq('dry', false).gte('started_at', dayStart.toISOString()).limit(200);
   if (error) return { pence: Number.POSITIVE_INFINITY, valuations: Number.POSITIVE_INFINITY };
   let pence = 0;

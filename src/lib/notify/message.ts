@@ -358,6 +358,12 @@ export interface DailyInput {
    * email with only these still goes. Absent: the email is as it was.
    */
   savedForYou?: SavedForYouItem[] | null;
+  /**
+   * Batch 28, Part I: the buy-to-let launch line (src/lib/btl/launch.ts
+   * btlLaunchSection), once, in whichever daily email the member gets next.
+   * It never makes an email on its own.
+   */
+  btlLaunch?: Section | null;
 }
 
 /** Batch 25: one "Saved for you" line: what it is, where, and what it could make (src/lib/standout/copy.ts), never an address. */
@@ -462,6 +468,8 @@ export interface BuiltMessage {
   droppedTeasers: string[];
   /** Batch 25: the "Saved for you" deals in the email: what to mark emailed once it has gone. */
   savedIds: string[];
+  /** Batch 28: the buy-to-let launch line is in it: what to mark once it has gone. */
+  btlLaunch: boolean;
 }
 
 /**
@@ -533,12 +541,14 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     const nudges = nudgesSection(briefing.nudges);
     if (nudges) sections.push(nudges);
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    if (input.btlLaunch) sections.push(input.btlLaunch);
     sections.push(...credit);
     if (input.lowCredit) sections.push(input.lowCredit);
   } else {
     sections.push(...credit);
     if (changes) sections.push(changes);
     if (input.profileNudge) sections.push(profileNudgeSection(input.profileNudge));
+    if (input.btlLaunch) sections.push(input.btlLaunch);
   }
 
   const phrase = changesPhrase(used);
@@ -574,6 +584,7 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     refusedIds: input.changes.filter((c) => !used.includes(c)).flatMap((c) => [c.id, ...(c.mergedIds ?? [])]),
     droppedTeasers: dropped,
     savedIds: saved.map((x) => x.dealId),
+    btlLaunch: Boolean(input.btlLaunch),
   };
 }
 

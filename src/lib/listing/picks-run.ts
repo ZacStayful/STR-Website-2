@@ -80,6 +80,8 @@ import { revealedFor } from "../intelligence/reveal-server";
 import { recordScanDays } from "../home/scan-record";
 import { siSavedPairs } from "../standout/saved-server";
 import { markSavedEmailed, savedForYouFor } from "../standout/email-server";
+import { anyHasBtl, btlLaunchSection } from "../btl/launch";
+import { btlLaunchDueFor, markBtlLaunchSent } from "../btl/launch-server";
 
 // ─── Daily picks: the run ─────────────────────────────────────────────
 // Every member with picks on (profiles.sourcing_alerts, default on) who has
@@ -530,7 +532,7 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   // a broken product: the log line has to show whether members got nothing
   // because the market was thin or because the bar rejected it all.
   const screened: Partial<Record<Band, number>> = {};
-  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, notProject: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence };
+  const summary = { dry, enabled, enrolled: profiles.length, members: members.length, queries: queries.length, answered: 0, fromPool: 0, unavailable: 0, listings: 0, verified: 0, gone: 0, unsuitable, screened, emails: 0, emailFailures: 0, sections: 0, unfunded: 0, chargedBasePence: 0, missed: 0, notProject: 0, ranOutOfTime: false, pickBasePence, chargeMode: mode, dailyPence, btlLaunchLines: 0 };
   // Each seat's tailoring (Batch 14): the same loader the Today page uses, so
   // a list stored here is the one the page would have chosen. A failed read
   // leaves every seat untailored: chosen exactly as before.
@@ -540,6 +542,13 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   });
   // What Today's list needs to know about a member (src/lib/today/selection.ts).
   const memberContextOf = (m: Member): MemberContext => ({ userId: m.id, payerId: payerIn(payers, m.id).payerId, goals: m.goals, savedAreas: m.areas, visibility: m.paid ? PAID_VISIBILITY : freeVisibility, profileId: m.profile?.id ?? null, profileActive: m.profile?.isActive ?? false, tailoring: tailoringBySeat.get(m.key) ?? null });
+  // Batch 28, Part I: the buy-to-let launch line, once, for anyone who pays for
+  // themselves and has no Buy to let on any running profile (as the profile nudge,
+  // a team member is never asked). Read here so a dry run shows it.
+  const launchDue = await btlLaunchDueFor(
+    admin,
+    [...new Set(memberIds)].filter((id) => payerIn(payers, id).payerId === id).map((id) => ({ id, hasBtl: anyHasBtl(members.filter((m) => m.id === id).map((m) => m.goals)) })),
+  );
   if (dry) {
     // What each member's daily email would carry besides the pick, read
     // without writing anything: a Today list only if one is stored already
@@ -589,6 +598,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               lowCredit: lowNotices.get(m.id)?.kind ?? null,
               savedForYou: (savedForYou.get(m.id) ?? []).length,
               briefing: briefings.has(m.id),
+              // Batch 28: the buy-to-let launch line would ride this email (once).
+              btlLaunch: launchDue.has(m.id),
               wouldCharge: m.admin
                 ? 0
                 : mode === "per_day"
@@ -1619,6 +1630,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
       actFast: seats.some((m) => wantsActFast(tailoringBySeat.get(m.key) ?? null)),
       briefing: briefings.get(userId) ?? null,
       savedForYou: savedForYou.get(userId) ?? null,
+      // Batch 28: the buy-to-let launch line, once (shown on the admin's test send, never marked by it).
+      btlLaunch: launchDue.has(userId) ? btlLaunchSection(base) : null,
     });
     const mail = built ? renderEmail(built.message) : null;
     const failRows = async () => {
@@ -1675,6 +1688,11 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (built.savedIds.length > 0) await markSavedEmailed(admin, userId, built.savedIds);
     // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.
     if (built.message.sections.some((s) => s.key === "briefing")) await markBriefingEmailed(admin, userId, day, new Date());
+    // Batch 28: the launch line went: never again (the admin's test send marks nothing).
+    if (built.btlLaunch && !opts.ignoreToday) {
+      await markBtlLaunchSent(admin, userId);
+      summary.btlLaunchLines += 1;
+    }
     summary.sections += parts.length;
     summary.unfunded += unfunded.length;
     const sentAt = new Date().toISOString();

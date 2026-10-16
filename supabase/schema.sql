@@ -7991,7 +7991,17 @@ create unique index if not exists analysis_purchases_btl_running_uidx on public.
   where kind = 'btl_report' and status = 'pending';
 
 -- ── The launch (Part I): the one line in the next daily email, sent once ──
+--   btl_launch_line_at  when this member's daily email carried the launch line (null: not yet). Never read by
+--                       the access checks; the daily email sets it as it sends.
 alter table public.profiles add column if not exists btl_launch_line_at timestamptz;
+-- The announcement's button words ("Add Buy to let"); null keeps "Take a look". Only with a link.
+alter table public.announcements add column if not exists link_label text;
+do $$ begin
+  alter table public.announcements drop constraint if exists announcements_link_label_check;
+  alter table public.announcements add constraint announcements_link_label_check check (
+    link_label is null or (char_length(link_label) between 1 and 24 and link_path is not null)
+  );
+end $$;
 
 -- The ledger label for the report (its price comes from btl_report_pence).
 insert into public.unit_costs (provider, unit, label, unit_cost_pence, markup, notes) values

@@ -110,6 +110,7 @@ import { comparablesSourceLine, readListingsNearby } from "@/lib/comps/nearby";
 import { readMonthlyOccupancy, readStayProfile, staySentence, turnoversByMonth } from "@/lib/comps/stays";
 import { readResolvedListing, RESOLVE_NETWORK_ERROR, type ResolvedListing } from "./_components/listing-client-types";
 import type { AnalysisResult, RiskLevel, VerdictFit } from "@/lib/types";
+import { BuyToLetInstead } from "@/components/report/BuyToLetInstead";
 import { DEMO_MAP } from "@/lib/demo-data";
 import {
   BarChart,
@@ -2698,6 +2699,8 @@ export default function HomePage({ initialResult, initialExpensesExpanded, funne
                 </div>
               </CardContent>
             </Card>
+            {/* Batch 28, Part H: the same home as a buy-to-let, on this report's own long-let valuation (no extra charge). */}
+            <BuyToLetInstead result={r} />
           </section>
 
           {/* ══════════════════════════════════════════════════════════

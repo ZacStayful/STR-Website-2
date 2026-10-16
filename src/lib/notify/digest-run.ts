@@ -70,6 +70,8 @@ import { GOALS_EDITOR_HREF } from '../nav';
 import type { ProfileDeals } from './message';
 import type { MarketGoals } from '../market/goals';
 import { markSavedEmailed, savedForYouFor } from '../standout/email-server';
+import { anyHasBtl, btlLaunchSection } from '../btl/launch';
+import { btlLaunchDueFor, markBtlLaunchSent } from '../btl/launch-server';
 
 const TIME_BUDGET_MS = 50_000;
 const PAGE = 1000;
@@ -155,7 +157,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     for (const p of (data ?? []) as unknown as ProfileRow[]) byId.set(p.id, p);
   }
   const ids = [...byId.keys()];
-  const summary = { dry: opts.dry, considered: ids.length, emails: 0, emailFailures: 0, todays5: 0, changesOnly: 0, ranOutOfTime: false, outOfTime: 0, chargeMode: 'per_pick' as 'per_pick' | 'per_day', chargedBasePence: 0, noCreditForTodays5: 0, freeTodays5: 0, profileIncomplete: 0 };
+  const summary = { dry: opts.dry, considered: ids.length, emails: 0, emailFailures: 0, todays5: 0, changesOnly: 0, ranOutOfTime: false, outOfTime: 0, chargeMode: 'per_pick' as 'per_pick' | 'per_day', chargedBasePence: 0, noCreditForTodays5: 0, freeTodays5: 0, profileIncomplete: 0, btlLaunchLines: 0 };
   const perUser: { user: string; sent: boolean; kind?: string; teasers?: number; changes?: number; reason?: string }[] = [];
   if (ids.length === 0) return { status: 200, body: { ...summary, members: perUser } };
 
@@ -294,6 +296,14 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
   const briefings = await emailBriefingsFor(base, open.filter(wantsTeasers).map((p) => p.id), now);
   // Batch 25: deals Stayful Intelligence saved for them and did not ring them about ("Saved for you").
   const savedForYou = await savedForYouFor(admin, open.filter(wantsTeasers).map((p) => p.id), base);
+  // Batch 28, Part I: the buy-to-let launch line, once, for anyone who pays for themselves and has no Buy to let yet
+  // (a team member's profile is the team's to change, as the profile nudge).
+  const launchDue = await btlLaunchDueFor(
+    admin,
+    open.filter((p) => (payers.get(p.id)?.payerId ?? p.id) === p.id).map((p) => ({ id: p.id, hasBtl: anyHasBtl([parseMarketGoals(p.market_goals), ...(profileRows?.get(p.id) ?? []).map((r) => r.goals)]) })),
+    now,
+  );
+  const launchSection = btlLaunchSection(base);
 
   await mapLimit(open, SEND_CONCURRENCY, async (p) => {
     if (elapsed() > TIME_BUDGET_MS) {
@@ -355,6 +365,7 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
       actFast: seats.some((seat) => wantsActFast(seat.context.tailoring)),
       briefing: wantsTeasers(p) ? briefings.get(p.id) ?? null : null,
       savedForYou: wantsTeasers(p) ? savedForYou.get(p.id) ?? null : null,
+      btlLaunch: launchDue.has(p.id) ? launchSection : null,
     });
     // Named for what the email IS, after the early-access backstop has had its
     // say: a Today's 5 whose teasers were all dropped is a changes email, and
@@ -400,7 +411,10 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
         payer: payers.get(p.id)?.payerId ?? p.id,
         lowCredit: lowNotices.get(p.id)?.kind ?? null,
         savedForYou: built.savedIds.length,
+        // Batch 28: the buy-to-let launch line rides this email (once; marked when it really goes).
+        btlLaunch: built.btlLaunch,
       });
+      if (built.btlLaunch) summary.btlLaunchLines += 1;
       perUser.push({ user: p.id, sent: false, kind: built.message.kind, reason: 'would_send' });
       return;
     }
@@ -436,6 +450,11 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     if (built.savedIds.length > 0) await markSavedEmailed(admin, p.id, built.savedIds, now);
     // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.
     if (built.message.sections.some((s) => s.key === 'briefing')) await markBriefingEmailed(admin, p.id, claim.day, now);
+    // Batch 28: the launch line went: never again.
+    if (built.btlLaunch) {
+      await markBtlLaunchSent(admin, p.id, now);
+      summary.btlLaunchLines += 1;
+    }
     if (built.message.kind === 'todays_5') summary.todays5 += 1;
     else summary.changesOnly += 1;
     for (const [i, part] of parts.entries()) {
