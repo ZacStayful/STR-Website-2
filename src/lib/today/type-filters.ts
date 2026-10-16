@@ -1,8 +1,9 @@
 /**
  * One deal type's own search (Batch 17): its kind, and its own money answer
- * — a BRRR deal's price is judged on the project budget, before works; Buy
- * and let on the budget; Rent-to-rent on the max rent, which the rent kind
- * already reads. Today chooses each type on these, and every "N deals match"
+ * — a BRRR deal's price is judged on the project budget, before works;
+ * Short-let on the budget; Rent-to-rent on the max rent, which the rent kind
+ * already reads; Buy to let on no price at all (Batch 28: its cash band is
+ * judged on the card). Today chooses each type on these, and every "N deals match"
  * counts on them, so the list and the count agree.
  *
  * Pure: no network, no database, no server-only. Kept apart from
@@ -14,7 +15,8 @@ import type { DealFilters } from '../marketplace/grid.ts';
 import { filtersForGoals } from './candidates.ts';
 
 export function goalsForType(g: MarketGoals, t: DealType): MarketGoals {
-  return { ...g, sourcingKind: t === 'r2r' ? 'rent' : 'sale', budget: t === 'brrr' ? g.brrr.budget : g.budget };
+  // Batch 28: a buy-to-let deal's money answer is the cash it needs (its card, btl/today.ts), never a price band.
+  return { ...g, sourcingKind: t === 'r2r' ? 'rent' : 'sale', budget: t === 'brrr' ? g.brrr.budget : t === 'btl' ? null : g.budget };
 }
 
 /** Whether this type's list takes light refreshes only: a BRRR "Light refresh" answer (Q24). */

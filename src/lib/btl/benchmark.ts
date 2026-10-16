@@ -125,3 +125,42 @@ export function benchmarkWhere(b: Pick<Benchmark, 'step' | 'radiusMiles'>, regio
   if (b.step === 'region') return regionName ? `across ${regionName}` : 'across the region';
   return 'across the UK';
 }
+
+const finite = (v: unknown): number | null => {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+};
+const isStepKey = (v: unknown): v is BenchmarkStepKey => v === 'region' || v === 'national' || (typeof v === 'string' && /^\d+mi$/.test(v));
+
+/** A stored btl_benchmarks row back into a Benchmark (the nightly run writes it); null when it is not one. */
+export function benchmarkFromRow(row: unknown): Benchmark | null {
+  if (!row || typeof row !== 'object') return null;
+  const r = row as Record<string, unknown>;
+  const band = r.band;
+  if (band !== 'under_25k' && band !== '25k_50k' && band !== '50k_100k' && band !== '100k_plus') return null;
+  if (!isStepKey(r.step)) return null;
+  const count = finite(r.deal_count);
+  const roiMedian = finite(r.roi_median);
+  const roiP40 = finite(r.roi_p40);
+  if (count === null || roiMedian === null || roiP40 === null) return null;
+  const steps: BenchmarkStep[] = Array.isArray(r.steps)
+    ? (r.steps as unknown[]).flatMap((x) => {
+        const o = x && typeof x === 'object' ? (x as Record<string, unknown>) : null;
+        const n = o ? finite(o.count) : null;
+        return o && isStepKey(o.key) && n !== null ? [{ key: o.key, radiusMiles: finite(o.radiusMiles), count: n }] : [];
+      })
+    : [];
+  return {
+    band,
+    step: r.step,
+    radiusMiles: finite(r.radius_miles),
+    count,
+    steps,
+    roiMedianPct: roiMedian,
+    roiP40Pct: roiP40,
+    growthMedianPct: finite(r.growth_median),
+    growthP40Pct: finite(r.growth_p40),
+    thin: r.thin === true,
+    none: r.no_compare === true,
+  };
+}

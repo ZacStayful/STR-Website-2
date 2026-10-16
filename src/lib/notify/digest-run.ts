@@ -29,6 +29,7 @@ import 'server-only';
  * Entry point: /api/internal/daily-digest (the cron, secret-gated, ?dry=1).
  */
 import { createAdminClient } from '../supabase/admin';
+import { btlWidenLine } from '../btl/today';
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from '../access';
 import { isAdminEmail } from '../admin';
 import { getBillingSettings } from '../credit/unit-costs';
@@ -319,6 +320,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           teasers,
           // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
           advice: plan?.advice ?? null,
+          // Batch 28: the day looked further for its buy-to-let deals.
+          btlLine: plan?.btlWiden ? btlWidenLine(plan.btlWiden) : null,
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
           figureFor: (c) => rangeLineFor(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct),

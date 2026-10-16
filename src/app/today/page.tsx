@@ -13,7 +13,8 @@ import { dealVisibilityFor } from "@/lib/marketplace/tier";
 import { filtersForType } from "@/lib/today/type-filters";
 import { typesShown } from "@/lib/profile/deal-types";
 import { greeting, matchLine, todayKey, todayStart } from "@/lib/today/day";
-import { type TodaysPick } from "@/lib/today/selection";
+import { checkedCountFor, type TodaysPick } from "@/lib/today/selection";
+import { btlWidenLine } from "@/lib/btl/today";
 import { loadTodayView } from "@/lib/today/view-server";
 import { whatIfViewFor } from "@/lib/intelligence/what-if-server";
 import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
@@ -135,6 +136,9 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   const investorShare = sharesWithInvestors(tailoring);
 
   const { selection, pick, pickDealId, onDay, answered, short, widen, cards } = today;
+  // Batch 28: "Not enough buy-to-let deals in Leeds today, so I looked up to 25 miles out" when the day had to look further.
+  const btlChosen = typesShown({ goals, about: tailoring?.about ?? null }).includes("btl");
+  const btlWiden = btlChosen && profileId && cards.some((c) => c.btl_pass === true) ? ((await checkedCountFor(profileId, now))?.btlWiden ?? null) : null;
   // Batch 22, Part F: a near-miss day gets the what-ifs (real counts) instead of the advice line.
   const whatIfs = selection?.nearMiss && !paused ? await whatIfViewFor({ userId: user.id, payerId: payer.payerId, goals, savedAreas, visibility, profileId, profileActive: true, tailoring }, now) : null;
   const stored = selection?.dealIds ?? [];
@@ -253,6 +257,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
                   <h2 id="todays-deals" className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {selection?.nearMiss ? "The closest I found" : pickCard ? "More I picked for you today" : "I picked these for you today"}
                   </h2>
+                  {btlWiden && <p className="mb-3 text-sm text-muted-foreground">{btlWidenLine(btlWiden)}</p>}
                   {selection?.nearMiss && whatIfs && (
                     // Batch 22, Part F: what would find a real match, with real counts, in place of the old advice line.
                     <div className="mb-3">

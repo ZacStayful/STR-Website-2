@@ -44,6 +44,8 @@ import { latestRestartsFor } from '../profiles/server';
 import { learningSince } from '../profiles/reset';
 import { todayKey, todayStart } from './day';
 import { siSavedDealIds } from '../standout/saved-server';
+import { readBtlBenchmark, readBtlSettingsCached } from '../btl/settings-server';
+import type { CashBand } from '../btl/deal';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -448,19 +450,22 @@ async function chooseToday(admin: Admin, member: MemberContext, exclude: Set<str
   const cards = await getAreaCardsWithin(AREA_WAIT_MS);
   const types = typesFor(member);
   const mix = await readTodayMix(admin);
+  // Batch 28: the buy-to-let settings and benchmarks, read only for a profile that chose it.
+  const btl = types.includes('btl') ? await readBtlSettingsCached(admin) : null;
   const typeKeeps = types.length > 1 ? await keepsByType(admin, member, new Date(now.getTime() - mix.windowDays * 86_400_000)) : {};
   // Batch 22: what the choice reads is tallied for "I checked N live deals" (choice.ts); the choosing itself is untouched.
   const tally = poolTally<Awaited<ReturnType<typeof rankingPool>>[number]>(exclude);
   const chosen = await chooseDay(
-    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null, types, typeKeeps, mix },
+    { goals: member.goals, savedAreas: member.savedAreas, feedback, exclude, cards, now, tailoring: member.tailoring ?? null, types, typeKeeps, mix, ...(btl ? { btlSettings: btl.settings } : {}) },
     {
       pool: tally.wrap((filters, limit) => rankingPool(filters, member.visibility, { userId: member.userId }, limit)),
       fullListings: (dealIds) => fullListingsFor(admin, dealIds),
       dealTypes: (dealIds) => dealTypesByIds(dealIds, types),
+      ...(btl ? { btlBenchmark: (area: string, band: CashBand) => readBtlBenchmark(admin, area, band) } : {}),
     },
     opts,
   );
-  return { chosen, tally: tally.result(chosen.mustMatches, chosen.capped === true) };
+  return { chosen, tally: { ...tally.result(chosen.mustMatches, chosen.capped === true), btlWiden: chosen.btlWiden ?? null } };
 }
 
 /** Of these deals, the ones the member has kept, passed or opened: a re-choose never takes those off. */

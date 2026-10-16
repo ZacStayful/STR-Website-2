@@ -150,6 +150,10 @@ export const GOAL_OPTIONS = {
   dealTypes: ['buy_str', 'brrr', 'r2r', 'btl'],
   /** Batch 17: "How much work would you take on?" for BRRR (it replaced Condition). */
   brrrWork: ['light', 'full', 'either'],
+  /** Batch 28: "What are you after?" for Buy to let: money each month, value going up, a bit of both (btl/rules.ts BtlPriority). */
+  btlPriority: ['income', 'growth', 'both'],
+  /** Batch 28: "How much cash can you put in?" for Buy to let: the cash bands (btl/deal.ts CASH_BANDS, edges in btl_bands). */
+  btlCash: ['under_25k', '25k_50k', '50k_100k', '100k_plus'],
   /** Where to look: near home, chosen areas, anywhere, or near home plus the best elsewhere. */
   where: ['near', 'areas', 'anywhere', 'near_plus_best'],
   // Investor buying
@@ -232,6 +236,12 @@ export interface BrrrGoals {
   work: GoalOption<'brrrWork'> | null;
 }
 
+/** Batch 28: the Buy to let answers, asked once and only for a profile that chose it. */
+export interface BtlGoals {
+  priority: GoalOption<'btlPriority'> | null;
+  cashBand: GoalOption<'btlCash'> | null;
+}
+
 export interface ManagerGoals {
   unitsManaged: GoalOption<'unitsManaged'> | null;
   /** Postcode areas the company already operates in. */
@@ -269,6 +279,8 @@ export interface MarketGoals {
   /** The deal types this profile wants to see; null until the question is answered (deal-types.ts maps older answers). */
   dealTypes: DealType[] | null;
   brrr: BrrrGoals;
+  // ── Batch 28 ──
+  btl: BtlGoals;
 }
 
 export const DEFAULT_BUYER_GOALS: BuyerGoals = { cashAvailable: null, funding: null, entity: null, mainGoal: null, propertyType: null, condition: null, leaseholdOk: null, restrictedAreas: null };
@@ -276,6 +288,7 @@ export const DEFAULT_R2R_GOALS: R2rGoals = { minMarginPcm: null, setupBudget: nu
 export const DEFAULT_SOURCER_GOALS: SourcerGoals = { sourceFor: null, sourcingFee: null, dealsPerMonth: null };
 export const DEFAULT_MANAGER_GOALS: ManagerGoals = { unitsManaged: null, operatingAreas: [], lookingFor: null, growthTarget: null };
 export const DEFAULT_BRRR_GOALS: BrrrGoals = { budget: null, work: null };
+export const DEFAULT_BTL_GOALS: BtlGoals = { priority: null, cashBand: null };
 
 export const DEFAULT_GOALS: MarketGoals = {
   version: 2,
@@ -298,6 +311,7 @@ export const DEFAULT_GOALS: MarketGoals = {
   manager: DEFAULT_MANAGER_GOALS,
   dealTypes: null,
   brrr: DEFAULT_BRRR_GOALS,
+  btl: DEFAULT_BTL_GOALS,
 };
 
 export const SOURCING_KIND_LABELS: Record<SourcingKind, string> = { sale: 'Properties to buy', rent: 'Properties to rent (rent-to-rent)', both: 'Both' };
@@ -435,6 +449,11 @@ export function parseBrrrGoals(raw: unknown): BrrrGoals {
   return { budget: isBudget(b.budget) && b.budget !== 'any' ? b.budget : null, work: goalOption('brrrWork', b.work) };
 }
 
+export function parseBtlGoals(raw: unknown): BtlGoals {
+  const b = obj(raw);
+  return { priority: goalOption('btlPriority', b.priority), cashBand: goalOption('btlCash', b.cashBand) };
+}
+
 export function parseManagerGoals(raw: unknown): ManagerGoals {
   const m = obj(raw);
   return { unitsManaged: goalOption('unitsManaged', m.unitsManaged), operatingAreas: areaCodeList(m.operatingAreas), lookingFor: goalOption('lookingFor', m.lookingFor), growthTarget: numberOption(GROWTH_OPTIONS, m.growthTarget) };
@@ -499,6 +518,7 @@ export function parseMarketGoals(raw: unknown): MarketGoals | null {
     manager: parseManagerGoals(o.manager),
     dealTypes: parseDealTypes(o.dealTypes),
     brrr: parseBrrrGoals(o.brrr),
+    btl: parseBtlGoals(o.btl),
   };
 }
 

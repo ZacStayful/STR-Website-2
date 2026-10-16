@@ -31,6 +31,9 @@ import { TODAY_SIZE } from './day.ts';
 import type { TailoringProfile } from '../tailoring/profile.ts';
 import type { DealType } from '../profile/deal-types.ts';
 import type { TodayMixSettings } from './mix.ts';
+import type { Benchmark } from '../btl/benchmark.ts';
+import type { BtlSettings } from '../btl/config.ts';
+import type { CashBand } from '../btl/deal.ts';
 
 /** Rows of the pool read for ranking: the best-profit end of what matches. */
 export const POOL_LIMIT = 1000;
@@ -57,6 +60,8 @@ export interface ChooseReads {
   fullListings: (dealIds: string[]) => Promise<Map<string, SourcedListing>>;
   /** Batch 17: each deal's type (for a re-choose of a mixed list); deals it cannot read are absent. */
   dealTypes?: (dealIds: string[]) => Promise<Map<string, DealType>>;
+  /** Batch 28: the stored buy-to-let benchmark for an area and cash band; absent or null: the hard rules alone. */
+  btlBenchmark?: (area: string, band: CashBand) => Promise<Benchmark | null>;
 }
 
 export interface ChooseInput {
@@ -80,6 +85,8 @@ export interface ChooseInput {
   /** Keeps of each type on this profile inside the mix's window. */
   typeKeeps?: Partial<Record<DealType, number>>;
   mix?: TodayMixSettings;
+  /** Batch 28: the buy-to-let settings (bands, benchmark steps); absent: the defaults. */
+  btlSettings?: BtlSettings;
 }
 
 export async function chooseTodayFrom(input: ChooseInput, reads: ChooseReads): Promise<TodayChoice> {

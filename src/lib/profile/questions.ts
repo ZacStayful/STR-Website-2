@@ -66,6 +66,8 @@ export type QuestionId =
   | 'budget'
   | 'brrr_budget'
   | 'max_rent'
+  | 'btl_priority'
+  | 'btl_cash'
   | 'deals_done'
   | 'units_now'
   | 'unit_areas'
@@ -195,6 +197,10 @@ const DEAL_TYPE_HELP: Record<DealType, string> = {
   btl: 'Buy a property and let it to long-term tenants',
 };
 
+/** Batch 28: "What are you after?" (btl/rules.ts BTL_PRIORITY_LABELS) and the cash bands (btl_bands' default edges). */
+const BTL_PRIORITY_OPTIONS: readonly Option[] = [opt('income', 'Money each month', 'The best cashflow for the cash you put in'), opt('growth', 'Value going up', 'Where prices have been rising'), opt('both', 'A bit of both')];
+const BTL_CASH_OPTIONS: readonly Option[] = [opt('under_25k', 'Under £25k'), opt('25k_50k', '£25k to £50k'), opt('50k_100k', '£50k to £100k'), opt('100k_plus', '£100k or more')];
+
 // Batch 22c: five brackets, "Under £200k" split in two. A stored 'u200' is still accepted and labelled "Under £200k", never offered.
 const BUDGET_OPTIONS: readonly Option[] = BUDGET_CHOICES.map((b) => opt(b, BUDGET_LABELS[b]));
 
@@ -284,6 +290,33 @@ export const QUESTIONS: readonly Question[] = [
     mandatory: true,
     affectsMatch: true,
     applies: wants('r2r'),
+  },
+  // Batch 28: Buy to let's two answers, asked once and only for a profile that chose it.
+  {
+    id: 'btl_priority',
+    section: 'about',
+    kind: 'single',
+    title: 'What are you after?',
+    why: 'Buy to let deals are judged on what you want from them.',
+    image: 'main_goal',
+    short: 'Buy to let: what you’re after',
+    options: BTL_PRIORITY_OPTIONS,
+    mandatory: true,
+    affectsMatch: true,
+    applies: wants('btl'),
+  },
+  {
+    id: 'btl_cash',
+    section: 'about',
+    kind: 'single',
+    title: 'How much cash can you put in?',
+    why: 'Deposit, tax and buying costs: so every buy-to-let deal is one you could fund.',
+    image: 'cash_available',
+    short: 'Buy to let: cash in',
+    options: BTL_CASH_OPTIONS,
+    mandatory: true,
+    affectsMatch: true,
+    applies: wants('btl'),
   },
   {
     id: 'deals_done',
@@ -665,12 +698,13 @@ export function imageOf(q: Question, a: Answers): ImageKey | 'cards' {
   return typeof q.image === 'function' ? q.image(a) : q.image;
 }
 
-/** The money question for each chosen type (all mandatory, Q27): the budget, the project budget, the rent ceiling. */
+/** The money question for each chosen type (all mandatory, Q27): the budget, the project budget, the rent ceiling; Batch 28: the cash a buy-to-let deal needs. */
 export function moneyQuestionsFor(types: readonly DealType[]): QuestionId[] {
   const out: QuestionId[] = [];
   if (types.includes('buy_str')) out.push('budget');
   if (types.includes('brrr')) out.push('brrr_budget');
   if (types.includes('r2r')) out.push('max_rent');
+  if (types.includes('btl')) out.push('btl_cash');
   return out;
 }
 
@@ -780,6 +814,16 @@ export function applyAnswer(id: QuestionId, raw: unknown, a: Answers): Applied {
       const v = goalOption('brrrWork', raw);
       if (!v) return fail('Choose one.');
       return { ok: true, answers: { ...a, goals: { ...goals, brrr: { ...goals.brrr, work: v } } } };
+    }
+    case 'btl_priority': {
+      const v = goalOption('btlPriority', raw);
+      if (!v) return fail('Choose one.');
+      return { ok: true, answers: { ...a, goals: { ...goals, btl: { ...goals.btl, priority: v } } } };
+    }
+    case 'btl_cash': {
+      const v = goalOption('btlCash', raw);
+      if (!v) return fail('Choose how much cash you can put in.');
+      return { ok: true, answers: { ...a, goals: { ...goals, btl: { ...goals.btl, cashBand: v } } } };
     }
     case 'max_rent': {
       const rent = parseMaxRentPcm(raw);
@@ -912,6 +956,8 @@ export function clearAnswer(id: QuestionId, a: Answers): Answers {
     case 'budget':
     case 'brrr_budget':
     case 'max_rent':
+    case 'btl_priority':
+    case 'btl_cash':
       return a;
     case 'brrr_work':
       return { ...a, goals: { ...goals, brrr: { ...goals.brrr, work: null } } };
@@ -1004,6 +1050,10 @@ export function currentValue(id: QuestionId, a: Answers): unknown {
       return g.brrr.work;
     case 'max_rent':
       return g.maxRentPcm;
+    case 'btl_priority':
+      return g.btl.priority;
+    case 'btl_cash':
+      return g.btl.cashBand;
     case 'deals_done':
       return b.dealsDone;
     case 'units_now':

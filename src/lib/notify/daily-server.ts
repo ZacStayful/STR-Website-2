@@ -22,6 +22,8 @@ import { dealVisible, type DealVisibility } from '../marketplace/visibility';
 import { payersFor, type Payer } from '../team';
 import { seatKey } from '../profiles/rules';
 import { dealTypeFor, type DealType } from '../profile/deal-types';
+import { parseStoredChoice } from '../today/choice';
+import type { BtlWiden } from '../btl/today';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -37,6 +39,8 @@ export interface TodayPlan {
   cards: Map<string, DealCard>;
   /** Batch 28: the types this profile is shown, so a deal that is two types is the one it chose (dealTypeFor). */
   types?: DealType[];
+  /** Batch 28: how far the day looked for its buy-to-let deals (the stored choice), for the email's line. */
+  btlWiden?: BtlWiden | null;
 }
 
 /** payersFor, a chunk at a time: one `.in()` over every member would outgrow the request at scale. */
@@ -116,6 +120,17 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
   }
   // Batch 17: a Project teaser shows its own numbers and label; Batch 28: a buy-to-let one its own.
   for (const card of await withProjectCards([...cards.values()])) cards.set(card.id, card);
+  // Batch 28: the day's "I looked further" line, for the profiles that chose Buy to let (the stored choice, Batch 22's column).
+  const btlWiden = new Map<string, BtlWiden>();
+  const btlSeats = members.filter((m) => m.profileId && typesFor(m).includes('btl') && (lists.get(planKey(m))?.stored.length ?? 0) > 0);
+  for (let i = 0; i < btlSeats.length; i += ID_CHUNK) {
+    const { data, error } = await admin.from('profile_today_lists').select('user_id, profile_id, choice').eq('day', todayKey(now)).in('profile_id', btlSeats.slice(i, i + ID_CHUNK).map((m) => m.profileId!));
+    if (error) console.warn('[notify] buy-to-let widen line unreadable:', error.message);
+    for (const r of (data ?? []) as { user_id: string; profile_id: string; choice: unknown }[]) {
+      const w = parseStoredChoice(r.choice)?.btlWiden ?? null;
+      if (w) btlWiden.set(planKey({ userId: r.user_id, profileId: r.profile_id }), w);
+    }
+  }
   const answered = new Map<string, Set<string>>();
   const withLists = [...new Set(members.filter((m) => (lists.get(planKey(m))?.stored.length ?? 0) > 0).map((m) => m.userId))];
   for (let i = 0; i < withLists.length; i += ID_CHUNK) {
@@ -136,7 +151,7 @@ export async function todayPlans(admin: Admin, members: readonly MemberContext[]
       const c = cards.get(id);
       if (c) mine.set(id, c);
     }
-    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine, types: typesFor(m) });
+    out.set(planKey(m), { ...l, answered: answered.get(m.userId) ?? new Set(), cards: mine, types: typesFor(m), btlWiden: btlWiden.get(planKey(m)) ?? null });
   }
   return out;
 }

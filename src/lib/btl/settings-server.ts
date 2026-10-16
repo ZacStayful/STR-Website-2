@@ -8,6 +8,8 @@ import 'server-only';
  */
 import type { createAdminClient } from '../supabase/admin';
 import { BTL_SETTING_KEYS, DEFAULT_BTL_SETTINGS, parseBtlSettings, type BtlSettings } from './config';
+import { benchmarkFromRow, type Benchmark } from './benchmark';
+import type { CashBand } from './deal';
 import { DEFAULT_PROJECT_COSTS, PROJECT_COSTS_KEY, parseProjectCosts } from '../project/config';
 import { DEAL_CHECKS_KEY } from '../deal-quality/config';
 
@@ -33,4 +35,30 @@ export async function readBtlSettings(admin: Admin): Promise<BtlSettingsRead> {
 /** The nightly screen's switch (env), the same pattern as DEAL_CHECKS_ENABLED. A dry run works either way. */
 export function btlScreenEnabled(): boolean {
   return process.env.BTL_SCREEN_ENABLED === 'true';
+}
+
+let cached: { at: number; value: BtlSettingsRead } | null = null;
+const TTL_MS = 60_000;
+
+/** readBtlSettings, held a minute: what Today reads for every member it chooses for. */
+export async function readBtlSettingsCached(admin: Admin): Promise<BtlSettingsRead> {
+  if (cached && Date.now() - cached.at < TTL_MS) return cached.value;
+  const value = await readBtlSettings(admin);
+  cached = { at: Date.now(), value };
+  return value;
+}
+
+/**
+ * The stored benchmark for a member's area and cash band (the nightly run
+ * writes btl_benchmarks). Null when there is none yet, or the table is not
+ * there (the schema section not run): their deals are then judged on the
+ * hard rules alone, as "too few deals to compare" is.
+ */
+export async function readBtlBenchmark(admin: Admin, area: string, band: CashBand): Promise<Benchmark | null> {
+  const { data, error } = await admin.from('btl_benchmarks').select('band, step, radius_miles, deal_count, roi_median, roi_p40, growth_median, growth_p40, thin, no_compare, steps').eq('area_code', area).eq('band', band).maybeSingle();
+  if (error) {
+    console.warn('[btl] benchmark unreadable:', error.message);
+    return null;
+  }
+  return benchmarkFromRow(data);
 }

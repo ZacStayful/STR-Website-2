@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "../supabase/admin";
+import { btlWidenLine } from "../btl/today";
 import { getAreaCardsWithin } from "../market/cached";
 import { parseMarketGoals, describeGoals, type MarketGoals } from "../market/goals";
 import { personaliseScore, personalInputFor } from "../market/personalise";
@@ -1530,6 +1531,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           teasers,
           // A near miss's advice, or a tailored day's "only N met your must-haves" (Batch 14).
           advice: plan?.advice ?? null,
+          // Batch 28: the day looked further for its buy-to-let deals.
+          btlLine: plan?.btlWiden ? btlWidenLine(plan.btlWiden) : null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
           figureFor: (c) => rangeLineFor(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),

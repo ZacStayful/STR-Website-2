@@ -418,6 +418,8 @@ export interface ProfileDeals {
   pickDealId?: string | null;
   teasers: DealCard[];
   advice?: string | null;
+  /** Batch 28: "Not enough buy-to-let deals in Leeds today, so I looked up to 25 miles out" (btl/today.ts btlWidenLine). */
+  btlLine?: string | null;
   /** "Open Today" for this profile: /today, or through the switch route for another profile. */
   todayUrl?: string;
   /** Each teaser's profit at this profile's finance; defaults to the input's. */
@@ -503,6 +505,8 @@ export function buildDaily(input: DailyInput): BuiltMessage | null {
     if (kept.length > 0) {
       const blocks: Block[] = [];
       if (part.advice) blocks.push({ type: 'text', text: part.advice, tone: 'callout' });
+      // Batch 28: the day had to look further for its buy-to-let deals, and says so.
+      if (part.btlLine && kept.some((c) => c.btl_pass === true)) blocks.push({ type: 'text', text: part.btlLine });
       const extras: TeaserExtras = { answers: input.answerToken ? { siteUrl: base, token: input.answerToken } : null, actFast: input.actFast };
       blocks.push({ type: 'items', items: kept.map((c) => teaserItem(c, todayUrl, now, part.figureFor ?? input.figureFor, extras)) });
       blocks.push({ type: 'buttons', links: [{ label: 'Open Today', url: todayUrl, primary: !part.pick }] });
