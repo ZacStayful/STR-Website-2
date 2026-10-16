@@ -43,6 +43,7 @@ import { memberFinance } from '../marketplace/most-you-can-pay';
 import { sendEmail, isEmailConfigured } from '../email/send';
 import { siteUrl } from '../url';
 import { emailBriefingsFor } from '../briefing/email';
+import { markBriefingEmailed } from '../briefing/store';
 import { buildDaily } from './message';
 import { renderEmail } from './render-email';
 import { abandonSend, claimSlot, finishSend, markSending, releaseClaim, slotsInUse } from './sends';
@@ -426,6 +427,8 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
     if (lowNotices.has(p.id)) await markLowCreditTold(admin, p.id, now);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, p.id, built.savedIds, now);
+    // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.
+    if (built.message.sections.some((s) => s.key === 'briefing')) await markBriefingEmailed(admin, p.id, claim.day, now);
     if (built.message.kind === 'todays_5') summary.todays5 += 1;
     else summary.changesOnly += 1;
     for (const [i, part] of parts.entries()) {

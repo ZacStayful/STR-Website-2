@@ -32,6 +32,10 @@ export default async function BriefingsAdminPage() {
     ["Useful", (d) => d.useful],
     ["Not for me", (d) => d.notForMe],
     ["Charged", (d) => pence(d.chargedPence)],
+    // R3: the counts the pass took that morning (briefing_day_counts).
+    ["Screened yesterday", (d) => d.counts?.screenedYesterday ?? "–"],
+    ["Live pool", (d) => d.counts?.livePool ?? "–"],
+    ["Went live yesterday", (d) => d.counts?.wentLiveYesterday ?? "–"],
   ];
 
   return (

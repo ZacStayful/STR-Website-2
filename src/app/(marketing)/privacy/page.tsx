@@ -4,7 +4,9 @@ import { siteUrl } from "@/lib/url";
 import { GOALS_EDITOR_HREF } from "@/lib/nav";
 import { TRACKING } from "@/lib/tracking/config";
 import { DEFAULT_VOICE } from "@/lib/voice/settings";
-import { DEFAULT_KNOWLEDGE_SETTINGS } from "@/lib/knowledge/settings";
+import { DEFAULT_KNOWLEDGE_SETTINGS, type KnowledgeSettings } from "@/lib/knowledge/settings";
+import { getBillingSettings } from "@/lib/credit/unit-costs";
+import { readKnowledgeSettings } from "@/lib/knowledge/store-server";
 
 export const metadata: Metadata = {
   title: "Privacy policy — Stayful Intelligence",
@@ -12,7 +14,10 @@ export const metadata: Metadata = {
   alternates: { canonical: siteUrl("/privacy") },
 };
 
-const LAST_UPDATED = "3 October 2026";
+// R3-129: the days and months below are the live settings, read when the page is served.
+export const dynamic = "force-dynamic";
+
+const LAST_UPDATED = "15 October 2026";
 
 /** How long a cookie choice is remembered, in months, as the config sets it. */
 const CONSENT_MONTHS = Math.round(TRACKING.consentDays / 30.4);
@@ -35,8 +40,21 @@ const CONSENT_MONTHS = Math.round(TRACKING.consentDays / 30.4);
  * answers, and how long they are kept were added with Batch 24 (the wording
  * Zac approved, Q5); the months are the default of
  * si_question_retention_months (src/lib/knowledge/settings.ts).
+ * Review R3 (R3-9, R3-129): the typed and spoken chat in the app is named,
+ * with what goes to Anthropic and ElevenLabs for it, and the days and months
+ * are the live settings (si_transcript_retention_days,
+ * si_question_retention_months), the defaults only when they can't be read.
  */
-export default function PrivacyPage() {
+async function liveFigures(): Promise<{ transcriptDays: number; questionMonths: number }> {
+  const [billing, knowledge] = await Promise.all([
+    getBillingSettings().catch(() => null),
+    readKnowledgeSettings().catch((): KnowledgeSettings => DEFAULT_KNOWLEDGE_SETTINGS),
+  ]);
+  return { transcriptDays: billing?.voice.transcriptRetentionDays ?? DEFAULT_VOICE.transcriptRetentionDays, questionMonths: knowledge.questionRetentionMonths };
+}
+
+export default async function PrivacyPage() {
+  const { transcriptDays, questionMonths } = await liveFigures();
   return (
     <section className="section">
       <div className="wrap-narrow">
@@ -56,7 +74,8 @@ export default function PrivacyPage() {
           <li><strong>How you use the service:</strong> pages and deals you view, deals you keep or pass, reports you run, visits and time spent, and which emails or messages you open or click.</li>
           <li><strong>Payments:</strong> your plan, credit balance and transaction history. Card details are handled by Stripe; we never see or store your full card number.</li>
           <li><strong>Feedback</strong> you give on deals, including reasons.</li>
-          <li><strong>Calls and texts with Stayful Intelligence:</strong> if you switch on calls, we keep a record of each call (when, how long, what it cost) and a written transcript of what was said, produced by our AI voice provider. Calls are not recorded as audio. If you text the Stayful Intelligence number, we keep your message and our reply. Transcripts and messages are deleted after {DEFAULT_VOICE.transcriptRetentionDays} days; after that we keep only the questions asked and whether they were answered, to improve the answers. If someone rings from a number we don&apos;t recognise, we keep a scrambled (hashed) version of the number, not the number itself.</li>
+          <li><strong>Calls and texts with Stayful Intelligence:</strong> if you switch on calls, we keep a record of each call (when, how long, what it cost) and a written transcript of what was said, produced by our AI voice provider. Calls are not recorded as audio. If you text the Stayful Intelligence number, we keep your message and our reply. Transcripts and messages are deleted after {transcriptDays} days, and your name comes off the record of the conversation; after that we keep only the questions asked and whether they were answered, to improve the answers. If someone rings from a number we don&apos;t recognise, we keep a scrambled (hashed) version of the number, not the number itself.</li>
+          <li><strong>Chat with Stayful Intelligence:</strong> if you ask it a question in the app, typed or spoken, we keep what you asked and what it answered for {transcriptDays} days; you can delete your chat history any time from the Stayful Intelligence view. After that we keep only the questions asked and whether they were answered, without your name. A spoken question is turned into text by our AI voice provider; we do not keep the audio.</li>
           <li><strong>What Stayful Intelligence remembers:</strong> if you ask it to remember something about you, such as the kind of property you want, it saves that only after you say yes. You can see and delete it any time in <Link href="/account#remembers">Account → What Stayful Intelligence remembers about you</Link>; deleting it removes it for good. It never asks to remember health, money beyond your profile, or anything about other people.</li>
           <li><strong>Bug reports and ideas:</strong> when you send feedback we keep your message, any screenshots (deleted after 90 days), the page you were on, your browser, device and screen size, and the app version.</li>
           <li><strong>Technical data:</strong> IP address, browser and device type, used for security and to keep you signed in.</li>
@@ -89,7 +108,8 @@ export default function PrivacyPage() {
           <li>Stripe (payments)</li>
           <li>Resend (email) and Twilio (text messages)</li>
           <li>Monday.com (our customer records)</li>
-          <li>Anthropic and ElevenLabs (AI written and spoken summaries, only when you use those features; property details only)</li>
+          <li>Anthropic (AI written summaries of properties, and Stayful Intelligence&apos;s answers in the app: your question, your account basics and the figures of your own deals go to it to write the answer, only when you use those features)</li>
+          <li>ElevenLabs (AI spoken summaries, Stayful Intelligence&apos;s spoken answers in the app, and turning a spoken question into text, only when you use those features)</li>
           <li>Anthropic (the questions Stayful Intelligence couldn&apos;t answer, without your name or contact details, so we can group them and draft better answers for us to check)</li>
           <li>ElevenLabs (Stayful Intelligence&apos;s AI voice on phone calls, with Twilio carrying the calls: your number, your first name and what is said on the call, only if you switch calls on or ring the number)</li>
           <li>Google Maps (address and map lookups)</li>
@@ -103,8 +123,9 @@ export default function PrivacyPage() {
         <ul>
           <li>Account and profile details: while your account is open, and deleted within 30 days of closing it.</li>
           <li>Usage and activity records: up to 24 months.</li>
-          <li>Call transcripts and texts to the Stayful Intelligence number: {DEFAULT_VOICE.transcriptRetentionDays} days.</li>
-          <li>Questions asked of Stayful Intelligence and whether they were answered: {DEFAULT_KNOWLEDGE_SETTINGS.questionRetentionMonths} months.</li>
+          <li>Call transcripts and texts to the Stayful Intelligence number: {transcriptDays} days.</li>
+          <li>Chat with Stayful Intelligence in the app: {transcriptDays} days, or until you delete it.</li>
+          <li>Questions asked of Stayful Intelligence and whether they were answered, and the record of each call: {questionMonths} months.</li>
           <li>What Stayful Intelligence remembers about you: until you delete it or close your account.</li>
           <li>Payment and billing records: 6 years, as required for tax.</li>
         </ul>

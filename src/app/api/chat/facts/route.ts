@@ -45,5 +45,6 @@ export async function POST(request: Request) {
   // R3-92: a No is the member's own action too, record only (a Yes is logged by rememberFact as si_fact_confirmed).
   if (result.ok && !result.saved) logActivity(user.id, 'si_fact_declined', { dedupeKey: `si_fact_declined:${String(body.turnId)}` });
   if (result.ok) return Response.json({ ok: true, saved: result.saved, message: result.saved ? 'Done — I’ll remember that. You can see it in Account.' : 'OK, I won’t keep that.' });
-  return Response.json({ ok: false, message: REASONS[result.reason] ?? 'I couldn’t save that just now.' });
+  // retry: the Yes can be given again (R3-93).
+  return Response.json({ ok: false, retry: result.retry, message: REASONS[result.reason] ?? 'I couldn’t save that just now.' });
 }

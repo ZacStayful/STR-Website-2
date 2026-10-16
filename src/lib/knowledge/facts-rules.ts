@@ -40,6 +40,8 @@ export function checkFact(input: { fact: unknown; asked?: unknown; confirmed: un
   const topic = sensitiveTopic(fact);
   if (topic) return { ok: false, reason: 'sensitive', detail: topic };
   for (const [re, what] of PERSONAL) if (re.test(fact)) return { ok: false, reason: 'personal_details', detail: what };
-  const asked = typeof input.asked === 'string' && input.asked.trim() ? input.asked.replace(/\s+/g, ' ').trim().slice(0, FACT_ASKED_MAX_CHARS) : null;
+  // R3-32: the question is context for the fact, never a second copy of something the fact itself may not hold.
+  const askedRaw = typeof input.asked === 'string' && input.asked.trim() ? input.asked.replace(/\s+/g, ' ').trim().slice(0, FACT_ASKED_MAX_CHARS) : null;
+  const asked = askedRaw && !sensitiveTopic(askedRaw) && !PERSONAL.some(([re]) => re.test(askedRaw)) ? askedRaw : null;
   return { ok: true, fact, asked };
 }

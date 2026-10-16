@@ -256,7 +256,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
                   {selection?.nearMiss && whatIfs && (
                     // Batch 22, Part F: what would find a real match, with real counts, in place of the old advice line.
                     <div className="mb-3">
-                      <WhatIfSuggestions items={whatIfs.items} none={whatIfs.none} surface="today" tone="light" changeHref={`/welcome?q=budget&next=${encodeURIComponent("/today")}`} />
+                      <WhatIfSuggestions items={whatIfs.items} none={whatIfs.none} surface="today" tone="light" changeBase={`/welcome?next=${encodeURIComponent("/today")}`} />
                     </div>
                   )}
                   {selection?.nearMiss && !whatIfs && (

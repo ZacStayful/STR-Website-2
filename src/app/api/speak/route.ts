@@ -5,6 +5,10 @@ import { runMetered } from "@/lib/credit/context";
 import { InsufficientCreditError } from "@/lib/credit/ledger";
 import { insufficientCreditResponse } from "@/lib/credit/http";
 import { meter } from "@/lib/credit/meter";
+import { getUnitCostTable } from "@/lib/credit/unit-costs";
+import { priceFor } from "@/lib/credit/pricing";
+import { quoterFor } from "@/lib/credit/quote-server";
+import { chargeLabel } from "@/lib/chat/format";
 import { VOICE, ttsVoiceSettings, voiceId as personaVoiceId } from "@/lib/persona/stayful-intelligence";
 
 // Streams audio back from ElevenLabs. Give it headroom over the 10s Hobby
@@ -41,10 +45,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "No text to speak." }, { status: 400 });
   }
 
-  // Credit: ElevenLabs bills per character, known before the call.
+  // Credit: ElevenLabs bills per character, known before the call, so the price is held first
+  // (R3-28: never below zero, and a member out of credit is told before anything is synthesised).
+  const adminUser = isAdminEmail(user.email);
+  const basePence = adminUser ? 0 : priceFor(await getUnitCostTable(), "elevenlabs", "character", text.length).basePence;
   let action;
   try {
-    action = await startAction({ userId: user.id, admin: isAdminEmail(user.email), action: "speak" });
+    action = await startAction({ userId: user.id, admin: adminUser, action: "speak", maxBasePence: basePence, requireCredit: true });
   } catch (err) {
     if (err instanceof InsufficientCreditError) return insufficientCreditResponse(err, "speak");
     throw err;
@@ -89,11 +96,21 @@ export async function POST(request: Request) {
     return Response.json({ error: "Voice synthesis failed." }, { status: 502 });
   }
 
+  // R3-1: what this answer's voice cost the member, for the page to show under the answer.
+  let charged: string | null = null;
+  if (!adminUser && basePence > 0 && action.ctx.userId) {
+    try {
+      charged = chargeLabel((await quoterFor(action.ctx.userId, false)).label(basePence).facePence);
+    } catch {
+      charged = null;
+    }
+  }
   // Stream the MP3 straight through to the client.
   return new Response(upstream.body, {
     headers: {
       "content-type": "audio/mpeg",
       "cache-control": "no-store",
+      ...(charged ? { "x-si-voice-charge": charged } : {}),
     },
   });
 }

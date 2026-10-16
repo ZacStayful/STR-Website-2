@@ -14,6 +14,7 @@
  *
  * Pure.
  */
+import { BANNED_GROUPS, phraseRe } from '../persona/stayful-intelligence.ts';
 
 export interface Figure {
   /** As written, e.g. "£38k". */
@@ -25,8 +26,9 @@ export interface Figure {
 }
 
 // £ optional; 1,234 or 1234; .5 decimals; then k / m / bn / % / p stuck to it, but only when no
-// other letter follows (so "£999pcm" is 999 and "18months" is 18, never "£9.99" or "18 million").
-const FIGURE = /(£)?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:(k|m|bn|%|p)(?![a-z]))?(?![0-9])/gi;
+// other letter follows (so "£999pcm" is 999 and "18months" is 18, never "£9.99" or "18 million"); or a
+// unit in words after it (Review R3, R3-35: "5 pounds", "8 pence", "10 percent" are money and percent too).
+const FIGURE = /(£)?\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:(k|m|bn|%|p)(?![a-z])|\s?(pounds?|pence|quid|per\s?cent|percent)(?![a-z]))?(?![0-9])/gi;
 
 /** Every figure written in a text, in order. */
 export function figuresIn(text: string): Figure[] {
@@ -36,12 +38,13 @@ export function figuresIn(text: string): Figure[] {
     const whole = m[2].replace(/,/g, '');
     let value = Number(m[3] ? `${whole}.${m[3]}` : whole);
     if (!Number.isFinite(value)) continue;
-    const suffix = (m[4] ?? '').toLowerCase();
+    const word = (m[5] ?? '').toLowerCase().replace(/\s+/g, '');
+    const suffix = word ? (word === 'pence' ? 'p' : word.startsWith('percent') ? '%' : '£') : (m[4] ?? '').toLowerCase();
     if (suffix === 'k') value *= 1_000;
     else if (suffix === 'm') value *= 1_000_000;
     else if (suffix === 'bn') value *= 1_000_000_000;
     else if (suffix === 'p') value /= 100;
-    out.push({ raw: m[0].trim(), value, money: pound || suffix === 'p', percent: suffix === '%' });
+    out.push({ raw: m[0].trim(), value, money: pound || suffix === 'p' || suffix === '£', percent: suffix === '%' });
   }
   return out;
 }
@@ -103,11 +106,15 @@ export function clampWords(text: string, maxWords: number): string {
   return end > 0 ? words.slice(0, end + 1) : `${words}…`;
 }
 
-/** Questions are plain text: control characters out, whitespace collapsed, cut to the log's limit. */
+/**
+ * Questions are plain text: control characters out, angle brackets out (a
+ * typed "<approved_answer>" can never pass for one of ours in the prompt;
+ * Review R3, R3-88), whitespace collapsed, cut to the log's limit.
+ */
 export function cleanQuestion(raw: unknown, maxChars: number): string {
   if (typeof raw !== 'string') return '';
   return raw
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\u0000-\u001f\u007f<>]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxChars);
@@ -115,9 +122,13 @@ export function cleanQuestion(raw: unknown, maxChars: number): string {
 
 /**
  * Advice the chat must never give (the brief: "Should I buy this?" gets the
- * numbers and "Get a survey and your own advice before you offer."). A short,
- * explicit list: wording that is only ever a recommendation. Whole words,
- * any case.
+ * numbers and "Get a survey and your own advice before you offer."). The
+ * chat's own list (wording that is only ever a recommendation) plus the
+ * persona's banned advice, guarantees and predictions, matched the way the
+ * briefing validator matches them (Review R3, R3-34: one list governs every
+ * written channel). Whole words, any case. A phrase inside a caveat or a
+ * condition ("before you buy it", "aren't guaranteed", "if you make an
+ * offer") is not advice.
  */
 const ADVICE: readonly string[] = [
   'i recommend', "i'd recommend", 'i would recommend', 'my advice', 'my recommendation',
@@ -125,14 +136,68 @@ const ADVICE: readonly string[] = [
   'go for it', 'snap it up', 'buy it now', 'worth buying', 'a good investment', 'a safe bet',
   'guaranteed income', 'guaranteed return', 'guaranteed profit', 'is guaranteed to',
 ];
+/** The report's own forecast is a product the chat may name, not a prediction it makes: these stay the validator's. */
+const PRODUCT_WORDS: ReadonlySet<string> = new Set(['forecast', 'expect', 'expected to', 'predict']);
+const PHRASES: ReadonlyArray<{ p: string; re: RegExp }> = [
+  ...new Set([...ADVICE, ...BANNED_GROUPS.advice, ...BANNED_GROUPS.guarantees, ...BANNED_GROUPS.predictions.filter((p) => !PRODUCT_WORDS.has(p))]),
+].map((p) => ({ p, re: new RegExp(phraseRe(p).source, 'gi') }));
+/** What can stand just before a phrase and make it a caveat or a condition rather than advice. */
+const CAVEAT = /(?:\b(?:not|never|no|nothing|without|aren't|isn't|don't|doesn't|can't|cannot|won't|before|if|whether|unless|until)(?:\s+\w+){0,2}|\b(?:want|wants|decide|decided|plan|planning|going)\s+to)\s*$/;
 
 /** Whether an answer is only the don't-know line (or says it): never charged, whatever form the model put it in. */
 export function saysDontKnow(text: string): boolean {
   return /i don['’]t know that one yet/i.test(text);
 }
 
+const NON_ANSWER: readonly RegExp[] = [
+  /\b(?:don['’]t|do not|cannot|can['’]t|couldn['’]t|unable to|not able to) (?:know|find|see|tell|help|answer|locate|access|say)\b/i,
+  /\b(?:don['’]t|do not) have (?:that|any|the|this) (?:information|details?|data)\b/i,
+  /\bno (?:information|details?|data|record|way of knowing)\b/i,
+  /\bnothing (?:on|about|for) (?:that|this)\b/i,
+  /\b(?:have|['’]ve) no (?:way|idea)\b/i,
+  /\bi['’]m afraid i (?:don['’]t|can['’]t)\b/i,
+];
+
+/**
+ * Review R3 (R3-85): a don't-know in the model's own words ("I can't find
+ * anything on that", "I don't have that information") is a non-answer when
+ * it carries no figure and no look-up fed it, and is never charged. Behind a
+ * look-up, "I can't see a 3-bed in LS6 among your deals" is a real (negative)
+ * answer.
+ */
+export function isNonAnswer(text: string, o: { usedTools: boolean }): boolean {
+  if (saysDontKnow(text)) return true;
+  if (o.usedTools || figuresIn(text).length > 0 || wordCount(text) > 60) return false;
+  return NON_ANSWER.some((re) => re.test(text));
+}
+
 /** The advice phrases an answer uses (none: it may be shown). */
 export function adviceIn(text: string): string[] {
   const t = ` ${text.toLowerCase().replace(/[’']/g, "'").replace(/\s+/g, ' ')} `;
-  return ADVICE.filter((p) => new RegExp(`(^|[^a-z'])${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`).test(t));
+  const out: string[] = [];
+  for (const { p, re } of PHRASES) {
+    for (const m of t.matchAll(re)) {
+      if (CAVEAT.test(t.slice(0, (m.index ?? 0) + m[1].length))) continue;
+      out.push(p);
+      break;
+    }
+  }
+  return out;
+}
+
+/** The text streamed so far without its last, possibly unfinished, token: what the stream guard checks. */
+export function settledText(text: string): string {
+  return text.replace(/\S*$/, '');
+}
+
+/**
+ * Review R3 (R3-36): run on the text as it streams, against the figures the
+ * round was given. True at the first figure the model was not given or the
+ * first advice phrase: the page clears what it has shown and the rest of the
+ * round stays off the screen (the check on the whole answer then refuses it,
+ * or shows it if the figure turns out to be allowed).
+ */
+export function streamDisallowed(text: string, allowed: ReadonlySet<string>): boolean {
+  const settled = settledText(text);
+  return !checkFigures(settled, allowed).ok || adviceIn(settled).length > 0;
 }

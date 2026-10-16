@@ -43,8 +43,12 @@ export const SLUG_PATTERN = /^[a-z][a-z0-9_]{1,47}$/;
  * answer. Change one only with the code it describes.
  */
 export const PRODUCT_FACTS = {
-  /** The Full analysis report's sections (src/lib/pdf/report). */
-  reportSections: 10,
+  /**
+   * The most sections a Full analysis report has (src/lib/pdf/sections.ts
+   * ALL; the test ties the two). A report has the ones its deal needs, so no
+   * answer may quote this as the count (Review R3, R3-21): "up to".
+   */
+  reportSectionsMax: 10,
   /** The Full analysis forecast's months. */
   forecastMonths: 12,
   /** Stayful Management's fee, % of gross plus VAT (src/app/str-report/_lib/calculations.ts). */
@@ -58,11 +62,14 @@ export const PRODUCT_FACTS = {
 export const TEAM_EMAIL = 'hello@stayful.co.uk';
 
 /**
- * What a call says for a figure that could not be read at dial time. The
- * entry is marked stale at the same moment and the agent re-synced without
- * it, so this is said at most until the next sync.
+ * What a call's prompt carries for a figure that could not be read at dial
+ * time. The entry is marked stale at the same moment and the agent re-synced
+ * without it, so this stands at most until the next sync. Review R3 (R3-77):
+ * an instruction to the agent rather than words to read out, since it lands
+ * mid-sentence ("cost about … a minute"): the agent says the figure is in
+ * the app instead of reading the fallback aloud.
  */
-export const CALL_FIGURE_FALLBACK = 'shown in the app';
+export const CALL_FIGURE_FALLBACK = "(this figure isn't available right now: say it's shown in the app, and don't guess it)";
 
 /** Credit bands for {credit_balance_band} (view and chat only, never a call): the upper bounds in pence. */
 export const BALANCE_BANDS_PENCE = [500, 2000] as const;
@@ -125,18 +132,25 @@ export const SENSITIVE_TERMS: Readonly<Record<string, readonly string[]>> = {
   health: ['health', 'ill', 'illness', 'sick', 'disease', 'diagnosed', 'diagnosis', 'cancer', 'diabetes', 'pregnant', 'pregnancy', 'disabled', 'disability', 'depression', 'depressed', 'anxiety', 'mental', 'medication', 'medicine', 'hospital', 'therapy', 'therapist', 'doctor', 'surgery', 'adhd', 'autism', 'autistic'],
   identity: ['religion', 'religious', 'christian', 'muslim', 'jewish', 'hindu', 'sikh', 'church', 'mosque', 'synagogue', 'ethnic', 'ethnicity', 'race', 'racial', 'gay', 'lesbian', 'bisexual', 'transgender', 'sexuality', 'sexual', 'political', 'politics', 'vote', 'voted', 'union', 'criminal', 'conviction', 'convicted', 'prison'],
   money: ['salary', 'wage', 'wages', 'payslip', 'debt', 'debts', 'arrears', 'bankrupt', 'bankruptcy', 'ccj', 'iva', 'benefits', 'universal credit', 'credit score', 'credit rating', 'overdraft', 'divorce', 'divorced', 'inheritance', 'pension', 'redundant', 'redundancy'],
-  people: ['wife', 'husband', 'partner', 'girlfriend', 'boyfriend', 'son', 'daughter', 'kids', 'children', 'child', 'mum', 'mother', 'dad', 'father', 'brother', 'sister', 'friend', 'colleague', 'neighbour', 'neighbor', 'he', 'she', 'him', 'her', 'his', 'hers'],
+  // Relationship nouns only: a bare pronoun is how the chat's propose_fact tool writes the member's own preference
+  // ("He only wants 2-bed flats"), which is not about another person (Review R3, R3-43).
+  people: ['wife', 'husband', 'partner', 'girlfriend', 'boyfriend', 'son', 'daughter', 'kids', 'children', 'child', 'mum', 'mother', 'dad', 'father', 'brother', 'sister', 'friend', 'colleague', 'neighbour', 'neighbor'],
 };
 
 // ── Matching ────────────────────────────────────────────────────────────────
 
-/** Words that carry no meaning for matching. */
+/**
+ * Words that carry no meaning for matching. 'why' and 'question' are kept
+ * as tokens (Review R3, R3-10): "Why did you call me?" and "Why was I charged
+ * for a question?" need them to stand apart from the entries they would
+ * otherwise tie with.
+ */
 export const STOPWORDS: ReadonlySet<string> = new Set([
   'a', 'an', 'the', 'and', 'or', 'but', 'if', 'of', 'to', 'in', 'on', 'at', 'for', 'from', 'by', 'with', 'about', 'as', 'into', 'is', 'are', 'was', 'were', 'be', 'been', 'am',
   'do', 'does', 'did', 'done', 'i', 'me', 'my', 'mine', 'we', 'us', 'our', 'you', 'your', 'yours', 'it', 'its', 'this', 'that', 'these', 'those', 'there', 'here',
   'can', 'could', 'would', 'should', 'will', 'shall', 'may', 'might', 'must', 'just', 'so', 'then', 'than', 'too', 'very', 'really', 'please', 'thanks', 'thank',
-  'hi', 'hello', 'hey', 'ok', 'okay', 'um', 'uh', 'erm', 'er', 'like', 'yeah', 'yes', 'no', 'well', 'right', 'oh', 'actually', 'basically', 'quick', 'question',
-  'what', 'whats', 'how', 'hows', 'when', 'where', 'which', 'who', 'why', 'tell', 'know', 'want', 'wanted', 'wondering', 'get', 'got', 'any', 'some', 'one',
+  'hi', 'hello', 'hey', 'ok', 'okay', 'um', 'uh', 'erm', 'er', 'like', 'yeah', 'yes', 'no', 'well', 'right', 'oh', 'actually', 'basically', 'quick',
+  'what', 'whats', 'how', 'hows', 'when', 'where', 'which', 'who', 'tell', 'know', 'want', 'wanted', 'wondering', 'get', 'got', 'any', 'some', 'one',
   'have', 'has', 'had', 'having',
 ]);
 

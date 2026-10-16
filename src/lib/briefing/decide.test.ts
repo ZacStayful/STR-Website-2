@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BRIEFING_CEILING_PENCE, afterWriting, ceilingPence, dayChargeEstimate, decide, type DecideInput } from './decide.ts';
+import { BRIEFING_CEILING_PENCE, afterWriting, cappedTokens, ceilingPence, dayChargeEstimate, decide, type DecideInput } from './decide.ts';
 import { keptDropsFrom, passesByTypeFrom, stageEntriesFrom, type CardLite, type TrackedLite } from './tracked-facts.ts';
 import { buildFactSheet } from './facts.ts';
 import { buildAiInput } from './ai-input.ts';
@@ -112,4 +112,21 @@ test('admin page: generated, rejected, template only, seen, played, feedback and
     row({ status: 'skipped', ai_attempted: false }),
   ]);
   assert.deepEqual(d, { day: '2026-10-06', generated: 1, rejected: 1, templateOnly: 1, skipped: 1, seenInApp: 1, seenByEmail: 1, played: 1, useful: 1, notForMe: 1, chargedPence: 1.4 });
+});
+
+test('R3: the ceiling is a setting; the code default applies only when it is absent', () => {
+  assert.deepEqual(decide({ ...base, ceiling: 2.9, ceilingMax: 2.5 }), { kind: 'template', reason: 'over_ceiling' });
+  assert.deepEqual(decide({ ...base, ceiling: 2.9, ceilingMax: 3.5 }), { kind: 'ai' });
+  assert.deepEqual(decide({ ...base, ceiling: BRIEFING_CEILING_PENCE + 0.01 }), { kind: 'template', reason: 'over_ceiling' });
+});
+
+test('R3: the real tokens are charged, but never past the ceiling', () => {
+  // 0.000395p an input token, 0.001975p an output token (Haiku 4.5 x 5).
+  const rates = { inputPence: 0.000395, outputPence: 0.001975 };
+  assert.deepEqual(cappedTokens({ inputTokens: 1000, outputTokens: 300, ...rates, capPence: 3 }), { inputTokens: 1000, outputTokens: 300, scaled: false });
+  const capped = cappedTokens({ inputTokens: 4000, outputTokens: 1500, ...rates, capPence: 3 });
+  assert.equal(capped.scaled, true);
+  assert.ok(capped.inputTokens * rates.inputPence + capped.outputTokens * rates.outputPence <= 3 + 1e-9);
+  assert.ok(capped.inputTokens < 4000 && capped.outputTokens < 1500);
+  assert.deepEqual(cappedTokens({ inputTokens: 10, outputTokens: 10, ...rates, capPence: 0 }), { inputTokens: 10, outputTokens: 10, scaled: false });
 });

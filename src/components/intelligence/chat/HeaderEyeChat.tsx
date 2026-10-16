@@ -92,7 +92,7 @@ export function HeaderEyeChat({ level, style, onDark, chat }: { level: EyeLevel;
             </span>
           </div>
           <div className="min-h-0 flex-1">
-            <QuickChat hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} voice={chat.voice} inputId="si-quick-panel-q" autoFocus />
+            <QuickChat hintPence={chat.quickHintPence} fullHintPence={chat.fullHintPence} floorPence={chat.quickFloorPence} voice={chat.voice} speakHintPence={chat.speakQuickHintPence} inputId="si-quick-panel-q" autoFocus />
           </div>
         </div>
       )}

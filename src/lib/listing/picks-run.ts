@@ -72,6 +72,7 @@ import { projectClearedUrls } from "../project/read-server";
 import { typesShown, type DealType } from "../profile/deal-types";
 import { siteUrl } from "../url";
 import { emailBriefingsFor } from "../briefing/email";
+import { markBriefingEmailed } from "../briefing/store";
 import { revealedFor } from "../intelligence/reveal-server";
 import { recordScanDays } from "../home/scan-record";
 import { siSavedPairs } from "../standout/saved-server";
@@ -543,13 +544,16 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     // their daily slot is already spent. The pick itself is chosen at send
     // time, after page reads a dry run does not make.
     const ids = memberIds;
-    const [slots, plans, alertsOn, pending, lowNotices] = await Promise.all([
+    const [slots, plans, alertsOn, pending, lowNotices, savedForYou, briefings] = await Promise.all([
       slotsInUse(admin, ids, "daily"),
       todayPlans(admin, members.map(memberContextOf), new Date(), { create: false }),
       trackedAlertsOn(admin, ids),
       pendingChanges(admin, ids),
       // Batch 20, Part B: who would get the £5 low-credit decision at the top of their email.
       lowCreditNoticesFor(admin, [...new Set(ids)].filter((id) => payerIn(payers, id).payerId === id), new Date(), { preview: true }),
+      // R3-140: what else the email would carry: the "Saved for you" lines and the morning briefing (read-only).
+      savedForYouFor(admin, [...new Set(ids)], siteUrl()),
+      emailBriefingsFor(siteUrl(), [...new Set(ids)]),
     ]);
     return done({
       status: 200,
@@ -580,6 +584,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
               changes: changes.map((c) => ({ id: c.id, type: c.alertType })),
               changesSwitch: alertsOn.has(m.id),
               lowCredit: lowNotices.get(m.id)?.kind ?? null,
+              savedForYou: (savedForYou.get(m.id) ?? []).length,
+              briefing: briefings.has(m.id),
               wouldCharge: m.admin
                 ? 0
                 : mode === "per_day"
@@ -846,10 +852,17 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
   if (urlToDealId.size > 0) {
     const urlOf = new Map([...urlToDealId].map(([url, id]) => [id, url]));
     const saved = await siSavedPairs(admin, [...new Set(members.map((m) => m.id))], [...urlToDealId.values()]);
-    for (const key of saved) {
-      const [userId, dealId] = key.split(":");
-      const url = urlOf.get(dealId);
-      if (url) sentByUser.set(userId, new Set([...(sentByUser.get(userId) ?? []), url]));
+    if (saved === null) {
+      // R3-108: unreadable: any pool deal might be one Stayful Intelligence saved (a free open), so no pool deal is
+      // anyone's charged pick this pass; the listings the searches found still are.
+      console.error("[sourcing] SI saves unreadable: no pool deal is a pick this pass");
+      for (const m of members) sentByUser.set(m.id, new Set([...(sentByUser.get(m.id) ?? []), ...urlToDealId.keys()]));
+    } else {
+      for (const key of saved) {
+        const [userId, dealId] = key.split(":");
+        const url = urlOf.get(dealId);
+        if (url) sentByUser.set(userId, new Set([...(sentByUser.get(userId) ?? []), url]));
+      }
     }
   }
 
@@ -1651,6 +1664,8 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
     if (lowNotices.has(userId)) await markLowCreditTold(admin, userId);
     // Batch 25: the "Saved for you" deals in it are told.
     if (built.savedIds.length > 0) await markSavedEmailed(admin, userId, built.savedIds);
+    // R3-62: the briefing went with it: "seen by email" and the Today card can now rely on that.
+    if (built.message.sections.some((s) => s.key === "briefing")) await markBriefingEmailed(admin, userId, day, new Date());
     summary.sections += parts.length;
     summary.unfunded += unfunded.length;
     const sentAt = new Date().toISOString();

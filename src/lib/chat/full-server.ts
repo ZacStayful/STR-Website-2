@@ -10,8 +10,10 @@ import 'server-only';
  *   runFull      the look-up loop: each round's max_tokens sized to what is
  *                left of the hold, so the charge can never pass the ceiling;
  *                text streamed as it comes (cleared if the round turns out to
- *                be a look-up); the answer checked (no figure it wasn't given,
- *                no advice) before it is charged
+ *                be a look-up, and cleared at the first figure it wasn't
+ *                given or advice phrase, Review R3 R3-36); the answer checked
+ *                (no figure it wasn't given, no advice, not a don't-know in
+ *                its own words) before it is charged
  *
  * A manual loop rather than the SDK's tool runner: every round is metered,
  * the budget is re-checked between rounds, the member is bound on the server
@@ -30,11 +32,11 @@ import { SeatPausedError, type StartedAction } from '../credit/action';
 import { getUnitCostTable } from '../credit/unit-costs';
 import type { UnitCostTable } from '../credit/costs';
 import { logActivity } from '../activity/log';
-import { CAPPED_LINE, DONT_KNOW_LINE, FULL_HARD_DEADLINE_MS, FULL_LOOKUP_DEADLINE_MS, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, LOOKUP_ROUND_MAX_TOKENS, MAX_QUESTION_CHARS, MAX_TOOL_RESULT_CHARS, MIN_ROUND_TIME_MS, MODEL_UNITS } from './config';
-import { affordsLookUp, approxTokens, budgetFor, costOf, promptTokensOf, roundMaxTokens, unitsPriced, usageOf, NO_USAGE, type RoundUsage } from './budget';
-import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, saysDontKnow } from './guard';
+import { CAPPED_LINE, DONT_KNOW_LINE, FULL_FINAL_ROUND_MIN_TOKENS, FULL_HARD_DEADLINE_MS, FULL_LOOKUP_DEADLINE_MS, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, FULL_TOOL_SYSTEM_TOKENS, LOOKUP_ROUND_MAX_TOKENS, MAX_QUESTION_CHARS, MIN_ROUND_TIME_MS, MODEL_UNITS, FACT_PROMPT } from './config';
+import { affordsLookUp, approxTokens, budgetFor, costOf, lookUpFloorPence, promptTokensOf, roundFailureState, roundMaxTokens, unitsPriced, usageOf, LOOKUP_RESULT_TOKENS, NO_USAGE, type RoundUsage } from './budget';
+import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, isNonAnswer, streamDisallowed } from './guard';
 import { buildButtons } from './actions';
-import { accountBlock, fullSystemPrompt, historyMessages, questionBlock } from './prompts';
+import { accountBlock, fullPromptTokens, fullSystemPrompt, historyMessages, questionBlock } from './prompts';
 import { ANSWER_EXTRAS, CHAT_TOOLS, parseToolInput, statusFor } from './tools';
 import { chargeLabel } from './format';
 import { stateReply, type ChatReply, type FullEvent } from './reply';
@@ -44,11 +46,6 @@ import type { ChatSettings } from './settings';
 import { chatContext } from './context-server';
 import { chatTools, newAnswerState } from './tools-server';
 import type { QuestionOutcome } from '../voice/config';
-
-/** A round with less room than this answers instead of looking anything else up. */
-const FINAL_ROUND_MIN_TOKENS = 350;
-/** Sonnet 5.5's tool-use system prompt (auto), per the pricing page. */
-const TOOL_SYSTEM_TOKENS = 286;
 
 export type { FullEvent };
 
@@ -84,7 +81,10 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
     console.error('[chat] full: no unit prices or no API key');
     return { kind: 'reply', reply: stateReply('failed') };
   }
-  const budget = budgetFor({ ceilingPence: settings.fullCeilingPence, floorPence: settings.fullFloorPence, spendableBasePence: spendable, admin: member.admin });
+  // R3-27: the floor is at least the hold that affords one look-up, so a member just above the setting's floor is
+  // told to top up rather than paid "I don't know" (and a knowledge gap) for every question.
+  const floorPence = Math.max(settings.fullFloorPence, lookUpFloorPence({ table, units: MODEL_UNITS.full, markup: settings.markup, promptTokens: fullPromptTokens(settings.fullMaxWords), ceilingPence: settings.fullCeilingPence }) ?? 0);
+  const budget = budgetFor({ ceilingPence: settings.fullCeilingPence, floorPence, spendableBasePence: spendable, admin: member.admin });
   if (budget === null) return { kind: 'reply', reply: topUp(member) };
 
   const inserted = await insertTurn(admin, member, input.clientTurnId, 'full');
@@ -156,7 +156,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     const messages: Anthropic.MessageParam[] = historyMessages(conv.history);
     messages.push({ role: 'user', content: [{ type: 'text', text: `<account>\n${account}\n</account>` }, { type: 'text', text: questionBlock(question) }] });
     const system: Anthropic.TextBlockParam[] = [{ type: 'text', text: fullSystemPrompt(settings.fullMaxWords), cache_control: { type: 'ephemeral' } }];
-    const fixedTokens = approxTokens(system[0].text + JSON.stringify(CHAT_TOOLS)) + TOOL_SYSTEM_TOKENS;
+    const fixedTokens = approxTokens(system[0].text + JSON.stringify(CHAT_TOOLS)) + FULL_TOOL_SYSTEM_TOKENS;
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: FULL_ROUND_TIMEOUT_MS, maxRetries: 0 });
     let answer = '';
@@ -164,6 +164,9 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     let capped = false;
     let spent = 0;
     let cachedTokens = 0;
+    /** R3-36: the page was told to clear this round's text; nothing more of it is shown until the whole answer is checked. */
+    let hidden = false;
+    const allowedNow = () => allowedFigures([account, question, ...state.sources, ...conv.history.map((h) => h.text)]);
 
     for (let round = 0; ; round++) {
       if (live.gone()) return await fail('did_not_finish');
@@ -179,11 +182,18 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       const mayLookUp =
         round < settings.fullMaxToolRounds &&
         elapsed < FULL_LOOKUP_DEADLINE_MS &&
-        room >= FINAL_ROUND_MIN_TOKENS &&
-        affordsLookUp({ table, units, markup: settings.markup, budgetPence: job.budget, spentPence: spent, promptTokens, cachedTokens, room: lookUpRoom, resultTokens: approxTokens('x'.repeat(MAX_TOOL_RESULT_CHARS)) * 2, finalTokens: FINAL_ROUND_MIN_TOKENS });
+        room >= FULL_FINAL_ROUND_MIN_TOKENS &&
+        affordsLookUp({ table, units, markup: settings.markup, budgetPence: job.budget, spentPence: spent, promptTokens, cachedTokens, room: lookUpRoom, resultTokens: LOOKUP_RESULT_TOKENS, finalTokens: FULL_FINAL_ROUND_MIN_TOKENS });
       let text = '';
       let usage: RoundUsage = NO_USAGE;
       let final: Anthropic.Message;
+      // R3-40: the SDK's timeout stops once the headers arrive; the signal bounds the streamed body too, so a slow
+      // round can never outlive the route (the turn would stay pending and its tokens unmetered).
+      const roundMs = Math.min(FULL_ROUND_TIMEOUT_MS, timeLeft);
+      const roundSignal = AbortSignal.timeout(roundMs);
+      // The figures this round may write: what it was given before it started (the final check reads them again after).
+      const allowed = allowedNow();
+      hidden = false;
       const stream = client.messages.stream({
         model: FULL_MODEL,
         max_tokens: mayLookUp ? lookUpRoom : room,
@@ -195,7 +205,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         // Sonnet 5.5 can't switch thinking off; between_tools keeps it to short notes between look-ups (as the gap job does).
         thinking: { type: 'between_tools' } as never,
         cache_control: { type: 'ephemeral' },
-      }, { timeout: Math.min(FULL_ROUND_TIMEOUT_MS, timeLeft) });
+      }, { timeout: roundMs, signal: roundSignal });
       live.onGone(() => stream.abort());
       try {
         for await (const event of stream) {
@@ -204,6 +214,13 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
           else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             text += event.delta.text;
             if (!firstTextAt) firstTextAt = Date.now();
+            if (hidden) continue;
+            // R3-36: a figure the model wasn't given, or advice, is never on the screen while the round runs.
+            if (streamDisallowed(text, allowed)) {
+              hidden = true;
+              send({ type: 'clear' });
+              continue;
+            }
             send({ type: 'delta', text: event.delta.text });
           }
         }
@@ -215,9 +232,10 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         // charged. The output so far is estimated from the text streamed (the final count never came).
         if (usage === NO_USAGE) await logFailedCall(turn, member);
         else rounds.push({ ...usage, output: Math.max(usage.output, approxTokens(text)) });
-        if (live.gone() || err instanceof Anthropic.APIUserAbortError) return await fail('did_not_finish');
-        console.error('[chat] full round failed:', (err as Error)?.message ?? err);
-        return await fail('failed');
+        const state = roundFailureState({ gone: live.gone(), timedOut: roundSignal.aborted, aborted: err instanceof Anthropic.APIUserAbortError });
+        if (state === 'out_of_room') console.warn(`[chat] full round ${round} cut by its clock after ${roundMs}ms`);
+        else if (state === 'failed') console.error('[chat] full round failed:', (err as Error)?.message ?? err);
+        return await fail(state);
       }
       spent = costOf(table, units, rounds, settings.markup).basePence;
       cachedTokens = promptTokensOf(usage);
@@ -237,7 +255,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
           answer = text.trim();
           break;
         }
-        if (text) send({ type: 'clear' });
+        if (text && !hidden) send({ type: 'clear' });
         const status = statusFor(calls.map((c) => c.name));
         send(status ? { type: 'status', text: status } : { type: 'thinking' });
         messages.push({ role: 'assistant', content: final.content });
@@ -272,18 +290,21 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     let replyState: ChatReply['state'];
     let shown: string;
     const refused = stop === 'refusal';
-    const dontKnow = !answer || refused || saysDontKnow(answer);
+    // R3-85: a don't-know in the model's own words, with no figure and no look-up behind it, is not an answer either.
+    const usedTools = state.toolsUsed.some((t) => !ANSWER_EXTRAS.has(t));
+    const dontKnow = !answer || refused || isNonAnswer(answer, { usedTools });
     if (dontKnow) {
       replyState = 'unknown';
       outcome = 'could_not_answer';
       shown = DONT_KNOW_LINE;
-      if (answer !== DONT_KNOW_LINE) send({ type: 'replace', text: shown });
+      if (hidden || answer !== DONT_KNOW_LINE) send({ type: 'replace', text: shown });
     } else {
-      const allowed = allowedFigures([account, question, ...state.sources, ...conv.history.map((h) => h.text)]);
+      const allowed = allowedNow();
       const figures = checkFigures(answer, allowed);
       const advice = adviceIn(answer);
       if (!figures.ok || advice.length > 0) {
-        console.warn(`[chat] full answer refused: ${!figures.ok ? `figures ${figures.figures.join(', ')}` : `advice ${advice.join(', ')}`}`);
+        // R3-86: counts only; what the model wrote for the member is never logged.
+        console.warn(`[chat] full answer refused: ${!figures.ok ? `${figures.figures.length} figure(s) it was not given` : `${advice.length} advice phrase(s)`}`);
         replyState = 'unknown';
         outcome = 'low_confidence';
         shown = DONT_KNOW_LINE;
@@ -293,7 +314,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         outcome = 'answered';
         shown = clampWords(answer, settings.fullMaxWords);
         if (capped) shown = `${shown} ${CAPPED_LINE}`;
-        if (shown !== answer) send({ type: 'replace', text: shown });
+        if (hidden || shown !== answer) send({ type: 'replace', text: shown });
       }
     }
     const buttons = replyState === 'answer' ? state.buttons : [];
@@ -317,7 +338,8 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
         questionId: logged.questionId,
         logSeq: logged.agentSeq,
         capped,
-        factProposal: factProposal ? { fact: factProposal, asked: question } : null,
+        // R3-32: what the page asks, not the member's whole question (which may hold what a fact never may).
+        factProposal: factProposal ? { fact: factProposal, asked: FACT_PROMPT } : null,
         buttons,
         capPence: job.budget,
       },

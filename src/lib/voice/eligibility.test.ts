@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkEligibility, type EligibilityInput } from './eligibility.ts';
+import { checkEligibility, LOW_CREDIT_NO_ROW, type EligibilityInput } from './eligibility.ts';
 import { DEFAULT_VOICE } from './settings.ts';
 
 const MON_NOON = new Date('2026-10-05T11:00:00Z'); // 12:00 BST, Monday
@@ -89,4 +89,9 @@ test('Batch 22f: a management company without deal-finding gets no intro and no 
   assert.deepEqual(checkEligibility(base({ type: 'intro', managementOnly: true })), { ok: false, reason: 'management_no_deals', skip: true });
   // Deal-finding switched on: the usual rules.
   assert.deepEqual(checkEligibility(base({ type: 'intro', managementOnly: false })), { ok: true });
+});
+
+test('R3-15: a passing reason leaves the landing\'s low-credit call open; a lasting one blocks it', () => {
+  for (const r of ['no_number', 'no_credit', 'in_flight', 'daily_limit', 'intro_day'] as const) assert.ok(LOW_CREDIT_NO_ROW.has(r), r);
+  for (const r of ['first_days', 'calls_off', 'not_owner', 'auto_topup_on', 'stale', 'management_no_deals'] as const) assert.ok(!LOW_CREDIT_NO_ROW.has(r), r);
 });

@@ -1,6 +1,7 @@
 import { SMS_NOTIFICATION_TYPES, type NotificationState } from "@/lib/notifications/registry";
 import type { SmsContact } from "@/lib/sms/store";
 import { maskPhone } from "@/lib/sms/phone";
+import { formatPence } from "@/lib/credit/deal-pricing";
 import { setNotificationAction } from "./actions";
 import { setSmsEnabledAction } from "./sms-actions";
 import { ChangeNumber, VerifyNumber } from "./VerifyNumber";
@@ -20,6 +21,7 @@ export function SmsSection({
   askedAtSignup,
   suggestedPhone,
   monthlyCap,
+  siTextPence,
 }: {
   contact: SmsContact | null;
   state: NotificationState;
@@ -30,9 +32,12 @@ export function SmsSection({
   /** Their signup mobile, when it is a UK mobile: pre-filled, never used unverified. */
   suggestedPhone: string | null;
   monthlyCap: number;
+  /** R3-61: what a text from Stayful Intelligence (about a call, or a deal it saved) costs: billing_settings.si_text_pence. */
+  siTextPence: number;
 }) {
   const verified = Boolean(contact?.verified_at && contact.phone_e164);
-  const rules = `At most one text a day, between 8am and 8pm, and no more than ${monthlyCap} a month. Texts are free. Reply STOP to any text to stop them all.`;
+  // R3-61 / R3-103: deal alerts are capped and free; Stayful Intelligence's own texts are priced and outside the cap, and need this switch too.
+  const rules = `Deal alerts: at most one text a day, between 8am and 8pm, no more than ${monthlyCap} a month, free. Texts from Stayful Intelligence about a call or a deal it saved for you cost ${formatPence(siTextPence)} each and go only while texts are on. Reply STOP to any text to stop them all.`;
 
   return (
     <section className="mt-8">

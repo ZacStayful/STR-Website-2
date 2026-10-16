@@ -40,6 +40,9 @@ export const CHARGE_DESCRIPTION = 'Stayful Intelligence question';
 /** The longest question: the conversation log keeps up to 500 characters. */
 export const MAX_QUESTION_CHARS = 500;
 
+/** R3-32: the chat's own question when it offers to remember something: stored as the fact's `asked`, never the member's text. */
+export const FACT_PROMPT = 'Want me to remember that?';
+
 /** A turn still pending after this is from an instance that died: marked failed on the member's next question. */
 export const PENDING_STALE_MS = 2 * 60_000;
 
@@ -62,6 +65,12 @@ export const LOOKUP_ROUND_MAX_TOKENS = 600;
 export const FULL_ROUND_MAX_TOKENS = 1_200;
 /** A round that cannot afford this many output tokens is not started: the answer ends there. */
 export const MIN_ROUND_OUTPUT_TOKENS = 120;
+/** A full-view round with less room than this answers instead of looking anything else up. */
+export const FULL_FINAL_ROUND_MIN_TOKENS = 350;
+/** Sonnet 5.5's tool-use system prompt (auto), per the pricing page. */
+export const FULL_TOOL_SYSTEM_TOKENS = 286;
+/** A short first message (the account block and a question), for sizing the full view's floor (Review R3, R3-27). */
+export const FULL_FIRST_MESSAGE_TOKENS = 150;
 
 /** A tool result is cut to this many characters before the model sees it. */
 export const MAX_TOOL_RESULT_CHARS = 6_000;
@@ -75,6 +84,8 @@ export const CHARS_PER_TOKEN = 3.5;
 export const DONT_KNOW_LINE = "I don't know that one yet — I've passed it to the team.";
 /** When the quick box needs the member's deals or the engine. */
 export const FULL_VIEW_LINE = 'That needs a proper look at your account.';
+/** Review R3 (R3-33): an approved answer covers the question, but not for this member's account. */
+export const NOT_APPLICABLE_LINE = 'That one doesn’t apply to your account.';
 /** When the balance is below the floor. */
 export const TOP_UP_LINE = 'Top up to ask me more.';
 /** A team member's version: the owner tops up. */

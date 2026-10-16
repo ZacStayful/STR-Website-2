@@ -105,6 +105,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
           askedAtSignup={user.user_metadata?.sms_opt_in === true}
           suggestedPhone={ukMobile(profile?.mobile ?? null)}
           monthlyCap={monthlyCap}
+          siTextPence={settings.intelligence.siTextPence}
         />
 
         {/* Batch 22: calls from Stayful Intelligence (off until ticked; a verified mobile is needed). */}

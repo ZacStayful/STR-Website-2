@@ -12,8 +12,9 @@
  * ElevenLabs refuses to start a call if a variable the prompt uses is not
  * sent. So the variable list is fixed here, from code (every global
  * placeholder, whatever is approved), and every call sends all of it; a
- * figure that can't be read at dial time is sent as CALL_FIGURE_FALLBACK
- * ("shown in the app") rather than stopping the call.
+ * figure that can't be read at dial time is sent as CALL_FIGURE_FALLBACK (an
+ * instruction to say it's shown in the app, Review R3 R3-77) rather than
+ * stopping the call.
  *
  * Pure: no network, no database, no server-only.
  */
@@ -35,7 +36,11 @@ export const KNOWLEDGE_VARIABLES: readonly string[] = CALL_PLACEHOLDERS.map(vari
  * and live, a sync is refused and the agent keeps what it has, so a
  * half-approved knowledge base can never wipe what it knows.
  */
-export const REQUIRED_CALL_SLUGS: readonly string[] = ['what_it_does', 'how_picks_work', 'reports', 'credit_how', 'auto_topup', 'calls_how', 'stop_calls', 'phone_privacy', 'talk_to_team', 'management'];
+export const REQUIRED_CALL_SLUGS: readonly string[] = [
+  'what_it_does', 'how_picks_work', 'reports', 'credit_how', 'auto_topup', 'calls_how', 'stop_calls', 'phone_privacy', 'talk_to_team', 'management',
+  // Review R3 (R3-48): the deal and missed-deal contexts answer "why did you call me" from these.
+  'why_called', 'standout_calls',
+];
 
 function toPrompt(parts: readonly Part[]): string | null {
   let out = '';
