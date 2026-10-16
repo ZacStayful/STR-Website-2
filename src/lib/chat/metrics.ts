@@ -146,6 +146,13 @@ export function activeShare(weeks: readonly string[], chatUsers: ReadonlyMap<str
   });
 }
 
+/** Review R3 (R3-67): the chat's weekly-active figure leaves out the accounts every other figure does. */
+export function withoutExcluded(chatUsers: ReadonlyMap<string, ReadonlySet<string>>, excluded: ReadonlySet<string>): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const [week, users] of chatUsers) out.set(week, new Set([...users].filter((u) => !excluded.has(u))));
+  return out;
+}
+
 export function pct(n: number | null): string {
   return n === null ? '—' : `${Math.round(n * 100)}%`;
 }

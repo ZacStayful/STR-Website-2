@@ -31,7 +31,7 @@ import { InsufficientCreditError } from '../credit/ledger';
 import { SeatPausedError, type StartedAction } from '../credit/action';
 import { getUnitCostTable } from '../credit/unit-costs';
 import type { UnitCostTable } from '../credit/costs';
-import { recordActivity } from '../activity/log';
+import { logActivity } from '../activity/log';
 import { CAPPED_LINE, DONT_KNOW_LINE, FULL_FINAL_ROUND_MIN_TOKENS, FULL_HARD_DEADLINE_MS, FULL_LOOKUP_DEADLINE_MS, FULL_MODEL, FULL_ROUND_MAX_TOKENS, FULL_ROUND_TIMEOUT_MS, FULL_TOOL_SYSTEM_TOKENS, LOOKUP_ROUND_MAX_TOKENS, MAX_QUESTION_CHARS, MIN_ROUND_TIME_MS, MODEL_UNITS, FACT_PROMPT } from './config';
 import { affordsLookUp, approxTokens, budgetFor, costOf, lookUpFloorPence, promptTokensOf, roundFailureState, roundMaxTokens, unitsPriced, usageOf, LOOKUP_RESULT_TOKENS, NO_USAGE, type RoundUsage } from './budget';
 import { adviceIn, allowedFigures, checkFigures, clampWords, cleanQuestion, isNonAnswer, streamDisallowed } from './guard';
@@ -90,6 +90,9 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
   const inserted = await insertTurn(admin, member, input.clientTurnId, 'full');
   if (inserted.kind === 'existing') return { kind: 'reply', reply: await replyForStored(admin, inserted.turn, member) };
   if (inserted.kind === 'busy') return { kind: 'reply', reply: stateReply('busy') };
+  // R3-42 / R3-91: the question is the member's action, recorded once per turn here (a retry with the same client
+  // id got the stored turn above), whatever becomes of the answer (out of room, dropped or failed included).
+  logActivity(user.id, 'si_chat_full', { extras: { outcome: 'asked' }, dedupeKey: `si_chat_full:${inserted.turn.id}` });
   try {
     const hold = await startHold(member, inserted.turn, budget, settings);
     return { kind: 'run', job: { user, supabase, member, settings, turn: inserted.turn, hold, budget, table, question, conversationId: input.conversationId, now } };
@@ -353,9 +356,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
       capped,
     };
     send({ type: 'done', reply });
-    // A full-view question counts towards weekly active (Zac, 29 Sep). Extras: the outcome only. After the
-    // answer is on the page: nothing waits for it.
-    await recordActivity(job.user.id, 'si_chat_full', { extras: { outcome } });
+    // The question was recorded as the member's action when it was taken (prepareFull, R3-42).
     // One line per question (no text): where the seconds went, for the runtime logs.
     console.log(`[chat] full ${replyState} in ${Date.now() - started}ms (${rounds.length} rounds, first words at ${firstTextAt ? firstTextAt - started : '-'}ms)`);
     return reply;

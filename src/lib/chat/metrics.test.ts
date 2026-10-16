@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activeShare, money, outcomes, pct, perDay, type TurnFact } from './metrics.ts';
+import { activeShare, money, outcomes, pct, perDay, withoutExcluded, type TurnFact } from './metrics.ts';
 
 const row = (o: Partial<TurnFact>): TurnFact => ({ createdAt: '2026-10-09T10:00:00Z', surface: 'full', status: 'answered', outcome: 'answered', rawPence: 1.5, chargedBasePence: 7.5, chargedFacePence: 7.5, inputTokens: 500, outputTokens: 200, cacheReadTokens: 3500, cacheWriteTokens: 0, ...o });
 
@@ -41,4 +41,12 @@ test('weekly active: at all, and beyond the chat', () => {
     'si_chat_full',
   );
   assert.deepEqual(w, [{ week: '2026-10-05', chatUsers: 3, active: 2, activeBeyondChat: 1 }]);
+});
+
+// Review R3 (R3-67): the chat tab's figure is the headline's definition: admin, staff and excluded accounts are left out.
+test('excluded accounts are left out of the chat users before the share is worked out', () => {
+  const users = withoutExcluded(new Map([['2026-10-05', new Set(['a', 'b', 'c'])]]), new Set(['b', 'zz']));
+  assert.deepEqual([...users.get('2026-10-05')!], ['a', 'c']);
+  const w = activeShare(['2026-10-05'], users, new Map([['2026-10-05', new Map([['a', new Set(['si_chat_full'])], ['b', new Set(['si_chat_full', 'keep'])]])]]), 'si_chat_full');
+  assert.deepEqual(w, [{ week: '2026-10-05', chatUsers: 2, active: 1, activeBeyondChat: 0 }]);
 });

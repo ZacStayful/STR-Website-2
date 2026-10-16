@@ -67,5 +67,8 @@ export async function undoNotForMeAction(dealId: unknown): Promise<NotForMeResul
   const supabase = await createSupabaseServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'signed_out' };
-  return (await undoNotForMe(user.id, dealId)) ? { ok: true } : { ok: false, error: 'failed' };
+  const undone = await undoNotForMe(user.id, dealId);
+  // R3-107: the Pass they took back is taken back in the log too (reaction_clear counts, as the Pass did).
+  if (undone) logActivity(user.id, 'reaction_clear', { dealId, extras: { via: 'si_saved_undo' } });
+  return undone ? { ok: true } : { ok: false, error: 'failed' };
 }
