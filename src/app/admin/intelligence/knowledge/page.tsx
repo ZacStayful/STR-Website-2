@@ -68,7 +68,7 @@ export default async function KnowledgeAdminPage({ searchParams }: { searchParam
   // A call answer just went stale: the agent is re-synced without it, in the background.
   if (stale?.callChanged && stale.newlyStale.length) afterKnowledgeChange("stale on the Knowledge page");
   const agent = admin && voiceConfig() ? await agentKnowledgeState(admin) : null;
-  const [rows, g, settings, live, flash] = await Promise.all([admin ? allEntries(admin) : null, admin ? readGlobalSnapshot(admin) : null, admin ? readKnowledgeSettings(admin) : DEFAULT_KNOWLEDGE_SETTINGS, admin ? liveEntries(undefined, admin) : null, readFlash()]);
+  const [rows, g, settings, live, flash] = await Promise.all([admin ? allEntries(admin) : null, admin ? readGlobalSnapshot(admin) : null, admin ? readKnowledgeSettings(admin) : DEFAULT_KNOWLEDGE_SETTINGS, admin ? liveEntries(undefined, admin) : null, readFlash("/admin/intelligence/knowledge")]);
 
   const list = (rows ?? []).filter((r) => {
     const s = entryStatus(r);

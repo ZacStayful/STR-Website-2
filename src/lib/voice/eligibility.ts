@@ -23,12 +23,12 @@
  *
  * Pure.
  */
-import type { BlockedReason, CallType } from './config.ts';
+import type { BlockedReason, OutboundCallType } from './config.ts';
 import type { VoiceSettings } from './settings.ts';
 import { inOutboundHours } from './hours.ts';
 
 export interface EligibilityInput {
-  type: Exclude<CallType, 'callback'>;
+  type: OutboundCallType;
   now: Date;
   settings: VoiceSettings;
   callsOn: boolean;

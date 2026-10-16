@@ -32,10 +32,10 @@ import { getBillingSettings } from '../credit/unit-costs';
 import { PERSONA_VERSION } from '../persona/stayful-intelligence';
 import { checkEligibility, LOW_CREDIT_NO_ROW, type Eligibility } from './eligibility';
 import { lowCreditStillDue } from './low-credit-recheck-server';
-import { nextDayOpening, nextOpening, ukDay } from './hours';
+import { nextDayOpening, nextOpening, readyAt, ukDay } from './hours';
 import { affordableSeconds } from './charge';
 import { callPencePerMinute } from './charge-server';
-import { callsDryRun, callsEnabled, toolSecret, voiceConfig, STALE_QUEUED_MS, type BlockedReason, type CallType } from './config';
+import { callsDryRun, callsEnabled, toolSecret, voiceConfig, STALE_QUEUED_MS, type BlockedReason, type OutboundCallType } from './config';
 import { memberFacts, type MemberFacts } from './member-server';
 import { contactCardSent, dayFacts, insertCall, updateCall, type CallRow } from './store-server';
 import { placeOutboundCall } from './elevenlabs-server';
@@ -45,8 +45,6 @@ import { claimCallSlot } from './cap-server';
 import { toolHeaderViaSecret } from './agent/tool-header-server';
 import { startConversation } from '../conversations/log-server';
 import { dealCallStillWanted } from '../standout/calls-server';
-
-type OutboundType = Exclude<CallType, 'callback'>;
 
 /** Reasons the once-ever intro waits for (no row when queueing; a day's wait when dialling). */
 const INTRO_WAITS: ReadonlySet<BlockedReason> = new Set(['no_number', 'no_credit']);
@@ -68,7 +66,7 @@ export type EnqueueResult =
   | { outcome: 'exists' }
   | { outcome: 'error' };
 
-async function eligibilityFor(type: OutboundType, m: MemberFacts, now: Date, exceptId: string | null): Promise<Eligibility> {
+async function eligibilityFor(type: OutboundCallType, m: MemberFacts, now: Date, exceptId: string | null): Promise<Eligibility> {
   const [settings, perMin] = await Promise.all([getBillingSettings(), callPencePerMinute()]);
   const day = await dayFacts(createAdminClient(), m.userId, now, exceptId);
   // Keep back enough for the texts the call may send.
@@ -92,9 +90,11 @@ async function eligibilityFor(type: OutboundType, m: MemberFacts, now: Date, exc
 
 /**
  * Queue an outbound call. Inside hours it is ready at once (the caller may
- * place it straight away); outside, it waits for the next opening.
+ * place it straight away), or `delayMs` from now and at the opening after
+ * that when the delay runs past closing (the intro, R3-23); outside, it waits
+ * for the next opening. The calls cron places whatever is due.
  */
-export async function enqueueCall(o: { userId: string; type: OutboundType; triggerRef?: string | null; context?: CallContext; now?: Date }): Promise<EnqueueResult> {
+export async function enqueueCall(o: { userId: string; type: OutboundCallType; triggerRef?: string | null; context?: CallContext; now?: Date; delayMs?: number }): Promise<EnqueueResult> {
   const now = o.now ?? new Date();
   if (!callsEnabled()) return { outcome: 'skipped', reason: 'disabled' };
   const m = await memberFacts(o.userId);
@@ -114,7 +114,7 @@ export async function enqueueCall(o: { userId: string; type: OutboundType; trigg
     console.log(`[voice] ${o.type} call blocked (${e.reason})`);
     return { outcome: 'blocked', reason: e.reason, call: r.call };
   }
-  const notBefore = e.ok ? now : e.defer === 'next_day' ? nextDayOpening(now, settings.voice) : nextOpening(now, settings.voice);
+  const notBefore = e.ok ? readyAt(now, o.delayMs ?? 0, settings.voice) : e.defer === 'next_day' ? nextDayOpening(now, settings.voice) : nextOpening(now, settings.voice);
   const r = await insertCall(admin, { ...base, status: 'queued', not_before: notBefore.toISOString() });
   if (!r.ok) {
     // One in flight already, or this intro / this landing's / this deal's call exists.
@@ -158,7 +158,7 @@ export async function placeCall(call: CallRow, o: { apply: boolean; now?: Date }
   if (call.status !== 'queued' || call.direction !== 'outbound' || !call.user_id) return { outcome: 'gone' };
   if (call.not_before && Date.parse(call.not_before) > now.getTime()) return { outcome: 'not_due' };
   const admin = createAdminClient();
-  const type = call.call_type as OutboundType;
+  const type = call.call_type as OutboundCallType;
   if (now.getTime() - Date.parse(call.queued_at) > STALE_QUEUED_MS) {
     if (o.apply) await dropOrBlock(call, 'stale');
     return { outcome: 'blocked', reason: 'stale' };

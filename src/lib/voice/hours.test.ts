@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { inOutboundHours, nextDayOpening, nextOpening, ukDay, ukWeekday } from './hours.ts';
+import { inOutboundHours, nextDayOpening, nextOpening, readyAt, ukDay, ukWeekday } from './hours.ts';
 import { DEFAULT_VOICE } from './settings.ts';
 
 const at = (iso: string) => new Date(iso);
@@ -39,4 +39,13 @@ test('next day\'s opening when today\'s call is used', () => {
 
 test('ukDay is the London date', () => {
   assert.equal(ukDay(at('2026-10-04T23:30:00Z')), '2026-10-05');
+});
+
+test('a delayed call is ready after its delay, or at the opening after it (R3-23)', () => {
+  const inside = at('2026-10-05T12:34:00Z');
+  assert.equal(readyAt(inside, 5 * 60_000, s).toISOString(), '2026-10-05T12:39:00.000Z');
+  assert.equal(readyAt(inside, 0, s).getTime(), inside.getTime());
+  assert.equal(readyAt(at('2026-10-05T17:57:00Z'), 5 * 60_000, s).toISOString(), '2026-10-06T08:00:00.000Z'); // 18:57 BST + 5 min is past 19:00 → Tue 09:00
+  assert.equal(readyAt(at('2026-10-05T06:00:00Z'), 5 * 60_000, s).toISOString(), '2026-10-05T08:00:00.000Z'); // 07:00 BST → 09:00
+  assert.equal(readyAt(at('2026-10-09T17:58:00Z'), 5 * 60_000, s).toISOString(), '2026-10-12T08:00:00.000Z'); // Fri 18:58 BST → Mon 09:00
 });

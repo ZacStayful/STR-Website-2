@@ -792,8 +792,11 @@ shows every call, including the ones a safety rule blocked and why.
    calls, and sets transcript retention.
 6. **Vercel (Production):** `ELEVENLABS_AGENT_ID`,
    `ELEVENLABS_PHONE_NUMBER_ID`, `ELEVENLABS_INITIATE_SECRET` and
-   `ELEVENLABS_TOOL_SECRET` (two long random strings, typed nowhere else),
-   and `CRM_ENCRYPTION_KEY`. `ELEVENLABS_WEBHOOK_SECRET` only if you made a
+   `ELEVENLABS_TOOL_SECRET` (two long random strings, typed nowhere else;
+   since Review R3h the Sync keeps the tool secret in ElevenLabs as a
+   workspace secret, `si_tool_token_<hash>`, and points the tools' header at
+   it, so no call carries it as a variable), and `CRM_ENCRYPTION_KEY`.
+   `ELEVENLABS_WEBHOOK_SECRET` only if you made a
    post-call webhook by hand (its HMAC secret). On Preview,
    `SI_CALLS_DRY_RUN=true`. Redeploy.
 7. **Sync the agent:** `/admin/calls` → The agent → **Dry run**, read what
@@ -807,8 +810,10 @@ shows every call, including the ones a safety rule blocked and why.
    The Dry run has a phone check (where Twilio sends the number's calls,
    Twilio's and ElevenLabs' last calls, where the agent asks who is
    ringing; saved in `billing_settings.si_phone_check`, and run by the
-   5-minute calls cron whenever `si_phone_check_request` is set to a newer
-   time), and says what it will create, which agent has the number now,
+   5-minute calls cron when a `si_phone_check_request` row holds a time
+   newer than the last check — the row is removed once the check has run,
+   so one request is one run, and the cron's `?dry=1` never runs it), and
+   says what it will create, which agent has the number now,
    if Twilio isn't sending the number's calls to ElevenLabs, if a secret
    is missing, and if
    ElevenLabs' workspace settings point at this site (set them back: other
@@ -966,9 +971,10 @@ account owner, one outbound call a day — a deal call waits for the next
 weekday when today's is used). Below the call floor (the higher of
 `standout_call_min_balance_pence` and a minute's calling with the texts kept
 back) a text and email go instead; members who can't be called hear in the
-next daily email's "Saved for you". A slower spender (8–21 days from their
-last credit to £5) gets one auto top-up text and email instead of that
-credit's £5 notice. Today's profile check is now "I've noticed", on Passes as
+next daily email's "Saved for you". A slower spender on pay-as-you-go (8–21
+days from their last credit to £5) gets one auto top-up text and email
+instead of that credit's £5 notice; a plan member keeps the plan's
+low-balance email instead. Today's profile check is now "I've noticed", on Passes as
 well as Keeps, and changes nothing until the member taps Accept.
 
 Everything is in `src/lib/standout` (rules, copy, notify and nudge are pure
@@ -977,7 +983,8 @@ edited on `/admin/standout`); the prompts are `src/lib/tailoring/behaviour.ts`.
 
 1. **Run `supabase/schema.sql`** (the "Batch 25: standout-deal calls"
    section; two earlier check lists were widened in place: `sms_messages.kind`
-   adds `standout`, `nudge`; `si_calls_log.call_type` adds `deal`).
+   adds `standout`, `nudge` and, since Review R3d, `call`;
+   `si_calls_log.call_type` adds `deal`).
    Idempotent and additive, service role only: `deal_reactions.saved_by`,
    `standout_runs`, `standout_decisions`, `credit_nudges`,
    `si_calls_log_deal_uidx` and twelve `standout_*` / `slower_spender_*`
@@ -1106,6 +1113,95 @@ rate); the settings themselves are plan-credit pence.
    `vercel.json` (some plans allow only one region), move the whole project
    to `fra1` instead (Settings → Functions → Region), which speeds up every page.
 
+### 26. The Review R3 fixes
+
+Fourteen branches from the review of everything merged since Review R2
+(`docs/reviews/review-r3.md`, PR #144), merged in the order r3a to r3n. Each
+had `npm test`, `npm run lint`, `npm run typecheck` and `npm run build` clean
+before it was opened, and a knowledge entry it changed is a seed draft for
+approval, never approved in code. What each needs by hand, in the order it
+is needed:
+
+1. **Run `supabase/schema.sql`** (the whole file, as always) for the branches
+   that change it: r3c (`member_briefings.emailed_at`; `briefing_ceiling_pence`
+   seeded at 3p; `briefings_enabled` seeded off — run it before merging r3c,
+   so the briefing reads find the column), r3d (`sms_messages.kind` adds
+   `call` — before merging r3d, or a call's texts fail to record until it
+   runs), r3f (`si_question_retention` also deletes nameless conversations
+   and non-intro call rows past the cutoff), r3g (`si_calls_log_deal_uidx`
+   leaves out failed rows), r3i (the Batch 10 backfill guarded, the inline
+   check lists as `do` blocks, `si_knowledge_live` needs `approved_at`; the
+   scan-days backfill recounts once more and writes its
+   `listing_scan_days_backfill` stamp row in `billing_settings`, after which
+   every run skips it; then `supabase/tests/credit-smoke.sql` and
+   `scan-days-smoke.sql` can be run by hand, both roll back) and r3m (the
+   `routed` outcome on `si_conversation_questions` and `chat_turns`).
+   Idempotent, as before.
+2. **Sync the agent** (`/admin/calls` → Dry run, then Sync with the tools)
+   after r3f (`record_voice` off, `delete_audio` on), r3h (the tool secret
+   becomes an ElevenLabs workspace secret, `si_tool_token_<hash>`; if the
+   Sync cannot list or create it, the tools keep their old header and
+   nothing else changes — say so) and r3j (the prompt: deal contexts, the
+   don't-know line, the numbers rule). r3c adds one call variable
+   (`k_briefing_max_cost`): sync when convenient.
+3. **Knowledge drafts to approve** (`/admin/intelligence/knowledge` → Seed,
+   dry run then for real, then approve each): `chat_voice` (r3b: the spoken
+   answer's real price — the step that clears the review's one Critical for
+   members), `morning_briefing` (r3c), `auto_topup_nudge` (r3e: pay as you
+   go only), `analyser_output` and `topup` (r3j), `chat_cost` (r3k). Until
+   approved, the live answers stand as they are.
+4. **Settings and reasons:** `/admin/billing` → the briefings box has "Most
+   a briefing may cost (base p)" (r3c); `/admin/standout` shows three new
+   reasons (`not_for_me_rule`, `picks_off`, `quiet`; r3g) and `/admin/calls`
+   two new blocked reasons (`topped_up`, `nudged`; r3e).
+5. **Dry runs to read once:** `/api/internal/briefings?dry=1` answers 200
+   with every member's outcome and `ceilingMaxPence: 3`, never
+   `schemaMissing` (r3c); `/api/internal/si-calls?dry=1` lists what it would
+   place and never runs the phone check (r3n); `/api/internal/si-chat?dry=1`
+   counts the whole retention backlog (r3n); `/api/internal/sourcing?dry=1`
+   carries `savedForYou` and `briefing` per member (r3g); with
+   `SI_CALLS_DRY_RUN` on, a missed-call dry run gives `fallback_sent_at`
+   back (r3d) and a nudge run shows `raced:` and `skipped:nothing_sent`
+   (r3e).
+6. **Ring the number** from a verified mobile whose account has calls
+   **off** (r3h): the agent answers as for an unknown caller, the log shows
+   an unknown (hashed) row, no charge. Then read `/privacy` once (r3f: the
+   chat bullet, the two provider lines and the retention list, with the
+   days and months as `/admin/billing` and `/admin/knowledge` have them).
+7. **Next.js 16.4.1 (r3n):** `next` and `eslint-config-next` move up from
+   16.3.7 (six advisories on 16.3.x), and `npm audit fix` takes
+   `@modelcontextprotocol/sdk`, `proxy-addr` and `source-map-js` to their
+   fixed versions. What `npm audit` still lists is one `braces` advisory
+   (GHSA-vfj7-8cjw-p6xm) with no fixed release yet, reached only through
+   build-time tools (`eslint-config-next`'s own glob, the `shadcn` CLI,
+   `ts-morph`); its only "fix" is a breaking downgrade, so it waits for
+   `braces`. The new `eslint-config-next` brings the React Compiler lint
+   rules, which flag twelve pre-existing effect, ref and memoisation
+   patterns in eight client components; `eslint.config.mjs` keeps them as
+   warnings (79 warnings, 0 errors is the new lint baseline) until they are
+   reworked in a pass of their own. A full click-through on the preview
+   before it merges, as for 21i (sign-up on a phone, the quiz, Today, a deal
+   page, a Full analysis, `/estimate`, `/account/billing`, the chat with its
+   microphone, a cron with `?dry=1`).
+8. **Two things from r3a, yours to watch:** a browser that followed the old
+   permanent `/home` → `/` redirect may keep doing so until its cache
+   expires (those members find Home from "Open Today"); and an account
+   stamped as a management company by a prefetch cannot be told apart in
+   the data — on `/admin`, management accounts that never set up a lead form
+   are the candidates.
+
+What changed that nobody sets: Home visits no longer count as being active
+(r3l: `home_view` is recorded only, the weekly-active figures change from
+the next week, and the Home-only section of `/admin/weekly-active` is gone);
+the intro call is queued for five minutes after calls are switched on and
+placed by the calls cron, never from the screen the member is on (r3n); the
+ledger names a text `si_text` and a missed-call email `si_email` from the
+next one (r3k); an `/admin/intelligence` action's message shows only on the
+page it is for (r3n); and a held team seat (a running action reserves part
+of a balance that covers it) is counted by the hourly seat cron, not
+reported as an error (r3n). Sections 19 and 23, Member emails and Text
+alerts above were corrected for r3c, r3d, r3e and r3h.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -1199,7 +1295,9 @@ an address); the AI (Haiku 4.5) writes the words; a validator checks every
 number, date and number word against the sheet and rejects hype, predictions,
 advice, comparisons and addresses. A rejected, late or switched-off briefing
 is the code's template opener, uncharged. A passed one is charged at raw cost
-× 5 ("Daily briefing" on usage, about 1.4p, never more than 3p), after the
+× 5 ("Daily briefing" on usage, about 1.4p, never more than
+`billing_settings.briefing_ceiling_pence`, 3p, set beside the switch on
+`/admin/billing`), after the
 day's own charge and only if the balance covers it. £0: no briefing; the email
 is exactly as before. One row per member per UK day (`member_briefings`)
 makes retries safe. Nudges under the changes link deals that have sat in a
@@ -1211,8 +1309,10 @@ price on the button). `/admin/briefings` has the figures per day.
   `ANTHROPIC_API_KEY` (already used by the analyser), then check
   `/api/internal/briefings?dry=1` (add `&model=claude-sonnet-5-5` for the
   model trial). Nothing is written or charged by a dry run.
-- **Switches:** `/admin/billing` → "AI briefings on" (off: template openers for
-  everyone with credit, nothing charged; missing reads as off).
+- **Switches:** `/admin/billing` → "AI briefings on" (the schema seeds it off
+  since Review R3c, so running the section never switches charged briefings
+  on; off: template openers for everyone with credit, nothing charged;
+  missing reads as off).
   `BRIEFINGS_PASS_ENABLED=false` stops the pass altogether (no briefings).
 
 Feedback emails (Batch 18) are outside the cap too, like receipts: the email
@@ -1239,7 +1339,11 @@ Account → Notifications (a 6-digit code, from the same number as the alerts).
 - **When:** 08:00–20:00 UK time, for changes recorded in the last 24 hours.
 - **How many:** one a day at most (Batch 6's `notification_sends`, channel
   `sms`), and `billing_settings.sms_monthly_cap` (8) a UK calendar month.
-  Several changes go in the same text.
+  Several changes go in the same text. Texts from Stayful Intelligence
+  (during and after a call, a standout deal below the call floor, the auto
+  top-up nudge; `sms_messages.kind` `call`, `standout`, `nudge`) are outside
+  this slot and the monthly cap by design: each is priced to the member
+  (`si_text_pence`) and has its own once-only rule, and STOP stops them too.
 - **Never twice:** `sms_messages.alert_ids`. A text does not close an alert;
   the daily email still carries it. The collector records changes for members
   who get texts even when their "Changes on deals I'm tracking" email is off;

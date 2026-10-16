@@ -138,7 +138,7 @@ export default async function GapsAdminPage({ searchParams }: { searchParams: Pr
       : null,
     admin ? allEntries(admin) : null,
     admin ? readGlobalSnapshot(admin) : null,
-    readFlash(),
+    readFlash("/admin/intelligence/gaps"),
   ]);
   const runs = (runsRes?.data ?? []) as RunRow[];
   const allGaps = (gapsRes?.data ?? []) as Gap[];

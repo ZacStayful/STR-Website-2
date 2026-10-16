@@ -43,7 +43,7 @@ export async function setSiCalls(userId: string, on: boolean, source: 'welcome' 
   const { error: recErr } = await admin.from('si_call_consents').insert({ user_id: userId, choice: on ? 'on' : 'off', source, version: CALL_CONSENT_VERSION, created_at: now.toISOString() });
   if (recErr) console.error('[si-calls] consent record failed:', recErr.message);
   logActivity(userId, 'notification_settings', { extras: { key: 'si_calls', on, source } });
-  // Batch 23, Part B: the intro call, within minutes (once per member, ever; src/lib/voice/triggers-server.ts).
+  // Batch 23, Part B: the intro call, queued for a few minutes' time and placed by the calls cron (once per member, ever; src/lib/voice/triggers-server.ts).
   if (on) {
     const intro = () => import('../voice/triggers-server').then((m) => m.onCallsSwitchedOn(userId)).catch((err) => console.error('[si-calls] intro trigger failed:', err));
     try {

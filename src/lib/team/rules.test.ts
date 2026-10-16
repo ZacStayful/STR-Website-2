@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  SEAT_PRICE_PENCE, seatPriceLabel, periodEnd, inviteExpiry, seatDue, normaliseEmail, joinBlocker, can,
+  SEAT_PRICE_PENCE, seatPriceLabel, periodEnd, inviteExpiry, seatDue, seatHeld, normaliseEmail, joinBlocker, can,
   JOIN_BLOCKER_COPY, type JoinFacts,
 } from './rules.ts';
 
@@ -35,6 +35,14 @@ test('a seat period is 30 days and falls due exactly at its end', () => {
   assert.equal(seatDue(end, new Date(end.getTime() - 1)), false);
   assert.equal(seatDue(end, end), true);
   assert.equal(seatDue('not a date', now), false);
+});
+
+test('a seat is held, not unpaid, only while a running action reserves part of a balance that covers it (R2-13, R3-139)', () => {
+  assert.equal(seatHeld({ reservedBasePence: 300, totalPence: 1000 }), true);
+  assert.equal(seatHeld({ reservedBasePence: 50, totalPence: 1200 }), true);
+  assert.equal(seatHeld({ reservedBasePence: 0, totalPence: 1200 }), false); // nothing reserved: the ledger's refusal stands
+  assert.equal(seatHeld({ reservedBasePence: 300, totalPence: 999 }), false); // short even once the hold is released
+  assert.equal(seatHeld({ reservedBasePence: 300, totalPence: 1250 }, 1250), true);
 });
 
 test('invites last 7 days', () => {

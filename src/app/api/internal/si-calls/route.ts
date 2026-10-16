@@ -14,9 +14,10 @@ import { runRequestedPhoneCheck } from '@/lib/voice/agent/phone-check-server';
  * done and changes nothing: no call, no text, no email, no charge, no row.
  * `?only=<email>` limits the pass to one member.
  *
- * It also runs the read-only phone check when one was asked for
+ * It also runs the phone check when one was asked for
  * (billing_settings.si_phone_check_request newer than the last check), so
- * the check can be read without anyone pressing Dry run.
+ * the check can be read without anyone pressing Dry run. Not on a dry run:
+ * the check saves its result to billing_settings (R3-137).
  *
  *   curl -H "x-internal-secret: $INTERNAL_API_SECRET" "https://<host>/api/internal/si-calls?dry=1"
  */
@@ -39,7 +40,8 @@ export async function GET(request: Request) {
     onlyUserId = String((data as { id: string }).id);
   }
   const result = await runCalls({ apply: !dry, onlyUserId });
-  const phoneCheck = await runRequestedPhoneCheck();
+  // R3-137: never on a dry run (the check writes its result, and the settings caches are dropped).
+  const phoneCheck = dry ? false : await runRequestedPhoneCheck();
   if (result.schemaMissing) console.warn('[si-calls] the Batch 23 section of supabase/schema.sql has not been run; nothing to do');
   if (result.errors.length > 0) console.error('[si-calls]', result.errors.join('; '));
   return Response.json({ ...result, phoneCheck });
