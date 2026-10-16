@@ -31,7 +31,13 @@ import { allProfilesFor } from '../profiles/server';
 import { primaryOf, type SavedProfile } from '../profiles/rules';
 import { tailoringForSeats } from '../tailoring/server';
 import { judgeRow } from '../tailoring/today';
-import { typeOfFacts, wantsFor } from '../tailoring/criteria';
+import { forTypes, typeOfFacts, wantsFor } from '../tailoring/criteria';
+import { btlLookerFor } from '../btl/view';
+import { parseBtlCard } from '../btl/card';
+import { DEFAULT_BTL_PRIORITY } from '../btl/today';
+import { readBtlBenchmark, readBtlSettings } from '../btl/settings-server';
+import type { Benchmark } from '../btl/benchmark';
+import type { DealType } from '../profile/deal-types';
 import { dealTypesFor } from '../profile/deal-types';
 import { feedbackForMember } from '../today/feedback';
 import { feedbackRules } from '../listing/picks';
@@ -39,7 +45,7 @@ import { serverFetchEnabled } from '../listing/fetch';
 import { londonDay, londonParts } from '../sms/uk-time';
 import { seatKey } from '../profiles/rules';
 import type { TailoringProfile } from '../tailoring/profile';
-import { judgeStandout, memberSkip, matchPctOf, bestFirst, bestAtLeast, beatsBest, liveConfirmed, inWindow, passesMemberRules, savesLeftToday, type KnownDeal, type StandoutJudgement } from './rules';
+import { judgeStandout, memberSkip, matchPctOf, bestFirst, bestAtLeast, beatsBest, liveConfirmed, inWindow, passesMemberRules, savesLeftToday, type BtlStandoutContext, type KnownDeal, type StandoutJudgement } from './rules';
 import { reasonLabel, type StandoutReason } from './reasons';
 import { recheckDeal, requestCheck } from './recheck';
 import {
@@ -369,6 +375,20 @@ async function judgeAndSave(c: Ctx): Promise<void> {
     }
   }
 
+  // Batch 28: what a member's buy-to-let deals are judged on (their answers, the benchmark where they search), read once.
+  const btlSettings = [...able.values()].some((a) => a.types.includes('btl')) ? (await readBtlSettings(admin)).settings : null;
+  const benchmarks = new Map<string, Promise<Benchmark | null>>();
+  const btlContextFor = async (a: { profile: SavedProfile; t: TailoringProfile; types: DealType[] }, card: unknown): Promise<BtlStandoutContext | null> => {
+    if (!btlSettings || !a.types.includes('btl')) return null;
+    const looker = btlLookerFor(a.profile.goals, a.profile.areas, a.t.about);
+    const parsed = parseBtlCard(card);
+    const band = looker.cashBand ?? parsed?.band ?? null;
+    const key = `${looker.centre}:${band}`;
+    if (looker.centre && band && !benchmarks.has(key)) benchmarks.set(key, readBtlBenchmark(admin, looker.centre, band));
+    const benchmark = looker.centre && band ? await benchmarks.get(key)! : null;
+    return { card: parsed, priority: looker.priority ?? DEFAULT_BTL_PRIORITY, cashBand: looker.cashBand ?? null, benchmark, settings: btlSettings.standout, bands: btlSettings.bands };
+  };
+
   // ── Judge ──
   const rows: DecisionRow[] = [];
   const candidates: Judged[] = [];
@@ -381,7 +401,8 @@ async function judgeAndSave(c: Ctx): Promise<void> {
     const rules = feedbackRules(feedback);
     for (const row of dealsFor.get(m.id) ?? []) {
       const judged = judgeRow(row, a.t, wants, now);
-      const j = judgeStandout({ judgement: judged.judgement, facts: judged.facts, figures: judged.figures, wants, chosenTypes: a.types, revealPct: revealPct.get(m.id) ?? null, settings: s, forced: Boolean(c.o.force) });
+      const btl = row.btl_pass === true ? await btlContextFor(a, row.btl) : null;
+      const j = judgeStandout({ judgement: judged.judgement, facts: judged.facts, figures: judged.figures, wants, chosenTypes: a.types, revealPct: revealPct.get(m.id) ?? null, settings: s, forced: Boolean(c.o.force), btl });
       out.judged += 1;
       if (!j.inPool) {
         if (c.o.force) out.decisions.push(viewOf(m, row.id, 'not_standout', j));
@@ -469,7 +490,10 @@ async function judgeAndSave(c: Ctx): Promise<void> {
       const wants = wantsFor(a.t);
       for (const row of shownRows) {
         const jr = judgeRow(row, a.t, wants, now);
-        known.push({ matchPct: matchPctOf(jr.judgement), profitLow: jr.figures.range?.lowPcm ?? null, dealType: typeOfFacts(jr.facts) });
+        // Batch 28: a deal they were shown as Buy to let sets the buy-to-let bar, on its own cashflow.
+        const asType = typeOfFacts(forTypes(jr.facts, a.types));
+        if (asType === 'btl') known.push({ matchPct: null, profitLow: parseBtlCard(row.btl)?.cashflowMonthly.low ?? null, dealType: 'btl' });
+        else known.push({ matchPct: matchPctOf(jr.judgement), profitLow: jr.figures.range?.lowPcm ?? null, dealType: asType });
       }
     }
     for (const x of bestFirst(list.map((y) => ({ ...y, matchPct: y.j.matchPct, profitLow: y.j.profitLow })))) {

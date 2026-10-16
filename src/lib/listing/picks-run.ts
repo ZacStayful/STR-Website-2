@@ -2,6 +2,8 @@ import "server-only";
 
 import { createAdminClient } from "../supabase/admin";
 import { btlWidenLine } from "../btl/today";
+import { BTL_BADGE, showsAsBtl } from "../btl/view";
+import { btlFigureLine } from "../btl/card";
 import { getAreaCardsWithin } from "../market/cached";
 import { parseMarketGoals, describeGoals, type MarketGoals } from "../market/goals";
 import { personaliseScore, personalInputFor } from "../market/personalise";
@@ -46,7 +48,7 @@ import { pendingChanges, trackedAlertsOn } from "../notify/alerts-server";
 import { teasersFrom, todayPlans, type TodayPlan } from "../notify/daily-server";
 import { dailyDealsMode, PayerPurse } from "./daily-deals";
 import { profitRange } from "../marketplace/profit-range";
-import { projectNumbersFor, projectRangeLine, rangeLineFor } from "../project/display";
+import { projectNumbersFor, projectRangeLine, rangeLineFor, kindWordFor } from "../project/display";
 import type { ProjectCardData } from "../project/headline";
 import { chargeDailyDeals, payersForCharging } from "./daily-deals-server";
 import { profileNudgesFor } from "../profile/server";
@@ -1535,7 +1537,9 @@ export async function runDailyPicks(opts: RunOptions): Promise<RunResult> {
           btlLine: plan?.btlWiden ? btlWidenLine(plan.btlWiden) : null,
           todayUrl: links?.today,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => rangeLineFor(c, memberFinance(m.goals), settings.dealPricing.profitRangePct),
+          // Batch 28: a deal this profile is shown as Buy to let gives its own line and badge, never a short-let range.
+          figureFor: (c) => (showsAsBtl(c, { types: plan?.types }) ? btlFigureLine(c) : rangeLineFor(c, memberFinance(m.goals), settings.dealPricing.profitRangePct)),
+          kindFor: (c) => (showsAsBtl(c, { types: plan?.types }) ? BTL_BADGE : kindWordFor(c)),
         },
       });
     }

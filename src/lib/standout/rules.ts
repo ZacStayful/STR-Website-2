@@ -27,8 +27,13 @@ import type { StandoutReason } from './reasons.ts';
 import { applyCandidateFeedback, feedbackRules, type AppliedRules, type PickFeedback } from '../listing/picks.ts';
 import { listingFromRow, parseStoredDeal, type PoolRow } from '../today/candidates.ts';
 import { parseScreening } from '../listing/screen.ts';
+import { judgedOf, type BtlCard } from '../btl/card.ts';
+import type { Benchmark } from '../btl/benchmark.ts';
+import type { BtlStandoutSettings } from '../btl/config.ts';
+import { inBudget, type CashBand } from '../btl/deal.ts';
+import { btlStandout, passesFor, type BtlPriority } from '../btl/rules.ts';
 
-export type ProfitBasis = 'range' | 'after_works' | 'after_refinance';
+export type ProfitBasis = 'range' | 'after_works' | 'after_refinance' | 'btl_cashflow';
 
 export interface StandoutJudgement {
   outcome: 'standout' | 'not_standout';
@@ -62,6 +67,25 @@ export interface StandoutInput {
   settings: Pick<StandoutSettings, 'minMatchPct' | 'minChecked' | 'profitOverMinPct'>;
   /** Admin's test helper: every threshold is skipped (types and must-haves still apply). */
   forced?: boolean;
+  /** Batch 28: what a buy-to-let deal is judged on instead (its own rule, Part D); absent: never a buy-to-let standout. */
+  btl?: BtlStandoutContext | null;
+}
+
+/**
+ * Batch 28: a buy-to-let deal's standout (Part D): it passes the member's
+ * priority against their benchmark and is in their cash band, and the LOW
+ * end on that priority is at least 125% of the benchmark median (rules.ts
+ * btlStandout: never on a median of 0% or less, and Income needs 6% at the
+ * low end). Judged on the stored card alone: no short-let figure, no
+ * minimum-profit answer. Of the member's must-haves only "where" applies.
+ */
+export interface BtlStandoutContext {
+  card: BtlCard | null;
+  priority: BtlPriority;
+  cashBand: CashBand | null;
+  benchmark: Benchmark | null;
+  settings: BtlStandoutSettings;
+  bands: readonly number[];
 }
 
 /** The % the member sees: matchLine's own rounding (src/lib/tailoring/why.ts). */
@@ -94,8 +118,8 @@ export function judgeStandout(i: StandoutInput): StandoutJudgement {
   const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...base });
 
   if (!i.chosenTypes.includes(dealType)) return no('type_not_chosen', false);
-  // A buy-to-let deal is never judged on short-let figures.
-  if (dealType === 'btl') return no('type_not_chosen', false);
+  // A buy-to-let deal is never judged on short-let figures: its own rule.
+  if (dealType === 'btl') return judgeBtlStandout(i, base);
   if (j.mustFails.length > 0) return no('must_have_missed', false);
   if (i.forced) return { outcome: 'standout', reason: 'forced', inPool: true, ...base };
   if (minProfit === null) return no('no_min_profit_for_type');
@@ -105,6 +129,20 @@ export function judgeStandout(i: StandoutInput): StandoutJudgement {
   if (profitLow === null) return no('profit_unknown');
   if (profitBar === null || profitLow < profitBar) return no('profit_short');
   return { outcome: 'standout', reason: 'standout', inPool: true, ...base };
+}
+
+function judgeBtlStandout(i: StandoutInput, base: Omit<StandoutJudgement, 'outcome' | 'reason' | 'inPool'>): StandoutJudgement {
+  const c = i.btl?.card ?? null;
+  const b = { ...base, matchPct: null, met: 0, checked: 0, profitLow: c ? c.cashflowMonthly.low : null, profitHigh: c ? c.cashflowMonthly.high : null, profitBasis: 'btl_cashflow' as const, minProfit: null, profitBar: null };
+  const no = (reason: StandoutReason, inPool = true): StandoutJudgement => ({ outcome: 'not_standout', reason, inPool, ...b });
+  if (!i.btl || !c) return no('btl_no_figures', false);
+  if (i.judgement.mustFails.includes('location')) return no('must_have_missed', false);
+  if (i.btl.cashBand && !inBudget(c.cashIn.mid, i.btl.cashBand, i.btl.bands)) return no('btl_over_budget', false);
+  const judged = judgedOf(c);
+  if (!passesFor(i.btl.priority, judged, i.btl.benchmark).pass) return no('btl_below_benchmark', false);
+  if (i.forced) return { outcome: 'standout', reason: 'forced', inPool: true, ...b };
+  if (!btlStandout(i.btl.priority, judged, i.btl.benchmark, i.btl.settings)) return no('btl_not_standout');
+  return { outcome: 'standout', reason: 'standout', inPool: true, ...b };
 }
 
 /** A member nothing can be standout for, and why; null when they can be judged. */
@@ -127,7 +165,8 @@ export function memberSkip(i: {
   if (i.primary.awaitingAnswers) return 'awaiting_answers';
   if (i.chosenTypes.length === 0) return 'no_deal_types';
   const w = i.wants;
-  if (!w || i.chosenTypes.every((t) => minProfitFor({ kind: t === 'r2r' ? 'rent' : 'sale' }, w) === null)) return 'no_min_profit';
+  // Batch 28: Buy to let needs no minimum-profit answer (its own rule judges it).
+  if (!w || i.chosenTypes.every((t) => t !== 'btl' && minProfitFor({ kind: t === 'r2r' ? 'rent' : 'sale' }, w) === null)) return 'no_min_profit';
   return null;
 }
 

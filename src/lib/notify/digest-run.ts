@@ -30,6 +30,8 @@ import 'server-only';
  */
 import { createAdminClient } from '../supabase/admin';
 import { btlWidenLine } from '../btl/today';
+import { BTL_BADGE, showsAsBtl } from '../btl/view';
+import { btlFigureLine } from '../btl/card';
 import { isPaused, hasEverPaid, PAID_TIER_COLUMNS, type PaidTierAccount } from '../access';
 import { isAdminEmail } from '../admin';
 import { getBillingSettings } from '../credit/unit-costs';
@@ -56,7 +58,7 @@ import { mapLimit, planKey, teasersFrom, todayPlans } from './daily-server';
 import { getBalance } from '../credit/ledger';
 import { dailyDealsMode, PayerPurse } from '../listing/daily-deals';
 import { chargeDailyDeals, payersForCharging } from '../listing/daily-deals-server';
-import { rangeLineFor } from '../project/display';
+import { rangeLineFor, kindWordFor } from '../project/display';
 import { profileNudgesFor } from '../profile/server';
 import { mandatoryIncompleteFor } from '../profile/mandatory-server';
 import { lowCreditNoticesFor, markLowCreditTold, sendLowCreditAlone } from '../credit/low-credit-server';
@@ -324,7 +326,9 @@ export async function runDailyDigest(opts: { dry: boolean; onlyUserIds?: string[
           btlLine: plan?.btlWiden ? btlWidenLine(plan.btlWiden) : null,
           todayUrl: seat.profile ? profileLinks(base, seat.profile, GOALS_EDITOR_HREF).today : undefined,
           // Batch 10: each deal's profit as a range at this profile's finance.
-          figureFor: (c) => rangeLineFor(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct),
+          // Batch 28: a deal this profile is shown as Buy to let gives its own line and badge, never a short-let range.
+          figureFor: (c) => (showsAsBtl(c, { types: plan?.types }) ? btlFigureLine(c) : rangeLineFor(c, memberFinance(seat.goals), settings.dealPricing.profitRangePct)),
+          kindFor: (c) => (showsAsBtl(c, { types: plan?.types }) ? BTL_BADGE : kindWordFor(c)),
         },
       });
     }

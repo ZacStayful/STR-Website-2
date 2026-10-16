@@ -9,7 +9,8 @@ import type { ListingSource } from '../listing/types.ts';
 import type { SourcingKind } from '../listing/sourcing.ts';
 import { AVAILABLE_DEAL_TYPES, type DealType } from '../market/goals.ts';
 import type { ConfirmedVia, DealStatus } from './types.ts';
-import { profitRange, rangeCaption, upliftTag } from './profit-range.ts';
+import { formatRange, profitRange, rangeCaption, upliftTag } from './profit-range.ts';
+import { dealTypeOf } from '../profile/deal-types.ts';
 import type { ProjectCardData } from '../project/headline.ts';
 import type { BtlCard } from '../btl/card.ts';
 import { kindWordFor, projectNumbersFor, projectOf, projectSummary } from '../project/display.ts';
@@ -391,7 +392,12 @@ export function priceLine(card: Pick<DealCard, 'price_amount' | 'price_period'>)
 }
 
 /** The one number a card leads with: uplift for a purchase, annual profit for rent-to-rent. */
-export function headlineFigure(card: Pick<DealCard, 'kind' | 'annual_profit' | 'uplift_pct'>): { big: string; small: string } {
+export function headlineFigure(card: Pick<DealCard, 'kind' | 'annual_profit' | 'uplift_pct'> & Partial<Pick<DealCard, 'band' | 'btl' | 'btl_pass' | 'project'>>): { big: string; small: string } {
+  // Batch 28: a deal in the pool only as a buy-to-let deal shows its own cashflow, never a short-let figure.
+  if (card.kind === 'sale' && dealTypeOf(card) === 'btl') {
+    const c = card.btl ?? null;
+    return c ? { big: formatRange(c.cashflowMonthly.low, c.cashflowMonthly.high), small: 'cashflow as a buy to let, before tax' } : { big: '—', small: 'buy to let: figures being updated' };
+  }
   const profit = card.annual_profit === null ? null : Number(card.annual_profit);
   if (card.kind === 'rent') return { big: profit === null ? '—' : `${gbpWhole(profit)}/yr`, small: 'profit after rent' };
   const uplift = card.uplift_pct === null ? null : Number(card.uplift_pct);

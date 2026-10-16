@@ -27,7 +27,7 @@ import { openPricePence } from '../marketplace/ladder';
 import { setDealReaction } from '../marketplace/reactions-server';
 import { dealVisibilityFor } from '../marketplace/tier';
 import { dealVisibleTo } from '../marketplace/visibility';
-import { saveOpenedDealToPipeline } from '../marketplace/open';
+import { saveOpenedDealToPipeline, openBasisOf } from '../marketplace/open';
 import { stageNeedsOpen, type PipelineStatus } from './pipeline';
 import { isFreeStandoutOpen, noteMemberActed } from '../standout/saved-server';
 
@@ -150,7 +150,7 @@ export async function setStageForMember(input: { userId: string; adminUser: bool
       const settings = await getBillingSettings();
       // Batch 25: a deal saved for the account by Stayful Intelligence opens free.
       const free = await isFreeStandoutOpen(payer.payerId, deal.id);
-      return { ok: false, code: 'needs_open', openPence: free ? 0 : openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder) };
+      return { ok: false, code: 'needs_open', openPence: free ? 0 : openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder) };
     }
     if (reacted) {
       return (await writeReaction(admin, userId, deal.id, stage)) ? { ok: true, stage, checkedListingId: null } : { ok: false, code: 'failed' };

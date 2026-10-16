@@ -53,7 +53,7 @@ test('exactly three numbers, following the priority, every one a range', () => {
 
 test('flags: service charge, EPC below C, short lease, rough rent, and how far the search went', () => {
   const card = b44Card();
-  assert.deepEqual(btlFlags(card), ['Rough rent estimate']);
+  assert.deepEqual(btlFlags(card), ['EPC not checked', 'Rough rent estimate']);
   const flat = { ...card, rent: { ...card.rent, confidence: 'high' as const }, flags: { serviceChargeConfirmed: false, epc: 'E' as const, epcChecked: true, shortLease: true } };
   assert.deepEqual(btlFlags(flat, '24 miles from Leeds'), ['Service charge not confirmed', 'EPC below C', 'Short lease', '24 miles from Leeds']);
 });

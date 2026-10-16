@@ -44,10 +44,13 @@ import { jobRole } from '../profile/about.ts';
 import type { DealType } from '../profile/deal-types.ts';
 import { valueAddedLabel } from '../project/headline.ts';
 import { shortMoney } from '../deal-quality/streams.ts';
+import { BTL_NUMBER_HELP, type BtlNumberKey } from '../btl/card.ts';
+import { btlViewFor, showsAsBtl, type BtlLooker } from '../btl/view.ts';
+import { typesShown } from '../profile/deal-types.ts';
 
 export type Role = 'buy_cashflow' | 'buy_growth' | 'r2r' | 'source' | 'manage' | 'brrr';
 
-export type NumberKey = 'profit' | 'cash' | 'coc' | 'yield' | 'vsTypical' | 'trend' | 'setup' | 'breakeven' | 'room' | 'motivation' | 'price' | 'priceCut' | 'revenue' | 'distance' | 'competition' | 'occupancy' | 'works' | 'valueAdded' | 'afterWorks';
+export type NumberKey = 'profit' | 'cash' | 'coc' | 'yield' | 'vsTypical' | 'trend' | 'setup' | 'breakeven' | 'room' | 'motivation' | 'price' | 'priceCut' | 'revenue' | 'distance' | 'competition' | 'occupancy' | 'works' | 'valueAdded' | 'afterWorks' | BtlNumberKey;
 
 export interface CardNumber {
   key: NumberKey;
@@ -67,6 +70,7 @@ const PLAN: Record<Role, { keys: NumberKey[]; fallback: NumberKey[] }> = {
 };
 
 const HELP: Record<NumberKey, string> = {
+  ...BTL_NUMBER_HELP,
   profit: 'What’s left each month after the costs, at your own figures.',
   cash: 'What you’d need up front: deposit, stamp duty and furnishing.',
   coc: 'A year’s profit as a share of the cash you put in.',
@@ -200,6 +204,13 @@ function value(key: NumberKey, i: NumbersInput, p: TailoringProfile): { label: s
       return i.area.competition ? { label: 'Competition', value: i.area.competition } : null;
     case 'occupancy':
       return i.area.occupancy !== null && i.area.occupancy !== undefined ? { label: 'Area occupancy', value: `${Math.round(i.area.occupancy)}%` } : null;
+    // Batch 28: a buy-to-let deal's numbers come from its own card (btlNumbersFor), never from here.
+    case 'btlCash':
+    case 'btlMonthly':
+    case 'btlRoi':
+    case 'btlValue5y':
+    case 'btlGrowth':
+      return null;
   }
 }
 
@@ -230,9 +241,21 @@ export function numbersFor(i: NumbersInput, p: TailoringProfile | null | undefin
   return out.length > 0 ? out.slice(0, 3) : null;
 }
 
+/**
+ * Batch 28: a deal shown as Buy to let carries its own three numbers, by
+ * what the member is after (btl/card.ts btlNumbers), from the stored card
+ * alone; a beginner gets the plain line under each, as every number does.
+ */
+export function btlNumbersFor(card: DealCard, p: TailoringProfile | null | undefined, looker: BtlLooker): CardNumber[] {
+  const beginner = p?.about.dealsDone === '0';
+  return btlViewFor(card, looker).numbers.map((n) => ({ ...n, help: beginner ? n.help : null }));
+}
+
 /** A card (CARD_COLUMNS) as the numbers read it, for this profile. */
 export function numbersForCard(card: DealCard, p: TailoringProfile | null | undefined, area: AreaLookup, now: Date): CardNumber[] | null {
   if (!usesTailoring(p)) return null;
+  const types = typesShown({ goals: p.goals, about: p.about });
+  if (showsAsBtl(card, { types })) return btlNumbersFor(card, p, { types, priority: p.goals?.btl?.priority ?? null });
   const { qualifies } = motivationFor({ kind: card.kind, motivation: card.motivation, listed_date: card.listed_date, first_seen_at: card.first_seen_at }, p.goals, now);
   const m = parseMotivation(card.motivation);
   // The card carries a rental's stored setup cost and break-even; a sale's cash needed is worked out.
@@ -262,10 +285,17 @@ export function numbersForCard(card: DealCard, p: TailoringProfile | null | unde
 export function withTailoring<V extends { numbers?: CardNumber[] | null; explanation?: Explanation | null; lead?: Lead }>(views: ReadonlyMap<string, V>, cards: readonly DealCard[], p: TailoringProfile | null | undefined, snapshot: readonly AreaCardData[] | null, now: Date, opts: { why?: boolean } = {}): Map<string, V> {
   const area = areaLookup(snapshot);
   const out = new Map(views);
+  const types = p ? typesShown({ goals: p.goals, about: p.about }) : [];
   for (const c of cards) {
     const v = out.get(c.id);
     if (!v) continue;
     const tailored = usesTailoring(p);
+    // Batch 28: a deal shown as Buy to let keeps its own numbers and flags (card-view.ts); the
+    // why-line and the match are short-let judging, so they are left off it.
+    if (showsAsBtl(c, { types })) {
+      out.set(c.id, { ...v, numbers: tailored ? btlNumbersFor(c, p, { types, priority: p?.goals?.btl?.priority ?? null }) : v.numbers ?? null, explanation: null, lead: undefined });
+      continue;
+    }
     const explained = tailored || opts.why ? explainCard(c, p, area, now) : null;
     out.set(c.id, {
       ...v,

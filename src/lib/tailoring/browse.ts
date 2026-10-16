@@ -28,7 +28,7 @@ import { DEFAULT_FILTERS, type DealCard } from '../marketplace/grid.ts';
 import { motivationFor } from '../today/candidates.ts';
 import { candidateContext } from '../today/choose.ts';
 import { CRITERIA, factsFromRow, forTypes, judgeDeal, rentalFromCard, wantsFor } from './criteria.ts';
-import { dealFitsTypes } from '../profile/deal-types.ts';
+import { dealFitsTypes, dealTypeFor, typesShown } from '../profile/deal-types.ts';
 import type { DealType } from '../market/goals.ts';
 import { adjustmentsFor, areaLookup, bonusOf, compareKeys, leaningsFor, orderKey, type OrderKey } from './order.ts';
 import { usesTailoring, type CriterionKey, type TailoringProfile } from './profile.ts';
@@ -93,7 +93,11 @@ export function bestForYouOrder(rows: readonly BrowseRow[], input: BestForYouInp
   const wants = p ? wantsFor(p) : null;
   const leanings = p ? leaningsFor(p) : null;
   const area = areaLookup(input.cards);
+  const types = typesShown({ goals, about: input.tailoring?.about ?? null });
   const scored: Scored[] = rows.map((row) => {
+    // Batch 28: a deal shown as Buy to let is never ordered on short-let figures: after the
+    // short-let order, by its own cashflow over a year (best first).
+    if (dealTypeFor(row, types) === 'btl') return { id: row.id, profit: row.btl ? row.btl.cashflowMonthly.mid * 12 : null, key: null, mustMissed: 0 };
     const profit = num(row.annual_profit);
     const deal = leanDeal(row);
     const precheck = row.suitability === 'ok' ? 'ok' : row.suitability === 'unknown' || row.suitability == null ? 'unknown' : null;

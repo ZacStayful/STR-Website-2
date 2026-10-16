@@ -45,7 +45,7 @@ const card = (over: Partial<DealCard> = {}): DealCard => ({
   price_period: 'total',
   raw_type: 'End of Terrace',
   tenure: 'Freehold',
-  band: 'strong',
+  band: 'qualified',
   annual_profit: 9_000,
   uplift_pct: 45,
   reduced_at: null,

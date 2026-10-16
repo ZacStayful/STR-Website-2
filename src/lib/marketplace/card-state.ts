@@ -1,4 +1,5 @@
 import 'server-only';
+import type { BtlLooker } from '../btl/view';
 import { offerPricingFor } from '../analysis/offers-server';
 import { offerLabel } from '../analysis/offers';
 
@@ -78,7 +79,7 @@ export async function cardStatesFor(supabase: ServerClient, userId: string, paye
  * src/lib/marketplace/card-view.ts). Batch 25: a deal Stayful Intelligence
  * saved for the account shows its Quick look free, as opening it is.
  */
-export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean }): Promise<Map<string, CardView>> {
+export async function cardViewsFor(input: { supabase: ServerClient; userId: string; adminUser: boolean; cards: DealCard[]; finance?: Partial<FinanceDefaults> | null; cashBuyer?: boolean; btl?: BtlLooker | null }): Promise<Map<string, CardView>> {
   const { payerId } = await payerFor(input.userId);
   const ids = input.cards.map((c) => c.id);
   const [settings, quoter, states, offers, free] = await Promise.all([getBillingSettings(), quoterFor(payerId, input.adminUser), cardStatesFor(input.supabase, input.userId, payerId, ids), offerPricingFor(input.userId, input.adminUser), input.adminUser ? Promise.resolve(new Set<string>()) : freeStandoutOpens(payerId, ids)]);
@@ -86,7 +87,7 @@ export async function cardViewsFor(input: { supabase: ServerClient; userId: stri
   return new Map(
     input.cards.map((c) => [
       c.id,
-      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, freeOpen: free.has(c.id) }),
+      cardView({ card: c, state: states.get(c.id) ?? NOT_OPENED, admin: input.adminUser, pricing: offers.pricing(c.id, false), offerNote: offerLabel(offers.offer(c.id, false)?.offer), ladder: settings.dealOpenLadder, finance: input.finance ?? null, cashBuyer: input.cashBuyer, lowEntry: settings.lowEntry, label: quoter.label, freeOpen: free.has(c.id), btl: input.btl ?? null }),
     ]),
   );
 }

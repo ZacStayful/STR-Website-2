@@ -13,6 +13,7 @@ import { ANALYSIS_LEAD_LINE } from "@/lib/tailoring/about-prompts";
 import { openDealAction } from "../actions";
 import { DealCardFrame } from "./DealCardFrame";
 import { emailedLabel } from "@/lib/home/emailed";
+import { BTL_BADGE, openProfitFor } from "@/lib/btl/view";
 
 // Re-exported for the pages that format a deal without rendering this card.
 export { headlineFigure, priceLine };
@@ -72,7 +73,9 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
   const priceWord = auction ? "Guide" : "Asking";
   const motivation = motivationLine(card, now);
   const where = [card.town, area?.name && area.name !== card.town ? area.name : null, card.outcode].filter(Boolean).join(" · ");
-  const open = opened ? "Opened" : `Open · ${formatOpenPrice(openPricePence(card.annual_profit === null ? null : Number(card.annual_profit), ladder))}`;
+  const open = opened ? "Opened" : `Open · ${formatOpenPrice(openPricePence(openProfitFor(card), ladder))}`;
+  // Batch 28: shown as a buy-to-let deal (card-view.ts): its badge, numbers, flags and cash in; no short-let line.
+  const btl = view?.btl ?? null;
   const body = (
     <Link href={`/deals/${card.id}`} className="block hover:bg-muted/40">
       <div className="relative aspect-[4/3] w-full bg-muted">
@@ -83,7 +86,7 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
           <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{card.source === "zoopla" ? "Photo on the listing" : "Photo coming"}</div>
         )}
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-          <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{kindWordFor(card)}</span>
+          <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{btl ? BTL_BADGE : kindWordFor(card)}</span>
           {earlyAccess && <span className="rounded-full bg-warning px-2 py-0.5 text-[11px] font-semibold text-warning-foreground">Early access</span>}
           {auction && <span className="rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white">{AUCTION_LABEL}</span>}
           {/* Batch 16, Part F; Batch 22c: the low-entry stream, a cheap purchase (asking price within the cheap price). */}
@@ -121,6 +124,16 @@ export function DealCard({ card, photoUrl, ladder, now, opened = false, reaction
             </p>
             {/* Batch 22c, Part E: a very cheap purchase's lender note; the figures above are unchanged. */}
             {view.lenderNote && <p className="mt-0.5 text-[11px] text-muted-foreground">{view.lenderNote}</p>}
+            {/* Batch 28: a buy-to-let deal's flags ("Service charge not confirmed", "24 miles from Leeds"). */}
+            {btl?.flags.map((f) => (
+              <p key={f} className="text-[11px] font-medium text-warning">{f}</p>
+            ))}
+          </>
+        ) : btl ? (
+          <>
+            {/* Batch 28: a buy-to-let deal whose figures are being redone shows none rather than a short-let one. */}
+            <p className="text-sm font-semibold text-foreground">{btl.caption}</p>
+            {price && <p className="text-xs font-medium text-foreground">{`${priceWord} ${price}`}</p>}
           </>
         ) : (
           <>
@@ -212,7 +225,8 @@ function PriceButtons({ dealId, live, view }: { dealId: string; live: boolean; v
       <button type="submit" className={`${btn} border border-border text-foreground hover:bg-muted`}>Quick look{priceText(view.quickLook) ? ` · ${priceText(view.quickLook)}` : ""}</button>
     </form>
   ) : null;
-  const analysis = view.opened || live ? <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}{full && view.offerNote ? ` ${view.offerNote}` : ""}</Link> : null;
+  // Batch 28: the Full analysis is a short-let report; a deal shown as Buy to let offers its own report on its sheet instead.
+  const analysis = view.btl ? null : view.opened || live ? <Link href={`/deals/${dealId}?analysis=1`} className={`${btn} bg-primary text-primary-foreground hover:opacity-90`}>Full analysis{full ? ` · ${full}` : ""}{full && view.offerNote ? ` ${view.offerNote}` : ""}</Link> : null;
   // Batch 14, Part E: "Knowing the numbers" holds them back, so the Full analysis comes first, with one line.
   if (view.lead === "analysis" && analysis) {
     return (

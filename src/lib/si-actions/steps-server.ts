@@ -28,7 +28,7 @@ import { openCreditBase } from '../credit/deal-pricing';
 import { analysisQuote } from '../analysis/deal-analysis-rules';
 import { offeredPmiAddonFor, offeredPricesFor } from '../analysis/offers-server';
 import { startDealAnalysis } from '../analysis/deal-analysis';
-import { existingOpen } from '../marketplace/open';
+import { existingOpen, openBasisOf } from '../marketplace/open';
 import { loadDealById } from '../marketplace/server';
 import { openPricePence } from '../marketplace/ladder';
 import { setDealReaction } from '../marketplace/reactions-server';
@@ -83,7 +83,7 @@ export async function quoteAnalysis(m: ActingMember, dealId: string, withPmi: bo
   const [settings, open, offered] = await Promise.all([getBillingSettings(), existingOpen(admin, m.payerId, deal.canonical_url), m.admin ? Promise.resolve(null) : offeredPricesFor(m.userId, dealId, withPmi).catch(() => null)]);
   const isOpen = open?.status === 'open';
   const pricing = offered && offered.offer ? { ...settings.dealPricing, fullAnalysisPence: offered.fullPence, pmiAddonPence: offered.pmiPence } : settings.dealPricing;
-  const ladder = openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
+  const ladder = openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder);
   const quote = analysisQuote({ admin: m.admin, pricing, opened: isOpen, openPaidBasePence: isOpen ? openCreditBase(open) : 0, openPricePence: ladder, withPmi });
   return { basePence: quote.due.purchaseBasePence, opensDeal: !quote.opened };
 }

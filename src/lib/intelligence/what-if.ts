@@ -30,6 +30,11 @@ import { WHAT_IF_BUDGET_STEPS, WHAT_IF_EXTRA_MILES, WHAT_IF_MAX_VARIANTS, WHAT_I
 import type { ChooseInput, ChooseReads } from '../today/choose.ts';
 import { admissible, judgeRow, tailoredFilters, tailoredRows } from '../tailoring/today.ts';
 import { TAILORING } from '../tailoring/config.ts';
+import { feedbackRules } from '../listing/picks.ts';
+import { formatRange } from '../marketplace/profit-range.ts';
+import type { PoolRow } from '../today/candidates.ts';
+import type { BtlCard } from '../btl/card.ts';
+import { inBudget } from '../btl/deal.ts';
 
 export type WhatIfKey = 'budget' | 'brrr_budget' | 'rent_10' | 'rent_20' | 'areas' | 'miles' | 'beds_down' | 'beds_up' | 'type_either' | 'profit' | `add_${DealType}`;
 
@@ -181,18 +186,22 @@ export async function whatIfResults(input: ChooseInput, p: TailoringProfile, rea
   const { rows } = await tailoredRows(reads, wide, tailoredFilters(wide, input.feedback), extraAreas);
   const byId = new Map(rows.map((r) => [r.id, r]));
   // Never a deal type the answers don't choose (Batch 17): each variant sees only its own types,
-  // each deal as the type it would be shown as (Batch 28: a buy-to-let-only row is never Short-let).
-  const ofTypes = (goals: MarketGoals | null) => {
+  // each deal as the type it would be shown as. Batch 28: a deal shown as Buy to let is judged on
+  // its own card (btlAdmissible), never on short-let figures.
+  const matchesOf = (goals: MarketGoals | null, profile: TailoringProfile): { dealId: string; btl: BtlCard | null }[] => {
     const allowed = typesShown({ goals, about: p.about });
-    return rows.filter((r) => allowed.includes(dealTypeFor(r as TypedDeal, allowed)));
+    const typed = rows.map((r) => ({ r, t: dealTypeFor(r as TypedDeal, allowed) })).filter((x) => allowed.includes(x.t));
+    const shortLet = admissible(typed.filter((x) => x.t !== 'btl').map((x) => x.r), input, profile).map((c) => ({ dealId: c.dealId, btl: null }));
+    return [...shortLet, ...btlAdmissible(typed.filter((x) => x.t === 'btl').map((x) => x.r), input, goals, profile)];
   };
-  const already = new Set(admissible(ofTypes(p.goals), input, p).map((c) => c.dealId));
+  const already = new Set(matchesOf(p.goals, p).map((c) => c.dealId));
   return variants.map((v) => {
-    const added = admissible(ofTypes(v.goals), input, v.profile).filter((c) => !already.has(c.dealId));
+    const added = matchesOf(v.goals, v.profile).filter((c) => !already.has(c.dealId));
     const top = added[0];
     const row = top ? byId.get(top.dealId) : undefined;
     let best: WhatIfResult['best'] = null;
-    if (top && row) {
+    if (top?.btl) best = { dealId: top.dealId, matchPct: null, profitLine: `${formatRange(top.btl.cashflowMonthly.low, top.btl.cashflowMonthly.high).replace(/\/mo$/, '/month')} as a buy to let` };
+    else if (top && row) {
       const j = judgeRow(row, v.profile, wantsFor(v.profile), input.now).judgement;
       const pct = j.checked >= TAILORING.matchMinChecked ? Math.round((j.met / j.checked) * 100) : null;
       const profit = row.annual_profit === null || row.annual_profit === undefined ? null : Number(row.annual_profit);
@@ -200,6 +209,28 @@ export async function whatIfResults(input: ChooseInput, p: TailoringProfile, rea
     }
     return { key: v.key, phrase: v.phrase, mustHave: v.mustHave, save: v.save, count: added.length, best };
   });
+}
+
+/**
+ * Batch 28: the buy-to-let deals a variant would show, as Today's own
+ * buy-to-let list judges them where it can without a benchmark read: they
+ * pass the hard rules (btl_pass), sit in the variant's areas and cash band,
+ * and are not ruled out by a reason the member gave. Best cashflow first.
+ */
+function btlAdmissible(rows: readonly PoolRow[], input: Pick<ChooseInput, 'feedback' | 'exclude'>, goals: MarketGoals | null, profile: TailoringProfile): { dealId: string; btl: BtlCard }[] {
+  const areas = wantsFor(profile).areas;
+  const band = goals?.btl?.cashBand ?? null;
+  const bad = feedbackRules(input.feedback).badAreas;
+  const out: { dealId: string; btl: BtlCard }[] = [];
+  for (const r of rows) {
+    const card = r.btl ?? null;
+    const area = r.postcode_area ? r.postcode_area.toUpperCase() : null;
+    if (r.btl_pass !== true || !card || input.exclude.has(r.id) || (area && bad.has(area))) continue;
+    if (areas && !(area && areas.has(area))) continue;
+    if (band && !inBudget(card.cashIn.mid, band)) continue;
+    out.push({ dealId: r.id, btl: card });
+  }
+  return out.sort((a, b) => b.btl.cashflowMonthly.low - a.btl.cashflowMonthly.low || (a.dealId < b.dealId ? -1 : 1));
 }
 
 /**

@@ -15,6 +15,7 @@ import { typesShown } from "@/lib/profile/deal-types";
 import { greeting, matchLine, todayKey, todayStart } from "@/lib/today/day";
 import { checkedCountFor, type TodaysPick } from "@/lib/today/selection";
 import { btlWidenLine } from "@/lib/btl/today";
+import { btlLookerFor } from "@/lib/btl/view";
 import { loadTodayView } from "@/lib/today/view-server";
 import { whatIfViewFor } from "@/lib/intelligence/what-if-server";
 import { WhatIfSuggestions } from "@/components/intelligence/WhatIfSuggestions";
@@ -147,7 +148,7 @@ export default async function TodayPage({ searchParams }: { searchParams: Promis
   if (short && widen.length > 0) {
     logActivity(user.id, "tailoring_widen_shown", { profileId, extras: { step: "shown", options: widen.length }, dedupeKey: `tailoring_widen_shown:${profileId ?? "member"}:${todayKey(now)}` });
   }
-  const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals) }), getAreaCardsWithin(AREA_WAIT_MS)]);
+  const [opened, baseViews, snapshot] = await Promise.all([openedDealIds(payer.payerId, cards.map((c) => c.id)), cardViewsFor({ supabase, userId: user.id, adminUser, cards, finance: goals?.finance ?? null, cashBuyer: cashBuyerOf(goals), btl: btlLookerFor(goals, savedAreas, tailoring?.about ?? null) }), getAreaCardsWithin(AREA_WAIT_MS)]);
   // Batch 14: the three numbers for this member's role and goal.
   const views = withTailoring(baseViews, cards, tailoring, snapshot, now, { why: true });
   const pickCard = pickDealId ? cards.find((c) => c.id === pickDealId) ?? null : null;

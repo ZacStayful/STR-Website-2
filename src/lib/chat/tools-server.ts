@@ -16,6 +16,7 @@ import 'server-only';
  * Every figure is formatted here, the way the app writes it, so the answer
  * can quote it exactly (the figure guard checks it did).
  */
+import { btlLookerFor } from '../btl/view';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '../supabase/admin';
 import { dealCardsByIds } from '../marketplace/queries';
@@ -111,7 +112,9 @@ export interface ChatTools {
 function dealFacts(card: DealCard, view: CardView | undefined): Record<string, unknown> {
   return {
     deal_id: card.id,
-    type: card.kind === 'rent' ? 'rent-to-rent' : 'to buy',
+    // Batch 28: a deal shown as Buy to let reads as one, with its own figures (the view carries them).
+    type: view?.btl ? 'buy to let (long-term tenants)' : card.kind === 'rent' ? 'rent-to-rent' : 'to buy',
+    buy_to_let_flags: view?.btl?.flags ?? [],
     property: describeType(card),
     where: [card.town, card.outcode].filter(Boolean).join(' · ') || null,
     price: priceLine(card),
@@ -142,7 +145,7 @@ export function chatTools(member: ChatMember, ctx: ChatContext, supabase: Supaba
 
   async function views(cards: DealCard[]): Promise<Map<string, CardView>> {
     if (cards.length === 0) return new Map();
-    const [base, snapshot] = await Promise.all([cardViewsFor({ supabase: supabase as never, userId: member.userId, adminUser: member.admin, cards, finance, cashBuyer }), getAreaCardsWithin(AREA_WAIT_MS)]);
+    const [base, snapshot] = await Promise.all([cardViewsFor({ supabase: supabase as never, userId: member.userId, adminUser: member.admin, cards, finance, cashBuyer, btl: btlLookerFor(ctx.member.goals, ctx.member.savedAreas, ctx.member.tailoring?.about ?? null) }), getAreaCardsWithin(AREA_WAIT_MS)]);
     return withTailoring(base, cards, ctx.member.tailoring ?? null, snapshot, now, { why: true });
   }
 

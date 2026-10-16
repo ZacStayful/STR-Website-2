@@ -43,6 +43,7 @@ export function whatOf(d: Pick<DealDescription, 'bedrooms' | 'propertyKind' | 'd
   const beds = d.bedrooms !== null && d.bedrooms > 0 ? `${Math.min(d.bedrooms, 9)}-bed ` : '';
   if (d.dealType === 'brrr') return `${beds}project`;
   const kind = d.propertyKind === 'unknown' ? 'property' : d.propertyKind;
+  if (d.dealType === 'btl') return `${beds}${kind} to let to long-term tenants`;
   return d.dealType === 'r2r' ? `${beds}${kind} to rent` : `${beds}${kind}`;
 }
 
@@ -72,6 +73,7 @@ const BASIS_TAIL: Record<ProfitBasis, string> = {
   range: '',
   after_works: ' once the works are done',
   after_refinance: " once the works are done and it's refinanced",
+  btl_cashflow: ' after the mortgage, before tax',
 };
 
 /**

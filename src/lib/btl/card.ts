@@ -241,11 +241,13 @@ export function btlNumbers(card: BtlCard, priority: BtlPriority): BtlCardNumber[
 
 const BELOW_C = new Set<EpcRating>(['D', 'E', 'F', 'G']);
 
-/** The flags a card shows. `distance` is "24 miles from Leeds" when the search widened. */
+/** The flags a card shows. `distance` is "24 miles from Leeds" when the deal is outside the member's own areas. */
 export function btlFlags(card: BtlCard, distance: string | null = null): string[] {
   const out: string[] = [];
   if (card.flags.serviceChargeConfirmed === false) out.push('Service charge not confirmed');
   if (card.flags.epc && BELOW_C.has(card.flags.epc)) out.push('EPC below C');
+  // The top of the cash in carries an upgrade allowance until the rating is known (decided, Q10).
+  else if (!card.flags.epcChecked) out.push('EPC not checked');
   if (card.flags.shortLease) out.push('Short lease');
   if (card.rent.confidence === 'low') out.push('Rough rent estimate');
   if (distance) out.push(distance);
@@ -258,3 +260,14 @@ export const RENT_CONFIDENCE_WORDS: Record<Confidence, string> = {
   medium: 'Some rent evidence',
   low: 'Rough rent estimate',
 };
+
+/**
+ * A buy-to-let deal's one line in an email or a list: its cashflow and cash
+ * in, both ranges, from the stored card ("£315–£511/mo · £51,200–£56,200 cash
+ * in · buy to let, before tax").
+ */
+export function btlFigureLine(card: { btl?: BtlCard | null }): string {
+  const c = card.btl ?? null;
+  if (!c) return 'Buy to let: figures being updated';
+  return `${formatRange(c.cashflowMonthly.low, c.cashflowMonthly.high)} · ${btlNumbers(c, 'income')[0].value} cash in · buy to let, before tax`;
+}

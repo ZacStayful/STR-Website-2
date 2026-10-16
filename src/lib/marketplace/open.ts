@@ -24,6 +24,8 @@ import { runMetered } from '../credit/context';
 import { serverFetchEnabled } from '../listing/fetch';
 import { postcodeAreaOf } from '../listing/normalise';
 import { openPricePence } from './ladder';
+import { openProfitFor } from '../btl/view';
+import { parseBtlCard } from '../btl/card';
 import { openDecision, hasRecentLiveCheck, pendingOpenInFlight, type FetchOutcome } from './status';
 import { retiredReasonFor } from './status';
 import { applyLiveResult, fetchDealPage, loadDealById, loadScreenContext, loadSourcedListings, revalidateDeals, DEAL_COLUMNS, type Admin } from './server';
@@ -95,7 +97,7 @@ export async function openDeal(input: { userId: string; adminUser: boolean; deal
   const settings = await getBillingSettings();
   // Batch 25: a deal Stayful Intelligence saved for this account opens free (that deal only; the ladder is untouched).
   const freeStandout = !input.adminUser && (await isFreeStandoutOpen(input.userId, deal.id));
-  const pence = input.adminUser || freeStandout ? 0 : openPricePence(deal.annual_profit === null ? null : Number(deal.annual_profit), settings.dealOpenLadder);
+  const pence = input.adminUser || freeStandout ? 0 : openPricePence(await openBasisOf(admin, deal), settings.dealOpenLadder);
   if (pence > 0 && isEnforcing()) {
     const bal = await getBalance(input.userId).catch(() => null);
     if (!bal || bal.spendableBasePence < pence) return { ok: false, code: 'insufficient_credit', requiredPence: pence, availablePence: Math.max(0, Math.round(bal?.spendableBasePence ?? 0)) };
@@ -390,4 +392,18 @@ export async function listOpened(userId: string): Promise<OpenedDeal[]> {
     for (const d of (rows ?? []) as unknown as DealRow[]) deals.set(d.id, d);
   }
   return opens.map((open) => ({ open, deal: deals.get(open.deal_id) ?? null }));
+}
+
+/**
+ * Batch 28: the figure the open ladder reads for this row (btl/view.ts
+ * openProfitFor, the rule the card's price follows): its annual profit, or
+ * for a deal in the pool only as a buy-to-let deal, its middle cashflow
+ * over a year. Read without the buy-to-let card (schema behind), such a deal
+ * opens at the ladder's first rung.
+ */
+export async function openBasisOf(admin: ReturnType<typeof createAdminClient>, deal: DealRow): Promise<number | null> {
+  if (deal.kind !== 'sale' || deal.band === 'qualified') return openProfitFor({ ...deal, project: null });
+  const { data, error } = await admin.from('marketplace_deals').select('btl, project').eq('id', deal.id).maybeSingle();
+  const row = !error && data ? (data as { btl?: unknown; project?: unknown }) : null;
+  return openProfitFor({ ...deal, project: row?.project ?? null, btl: parseBtlCard(row?.btl ?? null) });
 }
