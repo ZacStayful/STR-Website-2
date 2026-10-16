@@ -7734,3 +7734,148 @@ insert into public.billing_settings (key, value) values
 on conflict (key) do nothing;
 
 notify pgrst, 'reload schema';
+
+-- =========================
+-- Batch 27: Stayful Intelligence actions
+-- =========================
+-- In the full Stayful Intelligence view the member can tell the eye what to
+-- do ("analyse my top 3 kept deals", "pass everything that's gone off the
+-- market", "only 2-beds under £180k", a pasted listing link) and it does it,
+-- through the same code the buttons use (src/lib/si-actions). Each action
+-- keeps its button's price and its ledger line; the question is Batch 26's
+-- own charge. Keep / Pass, stage moves and profile changes can be undone for
+-- si_action_undo_hours; a charge never is. Additive; nothing is added to
+-- ACCESS_COLUMNS. Service role only, like every table since Batch 3.
+
+-- ── si_instructions: one row per question that asked the eye to do something ──
+--   id                    the question's chat_turns.id (also the ledger action_id of the question's own charge)
+--   user_id / payer_id    who asked, and whose credit pays (a team member's owner)
+--   status                proposed | cancelled | done | ready | awaiting_confirm | running | stopped | declined | blocked | expired
+--                         (src/lib/si-actions/config.ts says what each means)
+--   confirm_kind          low_balance | over_cap (the rest past si_action_instruction_cap_pence) | null
+--   confirm_answer        yes | no, once the member answered
+--   quoted_*_pence        the charged steps' quotes, added up (base, and face: what comes off the balance)
+--   spend_line            the one line shown before anything charged ran ("Running 3 full analyses — £12")
+--   conversation_id       the chat conversation, where the spend line and what happened are logged as turns
+--   starts_after          the Stop countdown's end; charged_started_at the moment the first charged step was claimed
+--                         (Stop is refused from then on; "Stop the rest" still stops what hasn't started)
+--   report_ref / report_kind  a bug report or feature request the eye filed for the member (Batch 18's #ref)
+create table if not exists public.si_instructions (
+  id uuid primary key,
+  user_id uuid references public.profiles(id) on delete cascade,
+  payer_id uuid,
+  status text not null default 'proposed',
+  confirm_kind text,
+  confirm_answer text,
+  confirmed_at timestamptz,
+  quoted_base_pence numeric(14,4) not null default 0,
+  quoted_face_pence numeric(14,4) not null default 0,
+  later_face_pence numeric(14,4) not null default 0,
+  balance_before_pence numeric(14,4),
+  spend_line text,
+  conversation_id uuid,
+  starts_after timestamptz,
+  charged_started_at timestamptz,
+  stopped_at timestamptz,
+  report_ref integer,
+  report_kind text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+do $$ begin
+  alter table public.si_instructions drop constraint if exists si_instructions_status_check;
+  alter table public.si_instructions add constraint si_instructions_status_check check (status in ('proposed', 'cancelled', 'done', 'ready', 'awaiting_confirm', 'running', 'stopped', 'declined', 'blocked', 'expired'));
+  alter table public.si_instructions drop constraint if exists si_instructions_confirm_check;
+  alter table public.si_instructions add constraint si_instructions_confirm_check check ((confirm_kind is null or confirm_kind in ('low_balance', 'over_cap')) and (confirm_answer is null or confirm_answer in ('yes', 'no')));
+  alter table public.si_instructions drop constraint if exists si_instructions_report_check;
+  alter table public.si_instructions add constraint si_instructions_report_check check (report_kind is null or report_kind in ('bug', 'feature'));
+end $$;
+-- One instruction at a time per member: only one may be counting down or running.
+create unique index if not exists si_instructions_live_uidx on public.si_instructions (user_id) where status in ('ready', 'running');
+create index if not exists si_instructions_user_idx on public.si_instructions (user_id, created_at desc);
+create index if not exists si_instructions_created_idx on public.si_instructions (created_at);
+create index if not exists si_instructions_open_idx on public.si_instructions (status, updated_at) where status in ('proposed', 'ready', 'awaiting_confirm', 'running');
+alter table public.si_instructions enable row level security;  -- no policies: service role only
+revoke all on public.si_instructions from anon, authenticated;
+
+-- ── si_action_steps: one row per thing the eye did (or was asked to and didn't) ──
+--   id                 also the step's idempotency key: a step is claimed (queued → running) once, so a retry never runs it twice
+--   seq                its place in the instruction (the order charged steps run and are capped in)
+--   action             keep | pass | stage_move | full_analysis | deep_report | deep_search | check_link | change_criteria
+--   deal_id            the marketplace deal (never another member's: only deals the member's own look-ups returned)
+--   target_label       how the eye names it: area and type, never an address
+--   params             the stage, the profile question and value, or the link (its canonical URL)
+--   part               now | later (past the cap: waits for the member's yes)
+--   quote_*_pence      what its button would charge this member (charged by the button's own code, never here)
+--   before / after     what it changed, for Undo (a stage and Keep / Pass, or a profile answer)
+--   profile_id         the active profile a profile change was saved to (Undo refuses once another one is active)
+--   payload            a checked listing's parsed snapshot and quick view, held only until Keep or the Undo window (the nightly job clears it)
+--   ledger_ref         what its own code charged under: the analysis purchase, the deep search, the report
+--   status             queued | deferred | running | handed_out | done | failed | dropped | stopped | declined | skipped
+--   report_ref         Batch 18's #ref when a failure was reported to the team automatically
+create table if not exists public.si_action_steps (
+  id uuid primary key default gen_random_uuid(),
+  instruction_id uuid not null references public.si_instructions(id) on delete cascade,
+  user_id uuid,
+  seq integer not null,
+  action text not null,
+  deal_id uuid,
+  target_label text,
+  params jsonb not null default '{}'::jsonb,
+  part text not null default 'now',
+  quote_base_pence numeric(14,4) not null default 0,
+  quote_face_pence numeric(14,4) not null default 0,
+  before jsonb,
+  after jsonb,
+  profile_id uuid,
+  payload jsonb,
+  ledger_ref text,
+  status text not null default 'queued',
+  drop_reason text,
+  error_code text,
+  report_ref integer,
+  created_at timestamptz not null default now(),
+  started_at timestamptz,
+  finished_at timestamptz,
+  undone_at timestamptz,
+  undo_note text
+);
+do $$ begin
+  alter table public.si_action_steps drop constraint if exists si_action_steps_action_check;
+  alter table public.si_action_steps add constraint si_action_steps_action_check check (action in ('keep', 'pass', 'stage_move', 'full_analysis', 'deep_report', 'deep_search', 'check_link', 'change_criteria'));
+  alter table public.si_action_steps drop constraint if exists si_action_steps_status_check;
+  alter table public.si_action_steps add constraint si_action_steps_status_check check (status in ('queued', 'deferred', 'running', 'handed_out', 'done', 'failed', 'dropped', 'stopped', 'declined', 'skipped'));
+  alter table public.si_action_steps drop constraint if exists si_action_steps_part_check;
+  alter table public.si_action_steps add constraint si_action_steps_part_check check (part in ('now', 'later'));
+end $$;
+create unique index if not exists si_action_steps_seq_uidx on public.si_action_steps (instruction_id, seq);
+create index if not exists si_action_steps_user_idx on public.si_action_steps (user_id, finished_at desc);
+create index if not exists si_action_steps_created_idx on public.si_action_steps (created_at);
+create index if not exists si_action_steps_payload_idx on public.si_action_steps (created_at) where payload is not null;
+alter table public.si_action_steps enable row level security;  -- no policies: service role only
+revoke all on public.si_action_steps from anon, authenticated;
+
+-- Settings (defaults and bounds in src/lib/si-actions/settings.ts; a missing or
+-- bad row takes the default). Edited on /admin/intelligence/actions. The
+-- low-credit line is Batch 20's low_credit_pence (Zac, 11 Oct: one line).
+--   si_action_enabled                false: the eye answers but does nothing (its buttons only)
+--   si_action_instruction_cap_pence  one instruction's action charges past this (face pence) wait for the member's yes (Zac: £20)
+--   si_action_undo_hours             how long Keep/Pass, stage moves and profile changes can be undone (Zac: 24)
+--   si_action_stop_grace_seconds     the Stop countdown before the first charged step starts
+--   si_action_rate_per_hour          instructions a member may give in an hour
+--   si_action_rate_per_day           and in a UK day
+--   si_action_max_targets            the most deals one instruction may touch
+--   si_action_confirm_minutes        a countdown or confirm nobody answers expires after this
+insert into public.billing_settings (key, value) values
+  ('si_action_enabled', 'true'::jsonb),
+  ('si_action_instruction_cap_pence', '2000'::jsonb),
+  ('si_action_undo_hours', '24'::jsonb),
+  ('si_action_stop_grace_seconds', '5'::jsonb),
+  ('si_action_rate_per_hour', '20'::jsonb),
+  ('si_action_rate_per_day', '60'::jsonb),
+  ('si_action_max_targets', '50'::jsonb),
+  ('si_action_confirm_minutes', '10'::jsonb)
+on conflict (key) do nothing;
+
+notify pgrst, 'reload schema';
