@@ -109,6 +109,13 @@ const LBTT_RESIDENTIAL: Band[] = [
 const LBTT_ADS_RATE = 0.08;
 /** ADS applies to purchases at or above this price. */
 const LBTT_ADS_THRESHOLD = 40_000;
+/**
+ * Below this price the additional-property (higher) rates do not apply in
+ * England, Northern Ireland or Wales, and the standard nil band covers the
+ * whole price, so there is no tax at all (Batch 28). Scotland's ADS has the
+ * same £40,000 line, above.
+ */
+const HIGHER_RATES_THRESHOLD = 40_000;
 
 function banded(price: number, bands: Band[]): number {
   let duty = 0;
@@ -128,9 +135,9 @@ export function stampDutyLocal(price: number, country: TaxCountry = 'england'): 
   if (country === 'scotland') {
     amount = banded(p, LBTT_RESIDENTIAL) + (p >= LBTT_ADS_THRESHOLD ? p * LBTT_ADS_RATE : 0);
   } else if (country === 'wales') {
-    amount = banded(p, LTT_HIGHER);
+    amount = p < HIGHER_RATES_THRESHOLD ? 0 : banded(p, LTT_HIGHER);
   } else {
-    amount = banded(p, SDLT_ADDITIONAL);
+    amount = p < HIGHER_RATES_THRESHOLD ? 0 : banded(p, SDLT_ADDITIONAL);
   }
   const rounded = Math.round(amount);
   return { amount: rounded, name: taxNameFor(country), effectiveRatePct: p > 0 ? Math.round((rounded / p) * 1000) / 10 : 0, country, source: 'local' };
