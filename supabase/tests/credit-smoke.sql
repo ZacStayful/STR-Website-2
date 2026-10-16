@@ -383,6 +383,7 @@ declare
   gap uuid;                        -- a gap holding q1
   deal uuid;                       -- a marketplace deal
   ct uuid := gen_random_uuid();    -- a browser's client_turn_id
+  ins uuid;                        -- an instruction (Batch 27)
   j jsonb;
   refused boolean := false;
 begin
@@ -551,6 +552,41 @@ begin
     raise exception 'Batch 24-26 objects should be service-role only';
   end if;
   raise notice 'batch 24-26 privileges ok';
+
+  -- ── Batch 27: the eye acts for the member ──
+  -- One instruction counting down or running per member (the partial unique index), and a step claimed once per seq.
+  insert into si_instructions (id, user_id, status) values (gen_random_uuid(), u, 'running') returning id into ins;
+  begin
+    insert into si_instructions (id, user_id, status) values (gen_random_uuid(), u, 'ready');
+    raise exception 'one live instruction per member (si_instructions_live_uidx)';
+  exception when unique_violation then null;
+  end;
+  insert into si_instructions (id, user_id, status) values (gen_random_uuid(), u, 'awaiting_confirm');  -- waiting on a yes isn't live
+  insert into si_action_steps (instruction_id, user_id, seq, action) values (ins, u, 1, 'pass');
+  begin
+    insert into si_action_steps (instruction_id, user_id, seq, action) values (ins, u, 1, 'keep');
+    raise exception 'one step per instruction and seq (si_action_steps_seq_uidx)';
+  exception when unique_violation then null;
+  end;
+  begin
+    insert into si_action_steps (instruction_id, user_id, seq, action) values (ins, u, 2, 'top_up');
+    raise exception 'a step is one of the eight kinds (si_action_steps_action_check)';
+  exception when check_violation then null;
+  end;
+  begin
+    update si_instructions set confirm_kind = 'pay' where id = ins;
+    raise exception 'confirm_kind is low_balance or over_cap (si_instructions_confirm_check)';
+  exception when check_violation then null;
+  end;
+  if has_table_privilege('authenticated', 'public.si_instructions', 'select')
+     or has_table_privilege('anon', 'public.si_action_steps', 'select')
+     or has_table_privilege('authenticated', 'public.si_action_steps', 'update') then
+    raise exception 'Batch 27 tables should be service-role only';
+  end if;
+  if not exists (select 1 from billing_settings where key = 'si_action_instruction_cap_pence' and value = '2000'::jsonb) then
+    raise exception 'si_action_instruction_cap_pence is seeded at 2000 (Zac: £20)';
+  end if;
+  raise notice 'batch 27 actions ok';
 end $$;
 
 rollback;
