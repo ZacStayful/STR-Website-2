@@ -401,8 +401,8 @@ repayment figure beside an interest-only one. Once, after deploying:
 ### 13. Project deals, and "Which deals do you want to see?" (Batch 17)
 
 Two things arrive together. Every saved profile answers **"Which deals do
-you want to see?"** (Short-let, BRRR, Rent-to-rent; Buy to let shows as
-"Coming soon" and cannot be chosen), each chosen type with its own money
+you want to see?"** (Short-let, BRRR, Rent-to-rent; Buy to let showed as
+"Coming soon" until Batch 28, section 28), each chosen type with its own money
 question, and Today's 5 become a mix of the chosen types (2 / 2 / 1 for
 all three, 3 / 2 for two, shifting with Keeps; `billing_settings.today_mix`).
 And a sale whose own words say it needs work can become a **Project (BRRR)
@@ -1291,6 +1291,121 @@ Every action is logged with the existing activity kinds, with
 5. Nothing else to set: no new environment variable. It is on wherever the
    chat is (`SI_CHAT_ENABLED=true`); to stop it acting without a redeploy,
    untick the switch on the Actions tab.
+
+### 28. Buy-to-let deals (Batch 28)
+
+**Buy to let** becomes a deal type: a sale listing bought with a 75%
+interest-only mortgage at the live 2–3-year fixed rate and let to long-term
+tenants, judged on rent (`src/lib/btl`).
+
+How a deal is judged:
+
+- **Rent:** a range from the district's key stats and live rentals nearby
+  (same area, size and type), narrowed by a PropertyData valuation on a short
+  paid shortlist.
+- **Figures:** every figure is a range, with every running cost in.
+- **Hard rules:** the lender's rent test on the middle rent, low-end
+  cashflow of at least £0, and a home a lender would lend on.
+- **Benchmark:** what the member is after (income, growth or both) against
+  the typical deal in their cash band, widening from 10 miles out to the UK.
+
+A deal's buy-to-let lens sits on its `marketplace_deals` row beside the
+short-let one (`btl`, `btl_pass`). A row can be either kind or both. A
+buy-to-let-only row never reaches a profile that didn't choose Buy to let,
+and never shows short-let figures (`src/lib/btl/leak.test.ts`).
+
+Every number is a `btl_*` setting (defaults in `src/lib/btl/config.ts`).
+Profiles that chose "All of them" before this batch keep their three types
+and their 2 / 1 / 2 mix until the member taps **Add Buy to let**.
+
+In this order:
+
+1. **Run `supabase/schema.sql`:** the "Batch 28: buy-to-let" section. It is
+   additive and idempotent:
+   - `marketplace_deals.btl`, `.btl_pass` and `.btl_screened_at`, plus a
+     partial index;
+   - the `btl_apply_screen` function (service role only);
+   - two private tables, `btl_benchmarks` and `btl_reports` (row-level
+     security on, no policies);
+   - two unique indexes on `analysis_purchases` (one welcome-priced report
+     per member; one report running per listing);
+   - `profiles.btl_launch_line_at` (the launch line's flag) and
+     `announcements.link_label` (the button's words);
+   - the ledger row `marketplace:btl_report` and eleven `btl_*` settings,
+     `btl_launch_from` among them as **null**;
+   - a once-only update of `today_mix`: four types are 2 / 1 / 1 / 1, and
+     the old three-type mix is kept as `three`. A row that already names
+     `btl` is never touched again.
+
+   Nothing is added to `ACCESS_COLUMNS`, and nothing in `DEAL_COLUMNS` or
+   `CARD_COLUMNS` reads the new columns. They are read tolerantly, so the
+   site works before the section is run, but there are no buy-to-let deals
+   until it is.
+2. **Knowledge:** `/admin/intelligence/knowledge` → **Dry run**, then
+   **Seed**. That gives six new drafts: `btl_what`, `btl_add`,
+   `btl_rent_test`, `btl_costs`, `btl_judged` and `btl_report`. It also adds
+   seven placeholders: `btl_report_cost`, `btl_ltv`, `btl_rent_test`,
+   `btl_running_costs`, `btl_epc_allowance`, `btl_cash_bands` and
+   `btl_standout_margin`. The service facts gain a "Buy-to-let deals"
+   section. The rules note and the EPC lines per nation
+   (`src/lib/btl/nation.ts`) are legal wording and drafts too: check them
+   before launch.
+3. **Dry-run the screen for a few days, still off:** "Dry-run the screen" in
+   the Buy-to-let screen panel on `/admin/deals`, or
+   `/api/internal/btl-screen?dry=1`. It shows:
+   - how many sales it screened and how many pass;
+   - what it would let in, bring back and retire;
+   - the shortlist it would buy (outcode, size and why; never an address)
+     and what the day's cap has left;
+   - each benchmark's widening steps.
+
+   It asks nothing that costs and writes nothing.
+4. **Switch on:** set `BTL_SCREEN_ENABLED=true` on Production and redeploy.
+   - **When it runs:** 04:50 UTC (after market-warm buys the key stats and
+     the day's rate) and 06:57 (after the sweep, before the 07:00 picks).
+     vercel.json now has 45 cron entries.
+   - **What it buys:** the paid shortlist (rent valuations and EPCs, house
+     spend) runs inside its own line of Batch 16's cap, `btlValuations` (20
+     a day) and `btlCapPence` (100p a day), edited beside the deal-check
+     settings on `/admin/deals`. Set valuations to 0 to buy nothing.
+   - **Check:** the spend line on `/admin/deals` and the figures on
+     `/admin/deals/btl`.
+   - **The rent-valuation call:** PropertyData's `valuation-rent` answered
+     only 11 of 105 calls between 26 Sep and 16 Oct (failures cost
+     nothing). If "with a rent valuation" on `/admin/deals/btl` stays near
+     0, the ranges simply stay unnarrowed. Send on the reply (without the
+     key) if you want it looked at.
+5. **Walk the click-through checklist on a preview** (in the pull request).
+6. **Launch, once the deals look right:**
+   - **The announcement:** on `/admin/announcements` → New, write "New:
+     buy-to-let deals" with the link `/profile?add=btl` and the button
+     words "Add Buy to let". Check the preview, then Publish.
+   - **The tap:** opens the member's profile with Buy to let ready to
+     confirm. Nothing changes until they tap. The quiz then asks their
+     priority and cash band.
+   - **The email line:** set when it starts, with
+     `update public.billing_settings set value = '"2026-10-20T06:00:00Z"'::jsonb, updated_at = now() where key = 'btl_launch_from';`.
+     From then, each member with no Buy to let gets one line ("New:
+     buy-to-let deals" with an "Add Buy to let" button) in their next daily
+     email, once, inside the one-a-day cap; it is never an email of its
+     own.
+   - **Before it goes:** `/api/internal/daily-digest?dry=1` and the picks dry
+     run show `btlLaunch: true` for whoever would get it. Sends are counted
+     on `/admin/deals/btl`.
+7. **The £2 report** needs nothing more. Its price is `btl_report_pence`, it
+   is charged only once the report is made, and it carries Batch 22's
+   welcome price on revealed deals (`reveal_analysis_discount_pct`, once
+   per member). It is web only, at `/btl-report/<id>`, and the chat can run
+   it ("buy-to-let report").
+
+Member actions recorded:
+
+- deal types, and the priority and cash band, are `profile_edited`;
+- the report is `report_run` with `type: btl`;
+- the Explorer's "Buy to let" view is `explorer_btl_toggle`, record only.
+
+The weekly-active definition is unchanged, and the nightly screen records
+nothing as activity.
 
 ### Environment variables
 
