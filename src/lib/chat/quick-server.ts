@@ -183,8 +183,9 @@ export async function askQuick(user: Pick<User, 'id' | 'email'>, input: { client
         text = DONT_KNOW_LINE;
       }
     } else if (reply?.outcome === 'needs_full_view') {
+      // R3-37: sent to the full view: not a gap for the nightly job, not an answer.
       state = 'full_view';
-      outcome = 'low_confidence';
+      outcome = 'routed';
       text = FULL_VIEW_LINE;
     } else {
       state = 'unknown';

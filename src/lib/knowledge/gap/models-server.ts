@@ -47,7 +47,9 @@ export async function callModel(o: {
   const empty: Usage = {};
   if (!units) return { text: null, usage: empty, costPence: 0, stopReason: null, error: `no unit rows for ${o.model}` };
   if (!apiKey) return { text: null, usage: empty, costPence: 0, stopReason: null, error: 'no_api_key' };
-  const client = new Anthropic({ apiKey, timeout: GAP_MODEL_TIMEOUT_MS, maxRetries: 1 });
+  // R3-144: no SDK retry: a timed-out call may still have been billed, and the caller counts its worst case
+  // against the cap; the next night tries the gap again.
+  const client = new Anthropic({ apiKey, timeout: GAP_MODEL_TIMEOUT_MS, maxRetries: 0 });
   const sonnet = o.model === GAP_DRAFT_MODEL;
   let msg: Anthropic.Message;
   try {

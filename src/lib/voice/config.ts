@@ -74,7 +74,10 @@ export const TOOL_LIMITS = {
 export type ToolName = keyof typeof TOOL_LIMITS;
 export const TOOL_NAMES = Object.keys(TOOL_LIMITS) as ToolName[];
 
-export const QUESTION_OUTCOMES = ['answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off'] as const;
+/** The outcomes the phone agent may log (its tool's enum: unchanged, so the agent's tools need no re-sync). */
+export const CALL_QUESTION_OUTCOMES = ['answered', 'low_confidence', 'could_not_answer', 'member_unhappy', 'handed_off'] as const;
+/** Every outcome in the log. 'routed' (Review R3, R3-37): the quick box sent the member to the full view: not a gap, not an answer. */
+export const QUESTION_OUTCOMES = [...CALL_QUESTION_OUTCOMES, 'routed'] as const;
 export type QuestionOutcome = (typeof QUESTION_OUTCOMES)[number];
 
 /** A ringing call with no webhook after this long is reconciled from Twilio. */

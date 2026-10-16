@@ -26,11 +26,12 @@ export interface SeedRunResult {
 
 export async function runKnowledgeSeed(o: { dry: boolean; actor: string }, admin: Admin = createAdminClient()): Promise<SeedRunResult> {
   const empty = { inserted: [], proposed: [], skipped: [], unchanged: 0, failed: [] };
-  const { data, error } = await admin.from('si_knowledge').select('id, slug, seed_hash, draft_state, draft_source, version');
+  const { data, error } = await admin.from('si_knowledge').select('id, slug, seed_hash, draft_state, draft_source, version, retired_at');
   if (error) return { ok: false, dry: o.dry, message: isSchemaMissing(error) ? 'Run the Batch 24 section of supabase/schema.sql first.' : error.message, ...empty };
-  const rows = (data ?? []) as { id: string; slug: string; seed_hash: string | null; draft_state: SeedRowState['draftState']; draft_source: string | null; version: number }[];
+  const rows = (data ?? []) as { id: string; slug: string; seed_hash: string | null; draft_state: SeedRowState['draftState']; draft_source: string | null; version: number; retired_at: string | null }[];
   const plan = planSeed(
-    rows.map((r) => ({ slug: r.slug, seedHash: r.seed_hash, draftState: r.draft_state, draftSource: r.draft_source })),
+    // R3-146: a retired entry is skipped, so a later seed change never reports it as failed on every run.
+    rows.map((r) => ({ slug: r.slug, seedHash: r.seed_hash, draftState: r.draft_state, draftSource: r.draft_source, retired: r.retired_at !== null })),
     SEED,
     contentHash,
   );

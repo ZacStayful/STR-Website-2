@@ -97,7 +97,8 @@ export async function replyForStored(admin: Admin, turn: TurnRow, member: ChatMe
   if (turn.status === 'pending') return stateReply('busy', { turnId: turn.id });
   if (turn.status === 'failed') return stateReply('did_not_finish', { turnId: turn.id });
   if (turn.status === 'no_answer') {
-    const fullView = turn.surface === 'quick' && turn.outcome === 'low_confidence' && (turn.buttons ?? []).some((b) => b.kind === 'open_full_view');
+    // 'routed' from Review R3 (R3-37); the older rows carried low_confidence with the full-view button.
+    const fullView = turn.surface === 'quick' && (turn.outcome === 'routed' || (turn.outcome === 'low_confidence' && (turn.buttons ?? []).some((b) => b.kind === 'open_full_view')));
     return { ...stateReply(fullView ? 'full_view' : 'unknown', { turnId: turn.id, teamMember: member.teamMember }), buttons: turn.buttons ?? [], conversationId: turn.conversation_id };
   }
   const text = await storedAnswer(admin, turn);

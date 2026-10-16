@@ -81,6 +81,9 @@ function add(t: Tally, r: CountRow, approved: ReadonlySet<string>): void {
     case 'member_unhappy':
       t.memberUnhappy += r.n;
       break;
+    case 'routed':
+      // Review R3 (R3-37): the quick box sent them to the full view, where the question is asked (and counted) again.
+      break;
     default:
       t.asked += r.n;
   }

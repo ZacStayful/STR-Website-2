@@ -47,3 +47,35 @@ test('slugs and the catalogue', () => {
   assert.match(cat, /\{full_analysis_cost\}: .* \(now: £4\)/);
   assert.doesNotMatch(cat, /\{balance\}/, 'member values are never offered to a draft');
 });
+
+// Review R3 (R3-148, R3-145, R3-66, R3-57): the job's safety arithmetic.
+test('a missing unit row stops the model calls; a draft failure counts and gives up after the limit', async () => {
+  const { afterDraftFailure, unpricedUnits, MAX_DRAFT_ATTEMPTS } = await import('./plan.ts');
+  assert.deepEqual(unpricedUnits(() => 0.001), []);
+  assert.deepEqual(unpricedUnits((u) => (u === 'sonnet55_output_token' ? 0 : 0.001)), ['sonnet55_output_token']);
+  assert.deepEqual(afterDraftFailure(0), { draft_attempts: 1, status: 'open' });
+  assert.deepEqual(afterDraftFailure(MAX_DRAFT_ATTEMPTS - 1), { draft_attempts: MAX_DRAFT_ATTEMPTS, status: 'failed' });
+});
+
+test('a re-asked question lands on the gap already decided, never a new one; a decided gap is never drafted', async () => {
+  const { draftCandidates, findDecidedGap } = await import('./plan.ts');
+  const gaps = [
+    { id: 'g1', label: 'Can I bring my dog to a viewing?', status: 'rejected' as const, entry_id: null, asked: 3, draft_attempts: 0, last_asked_at: null },
+    { id: 'g2', label: 'Do you do commercial mortgages?', status: 'dismissed' as const, entry_id: null, asked: 2, draft_attempts: 0, last_asked_at: null },
+    { id: 'g3', label: 'How do I change my email address?', status: 'open' as const, entry_id: null, asked: 1, draft_attempts: 0, last_asked_at: null },
+  ];
+  const t = { answerMin: 0.55, lowMin: 0.3 };
+  assert.equal(findDecidedGap('Can I bring my dog to the viewing?', gaps, t)?.id, 'g1');
+  assert.equal(findDecidedGap('commercial mortgage?', gaps, t)?.id, 'g2');
+  assert.equal(findDecidedGap('How do I change my email address?', gaps, t), null, 'an open gap is the grouping model\'s to continue, not a decision');
+  assert.equal(findDecidedGap('What is the weather in Leeds?', gaps, t), null);
+  assert.deepEqual(draftCandidates(gaps, 5).map((g) => g.id), ['g3']);
+});
+
+test('an approved entry covers a group only on the channels its questions came from', async () => {
+  const { coversChannels } = await import('./plan.ts');
+  assert.deepEqual(coversChannels(['view', 'chat'], ['chat', 'chat']), { ok: true, missing: [] });
+  assert.deepEqual(coversChannels(['view', 'chat'], ['call', 'chat']), { ok: false, missing: ['call'] });
+  assert.deepEqual(coversChannels(['call'], ['sms']), { ok: true, missing: [] }, 'a text is an auto-reply template, outside the knowledge base');
+  assert.deepEqual(coversChannels(['call', 'chat'], ['call', 'sms', 'chat']), { ok: true, missing: [] });
+});
