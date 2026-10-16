@@ -25,11 +25,18 @@ export interface UndoableStep {
   status: StepStatus;
   finishedAt: string | null;
   undoneAt: string | null;
+  /** What it changed from (a profile change with no earlier answer has nothing to put back). */
+  before?: unknown;
 }
 
 /** Whether a step can still be undone: done, an undoable kind, not undone already, inside the window. */
 export function undoOpen(step: UndoableStep, now: Date, undoHours: number): boolean {
   if (!UNDOABLE_KINDS.has(step.kind) || step.status !== 'done' || step.undoneAt) return false;
+  // Review: a question the member had never answered can't be "put back" (answerQuestion can't clear one), so no Undo is offered.
+  if (step.kind === 'change_criteria') {
+    const v = step.before && typeof step.before === 'object' ? (step.before as { value?: unknown }).value : undefined;
+    if (v === undefined || v === null) return false;
+  }
   const at = step.finishedAt ? Date.parse(step.finishedAt) : Number.NaN;
   return Number.isFinite(at) && now.getTime() - at <= undoHours * 60 * 60 * 1000;
 }

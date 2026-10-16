@@ -42,7 +42,7 @@ export async function undoInstruction(m: ActingMember, supabase: SupabaseClient,
   for (const s of [...loaded.steps].sort((a, b) => b.seq - a.seq)) {
     const linkKeep = s.action === 'check_link' && s.status === 'done' && typeof s.after?.checkedListingId === 'string' && !s.undone_at;
     const keptAt = linkKeep ? Date.parse(String(s.after?.keptAt ?? s.finished_at ?? '')) : Number.NaN;
-    const open = linkKeep ? Number.isFinite(keptAt) && now.getTime() - keptAt <= windowMs : undoOpen({ kind: s.action, status: s.status, finishedAt: s.finished_at, undoneAt: s.undone_at }, now, config.undoHours);
+    const open = linkKeep ? Number.isFinite(keptAt) && now.getTime() - keptAt <= windowMs : undoOpen({ kind: s.action, status: s.status, finishedAt: s.finished_at, undoneAt: s.undone_at, before: s.before }, now, config.undoHours);
     if (!open) continue;
     // Claim it first: one tap undoes it once.
     const { data: claimed } = await admin.from('si_action_steps').update({ undone_at: now.toISOString() }).eq('id', s.id).eq('user_id', m.userId).is('undone_at', null).select('id');

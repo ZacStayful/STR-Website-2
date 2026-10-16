@@ -38,6 +38,8 @@ export interface StepLike {
   part: 'now' | 'later';
   quote_face_pence: number;
   after: Record<string, unknown> | null;
+  /** What it changed from (read for Undo: a profile change with nothing before can't be put back). */
+  before?: Record<string, unknown> | null;
   ledger_ref: string | null;
   status: StepStatus;
   drop_reason: string | null;
@@ -159,6 +161,8 @@ const FAIL_WORDS: Record<string, string> = {
   unavailable: 'it isn’t available just now',
   changed: 'it had changed since',
   expired: 'it wasn’t started in time',
+  switched_off: 'actions are switched off just now',
+  abandoned: 'it didn’t finish starting',
 };
 
 /** What wasn't done: dropped steps (with the reason), failed free steps. */
@@ -232,7 +236,7 @@ function linkView(steps: readonly StepLike[]): LinkView | null {
 const LIVE: ReadonlySet<InstructionStatus> = new Set<InstructionStatus>(['proposed', 'ready', 'running']);
 
 export function cardView(i: InstructionLike, steps: readonly StepLike[], o: { now: Date; undoHours: number; spendableBasePence?: number | null; autoTopupOn?: boolean }): ActionCardView {
-  const undoable = steps.filter((s) => undoOpen({ kind: s.action, status: s.status, finishedAt: s.finished_at, undoneAt: s.undone_at }, o.now, o.undoHours));
+  const undoable = steps.filter((s) => undoOpen({ kind: s.action, status: s.status, finishedAt: s.finished_at, undoneAt: s.undone_at, before: s.before }, o.now, o.undoHours));
   const linkKeep = steps.find((s) => s.action === 'check_link' && s.status === 'done' && typeof s.after?.checkedListingId === 'string' && !s.undone_at);
   const until = undoUntil([...undoable.map((s) => s.finished_at), ...(linkKeep ? [String(linkKeep.after?.keptAt ?? linkKeep.finished_at)] : [])], o.undoHours);
   const undoneNotes = steps.map((s) => s.undo_note).filter((n): n is string => Boolean(n));

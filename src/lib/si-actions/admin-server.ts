@@ -19,8 +19,24 @@ import { isStepKind, type StepKind } from './config';
 export const ACTION_ADMIN_DAYS = 30;
 /** Weeks of next-week weekly active (the newest one's "next week" is the week in progress). */
 export const ACTION_ADMIN_WEEKS = 5;
-const ROW_LIMIT = 10_000;
+/** PostgREST returns at most 1,000 rows a request: read a page at a time, up to this many in all. */
+const PAGE = 1000;
+const ROW_LIMIT = 20_000;
 const CHUNK = 200;
+
+type Page = { data: unknown[] | null; error: { message: string } | null };
+
+/** Every row a query returns (in pages, to ROW_LIMIT); the query must be ordered so pages don't overlap. */
+async function allRows<T>(read: (from: number, to: number) => PromiseLike<Page>): Promise<{ rows: T[]; error: string | null }> {
+  const rows: T[] = [];
+  for (let from = 0; from < ROW_LIMIT; from += PAGE) {
+    const { data, error } = await read(from, from + PAGE - 1);
+    if (error) return { rows, error: error.message };
+    rows.push(...((data ?? []) as T[]));
+    if ((data?.length ?? 0) < PAGE) break;
+  }
+  return { rows, error: null };
+}
 
 export interface ActionsAdmin {
   config: ActionConfig;
@@ -44,6 +60,8 @@ function chunks<T>(list: readonly T[]): T[][] {
 }
 
 const num = (v: unknown) => Number(v) || 0;
+
+type RawIns = { id: string; user_id: string | null; created_at: string; status: string; decision: string; confirm_kind: string | null; confirm_answer: string | null; charged_started_at: string | null; stopped_at: string | null; report_kind: string | null };
 
 interface RawStep {
   instruction_id: string;
@@ -115,19 +133,19 @@ export async function loadActionsAdmin(now: Date = new Date()): Promise<ActionsA
 
     const [config, insRes, stepsRes, chatRes] = await Promise.all([
       readActionConfig(admin),
-      admin.from('si_instructions').select('id, user_id, created_at, status, decision, confirm_kind, confirm_answer, charged_started_at, stopped_at, report_kind').gte('created_at', since).order('created_at', { ascending: false }).limit(ROW_LIMIT),
-      admin.from('si_action_steps').select('instruction_id, user_id, action, status, params, quote_base_pence, ledger_ref, report_ref, error_code, created_at, started_at, finished_at, undone_at').gte('created_at', since).order('created_at', { ascending: false }).limit(ROW_LIMIT),
-      admin.from('chat_turns').select('user_id, created_at').eq('surface', 'full').gte('created_at', weeksFrom.toISOString()).limit(ROW_LIMIT),
+      allRows<RawIns>((a, b) => admin.from('si_instructions').select('id, user_id, created_at, status, decision, confirm_kind, confirm_answer, charged_started_at, stopped_at, report_kind').gte('created_at', since).order('created_at', { ascending: false }).order('id').range(a, b)),
+      allRows<RawStep>((a, b) => admin.from('si_action_steps').select('id, instruction_id, user_id, action, status, params, quote_base_pence, ledger_ref, report_ref, error_code, created_at, started_at, finished_at, undone_at').gte('created_at', since).order('created_at', { ascending: false }).order('id').range(a, b)),
+      allRows<{ user_id: string | null; created_at: string }>((a, b) => admin.from('chat_turns').select('id, user_id, created_at').eq('surface', 'full').gte('created_at', weeksFrom.toISOString()).order('created_at', { ascending: false }).order('id').range(a, b)),
     ]);
-    if (insRes.error) return { status: 'failed', message: `si_instructions: ${insRes.error.message}` };
-    if (stepsRes.error) return { status: 'failed', message: `si_action_steps: ${stepsRes.error.message}` };
-    if (chatRes.error) return { status: 'failed', message: `chat_turns: ${chatRes.error.message}` };
+    if (insRes.error) return { status: 'failed', message: `si_instructions: ${insRes.error}` };
+    if (stepsRes.error) return { status: 'failed', message: `si_action_steps: ${stepsRes.error}` };
+    if (chatRes.error) return { status: 'failed', message: `chat_turns: ${chatRes.error}` };
 
-    type RawIns = { id: string; user_id: string | null; created_at: string; status: string; decision: string; confirm_kind: string | null; confirm_answer: string | null; charged_started_at: string | null; stopped_at: string | null; report_kind: string | null };
-    const allIns = (insRes.data ?? []) as RawIns[];
-    const rawSteps = ((stepsRes.data ?? []) as RawStep[]).filter((s) => isStepKind(s.action));
+    const allIns = insRes.rows;
+    const rawSteps = stepsRes.rows.filter((s) => isStepKind(s.action));
     const withSteps = new Set(rawSteps.map((s) => s.instruction_id));
-    const facts: InstructionFact[] = allIns.map((r) => ({ id: r.id, userId: r.user_id, createdAt: r.created_at, status: r.status, decision: r.decision, confirmKind: r.confirm_kind, confirmAnswer: r.confirm_answer, chargedStartedAt: r.charged_started_at, stoppedAt: r.stopped_at, reportKind: r.report_kind, planned: withSteps.has(r.id) }));
+    const outOfCredit = new Set(rawSteps.filter((s) => s.error_code === 'insufficient_credit').map((s) => s.instruction_id));
+    const facts: InstructionFact[] = allIns.map((r) => ({ id: r.id, userId: r.user_id, createdAt: r.created_at, status: r.status, decision: r.decision, confirmKind: r.confirm_kind, confirmAnswer: r.confirm_answer, chargedStartedAt: r.charged_started_at, stoppedAt: r.stopped_at, reportKind: r.report_kind, planned: withSteps.has(r.id), ranOutOfCredit: r.status === 'blocked' || outOfCredit.has(r.id) }));
     const charges = await chargesFor(admin, rawSteps);
     const stepFacts: (StepFact & { userId: string | null })[] = rawSteps.map((s) => ({
       instructionId: s.instruction_id,
@@ -169,7 +187,7 @@ export async function loadActionsAdmin(now: Date = new Date()): Promise<ActionsA
       actors.set(w, set);
     }
     const chatUsers = new Map<string, Set<string>>();
-    for (const t of (chatRes.data ?? []) as { user_id: string | null; created_at: string }[]) {
+    for (const t of chatRes.rows) {
       if (!t.user_id) continue;
       const w = weekOf(t.created_at);
       if (!weeks.includes(w)) continue;
@@ -183,8 +201,8 @@ export async function loadActionsAdmin(now: Date = new Date()): Promise<ActionsA
     const counted = everyone.filter((u) => !excluded.has(u));
     const activeByWeek = new Map<string, Set<string>>();
     for (const part of chunks(counted)) {
-      const { data } = await admin.from('activity_events').select('user_id, occurred_at').in('user_id', part).in('kind', QUALIFYING_KINDS as string[]).gte('occurred_at', weeksFrom.toISOString()).limit(ROW_LIMIT);
-      for (const e of (data ?? []) as { user_id: string; occurred_at: string }[]) {
+      const { rows: events } = await allRows<{ user_id: string; occurred_at: string }>((a, b) => admin.from('activity_events').select('id, user_id, occurred_at').in('user_id', part).in('kind', QUALIFYING_KINDS as string[]).gte('occurred_at', weeksFrom.toISOString()).order('id').range(a, b));
+      for (const e of events) {
         const w = weekOf(e.occurred_at);
         const set = activeByWeek.get(w) ?? new Set<string>();
         set.add(e.user_id);

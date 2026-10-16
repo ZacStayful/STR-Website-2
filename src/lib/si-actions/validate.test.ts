@@ -17,7 +17,7 @@ function ctx(o: Partial<PlanContext> = {}): PlanContext {
       [C, deal(C, { analysed: true })],
     ]),
     maxTargets: 50,
-    question: 'analyse my kept deals',
+    question: 'analyse my kept deals, and check https://www.rightmove.co.uk/properties/123456?channel=RES_BUY and www.rightmove.co.uk/properties/1.',
     deepSearch: 'available',
     linkChecks: true,
     ...o,
@@ -94,6 +94,21 @@ test('links: the sites the server can check; Zoopla needs the extension; anythin
   assert.deepEqual(r.dropped.map((d) => d.reason), ['needs_extension', 'unsupported_site', 'duplicate']);
 });
 
+test('only a link the member pasted is checked, never one from elsewhere', () => {
+  const r = checkPlan([step({ action: 'check_link', url: 'https://www.rightmove.co.uk/properties/777' })], ctx());
+  assert.equal(r.dropped[0].reason, 'link_not_given');
+  assert.equal(checkPlan([step({ action: 'check_link', url: 'https://www.rightmove.co.uk/properties/777' })], ctx({ question: 'check (https://www.rightmove.co.uk/properties/777).' })).steps.length, 1);
+});
+
+test('a Full analysis and a Deep report of one deal are one Deep report', () => {
+  const r = checkPlan([step({ action: 'full_analysis', dealId: A }), step({ action: 'full_analysis', dealId: B }), step({ action: 'deep_report', dealId: A })], ctx());
+  assert.deepEqual(r.steps.map((s) => [s.kind, 'dealId' in s ? s.dealId : null]), [['deep_report', A], ['full_analysis', B]]);
+  assert.equal(r.dropped.length, 0);
+  const back = checkPlan([step({ action: 'deep_report', dealId: A }), step({ action: 'full_analysis', dealId: A })], ctx());
+  assert.deepEqual(back.steps.map((s) => s.kind), ['deep_report']);
+  assert.equal(back.dropped[0].reason, 'duplicate');
+});
+
 test('a member without listing checks gets no link check', () => {
   const r = checkPlan([step({ action: 'check_link', url: 'https://www.rightmove.co.uk/properties/1' })], ctx({ linkChecks: false }));
   assert.equal(r.dropped[0].reason, 'no_link_checks');
@@ -131,6 +146,13 @@ test('removal words and type names', () => {
   assert.equal(memberAskedToRemove("I don't want rent-to-rent any more", 'r2r'), true);
   assert.equal(memberAskedToRemove('show me more rent to rent', 'r2r'), false);
   assert.equal(memberAskedToRemove('remove brrr', 'buy_str'), false);
+  assert.equal(memberAskedToRemove('Stop showing me BRRR deals', 'brrr'), true);
+  assert.equal(memberAskedToRemove('No more short lets please', 'buy_str'), true);
+  // Review: a removal word anywhere plus the type's name isn't asking to remove it.
+  assert.equal(memberAskedToRemove("I don't want to lose short-lets, add BRRR", 'buy_str'), false);
+  assert.equal(memberAskedToRemove('add BRRR without dropping short-lets', 'buy_str'), false);
+  assert.equal(memberAskedToRemove("don't stop showing me BRRR", 'brrr'), false);
+  assert.equal(memberAskedToRemove('remove the 3-beds from my search and show me more rent to rent', 'r2r'), false);
   assert.equal(dealTypeOf('Short-let'), 'buy_str');
   assert.equal(dealTypeOf('r2r'), 'r2r');
   assert.equal(dealTypeOf('btl'), null);

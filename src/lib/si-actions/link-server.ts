@@ -19,7 +19,7 @@ import { stateReply, type ChatReply } from '../chat/reply';
 import type { ChatSettings } from '../chat/settings';
 import { DROP_REASONS } from './config';
 import { proposeActions } from './plan-server';
-import { finaliseInstruction } from './run-server';
+import { finaliseInstruction, withStoredCard } from './run-server';
 import { actionsOn, readActionConfig } from './store-server';
 import type { ActingMember } from './steps-server';
 
@@ -35,7 +35,7 @@ export async function linkOnlyReply(input: { user: Pick<User, 'id' | 'email'>; s
   if (!actionsOn(config)) return null;
   const { member, now } = input;
   const inserted = await insertTurn(admin, member, input.clientTurnId, 'full');
-  if (inserted.kind === 'existing') return replyForStored(admin, inserted.turn, member);
+  if (inserted.kind === 'existing') return withStoredCard(await replyForStored(admin, inserted.turn, member), { userId: member.userId, email: input.user.email ?? null, payerId: member.payerId, admin: member.admin, teamMember: member.teamMember });
   if (inserted.kind === 'busy') return stateReply('busy');
   const turn = inserted.turn;
   logActivity(member.userId, 'si_chat_full', { extras: { outcome: 'asked' }, dedupeKey: `si_chat_full:${turn.id}` });

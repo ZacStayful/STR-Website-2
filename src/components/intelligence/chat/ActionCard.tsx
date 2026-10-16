@@ -37,14 +37,26 @@ interface Resp {
 const btn = "rounded-md bg-[#B9D5C6] px-3 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90 disabled:opacity-60";
 const ghost = "rounded-md border border-white/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60";
 
+const DIDNT_GO = "That didn’t go through. Please try again.";
+
+/** One request to the instruction's route. Never throws: a dropped connection or a server error comes back as { error }. */
 async function post(id: string, body: Record<string, unknown>): Promise<Resp> {
-  const res = await fetch(`/api/si/actions/${id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  let res: Response;
   try {
-    return (await res.json()) as Resp;
+    res = await fetch(`/api/si/actions/${id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   } catch {
-    return { error: "That didn’t go through. Please try again." };
+    return { error: DIDNT_GO };
+  }
+  try {
+    const r = (await res.json()) as Resp;
+    return !res.ok && !r.error ? { ...r, error: DIDNT_GO } : r;
+  } catch {
+    return { error: DIDNT_GO };
   }
 }
+
+/** Tries of the next step after a failed request (2s, 4s, 8s) before the card waits for the member. */
+const NEXT_RETRIES = 3;
 
 /** A full analysis's run through its button's own route (server-sent events), to its end. */
 async function runAnalysis(h: Extract<HandOut, { kind: "analysis" }>, onProgress: (pct: number, message: string) => void): Promise<void> {
@@ -77,9 +89,15 @@ function outOfCredit(r: Resp) {
   if (r.code === "insufficient_credit") openOutOfCredit({ action: "this", requiredPence: r.requiredPence, availablePence: r.availablePence, mode: "topup" });
 }
 
-export function ActionCard({ initial }: { initial: ActionCardView }) {
+/** `update`: a newer view of the same instruction from elsewhere in the answer ("Use this"), taken in without a second card. */
+export function ActionCard({ initial, update = null }: { initial: ActionCardView; update?: ActionCardView | null }) {
   const router = useRouter();
   const [card, setCard] = useState<ActionCardView>(initial);
+  const [lastUpdate, setLastUpdate] = useState<ActionCardView | null>(update);
+  if (update !== lastUpdate) {
+    setLastUpdate(update);
+    if (update) setCard(update);
+  }
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -87,7 +105,17 @@ export function ActionCard({ initial }: { initial: ActionCardView }) {
   const inFlight = useRef(0);
   const pumping = useRef(false);
   const started = useRef(false);
+  const failures = useRef(0);
+  // Gone from the page: nothing more is asked for (what already started finishes through its own route).
+  const alive = useRef(true);
   const id = card.instructionId;
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const apply = useCallback(
     (r: Resp) => {
@@ -107,27 +135,51 @@ export function ActionCard({ initial }: { initial: ActionCardView }) {
   }, [id]);
 
   // One charged step at a time from the server; the long ones run through their own routes, two at once.
+  // A PMI opinion through its button's own route; a refusal (price changed, no credit) closes its step at once.
+  const runPmi = useCallback(
+    async (h: Extract<HandOut, { kind: "pmi" }>): Promise<void> => {
+      const res = await fetch(`/api/reports/${h.reportId}/pmi`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quotedBasePence: h.quotedBasePence }) }).catch(() => null);
+      if (!res || res.ok) return; // a dropped connection: its purchase row settles it
+      const b = (await res.json().catch(() => ({}))) as { code?: string; requiredPence?: number; availablePence?: number };
+      const code = res.status === 402 ? "insufficient_credit" : b.code;
+      if (code === "insufficient_credit") openOutOfCredit({ action: "this", requiredPence: b.requiredPence, availablePence: b.availablePence, mode: "topup" });
+      if (alive.current) apply(await post(id, { op: "refused", stepId: h.stepId, code }));
+    },
+    [apply, id],
+  );
+
   const pump = useCallback(async (): Promise<void> => {
-    if (pumping.current) return;
+    if (pumping.current || !alive.current) return;
     pumping.current = true;
     try {
-      while (inFlight.current < ANALYSES_AT_ONCE) {
+      while (alive.current && inFlight.current < ANALYSES_AT_ONCE) {
         const r = apply(await post(id, { op: "next" }));
         if (typeof r.waitMs === "number") {
           window.setTimeout(() => void pump(), Math.max(200, r.waitMs));
           return;
         }
+        if (r.error && !r.card) {
+          // A failed request isn't the end: ask again a little later, a few times (a paused seat won't change).
+          if (r.code !== "seat_paused" && failures.current < NEXT_RETRIES) {
+            const wait = 2000 * 2 ** failures.current;
+            failures.current += 1;
+            window.setTimeout(() => void pump(), wait);
+          }
+          return;
+        }
+        failures.current = 0;
         if (!("handOut" in r)) break;
         notifyCreditChanged();
         const h = r.handOut;
         if (!h) continue;
         inFlight.current += 1;
-        const run = h.kind === "analysis" ? runAnalysis(h, (pct, message) => setProgress((p) => ({ ...p, [h.stepId]: { pct, message } }))) : fetch(`/api/reports/${h.reportId}/pmi`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quotedBasePence: h.quotedBasePence }) }).then(() => undefined);
+        const run = h.kind === "analysis" ? runAnalysis(h, (pct, message) => setProgress((p) => ({ ...p, [h.stepId]: { pct, message } }))) : runPmi(h);
         void run
           .catch(() => undefined)
           .finally(() => {
             inFlight.current -= 1;
             notifyCreditChanged();
+            if (!alive.current) return;
             void refresh().then(() => pump());
             router.refresh();
           });
@@ -135,7 +187,7 @@ export function ActionCard({ initial }: { initial: ActionCardView }) {
     } finally {
       pumping.current = false;
     }
-  }, [apply, id, refresh, router]);
+  }, [apply, id, refresh, router, runPmi]);
 
   // The countdown: ticks until it ends, then the charged steps start (once).
   useEffect(() => {
@@ -172,12 +224,16 @@ export function ActionCard({ initial }: { initial: ActionCardView }) {
   const act = async (body: Record<string, unknown>) => {
     setBusy(true);
     setNote(null);
-    const r = apply(await post(id, body));
-    setBusy(false);
-    if (body.op === "undo" || body.op === "keep") router.refresh();
-    if (body.op === "confirm" && body.yes === true && (r.card?.status === "ready" || r.card?.status === "running")) {
-      started.current = true;
-      void pump();
+    try {
+      const r = apply(await post(id, body));
+      if (body.op === "undo" || body.op === "keep") router.refresh();
+      if (body.op === "confirm" && body.yes === true && (r.card?.status === "ready" || r.card?.status === "running")) {
+        started.current = true;
+        failures.current = 0;
+        void pump();
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -187,15 +243,15 @@ export function ActionCard({ initial }: { initial: ActionCardView }) {
     <div className="mt-3 space-y-3 rounded-lg border border-white/20 p-3 text-sm" aria-live="polite">
       {card.done.length > 0 && (
         <ul className="space-y-1">
-          {card.done.map((line) => (
-            <li key={line}>✓ {line}</li>
+          {card.done.map((line, i) => (
+            <li key={`${i}:${line}`}>✓ {line}</li>
           ))}
         </ul>
       )}
       {card.notDone.length > 0 && (
         <ul className="space-y-1 text-[#B9D5C6]">
-          {card.notDone.map((line) => (
-            <li key={line}>{line}</li>
+          {card.notDone.map((line, i) => (
+            <li key={`${i}:${line}`}>{line}</li>
           ))}
         </ul>
       )}
@@ -275,8 +331,8 @@ export function ActionCard({ initial }: { initial: ActionCardView }) {
       {card.link && (
         <div className="space-y-2 rounded-md bg-white/5 p-3">
           <p className="font-semibold">{card.link.title}</p>
-          {card.link.lines.map((l) => (
-            <p key={l} className="text-[#B9D5C6]">
+          {card.link.lines.map((l, i) => (
+            <p key={`${i}:${l}`} className="text-[#B9D5C6]">
               {l}
             </p>
           ))}

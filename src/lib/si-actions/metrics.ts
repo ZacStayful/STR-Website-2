@@ -20,6 +20,8 @@ export interface InstructionFact {
   reportKind: string | null;
   /** It had steps: a question that only filed a report or offered a feature request is not an instruction. */
   planned: boolean;
+  /** Blocked for credit after a yes, or a charged step skipped because the balance didn't cover it when its turn came. */
+  ranOutOfCredit?: boolean;
 }
 
 export interface StepFact {
@@ -140,7 +142,7 @@ export interface Safety {
   confirmsShown: { low_balance: number; over_cap: number };
   confirmsYes: { low_balance: number; over_cap: number };
   confirmsNo: { low_balance: number; over_cap: number };
-  /** Not enough credit: the pack / top-up offer, and nothing charged ran. */
+  /** Not enough credit: at the start (nothing charged ran), after a yes, or when a step's turn came. */
   blocked: number;
   memberBugs: number;
   featureRequests: number;
@@ -166,7 +168,7 @@ export function safety(instructions: readonly InstructionFact[]): Safety {
       if (i.confirmAnswer === 'yes') out.confirmsYes[i.confirmKind] += 1;
       if (i.confirmAnswer === 'no') out.confirmsNo[i.confirmKind] += 1;
     }
-    if (i.decision === 'insufficient') out.blocked += 1;
+    if (i.decision === 'insufficient' || i.ranOutOfCredit) out.blocked += 1;
   }
   return out;
 }

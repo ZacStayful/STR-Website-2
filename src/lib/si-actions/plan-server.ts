@@ -28,6 +28,7 @@ import { checkPlan, type PlanDeal, type ProposedStep, type ValidStep } from './v
 import { decideSpend, spendLine, type PricedStep } from './spend';
 import { actionsOn, insertInstruction, instructionsSince, liveInstructionFor, readActionConfig, type NewStep } from './store-server';
 import { mayCheckLinks, previewCriteria, quoteAnalysis, quoteDeepSearch, quoteLinkCheck, quotePmiAddon, type ActingMember } from './steps-server';
+import { freshenLive } from './run-server';
 
 export interface ProposeInput {
   member: ActingMember;
@@ -39,7 +40,7 @@ export interface ProposeInput {
   /** Deal ids this answer's own look-ups returned: the only deals a step may name. */
   seenDeals: ReadonlySet<string>;
   steps: ProposedStep[];
-  /** The question's own hold (face pence, about): kept out of what the actions may leave. */
+  /** The question's own hold (base pence, its budget): kept out of what the actions may leave. */
   holdPence: number;
   now: Date;
 }
@@ -99,7 +100,8 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
   const config = await readActionConfig(admin);
   if (!actionsOn(config)) return { ok: false, note: 'Doing things for the member is switched off just now: offer the button instead (offer_action).' };
 
-  // Zac: one instruction at a time, and a limit an hour and a day.
+  // Zac: one instruction at a time, and a limit an hour and a day. One whose page went away doesn't count as live.
+  await freshenLive(m, now).catch((err) => console.error('[si-actions] freshen live failed:', (err as Error)?.message ?? err));
   const dayStart = londonDayStart(ukDay(now)) ?? new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const [lastHour, today, live] = await Promise.all([instructionsSince(admin, m.userId, new Date(now.getTime() - 60 * 60 * 1000)), instructionsSince(admin, m.userId, dayStart), liveInstructionFor(admin, m.userId)]);
   if (lastHour >= config.ratePerHour || today >= config.ratePerDay) return { ok: false, note: 'They have given a lot of instructions in a short time: tell them to try again a little later. Nothing was done.' };
@@ -192,7 +194,8 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
     opensDeal: p.opensDeal,
     aboutFacePence: p.aboutBasePence === null ? null : m.admin ? 0 : Math.round(quoteFace(p.aboutBasePence) * 100) / 100,
   }));
-  const balanceFace = Math.max(0, (balance?.totalPence ?? 0) - Math.max(0, input.holdPence));
+  // The question's hold is base pence: what it takes off the balance is its face (top-up credit at its rate).
+  const balanceFace = Math.max(0, (balance?.totalPence ?? 0) - quoteFace(Math.max(0, input.holdPence)));
   const decision = decideSpend({
     steps: priced,
     spendableBasePence: m.admin ? Number.POSITIVE_INFINITY : (balance?.spendableBasePence ?? 0),

@@ -29,13 +29,15 @@ import { getBalance } from '../credit/ledger';
 import { CHARGED_KINDS, RUNNING_STALE_MS } from './config';
 import { laterCheck, type PricedStep } from './spend';
 import { cardView, doneLines, type ActionCardView } from './view';
-import { claimStep, instructionFor, logActionLine, moveInstruction, moveSteps, readActionConfig, stepPayload, stepsFor, updateStep, type InstructionRow, type StepRow } from './store-server';
+import { actionsOn, claimStep, instructionFor, liveInstructionFor, logActionLine, moveInstruction, moveSteps, readActionConfig, stepPayload, stepsFor, updateStep, type InstructionRow, type StepRow } from './store-server';
 import { applyWhatIf } from '../intelligence/what-if-apply-server';
 import { questionById } from '../profile/questions';
 import { activeProfileFor } from '../profiles/server';
 import { applyCriteria, criteriaNow, checkLink, handOutPmi, keepCheckedListing, runStageStep, startAnalysis, startSearch, type ActingMember, type ChargedStart, type HandOut } from './steps-server';
 import { fileAutoBug, unexpectedFailure } from './report-server';
+import { leftBehind } from './live';
 import type { PipelineStatus } from '../listing/pipeline';
+import type { ChatReply } from '../chat/reply';
 
 export type Admin = ReturnType<typeof createAdminClient>;
 
@@ -74,14 +76,27 @@ async function runFreeStep(m: ActingMember, supabase: SupabaseClient, i: Instruc
     if (s.action === 'keep' || s.action === 'pass' || s.action === 'stage_move') {
       const r = await runStageStep(m, i.id, { action: s.action, dealId: String(s.deal_id), stage: String(s.params.stage) as PipelineStatus });
       if (r.ok) await updateStep(admin, s.id, { status: 'done', before: r.before, after: r.after, finished_at: iso() });
-      else await updateStep(admin, s.id, { status: 'failed', error_code: r.code, finished_at: iso() });
+      else {
+        await updateStep(admin, s.id, { status: 'failed', error_code: r.code, finished_at: iso() });
+        if (unexpectedFailure(r.code)) {
+          const rep = await fileAutoBug({ userId: m.userId, email: m.email, instructionId: i.id, stepId: s.id, action: s.action, code: r.code, detail: 'The stage change did not save.' }).catch(() => null);
+          if (rep && rep.ok) await updateStep(admin, s.id, { report_ref: rep.ref });
+        }
+      }
       return;
     }
     if (s.action === 'change_criteria') {
       const after = (s.after ?? {}) as { value?: unknown; label?: string; countBefore?: number | null; countAfter?: number | null };
       const r = await applyCriteria(m, supabase, String(s.params.savedAs), after.value);
       if (r.ok) await updateStep(admin, s.id, { status: 'done', after: { ...after, countAfter: r.countAfter ?? after.countAfter ?? null }, finished_at: iso() });
-      else await updateStep(admin, s.id, { status: 'failed', error_code: 'bad_value', undo_note: r.error.slice(0, 200), finished_at: iso() });
+      else {
+        // A save that failed on our side is a system error (the question isn't charged, and it is reported).
+        await updateStep(admin, s.id, { status: 'failed', error_code: r.ours ? 'failed' : 'bad_value', undo_note: r.error.slice(0, 200), finished_at: iso() });
+        if (r.ours) {
+          const rep = await fileAutoBug({ userId: m.userId, email: m.email, instructionId: i.id, stepId: s.id, action: s.action, code: 'failed', detail: 'The profile change did not save.' }).catch(() => null);
+          if (rep && rep.ok) await updateStep(admin, s.id, { report_ref: rep.ref });
+        }
+      }
       return;
     }
     await updateStep(admin, s.id, { status: 'failed', error_code: 'failed', finished_at: iso() });
@@ -194,10 +209,61 @@ async function settleIfIdle(admin: Admin, m: ActingMember, i: InstructionRow, st
   if (!i.stopped_at && steps.some((s) => s.status === 'deferred')) {
     const laterFace = steps.filter((s) => s.status === 'deferred').reduce((a, s) => a + s.quote_face_pence, 0);
     const balance = m.admin ? null : await getBalance(m.payerId).catch(() => null);
-    await moveInstruction(admin, i.id, m.userId, ['running'], 'awaiting_confirm', { confirm_kind: 'over_cap', later_face_pence: laterFace, balance_before_pence: balance ? balance.totalPence : i.balance_before_pence });
+    // A new question: an earlier low-credit yes isn't this one's answer (the admin counts each confirm once).
+    await moveInstruction(admin, i.id, m.userId, ['running'], 'awaiting_confirm', { confirm_kind: 'over_cap', confirm_answer: null, confirmed_at: null, later_face_pence: laterFace, balance_before_pence: balance ? balance.totalPence : i.balance_before_pence });
     return;
   }
   await moveInstruction(admin, i.id, m.userId, ['running'], i.stopped_at ? 'stopped' : 'done');
+}
+
+/**
+ * Closes the member's live instruction if its page has gone (live.ts): a
+ * countdown nobody acted on expires, a start that never finished fails, and
+ * queued steps nobody is going to start are skipped. Called before a new
+ * instruction is judged busy, so a closed tab never blocks the next one
+ * until the nightly job. Nothing charged is started or undone here.
+ */
+export async function freshenLive(m: ActingMember, now: Date = new Date()): Promise<void> {
+  const admin = createAdminClient();
+  const live = await liveInstructionFor(admin, m.userId);
+  if (!live) return;
+  let loaded = await instructionFor(admin, m.userId, live.id);
+  if (!loaded) return;
+  if (await reconcile(admin, m, loaded.instruction, loaded.steps, now)) loaded = (await instructionFor(admin, m.userId, live.id))!;
+  const left = leftBehind(loaded.instruction, loaded.steps, now);
+  if (left.expire) {
+    if (await moveInstruction(admin, live.id, m.userId, ['ready'], 'expired')) await moveSteps(admin, live.id, ['queued', 'deferred'], 'skipped', { error_code: 'expired' });
+    return;
+  }
+  for (const stepId of left.abandon) {
+    if (!(await claimStep(admin, stepId, 'running', 'failed', { error_code: 'abandoned', finished_at: iso(now) }))) continue;
+    const s = loaded.steps.find((x) => x.id === stepId)!;
+    const rep = await fileAutoBug({ userId: m.userId, email: m.email, instructionId: live.id, stepId, action: s.action, code: 'abandoned', detail: 'The step was claimed but its start never finished.' }).catch(() => null);
+    if (rep && rep.ok) await updateStep(admin, stepId, { report_ref: rep.ref });
+  }
+  if (left.skipQueued) await moveSteps(admin, live.id, ['queued'], 'skipped', { error_code: 'expired' });
+  if (left.abandon.length > 0 || left.skipQueued) {
+    loaded = (await instructionFor(admin, m.userId, live.id))!;
+    await settleIfIdle(admin, m, loaded.instruction, loaded.steps);
+  }
+}
+
+/**
+ * The card of a question already answered, for a retry or "Try again" that
+ * gets the stored answer: so a page that came back can still Stop, confirm
+ * or Undo. Null when the question planned nothing.
+ */
+export async function storedCard(m: ActingMember, turnId: string): Promise<ActionCardView | null> {
+  const loaded = await instructionFor(createAdminClient(), m.userId, turnId);
+  if (!loaded || loaded.steps.length === 0) return null;
+  return instructionView(m, turnId);
+}
+
+/** A stored reply with its card, when its question planned anything. */
+export async function withStoredCard(reply: ChatReply, m: ActingMember): Promise<ChatReply> {
+  if (!reply.turnId || reply.state === 'busy') return reply;
+  const card = await storedCard(m, reply.turnId).catch(() => null);
+  return card ? { ...reply, actions: card } : reply;
 }
 
 /** The card as it stands now (and anything whose own route has finished, settled). */
@@ -228,11 +294,17 @@ export async function nextStep(m: ActingMember, supabase: SupabaseClient, id: un
   let loaded = await instructionFor(admin, m.userId, id);
   if (!loaded) return null;
   let i = loaded.instruction;
+  const config = await readActionConfig(admin);
+  // Switched off on the admin page: nothing more starts, including what was already counting down or running.
+  if (!actionsOn(config) && (i.status === 'ready' || i.status === 'running')) {
+    await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'switched_off' });
+    await moveInstruction(admin, i.id, m.userId, ['ready'], 'expired');
+    return { kind: 'card', card: (await instructionView(m, i.id, now))! };
+  }
   if (i.status === 'ready') {
     const startsAt = i.starts_after ? Date.parse(i.starts_after) : 0;
     // The countdown is the Stop window: nothing charged starts before it ends, whatever the page asks.
-    if (now.getTime() < startsAt - 500) return { kind: 'wait', card: await view(admin, m, i, loaded.steps, now), waitMs: startsAt - now.getTime() };
-    const config = await readActionConfig(admin);
+    if (now.getTime() < startsAt) return { kind: 'wait', card: await view(admin, m, i, loaded.steps, now), waitMs: startsAt - now.getTime() };
     if (now.getTime() - startsAt > config.confirmMinutes * 60_000) {
       await moveInstruction(admin, i.id, m.userId, ['ready'], 'expired');
       await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'expired' });
@@ -248,6 +320,12 @@ export async function nextStep(m: ActingMember, supabase: SupabaseClient, id: un
   const step = loaded.steps.find((s) => s.status === 'queued' && CHARGED_KINDS.has(s.action));
   if (!step) return { kind: 'card', card: (await instructionView(m, i.id, now))! };
   if (!(await claimStep(admin, step.id, 'queued', 'running', { started_at: iso(now) }))) return { kind: 'card', card: (await instructionView(m, i.id, now))! };
+  // A Stop that landed between reading the instruction and the claim wins: the step goes back unstarted.
+  const { data: stop } = await admin.from('si_instructions').select('stopped_at').eq('id', i.id).eq('user_id', m.userId).maybeSingle();
+  if ((stop as { stopped_at?: string | null } | null)?.stopped_at) {
+    await claimStep(admin, step.id, 'running', 'stopped', { started_at: null });
+    return { kind: 'card', card: (await instructionView(m, i.id, now))! };
+  }
 
   // The balance when its turn comes (another charge, or a run already holding credit, may have used it).
   const have = await spendable(m);
@@ -294,6 +372,30 @@ export async function nextStep(m: ActingMember, supabase: SupabaseClient, id: un
   return { kind: 'card', card: (await instructionView(m, i.id))! };
 }
 
+/**
+ * The page's word that a PMI opinion's own route refused (the price changed,
+ * not enough credit, one already running), so the step closes now rather
+ * than after reconcile's wait. Believed only when the route made no purchase
+ * for it: a purchase settles the step from its own row, as ever. Nothing is
+ * charged or refunded here.
+ */
+export async function handOutRefused(m: ActingMember, id: unknown, stepId: unknown, code: unknown, now: Date = new Date()): Promise<ActionCardView | null> {
+  const admin = createAdminClient();
+  const loaded = await instructionFor(admin, m.userId, id);
+  if (!loaded) return null;
+  const s = loaded.steps.find((x) => x.id === stepId && x.status === 'handed_out' && x.action === 'deep_report' && x.params.addOn === true);
+  if (s?.ledger_ref) {
+    const from = new Date(Date.parse(s.started_at ?? s.created_at) - 60_000).toISOString();
+    const { data } = await admin.from('analysis_purchases').select('id').eq('report_id', s.ledger_ref).eq('kind', 'pmi_addon').eq('buyer_id', m.userId).gte('created_at', from).limit(1);
+    if ((data ?? []).length === 0) {
+      // Only the route's own refusal codes; anything else is "failed" (and never reported on the page's word).
+      const c = failureCode(typeof code === 'string' ? code.slice(0, 40) : '');
+      await claimStep(admin, s.id, 'handed_out', c === 'insufficient_credit' ? 'skipped' : 'failed', { error_code: c, finished_at: iso(now) });
+    }
+  }
+  return instructionView(m, loaded.instruction.id, now);
+}
+
 // ── Stop, a yes or a no, Keep ───────────────────────────────────────────────
 
 /** Stop: before the first charged step, nothing charged runs; after it, what hasn't started doesn't. */
@@ -303,12 +405,19 @@ export async function stopInstruction(m: ActingMember, id: unknown): Promise<Act
   if (!loaded) return null;
   const i = loaded.instruction;
   const now = iso();
-  if (i.status === 'ready') {
-    if (await moveInstruction(admin, i.id, m.userId, ['ready'], 'stopped', { stopped_at: now })) await moveSteps(admin, i.id, ['queued', 'deferred'], 'stopped');
-  } else if (i.status === 'running') {
+  let status = i.status;
+  if (status === 'ready') {
+    if (await moveInstruction(admin, i.id, m.userId, ['ready'], 'stopped', { stopped_at: now })) {
+      await moveSteps(admin, i.id, ['queued', 'deferred'], 'stopped');
+      return instructionView(m, i.id);
+    }
+    // The countdown ended as Stop was tapped and the first step was claimed: Stop still stops the rest.
+    status = (await instructionFor(admin, m.userId, i.id))?.instruction.status ?? status;
+  }
+  if (status === 'running') {
     await admin.from('si_instructions').update({ stopped_at: now, updated_at: now }).eq('id', i.id).eq('user_id', m.userId).eq('status', 'running').is('stopped_at', null);
     await moveSteps(admin, i.id, ['queued', 'deferred'], 'stopped');
-  } else if (i.status === 'awaiting_confirm') {
+  } else if (status === 'awaiting_confirm') {
     return confirmInstruction(m, id, false);
   }
   return instructionView(m, i.id);
@@ -334,6 +443,11 @@ export async function confirmWithCredit(m: ActingMember, id: unknown, yes: boole
     return { card: (await instructionView(m, i.id, now))!, credit: null };
   }
   const started = Boolean(i.charged_started_at);
+  if (yes && !actionsOn(config)) {
+    await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'switched_off' });
+    await moveInstruction(admin, i.id, m.userId, ['awaiting_confirm'], started ? 'done' : 'expired', { confirm_answer: 'yes', confirmed_at: iso(now) });
+    return { card: (await instructionView(m, i.id, now))!, credit: null };
+  }
   if (!yes) {
     await moveInstruction(admin, i.id, m.userId, ['awaiting_confirm'], started ? 'done' : 'declined', { confirm_answer: 'no', confirmed_at: iso(now) });
     await moveSteps(admin, i.id, ['queued', 'deferred'], 'declined');
@@ -351,12 +465,20 @@ export async function confirmWithCredit(m: ActingMember, id: unknown, yes: boole
     await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'insufficient_credit' });
     return { card: (await instructionView(m, i.id, now))!, credit: { requiredPence: check.requiredBasePence, availablePence: Math.round(check.availableBasePence) } };
   }
+  // Another instruction whose page went away doesn't hold the lock against this yes.
+  await freshenLive(m, now).catch(() => undefined);
+  // Queued before the instruction moves, so the card's next never finds it running with nothing queued.
   if (overCap) await moveSteps(admin, i.id, ['deferred'], 'queued');
   // The yes is the go-ahead: no second countdown.
   const moved = await moveInstruction(admin, i.id, m.userId, ['awaiting_confirm'], started ? 'running' : 'ready', { confirm_answer: 'yes', confirmed_at: iso(now), starts_after: iso(now) });
   if (!moved) {
-    await moveSteps(admin, i.id, ['queued'], 'skipped', { error_code: 'busy' });
-    await moveInstruction(admin, i.id, m.userId, ['awaiting_confirm'], 'done');
+    // Still waiting: another instruction is live (the one-at-a-time index), so nothing here starts. Anything else
+    // (a second tap of the same yes already moved it) is left alone.
+    const still = (await instructionFor(admin, m.userId, i.id))?.instruction.status === 'awaiting_confirm';
+    if (still) {
+      await moveSteps(admin, i.id, ['queued', 'deferred'], 'skipped', { error_code: 'busy' });
+      await moveInstruction(admin, i.id, m.userId, ['awaiting_confirm'], 'done');
+    }
   }
   return { card: (await instructionView(m, i.id, now))!, credit: null };
 }
@@ -419,7 +541,7 @@ export async function tidyInstructions(o: { apply: boolean; now?: Date }): Promi
  * had none) for the admin's counts.
  */
 export async function recordReport(admin: Admin, m: ActingMember, turnId: string, kind: 'bug' | 'feature', ref: number | null): Promise<void> {
-  const { error } = await admin.from('si_instructions').insert({ id: turnId, user_id: m.userId, payer_id: m.payerId, status: 'done', decision: 'free', report_kind: kind, report_ref: ref, finished_at: iso() });
+  const { error } = await admin.from('si_instructions').insert({ id: turnId, user_id: m.userId, payer_id: m.payerId, status: 'done', decision: 'free', report_kind: kind, report_ref: ref, report_only: true, finished_at: iso() });
   if (error?.code === '23505') {
     await admin.from('si_instructions').update({ report_kind: kind, report_ref: ref }).eq('id', turnId).eq('user_id', m.userId);
   } else if (error) console.error('[si-actions] report record failed:', error.message);

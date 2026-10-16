@@ -1284,7 +1284,10 @@ Every action is logged with the existing activity kinds, with
 4. **Check Vercel:** Settings → Cron Jobs lists `/api/internal/si-actions`
    (02:55 UTC daily; 43 cron entries). It closes countdowns and confirms
    nobody answered, stale running instructions, and checked-listing
-   snapshots past the Undo window. `?dry=1` only counts.
+   snapshots past the Undo window. `?dry=1` only counts. A member's next
+   instruction (or a yes) also closes one whose page went away
+   (`src/lib/si-actions/live.ts`), so a closed tab never blocks them until
+   the night.
 5. Nothing else to set: no new environment variable. It is on wherever the
    chat is (`SI_CHAT_ENABLED=true`); to stop it acting without a redeploy,
    untick the switch on the Actions tab.

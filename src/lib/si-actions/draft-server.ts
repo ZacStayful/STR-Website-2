@@ -105,5 +105,5 @@ export async function moveAfterDraft(admin: Admin, m: ActingMember, turnId: stri
   const r = await runStageStep(m, turnId, { action: 'stage_move', dealId, stage: to });
   if (r.ok) await updateStep(admin, String(inserted.id), { status: 'done', before: r.before, after: r.after, finished_at: new Date().toISOString() });
   else await updateStep(admin, String(inserted.id), { status: 'failed', error_code: r.code, finished_at: new Date().toISOString() });
-  return r.ok ? { ok: true, note: `Moved to ${stageLabel(to)}. You can undo it.` } : { ok: false, note: 'That didn’t move. Please try again from My deals.' };
+  return r.ok ? { ok: true, note: `Moved to ${stageLabel(to)}. You can undo it from the top of My deals.` } : { ok: false, note: 'That didn’t move. Please try again from My deals.' };
 }

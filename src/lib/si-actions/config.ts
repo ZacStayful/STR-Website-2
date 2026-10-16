@@ -102,6 +102,7 @@ export const DROP_REASONS = {
   already_done: 'That one already has its report.',
   already_there: 'That deal is already at that stage.',
   unsupported_site: 'I can check Rightmove, OnTheMarket and Airbnb links.',
+  link_not_given: 'I only check a link you paste into your message.',
   needs_extension: 'Zoopla and Booking.com pages need the browser extension to check.',
   no_link_checks: 'Listing checks aren’t on for your account.',
   bad_value: 'That isn’t a value your profile can take.',

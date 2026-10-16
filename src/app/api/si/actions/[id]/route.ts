@@ -4,7 +4,7 @@ import { isSameOriginJson } from '@/lib/tracking/request';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { isPipelineStatus } from '@/lib/listing/pipeline';
 import { actingMemberFor } from '@/lib/si-actions/member-server';
-import { confirmWithCredit, instructionView, keepLink, nextStep, stopInstruction, applyUseThisStep } from '@/lib/si-actions/run-server';
+import { confirmWithCredit, handOutRefused, instructionView, keepLink, nextStep, stopInstruction, applyUseThisStep } from '@/lib/si-actions/run-server';
 import { undoInstruction } from '@/lib/si-actions/undo-server';
 import { moveAfterDraft } from '@/lib/si-actions/draft-server';
 import { isUuid } from '@/lib/si-actions/store-server';
@@ -27,6 +27,7 @@ import { isUuid } from '@/lib/si-actions/store-server';
  *   POST { op: 'keep', stepId }   Keep a checked listing (into My deals as Kept)
  *   POST { op: 'move', dealId, stage }   a draft's "Move to …", on the member's tap
  *   POST { op: 'use_this', key }    the answer's "Use this" (Batch 22's what-if), with Undo
+ *   POST { op: 'refused', stepId, code }   a PMI opinion's own route refused before buying it: the step closes now
  */
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -96,6 +97,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         if (!isUuid(body.dealId) || !isPipelineStatus(body.stage)) return Response.json({ error: 'Bad request.' }, { status: 400 });
         const r = await moveAfterDraft(createAdminClient(), w.member, id, body.dealId, body.stage);
         return Response.json(r, { status: r.ok ? 200 : 409 });
+      }
+      case 'refused': {
+        const card = await handOutRefused(w.member, id, body.stepId, (body as { code?: unknown }).code);
+        return card ? Response.json({ card }) : Response.json({ error: 'Not found.' }, { status: 404 });
       }
       case 'use_this': {
         const r = await applyUseThisStep(w.member, w.supabase, id, (body as { key?: unknown }).key);

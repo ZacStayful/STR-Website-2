@@ -15,6 +15,7 @@ export function DraftCard({ draft, turnId }: { draft: DraftView; turnId: string 
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [moved, setMoved] = useState<string | null>(null);
+  const [moveNote, setMoveNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const text = `${draft.subject}\n\n${draft.body}`;
   return (
@@ -51,17 +52,19 @@ export function DraftCard({ draft, turnId }: { draft: DraftView; turnId: string 
             onClick={async () => {
               setBusy(true);
               const res = await fetch(`/api/si/actions/${turnId}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "move", dealId: draft.dealId, stage: draft.move!.to }) }).catch(() => null);
-              const body = res ? ((await res.json().catch(() => ({}))) as { note?: string }) : {};
-              setMoved(body.note ?? "That didn’t move. Please try again from My deals.");
+              const body = res ? ((await res.json().catch(() => ({}))) as { ok?: boolean; note?: string }) : {};
+              // Moved: the button goes. Not moved: it stays, to try again.
+              if (body.ok) setMoved(body.note ?? "Moved.");
+              else setMoveNote(body.note ?? "That didn’t move. Please try again.");
               setBusy(false);
-              router.refresh();
+              if (body.ok) router.refresh();
             }}
           >
             {draft.move.label}
           </button>
         )}
       </div>
-      {moved && <p className="text-xs text-[#B9D5C6]">{moved}</p>}
+      {(moved ?? moveNote) && <p className="text-xs text-[#B9D5C6]">{moved ?? moveNote}</p>}
     </div>
   );
 }

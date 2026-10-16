@@ -45,7 +45,7 @@ import { logExchange, openConversation, replyForStored } from './log-server';
 import type { ChatSettings } from './settings';
 import { chatContext } from './context-server';
 import { chatTools, newAnswerState } from './tools-server';
-import { finaliseInstruction, recordReport } from '../si-actions/run-server';
+import { finaliseInstruction, recordReport, withStoredCard } from '../si-actions/run-server';
 import { isLinkOnly, linkOnlyReply } from '../si-actions/link-server';
 import type { QuestionOutcome } from '../voice/config';
 
@@ -78,7 +78,9 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
   if (!question) return { kind: 'reply', reply: stateReply('unknown') };
   if (member.seatPaused) return { kind: 'reply', reply: stateReply('seat_paused') };
   const [pre, spendable] = await Promise.all([preflight(admin, member, input.clientTurnId, settings, now), spendableFor(member)]);
-  if (pre.kind === 'existing') return { kind: 'reply', reply: await replyForStored(admin, pre.turn, member) };
+  // Batch 27: a stored answer brings back its card (Stop, a confirm, Undo), so a page that came back can still use them.
+  const acting = { userId: member.userId, email: user.email ?? null, payerId: member.payerId, admin: member.admin, teamMember: member.teamMember };
+  if (pre.kind === 'existing') return { kind: 'reply', reply: await withStoredCard(await replyForStored(admin, pre.turn, member), acting) };
   if (pre.kind !== 'ok') return { kind: 'reply', reply: stateReply(pre.kind) };
 
   // Batch 27: a message that is only a listing link needs no model: checked at its own price, the question free.
@@ -98,7 +100,7 @@ export async function prepareFull(user: Pick<User, 'id' | 'email'>, supabase: Su
   if (budget === null) return { kind: 'reply', reply: topUp(member) };
 
   const inserted = await insertTurn(admin, member, input.clientTurnId, 'full');
-  if (inserted.kind === 'existing') return { kind: 'reply', reply: await replyForStored(admin, inserted.turn, member) };
+  if (inserted.kind === 'existing') return { kind: 'reply', reply: await withStoredCard(await replyForStored(admin, inserted.turn, member), acting) };
   if (inserted.kind === 'busy') return { kind: 'reply', reply: stateReply('busy') };
   // R3-42 / R3-91: the question is the member's action, recorded once per turn here (a retry with the same client
   // id got the stored turn above), whatever becomes of the answer (out of room, dropped or failed included).
@@ -341,7 +343,8 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     const fin = state.instruction ? await finaliseInstruction(acting, job.supabase, turn.id, { delivered: replyState === 'answer', conversationId: conv.id }) : { card: null, systemError: false };
     if (state.report) await recordReport(admin, acting, turn.id, 'bug', state.report.ref);
     else if (state.featureRequest && replyState === 'answer') await recordReport(admin, acting, turn.id, 'feature', null);
-    const noCharge = Boolean(state.report) || fin.systemError;
+    // Review: a question that also carried out actions is charged as one, even when it filed a bug too.
+    const noCharge = (Boolean(state.report) && !state.instruction) || fin.systemError;
     settled = true;
     const s = await settle(
       admin,

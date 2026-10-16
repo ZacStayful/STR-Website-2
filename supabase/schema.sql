@@ -7761,6 +7761,7 @@ notify pgrst, 'reload schema';
 --   starts_after          the Stop countdown's end; charged_started_at the moment the first charged step was claimed
 --                         (Stop is refused from then on; "Stop the rest" still stops what hasn't started)
 --   report_ref / report_kind  a bug report or feature request the eye filed for the member (Batch 18's #ref)
+--   report_only           the question only filed a report (no steps): not an instruction, so not counted in the rate limits
 create table if not exists public.si_instructions (
   id uuid primary key,
   user_id uuid references public.profiles(id) on delete cascade,
@@ -7781,10 +7782,12 @@ create table if not exists public.si_instructions (
   stopped_at timestamptz,
   report_ref integer,
   report_kind text,
+  report_only boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   finished_at timestamptz
 );
+alter table public.si_instructions add column if not exists report_only boolean not null default false;
 do $$ begin
   alter table public.si_instructions drop constraint if exists si_instructions_status_check;
   alter table public.si_instructions add constraint si_instructions_status_check check (status in ('proposed', 'cancelled', 'done', 'ready', 'awaiting_confirm', 'running', 'stopped', 'declined', 'blocked', 'expired'));

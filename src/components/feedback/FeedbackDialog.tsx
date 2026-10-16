@@ -69,6 +69,11 @@ export function FeedbackDialog() {
   const fileRef = useRef<HTMLInputElement>(null);
   const imagesRef = useRef<PreparedImage[]>([]);
   imagesRef.current = images;
+  // Batch 27: what the member has typed, for the open handler (a prefill only fills an empty form).
+  const textRef = useRef("");
+  useEffect(() => {
+    textRef.current = text;
+  }, [text]);
 
   const reset = useCallback(() => {
     for (const i of imagesRef.current) URL.revokeObjectURL(i.previewUrl);
@@ -88,9 +93,10 @@ export function FeedbackDialog() {
       // Batch 27: Stayful Intelligence's feature request, filled in; only over an empty form (a draft the member
       // was writing is never replaced).
       const prefill = (e as CustomEvent<FeedbackPrefill | undefined>).detail;
-      if (prefill && (prefill.kind === "bug" || prefill.kind === "feature") && typeof prefill.text === "string") {
-        setKind((k) => k ?? prefill.kind);
-        setText((t) => (t.trim() ? t : prefill.text.slice(0, LIMITS.textMax)));
+      if (prefill && (prefill.kind === "bug" || prefill.kind === "feature") && typeof prefill.text === "string" && !textRef.current.trim()) {
+        // The kind goes with the text: a feature request is never sent as the bug kind left over from before.
+        setKind(prefill.kind);
+        setText(prefill.text.slice(0, LIMITS.textMax));
         keyRef.current = null;
       }
       setOpen(true);

@@ -266,9 +266,12 @@ export async function previewCriteria(m: ActingMember, q: CriteriaQuestion, raw:
 }
 
 /** Saves a change through the profile editor's own save; the count after is the one it worked out. */
-export async function applyCriteria(m: ActingMember, supabase: SupabaseClient, savedAs: string, value: unknown): Promise<{ ok: true; countAfter: number | null } | { ok: false; error: string }> {
+/** answerQuestion's words when the save itself failed (our side), as against a value the profile can't take. */
+const SAVE_FAILED = /cannot be saved right now|could not save/i;
+
+export async function applyCriteria(m: ActingMember, supabase: SupabaseClient, savedAs: string, value: unknown): Promise<{ ok: true; countAfter: number | null } | { ok: false; error: string; ours: boolean }> {
   const r = await answerQuestion({ userId: m.userId, email: m.email, supabase, questionId: savedAs, value, notSure: false, editing: true });
-  return r.ok ? { ok: true, countAfter: r.view.matchCount } : { ok: false, error: r.error };
+  return r.ok ? { ok: true, countAfter: r.view.matchCount } : { ok: false, error: r.error, ours: SAVE_FAILED.test(r.error) };
 }
 
 /** The member's answer to a question now (for Undo's changed-since check), and the active profile. */

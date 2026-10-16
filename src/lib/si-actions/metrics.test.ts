@@ -91,18 +91,19 @@ test('Stops split into before anything was charged and “Stop the rest”; conf
     ins({ decision: 'confirm', confirmKind: 'low_balance', confirmAnswer: 'no' }),
     ins({ decision: 'confirm', confirmKind: 'low_balance' }),
     ins({ decision: 'insufficient', status: 'blocked' }),
+    ins({ id: 'later', decision: 'run', ranOutOfCredit: true }),
     ins({ reportKind: 'bug', planned: false }),
     ins({ reportKind: 'feature', planned: false }),
     ins({ status: 'cancelled', decision: 'run', stoppedAt: '2026-10-16T09:00:03Z' }),
   ]);
-  assert.equal(s.instructions, 6, 'a question that only filed a report is not an instruction');
-  assert.equal(s.withCharges, 6);
+  assert.equal(s.instructions, 7, 'a question that only filed a report is not an instruction');
+  assert.equal(s.withCharges, 7);
   assert.equal(s.stopsBeforeCharge, 1);
   assert.equal(s.stopsRest, 1);
   assert.deepEqual(s.confirmsShown, { low_balance: 2, over_cap: 1 });
   assert.deepEqual(s.confirmsYes, { low_balance: 0, over_cap: 1 });
   assert.deepEqual(s.confirmsNo, { low_balance: 1, over_cap: 0 });
-  assert.equal(s.blocked, 1);
+  assert.equal(s.blocked, 2, 'out of credit at the start, and when a step’s turn came');
   assert.equal(s.memberBugs, 1);
   assert.equal(s.featureRequests, 1);
 });

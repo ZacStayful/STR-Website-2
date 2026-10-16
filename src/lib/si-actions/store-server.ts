@@ -147,9 +147,9 @@ export async function liveInstructionFor(admin: Admin, userId: string): Promise<
   return row ? instructionOf(row) : null;
 }
 
-/** How many instructions the member gave since a time (cancelled ones too: each cost a question). */
+/** How many instructions the member gave since a time (cancelled ones too: each cost a question). A question that only filed a report isn't one; an instruction that also filed one still is. */
 export async function instructionsSince(admin: Admin, userId: string, since: Date): Promise<number> {
-  const { count } = await admin.from('si_instructions').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', since.toISOString()).is('report_kind', null);
+  const { count } = await admin.from('si_instructions').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', since.toISOString()).eq('report_only', false);
   return count ?? 0;
 }
 

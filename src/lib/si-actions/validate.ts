@@ -86,18 +86,45 @@ const TYPE_WORDS: Record<string, readonly string[]> = {
   r2r: ['rent-to-rent', 'rent to rent', 'r2r'],
 };
 
-const REMOVE_WORDS = /\b(remove|drop|stop|exclude|no more|take (?:off|out)|get rid of|don['’]t want|do not want|not interested in|without)\b/i;
+const REMOVE_WORDS = /\b(remove|drop|stop|exclude|no more|take (?:off|out)|get rid of|don't want|do not want|not interested in)\b/g;
+/** Words between the removal and the type that turn it round ("I don't want to lose short-lets"). */
+const KEEP_WORDS = /\b(lose|losing|keep|keeping|miss|missing|but|except)\b/;
+/** The most words between the removal and the type ("stop showing me BRRR"). */
+const REMOVE_GAP_WORDS = 4;
 
 /**
  * Zac (29 Sep): a deal type is never removed unless the member says so in
- * plain words. True only when their own question has a removal word and
- * names the type.
+ * plain words. True only when their own question has a removal word, not
+ * negated ("don't stop…"), followed within a few words by the type's name
+ * with nothing that turns it round in between.
  */
 export function memberAskedToRemove(question: string, type: string): boolean {
-  const q = question.toLowerCase();
   const words = TYPE_WORDS[type];
-  if (!words || !REMOVE_WORDS.test(q)) return false;
-  return words.some((w) => q.includes(w));
+  if (!words) return false;
+  const q = question.toLowerCase().replace(/[‘’]/g, "'");
+  for (const m of q.matchAll(REMOVE_WORDS)) {
+    const at = m.index ?? 0;
+    if (/\b(don't|do not|never|not|didn't|won't)\s+$/.test(q.slice(Math.max(0, at - 12), at))) continue;
+    const after = q.slice(at + m[0].length, at + m[0].length + 80);
+    for (const w of words) {
+      const i = after.indexOf(w);
+      if (i < 0) continue;
+      const gap = after.slice(0, i).trim();
+      if (gap.split(/\s+/).filter(Boolean).length > REMOVE_GAP_WORDS || KEEP_WORDS.test(gap)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The listing links in the member's own message, canonical: the only links the eye may check (never one it made up). */
+function linksIn(question: string): Set<string> {
+  const out = new Set<string>();
+  for (const token of question.split(/\s+/)) {
+    const d = detectListingUrl(token.replace(/^[<(\[]+|[>)\].,;:!?'"]+$/g, ''));
+    if (d) out.add(d.canonicalUrl);
+  }
+  return out;
 }
 
 /** The deal type a criteria value names: its id or one of its names. Null for anything else. */
@@ -134,6 +161,7 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
   const steps: ValidStep[] = [];
   const dropped: DroppedStep[] = [];
   const seen = new Set<string>();
+  let asked: Set<string> | undefined;
   const targets = new Set<string>();
   const drop = (step: ProposedStep, reason: DropReason, target: string | null = null) => dropped.push({ action: String(step.action ?? '').slice(0, 40), target, reason });
 
@@ -154,9 +182,13 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
         drop(step, deal);
         continue;
       }
-      const key = `${kind === 'deep_report' || kind === 'full_analysis' ? kind : 'stage'}:${deal.dealId}`;
+      // One analysis per deal: a deep report is a Full analysis with PMI's opinion, so asking for both is one deep
+      // report (two would price the open twice, and the second start would cancel the first's purchase).
+      const key = `${kind === 'deep_report' || kind === 'full_analysis' ? 'analysis' : 'stage'}:${deal.dealId}`;
       if (seen.has(key)) {
-        drop(step, 'duplicate', deal.label);
+        const earlier = kind === 'deep_report' ? steps.findIndex((s) => s.kind === 'full_analysis' && s.dealId === deal.dealId) : -1;
+        if (earlier >= 0) steps[earlier] = { kind: 'deep_report', dealId: deal.dealId, label: deal.label, opened: deal.opened, addOn: deal.analysed };
+        else drop(step, 'duplicate', deal.label);
         continue;
       }
       if (!targets.has(deal.dealId) && targets.size >= ctx.maxTargets) {
@@ -219,6 +251,10 @@ export function checkPlan(proposed: readonly ProposedStep[], ctx: PlanContext): 
       }
       if (!ctx.linkChecks) {
         drop(step, 'no_link_checks', detected.source);
+        continue;
+      }
+      if (!(asked ??= linksIn(ctx.question)).has(detected.canonicalUrl)) {
+        drop(step, 'link_not_given', detected.source);
         continue;
       }
       const key = `link:${detected.canonicalUrl}`;

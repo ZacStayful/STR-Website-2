@@ -29,13 +29,16 @@ export function ChatAnswer({
   onChoose?: (text: string) => void;
 }) {
   const muted = tone === "dark" ? "text-[#B9D5C6]" : "text-muted-foreground";
+  // "Use this" is a step of this answer's own instruction: its newer view goes into the one card, never a second.
+  const [cardUpdate, setCardUpdate] = useState<ActionCardView | null>(null);
+  const shownCard = reply.actions ?? cardUpdate;
   return (
     <div className={`rounded-xl ${tone === "dark" ? "bg-white/10 text-white" : "bg-muted text-foreground"} p-4 text-sm leading-relaxed`} aria-live="polite" aria-busy={streaming}>
       <p className="whitespace-pre-line">{reply.text || (streaming ? "…" : "")}</p>
       {!streaming && reply.buttons.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {reply.buttons.map((b) => (
-            <AnswerButton key={`${b.kind}:${b.href ?? b.whatIfKey}`} button={b} turnId={reply.turnId} />
+            <AnswerButton key={`${b.kind}:${b.href ?? b.whatIfKey}`} button={b} turnId={reply.turnId} onCard={setCardUpdate} />
           ))}
         </div>
       )}
@@ -48,10 +51,10 @@ export function ChatAnswer({
           ))}
         </div>
       )}
-      {!streaming && reply.actions && <ActionCard key={reply.actions.instructionId} initial={reply.actions} />}
+      {!streaming && shownCard && <ActionCard key={shownCard.instructionId} initial={shownCard} update={cardUpdate} />}
       {!streaming && reply.draft && <DraftCard draft={reply.draft} turnId={reply.turnId} />}
       {!streaming && reply.featureRequest && <FeatureRequest text={reply.featureRequest} />}
-      {!streaming && reply.report && !reply.actions && <p className={`mt-3 text-xs ${muted}`}>Reported to the Stayful team · #{reply.report.ref}</p>}
+      {!streaming && reply.report && !shownCard && <p className={`mt-3 text-xs ${muted}`}>Reported to the Stayful team · #{reply.report.ref}</p>}
       {!streaming && reply.factProposal && reply.turnId && <RememberThat turnId={reply.turnId} fact={reply.factProposal} muted={muted} />}
       {!streaming && (reply.charged || reply.voiceCharged || (reply.state === "answer" && reply.turnId)) && (
         <div className={`mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs ${muted}`}>
@@ -64,10 +67,9 @@ export function ChatAnswer({
   );
 }
 
-function AnswerButton({ button, turnId }: { button: ChatButton; turnId: string | null }) {
+function AnswerButton({ button, turnId, onCard }: { button: ChatButton; turnId: string | null; onCard: (card: ActionCardView) => void }) {
   const router = useRouter();
   const [done, setDone] = useState<string | null>(null);
-  const [card, setCard] = useState<ActionCardView | null>(null);
   const [busy, setBusy] = useState(false);
   const cls = "inline-block rounded-md bg-[#B9D5C6] px-3 py-1.5 text-sm font-semibold text-[#1a2118] hover:opacity-90 disabled:opacity-60";
   if (button.href) {
@@ -85,8 +87,7 @@ function AnswerButton({ button, turnId }: { button: ChatButton; turnId: string |
     );
   }
   if (button.whatIfKey && turnId) {
-    // Batch 27: applied as one of the eye's steps (Batch 22's own save), with Undo for the window.
-    if (card) return <div className="basis-full"><ActionCard initial={card} /></div>;
+    // Batch 27: applied as one of the eye's steps (Batch 22's own save), with Undo for the window on the answer's card.
     if (done) return <span className="self-center text-xs">{done}</span>;
     return (
       <button
@@ -99,7 +100,8 @@ function AnswerButton({ button, turnId }: { button: ChatButton; turnId: string |
           const body = res ? ((await res.json().catch(() => ({}))) as { card?: ActionCardView; error?: string }) : {};
           setBusy(false);
           if (body.card) {
-            setCard(body.card);
+            onCard(body.card);
+            setDone("Done — Undo is below.");
             router.refresh();
           } else setDone(body.error ?? "That didn’t save. Please try again.");
         }}

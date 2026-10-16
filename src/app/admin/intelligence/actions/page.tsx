@@ -123,6 +123,7 @@ export default async function ActionsAdminPage() {
                   </table>
                 )}
                 {load.data.revenue.estimated > 0 && <p className="mt-1 text-xs text-muted-foreground">* Listing checks are metered per call, so they’re at their typical price here; the ledger has the exact pennies.</p>}
+                <p className="mt-1 text-xs text-muted-foreground">An analysis that opened its deal: the open is its own ledger line and isn’t counted here.</p>
               </div>
               <div>
                 <h3 className="text-sm font-semibold">The questions that gave them (the AI line)</h3>

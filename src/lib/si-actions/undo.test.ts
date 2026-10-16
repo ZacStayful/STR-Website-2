@@ -12,6 +12,13 @@ test('Undo is open for 24 hours on a done, undoable step, once', () => {
   assert.equal(undoOpen({ kind: 'pass', status: 'failed', finishedAt: hoursAgo(1), undoneAt: null }, now, 24), false);
 });
 
+test('a profile change with no earlier answer has no Undo (there is nothing to put back)', () => {
+  const at = { kind: 'change_criteria' as const, status: 'done' as const, finishedAt: hoursAgo(1), undoneAt: null };
+  assert.equal(undoOpen({ ...at, before: { value: null } }, now, 24), false);
+  assert.equal(undoOpen({ ...at, before: null }, now, 24), false);
+  assert.equal(undoOpen({ ...at, before: { value: 2 } }, now, 24), true);
+});
+
 test('a charge is never undone: analyses, searches and link checks have no Undo', () => {
   for (const kind of ['full_analysis', 'deep_report', 'deep_search', 'check_link'] as const) {
     assert.equal(undoOpen({ kind, status: 'done', finishedAt: hoursAgo(1), undoneAt: null }, now, 24), false, kind);
