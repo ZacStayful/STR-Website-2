@@ -165,7 +165,7 @@ export async function proposeActions(input: ProposeInput): Promise<ProposeResult
       planned.push({ step, row: { ...base, target_label: q.areas.length > 0 ? q.areas.slice(0, 6).join(', ') : null, params: { upToBasePence: q.upToBasePence, firstDiscount: q.firstDiscount } }, basePence: q.upToBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });
     } else if (step.kind === 'check_link') {
       const q = await quoteLinkCheck();
-      planned.push({ step, row: { ...base, target_label: step.source, params: { url: step.url } }, basePence: q.maxBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });
+      planned.push({ step, row: { ...base, target_label: step.source, params: { url: step.url, aboutBasePence: q.aboutBasePence } }, basePence: q.maxBasePence, aboutBasePence: q.aboutBasePence, opensDeal: false });
     }
   }
 

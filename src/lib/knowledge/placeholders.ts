@@ -25,6 +25,7 @@ import { SEAT_PERIOD_DAYS, SEAT_PRICE_PENCE } from '../team/rules.ts';
 import { WINDOW_END_HOUR, WINDOW_START_HOUR } from '../sms/uk-time.ts';
 import { callFloorPence } from '../standout/notify.ts';
 import { QUICK_MAX_WORDS, speakCharsFor, speakPricePence } from '../chat/voice-rules.ts';
+import { deepQuote } from '../sourcing-demand/member-search-quote.ts';
 
 /** One billing_plans row, as read. */
 export interface PlanRow {
@@ -316,6 +317,21 @@ export const PLACEHOLDERS: Readonly<Record<string, PlaceholderDef>> = {
   chat_speak_full_cost: g_('About what hearing a full-view answer costs (AI voice, on top of the question)', 'unit_costs elevenlabs:character × markup × billing_settings.si_chat_full_max_words', (g) => {
     const words = whole(g, 'si_chat_full_max_words', 1);
     return words === null ? null : money(speakPricePence(g.units.get('elevenlabs:character'), speakCharsFor(words)));
+  }),
+  // Batch 27: Stayful Intelligence acts for the member (src/lib/si-actions). The low-credit confirm is {low_credit_mark}.
+  deep_search_max_cost: g_('The most a deep search can cost (its "up to", before a first-time discount)', 'billing_settings.deep_search_max_raw_pence × deep_search_markup', (g) => {
+    const cap = pence(g, 'deep_search_max_raw_pence');
+    const markup = num(raw(g, 'deep_search_markup'));
+    return cap === null || markup === null || markup <= 0 ? null : money(deepQuote({ estimateRawPence: 0, maxRawPence: cap, markup, discountPct: 0 }).upToBasePence);
+  }),
+  si_action_cap: g_('What one instruction may spend before Stayful Intelligence asks first', 'billing_settings.si_action_instruction_cap_pence', (g) => money(pence(g, 'si_action_instruction_cap_pence'))),
+  si_action_undo_hours: g_('Hours a Keep, Pass, stage move or criteria change it made can be undone', 'billing_settings.si_action_undo_hours', (g) => {
+    const h = whole(g, 'si_action_undo_hours', 1);
+    return h === null ? null : String(h);
+  }),
+  si_action_stop_seconds: g_('Seconds to tap Stop before the first paid step starts', 'billing_settings.si_action_stop_grace_seconds', (g) => {
+    const n = whole(g, 'si_action_stop_grace_seconds', 1);
+    return n === null ? null : String(n);
   }),
   // Batch 25: standout deals, deal calls and the slower-spender nudge
   standout_calls_per_month: g_('Deal calls a member may get in a calendar month, in words', 'billing_settings.standout_calls_per_month', (g) => {

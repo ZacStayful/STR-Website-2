@@ -1041,7 +1041,8 @@ so it can never pass its ceiling (`si_chat_quick_ceiling_pence` 3p,
 `si_chat_full_ceiling_pence` 25p) or the member's balance. Every figure in an
 answer must be one a look-up, a setting or an approved answer gave it, and it
 never gives advice, an address or a postcode, or changes anything itself (it
-offers buttons the member taps). The tap-to-ask chips stay free. Everything
+offers buttons the member taps; Batch 27, section 27, lets the full view act
+when the member tells it to). The tap-to-ask chips stay free. Everything
 is in `src/lib/chat`; admin is the **Chat** tab of `/admin/intelligence`.
 
 Below the floors (`si_chat_quick_floor_pence` 2p, `si_chat_full_floor_pence`
@@ -1202,6 +1203,92 @@ of a balance that covers it) is counted by the hourly seat cron, not
 reported as an error (r3n). Sections 19 and 23, Member emails and Text
 alerts above were corrected for r3c, r3d, r3e and r3h.
 
+### 27. Stayful Intelligence acts for the member (Batch 27)
+
+In the full Stayful Intelligence view the member can tell the eye what to do,
+and it does it through the same code the buttons use (`src/lib/si-actions`):
+
+- **Check a pasted link** (Rightmove, OnTheMarket, Airbnb; Zoopla and
+  Booking.com need the extension). A message that is only a link skips the
+  model. The result has **Keep**, which saves it as the Explorer's Keep does.
+- **Run Full analyses, deep reports or a deep search**: each at its button's
+  own price, through its button's own code (`startDealAnalysis`,
+  `addSecondOpinion`, `startDeepSearch`), two analyses at a time.
+- **Keep, Pass or move deals between stages**, and **change the active
+  profile's criteria** (`answerQuestion`), with the match count before and after.
+- **Draft a message to an agent** from the next-step template: Copy; the
+  member sends it; then "Move to Contacted / Offer" on their tap.
+
+It acts without asking, with these exceptions:
+
+- It asks first when an instruction would leave the balance under Batch 20's
+  `low_credit_pence`.
+- Past `si_action_instruction_cap_pence` (£20) in one instruction, it runs up
+  to the cap and asks once about the rest.
+- With not enough credit, nothing runs and Batch 20's pack / top-up offer opens.
+
+A spend line ("Running 3 full analyses — £12.00") comes with Stop for
+`si_action_stop_grace_seconds` before the first paid step. After that,
+"Stop the rest" stops what hasn't started.
+
+Billing:
+
+- The question is Batch 26's own charge (tokens × 5).
+- A question that ends in a bug report or a system error isn't charged.
+- Nothing that fails is charged, and a balance never goes below zero.
+
+Undo lasts `si_action_undo_hours` (24), from the chat or a line at the top of
+My deals. It covers Keep / Pass, stage moves and criteria changes, skips
+anything changed since, and never undoes a charge.
+
+Limits and safety:
+
+- It never pays, tops up, changes plans or auto top-up, cancels, deletes,
+  shares, changes notifications or contacts anyone. There is no step kind
+  for those.
+- The member comes only from the session, and every step is checked on the
+  server (`validate.ts`). Deals are only those the member's own look-ups
+  returned.
+- One instruction at a time, with hourly and daily limits.
+
+Reports, through Batch 18's feedback:
+
+- "That's wrong" files a bug for the member, with a #ref under Your feedback.
+- When it can't help, it offers a filled-in feature request to check and send.
+- A step that fails unexpectedly is reported automatically, once per member,
+  action and code a day.
+
+Every action is logged with the existing activity kinds, with
+`by: stayful_intelligence`.
+
+1. **Run `supabase/schema.sql`** (the "Batch 27: Stayful Intelligence
+   actions" section). It is idempotent and additive, service role only:
+   - `si_instructions`, one per question that asked it to do something
+     (its id is the question's `chat_turns.id`);
+   - `si_action_steps`, one per thing it did, with the before and after
+     values for Undo;
+   - eight `si_action_*` settings.
+
+   Nothing goes in `ACCESS_COLUMNS`.
+2. **Knowledge:** `/admin/intelligence/knowledge` → **Dry run**, then
+   **Seed**. That gives five new drafts (`si_actions_what`,
+   `si_actions_cost`, `si_actions_stop`, `si_actions_undo`,
+   `si_actions_report`) and new drafts of `chat_what` and `chat_is_ai`, which
+   no longer say it only answers. Approve them; the live answers are
+   untouched until you do. Four new placeholders: `deep_search_max_cost`,
+   `si_action_cap`, `si_action_undo_hours`, `si_action_stop_seconds`.
+3. **Check the settings** on `/admin/intelligence/actions` (the new
+   **Actions** tab): the switch, the £20 cap, Undo hours, the Stop
+   countdown, the rate limits, the deals one instruction may touch, and how
+   long a confirm waits. The low-credit line stays on `/admin/lifecycle`.
+4. **Check Vercel:** Settings → Cron Jobs lists `/api/internal/si-actions`
+   (02:55 UTC daily; 43 cron entries). It closes countdowns and confirms
+   nobody answered, stale running instructions, and checked-listing
+   snapshots past the Undo window. `?dry=1` only counts.
+5. Nothing else to set: no new environment variable. It is on wherever the
+   chat is (`SI_CHAT_ENABLED=true`); to stop it acting without a redeploy,
+   untick the switch on the Actions tab.
+
 ### Environment variables
 
 Set on Vercel to match `.env.local`. `.env.example` documents every variable,
@@ -1241,7 +1328,8 @@ which are required, and what breaks without them.
 | `src/lib/knowledge` | The Stayful Intelligence knowledge base (Batch 24): templates and placeholders (`template.ts`, `placeholders.ts`, `render.ts`, `figures.ts`), matching (`match.ts`), the seed drafts (`seed.ts`), the service facts the nightly job drafts from (`service-facts.ts`), the agent's knowledge (`agent.ts`), member facts (`facts-rules.ts`), coverage and the Monday email (`coverage.ts`, `weekly.ts`), all pure and tested; the reads and writes are the `*-server.ts` files and `gap/` is the nightly job. Every number is in `config.ts` or a `billing_settings` row (`settings.ts`). `README.md` is the contract for Batches 25 and 26 |
 | `src/lib/chat` | The typed chat (Batch 26): the settings (`settings.ts`, every number a `billing_settings` row edited on `/admin/intelligence/chat`) and structure (`config.ts`); what a question may cost and did cost (`budget.ts`), the figure and advice guard (`guard.ts`), the buttons (`actions.ts`), the prompts (`prompts.ts`, on top of the one persona), the look-ups' schemas (`tools.ts`) and the admin sums (`metrics.ts`), all pure and tested; claiming, holding, settling and charging a question (`turns-server.ts`), the conversation log, history, deletion and the 90-day rule (`log-server.ts`), the two surfaces (`quick-server.ts`, `full-server.ts`) and the member-scoped look-ups (`tools-server.ts`). Routes under `src/app/api/chat`; components in `src/components/intelligence/chat` |
 | `src/lib/standout` | Standout deals (Batch 25): who a deal stands out for (`rules.ts`), how it is described (`copy.ts`), how the member is told (`notify.ts`) and the slower-spender nudge (`nudge.ts`), all pure and tested; the hourly pass (`run.ts`, `server.ts`), the last check before a deal call rings (`calls-server.ts`), the save's meaning elsewhere (`saved-server.ts`), "Saved for you" (`email-server.ts`) and the texts (`texts-server.ts`). Every judgement is a `standout_decisions` row with its reason. `/admin/standout` lists them (member, deal, deal type, match, profit against the minimum and its basis, saved, call, what they did) with a dry run and the settings |
-| `src/app/admin/intelligence` | Stayful Intelligence admin: Overview (Batch 22's reveal), Gaps (what it couldn't answer, with the drafted answers, spend against the cap and the job's runs), Knowledge (every entry, approve / reject / retire, try a question, the seed, the placeholder catalogue) and Coverage (the weekly share answered from approved knowledge). Conversations is `src/app/admin/conversations` |
+| `src/app/admin/intelligence` | Stayful Intelligence admin: Overview (Batch 22's reveal), Gaps (what it couldn't answer, with the drafted answers, spend against the cap and the job's runs), Knowledge (every entry, approve / reject / retire, try a question, the seed, the placeholder catalogue), Coverage (the weekly share answered from approved knowledge), Chat (Batch 26) and Actions (Batch 27: actions per day, revenue, the question's AI margin, Stops, confirms, failures, Undo rate, next-week weekly active, the settings). Conversations is `src/app/admin/conversations` |
+| `src/lib/si-actions` | Stayful Intelligence acts for the member (Batch 27): the step kinds and statuses (`config.ts`), the settings (`settings.ts`), the plan check (`validate.ts`), the spend line, confirms and £20 split (`spend.ts`), Undo's rules (`undo.ts`), the chat card (`view.ts`) and the admin sums (`metrics.ts`), all pure and tested; pricing and checking a plan (`plan-server.ts`), each step through its button's own code (`steps-server.ts`), running, Stop and confirms (`run-server.ts`), Undo (`undo-server.ts`), drafts (`draft-server.ts`), reports through Batch 18 (`report-server.ts`) and the admin reads (`admin-server.ts`). Routes: `/api/si/actions/[id]` and the nightly `/api/internal/si-actions` |
 | `src/app/api` | Route handlers, including the Stripe webhook and the cron endpoints |
 | `src/lib/access.ts` | Billing state of an account: subscriber, paused, lapsed, pay-as-you-go |
 | `src/lib/credit/` | The credit ledger: unit costs, metering, reservations, estimates, plans, perks |

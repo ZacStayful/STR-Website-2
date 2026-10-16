@@ -340,6 +340,7 @@ export async function runFull(job: FullJob, send: (e: FullEvent) => void, live: 
     // or a free step that failed on our side, means the question isn't charged (Zac, 11 Oct).
     const fin = state.instruction ? await finaliseInstruction(acting, job.supabase, turn.id, { delivered: replyState === 'answer', conversationId: conv.id }) : { card: null, systemError: false };
     if (state.report) await recordReport(admin, acting, turn.id, 'bug', state.report.ref);
+    else if (state.featureRequest && replyState === 'answer') await recordReport(admin, acting, turn.id, 'feature', null);
     const noCharge = Boolean(state.report) || fin.systemError;
     settled = true;
     const s = await settle(

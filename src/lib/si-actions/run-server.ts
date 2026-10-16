@@ -412,8 +412,13 @@ export async function tidyInstructions(o: { apply: boolean; now?: Date }): Promi
   return { cancelled: cancelIds.length, expired: expireIds.length, closed: closeIds.length, snapshots: snaps.length };
 }
 
-/** A report the eye filed for the member, kept on the question's instruction row (made for it when the question had none). */
-export async function recordReport(admin: Admin, m: ActingMember, turnId: string, kind: 'bug' | 'feature', ref: number): Promise<void> {
+/**
+ * A report the eye filed for the member (a bug, with Batch 18's #ref), or a
+ * feature request it filled in for them to send (no ref: the member sends
+ * it), kept on the question's instruction row (made for it when the question
+ * had none) for the admin's counts.
+ */
+export async function recordReport(admin: Admin, m: ActingMember, turnId: string, kind: 'bug' | 'feature', ref: number | null): Promise<void> {
   const { error } = await admin.from('si_instructions').insert({ id: turnId, user_id: m.userId, payer_id: m.payerId, status: 'done', decision: 'free', report_kind: kind, report_ref: ref, finished_at: iso() });
   if (error?.code === '23505') {
     await admin.from('si_instructions').update({ report_kind: kind, report_ref: ref }).eq('id', turnId).eq('user_id', m.userId);
