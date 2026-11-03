@@ -1,5 +1,15 @@
 @AGENTS.md
 
+## Code search: use Graphify first
+
+This repo is indexed in the Graphify MCP. For any question about how the code works, where something lives, what calls what, or what a change would affect:
+1. Use the graphify tools first (`mcp__graphify__graphify_find`, `mcp__graphify__query_graph`, `mcp__graphify__graphify_callers`, `mcp__graphify__graphify_callees`, `mcp__graphify__graphify_impact`, `mcp__graphify__graphify_file_neighbors`).
+2. Only open a file with Read once the graph has told you which file and lines matter.
+3. Don't grep or read whole folders to explore.
+4. The graph is a snapshot of the last indexed commit. If code was just changed, check the files you edit directly.
+
+If the repo isn't in the Graphify `list_repositories`, work as normal.
+
 # Stayful Intelligence knowledge (Batch 24)
 
 Any change to a feature, price, limit or rule must add or update the matching
